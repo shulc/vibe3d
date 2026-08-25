@@ -756,6 +756,13 @@ private void wireModelProviders(HttpServer httpServer, ref EditorApp app,
                 // the three counters are JSON `null` for a non-mesh layer,
                 // not `0` — `0` is a legal empty mesh and the two must stay
                 // distinguishable to a caller that only has this response.
+                // recorded remainder (1906 §3.5 row 28, §3.6): `mutationVersion`
+                // owns `mvJson` and there is nothing to migrate — this is an
+                // OUTPUT VALUE on the wire, not a cache key. It is the only wire
+                // view of a version stamp in the API (`/api/changes` carries bus
+                // COUNTERS, which are a different thing), so tests that need to
+                // see an edit stamp read it here. Answered.mainThread, so the
+                // read is bridged; it is NOT one of §1.8's HTTP-thread readers.
                 string vcJson = "null", fcJson = "null", mvJson = "null";
                 if (l.hasMesh) {
                     vcJson = l.meshRef().vertices.length.to!string;
@@ -1031,6 +1038,12 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
             // during httpServer.tickAll(), i.e. BEFORE this frame's flush — a
             // command earlier in the same tick may have mutated the mesh
             // without the (bus-driven) upload having run yet.
+            //
+            // recorded remainder (1906 §3.5 row 29): this endpoint polls no
+            // counter at all — it delegates its whole freshness question to the
+            // family-1 display guard, which IS bus-keyed (`g_displayEpochs`, via
+            // `displayServiced_`). That indirection is the migration; there is
+            // nothing left here to key.
             ensureDisplayCurrent();
             // Faces use stride-6 (pos+normal). Read the live VBO.
             int vertCount = gpu.faceVertCount;
@@ -1524,6 +1537,11 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
             // Mid-batch pull-guard: serviced during tickAll, before the flush
             // (see the surface provider above) — both engines read
             // upload-derived state (ID-FBO / BVH keyed on gpu.uploadVersion).
+            //
+            // recorded remainder (1906 §3.5 row 29): same as the surface
+            // provider — no counter is polled here; the freshness question is
+            // delegated to the bus-keyed display guard, and the two engines'
+            // own `uploadVersion` keys are rows 5 and 6, argued at their sites.
             ensureDisplayCurrent();
             Viewport vp = vpm.activeSnapshot();
             int faceIdx;
@@ -1715,6 +1733,16 @@ private void wireSelectionProviders(HttpServer httpServer, ref EditorApp app,
                                ref string[] optionalSlots) {
     with (app) {
         httpServer.setSelectionDataProvider(() {
+            // recorded remainder (1906 §3.5 row 26, §1.8): this provider polls
+            // no counter and MUST NOT subscribe or read `mesh_dirty.g_*Epochs`.
+            // `/api/selection` is `Answered.httpThread` — it runs on the HTTP
+            // thread, and both the change bus and the epoch tables are
+            // main-thread-only and unsynchronised by design (delivery is
+            // main-thread by construction, since every mutating endpoint reaches
+            // the mesh through `MainThreadBridge`). It re-reads live state
+            // instead, which is race-tolerant for a read-only introspection
+            // endpoint in the way an epoch compare would not be. The task 0950
+            // hole is untouched by 1906.
             // Derivation invariant: editMode is a materialized view of
             // selTypeOrder.mostRecentGeometry. Any bypassing writer (raw
             // *editModePtr write without going through the funnel) surfaces

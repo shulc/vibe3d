@@ -551,6 +551,13 @@ struct MeshCacheKey {
     size_t addr   = size_t.max;
     ulong  mutVer = ulong.max;
 
+    // recorded remainder (1906 §3.6): `mutationVersion` owns this compare, and
+    // the type survives stage 2 for ONE consumer group — the slice tools'
+    // `armedKey_` (plan §3.4 row 18). Those are not caches: they guard that an
+    // armed preview's baseline still belongs to THIS mesh at THIS edit,
+    // evaluated between mouse events. A bus epoch answers "did anything
+    // change"; the guard asks "is my baseline still valid", and only an
+    // identity can answer that. Every call site carries the same marker.
     bool matches(ref Mesh m) const {
         return addr == cast(size_t)&m && mutVer == m.mutationVersion;
     }
@@ -588,6 +595,13 @@ struct MeshStructKey {
     size_t addr      = size_t.max;
     ulong  structVer = ulong.max;
 
+    // recorded remainder (1906 §3.6): `structVersion` owns this compare — and
+    // read that counter as "writes to `edges`", which is what it literally is
+    // (see `MeshTopoKey` below for the measurement). One consumer after stage
+    // 2: `faceSelEdgesKey`, declared in `app.d`, reached through
+    // `editor_app.d`'s pointer bridge and consumed by `ui/viewport_render.d`
+    // (plan §3.4 row 16), where this term covers the EDGE dependency and a
+    // `faceMarks` content diff covers the FACE one. Neither is redundant.
     bool matches(ref Mesh m) const {
         return addr == cast(size_t)&m && structVer == m.structVersion;
     }
@@ -632,6 +646,12 @@ struct MeshTopoKey {
     size_t addr    = size_t.max;
     ulong  topoVer = ulong.max;
 
+    // recorded remainder (1906 §3.6): `topologyVersion` owns this compare. Its
+    // consumer, `PenSnapGuide.polyKey_` (plan §3.4 row 19), is driven headlessly
+    // over SCRATCH meshes no `Document` layer owns — and a `mesh_dirty` epoch
+    // only ever advances for a mesh that IS owned, so an epoch key would read
+    // permanently fresh there. That reachability argument, not the class, is
+    // why this row kept a counter.
     bool matches(ref Mesh m) const {
         return addr == cast(size_t)&m && topoVer == m.topologyVersion;
     }
@@ -1441,6 +1461,12 @@ struct Mesh {
     // out of bounds.
     void vertexAdjacencyCSR(out const(size_t)[] offset, out const(uint)[] neighbors) {
         const size_t nV = vertices.length;
+        // recorded remainder (1906 §3.6): `structVersion` owns this compare
+        // (re-keyed off `mutationVersion` at stage 2d, plan §3.4 row 12). A bus
+        // epoch was REJECTED here for REACHABILITY, not for class: an epoch
+        // only advances for a mesh a `Document` layer owns, and this memo is
+        // read on scratch meshes throughout `mesh_ops` and the unit tests,
+        // where no delivery ever happens — it would read permanently fresh.
         if (_adjCsrStructVer != structVersion || _adjCsrOffset.length != nV + 1) {
             // Counting pass → per-vertex degree, then prefix-sum into offsets.
             _adjCsrOffset.length = nV + 1;
@@ -17499,6 +17525,13 @@ struct SubpatchPreview {
         const srcAddr = cast(size_t)&source;
         import mesh_dirty : g_geomEpochs;
         const ulong srcEpoch = g_geomEpochs.epochFor(srcAddr);
+        // recorded remainder (1906 §3.6): `mutationVersion` owns the THIRD term
+        // of this early-out and is REQUIRED beside the epoch, not belt-and-
+        // braces. `GeomEpochMask` deliberately drops `Marks` (a Tab toggle) and
+        // `Material` (a crease weight); the counter carries both. The epoch
+        // carries what the counter cannot — the version-silent gizmo `Position`
+        // of task 0401. Dropping either term is a live bug, and each has its
+        // own witness (see `sourceEpoch` / `sourceVersion`).
         if (sourceMeshAddr == srcAddr
             && sourceEpoch == srcEpoch
             && sourceVersion == source.mutationVersion && depth == d)
@@ -17507,6 +17540,13 @@ struct SubpatchPreview {
         // unchanged → ask OSD's stencil table for new limit positions. A
         // different source address (layer switch) must NOT take this path — the
         // cached stencil table belongs to the prior layer's cage.
+        //
+        // recorded remainder (1906 §3.6): `topologyVersion` owns the
+        // `sourceTopologyVersion` term below, and it is NOT a freshness signal.
+        // It is the INDEX-SPACE IDENTITY of the stencil table already built —
+        // "is the limit surface still laid out for this source topology, so new
+        // positions can be scattered into it". A change class answers "something
+        // moved"; only an identity answers "the layout is the same one".
         if (active
             && sourceMeshAddr == srcAddr
             && depth == d

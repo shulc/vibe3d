@@ -48,10 +48,10 @@ module mesh_dirty;
 // surface-BVH rebuild for a mesh nobody touched. There is no middle: the
 // round-robin cursor evicts on every insert once the table is full, and
 // `evicted_` moves with it. `kSlots` is therefore not a tuning knob but a
-// LAYER-COUNT CEILING, and it is set to 32 (512 bytes per watcher, four
-// watchers since stage 2d) rather than to the number of layers anyone has
-// today. The cliff is
-// pinned by the eviction unit test below, which asserts both sides of it.
+// LAYER-COUNT CEILING, and it is set to 32 (512 bytes per watcher, three
+// watchers after stage 2d's review fold) rather than to the number of layers
+// anyone has today. The cliff is pinned by the eviction unit test below,
+// which asserts both sides of it.
 //
 // WHAT THIS KEY CANNOT SEE: ADDRESS REUSE (ABA). A consumer stamps `{A, e}`;
 // the `Layer` whose mesh lived at A is collected; a NEW `Layer` is allocated
@@ -166,18 +166,29 @@ struct MeshDirtyKey {
     void clear() nothrow @nogc { addr = 0; epoch = ulong.max; }
 }
 
+// THE THREE WATCHER MASKS ARE NAMED, and that is not tidiness (task 1906
+// stage 2e). A consumer may legitimately DECLINE to key on any of them —
+// `render/render_mvp.d`'s IPR accumulator does, because its trigger set is
+// neither a subset nor a superset of any mask here — and such a decision is
+// only worth writing down if something notices when it stops being true. A
+// named mask can be `static assert`ed against; the inline literals these
+// replace could not. Values are unchanged.
+enum uint DisplayEpochMask = DisplayRefreshMask;
+enum uint GeomEpochMask    = MeshEditScope.Position
+                           | MeshEditScope.Points
+                           | MeshEditScope.Polygons;
+enum uint TopoEpochMask    = MeshEditScope.Geometry;
+
 /// Display-relevant classes — what makes the GPU buffers wrong
 /// (`display_sync.DisplayRefreshMask`, single-sourced, NOT re-listed here).
 __gshared MeshDirtyEpochs g_displayEpochs =
-    MeshDirtyEpochs.forClasses(DisplayRefreshMask);
+    MeshDirtyEpochs.forClasses(DisplayEpochMask);
 
 /// Geometry-relevant classes — what makes a position-dependent derived
 /// structure (a BVH, the cage VBO) wrong. Narrower than the display mask on
 /// purpose: a material or map write moves no vertex.
 __gshared MeshDirtyEpochs g_geomEpochs =
-    MeshDirtyEpochs.forClasses(MeshEditScope.Position
-                             | MeshEditScope.Points
-                             | MeshEditScope.Polygons);
+    MeshDirtyEpochs.forClasses(GeomEpochMask);
 
 // TASK 1906 STAGE 2d — THERE IS NO ANY-CLASS WATCHER, AND THE REASONING THAT
 // BRIEFLY ADDED ONE IS RECORDED HERE BECAUSE IT IS PLAUSIBLE AND WRONG.
@@ -232,7 +243,7 @@ __gshared MeshDirtyEpochs g_geomEpochs =
 /// `toolpipe.stages.actcenter.g_acenClusterRebuilds` and
 /// `toolpipe.stages.falloff.g_falloffSelWeightRebuilds`.
 __gshared MeshDirtyEpochs g_topoEpochs =
-    MeshDirtyEpochs.forClasses(MeshEditScope.Geometry);
+    MeshDirtyEpochs.forClasses(TopoEpochMask);
 
 /// The single fan-in the change-bus listener calls. Registered ONCE, from
 /// `app.d`'s existing mesh-channel hub, so there is exactly one subscription

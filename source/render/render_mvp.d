@@ -27,7 +27,10 @@ import d_imgui.imgui_h;
 import mesh : Mesh, SubpatchPreview, Surface;
 import view : View;
 import math : Vec3, Viewport;
-import change_bus : MeshChangeAll;   // modeling-side bus constant (boundary-safe)
+// Modeling-side bus constants and the watcher masks (boundary-safe: render
+// may read modeling, never the reverse).
+import change_bus : MeshChangeAll, MeshEditScope;
+import mesh_dirty : DisplayEpochMask, GeomEpochMask, TopoEpochMask;
 
 import render.backend;
 import render.scene;
@@ -175,6 +178,66 @@ private enum Duration restartIdleThreshold = dur!"msecs"(50);
 bool isIPRPanelOpen() { return g.panelOpen; }
 void setIPRPanelOpen(bool v) { g.panelOpen = v; }
 
+/// The change classes the IPR restarts for. Hoisted to module scope at task
+/// 1906 stage 2e so the `static assert` below can see it; the value is
+/// unchanged.
+private enum uint kRenderTriggers = MeshEditScope.Position
+                                  | MeshEditScope.Geometry   // Points | Polygons
+                                  | MeshEditScope.Marks       // Tab → subpatch
+                                  | MeshEditScope.Material;
+
+// TASK 1906 STAGE 2e, PLAN §3.5 ROW 22 — THIS ROW TAKES NO EPOCH WATCHER,
+// AND THAT IS A DECISION WITH A REASON, NOT AN OMISSION.
+//
+// Every other migrated consumer in stage 2 swapped a version counter for a
+// `mesh_dirty` epoch keyed on the SUBJECT ADDRESS. This one did not, on two
+// independent grounds, either of which is sufficient:
+//
+//   (a) NO WATCHER MASK COVERS THE TRIGGER SET. `DisplayEpochMask` omits
+//       `Marks` — exactly the Tab→subpatch flip the IPR must re-push for —
+//       while ADDING `Visibility` and `MapsDisplay`, viewport-only classes
+//       that would restart a render for nothing: one bit short of covering,
+//       and overlapping in the direction that costs. `GeomEpochMask` and
+//       `TopoEpochMask` are strict SUBSETS, dropping `Marks` AND `Material`,
+//       so an epoch on either would MISS changes the IPR must see. The
+//       relation is therefore not the same in all three directions, and the
+//       wording this note carried until the 2e review fold — "neither a
+//       subset nor a superset of any of the three" — was simply false of
+//       `GeomEpochMask`, which IS a subset. The claim that holds for all
+//       three, and the one the assert below tests, is that none of them
+//       COVERS `kRenderTriggers`. A fourth watcher is not free either: stage
+//       2d's review fold measured what an over-wide watcher costs and DELETED
+//       the any-class one it had just added. So the argument for a new
+//       watcher would have to be made in the task card, and it has not been.
+//
+//   (b) THE SHAPE IS WRONG ANYWAY. `mesh_dirty` serves consumers that COMPARE
+//       at a lazy recompute. This one REACTS: it ORs bits into two accumulators
+//       that are cleared at two different moments (`captureLastSeen` vs
+//       `cacheAppliedState`). And its subject is the FLATTENED DOCUMENT — every
+//       visible layer — not one mesh address, so a per-address table with a
+//       32-slot eviction cliff answers a question the IPR never asks.
+//
+// WHAT THE ASSERT BELOW PINS, AND WHAT IT DOES NOT — because the difference was
+// measured at the 2e review fold and it is not what this note used to claim.
+// It pins (a)'s PREMISE: widen a watcher until its mask covers the render
+// trigger set and this row's argument has expired, loudly. It does NOT pin the
+// DECISION. Delete the `changeBus.onMeshChanged` registration below, poll
+// `g_displayEpochs.epochFor` in its place, and the premise is untouched, this
+// assert still holds, and `dmd -o- -c -version=WithRender` is still exit 0 —
+// run, and nothing went red. The decision's witness cannot live in this file at
+// all: it is `version (WithRender)`, absent from the modeling build and from
+// both gate lanes, so no routine change ever compiles it. That witness is
+// `tests/unit/render_ipr_bus_witness_test.d`, a text census in the lane that
+// does run, asserting this file registers on the bus and names no epoch TABLE.
+// Keep both. They fail for different reasons and neither implies the other.
+static assert((DisplayEpochMask & kRenderTriggers) != kRenderTriggers
+           && (GeomEpochMask    & kRenderTriggers) != kRenderTriggers
+           && (TopoEpochMask    & kRenderTriggers) != kRenderTriggers,
+    "task 1906 §3.5 row 22: a mesh_dirty watcher mask now COVERS the IPR's "
+  ~ "change-trigger set. The reason this row keeps a plain bus subscription "
+  ~ "instead of an epoch key was that no mask fitted — re-make the argument "
+  ~ "in doc/bus_sync_listeners_plan.md §3.5 before deleting this assert.");
+
 /// Register the IPR's change-notification bus subscriber. Call ONCE at app
 /// startup, on the main thread, from a `version (WithRender)` block (the bus
 /// lives in modeling; this is the render side opting in — render imports
@@ -191,11 +254,7 @@ void setIPRPanelOpen(bool v) { g.panelOpen = v; }
 /// no synchronisation needed.
 void initIPR()
 {
-    import change_bus : changeBus, MeshEditScope;
-    enum uint kRenderTriggers = MeshEditScope.Position
-                              | MeshEditScope.Geometry   // Points | Polygons
-                              | MeshEditScope.Marks       // Tab → subpatch
-                              | MeshEditScope.Material;
+    import change_bus : changeBus;
     changeBus.onMeshChanged((size_t, uint flags) {
         const uint relevant = flags & kRenderTriggers;
         if (relevant) {
@@ -879,6 +938,12 @@ private void shadowCheckMeshChanged(const(Mesh)* m, bool busSaysChanged,
                                     string label)
 {
     if (!hashCheckEnabled()) return;
+    // recorded remainder (1906 §3.6): `mutationVersion` owns this read, and it
+    // is DIAGNOSTIC ONLY — the whole function is behind
+    // `VIBE3D_RENDER_HASH_CHECK` and exists to warn when the bus signal and the
+    // old (hash + version) answer disagree. Migrating it to an epoch would
+    // make the shadow read the same channel it is shadowing, which is the one
+    // thing a shadow must not do.
     const ulong h  = vertsHash(m);
     const ulong mv = m.mutationVersion;
     const bool hashChanged = (h != shadowHash) || (mv != shadowVer);

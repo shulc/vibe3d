@@ -6094,6 +6094,14 @@ void main(string[] args) {
                     // `pendingChanges_`, so what the drain sees IS what the
                     // publishers wrote.
                     const lf = layer.meshRef().pendingChanges_;
+                    // recorded remainder (1906 §3.6): `mutationVersion` owns
+                    // the compare below and CANNOT be migrated — this is the
+                    // shadow check that catches a version bump made WITHOUT a
+                    // publish (`changeBus.missedPublishers`, read at
+                    // /api/changes, asserted to stay 0). A bus epoch is the
+                    // very signal a missed publisher fails to produce, so
+                    // keying this on one would make it agree by construction:
+                    // the check would be green exactly when it should be red.
                     auto seen = layer in lastSeenMutVer;
                     if (seen is null) {
                         // First observation of this layer — seed, do not compare.
@@ -7778,6 +7786,19 @@ void main(string[] args) {
                         DirtyKey _newKey;
                         _newKey.view       = vpk.view;
                         _newKey.proj       = vpk.proj;
+                        // recorded remainder (1906 §3.5 row 24, §3.6):
+                        // `mutationVersion` owns `meshMutVer` and
+                        // `GpuMesh.uploadVersion` owns `gpuUploadVer` below.
+                        // `DirtyKey` is COMPARED whole (`_newKey != _key`), not
+                        // reacted to, so every term has to be a VALUE that can
+                        // sit in a struct — which is exactly the shape
+                        // `fboSelEpoch` beside it already has: a subscription
+                        // materialised into a counter. Note `mesh_dirty`'s own
+                        // header cites this key as the precedent for its epochs.
+                        // Migrating these two terms would swap one comparable
+                        // number for another and buy nothing; what a Position
+                        // publish must reach here it already reaches through
+                        // `gpuUploadVer` (the VBO is re-uploaded) and `toolMat`.
                         _newKey.meshMutVer = mesh.mutationVersion;
                         _newKey.selEpoch   = fboSelEpoch;
                         _newKey.editMode_k = cast(int)editMode;

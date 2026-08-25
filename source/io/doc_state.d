@@ -74,4 +74,13 @@ void syncDocRevision(ulong rev) {
 void requestDocRebaseline() { g_rebaselineOnNextSync = true; }
 
 /// True when the document has unsaved changes since the last save/open/new.
+///
+/// recorded remainder (1906 §3.5 row 23, §3.6): `changeBus.docRevision()` owns
+/// this compare — a MONOTONE SUM over the persisted change classes, not a mesh
+/// version and not an epoch. Making delivery synchronous changes how many times
+/// a frame the sum is incremented and changes nothing here: the question asked
+/// is "does the live revision differ from the one at the last save", and any
+/// number of extra increments between two saves leaves that answer identical.
+/// A bus epoch would be strictly worse — this must survive across a mesh being
+/// REPLACED (file open, reset), which changes the mesh address an epoch keys on.
 bool docDirty() { return g_liveRevision != g_savedRevision; }

@@ -2443,6 +2443,18 @@ class HttpServer {
     }
 
     private void route_apiChanges(HttpRequest request, HttpResponse response) {
+        // recorded remainder (1906 §3.5 row 27, §1.8): the BUS COUNTERS own this
+        // endpoint and it must stay that way. It is `Answered.httpThread`, and
+        // `mesh_dirty.g_displayEpochs` / `g_geomEpochs` / `g_topoEpochs` are
+        // main-thread-only, unsynchronised, and mutated from inside a live mesh
+        // edit — reading one from here would be a data race, not a diagnostic.
+        // The plain integers below are safe for the same reason /api/perf's are:
+        // scalar, monotone, read as DELTAS across a step. Stage 0 extended the
+        // field list; the SHAPE (one whole-struct snapshot, then serialise) is
+        // unchanged: one copy, then serialise, which NARROWS the window in
+        // which a mid-format flush could mix two flushes but does not close
+        // it — a struct copy is not atomic and this thread takes no lock.
+        //
         // Change-notification bus debug counters (Stage 1; test-only). Direct
         // read of the process-wide __gshared bus from the HTTP thread — the
         // counters are plain integers updated on the main thread at the

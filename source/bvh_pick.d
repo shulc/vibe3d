@@ -153,6 +153,12 @@ public:
         if (!ms.invertible) return -1;
 
         size_t srcAddr = cast(size_t)&sourceMesh;
+        // recorded remainder (1906 §3.6): `GpuMesh.uploadVersion` owns this
+        // compare and stays (plan §3.2 row 6). The FACE tree is built to agree
+        // with what the GPU rasterised, so the artifact it keys on is the VBO,
+        // not the mesh. Its sibling `pickSurfaceRay` is the opposite case and
+        // was the 2b bug fix: that one reads the MESH, so it keys on
+        // `mesh_dirty.g_geomEpochs` — see `_surfKey` below.
         if (_handle is null
             || _uploadVersion != gpu.uploadVersion
             || _meshAddr      != srcAddr)

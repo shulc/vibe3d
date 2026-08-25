@@ -470,6 +470,15 @@ private:
                     bool occlude)
     {
         Slot* slot = &slots[mode];
+        // recorded remainder (1906 §3.6): `GpuMesh.uploadVersion` owns this
+        // term, and it MUST — it is not a mesh change class at all but a
+        // fingerprint of the VBO CONTENT, and this slot caches an FBO
+        // rasterised FROM that buffer (plan §3.2 row 5). A mesh dirty bit
+        // strictly loses here: the mesh can change without the buffer having
+        // been re-uploaded yet, and re-rendering IDs from a stale VBO on the
+        // strength of a fresh mesh is worse than not re-rendering at all. The
+        // bus trigger that stage 3 of task 0401 added on top was DELETED at
+        // stage 2b as redundant under that rule.
         if (slot.valid
             && slot.occlude == occlude
             && slot.uploadVer == gpu.uploadVersion

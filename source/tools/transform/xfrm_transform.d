@@ -822,6 +822,17 @@ public:
         // and any selection/mutation we'd observe is the drag's own
         // input, not a user action.
         if (activeDrag is null) {
+            // recorded remainder (1906 §3.6): `mutationVersion` owns the
+            // compare below, via `curMutVer` — same argument as row 21, plan
+            // §2.3/§2.3.1. A GESTURE BOUNDARY, not a cache: it asks whether a
+            // FOREIGN edit landed between two of the user's gestures. The
+            // counter is (§2.2's law, cage carve-out aside) blind to the
+            // transform kernels' own output; `g_geomEpochs` is NOT, because
+            // the drag delivers `publishChange(Position)` version-silently
+            // (xfrm_apply.d :551/:971, transform.d :741) and Position is in
+            // that mask. Re-keyed on an epoch this guard would fire on the
+            // tool's OWN drag at the first update() after mouse-up — commit
+            // the edit, split the run, cancel the re-grade §2.3 protects.
             ulong curHash   = computeSelectionHash();
             ulong curMutVer = mesh.mutationVersion;
             if (curHash != lastSelectionHash

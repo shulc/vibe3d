@@ -656,6 +656,17 @@ protected:
     // uint): a wider same-run change-detector token, harmless — nothing here
     // is persisted or compared across runs.
     ulong computeSelectionHash() {
+        // recorded remainder (1906 §3.6): `marksVersion` owns this memo's
+        // freshness term. It is the ONE counter stage 2 did not consider for
+        // migration at all, and correctly: no watcher carries `Marks` (the
+        // geometry and connectivity masks exclude it on purpose, and
+        // `DisplayEpochMask` does not list it either), and the thing being
+        // memoised — `selectionSignature` — IS the canonical content answer
+        // this counter is the cheap key for. A `Marks` epoch would be a
+        // strictly coarser restatement of a counter that already tracks exactly
+        // this class, on the mesh itself, where every scratch mesh has one.
+        //
+        // (Census shape C: counter into a local, compared two lines down.)
         immutable ulong  ver  = mesh.marksVersion;
         immutable size_t addr = cast(size_t)mesh;
         if (ver == selHashKeyVer_ && addr == selHashKeyMesh_

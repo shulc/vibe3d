@@ -347,6 +347,13 @@ public:
         // Selection / mesh cannot change during a drag — skip checks entirely.
         if (dragAxis >= 0) return;
 
+        // recorded remainder (1906 §3.6): `mutationVersion` owns the compare
+        // below, via `currentMutVer`. Same gate and same argument as the
+        // wrapper's (`xfrm_transform.d :: update`; row 21 in plan §2.3): a
+        // gesture boundary asking whether a FOREIGN edit landed, which works
+        // because the counter does not see this tool's own version-silent
+        // `publishChange(Position)`. `g_geomEpochs` carries Position, so an
+        // epoch key would fire on this tool's own drag. Argued at the wrapper.
         ulong currentHash   = computeSelectionHash();
         ulong currentMutVer = mesh.mutationVersion;
         bool selChanged = (currentHash   != lastSelectionHash);
