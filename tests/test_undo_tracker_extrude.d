@@ -215,6 +215,9 @@ JSONValue selectGridBoundaryEdgeAndReturnPre() {
 unittest {
     // --- snapshot path (tracker OFF) ---
     cmd("undo.tracker.off");
+    scope(exit) cmd("undo.tracker.on");   // the toggle is per-INSTANCE and
+        // /api/reset does not restore it: a block that leaves it off breaks the
+        // next test on this worker (measured: test_mesh_planes_endpoint).
     cmd("history.clear");
     auto preOff = selectTopFrontEdgeAndReturnPre();
     interactiveExtrude();
@@ -251,6 +254,9 @@ unittest {
         "PARITY: post-undo geometry is not the pre-extrude cube on both paths");
 
     cmd("undo.tracker.off");   // leave the instance in the default state
+    scope(exit) cmd("undo.tracker.on");   // the toggle is per-INSTANCE and
+        // /api/reset does not restore it: a block that leaves it off breaks the
+        // next test on this worker (measured: test_mesh_planes_endpoint).
 }
 
 // ===========================================================================
@@ -272,6 +278,9 @@ unittest {
     assert(sameGeometry(getModel(), post), "round-trip: redo != post-extrude");
 
     cmd("undo.tracker.off");
+    scope(exit) cmd("undo.tracker.on");   // the toggle is per-INSTANCE and
+        // /api/reset does not restore it: a block that leaves it off breaks the
+        // next test on this worker (measured: test_mesh_planes_endpoint).
 }
 
 // ===========================================================================
@@ -301,6 +310,9 @@ unittest {
         ~ " (the original selected edge must come back, NOT the ridge)");
 
     cmd("undo.tracker.off");
+    scope(exit) cmd("undo.tracker.on");   // the toggle is per-INSTANCE and
+        // /api/reset does not restore it: a block that leaves it off breaks the
+        // next test on this worker (measured: test_mesh_planes_endpoint).
 }
 
 // ===========================================================================
@@ -334,6 +346,9 @@ unittest {
         "jumpTo forward past extrude != post-extrude geometry");
 
     cmd("undo.tracker.off");
+    scope(exit) cmd("undo.tracker.on");   // the toggle is per-INSTANCE and
+        // /api/reset does not restore it: a block that leaves it off breaks the
+        // next test on this worker (measured: test_mesh_planes_endpoint).
 }
 
 // ===========================================================================
@@ -352,6 +367,9 @@ unittest {
 unittest {
     // --- snapshot path (tracker OFF) ---
     cmd("undo.tracker.off");
+    scope(exit) cmd("undo.tracker.on");   // the toggle is per-INSTANCE and
+        // /api/reset does not restore it: a block that leaves it off breaks the
+        // next test on this worker (measured: test_mesh_planes_endpoint).
     cmd("history.clear");
     auto preOff = selectGridBoundaryEdgeAndReturnPre();
     interactiveExtrude();
@@ -395,6 +413,9 @@ unittest {
         "free-end PARITY: post-undo geometry differs between snapshot and delta");
 
     cmd("undo.tracker.off");
+    scope(exit) cmd("undo.tracker.on");   // the toggle is per-INSTANCE and
+        // /api/reset does not restore it: a block that leaves it off breaks the
+        // next test on this worker (measured: test_mesh_planes_endpoint).
 }
 
 // ===========================================================================
@@ -537,4 +558,7 @@ unittest {
     assert(isHoleFree(redone), "0317 redo: redone mesh is not hole-free");
 
     cmd("undo.tracker.off");
+    scope(exit) cmd("undo.tracker.on");   // the toggle is per-INSTANCE and
+        // /api/reset does not restore it: a block that leaves it off breaks the
+        // next test on this worker (measured: test_mesh_planes_endpoint).
 }

@@ -194,6 +194,12 @@ unittest // every history entry reports opInverse, and the bit is not a constant
 
     // (b) mesh.delete — one of the four classes the undo tracker actually
     // branches on, and the one whose delta path Stage L3 migrates.
+    // PRECONDITION, stated rather than inherited: the tracker toggle is
+    // per-instance and survives /api/reset, so a sibling test that left it
+    // off would turn this cell red for a reason that has nothing to do with
+    // the class under test (it did — test_undo_tracker_extrude, 2026-08-25,
+    // 701/702 on the first full gate). Set it here; do not assume it.
+    cmd("undo.tracker.on");
     postSelect("polygons", [4]);
     cmd("mesh.delete");
 
