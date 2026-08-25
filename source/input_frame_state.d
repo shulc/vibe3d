@@ -58,22 +58,40 @@ module input_frame_state;
 // index-space-staleness guard, read by the pick family and the frame
 // body). See each member below for the specific reasoning.
 //
-// THIS STEP MOVES ONLY THE STATE AND THE TWO FUNCTIONS' BODIES -- it does
-// not decide who calls them next (that is steps 2 and 3: the router, then
-// the frame body, become this cluster's clients). main()'s existing call
-// sites -- inside the four SDL-event handlers 0781 has not yet extracted,
-// the pick* family, and the frame body -- keep their bare, unqualified
-// names; app.d gains a same-name forwarding declaration at each of the
-// five original positions (a nested `@property` for the three state
-// fields, a nested wrapper preserving the full parameter list for each
-// function) so every one of the ~105 existing call sites is untouched --
-// textually identical before and after this commit. See the task Log for
-// the D forward-reference constraint (nested functions/closures cannot
-// forward-reference a not-yet-declared sibling or local, confirmed by a
-// standalone probe) that fixed where `InputFrameState app.d`'s instance
-// has to be declared: before all five forwarders, i.e. near the top of
-// main(), well before `EditorApp app` itself is assembled -- its `.app`
-// field is wired later, at the same point `InputRouter.app` already is.
+// Step 1b folds in the hover triple -- `hoveredVertex`/`hoveredEdge`/
+// `hoveredFace`, three `main()` locals written by the pick family and read
+// by the frame body, by `ui/viewport_render.d` under `with (app)`, and by
+// the toolpipe hover key. `EditorApp`'s three POINTER fields
+// (`hoveredVertexPtr`/`EdgePtr`/`FacePtr`) are repointed at these members
+// rather than duplicated, so `EditorApp` gains no member and every
+// existing reader sees the same storage. The cross-module publish channel
+// `hover_state.g_hovered*` is deliberately NOT folded in (plan §2.3): the
+// cluster owns the SOURCE, the `__gshared` triple stays the CHANNEL that
+// four tool modules and two HTTP providers read without holding an
+// `EditorApp`.
+//
+// TASK 1040'S OWN STEP -- the paragraph's figures below describe THAT
+// commit, not today's cluster -- moved only the state and the two
+// functions' bodies: five names, five same-name forwarders in main(),
+// ~105 call sites left textually identical. The current membership and
+// forwarder count are carried by the 0781 paragraphs above instead
+// (step 1a: three functions, nine forwarders; step 1b: twelve
+// forwarders). What has NOT changed is the rule that step established,
+// and it still governs every member added since: a body moves, its
+// callers do not. Who calls the cluster next is steps 2 and 3 -- the
+// router, then the frame body, become its clients -- and until then
+// main()'s existing call sites (inside the SDL-event handlers 0781 has
+// not yet extracted, the pick* family, and the frame body) keep their
+// bare, unqualified names behind a same-name forwarding declaration at
+// each original position: a nested `@property ref` for a state field, a
+// nested wrapper preserving the full parameter list for a function. See
+// the task Log for the D forward-reference constraint (nested
+// functions/closures cannot forward-reference a not-yet-declared sibling
+// or local, confirmed by a standalone probe) that fixed where app.d's
+// instance has to be declared: before EVERY forwarder, i.e. near the top
+// of main(), well before `EditorApp app` itself is assembled -- its
+// `.app` field is wired later, at the same point `InputRouter.app`
+// already is.
 
 import editor_app         : EditorApp;
 import toolpipe.packets   : SubjectPacket, GesturePacket;
@@ -112,6 +130,34 @@ final class InputFrameState {
     // `fbHPtr` point straight at these two fields now, the same way they
     // already pointed at the main()-local pair before this step.
     int fbW, fbH;
+
+    // Task 0781 step 1b: the hover triple, folded in from main() locals of
+    // the same name by the same producer/consumer argument -- the pick
+    // family (input) writes them, the frame body reads them (its hover
+    // publish block, and the toolpipe display key's `hovV`/`hovE`/`hovF`
+    // terms).
+    //
+    // These three have a THIRD reader the other members do not, and it is
+    // why they must be fields and not a pointer: `EditorApp`'s
+    // `hoveredVertexPtr`/`EdgePtr`/`FacePtr` are repointed straight at them
+    // (app.d, next to the other pointer wiring), so `ui/viewport_render.d`
+    // -- which reads `hoveredVertex`/`hoveredEdge`/`hoveredFace` BARE under
+    // `with (app)`, never as `app.hoveredEdge` -- keeps seeing the same
+    // storage the pickers write. `EditorApp` therefore gains no member;
+    // three of its existing pointers just change what they point at, and
+    // the `final class` from step 1a is what makes that address stable for
+    // the whole run.
+    //
+    // NOT the same thing as `hover_state.g_hoveredVertex/Edge/Face`, and
+    // those deliberately stay where they are (plan §2.3): that `__gshared`
+    // triple is the cross-module PUBLISH channel four tool modules and two
+    // HTTP providers read without holding an `EditorApp`. The publish sites
+    // (`refreshHoverPickAt`'s tail and the frame body's pick block) mirror
+    // these fields into it. This cluster owns the SOURCE; the channel stays
+    // a channel.
+    int hoveredVertex = -1;
+    int hoveredEdge   = -1;
+    int hoveredFace   = -1;
 
     // buildToolVts's own publish slot. Kept out of buildToolVts's own
     // stack frame for the same reason main() kept it out before the move

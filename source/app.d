@@ -2182,10 +2182,25 @@ void main(string[] args) {
         glBindVertexArray(0);
     }
 
-    // Selection state
-    int hoveredVertex = -1;
-    int hoveredEdge   = -1;
-    int hoveredFace   = -1;
+    // Selection state.
+    //
+    // Task 0781 step 1b: the three hover indices were plain main() locals
+    // here; their storage moved into the input/frame cluster
+    // (`ifs.hoveredVertex`/`hoveredEdge`/`hoveredFace`), the same pattern
+    // `dragMode` / `fbW` / `g_viewportWindowHovered` already follow. These
+    // forwarders keep every bare read/write site untouched -- the pick*
+    // family that writes them (including `pickHover`'s
+    // `alias hovered = hoveredVertex;`, which aliases the forwarder and
+    // still assigns through its `ref` return), the two hover-publish
+    // blocks, and the frame body's toolpipe display key.
+    //
+    // A reader outside app.d never sees these: `ui/viewport_render.d` goes
+    // through `EditorApp.hoveredVertex`/`Edge`/`Face`, whose backing
+    // pointers are repointed at the cluster's fields (see the wiring block
+    // beside `app.hoveredVertexPtr`). Same storage, one owner.
+    @property ref int hoveredVertex() { return ifs.hoveredVertex; }
+    @property ref int hoveredEdge()   { return ifs.hoveredEdge;   }
+    @property ref int hoveredFace()   { return ifs.hoveredFace;   }
     mesh.resetSelection();
 
     // Cache: face→edge mask for Polygons mode edge highlighting.
@@ -4692,9 +4707,18 @@ void main(string[] args) {
     // always sees a fully-wired `app`. Full inventory:
     // doc/tasks/work/0419-app-decomp-panels.md.
     // -------------------------------------------------------------------------
-    app.hoveredVertexPtr       = &hoveredVertex;
-    app.hoveredEdgePtr         = &hoveredEdge;
-    app.hoveredFacePtr         = &hoveredFace;
+    // Task 0781 step 1b: these three now point INTO the input/frame cluster
+    // (their storage moved there), not at main() locals -- `&ifs.hoveredX`,
+    // not `&hoveredX`, because after the move `hoveredX` is a `@property`
+    // and `&`-ing it would take the address of the FORWARDER FUNCTION (the
+    // R3 rule the `fbW`/`fbH` wiring below already carries). `EditorApp`
+    // itself is unchanged: same three pointer fields, same three
+    // properties, new target. `ifs` is a `final class`, so this address is
+    // stable for the whole run -- and it must be assigned BEFORE
+    // `wireHttpProviders`, which captures `app` by value; it already is.
+    app.hoveredVertexPtr       = &ifs.hoveredVertex;
+    app.hoveredEdgePtr         = &ifs.hoveredEdge;
+    app.hoveredFacePtr         = &ifs.hoveredFace;
     app.activePanelIdxPtr      = &activePanelIdx;
     app.activeToolIdPtr        = &activeToolId;
     app.layerRenameIndexPtr    = &layerRenameIndex;
