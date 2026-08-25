@@ -22,8 +22,9 @@ version (unittest) import std.conv : to;
 
 // ---------------------------------------------------------------------------
 // Radial Sweep — interactive revolve/lathe tool (task 0326) wrapping
-// `Mesh.revolveProfileEx` (source/mesh.d), which itself wraps the original
-// `Mesh.revolveProfile` kernel behind the `mesh.sweep` one-shot command.
+// `revolveProfileEx` (source/mesh_ops/revolve.d — free functions over a
+// `MeshEditBatch` since task 1903 Stage E2), which itself wraps the original
+// `revolveProfile` kernel behind the `mesh.sweep` one-shot command.
 // Modelled directly on MirrorTool (tools/mirror.d): a self-contained
 // PREVIEW mesh that never touches the document mesh during interaction
 // (rebuilt every param change / handle drag from a base snapshot + the
@@ -64,7 +65,7 @@ struct RadialSweepParams {
     // Reference "Count" convention: the number of NEW bands on an open /
     // partial-angle sweep (ring count = sides+1); coincides with vibe3d's
     // own ring-count convention ONLY on a closed 360° sweep. Translated to
-    // Mesh.RevolveParams.count in `toKernelParams` below — the measured gap
+    // RevolveParams.count in `toKernelParams` below — the measured gap
     // from the task 0326 toolcard (a literal count->sides port would
     // silently under-count bands by one on every open sweep).
     int   sides         = 24;
@@ -92,7 +93,7 @@ struct RadialSweepParams {
     // Close the start/end ring with an n-gon (reference Cap Start/End,
     // both default ON). Only takes effect for a CLOSED profile ring
     // (polygon-mode sweep) on a non-closed sweep — see
-    // Mesh.revolveProfileEx's doc comment. Harmless at the default full
+    // `revolveProfileEx`'s doc comment. Harmless at the default full
     // 360° sweep (no exposed end to cap either way).
     bool  cap0            = true;
     bool  cap1            = true;
@@ -120,8 +121,8 @@ struct RadialSweepParams {
 ///      since `evaluate()` runs `rebuildRadialSweepPreview` SYNCHRONOUSLY
 ///      on the UI/HTTP thread.
 ///   2. `toKernelParams` (below) re-clamps defensively before translating
-///      into `Mesh.RevolveParams`.
-///   3. `Mesh.revolveProfileEx` itself clamps `count` to the same ceiling —
+///      into `RevolveParams`.
+///   3. `revolveProfileEx` itself clamps `count` to the same ceiling —
 ///      the durable backstop for any caller that reaches the shared kernel
 ///      through a path other than this tool.
 /// Without any of these, `tool.attr ... sides 100000000` allocated ~1.6GB
@@ -133,14 +134,14 @@ struct RadialSweepParams {
 /// directly; this tool references the same one for consistency.
 
 /// Translate `RadialSweepParams` (reference "Count" convention + every
-/// other panel field) into `Mesh.RevolveParams` (vibe3d's ring-count
+/// other panel field) into `RevolveParams` (vibe3d's ring-count
 /// convention). The two nontrivial steps: the Count-semantics fix (task
 /// 0326 measured gap, see `sides`'s doc comment) and the `sides` DoS clamp
 /// (see `mesh.MAX_SWEEP_SIDES`) — everything else is a direct field copy /
 /// degrees-to-radians conversion.
-Mesh.RevolveParams toKernelParams(in RadialSweepParams p) pure nothrow @nogc @safe {
+RevolveParams toKernelParams(in RadialSweepParams p) pure nothrow @nogc @safe {
     enum float D2R = cast(float)(PI / 180.0);
-    Mesh.RevolveParams kp;
+    RevolveParams kp;
     immutable float angleSpanRad = (p.endAngleDeg - p.startAngleDeg) * D2R;
     // revolveSweepClosedWithOffset (NOT the bare angle-only
     // revolveSweepClosed): a nonzero spiral `offset` must be treated as an
@@ -148,7 +149,7 @@ Mesh.RevolveParams toKernelParams(in RadialSweepParams p) pure nothrow @nogc @sa
     // translation below disagrees with revolveProfileEx's own OPEN
     // wrap-bridge decision (task 0326 review finding S1) — same single
     // source of truth the kernel itself uses.
-    immutable bool  closed = Mesh.revolveSweepClosedWithOffset(angleSpanRad, p.offset);
+    immutable bool  closed = revolveSweepClosedWithOffset(angleSpanRad, p.offset);
 
     int sidesClamped = p.sides;
     if (sidesClamped < 1) sidesClamped = 1;
@@ -187,8 +188,38 @@ void rebuildRadialSweepPreview(const ref MeshSnapshot baseSnap, ref Mesh preview
     baseSnap.restore(previewMesh);
     if (profile.length == 0) return;   // no valid selection captured — bare base
 
-    auto   kp       = toKernelParams(params_);
-    size_t inserted = previewMesh.revolveProfileEx(profile, profileClosed, kp);
+    auto kp = toKernelParams(params_);
+
+    // TASK 1903 Stage E2 — THE PREVIEW PATH, and UNRECORDED here is a HARD
+    // requirement rather than a track-1 economy (plan §9). `evaluate()` calls
+    // this once per parameter change and once per handle-drag frame: a
+    // RECORDING batch would build and throw away a full op-log at 60 Hz and
+    // `changeBus.opLogEntriesRecorded` would tick for an edit the user has not
+    // committed. An UNRECORDED frame keeps every tracker hook on its existing
+    // `if (editRecorder_ is null) return;` first line — one predictable branch,
+    // exactly today's batchless cost — while still collapsing the kernel's
+    // internal commits into ONE stamp and ONE hidden derive per frame.
+    // `close()` returns `MeshEditDelta.init` and there is nothing to read.
+    //
+    // NOT delivery, and the twin sentence in `StrokeExtrudeTool.applyPath` says
+    // "ONE delivery" only because that path edits the DOCUMENT mesh. This one
+    // edits `previewMesh`, a field of the tool: the change bus filters its
+    // subjects through `g_isDocumentMesh` (`Mesh.deliverySubjectAccepted`),
+    // which no `Layer` owns here, so this path delivered nothing before the
+    // batch and delivers nothing after it. The stamp and derive collapse is
+    // the whole of what the batch buys the preview (Stage E2 review, m6).
+    //
+    // The batch opens AFTER `baseSnap.restore(previewMesh)` above,
+    // deliberately: a whole-mesh restore inside an open batch would defer the
+    // stamps `commitRestored` exists to publish. It is also scoped to the
+    // kernel call ALONE and does not span the profile-face deletion below,
+    // which this stage does not touch.
+    size_t inserted;
+    {
+        auto ed = MeshEditBatch.unrecorded(previewMesh, kRevolveEditScope);
+        inserted = ed.revolveProfileEx(profile, profileClosed, kp);
+        ed.close();
+    }
     if (inserted > 0 && profileFaceIdx != uint.max
         && profileFaceIdx < previewMesh.faces.length) {
         auto delMask = new bool[](previewMesh.faces.length);
@@ -304,7 +335,18 @@ public:
         size_t inserted = 0;
         if (willCommit) {
             auto kp = toKernelParams(params_);
-            inserted = mesh.revolveProfileEx(profile_, profileClosed_, kp);
+            // TASK 1903 Stage E2 — the COMMIT path's batch. Still UNRECORDED:
+            // this tool undoes through the generic `MeshSessionEdit` snapshot
+            // pair (`commitSweepEdit(pre)` below, with `pre` captured just
+            // above), so an op-log would have no reader and `close()` would
+            // drop it. The recording decision belongs to that pair-holder and
+            // flips at plan Stage M — not here, and not at L10, which owns the
+            // `mesh.sweep` COMMAND's undo record.
+            {
+                auto ed = MeshEditBatch.unrecorded(*mesh, kRevolveEditScope);
+                inserted = ed.revolveProfileEx(profile_, profileClosed_, kp);
+                ed.close();
+            }
             if (inserted > 0) {
                 if (profileFaceIdx_ != uint.max && profileFaceIdx_ < mesh.faces.length) {
                     auto delMask = new bool[](mesh.faces.length);
@@ -430,8 +472,15 @@ public:
         uint   profileFaceIdx;
         if (!captureProfile(mesh, profile, profileClosed, profileFaceIdx)) return false;
 
-        auto   kp       = toKernelParams(params_);
-        size_t inserted = mesh.revolveProfileEx(profile, profileClosed, kp);
+        auto kp = toKernelParams(params_);
+        // TASK 1903 Stage E2 — same shape as the two sites above; see
+        // `rebuildRadialSweepPreview` for why every one of them is UNRECORDED.
+        size_t inserted;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kRevolveEditScope);
+            inserted = ed.revolveProfileEx(profile, profileClosed, kp);
+            ed.close();
+        }
         if (inserted == 0) return false;
 
         if (profileFaceIdx != uint.max && profileFaceIdx < mesh.faces.length) {

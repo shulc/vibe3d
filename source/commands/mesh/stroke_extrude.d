@@ -32,7 +32,7 @@ import snapshot : MeshSnapshot;
 ///                    path.length-1 new bands are created.
 ///   - alignToPath — bool. Reference "Align to Path" default ON (captured
 ///                    toolcard spec default) — see
-///                    `Mesh.extrudeAlongPath`'s doc comment for what this
+///                    `mesh_ops.revolve.extrudeAlongPath`'s doc comment for what this
 ///                    does and its curved-path TODO/unverified scope.
 ///
 /// Undo: snapshot-based (MeshSnapshot), consistent with mesh.sweep /
@@ -46,7 +46,7 @@ class MeshStrokeExtrude : Command, Operator {
 
     // DoS backstop (same class as the Radial Array count clamp — a huge
     // JSON-supplied path list over HTTP must not explode geometry).
-    // Mesh.extrudeAlongPath also clamps internally at 4096 spans
+    // `extrudeAlongPath` also clamps internally at 4096 spans
     // (defense-in-depth for the shared kernel); this bound agrees with it
     // (4097 points = 4096 spans, the kernel's own cap).
     private enum size_t maxPathPoints = 4097;
@@ -80,7 +80,29 @@ class MeshStrokeExtrude : Command, Operator {
         if (!any) return false;
 
         snap = MeshSnapshot.capture(*mesh);
-        size_t added = mesh.extrudeAlongPath(mask, path_, alignToPath_);
+
+        // TASK 1903 Stage E2 — the kernel takes `ref MeshEditBatch`, so the
+        // batch opens HERE, at the command boundary, and never inside the
+        // kernel (plan §4.1). This is the family's biggest single win:
+        // `extrudeAlongPath` runs `extrudePathStep_` once per PATH SPAN and
+        // each step ends in its own `commitChange`, so an N-span stroke used
+        // to stamp, re-derive hidden geometry and deliver N times. It now does
+        // all three ONCE, at `close()`.
+        //
+        // UNRECORDED, deliberately: undo here is still the whole-mesh `snap`
+        // captured just above (plan §5.1 — the conversion axis and the undo
+        // axis are separate commits), so a RECORDING batch would build a full
+        // op-log that nothing reads and `close()` would drop.
+        //
+        // No `scope(failure)`: `MeshEditBatch.~this` pops the frame during
+        // unwinding without asserting and ticks `changeBus.batchLeaks`, which
+        // the suite asserts stays 0 (§2.2c).
+        size_t added;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kRevolveEditScope);
+            added = ed.extrudeAlongPath(mask, path_, alignToPath_);
+            ed.close();
+        }
         if (added == 0) {
             snap = MeshSnapshot.init;
             return false;

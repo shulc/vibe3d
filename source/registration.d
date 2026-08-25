@@ -509,7 +509,8 @@ private void registerGeneratorTools(EditorApp app) {
     // Named `mesh.radialSweepTool` (task 0326 review S2), NOT
     // `mesh.sweepTool` — that id is reserved for the task-0323 Sketch
     // Extrude port, the natural claimant of the bare "sweep" name since it
-    // shares the same `Mesh.revolveProfile`/`revolveProfileEx` kernel.
+    // shares the same `revolveProfile`/`revolveProfileEx` kernel
+    // (source/mesh_ops/revolve.d — free functions since task 1903 Stage E2).
     reg.toolFactories["mesh.radialSweepTool"] = () {
         auto t = new RadialSweepTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setUndoBindings(history, bevelEditFactory);

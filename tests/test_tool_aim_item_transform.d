@@ -834,7 +834,7 @@ unittest { // T4: Magnet pulls the vertex to the cursor on the DRAWN surface
 // calls out: "the seeded anchor is local and every subsequent point is world
 // today; a partial fix (ray fixed, anchor not) leaves the FIRST span wrong."
 //
-// WHY IT READS A NUMBER. With Align to Path OFF, `Mesh.extrudeAlongPath` is a
+// WHY IT READS A NUMBER. With Align to Path OFF, `extrudeAlongPath` is a
 // pure translation per span, and the per-span translations telescope: the cap
 // sits at `v_i + (tip - anchor)` for every corner `i` of the swept face. So
 // the whole difference between the laws is one displacement, readable as a

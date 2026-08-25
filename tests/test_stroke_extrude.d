@@ -164,7 +164,7 @@ unittest {
 // ---------------------------------------------------------------------------
 // TEST 2: alignToPath=false smoke test. NOT a captured-law assertion — on a
 // perfectly straight path every segment shares one tangent, so
-// Mesh.extrudeAlongPath's align-to-path rotation is identity regardless
+// `extrudeAlongPath`'s align-to-path rotation is identity regardless
 // (see the kernel's doc comment); this only proves the param round-trips
 // and produces the same topology count on a straight path, not that the
 // tilt behaviour itself is correct for a curved path (open TODO).

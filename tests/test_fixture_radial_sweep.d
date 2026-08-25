@@ -17,7 +17,7 @@
 //
 // No external reference engine at runtime: this is a direct-import D
 // unittest exercising RadialSweepTool's pure translation functions
-// (RadialSweepParams / toKernelParams) and Mesh.revolveProfileEx directly
+// (RadialSweepParams / toKernelParams) and `revolveProfileEx` directly
 // -- no HTTP server, no live vibe3d instance, no GL context required.
 
 import std.conv : to;
@@ -70,7 +70,17 @@ unittest {
     assert(kp.count == 5,
         "toKernelParams: expected ringCount 5 (sides+1, open sweep), got " ~ kp.count.to!string);
 
-    size_t inserted = m.revolveProfileEx([v1, v2], false, kp);
+    // Task 1903 Stage E2: the kernel is a free function over
+    // `ref MeshEditBatch` now, so the batch opens at THIS boundary — the same
+    // three lines `rebuildRadialSweepPreview` and the `mesh.sweep` command use.
+    // UNRECORDED, because this fixture pins the FORWARD result and reads no
+    // op-log.
+    size_t inserted;
+    {
+        auto ed = MeshEditBatch.unrecorded(m, kRevolveEditScope);
+        inserted = ed.revolveProfileEx([v1, v2], false, kp);
+        ed.close();
+    }
     assert(inserted == 4,
         "revolveProfileEx: expected 4 faces added, got " ~ inserted.to!string);
 
@@ -139,7 +149,12 @@ unittest {
         "toKernelParams: closed 360 sweep must NOT add +1, expected ringCount 8, got "
         ~ kp.count.to!string);
 
-    size_t inserted = m.revolveProfileEx([v1, v2], false, kp);
+    size_t inserted;
+    {
+        auto ed = MeshEditBatch.unrecorded(m, kRevolveEditScope);   // task 1903 E2
+        inserted = ed.revolveProfileEx([v1, v2], false, kp);
+        ed.close();
+    }
     assert(inserted == 8,
         "revolveProfileEx: expected 8 faces added, got " ~ inserted.to!string);
     assert(m.vertices.length - vertsBefore == 14,
@@ -202,7 +217,7 @@ unittest {
 // ---------------------------------------------------------------------------
 // B1 regression (task 0326 review — DoS): `toKernelParams` must clamp
 // `sides` into [1, MAX_SWEEP_SIDES] BEFORE it ever reaches
-// Mesh.RevolveParams.count. Pure-D, no HTTP -- defense-in-depth check for
+// `RevolveParams.count`. Pure-D, no HTTP -- defense-in-depth check for
 // any caller reaching `toKernelParams` outside the Param-write path (which
 // has its own PRIMARY clamp, exercised end-to-end by the HTTP-based test
 // below).

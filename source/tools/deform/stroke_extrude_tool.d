@@ -57,7 +57,7 @@ alias StrokeExtrudeEditFactory = MeshSessionEdit delegate();
 //
 // Session model (mirrors RadialArrayTool / PolyExtrudeTool):
 //   activate()   — snapshot the cage; reset session state (no drawing yet).
-//   drag         — restore-and-rerun Mesh.extrudeAlongPath against the
+//   drag         — restore-and-rerun `extrudeAlongPath` against the
 //                    live sampled path (same restore+rerun-from-clean-cage
 //                    law RadialArrayTool/PolyExtrudeTool use for
 //                    topology-creating previews).
@@ -102,7 +102,7 @@ private:
     // LAYER-LOCAL, all of them (task 0619). Index 0 is `maskFaceCentroid`, a
     // raw `mesh.faceCentroid` average; every later point is a cursor-ray hit
     // resolved in the SAME local space (see onMouseMotion); and the whole
-    // array is handed to `Mesh.extrudeAlongPath`, which writes local vertex
+    // array is handed to `extrudeAlongPath`, which writes local vertex
     // coordinates. A partially-converted version of this tool — ray fixed,
     // anchor not — would leave the FIRST span wrong and the rest right.
     Vec3[]       pathPoints_;    // committed path points, LOCAL (index 0 = anchor)
@@ -112,7 +112,7 @@ private:
     // **RayPlane** law (§1.2) builds its ray from the un-composed viewport.
     Viewport     vpWorld_;
 
-    // DoS guard mirrors Mesh.extrudeAlongPath's own backstop (defense in
+    // DoS guard mirrors `extrudeAlongPath`'s own backstop (defense in
     // depth for the shared kernel — an unbounded drag must not explode
     // geometry).
     enum size_t maxSpans = 4096;
@@ -222,7 +222,7 @@ public:
         //
         // AIMING KIND: **RayPlane** (task 0619 §1.2), resolved entirely in
         // the LAYER'S LOCAL space because `pathPoints_` is consumed by
-        // `Mesh.extrudeAlongPath` against local vertices. The plane's anchor
+        // `extrudeAlongPath` against local vertices. The plane's anchor
         // (`pathPoints_[$-1]`) is local already; its NORMAL is the camera
         // forward, a WORLD direction, and a normal crosses into local space
         // through `M^T` (`toLocalNormal`) — `toLocalDir` (`M^-1`) is the
@@ -308,7 +308,33 @@ private:
             refreshCaches();
             return;
         }
-        size_t n = mesh.extrudeAlongPath(mask_, path, alignToPath_);
+        // TASK 1903 Stage E2 — THE DRAG-FRAME PATH, and the batch here is a
+        // HARD requirement, not a track-1 economy (plan §9). `applyPath` runs
+        // once per mouse-move while the stroke is being drawn: a RECORDING
+        // batch would build and throw away a full op-log at 60 Hz and
+        // `changeBus.opLogEntriesRecorded` would tick for an edit the user has
+        // not committed. An UNRECORDED frame keeps every tracker hook on its
+        // existing `if (editRecorder_ is null) return;` first line — one
+        // predictable branch, exactly today's batchless cost — while still
+        // collapsing the kernel's per-span `commitChange` calls into ONE stamp,
+        // ONE hidden derive and ONE delivery per frame. `close()` returns
+        // `MeshEditDelta.init` and there is nothing to read.
+        //
+        // The batch opens AFTER `before.restore(*mesh)` above and closes
+        // BEFORE `refreshCaches()` below, deliberately: a whole-mesh restore
+        // inside an open batch would defer the stamps `commitRestored` exists
+        // to publish, and the cache refresh must see the committed state.
+        //
+        // The commit path (`commitEdit`) is unchanged: this tool undoes
+        // through the generic `MeshSessionEdit` snapshot pair, so nothing here
+        // reads an op-log yet either. That flips with the tool pair-holders at
+        // plan Stage M, not here.
+        size_t n;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kRevolveEditScope);
+            n = ed.extrudeAlongPath(mask_, path, alignToPath_);
+            ed.close();
+        }
         built_ = (n != 0);
         refreshCaches();
     }

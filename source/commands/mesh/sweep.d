@@ -28,7 +28,9 @@ import snapshot : MeshSnapshot;
 ///                  default; values < 2π − 1e-3 produce an open arc sweep.
 ///
 /// Undo: snapshot-based (MeshSnapshot), consistent with mesh.bridge and
-///       mesh.radial_array.
+///       mesh.radial_array. Task 1903 Stage E2 put the kernel call inside an
+///       UNRECORDED `MeshEditBatch` (the commit seam, plan §5.0 axis 0); the
+///       undo record is untouched and moves at **L10**.
 class MeshSweep : Command, Operator {
     mixin OperatorActrCommon;
     private MeshSnapshot     snap;
@@ -89,8 +91,70 @@ class MeshSweep : Command, Operator {
         }
 
         snap = MeshSnapshot.capture(*mesh);
-        size_t inserted = mesh.revolveProfile(profile, profileClosed,
-                                              count_, axis_[0], center_, angle_);
+
+        // TASK 1903 Stage E2 — the kernel takes `ref MeshEditBatch`, so the
+        // batch opens HERE, at the command boundary, and never inside the
+        // kernel (plan §4.1). One sweep now bumps its version stamp,
+        // re-derives hidden geometry and delivers to the change bus ONCE at
+        // `close()` instead of once per `addVertex`/`addFace` the kernel makes
+        // on its way through — and BOTH profile arms do, which is the part E2
+        // changes. Until this commit `revolveProfileEx` opened a transitional
+        // batch around its CLOSED-profile ring loop only (Stage D3, plan
+        // §4.4a), leaving the open-profile arm committing per face. Measured
+        // over `/api/changes`, `unbatchedGeometryCommits` per `mesh.sweep`
+        // (arc of 4 segments, count=6, 360°): open +49 → **+0**.
+        //
+        // WHAT IS STILL UNBATCHED HERE, MEASURED AND OWNED: the polygon-mode
+        // source-face deletion below. A polygon-mode sweep reads **+2** where
+        // an edge-cycle sweep of the same closed profile reads **+0** — which
+        // is how we know the remaining two are the deletion and not the
+        // kernel. With the batch taken away entirely (`Mesh.commitChange`'s
+        // deferral disabled) the same two cells read **+62** and **+60**.
+        //
+        // WHICH TWO: traced by printing `flags` at the counter's own tick site,
+        // they are `0x4` then `0x6` — Polygons, from the `rebuildEdges()`
+        // `deleteFacesByMask` runs over the surviving faces (its `inserted` arm
+        // commits Polygons on its own), then Geometry, from that primitive's
+        // tail commit. `compactUnreferenced` is NOT one of the two: it
+        // early-returns at `removed == 0`, before its commit, because this
+        // command leaves `startAngle` at 0 and `revolveProfileEx` then has
+        // ring 0 REUSE the profile's own vertices — deleting the profile face
+        // orphans nothing. It only fires when the deletion DOES orphan a
+        // vertex, which on this family means `RadialSweepTool`'s non-zero
+        // Start Angle (ring 0 rotated off the profile): the same
+        // `deleteFacesByMask` call reads **+4** there, measured.
+        //
+        // That deletion is untouched by this stage, and folding it into the
+        // batch would be a second edit hiding inside a move (D3's rule, and the
+        // reason its review had to narrow the transitional block). It moves
+        // with the rest of this command's axis-0 obligation at **L10** (plan
+        // §5.0: "axis 0 rides along" with the family's own stage).
+        //
+        // UNRECORDED, deliberately: undo here is still the whole-mesh `snap`
+        // captured just above (plan §5.1 — track 1 is the conversion axis,
+        // track 2 is the undo migration, and mixing them in one commit is what
+        // §5.1 forbids), so a RECORDING batch would build a full op-log that
+        // nothing reads and `close()` would drop. `mesh.sweep` is an **L10**
+        // row (plan §5.5, the reindexing half of topo-misc) — that is the
+        // stage that turns this into a delta, not L5 and not E2.
+        //
+        // The batch is scoped to the kernel call ALONE and deliberately does
+        // NOT span the polygon-mode `deleteFacesByMask` below: that deletion
+        // is unchanged by this stage, and folding it in would be a second edit
+        // hiding inside a move (D3's rule at commands/mesh/bridge.d).
+        //
+        // No `scope(failure)`, unlike the older `beginEditBatch`/`endEditBatch`
+        // spelling at delete.d / remove.d: that pair has no destructor, this
+        // handle does. `MeshEditBatch.~this` pops the frame during unwinding —
+        // without asserting, because it runs while an exception is in flight —
+        // and ticks `changeBus.batchLeaks`, which the suite asserts stays 0.
+        size_t inserted;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kRevolveEditScope);
+            inserted = ed.revolveProfile(profile, profileClosed,
+                                         count_, axis_[0], center_, angle_);
+            ed.close();
+        }
         if (inserted == 0) {
             snap = MeshSnapshot.init;
             return false;

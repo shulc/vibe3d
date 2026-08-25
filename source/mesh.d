@@ -18,7 +18,7 @@ import mesh_ops.cut : MeshCutOps;
 // namespace; narrowing that is audit 0678 M9's job, not this task's.
 public import mesh_ops.bridge;
 import mesh_ops.loop_slice : MeshLoopSliceOps, bandWalk, BandCell;
-import mesh_ops.revolve : MeshRevolveOps;
+public import mesh_ops.revolve;
 // task 1903 Stage E1: the mesh-hygiene / orientation-repair family is
 // module-level free functions — `unifyFaces`, `cleanDegenerateFaces`,
 // `cleanupMesh` and `fixFaceOrientation` over `ref MeshEditBatch`, the three
@@ -15018,9 +15018,32 @@ struct Mesh {
         }
     }
 
-    // Radial Sweep / Revolve + Path-follow extrude kernel family — see
-    // source/mesh_ops/revolve.d (task 0417, 0407 §B.V2).
-    mixin MeshRevolveOps;
+    // Radial Sweep / Revolve + Path-follow extrude kernel family is NO
+    // LONGER a mixin: task 1903 Stage E2 made it module-level free functions
+    // in source/mesh_ops/revolve.d — `revolveProfile`, `revolveProfileEx`,
+    // `extrudePathStep_` and `extrudeAlongPath` over `ref MeshEditBatch`, the
+    // align-to-path pivot `maskVertexCentroid_` over `ref const(Mesh)`, and
+    // the two angle predicates `revolveSweepClosed` /
+    // `revolveSweepClosedWithOffset` with no receiver at all. `RevolveParams`
+    // moved to that module's scope with them, so `Mesh.RevolveParams` no
+    // longer resolves and the five call sites that spelled it moved in the
+    // same commit (§2.7, the route D3's `maxBridgeSpans` took).
+    //
+    // The stage ALSO removed a debt it had inherited: `revolveProfileEx` used
+    // to open a TRANSITIONAL `MeshEditBatch` of its own around the
+    // closed-profile ring loop, because `bridgeLoopsPaired` had crossed the
+    // seam at Stage D3 while this body was still a mixin with no caller-held
+    // batch to take (plan §4.4a). The batch is the caller's now and both sweep
+    // arms defer to one `close()`: `mesh.sweep`'s `unbatchedGeometryCommits`
+    // went +49 → +0 on the open profile, and the closed profile's residual +2
+    // is the polygon-mode source-face deletion, which sits outside the batch by
+    // the command's own choice (see commands/mesh/sweep.d — stage L10).
+    //
+    // Re-exported by the `public import` at the top of this file. Do not
+    // reinstate the mixin: a member of `Mesh` BEATS a same-name UFCS free
+    // function silently, so it would rebind every call site to a dead body
+    // (`static assert` at the foot of that file, and the named roster in
+    // tests/unit/commit_seam_census_test.d).
 
     // Mesh hygiene + orientation-repair kernel family is NO LONGER a mixin:
     // task 1903 Stage E1 made it module-level free functions in

@@ -59,17 +59,23 @@ module mesh_ops.bridge;
 // second half is what keeps the widening honest — Stage A shipped ten of these
 // with no caller and the review reverted them all (plan §2.6, review S3).
 //
-// THE TWO INTRA-`Mesh` CALLERS, and why they hold a TRANSITIONAL batch.
-// Unlike C / D1 / D2, this family is called from inside `struct Mesh` itself:
-// `Mesh.thickenSurface` (source/mesh.d, step 5 — the rim) and
-// `revolveProfileEx` (source/mesh_ops/revolve.d, still a mixin until Stage E2)
-// both call `bridgeLoopsPaired`. Neither has a batch, and neither is a command
-// or a tool, so §4.1's "the caller opens the batch" has nowhere to land yet.
-// Each site opens a narrow UNRECORDED batch around its bridging loop ONLY,
-// labelled TRANSITIONAL and naming the stage that removes it. They are the
-// first two sites in the tree where a KERNEL opens a batch, which §2.3 rule 2
-// forbids in the finished design — recorded as a debt, not defended as a
-// pattern.
+// THE INTRA-`Mesh` CALLER, and why it holds a TRANSITIONAL batch. Unlike
+// C / D1 / D2, this family is called from inside `struct Mesh` itself:
+// `Mesh.thickenSurface` (source/mesh.d, step 5 — the rim) calls
+// `bridgeLoopsPaired` and has no batch, and it is neither a command nor a tool,
+// so §4.1's "the caller opens the batch" has nowhere to land yet. That site
+// opens a narrow UNRECORDED batch around its bridging loop ONLY, labelled
+// TRANSITIONAL and naming the stage that removes it (**L2**). It is a debt, not
+// a pattern: a KERNEL opening a batch is what §2.3 rule 2 forbids in the
+// finished design.
+//
+// D3 CREATED TWO SUCH SITES AND ONE IS ALREADY GONE. The second was
+// `revolveProfileEx` (source/mesh_ops/revolve.d), a mixin at the time with the
+// same problem; **Stage E2** converted that family, so the kernel now takes its
+// caller's `ref MeshEditBatch` and its transitional block was deleted in that
+// commit. The per-command `changeBus.nestedBatchOpens` delta assert D3 wrote
+// for it in `tests/test_mesh_sweep.d` survived the removal and now pins the
+// finished shape. `test_thicken.d`'s twin is still pinning a live debt.
 //
 // WHAT `maxBridgeSpans` BECAME. §2.7 lists it among the non-function members a
 // mixin injects into `Mesh`; §11 decides it: "keep it an `enum` in the ops

@@ -6,6 +6,26 @@ module tests.unit.mesh_ops.revolve_test;
 import mesh;
 import math;
 import mesh_ops.revolve;
+import mesh_edit_delta : MeshEditScope, MeshEditDelta, MeshOpEntry;
+import std.conv : to;
+
+// TASK 1903 Stage E2 — `revolveProfile`, `revolveProfileEx` and
+// `extrudeAlongPath` are free functions over `ref MeshEditBatch` now, so a test
+// cannot call one on a bare `Mesh` any more: that is the point of the receiver,
+// and it is why every call site in this file goes through the helper below. One
+// helper for all three kernels, so there is ONE place that says why the batch is
+// `unrecorded` — nothing in these blocks reads an op-log, and track 1 is the
+// conversion axis only (the production callers — `commands/mesh/sweep.d`,
+// `commands/mesh/stroke_extrude.d`, `RadialSweepTool`'s three sites and
+// `StrokeExtrudeTool`'s drag frame — open theirs the same way; see
+// mesh_ops/revolve.d's header). The RECORDING block at the bottom of this file
+// is the one deliberate exception.
+private size_t revolveOnce(alias kernel, Args...)(ref Mesh m, auto ref Args args) {
+    auto ed = MeshEditBatch.unrecorded(m, kRevolveEditScope);
+    const n = kernel(ed, args);
+    ed.close();
+    return n;
+}
 
     unittest { // extrudeAlongPath (a): cube top face, straight vertical path, 16
                // spans — pins the KERNEL's topology for the captured span count
@@ -42,7 +62,7 @@ import mesh_ops.revolve;
         path ~= Vec3(0, 0.5f, 0);   // anchor -- top face's own height
         foreach (k; 1 .. 17) path ~= Vec3(0, 0.5f + 0.1f * cast(float)k, 0);
 
-        size_t added = m.extrudeAlongPath(mask, path, /*alignToPath*/true);
+        size_t added = revolveOnce!extrudeAlongPath(m, mask, path, /*alignToPath*/true);
         assert(added == 64,
             "extrudeAlongPath: expected +64 net faces for the captured 16-span case, got "
             ~ added.to!string);
@@ -77,18 +97,18 @@ import mesh_ops.revolve;
 
         // Mask length mismatch.
         bool[] badMask = [true, false];
-        assert(m.extrudeAlongPath(badMask, path2) == 0,
+        assert(revolveOnce!extrudeAlongPath(m, badMask, path2) == 0,
             "extrudeAlongPath: mask-length mismatch must return 0");
 
         // No face selected.
         bool[] emptyMask; emptyMask.length = m.faces.length;
-        assert(m.extrudeAlongPath(emptyMask, path2) == 0,
+        assert(revolveOnce!extrudeAlongPath(m, emptyMask, path2) == 0,
             "extrudeAlongPath: empty mask must return 0");
 
         // Fewer than 2 path points.
-        assert(m.extrudeAlongPath(mask, [Vec3(0, 0, 0)]) == 0,
+        assert(revolveOnce!extrudeAlongPath(m, mask, [Vec3(0, 0, 0)]) == 0,
             "extrudeAlongPath: single-point path must return 0");
-        assert(m.extrudeAlongPath(mask, cast(Vec3[])[]) == 0,
+        assert(revolveOnce!extrudeAlongPath(m, mask, cast(Vec3[])[]) == 0,
             "extrudeAlongPath: empty path must return 0");
 
         // Span-count DoS backstop: 4098 points => 4097 spans, one past the
@@ -104,7 +124,7 @@ import mesh_ops.revolve;
         foreach (k, ref p; overCap) p = Vec3(0, 0.5f + 0.001f * cast(float)k, 0);
         size_t facesBefore = m.faces.length;
         size_t vertsBefore = m.vertices.length;
-        assert(m.extrudeAlongPath(mask, overCap) == 0,
+        assert(revolveOnce!extrudeAlongPath(m, mask, overCap) == 0,
             "extrudeAlongPath: over-cap span count must return 0 (DoS backstop)");
         assert(m.faces.length == facesBefore && m.vertices.length == vertsBefore,
             "extrudeAlongPath: over-cap rejection must leave the mesh unchanged");
@@ -129,7 +149,7 @@ unittest { // revolveProfile (a): closed ring 360° — 16 quads, 16 verts, mani
     // Revolve 360°, 4 steps.
     // Closed sweep: 4 rings × 4 bridge steps × 4 quads/step = 16 faces.
     // Vertex count: ring[0]=4 original + rings[1..3]=3×4 = 4+12 = 16 (no seam dup).
-    size_t added = m.revolveProfile([0u, 1u, 2u, 3u], /*profileClosed*/true,
+    size_t added = revolveOnce!revolveProfile(m, [0u, 1u, 2u, 3u], /*profileClosed*/true,
                                     /*count*/4, 'Y', Vec3(0, 0, 0),
                                     cast(float)(2 * PI));
     assert(added == 16,
@@ -180,7 +200,7 @@ unittest { // revolveProfile (b): open strip, partial arc — 4 quads, 9 verts, 
     // stepAngle = (π/2)/(3-1) = π/4.
     // Bridges: (0→1), (1→2).  Each step: M-1 = 2 quads.  Total = 4 quads.
     // Vertex count: 3 original + 2 new rings × 3 = 9.
-    size_t added = m.revolveProfile([0u, 1u, 2u], /*profileClosed*/false,
+    size_t added = revolveOnce!revolveProfile(m, [0u, 1u, 2u], /*profileClosed*/false,
                                     /*count*/3, 'Y', Vec3(0, 0, 0),
                                     cast(float)(PI * 0.5));
     assert(added == 4,
@@ -222,27 +242,27 @@ unittest { // revolveProfile (c): guard rejections — all must return 0, mesh u
     uint[] p3 = [0u, 1u, 2u];
 
     // count < 2
-    assert(m.revolveProfile(p3, false, 1, 'Y', Vec3(0,0,0), tau) == 0,
+    assert(revolveOnce!revolveProfile(m, p3, false, 1, 'Y', Vec3(0,0,0), tau) == 0,
         "guard count<2: expected 0");
     assert(m.faces.length == 0, "guard count<2: mesh must be unchanged");
 
     // bad axis character
-    assert(m.revolveProfile(p3, false, 4, 'W', Vec3(0,0,0), tau) == 0,
+    assert(revolveOnce!revolveProfile(m, p3, false, 4, 'W', Vec3(0,0,0), tau) == 0,
         "guard bad axis: expected 0");
     assert(m.faces.length == 0, "guard bad axis: mesh must be unchanged");
 
     // zero angle
-    assert(m.revolveProfile(p3, false, 4, 'Y', Vec3(0,0,0), 0.0f) == 0,
+    assert(revolveOnce!revolveProfile(m, p3, false, 4, 'Y', Vec3(0,0,0), 0.0f) == 0,
         "guard zero angle: expected 0");
     assert(m.faces.length == 0, "guard zero angle: mesh must be unchanged");
 
     // profile.length < 2
-    assert(m.revolveProfile([0u], false, 4, 'Y', Vec3(0,0,0), tau) == 0,
+    assert(revolveOnce!revolveProfile(m, [0u], false, 4, 'Y', Vec3(0,0,0), tau) == 0,
         "guard profile<2: expected 0");
     assert(m.faces.length == 0, "guard profile<2: mesh must be unchanged");
 
     // closed profile with < 3 verts
-    assert(m.revolveProfile([0u, 1u], true, 4, 'Y', Vec3(0,0,0), tau) == 0,
+    assert(revolveOnce!revolveProfile(m, [0u, 1u], true, 4, 'Y', Vec3(0,0,0), tau) == 0,
         "guard closed<3: expected 0");
     assert(m.faces.length == 0, "guard closed<3: mesh must be unchanged");
 
@@ -262,7 +282,7 @@ unittest { // revolveProfileEx (d): spiral offset at a >=360deg angle span
 
     immutable float tau = cast(float)(2 * PI);
 
-    Mesh.RevolveParams p;
+    RevolveParams p;
     p.count  = 5;
     p.axis   = Vec3(0, 1, 0);
     p.center = Vec3(0, 0, 0);
@@ -271,7 +291,7 @@ unittest { // revolveProfileEx (d): spiral offset at a >=360deg angle span
 
     size_t vertsBefore = m.vertices.length;
     size_t facesBefore = m.faces.length;
-    size_t inserted = m.revolveProfileEx([0u, 1u], false, p);
+    size_t inserted = revolveOnce!revolveProfileEx(m, [0u, 1u], false, p);
 
     // OPEN topology: count-1 bridges (4), NOT count (5) — a wrap bridge
     // would connect ring[4] (height 4*offset=2.0) back onto ring[0]
@@ -325,7 +345,7 @@ unittest {
     mask[0] = true;   // top-left corner
     mask[8] = true;   // bottom-right corner — no edge shared with face 0
 
-    size_t added = m.extrudeAlongPath(mask, [Vec3(0,0,0), Vec3(0,0,1)], true);
+    size_t added = revolveOnce!extrudeAlongPath(m, mask, [Vec3(0,0,0), Vec3(0,0,1)], true);
     assert(added > 0, "extrudePathStep_: expected the single-span band to add faces");
 
     // 7 non-selected originals + 2 cap clones (one per island) + 8 wall
@@ -379,4 +399,374 @@ unittest {
     }
     assert(from0 == 4, "extrudePathStep_: expected 4 walls from face 0's island, got " ~ from0.to!string);
     assert(from8 == 4, "extrudePathStep_: expected 4 walls from face 8's island, got " ~ from8.to!string);
+}
+
+// ===========================================================================
+// THE RECORDING BATCH (task 1903 Stage E2, plan §2.2 / §5.3 / §5.5).
+//
+// Everything above runs under an UNRECORDED batch, because that is what all
+// four production callers open: `mesh.sweep`, `mesh.strokeExtrude`,
+// `RadialSweepTool` and `StrokeExtrudeTool` all undo through a whole-mesh
+// `MeshSnapshot` today, and track 1 is the CONVERSION axis only. The blocks
+// below open a RECORDING one instead, and they are the only place in the tree
+// that has ever looked at what this family's op-log actually contains.
+//
+// WHY THAT IS WORTH A TEST BEFORE THE UNDO MIGRATION. §5.5's L-table is keyed
+// by COMMAND, and this file's two kernels sit in DIFFERENT rows —
+// `mesh.sweep` is **L10** (topo-misc, reindexing half) and `mesh.strokeExtrude`
+// belongs with the extrude family at **L8** (after Stage J). Measuring the
+// delta now says which of them can already be flipped and which is carrying a
+// gap, instead of discovering it inside the stage that has to ship it.
+// ===========================================================================
+
+private size_t countKind(ref MeshEditDelta d, MeshOpEntry.Kind k) {
+    size_t n;
+    foreach (ref e; d.log) if (e.kind == k) ++n;
+    return n;
+}
+
+/// The scope both kernels declare, written out from the enum INDEPENDENTLY of
+/// `kRevolveEditScope`.
+///
+/// `d.scope_` IS `kRevolveEditScope` fed through `MeshEditTracker.declare`, so
+/// `d.scope_ == kRevolveEditScope` is the measurement judging itself: set the
+/// constant to 0 and that equality stays true. Measured at Stage D2 on the
+/// reduce family, where exactly that draft stayed green under
+/// `enum uint kReduceEditScope = 0;`. So the expectation here is written from
+/// what the kernels DO — they append rings and clones (Points), bridge them
+/// into faces and rewrite the face array (Polygons), and rewrite the selection
+/// to the new faces (Marks) — and the equality against the constant is
+/// asserted separately, AFTER it, where it can only see a broken
+/// `declare`/`close` path.
+private enum uint kExpectedRevolveScope = MeshEditScope.Points
+                                        | MeshEditScope.Polygons
+                                        | MeshEditScope.Marks;
+
+private void assertDeclaredScope(string what, ref MeshEditDelta d) {
+    import std.format : format;
+    assert(cast(uint)d.scope_ == kExpectedRevolveScope,
+        format("%s: a recording sweep declared scope 0x%x, expected 0x%x "
+             ~ "(Points|Polygons|Marks). Missing: 0x%x. Unexpected: 0x%x. "
+             ~ "`MeshEditDelta.finalize` reads scope_ back on a revert to "
+             ~ "decide what to bump and rebuild, so a wrong constant is a "
+             ~ "wrong invalidation, not a cosmetic mismatch "
+             ~ "(task 1903 Stage E2)",
+               what, cast(uint)d.scope_, kExpectedRevolveScope,
+               kExpectedRevolveScope & ~cast(uint)d.scope_,
+               cast(uint)d.scope_ & ~kExpectedRevolveScope));
+    assert(cast(uint)d.scope_ == kRevolveEditScope,
+        format("%s: the delta's scope_ (0x%x) is not the kRevolveEditScope the "
+             ~ "batch was opened with (0x%x) — the declared scope is not "
+             ~ "reaching MeshEditDelta.scope_ at all",
+               what, cast(uint)d.scope_, kRevolveEditScope));
+}
+
+/// NO POSITION WRITE, EVER — the behavioural twin of `kRevolveEditScope`'s
+/// "NOT Position" doc comment and of this family's §5.7 census count being 0
+/// rather than a retired allow-entry. Neither kernel moves an EXISTING vertex:
+/// every coordinate they produce belongs to a vertex created in the same call.
+private void assertNoPositionWrite(string what, ref MeshEditDelta d) {
+    import std.format : format;
+    immutable size_t setPos = countKind(d, MeshOpEntry.Kind.SetPos);
+    assert(setPos == 0,
+        format("%s: the op-log carries %d Kind.SetPos entries, expected 0 — a "
+             ~ "revolve kernel now moves an EXISTING vertex. That is a real "
+             ~ "behaviour change: add MeshEditScope.Position to "
+             ~ "kRevolveEditScope and rewrite its doc comment, or take the "
+             ~ "write back out (task 1903 §5.7)", what, setPos));
+}
+
+/// The GEOMETRY half of the mesh state: counts, vertex coordinates, face
+/// windings and the derived edge list. This is the half the revert below puts
+/// back EXACTLY, which is why it is dumped on its own.
+private string dumpGeometry(ref Mesh m) {
+    import std.format : format;
+    string s = format("V=%d F=%d E=%d",
+                      m.vertices.length, m.faces.length, m.edges.length);
+    // `%a` — the HEX float form, so this compares BITS. `%g` would let a
+    // `-0.0`/`+0.0` pair read as equal (task 1903 Stage D2's signed-zero cell).
+    foreach (i, v; m.vertices) s ~= format(" v%d(%a,%a,%a)", i, v.x, v.y, v.z);
+    foreach (i, f; m.faces)    s ~= format(" f%d%s", i, f.to!string);
+    foreach (i; 0 .. m.edges.length)
+        s ~= format(" e%d[%d,%d]", i, m.edges[i][0], m.edges[i][1]);
+    return s;
+}
+
+/// Everything `dumpGeometry` leaves out: all five mark planes and all three
+/// order counters. SEPARATE from the geometry dump on purpose — the revert law
+/// measured below is DIFFERENT on the two halves, and one dump spanning both
+/// could only ever assert the weaker of them.
+///
+/// Until Stage E2's review this file dumped `faceMarks` ALONE, on a stand that
+/// selected nothing (`recProfileStand`'s note). So "the revert is complete"
+/// compared an empty/zero plane with an empty/zero plane on every mark channel
+/// and was satisfied by a revert that restores none of them — which, measured,
+/// is what this one does.
+private string dumpMarkPlanes(ref Mesh m) {
+    import std.format : format;
+    return format("vm=%s em=%s fm=%s vo=%s eo=%s fo=%s vc=%d ec=%d fc=%d",
+                  m.vertexMarks, m.edgeMarks, m.faceMarks,
+                  m.vertexSelectionOrder, m.edgeSelectionOrder,
+                  m.faceSelectionOrder,
+                  m.vertexSelectionOrderCounter, m.edgeSelectionOrderCounter,
+                  m.faceSelectionOrderCounter);
+}
+
+/// A profile of `n` points, optionally capped into a face so the
+/// closed-profile arm has real geometry to inherit its marks from.
+///
+/// IT SELECTS, and that is load-bearing, not decoration. A real `mesh.sweep`
+/// starts FROM a selection — polygon mode requires exactly one selected face
+/// and edge mode reads the selected edge chain (`commands/mesh/sweep.d`'s
+/// `evaluate`) — and the delta below declares `MeshEditScope.Marks`. On a stand
+/// with every mark plane empty or zero, "the revert restored the marks" and
+/// "there were no marks" are the same measurement, and a revert that restores
+/// none of them answers yes. Measured: take the three lines below out and the
+/// marks half of the law in the RECORDING block compares zero with zero on
+/// every channel.
+private Mesh recProfileStand(size_t n, bool asFace) {
+    import std.math : cos, sin, PI;
+    Mesh m;
+    foreach (k; 0 .. n) {
+        float a = 0.4f * PI * cast(float)k / cast(float)(n > 1 ? n - 1 : 1);
+        m.addVertex(Vec3(1.0f + 0.5f * cos(a), 0.8f * sin(a), 0.0f));
+    }
+    if (asFace) {
+        uint[] f; foreach (k; 0 .. n) f ~= cast(uint)k;
+        m.addFace(f);
+        m.resizeSubpatch();
+        m.setFaceSubpatch(0, false);
+    }
+    m.buildLoops();
+    // `syncSelection` SIZES the mark planes — they are lazily grown and stay
+    // `[]` until something asks for them (tests/unit/mark_view_test.d's own
+    // note on exactly this), so without it `selectVertex` has nothing to write
+    // into and the dump reads `[]` on both sides of the revert.
+    m.syncSelection();
+    if (asFace) m.selectFace(0);
+    m.selectVertex(1);
+    return m;
+}
+
+unittest { // revolveProfileEx: BOTH arms record a complete, fully-revertible delta
+    import std.format : format;
+    foreach (profileClosed; [false, true]) {
+        RevolveParams p;
+        p.count = 6; p.axis = Vec3(0, 1, 0); p.angle = 6.2831853f;
+
+        Mesh m = recProfileStand(4, profileClosed);
+        // STAND CANARY. The marks half of the law at the bottom of this block
+        // compares this stand's OWN selection against what survives the revert;
+        // with nothing selected it is zero against zero and green whatever the
+        // delta records. This asserts the stand, not the code under test, so it
+        // can only fire when `recProfileStand` is edited.
+        assert(m.isVertexSelected(1) && (!profileClosed || m.isFaceSelected(0)),
+            format("closed=%s: recProfileStand selected nothing — the marks "
+                 ~ "half of the revert law below would be zero compared with "
+                 ~ "zero (task 1903 Stage E2 review, BLOCKER B1)",
+                   profileClosed));
+        immutable string preGeo    = dumpGeometry(m);
+        immutable string prePlanes = dumpMarkPlanes(m);
+        immutable size_t preV = m.vertices.length, preF = m.faces.length,
+                         preE = m.edges.length;
+
+        MeshEditDelta d;
+        size_t n;
+        {
+            auto ed = MeshEditBatch(m, kRevolveEditScope);   // RECORDING
+            n = ed.revolveProfileEx([0u, 1u, 2u, 3u], profileClosed, p);
+            d = ed.close();
+        }
+
+        // Anti-vacuity: this kernel refuses on five separate guards, and a
+        // refusal satisfies every assertion below for free.
+        immutable size_t want = profileClosed ? 24 : 18;
+        assert(n == want,
+            format("closed=%s: the stand swept %d faces, expected %d — every "
+                 ~ "assertion below would be vacuous on a refusal",
+                   profileClosed, n, want));
+
+        assertDeclaredScope(format("revolveProfileEx closed=%s", profileClosed), d);
+        assertNoPositionWrite(format("revolveProfileEx closed=%s", profileClosed), d);
+
+        // THE APPEND HOOKS COALESCE, measured — 20 `addVertex` calls become
+        // ONE `AddVerts` entry and every `addFace` in the ring loop becomes
+        // ONE `AddFaces`. A kernel that appended to `ed.vertices` / `ed.faces`
+        // directly (which compiles, through `alias mesh this`) would leave the
+        // log empty and these at 0.
+        //
+        // The count of OTHER entries is deliberately NOT asserted here. "The
+        // log is exactly these two" is a statement about what is MISSING — the
+        // Marks record — and it belongs with the revert law below, where it
+        // carries that message. Asserting it here as well put an unnamed guard
+        // in front of that law: a Marks publisher reddened this line first,
+        // with a message about `ed.vertices ~= …`, and the marks assertions it
+        // exists to protect were never reached (Stage E2 review, BLOCKER B1).
+        immutable size_t addV = countKind(d, MeshOpEntry.Kind.AddVerts);
+        immutable size_t addF = countKind(d, MeshOpEntry.Kind.AddFaces);
+        assert(addV == 1 && addF == 1,
+            format("closed=%s: the op-log carries %d AddVerts and %d AddFaces "
+                 ~ "entr(ies), expected exactly one of each. The rings must "
+                 ~ "arrive through Mesh.addVertex and the bridge/strip quads "
+                 ~ "through Mesh.addFace, which are the hooked appenders; a "
+                 ~ "bare `ed.vertices ~= …` compiles inside a recording batch "
+                 ~ "and records nothing (task 1903 Stage E2).",
+                   profileClosed, addV, addF));
+
+        // THE REVERT LAW, MEASURED PLANE BY PLANE — and it is NOT "complete".
+        // It used to say complete, on a stand that selected nothing and a dump
+        // that carried `faceMarks` alone; both halves of that are fixed above.
+        //
+        // GEOMETRY comes back bit for bit. This family only APPENDS: it
+        // reshapes no surviving face and moves no existing vertex, so
+        // AddVerts^-1 + AddFaces^-1 restore the vertex coordinates, the face
+        // windings AND the edge list `finalize` re-derives from them.
+        //
+        // THE MARK PLANES DO NOT COME BACK, and that is the finding. The delta
+        // DECLARES `MeshEditScope.Marks` (asserted by `assertDeclaredScope`
+        // above) and records NO Marks entry — the op-log is the two append
+        // entries and nothing else, zero `SelectionDelta`. So the pre-sweep
+        // Select bit on vertex 1 (and on face 0 in the closed arm) is gone
+        // after the revert, every plane reads all-zero, `vertexSelectionOrder`
+        // and `faceSelectionOrder` with it, and `faceSelectionOrderCounter` is
+        // left at `n` — the number of faces the sweep added — instead of its
+        // pre-sweep value. A declared class with no record is a REAL gap: it
+        // is exactly what `finalize` reads back to decide what to rebuild.
+        //
+        // Written as EQUALITY against that incomplete state, not as an
+        // inequality: a Marks publisher added anywhere on this path restores
+        // one of these channels and reddens the line, which is the whole point
+        // of pinning a gap. The `SelectionDelta == 0` assertion says the same
+        // thing from the op-log side, so a record that is written but does not
+        // reach the planes still shows up.
+        //
+        // STAGE L10 FLIPS THIS. `mesh.sweep` undoes through a whole-mesh
+        // `MeshSnapshot` today (plan §5.1), which restores every plane, so the
+        // gap is invisible to the user and costs nothing yet. L10 (plan §5.5,
+        // the reindexing half of topo-misc) is the stage that makes this delta
+        // the undo record, and it cannot ship until the kernel records the
+        // Marks it declares. When it does: change `wantPlanes` to `prePlanes`,
+        // change the `SelectionDelta == 0` expectation, and delete this note.
+        const bool reverted = d.revert(m);
+        assert(reverted, format("closed=%s: revert() refused the delta outright",
+                                profileClosed));
+        assert(m.vertices.length == preV && m.faces.length == preF,
+            format("closed=%s: revert restored V=%d F=%d, expected V=%d F=%d",
+                   profileClosed, m.vertices.length, m.faces.length, preV, preF));
+        assert(dumpGeometry(m) == preGeo,
+            format("closed=%s: the GEOMETRY half of the revert is not exact.\n"
+                 ~ "  pre : %s\n  post: %s",
+                   profileClosed, preGeo, dumpGeometry(m)));
+
+        // The measured post-revert planes, spelled from the PRE-sweep lengths
+        // (not re-read off the post state, which would make this compare the
+        // measurement with itself) and the added-face count.
+        immutable string wantPlanes =
+            format("vm=%s em=%s fm=%s vo=%s eo=%s fo=%s vc=0 ec=0 fc=%d",
+                   new uint[](preV), new uint[](preE), new uint[](preF),
+                   new int[](preV),  new int[](preE),  new int[](preF), n);
+        assert(dumpMarkPlanes(m) == wantPlanes,
+            format("closed=%s: the MARKS half of the revert changed. It is "
+                 ~ "MEASURED as ABSENT — the delta declares Marks and records "
+                 ~ "no Marks entry, so every plane comes back all-zero and "
+                 ~ "faceSelectionOrderCounter is left at the added-face count "
+                 ~ "(%d). If a Marks record was just added, this is the line "
+                 ~ "that says so: set the expectation to `prePlanes` and "
+                 ~ "delete the gap note above (task 1903 Stage L10).\n"
+                 ~ "  pre  : %s\n  want : %s\n  got  : %s",
+                   profileClosed, n, prePlanes, wantPlanes, dumpMarkPlanes(m)));
+        immutable size_t selDeltas = countKind(d, MeshOpEntry.Kind.SelectionDelta);
+        assert(selDeltas == 0 && d.log.length == 2,
+            format("closed=%s: the op-log carries %d entr(ies) of which %d are "
+                 ~ "SelectionDelta, expected 2 (AddVerts + AddFaces) and 0. "
+                 ~ "This is the same gap as the plane comparison above, read "
+                 ~ "off the LOG instead of off the mesh, and the two are not "
+                 ~ "redundant: a record that is written but not applied on "
+                 ~ "revert moves this one and not that one (task 1903 Stage "
+                 ~ "L10).",
+                   profileClosed, d.log.length, selDeltas));
+    }
+}
+
+unittest { // extrudeAlongPath: the op-log names NO face change, and that is a GAP
+    import std.format : format;
+
+    Mesh m = makeCube();
+    bool[] mask = new bool[](m.faces.length);
+    mask[0] = true;
+    Vec3[] path = [Vec3(0, 0, 0), Vec3(0, 0, 0.2f), Vec3(0, 0, 0.4f), Vec3(0, 0, 0.6f)];
+    immutable size_t preF = m.faces.length;
+
+    MeshEditDelta d;
+    size_t n;
+    {
+        auto ed = MeshEditBatch(m, kRevolveEditScope);   // RECORDING
+        n = ed.extrudeAlongPath(mask, path, /*alignToPath*/true);
+        d = ed.close();
+    }
+
+    assert(n == 12 && m.faces.length == preF + 12,
+        format("the stand added %d faces (F %d -> %d), expected 12 — every "
+             ~ "assertion below would be vacuous on a refusal",
+               n, preF, m.faces.length));
+
+    assertDeclaredScope("extrudeAlongPath", d);
+    assertNoPositionWrite("extrudeAlongPath", d);
+
+    // MEASURED, and it is the finding this block exists for. Three path spans,
+    // 12 vertices cloned and 12 faces created — and the op-log is ONE entry:
+    //
+    //     entries=1 kinds=[AddVerts]
+    //
+    // `extrudePathStep_` does not `addFace`: it builds a whole new face array
+    // and hands it to `mesh_planes.rewriteFaces`, whose `Kind.FaceReindex`
+    // publisher is DISARMED (`MeshEditTracker.wantsFaceReindex` is false, and
+    // plan §5.3's Stage-K audit lists `mesh_ops.revolve.extrudePathStep_` as
+    // "arm? yes"). So the delta names the vertices it added and NOTHING about
+    // the faces.
+    //
+    // NO `revert()` IS ATTEMPTED HERE, and that is not squeamishness — it was
+    // measured. Reverting this delta un-adds the 12 cloned vertices while the
+    // cap and wall faces still reference them, and `MeshEditDelta.finalize`'s
+    // `buildLoops()` walks straight off the end:
+    //
+    //     core.exception.ArrayIndexError@source/mesh.d(13841):
+    //     index [8] is out of bounds for array of length 8
+    //
+    // That is unreachable in production TODAY — all four callers of this
+    // kernel open UNRECORDED batches, so no such delta exists outside this
+    // block — but it is exactly the trap Stage L8 walks into if it flips
+    // `mesh.strokeExtrude` onto the delta path before Stage K arms the
+    // rewrite. Recorded here rather than in a commit message, next to the
+    // assertion that will redden when it is fixed.
+    //
+    // STAGE K/L8 FLIPS THIS. When the FaceReindex publisher is armed at
+    // `extrudePathStep_`'s `rewriteFaces` call (Stage K, after Stage J gives
+    // `CornerCarry` its FaceReindex case), this count stops being 0 and this
+    // assertion reddens by design: replace it with a full state comparison
+    // across `d.revert(m)`, which is what the block above already does for
+    // `revolveProfileEx`.
+    immutable size_t faceEntries = countKind(d, MeshOpEntry.Kind.AddFaces)
+                                 + countKind(d, MeshOpEntry.Kind.RemoveFaces)
+                                 + countKind(d, MeshOpEntry.Kind.ReshapeFaces)
+                                 + countKind(d, MeshOpEntry.Kind.FaceReindex);
+    assert(faceEntries == 0,
+        format("extrudeAlongPath's op-log now carries %d face entr(ies); at "
+             ~ "Stage E2 it carries none, because extrudePathStep_ rewrites the "
+             ~ "face array through mesh_planes.rewriteFaces with FaceReindex "
+             ~ "DISARMED. If that is Stage K arming it (after Stage J gives "
+             ~ "CornerCarry its FaceReindex case), rewrite this block: the "
+             ~ "assertions here become a `d.revert(m)` and a full state "
+             ~ "comparison. If it is NOT, something armed the publisher without "
+             ~ "the carry and this family's undo is now dropping per-corner UV "
+             ~ "provenance (task 1903 §5.3, plan §12 J/K/L8).", faceEntries));
+
+    immutable size_t addV = countKind(d, MeshOpEntry.Kind.AddVerts);
+    assert(addV == 1 && d.log.length == 1,
+        format("extrudeAlongPath's op-log carries %d entr(ies), %d of them "
+             ~ "AddVerts — expected exactly one AddVerts and nothing else. The "
+             ~ "clone loop must reach Mesh.addVertex (the hooked appender), and "
+             ~ "the three spans COALESCE into one entry (measured). A bare "
+             ~ "`ed.vertices ~= …` would leave this at 0 "
+             ~ "(task 1903 Stage E2).", d.log.length, addV));
 }

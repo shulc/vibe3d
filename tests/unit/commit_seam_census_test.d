@@ -465,6 +465,7 @@ unittest // every beginEditBatch caller carries a scope(failure) abort
 // M-D2-MIXIN: the same for `mixin MeshDecimateOps;` (task 1903 Stage D2).
 // M-D3-MIXIN: the same for `mixin MeshBridgeOps;` (task 1903 Stage D3).
 // M-E1-MIXIN: the same for `mixin MeshCleanupOps;` (task 1903 Stage E1).
+// M-E2-MIXIN: the same for `mixin MeshRevolveOps;` (task 1903 Stage E2).
 // ---------------------------------------------------------------------------
 
 unittest // the mixin count is falling, and the converted families stay converted
@@ -490,8 +491,8 @@ unittest // the mixin count is falling, and the converted families stay converte
     // 13 at the branch point; one family leaves per track-1 stage; 0 at Stage I.
     enum size_t kAtStart = 13;
     // C: MeshSelectLoopOps; D1: MeshConnectedMaskOps; D2: MeshDecimateOps;
-    // D3: MeshBridgeOps; E1: MeshCleanupOps.
-    enum size_t kExpected = 8;
+    // D3: MeshBridgeOps; E1: MeshCleanupOps; E2: MeshRevolveOps.
+    enum size_t kExpected = 7;
     assert(live.length == kExpected,
         format("source/mesh.d instantiates %d `mixin Mesh*Ops` templates; this "
              ~ "gate expects %d. Track 1 started at %d and every conversion "
@@ -506,7 +507,8 @@ unittest // the mixin count is falling, and the converted families stay converte
                                             "MeshConnectedMaskOps",     // Stage D1
                                             "MeshDecimateOps",          // Stage D2
                                             "MeshBridgeOps",            // Stage D3
-                                            "MeshCleanupOps"];          // Stage E1
+                                            "MeshCleanupOps",           // Stage E1
+                                            "MeshRevolveOps"];          // Stage E2
     foreach (name; kConverted)
         assert(!live.canFind(name),
             format("`mixin %s;` is back in struct Mesh. That family is free "
@@ -706,9 +708,11 @@ unittest // the mixin count is falling, and the converted families stay converte
                  ~ "not the style: it is what makes a batchless call a COMPILE "
                  ~ "error, so one bridge stamps, derives and delivers once at "
                  ~ "close() instead of once per addFace/addVertex — and it is "
-                 ~ "what the two intra-Mesh callers (Mesh.thickenSurface, "
-                 ~ "mesh_ops/revolve.d) had to open a transitional batch for "
-                 ~ "(task 1903 §4.1, §5.2 D3).", name));
+                 ~ "what the remaining intra-Mesh caller (Mesh.thickenSurface, "
+                 ~ "removed at stage L2) has to open a transitional batch for. "
+                 ~ "The second such caller, mesh_ops/revolve.d, lost its "
+                 ~ "transitional batch at Stage E2 (task 1903 §4.1, §5.2 D3)."
+                 , name));
 
     // …and the two wrong spellings, absent. A `ref Mesh` receiver would compile
     // and would silently take the batch away — the exact regression the rows
@@ -920,6 +924,166 @@ unittest // the mixin count is falling, and the converted families stay converte
         immutable size_t rawWrites = countRawPositionWrites(cl, firstHit);
         assert(rawWrites == 0,
             format("source/mesh_ops/cleanup.d: %d raw position write(s) under "
+                 ~ "§5.7's predicate, expected 0 — this family had none before "
+                 ~ "the conversion and must gain none through it. First hit: "
+                 ~ "`%s`. `alias mesh this` means `ed.vertices[i] = p` COMPILES "
+                 ~ "inside a recording batch and records nothing, which is why "
+                 ~ "the boundary is a counted census and not a type "
+                 ~ "(task 1903 §5.7, M-V1).", rawWrites, firstHit));
+    }
+
+    // Stage E2 — the Radial Sweep / Revolve + Path-follow extrude family, and
+    // the first stage whose job included DELETING a batch rather than adding
+    // one. Three receiver shapes live in this one file (§4.1's first two cells
+    // plus a receiver-less pair), and the rows below pin all three, because
+    // each drifts in a different direction: a mutating kernel to `ref Mesh`
+    // (compiles, silently drops the batch), a read-only helper to the batch
+    // (compiles, publishes a change for a call that changes nothing), and a
+    // pure predicate back to a `static` member of `Mesh` (which the tripwire
+    // at the foot of revolve.d catches, not this roster).
+    immutable rvPath = buildPath(repoRoot, "source", "mesh_ops", "revolve.d");
+    assert(exists(rvPath), "cannot find source/mesh_ops/revolve.d at " ~ rvPath);
+    immutable rv = stripCommentsAndStrings(readText(rvPath));
+    assert(countOccurrences(rv, "mixin template MeshRevolveOps") == 0,
+        "source/mesh_ops/revolve.d still declares `mixin template "
+      ~ "MeshRevolveOps` — Stage E2 converted this family to free functions; a "
+      ~ "surviving template is either dead or a second implementation "
+      ~ "(task 1903 Stage E2).");
+
+    // THE MUTATING RECEIVERS. All four take at least one further parameter, so
+    // the delimiter is `,` (E1's three nullary kernels needed `)` instead).
+    // Without a delimiter the needle is a PREFIX and `ed` -> `edb` stays green
+    // (measured at D2, MINOR-1).
+    static immutable string[] kBatchKernelsE2 = [
+        "revolveProfile", "revolveProfileEx", "extrudePathStep_",
+        "extrudeAlongPath",
+    ];
+    foreach (name; kBatchKernelsE2)
+        assert(countOccurrences(rv, name ~ "(ref MeshEditBatch ed,") == 1,
+            format("source/mesh_ops/revolve.d no longer declares `%s` over "
+                 ~ "`ref MeshEditBatch ed`. That receiver is the enforcement, "
+                 ~ "not the style: it is what makes a batchless call a COMPILE "
+                 ~ "error — and on THIS family it is also what let the "
+                 ~ "transitional batch Stage D3 had to open inside "
+                 ~ "`revolveProfileEx` be deleted, because the batch now "
+                 ~ "arrives from the caller (task 1903 §4.1, §4.4a, §5.2 E2).",
+                   name));
+
+    // …and the two wrong spellings, absent, for all four. Note that
+    // `revolveProfile` is a PREFIX of `revolveProfileEx`, so a `ref Mesh`
+    // overload of the latter would also satisfy a needle written for the
+    // former — the trailing `(` in each needle is what keeps the two rows
+    // independent.
+    foreach (name; kBatchKernelsE2) {
+        assert(countOccurrences(rv, name ~ "(ref Mesh ") == 0,
+            format("`%s` has a `ref Mesh` receiver again — that compiles, and "
+                 ~ "it drops the batch: the kernel's internal commits go back "
+                 ~ "to stamping one per appended face. Plan §4.4a REJECTED "
+                 ~ "exactly this overload for the in-mesh callers, by name, "
+                 ~ "because nothing in the two lanes can see it — the geometry "
+                 ~ "is identical and the receiver pin is satisfied by the "
+                 ~ "`ref MeshEditBatch` overload that still exists. This row is "
+                 ~ "the one thing that can (task 1903 Stage E2).", name));
+        assert(countOccurrences(rv, name ~ "(ref const(Mesh)") == 0,
+            format("`%s` cannot have a `ref const(Mesh)` receiver — it appends "
+                 ~ "vertices and faces and rewrites the selection. Such an "
+                 ~ "overload could only exist by casting const away "
+                 ~ "(task 1903 Stage E2).", name));
+    }
+
+    // THE READ-ONLY RECEIVER — one, and it is the align-to-path pivot
+    // `maskVertexCentroid_`. It only averages positions, and it was NOT a
+    // `const` member before the conversion: nothing in a mixin body forces the
+    // keyword. The const receiver here is therefore a widening of what the code
+    // already did, now ENFORCED at the seam.
+    assert(countOccurrences(rv, "maskVertexCentroid_(ref const(Mesh) m,") == 1,
+        "source/mesh_ops/revolve.d no longer declares `maskVertexCentroid_` "
+      ~ "over `ref const(Mesh) m`. It only READS faces and positions to average "
+      ~ "a pivot; the const receiver is what states that, and it is the half of "
+      ~ "§4.1 that a family with no const members would otherwise never grow "
+      ~ "(task 1903 Stage E2).");
+    assert(countOccurrences(rv, "maskVertexCentroid_(ref MeshEditBatch") == 0,
+        "`maskVertexCentroid_` took a `ref MeshEditBatch` receiver — that "
+      ~ "compiles, and it means a call that changes nothing now opens an edit "
+      ~ "batch and publishes a change (task 1903 Stage E2).");
+
+    // THE RECEIVER-LESS PAIR. `revolveSweepClosed` /
+    // `revolveSweepClosedWithOffset` were `static` members reading no mesh
+    // state at all, so they have no receiver row in the sense the others do —
+    // what IS pinned is that they are still free functions here and did not
+    // acquire one. `RadialSweepTool.toKernelParams` calls the second by its
+    // bare name and is the ONLY decision point outside this file that must
+    // agree with the kernel about what "closed" means.
+    foreach (name; ["revolveSweepClosed(float angle)",
+                    "revolveSweepClosedWithOffset(float angle, float offset)"])
+        assert(countOccurrences(rv, "bool " ~ name) == 1,
+            format("source/mesh_ops/revolve.d no longer declares `%s` as a "
+                 ~ "plain module function. These two read no mesh state — they "
+                 ~ "answer a question about an angle and an offset — and they "
+                 ~ "are the single source of truth the tool layer's Count "
+                 ~ "translation shares with the kernel's own wrap-bridge and "
+                 ~ "cap-eligibility decisions (task 0326 review S1, task 1903 "
+                 ~ "Stage E2).", name));
+
+    // THE PARAMETER STRUCT MOVED TO MODULE SCOPE (§2.7, the route D3's
+    // `maxBridgeSpans` took). `Mesh.RevolveParams` no longer resolves; the five
+    // call sites that spelled it that way moved in the same commit, and the
+    // `static assert(!__traits(hasMember, Mesh, "RevolveParams"))` at the foot
+    // of revolve.d is what refuses an `alias` putting it back on the struct.
+    assert(countOccurrences(rv, "\nstruct RevolveParams {") == 1,
+        "source/mesh_ops/revolve.d no longer declares `struct RevolveParams` at "
+      ~ "MODULE scope (column 0). The mixin used to inject it into `Mesh`, and "
+      ~ "`tools/alignment/radial_sweep_tool.d` plus two tests spelled it "
+      ~ "`Mesh.RevolveParams`; those call sites moved with this commit "
+      ~ "(task 1903 Stage E2, plan §2.7).");
+
+    // THE DEBT THIS STAGE PAID OFF, pinned as an ABSENCE. Stage D3 had to open
+    // a `MeshEditBatch` INSIDE `revolveProfileEx` because the Bridge kernels had
+    // crossed the seam while this file was still a mixin (plan §4.4a's fourth
+    // cell). E2 removed it. A kernel opening a batch is what §2.3 rule 2
+    // forbids, and no behavioural test can see it come back on the CLOSED
+    // profile — `nestedBatchOpens` only ticks when a CALLER already holds one,
+    // and `tests/test_mesh_sweep.d`'s delta is the suite half of that. This row
+    // is the text half: the string must not appear in this file at all.
+    assert(countOccurrences(rv, "MeshEditBatch.unrecorded(") == 0,
+        "source/mesh_ops/revolve.d opens a `MeshEditBatch` of its own again. A "
+      ~ "KERNEL never opens a batch — the command or the tool does (plan §4.1, "
+      ~ "§2.3 rule 2). Stage D3 had to break that rule here, because "
+      ~ "`revolveProfileEx` called the already-converted `bridgeLoopsPaired` "
+      ~ "from inside `struct Mesh` with no caller-held batch to take; Stage E2 "
+      ~ "gave the kernel a `ref MeshEditBatch` receiver and DELETED the "
+      ~ "transitional block. If a new intra-kernel batch is genuinely needed, "
+      ~ "§4.4a says what it costs: a TRANSITIONAL label, a named removing "
+      ~ "stage, and a per-command nestedBatchOpens DELTA assert in that "
+      ~ "command's own suite test (task 1903 Stage E2).");
+
+    // The family's declared scope lives ONCE, beside the kernels — D2's reason
+    // for `kReduceEditScope`, and this family has SIX call sites passing it
+    // (two commands, three RadialSweepTool sites, one StrokeExtrudeTool drag
+    // frame) plus the two test helpers, so it is the family with the most
+    // chances to drift. The BEHAVIOURAL half — that the value is right, written
+    // out from the enum independently — is in
+    // tests/unit/mesh_ops/revolve_test.d's recording block; this row only pins
+    // that there is one of it.
+    assert(countOccurrences(rv, "enum uint kRevolveEditScope =") == 1,
+        "source/mesh_ops/revolve.d no longer declares `kRevolveEditScope` at "
+      ~ "module scope — six production call sites and two test helpers pass it, "
+      ~ "and a per-call-site literal is the drift this constant exists to "
+      ~ "prevent (task 1903 Stage E2).");
+
+    // §5.7 over this file, under the SAME predicate decimate, bridge and
+    // cleanup are measured with. Expected 0, and 0 here is not a retirement but
+    // a statement about the family: neither kernel moves an EXISTING vertex.
+    // Every coordinate they produce belongs to a vertex created in the same
+    // call — `buildRing`'s `ed.addVertex(pos)` and `extrudePathStep_`'s
+    // per-(island,vertex) clone — which is why `kRevolveEditScope` carries no
+    // `Position` bit. The behavioural twin of this row is the
+    // `Kind.SetPos == 0` assertion in revolve_test.d's recording block.
+    {
+        string firstHit;
+        immutable size_t rawWrites = countRawPositionWrites(rv, firstHit);
+        assert(rawWrites == 0,
+            format("source/mesh_ops/revolve.d: %d raw position write(s) under "
                  ~ "§5.7's predicate, expected 0 — this family had none before "
                  ~ "the conversion and must gain none through it. First hit: "
                  ~ "`%s`. `alias mesh this` means `ed.vertices[i] = p` COMPILES "
