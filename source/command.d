@@ -314,7 +314,7 @@ class Command {
             // `scope(exit) endDeliveryBatch` pair immediately above this one and
             // relied on `scope(exit)` being LIFO to order the two closes — a
             // contract a reader could break by tidying two adjacent blocks, and
-            // one that the seven `beginHideDeriveBatch` call sites in `mesh.d`
+            // one that the eight `beginHideDeriveBatch` call sites in `mesh.d`
             // did not honour at all.
             //
             // THIS IS NO LONGER THE ANCHOR (stage 0b, 2026-08-25). It used to

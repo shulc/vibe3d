@@ -660,7 +660,7 @@ private Mesh*[] g_deliveryPendingMeshes;
 // (`document.ownsMesh` IS nothrow and converts implicitly, so the stricter
 // caller loses nothing).
 //
-// THE UNINSTALLED RULE IS NOT THE SAME FOR BOTH CONSUMERS, AND THAT IS
+// THE UNINSTALLED RULE IS NOT THE SAME FOR ALL THREE CONSUMERS, AND THAT IS
 // DELIBERATE — do not "unify" it:
 //
 //   * DELIVERY (1906, `deliverPending` below) reads null as **DELIVER**. Every
@@ -672,6 +672,11 @@ private Mesh*[] g_deliveryPendingMeshes;
 //   * 1903's L2 COUNTER reads null as **not a document mesh**, because it is a
 //     suite-lane-only observable and counting scratch meshes would swamp it.
 //
+//   * THE HIDE-DERIVE DEFERRAL (1903 gate fix, `hideDeriveDeferralAccepted`
+//     just below) reads null as **DEFER** — delivery's direction, for
+//     delivery's reason; see that function for why, and for the SIGSEGV that
+//     made a filter necessary there at all.
+//
 // A filter is a REFUSAL and must fail open; a counter is an OBSERVATION and
 // may fail closed.
 __gshared bool delegate(const(Mesh)*) g_isDocumentMesh;
@@ -680,6 +685,43 @@ __gshared bool delegate(const(Mesh)*) g_isDocumentMesh;
 private bool deliverySubjectAccepted(const(Mesh)* m) {
     if (g_isDocumentMesh is null) return true;
     return g_isDocumentMesh(m);
+}
+
+// THE THIRD CONSUMER, AND IT TAKES DELIVERY'S RULE, NOT THE COUNTER'S — task
+// 1903 gate fix, 2026-08-25.
+//
+// `commitStamps`' hide-derive DEFERRAL arm (path (a)) appends `&this` to
+// `g_hideDerivePendingMeshes`, an array that outlives the call — it is drained
+// at `endHideDeriveBatch`. So the same sentence 1906 review S2 wrote for the
+// delivery set applies here verbatim: THE PENDING SET MAY ONLY HOLD ADDRESSES
+// THAT OUTLIVE THE BATCH, and `g_isDocumentMesh` is the proxy we have for
+// one — ownership at commit time guarantees a HEAP address (a `Layer` holds
+// its `Mesh` on the heap at a stable address), and the GC, not the layer,
+// keeps it alive past an unlink mid-batch (the same window `deliverPending`'s
+// comment names for the delivery set), while a kernel's `Mesh sub = catmullClarkOsd(...)`
+// (commands/mesh/subdivide.d) or `Mesh result;` (subpatch_osd.d) is a STACK
+// FRAME that unwinds long before the command's batch closes. The measured
+// symptom of deferring one of those was a SIGSEGV inside
+// `refreshHiddenDerived` at `hasFace[] = false`, with `this` garbage, on
+// `test_subdivide_smooth` / `test_subdivide_undo_redo`.
+//
+// Uninstalled ⇒ ACCEPT (defer), the same fail-open direction as delivery and
+// for the same reason: every headless unit test in this tree holds a bare
+// `Mesh` with no `Document`, and the 1330/1333/1361 derive-COUNT tests beside
+// `beginHideDeriveBatch` assert on exactly those meshes. "Uninstalled ⇒
+// reject" would derive them inline and turn every one of those counts into
+// a different number for no reason anyone measured. Under that default the
+// pair brackets only the BATCH'S OWN mesh: a unittest that commits a mesh
+// OTHER than the batch's own inside the batch must install `g_isDocumentMesh`
+// (as the block beside the 1330/1333/1361 tests does) — nothing enforces it,
+// and an uninstalled resolver defers that stack address into a set drained
+// after its frame is gone, which is the main-tree "green by luck" shape.
+//
+// A SEPARATE NAME rather than a call to `deliverySubjectAccepted` at the site:
+// the two questions happen to share an answer today, and the call site should
+// name the consumer it is deciding for rather than borrow delivery's.
+private bool hideDeriveDeferralAccepted(const(Mesh)* m) {
+    return deliverySubjectAccepted(m);
 }
 
 // ---- Mesh-edit batch state (task 1903 §2.2a) ------------------------------
@@ -1010,13 +1052,54 @@ void endDeliveryBatchGlobal() {
         flushDeliveryPending();
 }
 
+// THE SET MAY ONLY HOLD ADDRESSES THAT OUTLIVE THE BATCH (task 1903 gate fix).
+// This array is drained at `endHideDeriveBatch`, so every entry is dereferenced
+// AFTER the call that appended it has returned. `g_deliveryPendingMeshes` says
+// the same thing two hundred lines up and states it as an assert; this one
+// states it as a caller census, because the two callers satisfy it for two
+// DIFFERENT reasons and a blanket filter here would break one of them:
+//
+//   * `beginHideDeriveBatch` registers its OWN mesh, and is EXEMPT — the
+//     begin/end pair brackets that address's lifetime by construction (the
+//     close is itself a method call on it, so a dead mesh there is already UB
+//     for a reason that has nothing to do with this set). It must stay
+//     unconditional: `flushHideDerivePending`'s correctness argument below
+//     ("the batch's mesh is always among the ones a flush derives") is what
+//     lets `refreshHiddenDerived` own `g_hideDeriveDeferSafe` alone.
+//   * `commitStamps`' path (a) registers ANY mesh that commits while the batch
+//     is open, including one the batch never heard of, and satisfies the
+//     invariant only because `hideDeriveDeferralAccepted` refuses a
+//     non-document mesh BEFORE reaching here — see that predicate for the
+//     SIGSEGV that bought the rule.
+//
+// A THIRD CALLER must say which of those two it is. If it is the second kind,
+// it filters at its own site the way path (a) does; there is no third answer.
 private void noteHideDerivePending(Mesh* m) {
     if (m is null) return;
     foreach (p; g_hideDerivePendingMeshes) if (p is m) return;
     g_hideDerivePendingMeshes ~= m;
 }
 
-// Runs the derive once per mesh touched by the batch, then clears the set.
+version (unittest) {
+    // What the open hide-derive batch has deferred, shaped exactly like
+    // `deliveryPendingSetLength` above and `version (unittest)` for the reason
+    // this file records four times: a `debug {}` body is absent from a plain
+    // `-unittest` build, so a test over it would pass vacuously.
+    //
+    // `Contains` takes a raw address and never dereferences it, on purpose:
+    // the case worth testing is precisely an address whose frame is GONE.
+    size_t hideDerivePendingSetLength() { return g_hideDerivePendingMeshes.length; }
+
+    bool hideDerivePendingSetContains(const(void)* m) {
+        foreach (p; g_hideDerivePendingMeshes)
+            if (cast(const(void)*)p is m) return true;
+        return false;
+    }
+}
+
+// Runs the derive once per mesh the batch DEFERRED, then clears the set; a
+// mesh path (a) refused (no `Layer` owns it) derived inline at commit time and
+// is deliberately not here.
 // Unconditional: it also covers a mesh whose CONTENT was replaced wholesale
 // mid-batch (subdivide/remesh), where the pre-batch "nothing hidden" answer
 // no longer describes the mesh that is there now.
@@ -1966,7 +2049,35 @@ struct Mesh {
             // Skip ONLY when the call would write nothing anyway — see
             // beginHideDeriveBatch's rule. `noteHideDerivePending` makes the
             // batch close derive this mesh once.
-            if (g_hideDeriveDepth > 0 && g_hideDeriveDeferSafe) {
+            // The third term is the LIFETIME filter, and it is not a
+            // micro-optimization — see `hideDeriveDeferralAccepted`. Deferring
+            // means appending `&this` to an array drained at the batch close,
+            // so a mesh that is not the document's cannot be deferred: a
+            // kernel's `Mesh sub = catmullClarkOsd(...)` / `Mesh result;` is a
+            // stack frame that unwinds first, and the close then derives a dead
+            // frame (SIGSEGV at `hasFace[] = false`, `this` garbage).
+            //
+            // A rejected mesh does NOT lose its derive — it falls through to
+            // the inline arm below and derives exactly as it would with no
+            // batch open at all, which is the state it was in before any of
+            // this existed. The cost is O(|marks| of the refused mesh) per
+            // commit — `refreshHiddenDerived`'s early-out scans all three mark
+            // planes before it can bail — which is ZERO today because every
+            // kernel sizes its marks AFTER its appends (measured: 339/339 refused
+            // commits with 0 mark words); a kernel that sized first would pay a
+            // full scan per appended element. And `g_hideDeriveDeferSafe`
+            // describes the DOCUMENT mesh at batch open, not this mesh: a refused
+            // mesh that carries a Hide bit runs the full derive and disarms the
+            // flag for the rest of the batch, so the document's remaining commits
+            // derive eagerly (unreachable through subdivide, whose temp inherits
+            // Hide from a cage that would have disarmed at open). It is also the
+            // only direction that stays correct for a
+            // LONG-lived non-document mesh (a tool's private cage), which must
+            // still get its planes derived.
+            //
+            // Cheapest terms first: two loads before the delegate call.
+            if (g_hideDeriveDepth > 0 && g_hideDeriveDeferSafe
+                && hideDeriveDeferralAccepted(&this)) {
                 // Path (a) is only safe inside a delivery batch — the derived
                 // hide planes are still the PRE-edit ones here and only
                 // `endHideDeriveBatch` makes them current. `beginHideDeriveBatch`
@@ -10145,7 +10256,7 @@ struct Mesh {
     // That safety used to be PROSE plus a declaration-order convention in
     // `Command.apply` (delivery pair declared first, so LIFO `scope(exit)`
     // closed it last). Two things were wrong with it: the convention is
-    // invisible at every OTHER `beginHideDeriveBatch` call site — seven
+    // invisible at every OTHER `beginHideDeriveBatch` call site — eight
     // unittests in this file open a hide-derive batch with no delivery batch and
     // would have delivered with stale planes — and a reader who "tidies" the two
     // blocks into a nicer order in `command.d` silently breaks it.
@@ -10567,6 +10678,94 @@ struct Mesh {
         assert(duringBatch == 0,
                "a commit after the flush derived eagerly — the deferral is gone");
         assert(g_hideDeriveRuns == 1, "the batch close must still derive once");
+    }
+
+    unittest { // task 1903 gate — the pending set may not name a DEAD FRAME
+        // THE DEFECT, measured 2026-08-25 on the 1903 lane's first full gate.
+        // `Command.applyImpl` opens a hide-derive batch on the document mesh;
+        // `commands/mesh/subdivide.d` then runs
+        // `Mesh sub = catmullClarkOsd(*mesh, …)` (and that kernel its own
+        // `Mesh result;`). Those temporaries commit while the batch is open, so
+        // `commitStamps`' path (a) appended a STACK address to
+        // `g_hideDerivePendingMeshes`. The frame unwound at `*mesh = sub;` and
+        // `endHideDeriveBatch` then derived it: SIGSEGV inside
+        // `refreshHiddenDerived` at `hasFace[] = false` with `this` garbage,
+        // on `test_subdivide_smooth` and `test_subdivide_undo_redo`. The defect
+        // is LATENT ON MAIN — the same three stack addresses reach the set
+        // there and the derive happens to survive reading them.
+        //
+        // THE FIXTURE MUST INSTALL `g_isDocumentMesh`, or it is green in BOTH
+        // directions: uninstalled means "defer" (`hideDeriveDeferralAccepted`),
+        // which is exactly what keeps every OTHER unit case in this file on its
+        // measured derive counts. The resolver here recognises one heap
+        // address and nothing else.
+        auto owned = new Mesh;          // heap ⇒ a stable address, like a Layer's
+        *owned = makeCube();
+        owned.syncSelection();
+
+        auto prevResolver = g_isDocumentMesh;
+        scope(exit) g_isDocumentMesh = prevResolver;
+        const(void)* ownedAddr = cast(const(void)*)owned;
+        g_isDocumentMesh = (const(Mesh)* q) => cast(const(void)*)q is ownedAddr;
+
+        // Stash-then-assert, for the reason the two tests above spell out: an
+        // assert that fires mid-batch skips `endHideDeriveBatch`, leaks
+        // `g_hideDeriveDepth` into every later test in this binary and — the
+        // part that bites HERE — strands the very pointer this test is about.
+        const(void)* tmpAddr;
+        bool   sawOwned, sawTemp;
+        size_t duringTemp, pendingLen;
+
+        owned.beginHideDeriveBatch();
+        {
+            // A `Mesh` whose scope ENDS while the batch is still open — the
+            // shape of `Mesh sub = …` in a command kernel. Built by direct
+            // field writes, and with NO marks arrays, so (i) the only commit is
+            // the explicit one below and the derive count means what it says,
+            // and (ii) on the broken tree the close's derive of this dead frame
+            // takes `refreshHiddenDerived`'s word-OR early-out and reports the
+            // failure as an assert message instead of a second SIGSEGV.
+            Mesh tmp;
+            tmp.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0)];
+            tmp.faces    = [[0u, 1u, 2u]];
+            tmpAddr = cast(const(void)*)&tmp;
+
+            g_hideDeriveRuns = 0;
+            tmp.commitChange(MeshEditScope.Geometry);
+            duringTemp = g_hideDeriveRuns;
+
+            sawOwned   = hideDerivePendingSetContains(ownedAddr);
+            sawTemp    = hideDerivePendingSetContains(tmpAddr);
+            pendingLen = hideDerivePendingSetLength();
+        }
+        // `tmpAddr` now names a frame that is gone.
+        g_hideDeriveRuns = 0;
+        owned.endHideDeriveBatch();
+        const size_t closeRuns = g_hideDeriveRuns;
+
+        assert(sawOwned,
+               "fixture: beginHideDeriveBatch must register the batch's OWN "
+             ~ "mesh — over an empty set this test cannot tell a filtered "
+             ~ "temporary from a set nothing ever reached");
+        assert(!sawTemp,
+               "a mesh no Layer owns was deferred into "
+             ~ "g_hideDerivePendingMeshes — that array is drained at the batch "
+             ~ "close, so it may only hold addresses that OUTLIVE the batch; a "
+             ~ "kernel's `Mesh sub = …` unwinds first and the close derives a "
+             ~ "dead frame (SIGSEGV in refreshHiddenDerived at "
+             ~ "`hasFace[] = false`)");
+        assert(pendingLen == 1,
+               "the pending set grew past the batch's own mesh while a "
+             ~ "temporary was committing — every extra entry is one more "
+             ~ "address the close dereferences after its frame is gone");
+        assert(duringTemp == 1,
+               "the refused mesh did not derive INLINE — it must fall through "
+             ~ "to path (b) and derive exactly as it would with no batch open, "
+             ~ "not lose its derive altogether");
+        assert(closeRuns == 1,
+               "the close derived more than the batch's own mesh — a second "
+             ~ "run here is the deferred temporary being derived after its "
+             ~ "frame died");
     }
 
     unittest { // task 1361 — addFace derives ONCE per face, WHILE something is hidden
