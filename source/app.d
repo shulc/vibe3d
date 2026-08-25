@@ -2259,13 +2259,15 @@ void main(string[] args) {
     int activePanelIdx = 0;
 
     // RMB path trail
-    bool    rmbDragging = false;
+    // Task 0781 step 2c: `rmbDragging` relocated to InputRouter alongside
+    // handleMouseMotion -- router-exclusive state by 0781's own
+    // classification, so it MOVES rather than joining the cluster the way
+    // its trail `rmbPath` did; forwarded from the router-wiring block below
+    // for the press/release handlers' three sites.
     // Task 1040: state relocated to InputFrameState.rmbPath; this forwarder
     // keeps every one of its ~13 existing bare read/write sites (inside the
     // not-yet-extracted mouse handlers and the frame body's lasso overlay)
-    // untouched. `rmbDragging` above stays a plain main() local -- it is
-    // router-exclusive state (0781's own classification), out of this
-    // task's scope.
+    // untouched.
     @property ref ImVec2[] rmbPath() { return ifs.rmbPath; }
 
     // Phase C.x: interactive selection edit session. handleMouseButtonDown
@@ -4231,7 +4233,9 @@ void main(string[] args) {
     // already wired when the closures are built.
     // ---------------------------------------------------------------------
 
-    int lastMouseX, lastMouseY;
+    // Task 0781 step 2c: `lastMouseX`/`lastMouseY` relocated to InputRouter
+    // alongside handleMouseMotion (the drag deltas' origin); forwarded from
+    // the router-wiring block below for the press handler's three writes.
 
     // ---- Trackball momentum spin (task 0582) -------------------------------
     // The camera whose trackball drag is in flight, captured on the press.
@@ -4254,22 +4258,19 @@ void main(string[] args) {
     // (the button-up handler's OR-in, the frame body's tick) untouched.
     @property ref bool anySpinning() { return ifs.anySpinning; }
 
-    // The cooked 2D event, and the bookkeeping behind it. `gestureTrack` is
-    // advanced once per SDL mouse event at the TOP of each of the three
-    // mouse handlers (see GestureTrack.event's doc for why the placement is
-    // load-bearing).
-    //
-    // NOTHING READS THE PACKET. It is published so the shape exists at the
-    // one place a gesture's pixel state is known; migrating the tools that
-    // keep their own last-pixel bookkeeping onto it is a separate step, one
-    // tool per commit, each under its own drag test.
+    // The cooked 2D event, and the bookkeeping behind it. Task 0781 step 2c:
+    // `gestureTrack` relocated to InputRouter alongside handleMouseMotion,
+    // and its full note (why the per-handler placement is load-bearing, and
+    // that nothing reads the packet yet) travelled with it. The same-name
+    // forwarder in the router-wiring block below keeps the two sites still
+    // here — the press/release handlers' `gestureTrack.event(...)` —
+    // untouched until step 2d takes those handlers too.
     //
     // `gestureSlot` itself (task 1040: the storage buildToolVts publishes
     // from — it must live out here rather than as a local inside
     // buildToolVts because VectorStack stores POINTERS and the stack it
     // fills outlives the call) moved into InputFrameState alongside
     // buildToolVts's own body; see that struct's doc comment.
-    GestureTrack  gestureTrack;
 
     // `running` is declared higher up so the file.quit factory
     // closure (registered earlier) can capture it.
@@ -4879,6 +4880,30 @@ void main(string[] args) {
     router.recLogPtr          = &recLog;
     router.runCommandWithArgs = &runCommandWithArgs;
 
+    // Task 0781 step 2c -- `handleMouseMotion`'s own state. All four MOVED
+    // into InputRouter (storage there, no pointer back into main(): §4's
+    // "state that moves is state that moves"), so what stays here is a
+    // same-name forwarder per name, exactly the seam step 1 used for the
+    // cluster. They sit HERE rather than at the original declarations
+    // because a D nested function cannot forward-reference `router`, which
+    // is declared just above -- and nothing reads any of the four between
+    // its old position and this line (measured, not assumed).
+    //
+    // Each forwarder dies with its last main()-side reader in step 2d:
+    // `gestureTrack` / `rmbDragging` / `lastMouseX` / `lastMouseY` are read
+    // by handleMouseButtonDown + handleMouseButtonUp. `doSelectPickAt` gets no
+    // forwarder -- a delegate cannot have one (see the note at its old
+    // declaration); its three main()-side sites name `router` directly.
+    @property ref GestureTrack gestureTrack() { return router.gestureTrack; }
+    // `gestureTrack` is only ever used as `gestureTrack.event(...)`, so a
+    // forwarder that dropped `ref` would build green and advance a temporary
+    // copy; the other three forwarders are protected by their assignments.
+    static assert(is(typeof(&gestureTrack()) == GestureTrack*),
+                  "gestureTrack must forward by ref -- .event() on a copy is silent");
+    @property ref bool         rmbDragging()  { return router.rmbDragging;  }
+    @property ref int          lastMouseX()   { return router.lastMouseX;   }
+    @property ref int          lastMouseY()   { return router.lastMouseY;   }
+
     // Task 1040 — the input/frame shared-state cluster (source/
     // input_frame_state.d). Wired HERE, same reasoning as `router.app`
     // just above: `ifs.app = app` needs the SAME LATE ctx-wiring finished
@@ -4984,12 +5009,33 @@ void main(string[] args) {
         history.recordCoalescing(cmd);
     }
 
-    // Forward-declared here (before the mouse handlers that capture it) and
-    // assigned after pickVertices / pickEdges / pickFaces are defined further
-    // down. handleMouseButtonDown / handleMouseMotion call it to pick at the
-    // cursor immediately on press and on each drag motion; at call time the
+    // Task 0781 step 2c: STORAGE moved to InputRouter, next to the
+    // `handleMouseMotion` that is one of its two callers (the other is this
+    // file's `handleMouseButtonDown`, until step 2d). The declaration that
+    // stood here is gone; the three main()-side sites -- the press handler's
+    // null-guard and call below, and the binding
+    // `router.doSelectPickAt = (int mx, int my) { ... }` further down, still a
+    // closure over main()'s frame near the pick family -- now name the router.
+    //
+    // THE ONE SPELLING CHANGE THIS STEP COSTS ON THE main() SIDE, and why the
+    // same-name-forwarder trick every other moved name uses does not apply
+    // here: a forwarder for a DELEGATE would be
+    // `@property ref void delegate(int, int) doSelectPickAt()`, and D will not
+    // chain the two calls -- `doSelectPickAt(btn.x, btn.y)` is read as calling
+    // the PROPERTY with two arguments, verbatim:
+    //   Error: function `doSelectPickAt` is not callable using argument
+    //   types `(int, int)` ... expected 0 argument(s), not 2
+    // An `alias doSelectPickAt = router.doSelectPickAt;` does not work either
+    // (`Error: accessing non-static variable ... requires an instance`): an
+    // alias to a member drops the instance. So the choice is between naming
+    // the router at three sites and duplicating the storage; the plan's §4
+    // rule ("state that moves is state that moves") settles it. All three are
+    // compiler-caught, not silent.
+    //
+    // Original comment, unchanged in substance: forward-declared before the
+    // mouse handlers that capture it and assigned after pickVertices /
+    // pickEdges / pickFaces are defined further down; at call time the
     // delegate is bound.
-    void delegate(int mx, int my) doSelectPickAt;
 
     // The ITEM-selection-type counterpart of doSelectPickAt (task 0643):
     // resolve the item under the cursor and select it through `layer.select`.
@@ -5276,8 +5322,8 @@ void main(string[] args) {
             if ((dragMode == DragMode.Select
               || dragMode == DragMode.SelectAdd
               || dragMode == DragMode.SelectRemove)
-                && doSelectPickAt !is null) {
-                doSelectPickAt(btn.x, btn.y);
+                && router.doSelectPickAt !is null) {
+                router.doSelectPickAt(btn.x, btn.y);
 
                 // Element apply capture (task 0027). Gated to the mouse-DOWN
                 // dispatch path ONLY — doSelectPickAt is also bound to
@@ -5785,136 +5831,12 @@ void main(string[] args) {
     // Task 0781: handleMouseWheel moved to InputRouter too (see the note
     // above handleWindowEvent's removal site).
 
-    void handleMouseMotion(ref SDL_MouseMotionEvent mot) {
-        // Cooked once, before dispatch — see handleMouseButtonDown. This
-        // handler returns early from half a dozen branches (the three
-        // falloff RMB drags, a tool that consumed the motion, the gizmo
-        // drag, `dragMode == None`), so cooking here is also what keeps the
-        // previous-event pixel advancing on every event rather than only on
-        // the ones that reach the bottom.
-        GesturePacket gest = gestureTrack.event(GesturePacket.Phase.Move, mot.x, mot.y);
-        // Keep the queryMouse override in lockstep with the latest motion
-        // event so picking in subsequent render frames reads the actual
-        // cursor. Without this update, doSelectPickAt's setOverrideMouse
-        // (only called during select-drag) latched stale coordinates on
-        // the first drag, after which queryMouse forever returned that
-        // position — so a later "clear-then-pick" click would re-select
-        // the face under the old cursor instead of nothing.
-        setOverrideMouse(mot.x, mot.y);
-        {
-            import falloff_handles : screenFalloffRMBDragging, screenFalloffRMBMotion,
-                                     radialFalloffRMBDragging, radialFalloffRMBMotion,
-                                     elementFalloffRMBDragging, elementFalloffRMBMotion;
-            if (screenFalloffRMBDragging()) {
-                screenFalloffRMBMotion(mot.x);
-                return;
-            }
-            if (radialFalloffRMBDragging()) {
-                Viewport vp2 = vpm.originSnapshot();
-                radialFalloffRMBMotion(mot.x, mot.y, vp2);
-                return;
-            }
-            if (elementFalloffRMBDragging()) {
-                Viewport vp2 = vpm.originSnapshot();
-                elementFalloffRMBMotion(mot.x, mot.y, vp2);
-                return;
-            }
-        }
-        if (rmbDragging)
-            rmbPath ~= ImVec2(cast(float)mot.x, cast(float)mot.y);
-        if (activeTool) {
-            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts, mot.x, mot.y, true, gest);
-            if (activeTool.onMouseMotion(mot, vts)) return;
-        }
-        // Host falloff-gizmo endpoint drag (no tool active). The gizmo writes
-        // the new endpoint to the FalloffStage via tool.pipe.attr.
-        if (activeTool is null && pipeGizmoHost.isDragging()) {
-            Viewport vpg = vpm.originSnapshot();
-            if (pipeGizmoHost.routeMotion(mot, vpg)) return;
-        }
-        if (dragMode == DragMode.None) return;
-
-        SDL_Keymod mods = SDL_GetModState();
-        bool ctrl  = (mods & KMOD_CTRL)  != 0;
-        bool alt   = (mods & KMOD_ALT)   != 0;
-        bool shift = (mods & KMOD_SHIFT)  != 0;
-
-        bool modOk = (dragMode == DragMode.Zoom)      ? (ctrl && alt)
-                   : (dragMode == DragMode.Pan)       ? (alt && shift)
-                   : (dragMode == DragMode.Orbit)     ? (alt && !shift)
-                   : (dragMode == DragMode.Roll)      ? (alt && !shift && !ctrl)
-                   : (dragMode == DragMode.Select    ||
-                      dragMode == DragMode.SelectAdd  ||
-                      dragMode == DragMode.SelectRemove) ? true
-                   : false;
-        if (!modOk) { dragMode = DragMode.None; return; }
-
-        int dx = mot.x - lastMouseX;
-        int dy = mot.y - lastMouseY;
-
-        // Coupled pan/zoom (task 0217): drag math (basis, screen-space delta)
-        // always uses the ORIGIN cell's own camera (its ortho preset basis
-        // for Pan; its own distance scale for Zoom), but the write target is
-        // redirected to the linkage owner (scaleOwner/focusOwner) so a
-        // default follower's drag moves the whole linked group instead of a
-        // field `resolveFollow` never reads. A cell with `indScale`/
-        // `indCenter` on (opt-in override) owns itself, so it zooms/pans
-        // independently exactly as before.
-        int originId = vpm.dragOriginId >= 0 ? vpm.dragOriginId : vpm.activeId;
-        if      (dragMode == DragMode.Orbit && !vpm.originIsOrtho()) {
-            // Two implementations of one drag, chosen by a preference. The
-            // trackball reads the ABSOLUTE cursor (its arc is the angle between
-            // where the press and the cursor sit on a virtual ball, so the same
-            // delta rotates differently depending on where in the pane it
-            // happens); the two-axis orbit reads the delta. With the option off
-            // — the shipped default — this is the identical `orbit(dx, dy)`
-            // call this line has always made, reached past one bool read.
-            // The clock is the EVENT's, not the frame's, and the difference
-            // is the whole reason this is a parameter. It is used for one
-            // thing — dividing the last step's arc into a release rate — and
-            // the honest divisor is the interval between the two MOTIONS, which
-            // is what SDL stamps on the event when it arrives. Reading a clock
-            // here instead would divide by the interval between the FRAMES that
-            // happened to process them: identical for live input, and for a
-            // replay a measurement of how loaded the machine is. A replayed
-            // event carries the stamp its log gave it (0 unless the log says
-            // otherwise), and two events sharing a stamp leave no spin — so a
-            // log that never recorded when things happened reports, correctly,
-            // that it does not know. See `EventPlayer`'s `ts` field.
-            if (vpm.originCamera().trackballActive())
-                vpm.originCamera().trackballMove(mot.x, mot.y, mot.timestamp);
-            else
-                vpm.originCamera().orbit(dx, dy);
-        }
-        // Bank writes the ORIGIN cell's own camera, mirroring orbit exactly
-        // (orbit does not redirect through a rotate-owner either). Whatever
-        // coupling orbit grows, bank inherits by construction.
-        else if (dragMode == DragMode.Roll)  vpm.originCamera().rollBy(dx);
-        else if (dragMode == DragMode.Zoom)  vpm.scaleOwnerCamera(originId).zoom(dx);
-        else if (dragMode == DragMode.Pan ||
-                 (dragMode == DragMode.Orbit && vpm.originIsOrtho())) {
-            // Alt+LMB in an orthographic cell (task 0224): orbit is meaningless
-            // in an axis-locked ortho view, so it pans instead — same coupled
-            // focusOwner path as Alt+Shift+LMB (task 0217).
-            Vec3 delta = vpm.originCamera().panDelta(dx, dy);
-            vpm.focusOwnerCamera(originId).focus += delta;
-        }
-
-        // Select-drag: run the appropriate picker on EVERY motion event.
-        // Without this, picks only happen once per render frame; in fast
-        // event-playback scenarios (and any rapid drag) intermediate cursor
-        // positions get skipped, missing verts/edges the cursor passed over.
-        // The delegate is bound after the pickers are declared (see below).
-        if ((dragMode == DragMode.Select
-          || dragMode == DragMode.SelectAdd
-          || dragMode == DragMode.SelectRemove)
-            && doSelectPickAt !is null) {
-            doSelectPickAt(mot.x, mot.y);
-        }
-
-        lastMouseX = mot.x;
-        lastMouseY = mot.y;
-    }
+    // Task 0781 step 2c: handleMouseMotion moved to InputRouter too
+    // (source/input_router.d). The body is verbatim -- the only edits are
+    // the `app.` / `ifs.` bindings this seam always costs (see that
+    // module's own note above the moved handler for why they are spelled
+    // out instead of inferred from a `with (app)` block).
+    // processEvent's SDL_MOUSEMOTION case now calls router.handleMouseMotion.
 
     // Task 0781 step 1c -- THE PICK FAMILY MOVED. `pickHover` (and its
     // `pickVertices`/`pickEdges` instantiations), `pickFaces`,
@@ -5953,7 +5875,7 @@ void main(string[] args) {
     // already at the LAST event's position by the time this delegate runs
     // for the FIRST event in the batch — so reset the override to (mx, my)
     // before each pick so the picker sees the right cursor.
-    doSelectPickAt = (int mx, int my) {
+    router.doSelectPickAt = (int mx, int my) {
         setOverrideMouse(mx, my);
         Viewport vp = vpm.activeSnapshot();
         int pickedVertex = -1;
@@ -6349,7 +6271,7 @@ void main(string[] args) {
             case SDL_MOUSEBUTTONDOWN: handleMouseButtonDown(ev.button);  break;
             case SDL_MOUSEBUTTONUP:   handleMouseButtonUp(ev.button);    break;
             case SDL_MOUSEWHEEL:      router.handleMouseWheel(ev.wheel);   break;
-            case SDL_MOUSEMOTION:     handleMouseMotion(ev.motion);      break;
+            case SDL_MOUSEMOTION:     router.handleMouseMotion(ev.motion); break;
             default: break;
         }
         return true;

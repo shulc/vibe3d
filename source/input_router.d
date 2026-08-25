@@ -38,8 +38,8 @@ module input_router;
 // holds as a class reference -- so STEP 2 walks the remaining five handlers
 // in, one commit each, in the plan's order (2a `handleKeyDown` +
 // `handleKeyUp`, 2c `handleMouseMotion`, 2d `handleMouseButtonDown/Up`, 2e
-// `processEvent`). Done so far: 2a. `handleMouseMotion`,
-// `handleMouseButtonDown/Up` and `processEvent` are still nested in main().
+// `processEvent`). Done so far: 2a + 2c. `handleMouseButtonDown/Up` and
+// `processEvent` are still nested in main().
 //
 // The `buildToolVts` ABI trap the paragraph above names is REAL and is now
 // measured rather than reasoned (task 0781 step 2a Log): the real function is
@@ -75,14 +75,21 @@ import editor_app : EditorApp;
 // recorder's TYPE only (the instance stays a main() local, pointer-backed
 // below); the rest are the free functions and __gshared state the moved
 // bodies call by their own names.
-import input_frame_state    : InputFrameState;
-import eventlog             : EventLogger;
-import toolpipe.packets     : SubjectPacket;
+import input_frame_state    : InputFrameState, DragMode;
+import eventlog             : EventLogger, setOverrideMouse;
+import toolpipe.packets     : SubjectPacket, GesturePacket, GestureTrack;
 import operator             : VectorStack;
 import shortcuts            : canonFromEvent, resolveBinding, BindingKind;
 import seltype              : SelType, currentSelType;
 import editmode             : EditMode;
 import viewport             : Viewport3D;
+// Task 0781 step 2c -- what the MOTION handler reaches beyond the two
+// keyboard ones: `DragMode` (the cluster's enum, above), `GestureTrack`/
+// `GesturePacket` (the cooked 2D event), `setOverrideMouse` (eventlog's
+// replay-time cursor override), `Viewport`/`Vec3` (the camera-drag math)
+// and `ImVec2` (the lasso trail's element type).
+import math                 : Viewport, Vec3;
+import d_imgui.imgui_h      : ImVec2;
 import pie_state            : g_pie, armPie;
 import handles.gizmo_metrics : stepGizmoHandleScale;
 import log                  : logInfo;
@@ -150,6 +157,57 @@ struct InputRouter {
     // caller arrives. The field NAME is the function's, so the moved call site
     // is textually unchanged.
     bool delegate(string, string) runCommandWithArgs;
+
+    // ---- Task 0781 step 2c: what `handleMouseMotion` owns ---------------
+    //
+    // All four MOVE -- storage HERE, never a pointer back into main(). That is
+    // §4's own rule for every step-2 commit ("state that moves is state that
+    // moves"), and the reason is that a pointer would freeze today's shape as
+    // the contract. main() keeps a same-name forwarder for each only while its
+    // OTHER readers are still nested there (`handleMouseButtonDown`/`Up`, and
+    // `doSelectPickAt`'s binding site); step 2d moves those in and the
+    // forwarders go with them.
+
+    // The cooked 2D event, and the bookkeeping behind it. `gestureTrack` is
+    // advanced once per SDL mouse event at the TOP of each of the three mouse
+    // handlers (see GestureTrack.event's doc for why the placement is
+    // load-bearing) -- in this module, at the top of `handleMouseMotion`; the
+    // press/release handlers still do it from main() until step 2d.
+    //
+    // NOTHING READS THE PACKET. It is published so the shape exists at the one
+    // place a gesture's pixel state is known; migrating the tools that keep
+    // their own last-pixel bookkeeping onto it is a separate step, one tool
+    // per commit, each under its own drag test.
+    //
+    // The publish SLOT it feeds (`gestureSlot`) is the CLUSTER's, not this
+    // struct's: `VectorStack` stores POINTERS into it and the stack a caller
+    // builds must outlive the call, so it needs storage that lives as long as
+    // the cluster does. See input_frame_state.d.
+    GestureTrack gestureTrack;
+
+    // RMB path trail: is a right-button lasso in flight? Router-EXCLUSIVE
+    // state by 0781's own classification, which is why it moves here and did
+    // not join the cluster the way its trail `rmbPath` did -- the frame body
+    // draws that trail every frame (the dashed lasso overlay) and never reads
+    // this flag.
+    bool rmbDragging = false;
+
+    // The previous motion pixel: the drag deltas' origin. Written at the
+    // BOTTOM of each of the three mouse handlers, so a handler that returns
+    // early deliberately leaves them where the last completed step put them
+    // (app.d's comment at the buildToolVts wiring records that this is the
+    // intent, not an oversight).
+    int lastMouseX, lastMouseY;
+
+    // The select-drag picker. Still BOUND in main() -- its body is a closure
+    // over main()'s frame, declared next to the pick family, and step 2d takes
+    // it together with `handleMouseButtonDown`, its other caller. Held by
+    // VALUE here (a delegate is already a two-word reference; a pointer to it
+    // would buy nothing), so both call sites read one delegate and the
+    // `!is null` guard each makes is the same guard it made when this was a
+    // main() local: the binding happens ~1,000 lines after the handlers are
+    // declared, and an SDL event cannot arrive in between.
+    void delegate(int mx, int my) doSelectPickAt;
 
     // The editor uses a fixed fovY=45° everywhere (see source/view.d).
     // Mirrors main()'s own `kFovY` (app.d, right after `layout.resize` at
@@ -515,5 +573,180 @@ struct InputRouter {
     void handleKeyUp(ref SDL_KeyboardEvent kev) {
         SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts);
         if (app.activeTool && app.activeTool.onKeyUp(kev, vts)) return;
+    }
+
+    // ---- Task 0781 step 2c: the MOTION handler --------------------------
+    //
+    // `handleMouseMotion`, relocated from a nested function of the same name
+    // in app.d's main(). The body is VERBATIM: a line-by-line diff of the
+    // moved text against the pre-move block is 32 lines out of 130, and every
+    // one of the 32 differs only by an `app.` or an `ifs.` prefix -- no
+    // comment, no blank line and no indentation column changed. The card's
+    // Log lists them.
+    //
+    // NOT wrapped in `with (app)`, unlike `handleKeyDown` above, and that is a
+    // decision rather than a style drift. Three EditorApp names appear here
+    // (`vpm`, `activeTool`, `pipeGizmoHost`) against three cluster ones
+    // (`dragMode`, `rmbPath`, `buildToolVts`) -- and `buildToolVts` is exactly
+    // the name §5/R2 warns is carried by BOTH. Step 2a MEASURED what a
+    // `with (app)` does to it: a bare two-argument call compiled GREEN,
+    // silently binding to EditorApp's narrow two-parameter delegate field.
+    // Spelling `app.` / `ifs.` out turns that trap into a compile error here
+    // (there is no `with` for a bare name to fall into) and keeps the moved
+    // body's indentation identical to the original, so the 32-line diff above
+    // is exactly the set of binding decisions and nothing else. The six-
+    // parameter call below is the ABI half of the same trap: it is written
+    // `ifs.buildToolVts(...)` for the same reason both keyboard handlers do.
+    //
+    // Covered BY VALUE, named rather than assumed -- three suite tests read
+    // this handler through three different branches:
+    // tests/test_camera.d replays Alt+LMB orbit / Alt+Shift+LMB pan /
+    // Ctrl+Alt+LMB zoom event logs through /api/play-events and asserts the
+    // resulting camera state exactly (`assertCameraState`), which is the
+    // camera-drag half AND the cross-client witness for `ifs.dragMode`: the
+    // press handler is still main()'s and writes the cluster through main()'s
+    // forwarder, this handler reads it through the router's class reference,
+    // so a by-value copy of the cluster would leave `dragMode` at `None` here
+    // and the orbit would never happen;
+    // tests/test_lasso_select.d drives an RMB lasso and asserts the selected
+    // id set -- the `rmbDragging` / `ifs.rmbPath` append;
+    // the `doSelectPickAt` call at the bottom has NO suite witness: the
+    // hover-freeze and fresh-hover tests emit motion with the button held, but
+    // under an active haul tool this handler returns at the tool's
+    // onMouseMotion above the pick branch, and their assertions are satisfied
+    // by the mouse-DOWN handler's own pick (measured: disabling the motion-path
+    // pick left both green). What protects the receiver change is the
+    // compiler at all three call sites; the missing fixture is a tool-less
+    // select-drag sweeping several vertices in one event batch and asserting
+    // the whole swept set.
+    void handleMouseMotion(ref SDL_MouseMotionEvent mot) {
+        // Cooked once, before dispatch — see handleMouseButtonDown. This
+        // handler returns early from half a dozen branches (the three
+        // falloff RMB drags, a tool that consumed the motion, the gizmo
+        // drag, `dragMode == None`), so cooking here is also what keeps the
+        // previous-event pixel advancing on every event rather than only on
+        // the ones that reach the bottom.
+        GesturePacket gest = gestureTrack.event(GesturePacket.Phase.Move, mot.x, mot.y);
+        // Keep the queryMouse override in lockstep with the latest motion
+        // event so picking in subsequent render frames reads the actual
+        // cursor. Without this update, doSelectPickAt's setOverrideMouse
+        // (only called during select-drag) latched stale coordinates on
+        // the first drag, after which queryMouse forever returned that
+        // position — so a later "clear-then-pick" click would re-select
+        // the face under the old cursor instead of nothing.
+        setOverrideMouse(mot.x, mot.y);
+        {
+            import falloff_handles : screenFalloffRMBDragging, screenFalloffRMBMotion,
+                                     radialFalloffRMBDragging, radialFalloffRMBMotion,
+                                     elementFalloffRMBDragging, elementFalloffRMBMotion;
+            if (screenFalloffRMBDragging()) {
+                screenFalloffRMBMotion(mot.x);
+                return;
+            }
+            if (radialFalloffRMBDragging()) {
+                Viewport vp2 = app.vpm.originSnapshot();
+                radialFalloffRMBMotion(mot.x, mot.y, vp2);
+                return;
+            }
+            if (elementFalloffRMBDragging()) {
+                Viewport vp2 = app.vpm.originSnapshot();
+                elementFalloffRMBMotion(mot.x, mot.y, vp2);
+                return;
+            }
+        }
+        if (rmbDragging)
+            ifs.rmbPath ~= ImVec2(cast(float)mot.x, cast(float)mot.y);
+        if (app.activeTool) {
+            SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts, mot.x, mot.y, true, gest);
+            if (app.activeTool.onMouseMotion(mot, vts)) return;
+        }
+        // Host falloff-gizmo endpoint drag (no tool active). The gizmo writes
+        // the new endpoint to the FalloffStage via tool.pipe.attr.
+        if (app.activeTool is null && app.pipeGizmoHost.isDragging()) {
+            Viewport vpg = app.vpm.originSnapshot();
+            if (app.pipeGizmoHost.routeMotion(mot, vpg)) return;
+        }
+        if (ifs.dragMode == DragMode.None) return;
+
+        SDL_Keymod mods = SDL_GetModState();
+        bool ctrl  = (mods & KMOD_CTRL)  != 0;
+        bool alt   = (mods & KMOD_ALT)   != 0;
+        bool shift = (mods & KMOD_SHIFT)  != 0;
+
+        bool modOk = (ifs.dragMode == DragMode.Zoom)      ? (ctrl && alt)
+                   : (ifs.dragMode == DragMode.Pan)       ? (alt && shift)
+                   : (ifs.dragMode == DragMode.Orbit)     ? (alt && !shift)
+                   : (ifs.dragMode == DragMode.Roll)      ? (alt && !shift && !ctrl)
+                   : (ifs.dragMode == DragMode.Select    ||
+                      ifs.dragMode == DragMode.SelectAdd  ||
+                      ifs.dragMode == DragMode.SelectRemove) ? true
+                   : false;
+        if (!modOk) { ifs.dragMode = DragMode.None; return; }
+
+        int dx = mot.x - lastMouseX;
+        int dy = mot.y - lastMouseY;
+
+        // Coupled pan/zoom (task 0217): drag math (basis, screen-space delta)
+        // always uses the ORIGIN cell's own camera (its ortho preset basis
+        // for Pan; its own distance scale for Zoom), but the write target is
+        // redirected to the linkage owner (scaleOwner/focusOwner) so a
+        // default follower's drag moves the whole linked group instead of a
+        // field `resolveFollow` never reads. A cell with `indScale`/
+        // `indCenter` on (opt-in override) owns itself, so it zooms/pans
+        // independently exactly as before.
+        int originId = app.vpm.dragOriginId >= 0 ? app.vpm.dragOriginId : app.vpm.activeId;
+        if      (ifs.dragMode == DragMode.Orbit && !app.vpm.originIsOrtho()) {
+            // Two implementations of one drag, chosen by a preference. The
+            // trackball reads the ABSOLUTE cursor (its arc is the angle between
+            // where the press and the cursor sit on a virtual ball, so the same
+            // delta rotates differently depending on where in the pane it
+            // happens); the two-axis orbit reads the delta. With the option off
+            // — the shipped default — this is the identical `orbit(dx, dy)`
+            // call this line has always made, reached past one bool read.
+            // The clock is the EVENT's, not the frame's, and the difference
+            // is the whole reason this is a parameter. It is used for one
+            // thing — dividing the last step's arc into a release rate — and
+            // the honest divisor is the interval between the two MOTIONS, which
+            // is what SDL stamps on the event when it arrives. Reading a clock
+            // here instead would divide by the interval between the FRAMES that
+            // happened to process them: identical for live input, and for a
+            // replay a measurement of how loaded the machine is. A replayed
+            // event carries the stamp its log gave it (0 unless the log says
+            // otherwise), and two events sharing a stamp leave no spin — so a
+            // log that never recorded when things happened reports, correctly,
+            // that it does not know. See `EventPlayer`'s `ts` field.
+            if (app.vpm.originCamera().trackballActive())
+                app.vpm.originCamera().trackballMove(mot.x, mot.y, mot.timestamp);
+            else
+                app.vpm.originCamera().orbit(dx, dy);
+        }
+        // Bank writes the ORIGIN cell's own camera, mirroring orbit exactly
+        // (orbit does not redirect through a rotate-owner either). Whatever
+        // coupling orbit grows, bank inherits by construction.
+        else if (ifs.dragMode == DragMode.Roll)  app.vpm.originCamera().rollBy(dx);
+        else if (ifs.dragMode == DragMode.Zoom)  app.vpm.scaleOwnerCamera(originId).zoom(dx);
+        else if (ifs.dragMode == DragMode.Pan ||
+                 (ifs.dragMode == DragMode.Orbit && app.vpm.originIsOrtho())) {
+            // Alt+LMB in an orthographic cell (task 0224): orbit is meaningless
+            // in an axis-locked ortho view, so it pans instead — same coupled
+            // focusOwner path as Alt+Shift+LMB (task 0217).
+            Vec3 delta = app.vpm.originCamera().panDelta(dx, dy);
+            app.vpm.focusOwnerCamera(originId).focus += delta;
+        }
+
+        // Select-drag: run the appropriate picker on EVERY motion event.
+        // Without this, picks only happen once per render frame; in fast
+        // event-playback scenarios (and any rapid drag) intermediate cursor
+        // positions get skipped, missing verts/edges the cursor passed over.
+        // The delegate is bound after the pickers are declared (see below).
+        if ((ifs.dragMode == DragMode.Select
+          || ifs.dragMode == DragMode.SelectAdd
+          || ifs.dragMode == DragMode.SelectRemove)
+            && doSelectPickAt !is null) {
+            doSelectPickAt(mot.x, mot.y);
+        }
+
+        lastMouseX = mot.x;
+        lastMouseY = mot.y;
     }
 }

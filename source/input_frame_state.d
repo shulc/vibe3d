@@ -565,3 +565,19 @@ final class InputFrameState {
         if (h.hit) g_hoveredItem = h.layerIndex;
     }
 }
+
+// Task 0781 step 2c (a correction the step-2a review asked for): the ONLY
+// witness the constructor above has. Both of its defaults are invisible to
+// the suite by construction -- `itemPicker`'s null window is quiet (nothing
+// dereferences it before main()'s wiring block, which is exactly why a
+// regression there would not crash), and `useBvhFacePick`'s value is a
+// SUPPORTED configuration either way (`VIBE3D_FACE_PICK=gpu` turns it off,
+// and test_bvh_pick_equivalence holds the two engines equivalent). So no
+// HTTP test can redden on either; three lines here can.
+unittest {
+    auto ifs = new InputFrameState();
+    assert(ifs.itemPicker !is null,
+           "InputFrameState must be BORN with an ItemRayPicker -- see this.this()");
+    assert(ifs.useBvhFacePick,
+           "the shipped default face-pick engine is BVH, not the bool.init GPU one");
+}
