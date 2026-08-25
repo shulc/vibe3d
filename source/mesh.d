@@ -1662,8 +1662,11 @@ struct Mesh {
             ~ "nothing for a stale table to serve");
         const size_t nVertsZ  = z.vertices.length;
         const ulong  structZ0 = z.structVersion;
-        bool[] everyFace = new bool[](z.faces.length);
-        everyFace[] = true;
+        // Nothing is selected, so the operand mask is the whole mesh — the
+        // funnel test_operand_mask_gate prescribes over a hand-filled `[] = true`.
+        bool[] everyFace = z.operandFaceMask();
+        assert(everyFace.length == z.faces.length && everyFace[0] && everyFace[$ - 1],
+            "setup: an unselected cube's operand mask must cover every face");
         z.deleteFacesByMask(everyFace, /*keepOrphans*/ true);
         assert(z.edges.length == 0 && z.faces.length == 0,
             "setup: every face and therefore every edge must be gone");
