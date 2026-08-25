@@ -1,6 +1,6 @@
 // Element click-pick must read the CURRENT hover, not last frame's
 // (regression for the "element click-pick reads current hover, not last
-// frame's" fix in source/app.d refreshHoverPickAt + source/tools/
+// frame's" fix in source/input_router.d refreshHoverPickAt + source/tools/
 // xfrm_transform.d).
 //
 // Root cause: g_hoveredVertex/Edge/Face is refreshed once per render frame

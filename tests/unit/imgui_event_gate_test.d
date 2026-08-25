@@ -166,12 +166,20 @@ unittest {
     // must not be able to hide the other's message.
     //
     // Uniqueness alone does not pin anything. `callers == [the gate module]`
-    // is equally satisfied by "app.d routes through the gate" and by "app.d
-    // calls nothing at all" — and the second was reached by mutation: deleting
-    // `feedImGui(ev);` from the dispatcher left both lanes green while that
-    // tree hands ImGui ZERO SDL events (no mouse capture, no WantCaptureMouse,
-    // a dead UI) and the whole fix is gone. `scanned > 50` below guards the
-    // denominator; this block guards the numerator.
+    // is equally satisfied by "the dispatcher routes through the gate" and by
+    // "the dispatcher calls nothing at all" — and the second was reached by
+    // mutation: deleting `feedImGui(ev);` from the dispatcher left both lanes
+    // green while that tree hands ImGui ZERO SDL events (no mouse capture, no
+    // WantCaptureMouse, a dead UI) and the whole fix is gone. `scanned > 50`
+    // below guards the denominator; this block guards the numerator.
+    //
+    // THE FILE NAMED HERE IS THE DISPATCHER'S HOME, and it moved: task 0781
+    // step 2e lifted `processEvent` out of `app.d`'s `main()` into
+    // `InputRouter` (source/input_router.d), taking both calls with it. The
+    // scan follows the code rather than the filename it used to sit in — a
+    // check still pointed at `app.d` would go red on a pure relocation and,
+    // worse, could be "fixed" by pasting the call back into a file that no
+    // longer dispatches anything.
     //
     // What it cannot see, said plainly: a call commented out in place still
     // reads as present. That is "someone deleted the fix by hand", not drift.
@@ -180,16 +188,16 @@ unittest {
     import std.algorithm : canFind;
 
     enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
-    const app = readText(buildPath(repoRoot, "source", "app.d"));
+    const dispatcher = readText(buildPath(repoRoot, "source", "input_router.d"));
 
-    assert(app.canFind("feedImGui("),
-           "source/app.d no longer routes SDL events through the gate — ImGui "
-           ~ "is receiving nothing at all, and the uniqueness check below is "
-           ~ "green for exactly that tree");
-    assert(app.canFind("keyBelongsToEditor("),
-           "source/app.d no longer consults keyBelongsToEditor, so blocks F/G "
-           ~ "pin nothing: either the text-field gate is gone (a Tab typed "
-           ~ "into a filter box now toggles subpatch) or it was re-inlined "
+    assert(dispatcher.canFind("feedImGui("),
+           "source/input_router.d no longer routes SDL events through the gate "
+           ~ "— ImGui is receiving nothing at all, and the uniqueness check "
+           ~ "below is green for exactly that tree");
+    assert(dispatcher.canFind("keyBelongsToEditor("),
+           "source/input_router.d no longer consults keyBelongsToEditor, so "
+           ~ "blocks F/G pin nothing: either the text-field gate is gone (a Tab "
+           ~ "typed into a filter box now toggles subpatch) or it was re-inlined "
            ~ "past the predicate under test");
 }
 

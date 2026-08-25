@@ -4850,6 +4850,19 @@ void main(string[] args) {
     // its second caller's spelling router-side and turned the step-2a delegate
     // field into a real InputRouter method (plan §4/Q2).
     router.ifs                = ifs;
+    // Task 0781 step 2e -- both SDL-event logs, pointer-backed. `recLogPtr`
+    // arrived in 2a for the F1/F2 recording branch; `evLogPtr` arrives now with
+    // `processEvent`, whose first two lines are `evLog.log(*ev)` and (unless the
+    // key is F1/F2) `recLog.log(*ev)`. Neither instance MOVES, and that is the
+    // plan's `winW`/`winH` exception rather than a shortcut past its "state that
+    // moves is state that MOVES" rule: main() opens `evLog` from the CLI flags,
+    // writes its viewport header once the layout is known, and registers
+    // `scope(exit) evLog.close()` / `scope(exit) recLog.close()` AT the
+    // declarations ~3,580 lines above this line. Re-registering those two here
+    // would reorder them against the ~20 `scope(exit)`s in between -- both logs
+    // close LAST today and would close mid-GL-teardown instead -- and 0781's
+    // whole contract is byte-identical behaviour.
+    router.evLogPtr           = &evLog;
     router.recLogPtr          = &recLog;
 
     // Task 0781 step 2d -- the AI interaction-log pair the press handler reads,
@@ -4866,24 +4879,11 @@ void main(string[] args) {
     router.aiLogSource        = aiLogSource;
     router.aiEditModeId       = &aiEditModeId;
 
-    // Task 0781 step 2d -- the last-picked element triple. Storage MOVED to
-    // InputRouter with its reader (the press handler's AI capture block), but
-    // its WRITER is still here: the `router.doSelectPickAt = ...` binding
-    // further down is a closure over main()'s frame until step 2e. So the
-    // three keep a same-name forwarder, on exactly the seam step 2c used --
-    // and here rather than at the original declarations, because a D nested
-    // function cannot forward-reference `router`, which is declared just
-    // above.
-    //
-    // Step 2c's own four forwarders (`gestureTrack`, `rmbDragging`,
-    // `lastMouseX`, `lastMouseY`) are GONE with this commit, exactly as that
-    // step predicted: their last main()-side readers were the two handlers 2d
-    // just took, so the compiler is now the census. `doSelectPickAt` still has
-    // no forwarder (a delegate cannot have one -- see step 2c's note); its one
-    // remaining main()-side site, the binding, names `router` directly.
-    @property ref int aiLastPickedVertex() { return router.aiLastPickedVertex; }
-    @property ref int aiLastPickedEdge()   { return router.aiLastPickedEdge;   }
-    @property ref int aiLastPickedFace()   { return router.aiLastPickedFace;   }
+    // Task 0781 step 2e -- the three `aiLastPicked*` forwarders 2d left here
+    // are GONE, exactly as that step predicted: their last main()-side sites
+    // were the writes inside `doSelectPickAt`'s body, and that body is now an
+    // InputRouter method writing the fields bare. The compiler was the census,
+    // as it was for step 2c's four.
 
     // Task 1040 — the input/frame shared-state cluster (source/
     // input_frame_state.d). Wired HERE, same reasoning as `router.app`
@@ -4941,8 +4941,9 @@ void main(string[] args) {
     // What they reached that EditorApp does not carry travels as router
     // members, wired in the `InputRouter router;` block above: `recLog`
     // POINTER-backed (the EventLogger instance stays a main() local -- main()
-    // still owns its `scope(exit) close()` and `processEvent`'s own
-    // `recLog.log`), `runCommandWithArgs` as a DELEGATE onto the nested
+    // still owns its `scope(exit) close()`; step 2e gave it a second router-side
+    // reader, `processEvent`'s own `recLog.log`, and `evLog` the same
+    // treatment), `runCommandWithArgs` as a DELEGATE onto the nested
     // function above (its second caller, `doItemSelectPickAt`, is still here
     // and moves in step 2d, at which point the body moves too -- plan §4/Q2),
     // `kFovY` as a struct-level enum, and `ifs` as the class reference to this
@@ -4970,19 +4971,14 @@ void main(string[] args) {
     //   * `tbSpinCam` (the trackball-spin camera captured on the press and
     //     armed on the release) -- same, both readers moved;
     //   * `doItemSelectPickAt` and `refreshHoverPickAt` -- DELEGATE fields on
-    //     the router now, exactly as `doSelectPickAt` became in step 2c. Their
-    //     BODIES stay here (closures over main()'s frame, bound next to the
-    //     pick family further down); the binding sites are the only spelling
-    //     change, `router.doItemSelectPickAt = ...` / `router.refreshHoverPickAt
-    //     = ...`, and a delegate cannot take a same-name forwarder for the
-    //     reason step 2c spelled out at `doSelectPickAt`'s old declaration:
-    //     `@property ref void delegate(int,int) f()` makes `f(x, y)` a call of
-    //     the PROPERTY with two arguments, and an `alias` to a member drops the
-    //     instance. Step 2e takes the bodies;
-    //   * `aiLastPickedVertex` / `Edge` / `Face` -- storage moved, but the
-    //     `router.doSelectPickAt` binding below still WRITES them from main(),
-    //     so the three keep a same-name `@property ref` forwarder in the
-    //     router-wiring block above until step 2e moves that body too;
+    //     the router at that step, exactly as `doSelectPickAt` became in 2c,
+    //     because their BODIES were still closures over main()'s frame. Step 2e
+    //     moved the bodies and the three became plain methods, so nothing binds
+    //     them any more;
+    //   * `aiLastPickedVertex` / `Edge` / `Face` -- storage moved in 2d with the
+    //     reader, and step 2e brought the writer (`doSelectPickAt`'s body), so
+    //     the three same-name forwarders 2d parked in the router-wiring block
+    //     are gone;
     //   * `runCommandWithArgs` -- a real InputRouter METHOD now, not the step-2a
     //     delegate field. Plan §4/Q2's deciding grep held at the move (the
     //     declaration plus three calls, nothing else), and 2d brought its second
@@ -4995,10 +4991,9 @@ void main(string[] args) {
     //     (the handle-apply hook at the AI wiring block, declared long before
     //     `router` exists, so it could not name it).
     //
-    // `doSelectPickAt` itself (step 2c) now has exactly ONE main()-side site
-    // left: the `router.doSelectPickAt = ...` binding below. The press
-    // handler's null-guard and call went router-side with this commit and are
-    // spelled bare there.
+    // `doSelectPickAt` itself (step 2c) had exactly ONE main()-side site left
+    // after 2d, the `router.doSelectPickAt = ...` binding; step 2e deleted it
+    // with the body. The press handler's null-guard went with the field.
 
     // Task 0781: handleMouseWheel moved to InputRouter too (see the note
     // above handleWindowEvent's removal site).
@@ -5034,164 +5029,25 @@ void main(string[] args) {
     void pickFaces(ref Viewport vp, bool doingCameraDrag) {
         ifs.pickFaces(vp, doingCameraDrag);
     }
-    ItemHit pickItemUnderCursor(int mx, int my, ref Viewport vp) {
-        return ifs.pickItemUnderCursor(mx, my, vp);
-    }
     void pickItems(ref Viewport vp, bool doingCameraDrag) {
         ifs.pickItems(vp, doingCameraDrag);
     }
 
-    // Bind the picker delegate forward-declared at handleMouseMotion's
-    // scope. queryMouse() pulls from the global override which the event
-    // player updates in batch (per tickEventPlayer call); the override is
-    // already at the LAST event's position by the time this delegate runs
-    // for the FIRST event in the batch — so reset the override to (mx, my)
-    // before each pick so the picker sees the right cursor.
-    router.doSelectPickAt = (int mx, int my) {
-        setOverrideMouse(mx, my);
-        Viewport vp = vpm.activeSnapshot();
-        int pickedVertex = -1;
-        int pickedEdge = -1;
-        int pickedFace = -1;
-        // The ordering, item-inclusive (task 0655) — NOT `editMode`. The
-        // mouse-DOWN path already returns before this under the item type
-        // (the 0643 branch in handleMouseButtonDown), but this delegate is
-        // ALSO bound to mouse-MOTION during a select drag, and a drag that
-        // outlives a type flip would otherwise resume picking geometry from a
-        // cache that never mentions items. Under `SelType.Item` none of the
-        // three branches runs and the triple stays all -1, which
-        // `publishElementCandidates` already reads as "no element here".
-        final switch (viewportPickType(selTypeOrder)) {
-            case SelType.Vertex:
-                pickVertices(vp, false);
-                pickedVertex = hoveredVertex;
-                break;
-            case SelType.Edge:
-                pickEdges(vp, false);
-                pickedEdge = hoveredEdge;
-                break;
-            case SelType.Polygon:
-                pickFaces(vp, false);
-                pickedFace = hoveredFace;
-                break;
-            case SelType.Item:
-                break;
-        }
-        publishElementCandidates(mx, my, pickedVertex, pickedEdge, pickedFace);
-        // Stash for the mouse-DOWN capture hook (cheap; the motion path runs
-        // through here too but never reads these back, so it stays zero-cost).
-        aiLastPickedVertex = pickedVertex;
-        aiLastPickedEdge   = pickedEdge;
-        aiLastPickedFace   = pickedFace;
-    };
-
-    // Item click-select (task 0643) — the Items-mode counterpart of the
-    // delegate above, bound here for the same reason.
+    // Task 0781 step 2e -- THE THREE PICKER BODIES MOVED. `doSelectPickAt`,
+    // `doItemSelectPickAt` and `refreshHoverPickAt` are now real METHODS of
+    // InputRouter (source/input_router.d), not delegate fields bound here: with
+    // the six handlers that call them already router-side, the closures had no
+    // main() frame left to close over. Bodies are verbatim modulo the
+    // `app.`/`ifs.` bindings this seam always costs; the three
+    // `router.doXxx = ...` assignments and the `!is null` guard at each call
+    // site are gone with them (a bare method name in a boolean context does not
+    // compile, so that removal is compiler-checked, not eyeballed).
     //
-    // The MUTATION IS `layer.select`, never a direct `document.selectItem`.
-    // That command already holds the set invariants, the primary move, the
-    // `SelType.Item` promotion and a UI-class undo entry that restores the whole
-    // prior selection; a bespoke write here would be a second, weaker copy of
-    // all four, and the first one to drift would do it silently.
-    //
-    // Modifier -> mode mirrors the geometry select path exactly (ctrl removes,
-    // shift adds, bare sets), so the chords a user already knows keep meaning
-    // the same thing when the selection type changes under them. `toggle`,
-    // which the command also offers, is deliberately NOT bound to a viewport
-    // chord: the geometry path has no toggle chord to mirror, and inventing one
-    // here would make the two paths disagree. It stays reachable from the item
-    // list, where ctrl-click has always meant toggle.
-    router.doItemSelectPickAt = (int mx, int my, bool ctrl, bool shift) {
-        if (!viewportInputAllowed()) return;
-        setOverrideMouse(mx, my);
-        Viewport vp = vpm.activeSnapshot();
-        immutable ItemHit h = pickItemUnderCursor(mx, my, vp);
-        // A MISS EMPTIES THE ITEM SELECTION (task 0654).
-        //
-        // 0643 made a miss do NOTHING, for one stated reason: "that state is
-        // unrepresentable (at least one item is always selected)". The
-        // reference was then measured (0653) and empties on a miss; the owner
-        // decided we follow it, and 0654 removed the invariant that was the
-        // whole basis of the do-nothing branch. So this is not a preference
-        // reversal — the premise 0643 named is simply gone.
-        //
-        // The MODIFIED chords do not empty. Ctrl/shift are set-EDITING chords:
-        // ctrl-clicking empty space means "remove nothing", shift-clicking it
-        // means "add nothing". Emptying there would make a mis-aimed
-        // ctrl-click destroy a set the user was building, and the geometry
-        // select path treats a modified miss the same way.
-        if (!h.hit) {
-            if (ctrl || shift) return;
-            if (document.selectedItemCount() == 0) return;  // already empty
-            router.runCommandWithArgs("layer.select", "mode:clear");
-            return;
-        }
-        // Already the SOLE selection: a bare `set` on it would push a UI-undo
-        // entry that reverts to the state it came from, so clicking the one
-        // selected item twice would cost the user an Esc-less undo step that
-        // does nothing visible. All three conditions are needed — with two
-        // items selected, a bare click on one of them genuinely collapses the
-        // set to one and must go through.
-        //
-        // TASK 0671 — `.selected`, NOT `isPrimary`. The two agreed while the
-        // edit target had to be a selected item, and `isPrimary` was the
-        // spelling. They part company the moment a target is latched behind a
-        // selection it is not in: click a reference plane (the plane alone is
-        // selected, the mesh keeps the target), then click the MESH, and the
-        // guard read `selCount == 1 && isPrimary(mesh)` as "already the sole
-        // selection" and swallowed the click. The mesh was not selected at all
-        // — the user could not select it back by clicking it.
-        {
-            size_t selCount = 0;
-            foreach (l; document.layers) if (l !is null && l.selected) ++selCount;
-            if (!ctrl && !shift && selCount == 1
-                && document.layers[h.layerIndex].selected)
-                return;
-        }
-        import std.format : format;
-        immutable string mode = ctrl ? "remove" : (shift ? "add" : "set");
-        router.runCommandWithArgs("layer.select",
-                                  format("index:%d mode:%s", h.layerIndex, mode));
-    };
-
-    // Synchronously re-run the GPU ID-buffer hover pick at (mx, my) and
-    // publish g_hovered — the same vert>edge>face resolution + publish the
-    // render loop does each frame (see the pick block in the frame body).
-    // Called on mouse-DOWN, BEFORE the active tool's onMouseButtonDown, so a
-    // tool's click-pick (XfrmTransformTool.tryPickElement under
-    // falloff.element) reads hover for the CURRENT cursor rather than the
-    // PREVIOUS frame's.
-    //
-    // Why it matters: g_hovered is otherwise refreshed only once per render
-    // frame. On a fast click after a large cursor jump (e.g. pick element A,
-    // then immediately click element B), the button-down is processed before
-    // any frame re-picks B, so tryPickElement lands on the STALE element A.
-    // The element-falloff drag then freezes A's anchor for the whole gesture
-    // and only a later frame / the commit corrects it — the "falloff sits at
-    // the previous click and the points snap to the new spot on release" bug.
-    router.refreshHoverPickAt = (int mx, int my) {
-        setOverrideMouse(mx, my);
-        Viewport vp = vpm.activeSnapshot();
-        pickVertices(vp, false);
-        if (edgeCache.needsUpdate(vp)) { edgeCache.invalidate(); edgeCache.update(vp); }
-        pickEdges(vp, false);
-        if (faceCache.needsUpdate(vp)) { faceCache.invalidate(); faceCache.update(vp); }
-        pickFaces(vp, false);
-        int pickedVertex = hoveredVertex;
-        int pickedEdge = hoveredEdge;
-        int pickedFace = hoveredFace;
-        // Tool-driven multi-type priority (vert first, then edge, then face),
-        // mirroring the render-loop resolution so the published hover matches.
-        if (activeTool !is null) {
-            if (hoveredVertex >= 0) { hoveredEdge = -1; hoveredFace = -1; }
-            else if (hoveredEdge >= 0) { hoveredFace = -1; }
-        }
-        publishElementCandidates(mx, my, pickedVertex, pickedEdge, pickedFace);
-        import hover_state : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
-        g_hoveredVertex = hoveredVertex;
-        g_hoveredEdge   = hoveredEdge;
-        g_hoveredFace   = hoveredFace;
-    };
+    // `pickItemUnderCursor`'s same-name forwarder went too: its ONLY caller was
+    // `doItemSelectPickAt`, which now spells `ifs.pickItemUnderCursor`. The
+    // other four forwarders above stay -- the frame body still calls
+    // `pickVertices`/`pickEdges`/`pickFaces`/`pickItems` by their bare names,
+    // and step 3 is what deletes those.
 
     // The entire former UI-panel block (app.d main()'s 23 nested functions)
     // is now relocated to source/ui/panels.d across task 0419's phases:
@@ -5231,228 +5087,27 @@ void main(string[] args) {
     // Main loop
     // -------------------------------------------------------------------------
 
-    // Process one SDL event through the same path as the main loop's
-    // SDL_PollEvent body. Used both:
-    //   - inline by the main loop (one event per SDL_PollEvent), and
-    //   - by EventPlayer for direct dispatch (skipping SDL_PushEvent and
-    //     thus the X11 motion-event coalescing that drops most motion
-    //     events when many are queued in a single PollEvent batch).
-    // Returns true to keep the main loop running, false to quit.
-    // ---- Pie menu (task 1800) -------------------------------------------
+    // Task 0781 step 2e -- THE DISPATCHER MOVED. `processEvent` (the SDL-event
+    // switch), `pieFireHovered` and `pieChordModifier` (its two pie-menu
+    // helpers, called from nowhere else) are now InputRouter methods
+    // (source/input_router.d). That closes step 2: all seven handlers plus the
+    // dispatcher are one object's, and main() reaches the input path through
+    // exactly two call sites, both spelled `router.processEvent(...)` -- the
+    // direct-dispatch delegate just below and the SDL_PollEvent body in the
+    // frame loop.
     //
-    // Fire whatever the ring is currently aimed at, then close. Closing FIRST
-    // is deliberate: a wedge's action may itself open a dialog or a popup, and
-    // a menu still "open" underneath it would keep swallowing input.
-    //
-    // The same two gates the side panel and the status bar apply to a button
-    // apply here (`disabled` placeholder, `actionRefusal`) — one availability
-    // policy for all three surfaces, so a wedge drawn greyed cannot fire.
-    void pieFireHovered() {
-        import pie_menus       : findPieMenu;
-        import ui.availability : actionRefusal;
-        import ui.panels       : dispatchAction;
-
-        auto m    = findPieMenu(g_pie.menuId);
-        int  slot = g_pie.hover;
-        closePie();
-        if (m is null || slot < 0 || slot >= cast(int) m.items.length) return;
-
-        auto btn = m.items[slot];
-        if (btn.disabled) return;
-        if (actionRefusal(reg, btn.action, document.hasEditTarget(),
-                          activeToolId).length > 0) return;
-        dispatchAction(app, btn.action);
-    }
-
-    // Is `sym` one of the modifier keys the opening chord required? Releasing
-    // EITHER half of "Ctrl+Space" ends the gesture — a user who lets go of
-    // Ctrl first has finished aiming just as much as one who lets go of Space.
-    static bool pieChordModifier(SDL_Keycode sym, ushort mods) {
-        switch (sym) {
-            case SDLK_LCTRL:  case SDLK_RCTRL:  return (mods & KMOD_CTRL)  != 0;
-            case SDLK_LSHIFT: case SDLK_RSHIFT: return (mods & KMOD_SHIFT) != 0;
-            case SDLK_LALT:   case SDLK_RALT:   return (mods & KMOD_ALT)   != 0;
-            case SDLK_LGUI:   case SDLK_RGUI:   return (mods & KMOD_GUI)   != 0;
-            default: return false;
-        }
-    }
-
-    bool processEvent(SDL_Event* ev) {
-        evLog.log(*ev);
-        bool isF1orF2 = ev.type == SDL_KEYDOWN &&
-            (ev.key.keysym.sym == SDLK_F1 || ev.key.keysym.sym == SDLK_F2);
-        if (!isF1orF2) recLog.log(*ev);
-
-        // ---- Pie menu input grab (task 1800) ----------------------------
-        //
-        // BEFORE ImGui and before every gate below, because an open pie is
-        // MODAL and is anchored wherever the chord was pressed — which may be
-        // over a docked panel, where `viewportInputAllowed()` would otherwise
-        // eat the very click meant for a wedge, or over an ImGui button, which
-        // would otherwise see the press under the ring and fire on release.
-        // The event is still LOGGED above, so a replay reproduces the gesture.
-        if (g_pie.open) {
-            switch (ev.type) {
-                case SDL_MOUSEMOTION:
-                    aimPie(ev.motion.x, ev.motion.y);
-                    return true;
-                case SDL_MOUSEBUTTONDOWN:
-                    // Swallowed; the wedge runs on the RELEASE half of the
-                    // click, off the position the button came UP at — which is
-                    // the wedge the ring was visibly highlighting.
-                    return true;
-                case SDL_MOUSEBUTTONUP:
-                    if (ev.button.button == SDL_BUTTON_LEFT) {
-                        aimPie(ev.button.x, ev.button.y);
-                        pieFireHovered();
-                    } else {
-                        closePie();
-                    }
-                    return true;
-                case SDL_KEYUP:
-                    // RELEASING THE CHORD DISMISSES — it never selects. The
-                    // ring lives exactly as long as the chord is held down,
-                    // and the only thing that runs a wedge is a CLICK while it
-                    // is up (owner's call 2026-08-23, matching the reference).
-                    //
-                    // Either half of the chord ends it: a user who lets go of
-                    // Ctrl first has stopped holding "Ctrl+Space" just as much
-                    // as one who lets go of Space.
-                    //
-                    // `armedKey == 0` — a ring opened by something other than a
-                    // chord (`/api/command ui.pie …`) — has no chord to
-                    // release, so no key release may close it; it waits for the
-                    // click or for Esc.
-                    if (g_pie.armedKey != 0 &&
-                        (ev.key.keysym.sym == g_pie.armedKey ||
-                         pieChordModifier(ev.key.keysym.sym, g_pie.armedMods)))
-                        closePie();
-                    return true;
-                case SDL_KEYDOWN:
-                    if (ev.key.keysym.sym == SDLK_ESCAPE) { closePie(); return true; }
-                    // Every other key is swallowed while the ring is up: it
-                    // is a menu, not an overlay. The opening chord's own auto-
-                    // repeat lands here too and stops here, so a held chord
-                    // cannot re-dispatch `ui.pie` and drag the ring along
-                    // under the cursor.
-                    return true;
-                default: break;
-            }
-        }
-
-        // THE ONLY DOOR INTO IMGUI (task 1850). Tab is the subpatch toggle;
-        // ImGui's keyboard-focus walk eats it as well, so one press both
-        // toggled the flag and crept the focus one widget along. `feedImGui`
-        // holds back exactly the Tab PRESSES ImGui would turn into a focus
-        // move — bare and Shift+Tab — and passes everything else, releases
-        // included. Ctrl+Tab still reaches ImGui: that is the window switcher,
-        // not a focus move. The rule, and why it has no `WantTextInput`
-        // carve-out, are in `source/imgui_event_gate.d`; do not re-inline this
-        // call, a unittest scans `source/` for a second caller.
-        feedImGui(ev);
-
-        // Route through viewportInputAllowed() so mouse events over the docked
-        // "Viewport" window still reach 3D picking/orbit (objection 1 fix).
-        // In --test viewportInputAllowed()==!io.WantCaptureMouse → byte-identical.
-        //
-        // Drag-capture (task 0222): once a pointer gesture is ACTIVE
-        // (`vpm.dragOriginId >= 0`, set on button-DOWN over a cell), the
-        // remaining MOTION/UP events must reach the origin cell REGARDLESS of
-        // where the cursor now is — over a panel, another Quad/Split cell, or
-        // outside the window. Without this bypass an RMB-lasso (or LMB
-        // box-select / camera drag) whose cursor left the origin cell had its
-        // terminating UP swallowed by the gate → the gesture hung (lasso kept
-        // drawing, selection never committed). The active-gesture guard lets
-        // the UP through so handleMouseButtonUp always completes + clears it.
-        // (SDL-level capture for the out-of-window case is already provided by
-        // ImGui: the ##vpHit InvisibleButton becomes the active item on press,
-        // and ImGui's SDL2 backend SDL_CaptureMouse()s while an item is active.)
-        if (!testMode && !viewportInputAllowed() && vpm.dragOriginId < 0 &&
-            (ev.type == SDL_MOUSEBUTTONDOWN ||
-             ev.type == SDL_MOUSEBUTTONUP   ||
-             ev.type == SDL_MOUSEMOTION      ||
-             ev.type == SDL_MOUSEWHEEL))
-            return true;
-
-        // A FOCUSED TEXT FIELD OWNS THE KEYBOARD. Same rule as before, moved
-        // into `imgui_event_gate` so it can be tabled in a unittest (task
-        // 1850): the gate above now holds a bare Tab PRESS back from ImGui, so
-        // the focus can no longer walk off a field by itself — which makes THIS
-        // line the only thing between a Tab pressed mid-typing and the subpatch
-        // toggle at `case SDLK_TAB`. It did not have that job before the fix
-        // (the focus left the field on Tab #1 and Tab #2 came through here
-        // unswallowed), so it is pinned now rather than left inline.
-        if (!keyBelongsToEditor(ev.type, io.WantTextInput))
-            return true;
-
-        // Phase 1c — input-router seam: compute hovered/active viewport per
-        // mouse event.  With ONE viewport (Phase 1) viewportUnderCursor()
-        // trivially returns 0 or −1, so activeId/hoveredId never leave 0 and
-        // the block is a no-op that doesn't change behaviour.
-        //
-        // Phase 4 will (a) route camera-manip to hoveredCamera(), (b) gate
-        // viewport input on hoveredId >= 0, (c) freeze the active Viewport3D
-        // at gizmo-drag start — all in this block.
-        {
-            int _rtx = -1, _rty = -1;
-            if (ev.type == SDL_MOUSEBUTTONDOWN || ev.type == SDL_MOUSEBUTTONUP) {
-                _rtx = ev.button.x; _rty = ev.button.y;
-            } else if (ev.type == SDL_MOUSEMOTION) {
-                _rtx = ev.motion.x; _rty = ev.motion.y;
-            } else if (ev.type == SDL_MOUSEWHEEL) {
-                SDL_GetMouseState(&_rtx, &_rty);
-            }
-            if (_rtx >= 0) {
-                vpm.hoveredId = vpm.viewportUnderCursor(_rtx, _rty);
-                // Focus-follows-mouse: the active cell tracks the hovered one
-                // on every positioned mouse event (motion/wheel/down/up), not
-                // just on click — see ViewportManager.followHover() for the
-                // dragOriginId pin + panel-hover fallback rationale.
-                vpm.followHover();
-                if (ev.type == SDL_MOUSEBUTTONDOWN && vpm.hoveredId >= 0) {
-                    vpm.activeId     = vpm.hoveredId;
-                    vpm.dragOriginId = vpm.hoveredId;
-                }
-                if (ev.type == SDL_MOUSEBUTTONUP)
-                    vpm.dragOriginId = -1;
-            }
-        }
-
-        switch (ev.type) {
-            // Window [X] / SIGINT (task 0434, re-pointed by 1521): build the
-            // ORDINARY `file.quit` command and run it through the ONE guarded
-            // UI entry, so the window close and Ctrl+Q are literally the same
-            // path. `fromWindowClose` is the only difference and it buys
-            // exactly one thing: `--test` must still be able to close the
-            // window (the harness ends every session that way), while a
-            // `file.quit` DISPATCHED by a test must not take the shared
-            // instance down with it. Keep processing this frame (return true).
-            case SDL_QUIT:
-                {
-                    import commands.file.quit : FileQuit;
-                    auto q = cast(FileQuit) reg.commandFactories["file.quit"]();
-                    if (q !is null) q.setFromWindowClose(true);
-                    runUiCommand(q, RecordMode.Record, "file.quit");
-                }
-                break;
-            case SDL_WINDOWEVENT:     router.handleWindowEvent(ev.window); break;
-            case SDL_KEYDOWN:         router.handleKeyDown(ev.key);      break;
-            // Task 0709 — the release side of the pair above. Absent until
-            // this task, which is what made `Tool.onKeyUp` unreachable.
-            case SDL_KEYUP:           router.handleKeyUp(ev.key);        break;
-            case SDL_MOUSEBUTTONDOWN: router.handleMouseButtonDown(ev.button); break;
-            case SDL_MOUSEBUTTONUP:   router.handleMouseButtonUp(ev.button);   break;
-            case SDL_MOUSEWHEEL:      router.handleMouseWheel(ev.wheel);   break;
-            case SDL_MOUSEMOTION:     router.handleMouseMotion(ev.motion); break;
-            default: break;
-        }
-        return true;
-    }
+    // `evLog` and `recLog` did NOT move with it. They are the plan's
+    // `winW`/`winH` exception class, not new router state: main() opens them
+    // from the CLI flags and registers `scope(exit) <log>.close()` AT the
+    // declarations ~3,580 lines above, so moving the storage would mean
+    // re-registering those two `scope(exit)`s here, in the middle of the GL
+    // teardown chain instead of after it. The router reads them through
+    // `evLogPtr`/`recLogPtr`; the reasoning is written out at those fields.
 
     // Register direct-dispatch delegate so EventPlayer.tick can deliver
     // events to the same code path without going through SDL's queue.
     setDirectEventDispatch((SDL_Event* ev) {
-        if (!processEvent(ev)) running = false;
+        if (!router.processEvent(ev)) running = false;
     });
     scope(exit) clearDirectEventDispatch();
 
@@ -5565,7 +5220,7 @@ void main(string[] args) {
                   || event.type == SDL_MOUSEBUTTONUP
                   || event.type == SDL_MOUSEWHEEL))
                     continue;
-                if (!processEvent(&event)) {
+                if (!router.processEvent(&event)) {
                     running = false;
                     break;
                 }

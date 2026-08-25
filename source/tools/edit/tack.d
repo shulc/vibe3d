@@ -385,7 +385,7 @@ public:
         if (mods & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT)) return false;   // reserved for camera / modifiers
 
         // Read the hover fresh rather than the possibly one-frame-stale
-        // draw()-cached hoveredTargetFace_ — app.d's refreshHoverPickAt
+        // draw()-cached hoveredTargetFace_ — input_router.d's refreshHoverPickAt
         // re-runs the hover pick synchronously at the click pixel BEFORE
         // dispatching to the active tool's onMouseButtonDown, precisely so a
         // fast click after a cursor jump doesn't commit against a stale
