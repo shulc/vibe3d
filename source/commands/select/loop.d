@@ -66,7 +66,9 @@ class SelectLoop : Command {
             bool[] initSel = mesh.selectedEdges.dup;
             foreach (i; 0 .. initSel.length) {
                 if (!initSel[i]) continue;
-                foreach (ei; mesh.selectLoopEdges(cast(uint)i))
+                // `mesh` is a `Mesh*`: the member call auto-derefs, the UFCS free
+                // function (task 1903 Stage C) does not — hence `(*mesh).` beside `mesh.`.
+                foreach (ei; (*mesh).selectLoopEdges(cast(uint)i))
                     mesh.selectEdge(ei);
             }
             return true;
@@ -109,7 +111,7 @@ class SelectLoop : Command {
             // seed = adjacent selected vertex PAIR; result REPLACES the
             // selection (reference purge-then-commit — a lone selected
             // vertex therefore clears it).
-            mesh.selectVerticesFrom(mesh.selectLoopVertices());
+            mesh.selectVerticesFrom((*mesh).selectLoopVertices());
             return true;
         }
 
@@ -128,7 +130,7 @@ class SelectLoop : Command {
         // (and grows faceSelectionOrder too, which resizeFaceSelection does
         // not) — so the guard was redundant, and reading it through the
         // allocating `mesh.selectedFaces` @property cost a whole-mesh bool[].
-        mesh.selectFacesFrom(mesh.selectLoopFaces());
+        mesh.selectFacesFrom((*mesh).selectLoopFaces());
 
         return true;
     }

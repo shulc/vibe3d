@@ -10,7 +10,14 @@ import std.json : JSONValue;
 import std.math : hypot, SQRT2;
 
 import tool;
-import mesh                : Mesh, GpuMesh, MeshCacheKey;
+// `selectLoopEdges` / `isEdgeBorder` are FREE FUNCTIONS in
+// `mesh_ops.select_loop` since task 1903 Stage C, re-exported by mesh.d's
+// `public import`. A SELECTIVE import does not pick up a re-export by
+// itself, and UFCS needs the name in this module's scope — so they are
+// listed here by name. `render.d`'s mixin body resolves in THIS scope, so
+// its two `selectLoopEdges` call sites are covered by this line too.
+import mesh                : Mesh, GpuMesh, MeshCacheKey,
+                             selectLoopEdges, isEdgeBorder;
 import math               : Vec3, Viewport, projectToWindowFull, closestOnSegment2D,
                              screenPointToRay, closestPointOnSegmentToRay, dot,
                              pointInPolygon2D, rayPlaneIntersect,
@@ -3338,7 +3345,7 @@ public:
                     if (e2 == came) continue;
                     if ((e2 in inSet) is null) continue;
                     if ((e2 in taken) !is null) continue;
-                    if (!m.isEdgeBorder(cast(uint) e2)) continue;
+                    if (!(*m).isEdgeBorder(cast(uint) e2)) continue;
                     next = e2;
                     break;
                 }
@@ -3369,7 +3376,7 @@ public:
         auto m = mesh;
         if (m is null || seed < 0 || seed >= cast(int)m.edges.length) return false;
 
-        if (!m.isEdgeBorder(cast(uint) seed)) {
+        if (!(*m).isEdgeBorder(cast(uint) seed)) {
             // Interior seed -> the Move family, per the effective loop flag.
             if (loopFlag) return stamp(onMoveLoopRmbDown(e, vts), PenGesture.MoveLoop,
                                        InputButton.Left);
@@ -3861,7 +3868,7 @@ public:
                 // MINOR-4: `isEdgeBorder` is `n == 1` EXACTLY (one incident
                 // face) — a 0-face bare edge returns false (nothing to
                 // hatch there, correctly).
-                if (m.isEdgeBorder(cast(uint)hoverNearestEdge_)) {
+                if ((*m).isEdgeBorder(cast(uint)hoverNearestEdge_)) {
                     hoverBoundary_ = true;
                     foreach (fi; m.facesAroundEdge(cast(uint)hoverNearestEdge_)) {
                         hoverBoundaryFace_ = cast(int)fi;
@@ -4436,7 +4443,7 @@ public:
 
         bool[uint] seen;
         uint[] verts;
-        foreach (ei; m.selectLoopEdges(seedEdge)) {
+        foreach (ei; (*m).selectLoopEdges(seedEdge)) {
             if (ei < 0 || ei >= cast(int)m.edges.length) continue;   // defensive
             auto ep = m.edges[cast(uint)ei];
             foreach (v; ep) {
@@ -4545,13 +4552,13 @@ public:
         // interior one this chord is a MOVE-LOOP, not a declined press and not
         // a duplicate — the reference's Evaluate guards Duplicate on
         // `isEdgeBorder(pressed)` and silently runs Move when it fails.
-        if (!m.isEdgeBorder(cast(uint) seed)) return onMoveLoopRmbDown(e, vts);
+        if (!(*m).isEdgeBorder(cast(uint) seed)) return onMoveLoopRmbDown(e, vts);
 
         // Contract C-1: this chord FORCES the loop on and never reads
         // `edgeLoop_` — `loop=false` and `loop=true` were bit-identical on one
         // seed. C-4: the committed set is the border RUN, not the whole
         // gathered perimeter.
-        auto edges = trimBorderRunAroundSeed(m.selectLoopEdges(cast(uint)seed), seed);
+        auto edges = trimBorderRunAroundSeed((*m).selectLoopEdges(cast(uint)seed), seed);
         if (edges.length == 0) return false;   // defensive; shouldn't happen for a valid seed
 
         dupLoopSeed_    = seed;
@@ -5569,7 +5576,7 @@ public:
     // never yield an out-of-range edge index).
     package static uint[][uint] loopNeighborsOf(Mesh* m, uint seed) {
         uint[][uint] nbrs;
-        foreach (ei; m.selectLoopEdges(seed)) {
+        foreach (ei; (*m).selectLoopEdges(seed)) {
             if (ei < 0 || ei >= cast(int)m.edges.length) continue;   // defensive
             auto ep = m.edges[cast(uint)ei];
             nbrs[ep[0]] ~= ep[1];
@@ -6045,7 +6052,7 @@ public:
 
         auto mask = new bool[](m.edges.length);
         if (loop)
-            foreach (ei; m.selectLoopEdges(cast(uint)edgeIdx)) {
+            foreach (ei; (*m).selectLoopEdges(cast(uint)edgeIdx)) {
                 if (ei < 0 || ei >= cast(int)m.edges.length) continue;
                 if (polyCount[ei] != 2) continue;
                 mask[ei] = true;

@@ -33,7 +33,12 @@ import std.json : JSONValue;
 import std.math : hypot, SQRT2;
 
 import tool;
-import mesh                : Mesh, GpuMesh, MeshCacheKey;
+// `selectLoopEdges` / `isEdgeBorder` / `isVertexBorder` are free functions in
+// `mesh_ops.select_loop` since task 1903 Stage C (re-exported by mesh.d). A
+// selective import does not pick up a re-export on its own and UFCS needs the
+// name in this module's scope, so they are listed by name here.
+import mesh                : Mesh, GpuMesh, MeshCacheKey,
+                             selectLoopEdges, isEdgeBorder, isVertexBorder;
 import math               : Vec3, Viewport, projectToWindowFull, closestOnSegment2D,
                              screenPointToRay, closestPointOnSegmentToRay, dot,
                              pointInPolygon2D, rayPlaneIntersect,
@@ -325,7 +330,7 @@ unittest {
                     if (e2 == came) continue;
                     if ((e2 in inSet) is null) continue;
                     if ((e2 in taken) !is null) continue;
-                    if (!m.isEdgeBorder(cast(uint) e2)) continue;
+                    if (!(*m).isEdgeBorder(cast(uint) e2)) continue;
                     next = e2;
                     break;
                 }
@@ -399,7 +404,7 @@ unittest {
     void sweep(string rig, Mesh* m, bool fanIdentity) {
         if (fanIdentity)
             foreach (v; 0 .. cast(uint) m.vertices.length) {
-                if (!m.isVertexBorder(v)) continue;
+                if (!(*m).isVertexBorder(v)) continue;
                 assert(m.vertexValence(v) == cast(uint) polyCountOf(*m, v) + 1,
                     rig ~ ": a border-reachable vertex must have an OPEN dart fan "
                         ~ "(valence == incident-polygon count + 1) — this identity "
@@ -408,8 +413,8 @@ unittest {
 
         t.meshSrc_ = () => m;
         foreach (ei; 0 .. cast(int) m.edges.length) {
-            if (!m.isEdgeBorder(cast(uint) ei)) continue;   // the only seeds the trim sees
-            auto gathered = m.selectLoopEdges(cast(uint) ei);
+            if (!(*m).isEdgeBorder(cast(uint) ei)) continue;   // the only seeds the trim sees
+            auto gathered = (*m).selectLoopEdges(cast(uint) ei);
 
             auto shipped = sortedDup(t.trimBorderRunAroundSeed(gathered, ei));
             auto byPoly  = sortedDup(walkWith(m, gathered, ei,

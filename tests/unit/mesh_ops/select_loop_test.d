@@ -1,7 +1,14 @@
-// Module unittests for the select.loop family (`mesh_ops.select_loop`, mixed
-// into `struct Mesh` as `MeshSelectLoopOps`) — the differential test against
-// the frozen head-restart oracles, the seed-scan step budget, and the corpus
-// fixtures both run on.
+// Module unittests for the select.loop family (`mesh_ops.select_loop`) — the
+// differential test against the frozen head-restart oracles, the seed-scan
+// step budget, and the corpus fixtures both run on.
+//
+// The family was a `mixin MeshSelectLoopOps` inside `struct Mesh` until task
+// 1903 Stage C turned it into free functions over `ref const(Mesh)`. The op
+// call sites below (`m.selectLoopFaces()`, …) are unchanged — UFCS keeps that
+// spelling. The seed-scan counter is the one thing that could not: it was
+// `Mesh.gSelectLoopSeedScanSteps`, a static injected into the struct, and a
+// `Mesh.`-qualified name is not a UFCS call, so it is now the module-level
+// `gSelectLoopSeedScanSteps` this file reads through `import mesh;`.
 //
 // Moved here by task 0717 when the family was split out of mesh.d. 0706 had
 // left these in source/ as "blocks that read private"; they do not. The
@@ -240,9 +247,9 @@ unittest { // …and they cost O(selected), not O(selected^2)
         m.resizeFaceSelection();
         m.faceSelectionOrder.length = m.faces.length;
         foreach (i; 0 .. m.faces.length) m.selectFace(cast(int)i);
-        Mesh.gSelectLoopSeedScanSteps = 0;
+        gSelectLoopSeedScanSteps = 0;
         m.selectLoopFaces();
-        return Mesh.gSelectLoopSeedScanSteps;
+        return gSelectLoopSeedScanSteps;
     }
     const p1 = polySteps(20);   //   800 triangles
     const p2 = polySteps(40);   //  3200 triangles
@@ -260,9 +267,9 @@ unittest { // …and they cost O(selected), not O(selected^2)
         auto m = slDisjoint(k, 4);
         m.resizeVertexSelection();
         foreach (i; 0 .. m.vertices.length) m.selectVertex(cast(int)i);
-        Mesh.gSelectLoopSeedScanSteps = 0;
+        gSelectLoopSeedScanSteps = 0;
         m.selectLoopVertices();
-        return Mesh.gSelectLoopSeedScanSteps;
+        return gSelectLoopSeedScanSteps;
     }
     const v1 = vertSteps(250);   // 1000 vertices
     const v2 = vertSteps(1000);  // 4000 vertices
@@ -276,4 +283,22 @@ unittest { // …and they cost O(selected), not O(selected^2)
     // ~3 steps/vertex.
     assert(p2 <= 24 * 3200, format("polygon seed scan: %d steps for 3200 polygons", p2));
     assert(v2 <= 24 * 4000, format("vertex seed scan: %d steps for 4000 vertices", v2));
+
+    // NON-VACUITY FLOOR (task 1903 Stage C). Every assertion above is an UPPER
+    // bound, so a counter that never increments satisfies all four — measured:
+    // deleting the three `++gSelectLoopSeedScanSteps` sites left this block
+    // green, and with them the only evidence that the walks under test are the
+    // ones being measured at all. A scan that touches a selected element must
+    // cost at least one step per element it consumed; anything at or below the
+    // element count means the instrument is disconnected, not that the scan
+    // got faster.
+    assert(p1 >= 800 && p2 >= 3200,
+        format("the polygon seed-scan counter did not count: %d steps for 800 "
+             ~ "selected polygons and %d for 3200. Every other assertion here "
+             ~ "is an upper bound, so a dead counter passes them all — this "
+             ~ "floor is what says the walk being measured is the live one "
+             ~ "(task 1903 Stage C).", p1, p2));
+    assert(v1 >= 1000 && v2 >= 4000,
+        format("the vertex seed-scan counter did not count: %d steps for 1000 "
+             ~ "selected vertices and %d for 4000 (task 1903 Stage C).", v1, v2));
 }

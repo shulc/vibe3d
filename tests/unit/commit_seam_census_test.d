@@ -317,3 +317,94 @@ unittest // every beginEditBatch caller carries a scope(failure) abort
                  ~ "it from this roster and say so", want));
     }
 }
+
+// ---------------------------------------------------------------------------
+// THE MIXIN CENSUS (plan §4.5) — the track-1 conversion's only gate.
+//
+// `grep -c 'mixin Mesh*Ops' source/mesh.d` was 13 before Stage C and must
+// reach 0. This block holds the running count and, more importantly, names the
+// families already converted, because the count alone is a weak check: a stage
+// that converted one family while someone re-added a mixin for another would
+// keep the number and lose the meaning.
+//
+// WHY A NAMED ROSTER AND NOT JUST A NUMBER. A member reachable on the
+// receiver BEATS a same-name UFCS free function — measured by the plan's
+// Stage-0 probe. So a `mixin MeshSelectLoopOps;` reinstated NEXT TO the free
+// functions is not a compile error and not an ambiguity: `mesh.selectLoopEdges(…)`
+// silently binds back to the mixed-in method, the free functions go dead, and
+// every select.loop test stays green while measuring the old body. That is a
+// mutation no behavioural test in the tree can see, which is exactly why it
+// has to be a text census here. Hence `kConverted`: the family is named, and
+// reinstating its mixin reddens with the family's name in the message.
+//
+// The floor is a floor, never an equality on the converted side: a later stage
+// converting another family lowers `mixin` count and raises the roster, and
+// neither direction should need this block edited twice.
+//
+// M-C-MIXIN: paste `mixin MeshSelectLoopOps;` back into struct Mesh (keeping
+// the free functions) → this block reddens naming MeshSelectLoopOps.
+// ---------------------------------------------------------------------------
+
+unittest // the mixin count is falling, and the converted families stay converted
+{
+    import std.algorithm : canFind;
+    import std.regex     : ctRegex, matchAll;
+
+    immutable path = buildPath(repoRoot, "source", "mesh.d");
+    immutable src  = stripCommentsAndStrings(readText(path));
+
+    // Non-vacuity floor. The stripper eating the file, or a bad path, would
+    // otherwise read as "every family is converted" — the strongest possible
+    // green from the weakest possible evidence.
+    assert(countOccurrences(src, "struct Mesh {") == 1,
+        "the comment stripper ate source/mesh.d — `struct Mesh {` is gone, so "
+      ~ "a zero mixin count below would mean nothing");
+
+    auto re = ctRegex!(`mixin\s+(Mesh[A-Za-z]*Ops)\s*;`);
+    string[] live;
+    foreach (mo; matchAll(src, re))
+        live ~= mo[1].idup;
+
+    // 13 at the branch point; one family leaves per track-1 stage; 0 at Stage I.
+    enum size_t kAtStart = 13;
+    enum size_t kExpected = 12;          // Stage C converted MeshSelectLoopOps
+    assert(live.length == kExpected,
+        format("source/mesh.d instantiates %d `mixin Mesh*Ops` templates; this "
+             ~ "gate expects %d. Track 1 started at %d and every conversion "
+             ~ "stage deletes its own line in its own commit, so a HIGHER count "
+             ~ "is a reinstated mixin and a LOWER one is a stage that landed "
+             ~ "without updating this number. Live: %s "
+             ~ "(task 1903 §4.5)", live.length, kExpected, kAtStart, live));
+
+    // …and these are gone BY NAME. `MeshSelectLoopOps` cannot come back beside
+    // its free functions without silently taking every call site with it.
+    static immutable string[] kConverted = ["MeshSelectLoopOps"];
+    foreach (name; kConverted)
+        assert(!live.canFind(name),
+            format("`mixin %s;` is back in struct Mesh. That family is free "
+                 ~ "functions in source/mesh_ops/ now, and a member BEATS a "
+                 ~ "same-name UFCS free function — so the mixin does not "
+                 ~ "conflict with them, it SHADOWS them: every call site binds "
+                 ~ "to the mixed-in body again, the free functions go "
+                 ~ "unreachable, and every test on this family stays green "
+                 ~ "while measuring the code the conversion replaced "
+                 ~ "(task 1903, plan Revision 2 caveat 1).", name));
+
+    // The other half of the same claim: the ops file must not be a mixin
+    // template any more either. Deleting the instantiation while leaving
+    // `mixin template MeshSelectLoopOps()` in place would leave a template
+    // nothing instantiates — dead code that reads as the live implementation.
+    immutable opsPath = buildPath(repoRoot, "source", "mesh_ops", "select_loop.d");
+    assert(exists(opsPath), "cannot find source/mesh_ops/select_loop.d at " ~ opsPath);
+    immutable ops = stripCommentsAndStrings(readText(opsPath));
+    assert(countOccurrences(ops, "mixin template MeshSelectLoopOps") == 0,
+        "source/mesh_ops/select_loop.d still declares `mixin template "
+      ~ "MeshSelectLoopOps` — Stage C converted this family to free functions "
+      ~ "over `ref const(Mesh)`; a surviving template is either dead or a "
+      ~ "second implementation (task 1903 Stage C).");
+    assert(countOccurrences(ops, "selectLoopEdges(ref const(Mesh) m") == 1,
+        "source/mesh_ops/select_loop.d no longer declares `selectLoopEdges` as "
+      ~ "a free function over `ref const(Mesh)` — if the receiver changed, say "
+      ~ "why here: `ref const(Mesh)` is what keeps `mesh.selectLoopEdges(seed)` "
+      ~ "compiling verbatim at ~40 call sites (task 1903 §4.1).");
+}

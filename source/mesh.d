@@ -18,7 +18,12 @@ import mesh_ops.bevel_fin : MeshBevelFinOps;
 import mesh_ops.bevel_vertex : MeshBevelVertexOps;
 import mesh_ops.extrude : MeshExtrudeOps;
 import mesh_ops.connected_mask : MeshConnectedMaskOps;
-import mesh_ops.select_loop : MeshSelectLoopOps;
+// task 1903 Stage C: the select.loop family is module-level free functions over
+// `ref const(Mesh)`, not a mixin. PUBLIC so every `import mesh;` re-exports them
+// and `mesh.selectLoopEdges(seed)` keeps resolving through UFCS unchanged
+// (`doc/mesh_edit_seam_plan.md` §4.2). This keeps mesh.d the door for the ops
+// namespace; narrowing that is audit 0678 M9's job, not this task's.
+public import mesh_ops.select_loop;
 import mesh_ops.poly_bevel : MeshPolyBevelOps;
 import mesh_selsets : selSetResizeVertex, selSetRekeyEdges,
     selSetGatherVertexMaskForward;
@@ -13151,9 +13156,14 @@ struct Mesh {
     // collectEdgeRing / insertEdgeLoops / insertEdgeLoopsMulti) + capShellCycles
     // — see source/mesh_ops/loop_slice.d (task 0417, 0407 §B.V2).
     // select.loop family (border predicates / selectLoopEdges / selectLoopVertices
-    // / selectLoopFaces + the head-restart oracles) — see
-    // source/mesh_ops/select_loop.d (task 0717, 0678 §2B-M3).
-    mixin MeshSelectLoopOps;
+    // / selectLoopFaces + the head-restart oracles) is NO LONGER a mixin: task
+    // 1903 Stage C made it module-level free functions over `ref const(Mesh)` in
+    // source/mesh_ops/select_loop.d, re-exported by the `public import` at the
+    // top of this file. Do not reinstate the `MeshSelectLoopOps` mixin here — a
+    // member BEATS a same-name UFCS free function, so the mixin would silently
+    // take every call back and the conversion would mean nothing
+    // (`doc/mesh_edit_seam_plan.md` Revision 2 caveat 1;
+    // tests/unit/commit_seam_census_test.d reddens by name if it returns).
 
     mixin MeshLoopSliceOps;
 

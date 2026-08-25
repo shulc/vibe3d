@@ -354,7 +354,7 @@ mixin template PenRenderOps() {
                     ghostPos[vi] = g;
                 }
 
-                foreach (ei; m.selectLoopEdges(cast(uint)moveLoopSeed_)) {
+                foreach (ei; (*m).selectLoopEdges(cast(uint)moveLoopSeed_)) {
                     if (ei < 0 || ei >= cast(int)m.edges.length) continue;
                     auto ringE = m.edges[ei];
                     auto ga = ringE[0] in ghostPos;
@@ -407,7 +407,7 @@ mixin template PenRenderOps() {
             if (m !is null && smoothLoopSeed_ >= 0 && smoothLoopSeed_ < cast(int)m.edges.length) {
                 enum uint smoothLoopCol = IM_COL32(120, 255, 200, 220);   // smoothing green-blue (P8's own hue)
                 const AimViewport vpAim = aimSpace(vp, primaryModelSpace());   // Pixel (§1.1), once (§3)
-                foreach (ei; m.selectLoopEdges(cast(uint)smoothLoopSeed_)) {
+                foreach (ei; (*m).selectLoopEdges(cast(uint)smoothLoopSeed_)) {
                     if (ei < 0 || ei >= cast(int)m.edges.length) continue;
                     auto ringE = m.edges[ei];
                     ImVec2 ra, rb;
