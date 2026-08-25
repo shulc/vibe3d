@@ -38,8 +38,9 @@ module input_router;
 // holds as a class reference -- so STEP 2 walks the remaining five handlers
 // in, one commit each, in the plan's order (2a `handleKeyDown` +
 // `handleKeyUp`, 2c `handleMouseMotion`, 2d `handleMouseButtonDown/Up`, 2e
-// `processEvent`). Done so far: 2a + 2c. `handleMouseButtonDown/Up` and
-// `processEvent` are still nested in main().
+// `processEvent`). Done so far: 2a + 2c + 2d — six of the seven handlers.
+// `processEvent` (the dispatcher that calls the other six) and the three
+// picker delegate BODIES are still nested in main(); step 2e takes them.
 //
 // The `buildToolVts` ABI trap the paragraph above names is REAL and is now
 // measured rather than reasoned (task 0781 step 2a Log): the real function is
@@ -80,7 +81,7 @@ import eventlog             : EventLogger, setOverrideMouse;
 import toolpipe.packets     : SubjectPacket, GesturePacket, GestureTrack;
 import operator             : VectorStack;
 import shortcuts            : canonFromEvent, resolveBinding, BindingKind;
-import seltype              : SelType, currentSelType;
+import seltype              : SelType, currentSelType, viewportPickType;
 import editmode             : EditMode;
 import viewport             : Viewport3D;
 // Task 0781 step 2c -- what the MOTION handler reaches beyond the two
@@ -88,11 +89,32 @@ import viewport             : Viewport3D;
 // `GesturePacket` (the cooked 2D event), `setOverrideMouse` (eventlog's
 // replay-time cursor override), `Viewport`/`Vec3` (the camera-drag math)
 // and `ImVec2` (the lasso trail's element type).
-import math                 : Viewport, Vec3;
+import math                 : Viewport, Vec3, ModelSpace, projectionSpace,
+                              projectToWindow, pointInPolygon2D, frontFacingLocal;
 import d_imgui.imgui_h      : ImVec2;
 import pie_state            : g_pie, armPie;
 import handles.gizmo_metrics : stepGizmoHandleScale;
 import log                  : logInfo;
+// Task 0781 step 2d -- what the PRESS/RELEASE pair reaches beyond the three
+// handlers already here. `ImGui` is the focus drop on a viewport click;
+// `View` is `tbSpinCam`'s type; `snapshot`/`selection_edit`/`loop`/`connect`
+// back the interactive-selection session and the double-click commands;
+// `document`/`symmetry_pick`/the `math` names above are the RMB lasso's
+// geometry half; the three `ai.*` modules are the press handler's
+// interaction-log capture. None of them imports this module back.
+import ImGui = d_imgui;
+import view                 : View;
+import snapshot             : SelectionSnapshot;
+import document             : primaryModelSpace;
+import symmetry_pick        : symmetricSelectVertex, symmetricSelectEdge,
+                              symmetricSelectFace;
+import commands.mesh.selection_edit : MeshSelectionEdit;
+import commands.select.loop    : SelectLoop;
+import commands.select.connect : SelectConnect;
+import ai.element_candidates : collectElementCandidates,
+                               resolveElementCandidateDecision;
+import ai.interaction       : AiInteractionContext, AiInteractionPhase, AiIntent;
+import ai.interaction_log   : makeAiInteractionLogRecord;
 
 /// The input-router cluster (task 0781). Constructed once in main() after
 /// EditorApp's own wiring, and threaded the same way ToolHost/vpm/etc.
@@ -123,7 +145,7 @@ struct InputRouter {
     //      for an address-taken local (call-site edit `&x -> &x()`, since
     //      `&propertyCall` addresses the property FUNCTION, not the `ref`
     //      it returns). `fbW`/`fbH` are ALSO read every frame by the
-    //      not-yet-extracted frame body (app.d ~8039-8329); `winW`/`winH`
+    //      not-yet-extracted frame body (the frame body in app.d (the fbW/fbH readers around the FBO resize and the per-frame upload)); `winW`/`winH`
     //      have no other reader once init finishes, but stay pointer-backed
     //      for the same address-of reason regardless. ----
     int* winWPtr;
@@ -145,18 +167,48 @@ struct InputRouter {
     EventLogger* recLogPtr;
     @property ref EventLogger recLog() { return *recLogPtr; }
 
-    // Task 0781 step 2a -- the argument-carrying command dispatcher, held as a
-    // DELEGATE onto main()'s own nested function rather than moved.
-    // doc/input_state_cluster_plan.md §4/Q2 says to move the body once every
-    // caller is router-side, and gives the deciding grep; re-run today it
-    // returns exactly the four sites the plan predicts (declaration +
-    // `handleKeyDown` + `doItemSelectPickAt` ×2), but `doItemSelectPickAt` does
-    // not become a router method until step 2d. So this step takes the plan's
-    // stated alternative -- a `bool delegate(string, string)` field, never a
-    // duplicated body -- and 2d turns it into a real method when its second
-    // caller arrives. The field NAME is the function's, so the moved call site
-    // is textually unchanged.
-    bool delegate(string, string) runCommandWithArgs;
+    // Task 0781 step 2d -- the argument-carrying command dispatcher, now a real
+    // METHOD (step 2a parked it here as a `bool delegate(string, string)` field
+    // while `doItemSelectPickAt` was still main()'s). Plan §4/Q2's deciding
+    // grep, re-run at the move, still returned exactly the shape it predicts --
+    // the declaration plus `handleKeyDown` and `doItemSelectPickAt` ×2, nothing
+    // else -- so the plan's "move it" branch applies. The body is app.d's
+    // verbatim; the ONLY edits are `app.reg` and `app.runCommand`, because this
+    // method is not inside a `with (app)` block. `handleKeyDown`'s call site is
+    // textually unchanged (the method name is the field's); `doItemSelectPickAt`
+    // is still bound in main() until step 2e, so its two calls spell
+    // `router.runCommandWithArgs`.
+    //
+    // Run a command immediately with a baked argstring injected — used by
+    // shortcut bindings that pin arguments (`mesh.subdivide: "D ccsds"`), so a
+    // param-carrying command applies at once instead of popping the args dialog
+    // (mirrors baking `poly.subdivide ccsds` into its keymap). Positional
+    // args map onto params() in declaration order; `name:value` args match by
+    // name. Injection writes through the same param pointers the dialog uses.
+    // Returns false only if the id has no factory.
+    bool runCommandWithArgs(string commandId, string argstr) {
+        import std.json  : JSONValue, JSONType;
+        import params    : injectParamsInto;
+        import argstring : parseArgstring;
+        auto factory = commandId in app.reg.commandFactories;
+        if (factory is null) return false;
+        auto cmd    = (*factory)();
+        auto schema = cmd.params();
+        if (argstr.length > 0 && schema.length > 0) {
+            auto pj = parseArgstring(commandId ~ " " ~ argstr).params;
+            if (pj.type == JSONType.object) {
+                // Positional args → schema order (so "ccsds" fills `mode`).
+                if (auto pos = "_positional" in pj)
+                    if (pos.type == JSONType.array)
+                        foreach (i, ref v; pos.array)
+                            if (i < schema.length)
+                                pj.object[schema[i].name] = v;
+                injectParamsInto(schema, pj);
+            }
+        }
+        app.runCommand(cmd);
+        return true;
+    }
 
     // ---- Task 0781 step 2c: what `handleMouseMotion` owns ---------------
     //
@@ -208,6 +260,69 @@ struct InputRouter {
     // main() local: the binding happens ~1,000 lines after the handlers are
     // declared, and an SDL event cannot arrive in between.
     void delegate(int mx, int my) doSelectPickAt;
+
+    // ---- Task 0781 step 2d: what the PRESS/RELEASE pair owns -------------
+
+    // The ITEM-selection-type counterpart of doSelectPickAt (task 0643):
+    // resolve the item under the cursor and select it through `layer.select`.
+    // Held on exactly the terms `doSelectPickAt` above is: the BODY is still a
+    // closure over main()'s frame, bound next to the pick family there, and
+    // step 2e takes it. `ctrl` / `shift` arrive as booleans rather than being
+    // re-read from SDL_GetModState() inside: the press handler has already
+    // cooked them, and a second read could disagree with the one that chose
+    // this branch.
+    void delegate(int mx, int my, bool ctrl, bool shift) doItemSelectPickAt;
+
+    // Re-runs the GPU hover pick at a pixel so a mouse-DOWN element click-pick
+    // reads current hover, not last frame's. Same holding as the two delegates
+    // above: bound in main() near `pickFaces`, body moves in step 2e.
+    void delegate(int mx, int my) refreshHoverPickAt;
+
+    // Last element triple resolved by doSelectPickAt, stashed so the mouse-DOWN
+    // dispatch path can capture an interaction-log record (task 0027) WITHOUT
+    // re-running the pick — and without the shared delegate body (also bound to
+    // mouse-MOTION) emitting one record per motion event. Exactly one of these
+    // is >= 0 per editMode (vertices/edges/polygons); all -1 = a background pick.
+    //
+    // The READER moved here with `handleMouseButtonDown`; the WRITER is
+    // `doSelectPickAt`'s body, still main()'s, which reaches these three
+    // through same-name `@property ref` forwarders in the router-wiring block
+    // until step 2e.
+    int aiLastPickedVertex = -1;
+    int aiLastPickedEdge   = -1;
+    int aiLastPickedFace   = -1;
+
+    // The interaction-log source tag, BY VALUE (assigned once at wiring, never
+    // mutated -- the (в) class this struct already applies to `window` and
+    // `playbackMode`), and the EditMode->schema-id mapper as a DELEGATE onto
+    // main()'s nested function. Neither moves outright, and the reason is the
+    // same for both: each has a second main()-side reader (the handle-apply
+    // hook at the AI wiring block) that is lexically BEFORE `router` exists, so
+    // it could not name the router. Holding `aiEditModeId` by delegate is also
+    // what keeps the moved call site textually unchanged.
+    string aiLogSource;
+    string delegate() aiEditModeId;
+
+    // ---- Trackball momentum spin (task 0582) ----------------------------
+    // The camera whose trackball drag is in flight, captured on the press.
+    // Held rather than re-derived because the release CANNOT re-derive it:
+    // `vpm.dragOriginId` is cleared in the event router BEFORE the button-up
+    // reaches its handler, so `originCamera()` there is whichever cell is
+    // active — the same trap `View.trackballCancel`'s doc records. Null
+    // whenever no trackball drag is in flight, which is always for a user who
+    // has not switched the gesture on.
+    View tbSpinCam = null;
+
+    // Phase C.x: interactive selection edit session. `handleMouseButtonDown`
+    // captures the selection-snapshot before any picking/lasso/clear happens;
+    // `handleMouseButtonUp` captures after, builds a MeshSelectionEdit, and
+    // records on history if anything actually changed. Both handlers, both
+    // session functions and these three fields are now one object's -- the
+    // pair below had no caller outside them (six sites, all inside this
+    // struct's two press/release handlers).
+    SelectionSnapshot pendingSelBefore;
+    EditMode          pendingSelBeforeMode;
+    bool              pendingSelOpen = false;
 
     // The editor uses a fixed fovY=45° everywhere (see source/view.d).
     // Mirrors main()'s own `kFovY` (app.d, right after `layout.resize` at
@@ -573,6 +688,857 @@ struct InputRouter {
     void handleKeyUp(ref SDL_KeyboardEvent kev) {
         SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts);
         if (app.activeTool && app.activeTool.onKeyUp(kev, vts)) return;
+    }
+
+    // ---- Task 0781 step 2d: the interactive-selection session ------------
+    //
+    // Both functions moved WHOLE, with the three `pendingSel*` fields above:
+    // the press/release pair this struct just took were their only callers
+    // (six sites), so nothing in main() names either any more. Bodies verbatim
+    // apart from the `app.` prefixes -- and ONE line that is not a pure
+    // prefix, flagged because R3 is exactly this shape: `&editMode` was the
+    // address of a main() LOCAL and is now `&app.editMode()`, WITH the call
+    // parens, because `&app.editMode` would address the @property FUNCTION.
+    // The pointer is the same object either way (`app.editModePtr = &editMode`
+    // at the ctx wiring), which is what makes the edit a spelling and not a
+    // behaviour change.
+
+    // Open an interactive selection edit session. Idempotent — repeated
+    // calls before commitInteractiveSelEdit() are no-ops. Snapshot must be
+    // captured BEFORE any pick/lasso/clear mutates the selection.
+    void beginInteractiveSelEdit() {
+        if (pendingSelOpen) return;
+        app.mesh.syncSelection();
+        pendingSelBefore     = SelectionSnapshot.capture(app.mesh);
+        pendingSelBeforeMode = app.editMode;
+        pendingSelOpen       = true;
+    }
+
+    // Close the session: capture post-state, build a MeshSelectionEdit and
+    // record it if anything actually changed (selection arrays differ or
+    // edit mode flipped). No-op when no session is open.
+    void commitInteractiveSelEdit() {
+        if (!pendingSelOpen) return;
+        scope(exit) pendingSelOpen = false;
+
+        app.mesh.syncSelection();
+        auto after = SelectionSnapshot.capture(app.mesh);
+
+        bool changed = (app.editMode != pendingSelBeforeMode)
+                    || pendingSelBefore.selectedVertices != after.selectedVertices
+                    || pendingSelBefore.selectedEdges    != after.selectedEdges
+                    || pendingSelBefore.selectedFaces    != after.selectedFaces;
+        if (!changed) return;
+
+        auto cmd = (new MeshSelectionEdit(&app.mesh(), app.cameraView, app.editMode, &app.editMode()))
+            .setPromoteHook((EditMode m) => app.promoteGeometryType(m));
+        cmd.setBefore(pendingSelBefore, pendingSelBeforeMode);
+        cmd.setAfter (after,            app.editMode);
+        // P5: coalesce consecutive interactive selects into one undo entry.
+        // An intervening geometry/non-selection edit becomes the top entry, so
+        // the next select's compareOp(top) = Different → new entry (automatic
+        // gesture boundary). Selection-undo stays in its own UI-undo class.
+        app.history.recordCoalescing(cmd);
+    }
+
+    // ---- Task 0781 step 2d: the PRESS and RELEASE handlers ---------------
+    //
+    // `handleMouseButtonDown` (299 lines) and `handleMouseButtonUp` (467),
+    // relocated from nested functions of the same name in app.d's main(). The
+    // bodies are VERBATIM: a line-by-line diff of the moved text against the
+    // pre-move block is 132 lines out of 766, and 130 of the 132 differ ONLY by
+    // an `app.` or an `ifs.` prefix -- no comment, no blank line and no
+    // indentation column changed. The two that are not pure prefixes are the
+    // `router.doSelectPickAt` pair in the press handler's pick branch, which
+    // lose the `router.` they needed while this struct was somebody else's
+    // (step 2c's stated cost, now repaid). The card's Log lists all 132.
+    //
+    // NOT wrapped in `with (app)`, for the reason spelled out above
+    // `handleMouseMotion` below and MEASURED in step 2a: a bare
+    // `buildToolVts(subj, vts)` inside a `with (app)` compiles GREEN against
+    // EditorApp's narrow two-parameter delegate field instead of the cluster's
+    // real six-parameter function. This pair reaches that name SEVEN times, so
+    // it is the worst place in the codebase for that trap; spelling `app.` /
+    // `ifs.` out turns a bare cluster name into a compile error instead.
+    //
+    // Covered BY VALUE, named rather than assumed:
+    // tests/test_lasso_select.d drives the whole RMB half -- `ifs.rmbPath`, the
+    // lasso close, and the per-mode selection loops -- and asserts the selected
+    // id sets exactly; tests/test_interactive_select_undo.d drives the
+    // click-selection post-synthesis (`beginInteractiveSelEdit` ->
+    // `commitInteractiveSelEdit` -> a coalesced `MeshSelectionEdit`) and
+    // asserts what undo restores, which is the only oracle `pendingSelBefore`
+    // has; tests/test_item_mode_geometry_gate.d drives the 0643 item branch and
+    // `doItemSelectPickAt`; tests/test_camera.d's orbit/pan/zoom logs are the
+    // cross-client witness for `ifs.dragMode`, written here and read by
+    // `handleMouseMotion`; tests/test_pie_menu.d and
+    // tests/test_command_availability.d reach `runCommandWithArgs`.
+
+    void handleMouseButtonDown(ref SDL_MouseButtonEvent btn) {
+        // Cook this event ONCE, before any dispatch: this handler reaches
+        // buildToolVts from four different branches (RMB-to-tool, the
+        // apply-and-continue re-arm, LMB-to-tool, the no-tool gizmo claim)
+        // and they must not disagree about what the event was. A press also
+        // re-anchors the gesture, which has to happen before the first
+        // branch that could consume the event and return.
+        GesturePacket gest = gestureTrack.event(GesturePacket.Phase.Down, btn.x, btn.y);
+        // A PRESS CANCELS A RUNNING MOMENTUM SPIN (task 0582), before anything
+        // else can consume this event and return. The reference re-arms the
+        // spin with a rate of zero on its navigation press, which is the same
+        // observable; widening it from that one chord to any press over
+        // the cell is a port decision, and it can only ever stop the spin
+        // SOONER — a camera that kept coasting through a click would be a bug
+        // report, not parity. Cheap enough to be unconditional: `spinCancel`
+        // on a camera that is not spinning writes three fields nobody reads.
+        app.vpm.originCamera().spinCancel();
+        // Viewport click → drop ImGui keyboard focus. The viewport is
+        // raw OpenGL drawn under ImGui, so SDL clicks here don't reach
+        // ImGui at all — without this, a previously-focused text input
+        // (Filter, REPL, args dialog) keeps `io.WantTextInput` set
+        // forever, and the event-loop guard at the top of
+        // processSdlEvent() swallows EVERY subsequent KEYDOWN
+        // (including Delete, Tab, 1/2/3 mode keys). User reported
+        // "Delete doesn't work on selected polygons" — turned out the
+        // History panel's Filter input was still focused after they
+        // typed a search.
+        if (ifs.viewportInputAllowed())
+            ImGui.SetWindowFocus(null);
+        if (btn.button == SDL_BUTTON_RIGHT) {
+            import falloff_handles : screenFalloffActive, screenFalloffRMBDown,
+                                     radialFalloffActive, radialFalloffRMBDown,
+                                     elementFalloffActive, elementFalloffRMBDown;
+            if (screenFalloffActive()) {
+                screenFalloffRMBDown(btn.x, btn.y);
+                return;
+            }
+            if (radialFalloffActive()) {
+                SDL_Keymod mods = SDL_GetModState();
+                bool ctrl = (mods & KMOD_CTRL) != 0;
+                Viewport vp2 = app.vpm.originSnapshot();
+                if (radialFalloffRMBDown(btn.x, btn.y, ctrl, vp2))
+                    return;
+                // Plane projection failed (camera aligned to plane);
+                // fall through to lasso so the click isn't lost.
+            }
+            if (elementFalloffActive()) {
+                Viewport vp2 = app.vpm.originSnapshot();
+                if (elementFalloffRMBDown(btn.x, btn.y, vp2))
+                    return;
+                // Ray-parallel-to-camera-back is the only failure
+                // mode (degenerate camera state); fall through.
+            }
+            // Give the ACTIVE tool first crack at RMB (task 0288). A tool may bind
+            // RMB to its own gesture — Slice uses RMB as the gap-adjust drag
+            // (dashed-circle + value HUD), and the live-edit tools cancel on RMB.
+            // The falloff RMB handlers above kept their priority; if no tool
+            // consumes the click, fall through to the RMB lasso select as before
+            // (lasso runs with NO active tool, so it is unaffected).
+            if (app.activeTool) {
+                SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts, btn.x, btn.y, true, gest);
+                if (app.activeTool.onMouseButtonDown(btn, vts)) return;
+            }
+            rmbDragging = true;
+            ifs.rmbPath = [ImVec2(cast(float)btn.x, cast(float)btn.y)];
+            // RMB lasso mutates selection on mouseUp; snapshot now.
+            beginInteractiveSelEdit();
+            return;
+        }
+        if (app.activeTool) {
+            // Framework "apply and continue" (the reference editor's apply-
+            // and-continue gesture, task 0461): a Shift+LMB while the active
+            // tool holds an uncommitted edit commits it as its own undo entry
+            // and re-arms the SAME tool session in place (no drop — ACEN/AXIS/
+            // pipe state persist): commit-into-history then re-arm-in-place.
+            //
+            // COMBINED GESTURE: after the commit+rearm, THIS same Shift+LMB is
+            // forwarded to the re-armed tool as a fresh gesture-start, so a
+            // Shift+click+drag applies the old edit AND immediately hauls the
+            // new one in one motion — no lift between operations (a "series of
+            // bevels"). Shift is masked for the forwarded down because the
+            // opted-in tools reject a raw Shift+LMB (reserving it for sel-add);
+            // masking makes them treat it as a plain gesture-start. The forward
+            // reads the live modifier state, so the mask must go through the
+            // real SDL modstate (restored immediately after via scope(exit)).
+            //
+            // When the active tool has NO open edit, or opts out of in-place
+            // commit (transform tools already commit per gesture),
+            // applyAndContinue() returns false and this Shift+LMB falls through
+            // unchanged to the selection-add path below — no edit is ever lost.
+            // Alt/Ctrl chords stay excluded (camera / axis-lock).
+            if (btn.button == SDL_BUTTON_LEFT && ifs.viewportInputAllowed()
+                && (SDL_GetModState() & KMOD_SHIFT)
+                && !(SDL_GetModState() & (KMOD_ALT | KMOD_CTRL))
+                && app.session.applyAndContinue()) {
+                SDL_Keymod savedMods = SDL_GetModState();
+                SDL_SetModState(cast(SDL_Keymod)(savedMods & ~KMOD_SHIFT));
+                scope(exit) SDL_SetModState(savedMods);
+                SubjectPacket subjR; VectorStack vtsR; ifs.buildToolVts(subjR, vtsR, btn.x, btn.y, true, gest);
+                app.activeTool.onMouseButtonDown(btn, vtsR);
+                return;
+            }
+            // Refresh the hover pick at the click position BEFORE the tool sees
+            // the event, so a tool that click-picks an element (XfrmTransformTool
+            // under falloff.element) reads hover for THIS cursor, not the last
+            // rendered frame's. Gated to a LEFT click on an element-hover tool —
+            // the only case that reads g_hovered on mouse-down — so it never adds
+            // a GPU readback to camera chords or non-picking tools. Ctrl is
+            // ALLOWED (it's the axis-lock modifier the click-pick forwards as
+            // ctrlMod): excluding it left the hover stale on a Ctrl+click, so the
+            // first Ctrl element-move gesture failed to pick → no relocate, no
+            // axis-lock (must mirror XfrmTransformTool's `pickAllowed` gate).
+            // Alt stays excluded (Ctrl+Alt+LMB = camera zoom); Shift = sel-add.
+            if (btn.button == SDL_BUTTON_LEFT && ifs.viewportInputAllowed()
+                && refreshHoverPickAt !is null
+                && !(SDL_GetModState() & (KMOD_ALT | KMOD_SHIFT))
+                && (app.activeTool.wantsHoverForType(EditMode.Vertices)
+                 || app.activeTool.wantsHoverForType(EditMode.Edges)
+                 || app.activeTool.wantsHoverForType(EditMode.Polygons)))
+                refreshHoverPickAt(btn.x, btn.y);
+            SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts, btn.x, btn.y, true, gest);
+            if (app.activeTool.onMouseButtonDown(btn, vts)) return;
+        }
+        // No tool, but the host's falloff gizmo may own this click (drag an
+        // endpoint). Must run BEFORE the bare-LMB selection-clear below so a
+        // handle grab isn't treated as a deselect. Skip alt/ctrl chords (camera).
+        if (app.activeTool is null && btn.button == SDL_BUTTON_LEFT
+            && !(SDL_GetModState() & (KMOD_ALT | KMOD_CTRL))) {
+            import toolpipe.packets : FalloffPacket;
+            SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts, btn.x, btn.y, true, gest);
+            FalloffPacket fp;
+            if (auto p = vts.get!FalloffPacket()) fp = *p;
+            Viewport vpg = app.vpm.originSnapshot();
+            if (app.pipeGizmoHost.tryClaimDown(btn, vpg, fp, app.pipeGizmoHost.ownPool()))
+                return;
+        }
+        if (btn.button == SDL_BUTTON_LEFT && btn.clicks == 2 && app.activeTool is null
+            && viewportPickType(app.selTypeOrder) != SelType.Item) {
+            // Double-click loop / connect — these mutate selection. Wrap as
+            // an interactive edit so undo restores the prior selection.
+            //
+            // Item-inclusive gate (task 0655): this is a GEOMETRY pick site
+            // like every other, and it reached `editMode` — so under the item
+            // type a double-click grew the geometry selection the user could
+            // not even see. It falls through to the single-click handling
+            // below, where the 0643 item branch takes it.
+            beginInteractiveSelEdit();
+            if (app.editMode == EditMode.Edges)
+                new SelectLoop(&app.mesh(), app.cameraView, app.editMode).apply();
+            else
+                new SelectConnect(&app.mesh(), app.cameraView, app.editMode).apply();
+            commitInteractiveSelEdit();
+            return;
+        }
+        // Alt+MMB — camera BANK, the reference's own dedicated roll chord.
+        // Placed AFTER the active-tool dispatch above so a tool that owns
+        // the middle button (Slice) keeps first refusal, exactly as the
+        // Alt+LMB camera chords do. Bare MMB is untouched.
+        if (btn.button == SDL_BUTTON_MIDDLE) {
+            SDL_Keymod mmods = SDL_GetModState();
+            if ((mmods & KMOD_ALT) && !(mmods & KMOD_SHIFT) && !(mmods & KMOD_CTRL)) {
+                ifs.dragMode   = DragMode.Roll;
+                lastMouseX = btn.x;
+                lastMouseY = btn.y;
+            }
+            return;
+        }
+        if (btn.button == SDL_BUTTON_LEFT) {
+            SDL_Keymod mods = SDL_GetModState();
+            bool ctrl  = (mods & KMOD_CTRL)  != 0;
+            bool alt   = (mods & KMOD_ALT)   != 0;
+            bool shift = (mods & KMOD_SHIFT)  != 0;
+            bool anyToolActive = app.activeTool !is null;
+
+            // ---- ITEM selection type: the click picks an ITEM (task 0643) ---
+            //
+            // BEFORE `beginInteractiveSelEdit` and before the clear/pick
+            // branches below, and every word of that ordering is load-bearing:
+            //
+            //   * it returns before the bare-LMB "clear the selection for the
+            //     current mode" branch, so clicking under Items does not wipe a
+            //     geometry selection the user still has. There is no item
+            //     analogue to wipe either — the document invariant is "at least
+            //     one item selected", so a miss is simply nothing.
+            //   * it returns before `doSelectPickAt`, and therefore before
+            //     `commitInteractiveSelEdit` can build a `MeshSelectionEdit`
+            //     whose promote hook would push the GEOMETRY type back to the
+            //     front of the recent ordering. That is the recorded R3 trap:
+            //     a mis-click silently turning the item mode into vertex mode.
+            //     The guard is structural (we never reach the code) rather than
+            //     a flag checked inside it.
+            //
+            // Alt chords are camera (orbit / pan / zoom) and keep first
+            // refusal; an active tool keeps its own, exactly as the geometry
+            // select path does — with a tool up, none of the Select drag modes
+            // are entered either, so this branch is gated the same way its
+            // neighbour is rather than in a new way.
+            if (!anyToolActive && !alt
+                && currentSelType(app.selTypeOrder) == SelType.Item
+                && doItemSelectPickAt !is null) {
+                doItemSelectPickAt(btn.x, btn.y, ctrl, shift);
+                lastMouseX = btn.x;
+                lastMouseY = btn.y;
+                ifs.dragMode = DragMode.None;   // no rubber-band select under Items
+                return;
+            }
+
+            // Capture pre-LMB selection snapshot now — BEFORE the bare-LMB
+            // clear-selection branch below could mutate. If LMB ends up
+            // being a camera drag (Alt / Ctrl+Alt / Alt+Shift), commit will
+            // see no change and skip recording. Tool-driven LMB doesn't
+            // need it (tools own their own undo plumbing).
+            if (!anyToolActive && !alt)
+                beginInteractiveSelEdit();
+
+            if      (ctrl && alt)  ifs.dragMode = DragMode.Zoom;
+            else if (alt && shift) ifs.dragMode = DragMode.Pan;
+            else if (alt)          ifs.dragMode = DragMode.Orbit;
+            else if (ctrl && !anyToolActive)  ifs.dragMode = DragMode.SelectRemove;
+            else if (shift && !anyToolActive) ifs.dragMode = DragMode.SelectAdd;
+            else if (!anyToolActive) {
+                // No modifiers: clear selection for current mode
+                if (app.editMode == EditMode.Vertices)
+                    app.mesh.clearVertexSelection();
+                else if (app.editMode == EditMode.Edges)
+                    app.mesh.clearEdgeSelection();
+                else if (app.editMode == EditMode.Polygons)
+                    app.mesh.clearFaceSelection();
+                ifs.dragMode = DragMode.Select;
+            }
+            lastMouseX = btn.x;
+            lastMouseY = btn.y;
+
+            // Trackball arming (task 0573). The trackball's rotation depends on
+            // WHERE the press landed in the pane, not only on how far the
+            // cursor has since travelled, so the absolute press pixel has to be
+            // captured here on the DOWN — the motion path only ever sees a
+            // delta. Armed only when the gesture would actually run it, which
+            // is off by default: a user who has not switched the trackball on
+            // reaches exactly the code they reached before.
+            if (ifs.dragMode == DragMode.Orbit && !app.vpm.originIsOrtho()
+                && app.vpm.originCamera().trackballActive()) {
+                app.vpm.originCamera().trackballDown(btn.x, btn.y);
+                // Remember WHICH camera, for the release that arms the spin.
+                tbSpinCam = app.vpm.originCamera();
+            }
+
+            // Pick immediately on press for select clicks. A stationary
+            // click (button pressed and released with no intervening motion
+            // event) otherwise relies on a render frame landing during the
+            // brief hold to run the per-frame picker (pickEdges, line ~5597).
+            // A CPU-starved host can skip that frame — under CI `-j $(nproc)`
+            // the trailing shift+click in selection_edges_add.log occasionally
+            // failed to add its edge ("expected 3 selected edges, got 2").
+            // Drags already pick per motion event (see handleMouseMotion);
+            // this makes the zero-motion case just as deterministic. selectEdge
+            // / deselectEdge are idempotent, so a later hold-frame pick of the
+            // same element is harmless.
+            if ((ifs.dragMode == DragMode.Select
+              || ifs.dragMode == DragMode.SelectAdd
+              || ifs.dragMode == DragMode.SelectRemove)
+                && doSelectPickAt !is null) {
+                doSelectPickAt(btn.x, btn.y);
+
+                // Element apply capture (task 0027). Gated to the mouse-DOWN
+                // dispatch path ONLY — doSelectPickAt is also bound to
+                // mouse-MOTION during a select-drag, so capturing inside its
+                // body would emit one record per motion event. The triple was
+                // stashed by the pick above; doSelectPickAt sets exactly one of
+                // vertex/edge/face per editMode (others -1, or all -1 for a
+                // background pick), so collectElementCandidates yields a single
+                // real candidate at index 0 = the default winner = the element
+                // the user actually applied. No advisor runs here, so
+                // resolveElementCandidateDecision's appliedWinnerIndex == the
+                // default winner.
+                if (app.aiLogWriter.enabled) {
+                    auto candidates = collectElementCandidates(
+                        btn.x, btn.y,
+                        aiLastPickedVertex, aiLastPickedEdge, aiLastPickedFace);
+                    auto resolution = resolveElementCandidateDecision(candidates);
+                    AiInteractionContext ctx;
+                    ctx.phase = AiInteractionPhase.mouseDown;
+                    ctx.defaultIntent = AiIntent.selectElement;
+                    ctx.mouseX = btn.x;
+                    ctx.mouseY = btn.y;
+                    ctx.shift = shift;
+                    ctx.ctrl = ctrl;
+                    ctx.alt = alt;
+                    ctx.activeToolId = app.activeToolId;
+                    ctx.editModeId = aiEditModeId();
+                    auto record = makeAiInteractionLogRecord(
+                        aiLogSource, "elements", ctx, candidates,
+                        resolution.advisor, resolution.appliedWinnerIndex);
+                    app.aiLogWriter.append(record);
+                }
+            }
+        }
+    }
+
+    void handleMouseButtonUp(ref SDL_MouseButtonEvent btn) {
+        // Cooked once, before dispatch — see handleMouseButtonDown. A
+        // release does NOT re-anchor: the press pixel this packet carries is
+        // still the one the gesture started from, which is the whole point
+        // of the cumulative form.
+        GesturePacket gest = gestureTrack.event(GesturePacket.Phase.Up, btn.x, btn.y);
+        // Arm the settling spin (task 0582), FIRST — this handler returns early
+        // from half a dozen branches below (the three falloff RMB paths, a
+        // tool's own gesture end, the host gizmo's), and a release that took
+        // one of them is still a release. `tbSpinCam` is non-null only when
+        // this press armed a trackball drag, so the whole block is skipped on
+        // every other button-up in the editor.
+        if (btn.button == SDL_BUTTON_LEFT && tbSpinCam !is null) {
+            tbSpinCam.trackballRelease(SDL_GetTicks());
+            ifs.anySpinning = ifs.anySpinning || tbSpinCam.spinning();
+            tbSpinCam = null;
+        }
+        if (btn.button == SDL_BUTTON_RIGHT) {
+            import falloff_handles : screenFalloffRMBUp, radialFalloffRMBUp,
+                                     elementFalloffRMBUp;
+            if (screenFalloffRMBUp())  return;
+            if (radialFalloffRMBUp())  return;
+            if (elementFalloffRMBUp()) return;
+            // Active tool RMB gesture end (task 0288): if a tool owns this RMB
+            // (it consumed the RMB-down, so no lasso is in flight — rmbDragging is
+            // false), let it finish its gesture (Slice bakes the final gap here).
+            if (app.activeTool && !rmbDragging) {
+                SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts, btn.x, btn.y, true, gest);
+                if (app.activeTool.onMouseButtonUp(btn, vts)) return;
+            }
+            // The rubber-band is a VIEWPORT PICK, so it asks the ordering with
+            // the item-inclusive candidate set (task 0655) — the same query
+            // the click and the hover ask. Everything inside this block
+            // branches on `editMode`, which is a cache of that query asked
+            // WITHOUT items, so under the item type a lasso used to clear the
+            // geometry selection and rebuild it from whatever the band
+            // enclosed. There is no item rubber-band to run instead: the band
+            // is still drawn and still cleared below, it simply selects
+            // nothing.
+            if (ifs.rmbPath.length >= 3
+                && viewportPickType(app.selTypeOrder) != SelType.Item
+                && !ifs.previewIndexSpaceStale()) {   // task 1730, see inside
+                // ---------------------------------------------------------
+                // Task 0617 Stage 3 (doc/picking_item_transform_plan.md):
+                // this block used to project RAW LOCAL vertices while Stage 1
+                // made the GPU occlusion probes below (`elementVisibility`,
+                // `endpointVisibleEdgeFbo`) render at the layer's DRAWN pose
+                // — a split-brain that made edge/vertex/face lasso select
+                // NOTHING on a primary with a non-identity `ItemXform` (the
+                // two tests agreed only at identity). Fixed by composing the
+                // item transform into exactly ONE local-space viewport
+                // (`vpLocal`, below) and routing every geometry test in this
+                // block through it. The occlusion probes and the
+                // `symmetricSelect*` calls keep seeing the WORLD viewport
+                // (`vpWorld`) unmodified: they compose `ms` internally, or
+                // anchor on local mesh coordinates themselves, so handing
+                // them `vpLocal` would apply the item transform twice (R10).
+                // ---------------------------------------------------------
+                SDL_Keymod mods = SDL_GetModState();
+                bool shift = (mods & KMOD_SHIFT) != 0;
+                bool ctrl  = (mods & KMOD_CTRL)  != 0;
+                const ModelSpace ms      = primaryModelSpace();
+                Viewport         vpWorld = app.vpm.originSnapshot();
+                const Viewport   vpLocal = projectionSpace(vpWorld, ms);
+                float[] pxs = new float[](ifs.rmbPath.length);
+                float[] pys = new float[](ifs.rmbPath.length);
+                foreach (i, p; ifs.rmbPath) { pxs[i] = p.x; pys[i] = p.y; }
+                // The only two projectors and the only front-facing test
+                // permitted in this block — every local-space geometry test
+                // below must go through one of these three, never a bare
+                // `projectToWindow`/`dot(...)` against vpLocal directly.
+                bool insideLasso(Vec3 vLocal) {
+                    float sx, sy, ndcZ;
+                    if (!projectToWindow(vLocal, vpLocal, sx, sy, ndcZ)) return false;
+                    return pointInPolygon2D(sx, sy, pxs, pys);
+                }
+                bool projLocal(Vec3 vLocal, out float sx, out float sy) {
+                    float ndcZ;
+                    return projectToWindow(vLocal, vpLocal, sx, sy, ndcZ);
+                }
+                bool frontFacing(const(Vec3)[] vertsLocal, const(uint)[] ring) {
+                    // Task 0832: the rule itself moved to
+                    // `math.frontFacingLocal`, its one home. It takes the RING
+                    // rather than a precomputed normal, because WHICH normal
+                    // is the rule — this call site used to hand it
+                    // `Mesh.faceNormal` (Newell over the whole polygon) while
+                    // the two snap sites each built a different one. The
+                    // adopted rule is the reference's, MEASURED for this
+                    // gesture (task 0726 drove the lasso).
+                    //
+                    // No `ms.mirrored` correction here (task 0617 follow-up:
+                    // the flip that used to live on this line was WRONG and
+                    // has been removed — see math.d's `ModelSpace.mirrored`
+                    // doc comment for the identity that replaces §3.7/§3.8).
+                    // `vpLocal.eye` is already `M⁻¹·eyeWorld`
+                    // (`projectionSpace`), so the local dot already answers
+                    // "is the eye on the outward side" correctly for ANY
+                    // invertible `M`, mirrored or not — XOR-ing `ms.mirrored`
+                    // on top flipped a right answer wrong under a mirror.
+                    return frontFacingLocal(vertsLocal, ring, vpLocal.eye);
+                }
+                // GPU-pick-buffer-driven visibility for the lasso.
+                // doc/lasso_gpu_pick_buffer_fix.md — replaces the old
+                // CPU `Mesh.visibleVertices` occlusion test that was
+                // O(V × F\_front) (multi-minute hang on heavy imports;
+                // mitigated by a 4 K-vert threshold that disabled
+                // occlusion entirely). The per-mode ID FBO that
+                // `gpuSelect.pick(...)` already maintains for hover
+                // selection bakes occlusion via its depth pre-pass;
+                // reading it back gives per-VBO-entry visibility in
+                // ~ms regardless of mesh size. We keep the strict
+                // "all face verts inside polygon" / "both edge ends
+                // inside" CPU lasso semantic (preserves the existing
+                // test_lasso_select.d behaviour) — only the visibility
+                // source changes.
+                import gpu_select : SelectMode;
+                SelectMode vbMode;
+                final switch (app.editMode) {
+                    case EditMode.Vertices: vbMode = SelectMode.Vertex; break;
+                    case EditMode.Edges:    vbMode = SelectMode.Edge;   break;
+                    case EditMode.Polygons: vbMode = SelectMode.Face;   break;
+                }
+                app.ensureDisplayCurrent(); // mid-batch pull-guard: FBO readback below renders from the VBO
+
+                // Task 1730 — the fourth `*OriginGpu` reader, and the one the
+                // M-INV comment below already describes the danger of. While a
+                // rebuild is in flight the VBOs hold a limit surface built
+                // against the PREVIOUS cage, so `gpuVisible` — keyed by
+                // preview face index — would be read as a cage index by the
+                // `preview == false` branch. That is the "answers with the
+                // WRONG element rather than crashing" case, stated three
+                // paragraphs down, arrived at from the other side.
+                //
+                // The gate itself is on this block's own `if` above, NOT a
+                // `return` from here: `rmbPath = null` runs further down in
+                // `handleMouseButtonUp`, so returning out of the middle would
+                // leave the band path armed — the next RMB drag would append
+                // to it and the overlay would keep drawing the old rubber
+                // band. Skipping the selection while still falling through to
+                // the cleanup is the only shape that ends the gesture.
+                //
+                // Refusing the band outright rather than falling back to a
+                // cage band: the band is a GESTURE the user completed against
+                // pixels showing the limit surface, and answering it from cage
+                // geometry would select a different set than the one they drew
+                // around. Nothing selected is wrong in a way they can see and
+                // repeat; a plausible wrong set is not.
+
+                // Selection visibility, resolved ONCE for this gesture
+                // (`select_visibility.d`). Under a display style that draws no
+                // faces the ID buffer carries no depth pre-pass, so
+                // `gpuVisible` marks everything that rasterised and the STRICT
+                // endpoint probes below stop rejecting far edges: the lasso
+                // picks vertices and edges THROUGH the model, exactly as click
+                // and paint now do.
+                //
+                // The polygon half of the lasso is deliberately UNCHANGED:
+                // `SelectMode.Face` never ran the pre-pass (the face pass is
+                // the surface), and the separate `frontFacing` cull below is
+                // its own, still-unwired term. See the follow-up named in
+                // doc/tasks/work/1830-wireframe-select-through.md.
+                //
+                // Hoisted rather than resolved per element: it is one pure
+                // resolve, and per-edge calls would put it inside the probe
+                // loop for no gain.
+                immutable bool occlTerm = app.vpm.pickVisibility().occlusionTerm;
+                // vpWorld + ms — gpuSelect composes `ms` internally (R10).
+                bool[] gpuVisible = app.gpuSelect.elementVisibility(
+                    vbMode, app.mesh, app.gpu, vpWorld, ms, occlTerm);
+
+                bool preview = app.subpatchPreview.active;
+                // ---- M-INV (task 1500), CONSUMER 1 of 2 ----------------
+                // ONE-SIDED, on purpose. `active` says the CPU side is in
+                // preview index space; `gpuUploadedPreview` says the VBOs —
+                // and `gpuVisible` below, which is keyed by PREVIEW face
+                // index — are too. The dangerous direction is exactly this
+                // one: a live trace against cage buffers reads someone
+                // else's visibility, or skips the check entirely past the
+                // mask's end, and answers with the WRONG element rather
+                // than crashing.
+                //
+                // The converse (`uploaded && !active`) is reachable TODAY
+                // and is legitimate: `deactivate()` runs from command hooks
+                // inside `tickAll`, i.e. mid events phase, and until the
+                // upload block runs the pair is split the SAFE way — the
+                // pick then goes through the cage, where `*OriginGpu` maps
+                // into the cage anyway. A two-sided assert would fire on
+                // every `/api/reset`.
+                //
+                // A plain `assert`, not `debug { }`: `-unittest` does not
+                // imply `-debug`, so a debug block would not even be
+                // compiled in the lane that is supposed to witness this.
+                if (preview) assert(app.gpuUploadedPreview,
+                    "lasso: preview trace is live but the VBOs still hold the cage");
+                // Phase 3c — preview.mesh.vertices may be stale after
+                // a fan-out-only drag; lasso needs fresh positions.
+                if (preview && app.subpatchPreview.lastRefreshSkipNonFace) {
+                    app.subpatchPreview.osdAccel.readLimitIntoPreview(
+                        app.subpatchPreview.mesh);
+                    app.subpatchPreview.lastRefreshSkipNonFace = false;
+                }
+                const pv = preview ? &app.subpatchPreview.mesh : null;
+
+                if (app.editMode == EditMode.Polygons) {
+                    if (!shift && !ctrl)
+                        app.mesh.clearFaceSelection();
+                    if (preview) {
+                        // Per cage face: every preview child that is
+                        // BOTH front-facing AND has at least one
+                        // visible pixel (per GPU FBO) must have all
+                        // its verts inside the lasso for the cage
+                        // face to be selected.
+                        bool[] cageAllInside = new bool[](app.mesh.faces.length);
+                        bool[] cageVisited   = new bool[](app.mesh.faces.length);
+                        cageAllInside[] = true;
+                        foreach (fi; 0 .. pv.faces.length) {
+                            uint cage = app.subpatchPreview.trace.faceOrigin[fi];
+                            if (cage == uint.max || cage >= app.mesh.faces.length) continue;
+                            // Hide, branch 1/6 (task 0613 S4). It goes HERE,
+                            // beside the identity the branch already resolved
+                            // — the three closures above take a POINT
+                            // (`insideLasso`, `projLocal`) or a bare vertex
+                            // RING (`frontFacing`, task 0832), never a face
+                            // INDEX, so none of them can know what is hidden.
+                            // FACES keep their VBO slot (faceTriCount == 0,
+                            // R3), so `gpuVisible[fi]` below stays correctly
+                            // keyed and only this guard is needed.
+                            if (app.mesh.isFaceHidden(cage)) continue;
+                            auto face = pv.faces[fi];
+                            if (face.length < 3) { cageAllInside[cage] = false; continue; }
+                            if (!frontFacing(pv.vertices, face)) continue;
+                            // GPU visibility per PREVIEW face index.
+                            // faceIdVbo writes preview-face indices,
+                            // so `gpuVisible[fi]` is the right key.
+                            if (gpuVisible !is null
+                                && fi < gpuVisible.length
+                                && !gpuVisible[fi]) continue;
+                            cageVisited[cage] = true;
+                            foreach (vi; face) {
+                                if (!insideLasso(pv.vertices[vi])) {
+                                    cageAllInside[cage] = false;
+                                    break;
+                                }
+                            }
+                        }
+                        foreach (fi; 0 .. app.mesh.faces.length) {
+                            if (!cageVisited[fi] || !cageAllInside[fi]) continue;
+                            symmetricSelectFace(&app.mesh(), vpWorld, app.editMode,
+                                                cast(int)fi, /*deselect=*/ctrl);
+                        }
+                    } else {
+                        // Cage mode — VBO entry IS cage face. faceIdVbo
+                        // writes cage face indices; `gpuVisible[fi]`
+                        // is direct.
+                        foreach (fi; 0 .. app.mesh.faces.length) {
+                            uint[] face = app.mesh.faces[fi];
+                            if (face.length < 3) continue;
+                            // Hide, branch 2/6. Same reasoning as the preview
+                            // branch above, and the same key: a hidden face
+                            // keeps its slot, so `fi` still indexes
+                            // `gpuVisible` correctly here.
+                            if (app.mesh.isFaceHidden(fi)) continue;
+                            if (!frontFacing(app.mesh.vertices, face)) continue;
+                            if (gpuVisible !is null
+                                && fi < gpuVisible.length
+                                && !gpuVisible[fi]) continue;
+                            bool allInside = true;
+                            foreach (vi; face) {
+                                if (!insideLasso(app.mesh.vertices[vi])) {
+                                    allInside = false;
+                                    break;
+                                }
+                            }
+                            if (allInside) {
+                                symmetricSelectFace(&app.mesh(), vpWorld, app.editMode,
+                                                    cast(int)fi, /*deselect=*/ctrl);
+                            }
+                        }
+                    }
+                } else if (app.editMode == EditMode.Vertices) {
+                    if (!shift && !ctrl)
+                        app.mesh.clearVertexSelection();
+                    // gpuVisible is indexed by VBO entry — in cage
+                    // mode k == vertex idx; in subpatch mode k is
+                    // the kept-preview-vert position. Walk pv (or
+                    // mesh) vertices, count k as we go, gate on
+                    // gpuVisible[k].
+                    if (preview) {
+                        size_t k = 0;
+                        foreach (pi; 0 .. pv.vertices.length) {
+                            uint cage = app.subpatchPreview.trace.vertOrigin[pi];
+                            if (cage == uint.max) continue;
+                            // Hide, branch 3/6 — and note it sits BEFORE the
+                            // `++k`, not after. `k` is a VBO-slot counter and
+                            // `GpuMesh.upload` skips hidden vertices when it
+                            // fills that buffer (S3), so a guard placed after
+                            // the increment would leave `k` counting slots
+                            // that do not exist and shift every `gpuVisible`
+                            // lookup past the first hidden vertex. The
+                            // predicate is the PREVIEW mesh's, byte-for-byte
+                            // the one `upload` used (subpatch_osd stamps the
+                            // preview's Hide planes from the cage), because
+                            // matching the buffer is what keeps `k` honest.
+                            if (pv.isVertexHidden(pi)) continue;
+                            scope(exit) ++k;
+                            if (gpuVisible !is null
+                                && k < gpuVisible.length
+                                && !gpuVisible[k]) continue;
+                            if (insideLasso(pv.vertices[pi])) {
+                                symmetricSelectVertex(&app.mesh(), vpWorld, app.editMode,
+                                                      cast(int)cage, /*deselect=*/ctrl);
+                            }
+                        }
+                    } else {
+                        // Hide, branch 4/6, and it is NOT just a `continue`:
+                        // this branch used to key `gpuVisible` by CAGE index,
+                        // which was right only while VBO slot == cage vertex.
+                        // S3 broke that identity — `upload` skips hidden
+                        // vertices — so the mask needs a SLOT key. `k` counts
+                        // kept vertices in the same order and by the same
+                        // predicate `upload` uses, which is exactly the shape
+                        // the preview branch above already had (R11 part 2).
+                        // Hiding vertex 0 is what tells the two apart: with the
+                        // cage key every later lookup reads its neighbour's
+                        // visibility, which selects a set of the RIGHT SIZE and
+                        // the WRONG MEMBERS.
+                        size_t k = 0;
+                        foreach (vi; 0 .. app.mesh.vertices.length) {
+                            if (app.mesh.isVertexHidden(vi)) continue;
+                            scope(exit) ++k;
+                            if (gpuVisible !is null
+                                && k < gpuVisible.length
+                                && !gpuVisible[k]) continue;
+                            if (insideLasso(app.mesh.vertices[vi])) {
+                                symmetricSelectVertex(&app.mesh(), vpWorld, app.editMode,
+                                                      cast(int)vi, /*deselect=*/ctrl);
+                            }
+                        }
+                    }
+                } else if (app.editMode == EditMode.Edges) {
+                    if (!shift && !ctrl)
+                        app.mesh.clearEdgeSelection();
+                    if (preview) {
+                        // Per cage edge: every preview segment that
+                        // is visible (GPU FBO) must have both
+                        // endpoints inside lasso. VBO-segment-index
+                        // matches `pei` after kept-edge filtering;
+                        // walk pv.edges, count k as we go.
+                        bool[] cageAllInside = new bool[](app.mesh.edges.length);
+                        bool[] cageVisited   = new bool[](app.mesh.edges.length);
+                        cageAllInside[] = true;
+                        size_t k = 0;
+                        foreach (pei; 0 .. pv.edges.length) {
+                            uint cage = app.subpatchPreview.trace.edgeOrigin[pei];
+                            if (cage == uint.max || cage >= app.mesh.edges.length) continue;
+                            // Hide, branch 5/6 — before the `++k`, for the
+                            // reason spelled out in the vertex/preview branch
+                            // above: `k` is a VBO segment index and `upload`
+                            // skips hidden edges when it fills that buffer.
+                            if (pv.isEdgeHidden(pei)) continue;
+                            scope(exit) ++k;
+                            if (gpuVisible !is null
+                                && k < gpuVisible.length
+                                && !gpuVisible[k]) continue;
+                            uint a = pv.edges[pei][0], b = pv.edges[pei][1];
+                            cageVisited[cage] = true;
+                            float sxa, sya, sxb, syb;
+                            if (!projLocal(pv.vertices[a], sxa, sya) ||
+                                !projLocal(pv.vertices[b], sxb, syb) ||
+                                !pointInPolygon2D(sxa, sya, pxs, pys) ||
+                                !pointInPolygon2D(sxb, syb, pxs, pys)) {
+                                cageAllInside[cage] = false;
+                            } else {
+                                // STRICT: both preview-segment endpoints must be
+                                // un-occluded in the Edge ID-FBO. The probe is
+                                // window-space / key-agnostic so no preview-to-cage
+                                // vertex mapping is needed (we are asking "any
+                                // surviving edge pixel near this window point").
+                                import std.math : lround;
+                                // vpWorld + ms — see the elementVisibility call above (R10).
+                                if (!app.gpuSelect.endpointVisibleEdgeFbo(
+                                        cast(int)lround(sxa), cast(int)lround(sya),
+                                        app.gpu, vpWorld, ms, occlTerm) ||
+                                    !app.gpuSelect.endpointVisibleEdgeFbo(
+                                        cast(int)lround(sxb), cast(int)lround(syb),
+                                        app.gpu, vpWorld, ms, occlTerm)) {
+                                    cageAllInside[cage] = false;
+                                }
+                            }
+                        }
+                        foreach (ei; 0 .. app.mesh.edges.length) {
+                            if (!cageVisited[ei] || !cageAllInside[ei]) continue;
+                            symmetricSelectEdge(&app.mesh(), vpWorld, app.editMode,
+                                                cast(int)ei, /*deselect=*/ctrl);
+                        }
+                    } else {
+                        // Hide, branch 6/6 — the edge twin of branch 4: skip
+                        // hidden edges AND re-key `gpuVisible` from the cage
+                        // index to the VBO segment index, which stopped being
+                        // the same number when `upload` started dropping
+                        // hidden edges (R11 part 2).
+                        size_t k = 0;
+                        foreach (ei; 0 .. app.mesh.edges.length) {
+                            if (app.mesh.isEdgeHidden(ei)) continue;
+                            scope(exit) ++k;
+                            if (gpuVisible !is null
+                                && k < gpuVisible.length
+                                && !gpuVisible[k]) continue;
+                            uint a = app.mesh.edges[ei][0], b = app.mesh.edges[ei][1];
+                            float sxa, sya, sxb, syb;
+                            if (!projLocal(app.mesh.vertices[a], sxa, sya)) continue;
+                            if (!projLocal(app.mesh.vertices[b], sxb, syb)) continue;
+                            if (pointInPolygon2D(sxa, sya, pxs, pys) &&
+                                pointInPolygon2D(sxb, syb, pxs, pys)) {
+                                // STRICT: both endpoints must be un-occluded in the
+                                // Edge ID-FBO (depth-pre-pass baked). Probe a small
+                                // window around each projected endpoint; reject the
+                                // edge if either window has no surviving edge pixel.
+                                // This is intentionally stricter than click (which
+                                // only requires a surviving pixel near the cursor).
+                                import std.math : lround;
+                                // vpWorld + ms — see the elementVisibility call above (R10).
+                                if (!app.gpuSelect.endpointVisibleEdgeFbo(
+                                        cast(int)lround(sxa), cast(int)lround(sya),
+                                        app.gpu, vpWorld, ms, occlTerm)) continue;
+                                if (!app.gpuSelect.endpointVisibleEdgeFbo(
+                                        cast(int)lround(sxb), cast(int)lround(syb),
+                                        app.gpu, vpWorld, ms, occlTerm)) continue;
+                                symmetricSelectEdge(&app.mesh(), vpWorld, app.editMode,
+                                                    cast(int)ei, /*deselect=*/ctrl);
+                            }
+                        }
+                    }
+                }
+            }
+            rmbDragging = false;
+            ifs.rmbPath = null;
+            // RMB lasso commit — close the selection edit session.
+            commitInteractiveSelEdit();
+            return;
+        }
+        if (app.activeTool) {
+            SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts, btn.x, btn.y, true, gest);
+            app.activeTool.onMouseButtonUp(btn, vts);
+        }
+        // Release a host falloff-gizmo drag (no tool active). routeUp does NOT
+        // bump the tweak generation — that bump is XfrmTransformTool-specific
+        // and the no-tool path never bumped.
+        if (app.activeTool is null && app.pipeGizmoHost.routeUp(btn))
+            return;
+        // When BoxTool commits a new face it appends geometry via mesh
+        // primitives (addVertex / addFace), which publish a Geometry change on
+        // the change-notification bus. The per-frame flush therefore delivers
+        // Geometry on this same frame (event dispatch precedes the flush), and
+        // the loop's pick-cache block does the resize + invalidate +
+        // syncSelection. No explicit hand-off needed here any more (Stage 2).
+        if (btn.button == SDL_BUTTON_LEFT) {
+            ifs.dragMode = DragMode.None;
+            // LMB up — close any open selection edit session. If the LMB
+            // was a camera drag (no selection touched), commit is a no-op.
+            commitInteractiveSelEdit();
+        }
+        // MMB up ends a bank drag. Guarded on the mode so a tool's own
+        // middle-button gesture (which never arms Roll) is not disturbed.
+        if (btn.button == SDL_BUTTON_MIDDLE && ifs.dragMode == DragMode.Roll)
+            ifs.dragMode = DragMode.None;
     }
 
     // ---- Task 0781 step 2c: the MOTION handler --------------------------

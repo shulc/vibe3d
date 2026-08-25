@@ -60,3 +60,19 @@ drop 1 7 0861 deleted the VisibilityCache wrapper (source/visibility_cache.d) an
 # invariant these two lines checked is still covered — the check moved, it
 # was not lost.
 drop 0 2 1902 mesh_ops/loop_slice.d's newMat/newPart/newSetMask length asserts are gone with the arrays themselves — mesh_planes.rewriteFaces asserts the same invariant once, internally
+
+# app.d, task 0781 step 2d: the `static assert` that kept step 2c's
+# `gestureTrack` forwarder BY REF (`is(typeof(&gestureTrack()) ==
+# GestureTrack*)`) is gone with the forwarder itself. It guarded exactly one
+# hazard — a `@property` forwarder that dropped `ref` would have let
+# `gestureTrack.event(...)` advance a temporary COPY, silently — and that
+# hazard has no subject any more: `handleMouseButtonDown`/`Up`, the two
+# main()-side readers the forwarder existed for, are now InputRouter methods
+# naming the router's OWN `GestureTrack` field bare. There is no forwarder
+# left to get wrong, so this is a guard whose object was deleted, not a check
+# that was weakened. The OTHER assert app.d lost in the same commit is a pure
+# MOVE and is not declared here: `assert(gpuUploadedPreview, "lasso: preview
+# trace is live but the VBOs still hold the cage")` travelled verbatim (as
+# `app.gpuUploadedPreview`) into input_router.d's `handleMouseButtonUp`, which
+# is why the net is -1 and not -2.
+drop 0 1 0781 the `static assert` guarding step 2c's `gestureTrack` @property-ref forwarder — the forwarder itself is gone with its last main()-side readers
