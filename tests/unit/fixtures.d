@@ -235,6 +235,211 @@ unittest // makeTaggedGrid: shape + every plane distinct/non-uniform, as adverti
                "vertexSetMask: exactly vertices 0 and 5 must be members");
 }
 
+// ---------------------------------------------------------------------------
+// makeTaggedGridFull (task 1903 Stage B) — `makeTaggedGrid` plus the four
+// planes it is missing, and PARAMETERISED by grid size.
+// ---------------------------------------------------------------------------
+
+/// The stand for task 1903's parity fixtures (plan §6.3) and for its O(Δ)
+/// measurement (plan §8.1): an OPEN `n`x`n` grid with **every** plane the
+/// burn-in class covers non-empty and non-uniform.
+///
+/// WHY A SIBLING AND NOT AN EXTENSION OF `makeTaggedGrid`. Task 1902's L3
+/// behavioural oracle (`tests/unit/mesh_planes_test.d`) reads `makeTaggedGrid`
+/// by name, and changing what that fixture CONTAINS changes what that gate
+/// OBSERVES. So `makeTaggedGrid` is untouched and this is a second, larger
+/// stand. The price is a second copy of the shared tagging, and the guard
+/// against the two drifting apart is executable: the superset unittest below
+/// asserts that at `n == 3` this fixture agrees with `makeTaggedGrid()` on
+/// every plane that one populates.
+///
+/// THE FOUR ADDITIONS over `makeTaggedGrid`, each with why it matters:
+///
+///  1. **`edgeSetMask`** — the `ulong[ulong]` odd one out. Its re-key across a
+///     topology edit is the CALLER's obligation
+///     (`mesh_selsets.selSetRekeyEdges`), which is exactly why it is the plane
+///     most likely to be forgotten by a migrated kernel, and why a fixture
+///     without it cannot notice.
+///  2. **A Point-domain map** — `makeTaggedGrid` carries only a PolyVertex
+///     (per-corner) UV map, which rides the corner-provenance protocol. A
+///     weight/morph-shaped Point map rides the per-VERTEX path instead, and the
+///     two are carried by different code.
+///  3. **Non-zero `vertexSelectionOrderCounter` / `edgeSelectionOrderCounter`**
+///     — `selectFace` moves only the FACE counter, so on `makeTaggedGrid` the
+///     other two counters are 0 and a delta that drops them reads identical.
+///  4. **Two `surfaces` and an edge selection** — `faceMaterial` alternates
+///     0/1, so without a second surface the material plane indexes a registry
+///     of one; and `edgeMarks` is the plane whose INDEX SPACE a delta replay
+///     rebuilds (plan §6.3), so it has to carry something.
+///
+/// `n` defaults to 3 so the §6.3 parity captures read `makeTaggedGridFull()`;
+/// the §8 cells pass 316 (99 856 faces) and 100 (10 000 faces). `n` must be at
+/// least 3 — the tagging names faces up to index 7 and vertices up to 5.
+Mesh makeTaggedGridFull(int n = 3)
+{
+    import mesh_selsets : selSetEditPolygon, selSetEditVertex, selSetEditEdge,
+                          SetEditMode;
+
+    assert(n >= 3, "makeTaggedGridFull: the tagging names face 7, so n >= 3");
+
+    Mesh m = makeGridPlane(n);
+    m.resetSelection();   // size every per-element plane to match
+
+    // ---- the `makeTaggedGrid` tagging, verbatim in effect ------------------
+    foreach (fi; 0 .. m.faces.length)
+        m.faceMaterial[fi] = cast(uint)(fi % 2);
+
+    static immutable uint[3] partCycle = [0, 2, 5];
+    foreach (fi; 0 .. m.faces.length)
+        m.facePart[fi] = partCycle[fi % 3];
+
+    bool[] polySel = new bool[](m.faces.length);
+    polySel[4] = true;
+    selSetEditPolygon(m, "S", SetEditMode.replace, polySel);
+
+    m.setSubpatch(1, true);
+    m.setFaceHidden(5, true);
+    m.selectFace(7);
+
+    m.faceSelectionOrder[2] = 11;
+    m.faceSelectionOrder[6] = 23;
+
+    auto uv = m.addMeshMap(kUvMapName, 2, MapDomain.PolyVertex);
+    assert(uv !is null, "fixture: UV map registration must succeed");
+    foreach (i; 0 .. uv.data.length)
+        uv.data[i] = cast(float) i;
+
+    bool[] vertSel = new bool[](m.vertices.length);
+    vertSel[0] = true;
+    vertSel[5] = true;
+    selSetEditVertex(m, "V", SetEditMode.replace, vertSel);
+
+    // ---- addition 4a: a second surface, so `faceMaterial`'s 0/1 indexes a
+    // registry with two entries rather than one and a padded default.
+    m.surfaces ~= Surface("GridA", Vec3(0.8f, 0.2f, 0.2f));
+    m.surfaces ~= Surface("GridB", Vec3(0.2f, 0.4f, 0.9f));
+
+    // ---- addition 2: a Point-domain map, one distinct value per VERTEX.
+    auto wm = m.addMeshMap("W", 1, MapDomain.Point);
+    assert(wm !is null, "fixture: Point-domain map registration must succeed");
+    foreach (i; 0 .. wm.data.length)
+        wm.data[i] = 0.5f + cast(float) i;
+
+    // ---- additions 3 + 4b: a vertex selection and an EDGE selection, which
+    // are also what move the two selection-order counters `selectFace` leaves
+    // at zero. Two vertices and two edges, so neither plane is a single bit.
+    m.selectVertex(2);
+    m.selectVertex(9);
+    m.selectEdge(0);
+    m.selectEdge(3);
+
+    // ---- addition 1: an edge selection SET — the ulong[ulong] plane.
+    bool[] edgeSel = new bool[](m.edges.length);
+    edgeSel[1] = true;
+    edgeSel[4] = true;
+    selSetEditEdge(m, "E", SetEditMode.replace, edgeSel);
+
+    return m;
+}
+
+unittest // makeTaggedGridFull: the four additions are present and non-uniform
+{
+    auto m = makeTaggedGridFull();
+
+    assert(m.faces.length == 9,     "3x3 grid: 9 quad faces");
+    assert(m.vertices.length == 16, "3x3 grid: 16 vertices");
+
+    bool sawBoundary = false;
+    foreach (c; m.edgePolygonCounts())
+        if (c == 1) { sawBoundary = true; break; }
+    assert(sawBoundary, "makeTaggedGridFull must be OPEN (have a boundary edge)");
+
+    // 1. edgeSetMask — the plane a delta's caller must re-key by hand. This is
+    // the message the M-F mutation (build the stand on makeCube()) reddens with.
+    assert(m.edgeSetMask.length > 0,
+           "makeTaggedGridFull: edgeSetMask must be non-empty");
+    assert(m.edgeSetNames.length >= 1, "an edge set needs a name registry entry");
+
+    // 2. A Point-domain map, distinct per vertex, ALONGSIDE the PolyVertex one.
+    auto wm = m.meshMap("W");
+    assert(wm !is null, "the Point-domain map must be registered");
+    assert(wm.domain == MapDomain.Point, "map W must be Point-domain");
+    assert(wm.data.length == m.vertices.length * wm.dim,
+           "a Point map is sized to vertices.length * dim");
+    bool wVaries = false;
+    foreach (i; 1 .. wm.data.length)
+        if (wm.data[i] != wm.data[0]) { wVaries = true; break; }
+    assert(wVaries, "the Point-domain map must not be uniform");
+    auto uv = m.meshMap(kUvMapName);
+    assert(uv !is null && uv.domain == MapDomain.PolyVertex,
+           "the PolyVertex map must survive alongside the Point one");
+
+    // 3. All THREE selection-order counters are non-zero. `selectFace` alone
+    // moves one of them, which is the gap this addition closes.
+    assert(m.faceSelectionOrderCounter   != 0, "face order counter");
+    assert(m.vertexSelectionOrderCounter != 0, "vertex order counter");
+    assert(m.edgeSelectionOrderCounter   != 0, "edge order counter");
+
+    // 4. Two surfaces, and an edge selection with a non-uniform edgeMarks.
+    assert(m.surfaces.length >= 2,
+           "faceMaterial alternates 0/1 — it needs two surfaces to index");
+    size_t selEdges = 0;
+    foreach (ei; 0 .. m.edges.length) if (m.isEdgeSelected(ei)) ++selEdges;
+    assert(selEdges >= 2, "at least two edges must be selected");
+    assert(selEdges < m.edges.length, "…and not all of them, or the plane is uniform");
+}
+
+unittest // makeTaggedGridFull(3) is a SUPERSET of makeTaggedGrid() — no drift
+{
+    // The guard on the deliberate second copy. `makeTaggedGridFull` is
+    // documented as "makeTaggedGrid plus four", and this is what makes that
+    // sentence executable rather than a comment that rots: every plane
+    // `makeTaggedGrid` populates must read identically here.
+    auto a = makeTaggedGrid();
+    auto b = makeTaggedGridFull(3);
+
+    assert(a.vertices.length == b.vertices.length, "same vertex count");
+    assert(a.faces.length    == b.faces.length,    "same face count");
+    import std.conv : to;
+    foreach (fi; 0 .. a.faces.length)
+        assert(a.faces[fi] == b.faces[fi], "winding differs at face " ~ fi.to!string);
+
+    assert(a.faceMaterial       == b.faceMaterial,       "faceMaterial drifted");
+    assert(a.facePart           == b.facePart,           "facePart drifted");
+    assert(a.faceSetMask        == b.faceSetMask,        "faceSetMask drifted");
+    assert(a.faceMarks          == b.faceMarks,          "faceMarks drifted");
+    assert(a.faceSelectionOrder == b.faceSelectionOrder, "faceSelectionOrder drifted");
+    assert(a.vertexSetMask      == b.vertexSetMask,      "vertexSetMask drifted");
+
+    auto uvA = a.meshMap(kUvMapName);
+    auto uvB = b.meshMap(kUvMapName);
+    assert(uvA !is null && uvB !is null, "both carry the UV map");
+    assert(uvA.data == uvB.data, "the UV map drifted");
+
+    // …and the four additions are exactly what makeTaggedGrid does NOT have,
+    // so the word "superset" is proper rather than "identical".
+    assert(a.edgeSetMask.length == 0 && b.edgeSetMask.length > 0);
+    assert(a.meshMap("W") is null && b.meshMap("W") !is null);
+    assert(a.edgeSelectionOrderCounter == 0 && b.edgeSelectionOrderCounter != 0);
+    assert(a.surfaces.length < 2 && b.surfaces.length >= 2);
+}
+
+unittest // makeTaggedGridFull scales, and the tagging survives the scaling
+{
+    // The §8 cells build 316x316 and 100x100 stands; this is the cheap proof
+    // that `n` reaches the planes rather than only the geometry.
+    auto m = makeTaggedGridFull(6);
+    assert(m.faces.length == 36,    "6x6 grid: 36 faces");
+    assert(m.vertices.length == 49, "6x6 grid: 49 vertices");
+    assert(m.edgeSetMask.length > 0, "the edge set scales with the grid");
+    auto wm = m.meshMap("W");
+    assert(wm !is null && wm.data.length == m.vertices.length,
+           "the Point map is re-sized to the larger vertex array");
+    auto uv = m.meshMap(kUvMapName);
+    assert(uv !is null && uv.data.length == m.cornerCount() * 2,
+           "the corner map is re-sized to the larger corner count");
+}
+
 unittest // makeDisk: hub-first fan, n triangles, n+1 verts, all rim on the unit circle
 {
     import std.math : abs, sqrt;

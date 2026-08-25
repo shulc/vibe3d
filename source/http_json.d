@@ -21,7 +21,7 @@ import std.datetime : Clock;
 import std.json;
 
 import json_num : jsonNum;
-import mesh : Mesh, Surface;
+import mesh : Mesh, Surface, MeshMap, MapDomain, MapKind;
 import mesh_selsets : selSetNamesVertex, selSetNamesEdge, selSetNamesPolygon,
     selSetMembersVertex, selSetMembersEdge, selSetMembersPolygon;
 
@@ -295,5 +295,311 @@ string meshToJsonDetailed(ref const(Mesh) m) {
 
     json ~= "}";
 
+    return json.data;
+}
+
+// ---------------------------------------------------------------------------
+// meshPlanesJson — the PLANE-COMPLETE readback (task 1903 Stage B, plan §6.3).
+//
+// WHY A NEW DUMP AND NOT AN EXISTING ENDPOINT. Measured: no existing readback
+// is plane-complete, and each is blind in a different place.
+//   * `.v3d` (`source/io/native.d`) carries materials / parts / subpatch / sets
+//     / maps / surfaces but NOT Select bits, Hide bits or selection order —
+//     those are session state, not document state, and correctly so.
+//   * `/api/model`'s `meshToJsonDetailed` above carries `isSubpatch` and the
+//     three `*Hidden` planes but NOT materials, parts, sets, maps or order.
+// A fixture assembled from three partial readbacks would leave exactly the
+// planes the delta↔snapshot burn-in class is about uncovered in the seams.
+//
+// WHAT IT IS FOR. Each command family freezes its delta↔snapshot parity ONCE,
+// as JSON, on the commit BEFORE it migrates — while the snapshot path simply IS
+// the code. The surviving test then runs the DELTA path against that frozen
+// JSON. When the hatch dies the fixture is the only remaining witness of what
+// the snapshot path produced.
+//
+// ---------------------------------------------------------------------------
+// EDGE PLANES ARE KEYED BY ENDPOINT PAIR, NEVER BY EDGE INDEX. This is the one
+// design decision in the dump, and it is not a preference.
+//
+// `edgeMarks` and `edgeSelectionOrder` are index-keyed arrays, and a delta
+// replay REBUILDS the edge array (`mesh_edit_delta.finalize` →
+// `Mesh.rebuildEdges`). That is exactly why `MeshOpEntry.Kind.EdgeSelByEnds`
+// exists and re-applies its selection "through `edgeIndexMap` AFTER finalize
+// rebuilds edges". A dump that compared `edgeMarks[i]` against a frozen
+// `edgeMarks[i]` would be comparing two different index spaces, and would fail
+// for a reason that has nothing to do with the family under test — the worst
+// kind of red, the one that gets a correct delta reverted.
+//
+// So the edge planes are emitted as `[(vLo,vHi) -> word]` pairs sorted by the
+// pair. `edgeSetMask` needs no re-keying at all: its `ulong[ulong]` key is
+// already `mesh.edgeKey(a, b)`, i.e. the two endpoints packed min-first, and it
+// is decoded back to the same `[lo, hi]` shape so all three edge planes read in
+// one index-free space.
+//
+// The claim is checked, not asserted: `tests/unit/plane_dump_test.d` permutes a
+// mesh's edge index space with its per-edge data attached and requires the dump
+// to compare EQUAL.
+// ---------------------------------------------------------------------------
+
+/// Capture provenance for a frozen parity fixture (plan §6.3, rule 2). Emitted
+/// ALWAYS — empty strings included — so that a change which drops the block
+/// reddens on the healthy case too, not only on a fixture that needed it. Same
+/// rule as `meshToJsonDetailed`'s `"nonFinite"` block above.
+struct PlaneDumpMeta {
+    /// `git rev-parse HEAD` of the tree that PRODUCED the dump. A fixture whose
+    /// `producedBy` is not an ancestor of the migration commit was captured
+    /// after the fact — i.e. against the code it was meant to be independent
+    /// of. The reviewer checks the ancestry; the test checks the field is there.
+    string producedBy;
+    /// Which undo path produced it: "snapshot" (the pre-migration capture) or
+    /// "delta" (what the surviving test runs).
+    string path;
+    /// The command family the fixture belongs to, e.g. "delete", "weld_merge".
+    string family;
+    /// The stand it was built on — "makeTaggedGridFull" for every fixture this
+    /// task freezes. Recorded because a fixture captured on a cube is green
+    /// under a delta that carries nothing.
+    string stand;
+}
+
+/// Every plane the burn-in class covers, in a FIXED order, as JSON.
+///
+/// Read-only, and it walks the live mesh with no copy standing between it and a
+/// concurrent edit — the same contract `meshToJsonDetailed` has, and the reason
+/// `/api/mesh/planes` marshals it onto the main thread.
+string meshPlanesJson(ref const(Mesh) m, in PlaneDumpMeta meta = PlaneDumpMeta.init) {
+    import std.algorithm.sorting : sort;
+    import std.array  : appender;
+    import std.format : format;
+
+    auto json = appender!string();
+
+    json ~= "{";
+    // Provenance first, so a fixture file is self-describing at its head.
+    json ~= format("\"provenance\": {\"producedBy\": \"%s\", \"path\": \"%s\", "
+                 ~ "\"family\": \"%s\", \"stand\": \"%s\"}, ",
+                   jsonEsc(meta.producedBy), jsonEsc(meta.path),
+                   jsonEsc(meta.family), jsonEsc(meta.stand));
+
+    json ~= format("\"counts\": {\"vertices\": %d, \"edges\": %d, \"faces\": %d}, ",
+                   m.vertices.length, m.edges.length, m.faces.length);
+
+    // ---- geometry ---------------------------------------------------------
+    json ~= "\"vertices\": [";
+    foreach (i; 0 .. m.vertices.length) {
+        if (i > 0) json ~= ", ";
+        json ~= format("[%s, %s, %s]",
+                       jsonNum(cast(double)m.vertices[i].x, "%.9g"),
+                       jsonNum(cast(double)m.vertices[i].y, "%.9g"),
+                       jsonNum(cast(double)m.vertices[i].z, "%.9g"));
+    }
+    json ~= "], ";
+
+    json ~= "\"faces\": [";
+    foreach (i; 0 .. m.faces.length) {
+        if (i > 0) json ~= ", ";
+        json ~= "[";
+        auto f = m.faces[i];
+        foreach (j; 0 .. f.length) {
+            if (j > 0) json ~= ", ";
+            json ~= format("%d", f[j]);
+        }
+        json ~= "]";
+    }
+    json ~= "], ";
+
+    // ---- per-vertex / per-face mark WORDS ---------------------------------
+    // Whole words, not decoded bits: `faceMarks` carries Select | Subpatch |
+    // Hide | Lock together, so a bit added later is carried by this dump with
+    // no change here — and a bit DROPPED by a migrated kernel shows up as a
+    // different word rather than as a plane nobody thought to compare.
+    static string uintArray(const(uint)[] a) {
+        auto s = appender!string();
+        s ~= "[";
+        foreach (i, v; a) { if (i > 0) s ~= ", "; s ~= format("%d", v); }
+        s ~= "]";
+        return s.data;
+    }
+    static string intArray(const(int)[] a) {
+        auto s = appender!string();
+        s ~= "[";
+        foreach (i, v; a) { if (i > 0) s ~= ", "; s ~= format("%d", v); }
+        s ~= "]";
+        return s.data;
+    }
+    static string ulongArray(const(ulong)[] a) {
+        auto s = appender!string();
+        s ~= "[";
+        foreach (i, v; a) { if (i > 0) s ~= ", "; s ~= format("%d", v); }
+        s ~= "]";
+        return s.data;
+    }
+    static string nameArray(const(string)[] a) {
+        auto s = appender!string();
+        s ~= "[";
+        foreach (i, v; a) { if (i > 0) s ~= ", "; s ~= format("\"%s\"", jsonEsc(v)); }
+        s ~= "]";
+        return s.data;
+    }
+
+    json ~= "\"vertexMarks\": " ~ uintArray(m.vertexMarks) ~ ", ";
+    json ~= "\"faceMarks\": "   ~ uintArray(m.faceMarks)   ~ ", ";
+    json ~= "\"vertexSelectionOrder\": " ~ intArray(m.vertexSelectionOrder) ~ ", ";
+    json ~= "\"faceSelectionOrder\": "   ~ intArray(m.faceSelectionOrder)   ~ ", ";
+    json ~= format("\"selectionOrderCounters\": {\"vertex\": %d, \"edge\": %d, "
+                 ~ "\"face\": %d}, ",
+                   m.vertexSelectionOrderCounter, m.edgeSelectionOrderCounter,
+                   m.faceSelectionOrderCounter);
+
+    // ---- the EDGE planes, endpoint-keyed ----------------------------------
+    // One entry per live edge, `[lo, hi]` first so the sort below is the sort
+    // of the KEY. `edgeMarks` / `edgeSelectionOrder` are read defensively —
+    // `rebuildEdges` does not resize them, so a mesh caught mid-edit can carry
+    // a shorter plane than its edge array, and a dump that indexed blindly
+    // would throw rather than report.
+    struct EdgeRow { uint lo, hi, marks; int order; }
+    EdgeRow[] edgeRows;
+    edgeRows.reserve(m.edges.length);
+    foreach (ei; 0 .. m.edges.length) {
+        const uint a = m.edges[ei][0], b = m.edges[ei][1];
+        EdgeRow r;
+        r.lo    = a < b ? a : b;
+        r.hi    = a < b ? b : a;
+        r.marks = ei < m.edgeMarks.length ? m.edgeMarks[ei] : 0u;
+        r.order = ei < m.edgeSelectionOrder.length ? m.edgeSelectionOrder[ei] : 0;
+        edgeRows ~= r;
+    }
+    edgeRows.sort!((x, y) => x.lo != y.lo ? x.lo < y.lo : x.hi < y.hi);
+    json ~= "\"edgePlanes\": [";
+    foreach (i, ref r; edgeRows) {
+        if (i > 0) json ~= ", ";
+        json ~= format("{\"ends\": [%d, %d], \"marks\": %d, \"order\": %d}",
+                       r.lo, r.hi, r.marks, r.order);
+    }
+    json ~= "], ";
+
+    // ---- material / part / surfaces ---------------------------------------
+    json ~= "\"faceMaterial\": " ~ uintArray(m.faceMaterial) ~ ", ";
+    json ~= "\"facePart\": "     ~ uintArray(m.facePart)     ~ ", ";
+    json ~= "\"surfaces\": [";
+    static assert(Surface.tupleof.length == 7,
+        "a new Surface field must be emitted by meshPlanesJson too, not only "
+        ~ "charged for in MeshSnapshot.byteSize()");
+    foreach (i, ref s; m.surfaces) {
+        if (i > 0) json ~= ", ";
+        string name = s.name;
+        json ~= format("{\"name\": \"%s\", \"baseColor\": [%s, %s, %s], "
+                     ~ "\"diffuseAmount\": %s, \"specularAmount\": %s, "
+                     ~ "\"glossiness\": %s, \"opacity\": %s}",
+                       jsonEsc(name),
+                       jsonNum(cast(double)s.baseColor.x, "%.9g"),
+                       jsonNum(cast(double)s.baseColor.y, "%.9g"),
+                       jsonNum(cast(double)s.baseColor.z, "%.9g"),
+                       jsonNum(cast(double)s.diffuseAmount,  "%.9g"),
+                       jsonNum(cast(double)s.specularAmount, "%.9g"),
+                       jsonNum(cast(double)s.glossiness,     "%.9g"),
+                       jsonNum(cast(double)s.opacity,        "%.9g"));
+    }
+    json ~= "], ";
+
+    // ---- selection SETS: the two index planes and the AA -------------------
+    json ~= "\"vertexSetNames\": "  ~ nameArray(m.vertexSetNames)  ~ ", ";
+    json ~= "\"vertexSetMask\": "   ~ ulongArray(m.vertexSetMask)  ~ ", ";
+    json ~= "\"polygonSetNames\": " ~ nameArray(m.polygonSetNames) ~ ", ";
+    json ~= "\"faceSetMask\": "     ~ ulongArray(m.faceSetMask)    ~ ", ";
+    json ~= "\"edgeSetNames\": "    ~ nameArray(m.edgeSetNames)    ~ ", ";
+    // `edgeSetMask`'s key IS `mesh.edgeKey(a, b)` — the endpoints packed
+    // min-first — so it is decoded, not re-keyed, and lands in the same
+    // index-free space as `edgePlanes` above. Sorted by the pair, because AA
+    // iteration order is unspecified and a fixture must be byte-stable.
+    struct SetRow { uint lo, hi; ulong mask; }
+    SetRow[] setRows;
+    setRows.reserve(m.edgeSetMask.length);
+    foreach (key, mask; m.edgeSetMask) {
+        SetRow r;
+        r.lo   = cast(uint)(key >>> 32);
+        r.hi   = cast(uint)(key & 0xFFFF_FFFFUL);
+        r.mask = mask;
+        setRows ~= r;
+    }
+    setRows.sort!((x, y) => x.lo != y.lo ? x.lo < y.lo : x.hi < y.hi);
+    json ~= "\"edgeSetMask\": [";
+    foreach (i, ref r; setRows) {
+        if (i > 0) json ~= ", ";
+        json ~= format("{\"ends\": [%d, %d], \"mask\": %d}", r.lo, r.hi, r.mask);
+    }
+    json ~= "], ";
+
+    // ---- the map registry: ALL SIX FIELDS of MeshMap ----------------------
+    // `data` is dumped BY VALUE. A per-corner UV map is the plane the corner
+    // provenance protocol carries rather than `kFacePlanes`, and it is the one
+    // most easily zero-filled by a migrated kernel; a dump that reported only
+    // the map's name and dim would read identically either way.
+    //
+    // `present` AND `kind` ARE CARRIED, AND THAT IS NOT COMPLETENESS FOR ITS
+    // OWN SAKE. Both are channels a migrated kernel can drop into a LEGAL WRONG
+    // ANSWER — the failure mode this dump exists to catch, and the one no
+    // crash and no garbage value announces:
+    //   * `present` is the per-element presence channel and EMPTY MEANS "ALL
+    //     PRESENT" (`MeshMap.present`), so a carry that loses it resurrects
+    //     every absent entry and reads as a healthy dense map. It is exactly
+    //     the shape `MeshMap.dup`'s `static assert` was written against, it is
+    //     carried EXPLICITLY through renumber / reindex / add / remove in
+    //     `mesh_edit_delta.d`, and `MeshSnapshot.byteSize()` already charges
+    //     for it — so the snapshot path pays for a plane the dump could not
+    //     see. On a `morphAbsolute` map the difference is geometry: an absent
+    //     entry means "stay at the base", a present zero does not.
+    //   * `kind` is STORED, never inferred (`MapKind` — the two morph kinds
+    //     have identical shape and neither reserves a name), so nothing else
+    //     in the dump can stand in for it. It is written through the `final
+    //     switch` below, which means a NEW `MapKind` stops the build here
+    //     instead of silently printing an old name.
+    json ~= "\"meshMaps\": [";
+    // Tripwire for the DUMP's hand-written member list — the sibling in
+    // MeshSnapshot.byteSize() (snapshot.d) guards only the charge, and a
+    // plane that is charged for but not emitted is exactly what a parity
+    // fixture cannot witness.
+    static assert(MeshMap.tupleof.length == 6,
+        "a new MeshMap field must be emitted by meshPlanesJson too, not only "
+        ~ "charged for in MeshSnapshot.byteSize()");
+    foreach (i, ref mm; m.meshMaps) {
+        if (i > 0) json ~= ", ";
+        string nm = mm.name;
+        string domainStr;
+        final switch (mm.domain) {
+            case MapDomain.Point:      domainStr = "point";      break;
+            case MapDomain.Edge:       domainStr = "edge";       break;
+            case MapDomain.PolyVertex: domainStr = "polyvertex"; break;
+        }
+        string kindStr;
+        final switch (mm.kind) {
+            case MapKind.unclassified:   kindStr = "unclassified";   break;
+            case MapKind.uv:             kindStr = "uv";             break;
+            case MapKind.vertexWeight:   kindStr = "vertexWeight";   break;
+            case MapKind.creaseWeight:   kindStr = "creaseWeight";   break;
+            case MapKind.morphRelative:  kindStr = "morphRelative";  break;
+            case MapKind.morphAbsolute:  kindStr = "morphAbsolute";  break;
+        }
+        json ~= format("{\"name\": \"%s\", \"domain\": \"%s\", \"kind\": \"%s\", "
+                     ~ "\"dim\": %d, \"data\": [",
+                       jsonEsc(nm), domainStr, kindStr, mm.dim);
+        foreach (k, v; mm.data) {
+            if (k > 0) json ~= ", ";
+            json ~= jsonNum(cast(double)v, "%.9g");
+        }
+        // Emitted as the raw channel, `[]` included — NOT decoded through
+        // `isPresent`, which would render the empty channel as a dense run of
+        // 1s and make "all present by convention" indistinguishable from "all
+        // present because somebody wrote them out".
+        json ~= "], \"present\": [";
+        foreach (k, v; mm.present) {
+            if (k > 0) json ~= ", ";
+            json ~= format("%d", v);
+        }
+        json ~= "]}";
+    }
+    json ~= "]";
+
+    json ~= "}";
     return json.data;
 }

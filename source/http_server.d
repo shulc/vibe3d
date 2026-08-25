@@ -14,7 +14,8 @@ import mesh : Mesh, Surface;
 // The JSON bodies and the escaper that assembles them (task 0720, D5). Public
 // re-export: http_providers.d reaches `meshToJsonDetailed` through this module
 // and did so before the split.
-public import http_json : jsonEsc, meshToJsonDetailed;
+public import http_json : jsonEsc, meshToJsonDetailed, meshPlanesJson,
+    PlaneDumpMeta;
 import core.atomic;
 import perf_probe : g_perf, g_frames, g_fc;
 
@@ -258,6 +259,22 @@ class HttpServer {
     private LayersDataProvider layersDataProvider;
     private alias LayerModelProvider = string delegate(int layer);
     private LayerModelProvider layerModelProvider;
+
+    // GET /api/mesh/planes (task 1903 Stage B, plan §6.3) — the PLANE-COMPLETE
+    // readback the per-family delta<->snapshot parity fixtures are frozen from.
+    // Test-automation only, gated exactly as /api/changes is.
+    //
+    // MAIN THREAD, and for the same reason /api/model is: the provider hands
+    // `http_json.meshPlanesJson` the LIVE mesh with no copy standing between
+    // them, and a dump torn across a mid-edit array reassignment is not an
+    // error, it is a fixture that looks like an answer.
+    //
+    // The four strings are the fixture's provenance (plan §6.3 rule 2), taken
+    // from the query string — the capture script knows the SHA it is standing
+    // on and the app does not.
+    private alias MeshPlanesProvider =
+        string delegate(string producedBy, string path, string family, string stand);
+    private MeshPlanesProvider meshPlanesProvider;
     private alias RecordedEventsProvider = string delegate();
     private RecordedEventsProvider recordedEventsProvider;
     // GET /api/registry — returns {"commands":[...],"tools":[...]} listing
@@ -772,6 +789,13 @@ class HttpServer {
     struct LayersResp { string result; string error; }
     private MainThreadBridge!(LayersReq, LayersResp) layersBridge;
 
+    // Task 1903 Stage B — /api/mesh/planes. Its OWN bridge instance, same hard
+    // rule as every other one (two endpoints sharing a bridge interleave their
+    // epochs and one of them returns a torn or empty result).
+    struct MeshPlanesReq  { string producedBy; string path; string family; string stand; }
+    struct MeshPlanesResp { string result; string error; }
+    private MainThreadBridge!(MeshPlanesReq, MeshPlanesResp) meshPlanesBridge;
+
     // Task 0612 Stage 4 — /api/imageplane. Its OWN bridge instance, same rule
     // as every other one.
     struct PlaneReq  { int index; int cell; }
@@ -1188,6 +1212,21 @@ class HttpServer {
                 }
             });
 
+        meshPlanesBridge = new MainThreadBridge!(MeshPlanesReq, MeshPlanesResp)(this,
+            (ref MeshPlanesReq req, ref MeshPlanesResp resp) {
+                if (meshPlanesProvider is null) {
+                    resp.error = "mesh-planes provider not set";
+                } else {
+                    try {
+                        resp.result = meshPlanesProvider(req.producedBy, req.path,
+                                                         req.family, req.stand);
+                        resp.error  = "";
+                    } catch (Exception e) {
+                        resp.error = e.msg;
+                    }
+                }
+            });
+
         planeBridge = new MainThreadBridge!(PlaneReq, PlaneResp)(this,
             (ref PlaneReq req, ref PlaneResp resp) {
                 if (imagePlaneProvider is null) {
@@ -1289,6 +1328,11 @@ class HttpServer {
     /// GET /api/layers — JSON layer list (layers Stage 2).
     public void setLayersDataProvider(LayersDataProvider provider) {
         this.layersDataProvider = provider;
+    }
+
+    /// GET /api/mesh/planes — the plane-complete readback (task 1903 §6.3).
+    public void setMeshPlanesProvider(MeshPlanesProvider provider) {
+        this.meshPlanesProvider = provider;
     }
 
     /// Layer-aware detailed model provider for /api/model?layer=N. When set, it
@@ -1898,6 +1942,7 @@ class HttpServer {
                        "<li>/info - Get application information</li>" ~
                        "<li>/api/version - Version, build configuration, platform and build date (same block `vibe3d --version` prints)</li>" ~
                        "<li>/api/model - Get current model state</li>" ~
+                       "<li>/api/mesh/planes - GET (--test only) every parallel plane of the active mesh, edge planes keyed by endpoint pair</li>" ~
                        "<li>/api/command - Execute one command (JSON {\"id\":...\"params\":...} OR argstring \"name arg:val ...\")</li>" ~
                        "<li>/api/script - Execute multi-line script (line-by-line argstring)</li>" ~
                        "<li>tool.set &lt;toolId&gt; [off] [name:val ...] - activate/deactivate a tool</li>" ~
@@ -2358,6 +2403,42 @@ class HttpServer {
             response.body = "{\"error\":\"frame probe read failed\",\"message\":\"" ~
                            jsonEsc(e.msg) ~ "\"}";
             response.headers["Content-Type"] = "application/json";
+        }
+    }
+
+    private void route_apiMeshPlanes(HttpRequest request, HttpResponse response) {
+        // The plane-complete readback (task 1903 Stage B, plan §6.3). Marshaled
+        // onto the main thread — see the provider alias for why — and gated
+        // exactly as /api/changes is: this is a test-automation surface whose
+        // whole purpose is to freeze a fixture, and it walks the live mesh.
+        response.headers["Content-Type"] = "application/json";
+        if (!testMode) {
+            response.statusCode = 403;
+            response.body = `{"error":"mesh/planes is only available in --test mode"}`;
+            return;
+        }
+        if (meshPlanesProvider is null) {
+            response.statusCode = 500;
+            response.body = `{"error":"mesh-planes provider not set"}`;
+            return;
+        }
+        // Provenance rides the query string: the capture script knows the SHA
+        // it is standing on, the app does not.
+        meshPlanesBridge.req.producedBy = parseQueryString(request.path, "producedBy", "");
+        meshPlanesBridge.req.path       = parseQueryString(request.path, "path", "");
+        meshPlanesBridge.req.family     = parseQueryString(request.path, "family", "");
+        meshPlanesBridge.req.stand      = parseQueryString(request.path, "stand", "");
+        meshPlanesBridge.resp.result    = "";
+        meshPlanesBridge.resp.error     = "";
+        if (!meshPlanesBridge.submitAndWait())
+            meshPlanesBridge.resp.error = "timeout waiting for main thread";
+        if (meshPlanesBridge.resp.error.length == 0) {
+            response.statusCode = 200;
+            response.body = meshPlanesBridge.resp.result;
+        } else {
+            response.statusCode = 500;
+            response.body = "{\"error\": \"Failed to dump mesh planes\", \"message\": \"" ~
+                           jsonEsc(meshPlanesBridge.resp.error) ~ "\"}";
         }
     }
 
@@ -3850,6 +3931,10 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/frames/reset",         "POST", Match.exact,  Answered.httpThread, "route_apiFramesReset"),
     RouteSpec("/api/frames",               "GET",  Match.exact,  Answered.httpThread, "route_apiFrames"),
     RouteSpec("/api/changes",              "GET",  Match.exact,  Answered.httpThread, "route_apiChanges"),
+    // Match.prefix: the provenance rides the query string (plan §6.3 rule 2),
+    // and Match.exact compares the whole path. No other route is a prefix of
+    // this one and none sits below it.
+    RouteSpec("/api/mesh/planes",          "GET",  Match.prefix, Answered.mainThread, "route_apiMeshPlanes"),
     RouteSpec("/api/toolpipe/eval",        "",     Match.exact,  Answered.mainThread, "route_apiToolpipeEval"),
     RouteSpec("/api/path",                 "",     Match.prefix, Answered.mainThread, "route_apiPath"),
     RouteSpec("/api/toolpipe",             "",     Match.exact,  Answered.mainThread, "route_apiToolpipe"),

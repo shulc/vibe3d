@@ -314,31 +314,65 @@ struct MeshEditDelta {
 
     bool isEmpty() const { return log.length == 0; }
 
-    // Approximate stored byte size — for the Ph3 "is the delta smaller than a
-    // snapshot?" gate. Counts the heap-backed arrays' element bytes.
-    size_t byteSize() const {
+    /// Stored byte size of the whole op-log, under the ONE accounting rule in
+    /// `source/plane_bytes.d` — the same rule `MeshSnapshot.byteSize()` uses,
+    /// which is what makes the §8 delta-vs-snapshot RATIO a measurement rather
+    /// than a comparison of two definitions of the word "size".
+    ///
+    /// REPAIRED IN TASK 1903 STAGE B (plan §8.2). The earlier body counted 19
+    /// of `MeshOpEntry`'s 26 heap arrays and omitted SEVEN: `facePrt`,
+    /// `faceSetMsk`, `faceOrd`, `faceOldOfNew`, `newFaceLists`,
+    /// `faceSurvivorIdx` and `faceSurvivorLists`. (`oldFaceCount` was the
+    /// eighth name on the plan's list and is NOT an omission — it is a `uint`
+    /// already inside the `MeshOpEntry.sizeof` term below.) Six of the seven
+    /// belong to `Kind.FaceReindex`, so the undercount grew exactly with the
+    /// entries this task is about to start emitting: the instrument was biased
+    /// in the DELTA's favour, the opposite direction from the snapshot bias the
+    /// card warns about.
+    ///
+    /// EVERY ARRAY FIELD MUST APPEAR BELOW. `tests/unit/byte_size_test.d`
+    /// enumerates `MeshOpEntry`'s fields through `FieldNameTuple` and reddens
+    /// on any dynamic array this method does not read — so a field added later
+    /// without an accounting line cannot go quiet, which is precisely how the
+    /// seven above were lost.
+    ///
+    /// `@nogc` is deliberate and not decoration: a measuring device that
+    /// allocates perturbs the GC readout printed beside its own number.
+    size_t byteSize() const pure nothrow @safe @nogc {
+        import plane_bytes : planeBytes;
         size_t n = 0;
         foreach (ref e; log) {
-            n += e.vIdx.length * uint.sizeof;
-            n += e.fIdx.length * FaceIdx.sizeof;
-            n += e.pos.length * Vec3.sizeof;
-            n += e.posBefore.length * Vec3.sizeof;
-            n += e.posAfter.length * Vec3.sizeof;
-            foreach (ref l; e.faceLists)        n += l.length * uint.sizeof;
-            foreach (ref l; e.faceListsBefore)  n += l.length * uint.sizeof;
-            foreach (ref l; e.faceListsAfter)   n += l.length * uint.sizeof;
-            n += e.faceMat.length * uint.sizeof;
-            n += e.faceSub.length * uint.sizeof;
-            n += e.perm.length * uint.sizeof;
-            n += e.markIdx.length * uint.sizeof;
-            n += e.markBefore.length * uint.sizeof;
-            n += e.markAfter.length * uint.sizeof;
-            n += e.edgeEndsBefore.length * uint.sizeof;
-            n += e.edgeEndsAfter.length * uint.sizeof;
-            n += e.mapDims.length * ubyte.sizeof;
-            n += e.mapArity.length * uint.sizeof;
-            n += e.mapVals.length * float.sizeof;
+            // Rule 5: the entry's own struct bytes, once. `kind`, `selDomain`
+            // and `oldFaceCount` are scalars and live inside this term.
             n += MeshOpEntry.sizeof;
+            n += planeBytes(e.vIdx);
+            n += planeBytes(e.fIdx);
+            n += planeBytes(e.pos);
+            n += planeBytes(e.posBefore);
+            n += planeBytes(e.posAfter);
+            n += planeBytes(e.faceLists);
+            n += planeBytes(e.faceListsBefore);
+            n += planeBytes(e.faceListsAfter);
+            n += planeBytes(e.faceMat);
+            n += planeBytes(e.facePrt);
+            n += planeBytes(e.faceSub);
+            n += planeBytes(e.faceSetMsk);
+            n += planeBytes(e.faceOrd);
+            n += planeBytes(e.perm);
+            // Kind.FaceReindex's own payload — the six arrays whose absence
+            // made this method under-report exactly the entries task 1903 adds.
+            n += planeBytes(e.faceOldOfNew);
+            n += planeBytes(e.newFaceLists);
+            n += planeBytes(e.faceSurvivorIdx);
+            n += planeBytes(e.faceSurvivorLists);
+            n += planeBytes(e.markIdx);
+            n += planeBytes(e.markBefore);
+            n += planeBytes(e.markAfter);
+            n += planeBytes(e.edgeEndsBefore);
+            n += planeBytes(e.edgeEndsAfter);
+            n += planeBytes(e.mapDims);
+            n += planeBytes(e.mapArity);
+            n += planeBytes(e.mapVals);
         }
         return n;
     }

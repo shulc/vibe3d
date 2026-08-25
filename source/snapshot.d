@@ -97,6 +97,94 @@ struct MeshSnapshot {
         return s;
     }
 
+    /// Stored byte size of everything `capture` duplicated, under the ONE
+    /// accounting rule in `source/plane_bytes.d` — the same rule
+    /// `MeshEditDelta.byteSize()` uses (task 1903 Stage B, plan §8.2).
+    ///
+    /// WHY IT EXISTS AT ALL. The §8 measurement is a RATIO: op-log bytes over
+    /// snapshot bytes, on a local edit to a large mesh. Until this method there
+    /// was no snapshot number to divide by (`grep -c 'byteSize\|sizeof'
+    /// source/snapshot.d` → 0), so the "is the delta smaller?" question had one
+    /// instrument and one guess.
+    ///
+    /// WHAT IT MUST NOT MISS, and why each is easy to miss:
+    ///   * `meshMaps` — a `MeshMap[]` whose `data` is per-CORNER for a UV map,
+    ///     i.e. the largest single term on a real mesh, sitting behind a struct
+    ///     array that looks like a small registry;
+    ///   * `edgeSetMask` — a `ulong[ulong]`, the one plane whose type looks
+    ///     scalar. Rule 3 counts it; a naive walk reads it as zero;
+    ///   * the three name registries — arrays of `string`, rule 2 over rule 4.
+    /// A snapshot measured on a fixture with no maps and no sets is roughly a
+    /// third of its real size, and the ratio then lies IN THE SNAPSHOT's
+    /// FAVOUR — which is why the §8 stand is `makeTaggedGridFull` and not a
+    /// cube.
+    ///
+    /// WHAT GUARDS THIS METHOD, AND WHERE EACH GUARD STOPS.
+    /// `tests/unit/byte_size_test.d` enumerates this struct's fields through
+    /// `FieldNameTuple` the same way it enumerates `MeshOpEntry`'s, so a
+    /// DYNAMIC ARRAY or AA declared on `MeshSnapshot` itself and left without
+    /// a line here reddens. That enumeration is blind in two directions and
+    /// both are real: a new SCALAR field is already inside the `.sizeof` term
+    /// and needs no line, and a new heap field on a NESTED struct
+    /// (`Surface`, `MeshMap`) is invisible to it — the enumeration sees
+    /// `meshMaps` as one populated field and cannot tell which of a `MeshMap`'s
+    /// members were read. The `static assert`s on the two nested loops below
+    /// are what covers that second blind spot, in the spelling `MeshMap.dup`
+    /// already uses (`mesh.d`): they are the tripwire for the NEXT field.
+    ///
+    /// `@nogc` is deliberate and not decoration: a measuring device that
+    /// allocates perturbs the GC readout printed beside its own number.
+    size_t byteSize() const pure nothrow @safe @nogc {
+        import plane_bytes : planeBytes;
+        // Rule 5: the struct's own bytes, once. `filled` and the three
+        // selection-order counters are scalars and live inside this term.
+        size_t n = MeshSnapshot.sizeof;
+        n += planeBytes(vertices);
+        n += planeBytes(edges);                 // uint[2][] — pairs held INLINE
+        n += planeBytes(faces);
+        n += planeBytes(vertexMarks);
+        n += planeBytes(edgeMarks);
+        n += planeBytes(faceMarks);
+        n += planeBytes(vertexSelectionOrder);
+        n += planeBytes(edgeSelectionOrder);
+        n += planeBytes(faceSelectionOrder);
+        // Surface[] carries two strings per entry; the array term is the
+        // struct bytes, the names are their own heap.
+        n += planeBytes(surfaces);
+        static assert(Surface.tupleof.length == 7,
+            "Surface gained a field — if it is heap-backed, add it to the loop "
+          ~ "below before bumping this count. The FieldNameTuple enumeration in "
+          ~ "tests/unit/byte_size_test.d sees `surfaces` as ONE populated field "
+          ~ "and cannot tell which of a Surface's members were read.");
+        foreach (ref sf; surfaces) {
+            n += planeBytes(sf.name);
+            n += planeBytes(sf.compiledFromTreeId);
+        }
+        n += planeBytes(faceMaterial);
+        n += planeBytes(facePart);
+        // MeshMap[] — same shape, and `data` is the term that dominates a real
+        // mesh. `present` is the per-element presence channel (empty ⇒ all
+        // present), so it is legitimately 0 on most maps and must still be read.
+        n += planeBytes(meshMaps);
+        static assert(MeshMap.tupleof.length == 6,
+            "MeshMap gained a field — if it is heap-backed, add it to the loop "
+          ~ "below before bumping this count. Same blind spot as Surface above: "
+          ~ "the field enumeration cannot see inside a nested struct, which is "
+          ~ "exactly how `present` would go uncounted.");
+        foreach (ref mm; meshMaps) {
+            n += planeBytes(mm.name);
+            n += planeBytes(mm.data);
+            n += planeBytes(mm.present);
+        }
+        n += planeBytes(vertexSetNames);
+        n += planeBytes(vertexSetMask);
+        n += planeBytes(edgeSetNames);
+        n += planeBytes(edgeSetMask);           // ulong[ulong] — rule 3
+        n += planeBytes(polygonSetNames);
+        n += planeBytes(faceSetMask);
+        return n;
+    }
+
     void restore(ref Mesh mesh) const {
         // Perf (task 1370): the RESTORE half of every interactive-tool
         // preview rebuild — ~16 array dups, `faces.map!dup`, plus

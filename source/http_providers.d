@@ -640,6 +640,24 @@ private void wireModelProviders(HttpServer httpServer, ref EditorApp app,
                      ~ ` has no mesh (kind ` ~ tokenOf(lyr.kind) ~ `)"}`;
             return meshToDetailedJson(lyr.meshRef());
         });
+        // GET /api/mesh/planes — the plane-complete readback (task 1903 Stage B,
+        // plan §6.3). It answers off the SAME live active mesh `/api/model`
+        // does and for the same reason it is safe here: the bridge invokes this
+        // during `tickAll()` on the main thread, never on the HTTP thread.
+        //
+        // Deliberately NOT layer-aware. The parity fixtures this feeds are
+        // captured against the EDIT TARGET — the mesh the command family under
+        // migration actually writes — and a `?layer=N` here would let a capture
+        // silently name a mesh no command touched.
+        httpServer.setMeshPlanesProvider((string producedBy, string path,
+                                          string family, string stand) {
+            PlaneDumpMeta meta;
+            meta.producedBy = producedBy;
+            meta.path       = path;
+            meta.family     = family;
+            meta.stand      = stand;
+            return meshPlanesJson(mesh, meta);
+        });
         // GET /api/layers — index/name/type/visible/background/active + per-layer
         // vertex & face counts + the per-layer mutationVersion (a read-only
         // diagnostic the Stage-6 cross-layer-undo torture test reads to confirm
@@ -3141,7 +3159,8 @@ private void wireHistoryProviders(HttpServer httpServer, ref EditorApp app,
         });
         httpServer.setHistoryProvider(() {
             // JSON: { "undo": [{"label":..,"args":..,"command":..,"ui":bool,
-            //                   "inSession":bool,"refire":bool,"runId":N}, ...],
+            //                   "inSession":bool,"refire":bool,"runId":N,
+            //                   "opInverse":bool}, ...],
             //         "redo":[..] }
             // "ui" is true when the entry is UI-undo class (selection / edit-mode
             // state) rather than Model-undo (geometry) — see HistoryFlags.UiUndo.
@@ -3168,6 +3187,24 @@ private void wireHistoryProviders(HttpServer httpServer, ref EditorApp app,
                 // entries — see HistoryEntry.tweakGeneration). Surfaced so a test
                 // can assert two discrete tweaks carry DIFFERENT generations.
                 obj["tweakGen"]  = JSONValue(cast(long)e.tweakGeneration);
+                // "opInverse" (task 1903 §6.4) — does this entry undo itself by
+                // an INVERSE OPERATION (an op-log delta) rather than by
+                // restoring a whole-mesh snapshot? `Command.isOperationInverse`
+                // had zero readers anywhere in source/ or tests/ until this
+                // line; the migration needs an observable that is not the
+                // geometry, and this is the cheapest one.
+                //
+                // IT IS A SELF-REPORT, AND THAT BOUNDS WHAT IT CAN WITNESS. The
+                // bit is `useDelta_`, which the command sets ABOUT ITSELF: a
+                // class that sets it true while its delta is empty or
+                // degenerate reports true and is still broken. So this row is a
+                // cheap TELL, run alongside the two things that can actually
+                // see the failure — the counted MeshSnapshot-holder census
+                // (which reddens on a revert with no cooperation from the class
+                // under test) and the per-family plane-dump parity fixture
+                // (which is what catches a degenerate delta). Never let a green
+                // `opInverse` stand in for either.
+                obj["opInverse"] = JSONValue(e.cmd !is null && e.cmd.isOperationInverse());
                 undoArr ~= obj;
             }
             JSONValue[] redoArr;
@@ -3182,6 +3219,8 @@ private void wireHistoryProviders(HttpServer httpServer, ref EditorApp app,
                 obj["refire"]    = JSONValue((e.flags & HistoryFlags.Refire) != 0);
                 obj["runId"]     = JSONValue(cast(long)e.runId);
                 obj["tweakGen"]  = JSONValue(cast(long)e.tweakGeneration);
+                // See the undo arm above for what this bit is and is not.
+                obj["opInverse"] = JSONValue(e.cmd !is null && e.cmd.isOperationInverse());
                 redoArr ~= obj;
             }
             JSONValue payload = JSONValue.emptyObject;

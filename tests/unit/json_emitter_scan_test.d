@@ -455,8 +455,18 @@ unittest {
 unittest {
     static struct Expect { string file; string spec; size_t count; }
     // Measured over the converted tree; 100 specifiers over 24 call sites.
+    // Task 1903 Stage B raised it to 111: `http_json.meshPlanesJson` emits 11
+    // floats at `%.9g` — 3 vertex components, 3 surface baseColor components
+    // plus 4 surface scalars, and the mesh-map `data` values. `%.9g` and NOT
+    // the `%f` its neighbour `meshToJsonDetailed` uses, DELIBERATELY: those
+    // bodies are read by tests that compare tolerances, while this one is
+    // frozen verbatim as a per-family parity fixture and diffed BYTE FOR BYTE
+    // against a later run. `%f` is six decimal places, so two genuinely
+    // different floats can print identically and a dropped plane carry would
+    // compare equal to the plane that carried; `%.9g` round-trips a `float`.
     static immutable Expect[] kFrozen = [
         Expect("source/http_json.d",      "%f",   10),
+        Expect("source/http_json.d",      "%.9g", 11),
         Expect("source/view.d",           "%.9g",  9),
         Expect("source/view.d",           "%f",   10),
         Expect("source/http_providers.d", "%.6f", 41),
@@ -500,9 +510,10 @@ unittest {
                                       ~ "frozen census", f, s, n);
         }
 
-    assert(total == 100, format("the frozen table must add up to the 100 "
-                              ~ "specifiers the conversion covered, got %d",
-                                total));
+    assert(total == 111, format("the frozen table must add up to the 111 "
+                              ~ "specifiers the conversion covered (100 from "
+                              ~ "task 1550, plus meshPlanesJson's 11 from task "
+                              ~ "1903 Stage B), got %d", total));
     assert(drift.length == 0,
         "the per-file specifier census moved. This is the ONLY check that can "
       ~ "see a specifier change whose OUTPUT is identical (`%f` <-> `%.6f`), "

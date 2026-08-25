@@ -1,0 +1,25 @@
+{
+  "what": "task 1903 plan section 8 — the O(Delta) measurement",
+  "build": "dmd -i, BOUNDS-CHECKED. -release is FORBIDDEN for this instrument: it compiles out the array bounds check that found the B-now out-of-bounds write. See tools/odelta/run.d.",
+  "pinned": "the byte and alloc columns and deltaRoundTrip; the ms and collection columns are NOT — see fieldNotes",
+  "fieldNotes": {
+    "snapshotBytes":       "PINNED — MeshSnapshot.byteSize(), array lengths, deterministic",
+    "deltaBytes":          "PINNED — MeshEditDelta.byteSize(), array lengths, deterministic",
+    "snapshotRecordMs":    "INFORMATIONAL — SERIAL wall time on the measuring host (the driver pins the task pool); a lane comparing it compares loadavg",
+    "deltaRecordMs":       "INFORMATIONAL — wall time",
+    "snapshotUndoMs":      "INFORMATIONAL — wall time",
+    "deltaUndoMs":         "INFORMATIONAL — wall time; null means the cell refused to revert (see deltaRoundTrip)",
+    "snapshotAllocBytes":  "PINNED — GC.stats().allocatedInCurrentThread across the record; monotone, reproduces run to run. NOT the live set.",
+    "deltaAllocBytes":     "PINNED — same counter, delta path",
+    "snapshotCollections": "INFORMATIONAL — GC.profileStats().numCollections; when the collector runs is not a property of the edit",
+    "deltaCollections":    "INFORMATIONAL — same",
+    "deltaRoundTrip":      "PINNED — yes | no | not-attempted. no means a measured lossy record; not-attempted means the replay is unsafe in this tree and the cell refused."
+  },
+  "stand": "tests/unit/fixtures.d :: makeTaggedGridFull(n), Hide bit cleared — see tools/odelta/run.d",
+  "cells": [
+    {"cell": "A", "grid": 316, "faces": 99856, "snapshotBytes": 15209152, "deltaBytes": 1153, "snapshotRecordMs": 117.78, "deltaRecordMs": 105.91, "snapshotUndoMs": 64.27, "deltaUndoMs": 74.61, "snapshotAllocBytes": 48986864, "deltaAllocBytes": 29277232, "snapshotCollections": 1, "deltaCollections": 1, "deltaRoundTrip": "yes"},
+    {"cell": "B-now", "grid": 100, "faces": 10000, "snapshotBytes": 1530304, "deltaBytes": 362136, "snapshotRecordMs": 414.98, "deltaRecordMs": 59.33, "snapshotUndoMs": 4.39, "deltaUndoMs": null, "snapshotAllocBytes": 136779424, "deltaAllocBytes": 135271168, "snapshotCollections": 1, "deltaCollections": 1, "deltaRoundTrip": "not-attempted"},
+    {"cell": "B-armed", "grid": 100, "faces": 10000, "snapshotBytes": 1530304, "deltaBytes": 1096968, "snapshotRecordMs": 414.98, "deltaRecordMs": 60.42, "snapshotUndoMs": 4.39, "deltaUndoMs": 12.64, "snapshotAllocBytes": 136779424, "deltaAllocBytes": 136988752, "snapshotCollections": 1, "deltaCollections": 1, "deltaRoundTrip": "yes"},
+    {"cell": "C", "grid": 316, "faces": 99856, "snapshotBytes": 15209152, "deltaBytes": 3596368, "snapshotRecordMs": 223.50, "deltaRecordMs": 228.08, "snapshotUndoMs": 55.34, "deltaUndoMs": 74.34, "snapshotAllocBytes": 105196496, "deltaAllocBytes": 95633680, "snapshotCollections": 1, "deltaCollections": 1, "deltaRoundTrip": "yes"}
+  ]
+}
