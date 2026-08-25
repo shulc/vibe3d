@@ -711,3 +711,43 @@ unittest {
         format("REDO delivered %d time(s), expected exactly 1 — CommandHistory.redo() "
              ~ "must hold the same batch undo() does", dRedo));
 }
+
+// ---------------------------------------------------------------------------
+// (8) TASK 1906 STAGE 3 (review round 3) — A RE-FIRE STEP DELIVERS ONCE.
+//
+// `CommandHistory.fire()` is the third entry point that runs a `revert()`
+// outside `Command.apply`'s batch: inside a refire window (`/api/refire`
+// begin … end — the panel's Post-Mode attribute drag) the second fire reverts
+// the live command and applies the new one. The revert's per-element
+// selection restore delivered 3 005 times for a 3 000-edge remove (measured)
+// where the first fire delivered once. Block (7) cannot see this path — it
+// drives undo/redo. The fix is the same global batch, held by `fire()`.
+// ---------------------------------------------------------------------------
+unittest {
+    gridSceneBelow(40, "edges");
+    enum int kEdges = 3000;
+    string idx;
+    foreach (i; 0 .. kEdges) idx ~= (i ? "," : "") ~ i.to!string;
+    postJson("/api/select", `{"mode":"edges","indices":[` ~ idx ~ `]}`);
+
+    auto begun = postJson("/api/refire", `{"action":"begin"}`);
+    assert(begun["status"].str == "ok", "PREMISE: /api/refire begin must be accepted");
+    scope(exit) postJson("/api/refire", `{"action":"end"}`);
+
+    const long d0 = deliveries();
+    cmd("mesh.remove");
+    const long dFirst = deliveries() - d0;
+    assert(dFirst == 1,
+        format("PREMISE: the FIRST fire over %d edges must deliver exactly once; got %d",
+               kEdges, dFirst));
+
+    const long d1 = deliveries();
+    cmd("mesh.remove");                       // re-fire: revert #1, apply #2
+    const long dSecond = deliveries() - d1;
+    assert(dSecond == 1,
+        format("the SECOND fire (revert the live command, apply the new one) "
+             ~ "delivered %d time(s), expected exactly 1. The per-element shape is "
+             ~ "back on the re-fire path: CommandHistory.fire() must hold the global "
+             ~ "delivery batch like undo()/redo() (task 1906 stage 3, review round 3: "
+             ~ "measured 3 005 before the fix).", dSecond));
+}

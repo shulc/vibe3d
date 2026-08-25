@@ -1498,6 +1498,14 @@ final class CommandHistory {
     bool fire(Command cmd) {
         if (_lockout) return false;
         if (cmd is null) return false;
+        // Task 1906 stage 3 (review round 3): the third entry point that runs a
+        // `revert()` outside `Command.apply`'s batch — a re-fire reverts the live
+        // command and applies the new one, and the revert's per-element selection
+        // restore delivered 3 005 times for a 3 000-edge remove where the first
+        // fire delivered once (measured). One re-fire step is ONE delivery, the
+        // same batch `undo()`/`redo()` hold; nested batches coalesce.
+        { import mesh : beginDeliveryBatchGlobal; beginDeliveryBatchGlobal(); }
+        scope(exit) { import mesh : endDeliveryBatchGlobal; endDeliveryBatchGlobal(); }
         if (!refireOpen) {
             // Caller forgot refireBegin(); treat as a plain apply+record.
             if (!cmd.apply()) return false;
