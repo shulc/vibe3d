@@ -114,9 +114,21 @@ final class Remesh : Command, Operator {
         *mesh = result;
         mesh.resetSelection();
         // `*mesh = result` swap reset the fresh struct's version counters to
-        // 0; noteChange (not commitChange) just needs the bus to know a
+        // 0; no version bump is wanted here — the bus only needs to know a
         // Geometry-scope change happened so caches rebuild.
-        mesh.noteChange(MeshEditScope.Geometry);
+        // TASK 1906 STAGE 2 PRECONDITION — `publishChange`, not `noteChange`.
+        // `noteChange` accumulates and NEVER delivers (that is its contract:
+        // safe inside loops, safe mid-drag), so a command whose LAST mesh
+        // publisher is a note delivers only if some EARLIER call happened to
+        // register the mesh with the open delivery batch — incidental, not
+        // structural. Stage 2a moved the display family off the frame-drain
+        // pull and onto the bus, and a wholesale replace that delivers nothing
+        // would leave the mid-batch pull guard (`ensureDisplayCurrent`) with
+        // no reason to re-upload before the next VBO reader. `publishChange`
+        // accumulates identically and delivers at depth 0 / at the batch
+        // close, so the delivery COUNT per command is unchanged (one) while
+        // the delivery itself is now guaranteed.
+        mesh.publishChange(MeshEditScope.Geometry);
         applied_ = true;
         return true;
     }

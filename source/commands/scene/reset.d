@@ -285,11 +285,23 @@ class SceneReset : Command {
         import geometry_clipboard : geometryClipboard;
         geometryClipboard.clear();
         // Bulk transition: the whole mesh was REPLACED — every cache must
-        // invalidate. noteChange(All) (the `*mesh = ...` above reset the new
-        // mesh's pending set + counters to 0, so this must come after it). We use
-        // noteChange (not commitChange) because the fresh mesh's version counters
-        // start at 0 by design; the bus only needs the All notification.
-        mesh.noteChange(MeshChangeAll);
+        // invalidate. The All class is published after the `*mesh = ...` above
+        // (which reset the new mesh's pending set + counters to 0), and
+        // WITHOUT a version bump — the fresh mesh's counters start at 0 by
+        // design; the bus class is the notification consumers key on.
+        // TASK 1906 STAGE 2 PRECONDITION — `publishChange`, not `noteChange`.
+        // `noteChange` accumulates and NEVER delivers (that is its contract:
+        // safe inside loops, safe mid-drag), so a command whose LAST mesh
+        // publisher is a note delivers only if some EARLIER call happened to
+        // register the mesh with the open delivery batch — incidental, not
+        // structural. Stage 2a moved the display family off the frame-drain
+        // pull and onto the bus, and a wholesale replace that delivers nothing
+        // would leave the mid-batch pull guard (`ensureDisplayCurrent`) with
+        // no reason to re-upload before the next VBO reader. `publishChange`
+        // accumulates identically and delivers at depth 0 / at the batch
+        // close, so the delivery COUNT per command is unchanged (one) while
+        // the delivery itself is now guaranteed.
+        mesh.publishChange(MeshChangeAll);
         return true;
     }
 

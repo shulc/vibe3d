@@ -1872,6 +1872,26 @@ struct Mesh {
     /// in-session falloff re-grade) while still telling position-dependent
     /// listeners that vertices moved. Version counters own STRUCTURE; the bus's
     /// `Position` class owns POSITION.
+    ///
+    /// IT IS ALSO THE CORRECT TAIL FOR A `*mesh = …` WHOLESALE REPLACE, and
+    /// THAT is the rule stage 2 of task 1906 turned from a nicety into a
+    /// requirement. `noteChange` never delivers. A command whose LAST mesh
+    /// publisher is a note therefore delivers only if some EARLIER call inside
+    /// the same `Command.apply` batch happened to register the mesh — via a
+    /// `commitChange` in `resetSelection()`, or in a `MeshSnapshot.restore`.
+    /// That is INCIDENTAL: reorder those two lines, or drop the
+    /// `resetSelection()`, and the command silently stops delivering. Since
+    /// stage 2a the display family and the geometry family key on the BUS
+    /// EPOCH rather than on a pull of `pendingChanges_`, so a command that
+    /// delivers nothing leaves `ensureDisplayCurrent` — the mid-batch pull
+    /// guard in front of every VBO reader that runs before the frame's flush —
+    /// with no reason to re-upload, for the rest of that frame.
+    /// `publishChange` accumulates identically to `noteChange` and delivers at
+    /// depth 0 / at the batch close, so the delivery COUNT per command is
+    /// unchanged (one, at the close) while the delivery itself becomes
+    /// STRUCTURAL. A note is still right for a publisher that is followed by a
+    /// real delivering one inside the same operation (the `Maps` notes on the
+    /// transform path say so at their sites); it is wrong as a command's tail.
     void publishChange(uint flags) {
         noteChange(flags);
         deliverPending();

@@ -32,6 +32,7 @@ import imgui_impl_opengl3;
 import nfde;
 import math;
 import mesh;
+import mesh_dirty : MeshDirtyKey;   // task 1906 stage 2a — BgGpu's upload key
 import eventlog;
 import handler;
 import pipe_gizmo_host : PipeGizmoHost;
@@ -421,7 +422,13 @@ else              enum bool kAiToggleAvailable = false;
 /// { ... }` right above the `bgGpuByLayer` local) -- exact analog of
 /// Ai3dModalState: relocated verbatim so `BgGpu*[Layer]` is nameable as a
 /// ctx field's type from ui.panels.
-struct BgGpu { GpuMesh gpu; ulong uploadedVersion = ulong.max; }
+/// TASK 1906 STAGE 2a (row 17) — `ulong uploadedVersion` compared against
+/// `mesh.mutationVersion` became a `MeshDirtyKey`: the mesh ADDRESS plus the
+/// display-class bus epoch. The address term is not redundant with the AA's
+/// `Layer` key — a layer whose mesh is replaced wholesale (`*mesh = ...`,
+/// ~15 sites) keeps its `Layer` identity while its `Mesh` moves, and it is the
+/// address that says so.
+struct BgGpu { GpuMesh gpu; MeshDirtyKey uploaded; }
 
 ulong edgeKey(uint a, uint b) {
     uint lo = a < b ? a : b, hi = a < b ? b : a;

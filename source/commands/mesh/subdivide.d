@@ -129,10 +129,15 @@ class Subdivide : Command, Operator {
             }
             // Change-notification (Stage 1): Catmull-Clark REPLACED the whole
             // mesh (new verts AND faces) — publish Geometry (Points|Polygons).
-            // noteChange (not commitChange): the `*mesh = ...` swap reset the
-            // fresh struct's version counters to 0; the bus only needs the
-            // class so caches rebuild.
-            mesh.noteChange(MeshEditScope.Geometry);
+            // No version bump: the `*mesh = ...` swap reset the fresh struct's
+            // version counters to 0; the bus class is what caches rebuild on.
+            // TASK 1906 STAGE 2 — `publishChange`, not `noteChange`: this is
+            // the command's LAST mesh publisher, and a command's tail must
+            // DELIVER. It happened to deliver before, because `resetSelection()`
+            // above commits — incidental, and it is exactly the kind of
+            // coupling that survives until someone tidies the reset away.
+            // `Mesh.publishChange`'s doc comment carries the whole rule.
+            mesh.publishChange(MeshEditScope.Geometry);
         }
         return true;
     }

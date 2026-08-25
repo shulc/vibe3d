@@ -114,9 +114,21 @@ class MeshLoadRaw : Command {
         else *editModePtr = EditMode.Vertices;
         if (onResetTool !is null) onResetTool();
         // Bulk transition: the whole mesh was REPLACED (test-only raw load) —
-        // every cache must invalidate. noteChange(All), after the `*mesh = m`
-        // swap reset the fresh struct's pending + counters to 0.
-        mesh.noteChange(MeshChangeAll);
+        // every cache must invalidate. The All class is published after the
+        // `*mesh = m` swap reset the fresh struct's pending + counters to 0.
+        // TASK 1906 STAGE 2 PRECONDITION — `publishChange`, not `noteChange`.
+        // `noteChange` accumulates and NEVER delivers (that is its contract:
+        // safe inside loops, safe mid-drag), so a command whose LAST mesh
+        // publisher is a note delivers only if some EARLIER call happened to
+        // register the mesh with the open delivery batch — incidental, not
+        // structural. Stage 2a moved the display family off the frame-drain
+        // pull and onto the bus, and a wholesale replace that delivers nothing
+        // would leave the mid-batch pull guard (`ensureDisplayCurrent`) with
+        // no reason to re-upload before the next VBO reader. `publishChange`
+        // accumulates identically and delivers at depth 0 / at the batch
+        // close, so the delivery COUNT per command is unchanged (one) while
+        // the delivery itself is now guaranteed.
+        mesh.publishChange(MeshChangeAll);
         return true;
     }
 

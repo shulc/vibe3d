@@ -58,10 +58,21 @@ package void runFacetedFamily(Mesh* mesh, EditMode editMode, bool smooth)
         }
     }
     // Change-notification (Stage 1): faceted kernel REPLACED the whole mesh
-    // (new verts AND faces). noteChange (not commitChange): the `*mesh = ...`
-    // swap reset the version counters to 0; the bus only needs the class so
-    // caches rebuild.
-    mesh.noteChange(MeshEditScope.Geometry);
+    // (new verts AND faces). No version bump: the `*mesh = ...` swap reset the
+    // version counters to 0; the bus only needs the class so caches rebuild.
+    // TASK 1906 STAGE 2 PRECONDITION — `publishChange`, not `noteChange`.
+    // `noteChange` accumulates and NEVER delivers (that is its contract:
+    // safe inside loops, safe mid-drag), so a command whose LAST mesh
+    // publisher is a note delivers only if some EARLIER call happened to
+    // register the mesh with the open delivery batch — incidental, not
+    // structural. Stage 2a moved the display family off the frame-drain
+    // pull and onto the bus, and a wholesale replace that delivers nothing
+    // would leave the mid-batch pull guard (`ensureDisplayCurrent`) with
+    // no reason to re-upload before the next VBO reader. `publishChange`
+    // accumulates identically and delivers at depth 0 / at the batch
+    // close, so the delivery COUNT per command is unchanged (one) while
+    // the delivery itself is now guaranteed.
+    mesh.publishChange(MeshEditScope.Geometry);
 }
 
 class SubdivideFaceted : Command, Operator {

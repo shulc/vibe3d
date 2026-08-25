@@ -260,12 +260,29 @@ class FileLoad : Command {
         // isSubpatch.
         active.syncSelection();
         // Bulk transition: the load REPLACED the active mesh — every cache must
-        // invalidate. noteChange(All) on the NEW active mesh (the fresh struct
-        // reset pending + counters to 0). Freshly built background layers (v2
-        // multi-layer files) start with clean pendingChanges_ and unseeded
+        // invalidate. The All class goes on the NEW active mesh (the fresh
+        // struct reset pending + counters to 0). Freshly built background layers
+        // (v2 multi-layer files) start with clean pendingChanges_ and unseeded
         // shadow stamps; the per-layer flush lazily seeds them on first sight,
         // so a layered load does not trip the MISSED-PUBLISHER check.
-        active.noteChange(MeshChangeAll);
+        //
+        // TASK 1906 STAGE 2 — `publishChange`, not `noteChange`, and this site
+        // is the one that was MEASURED blind (review of stage 2a/2b). It is the
+        // command's LAST mesh publisher and `syncSelection()` above delivers
+        // nothing, so `file.load` produced ZERO subject-carrying deliveries —
+        // only the subject-less per-frame aggregate, which `mesh_dirty`
+        // deliberately ignores. Since stage 2a the display family keys on the
+        // bus epoch instead of pulling `pendingChanges_`, so a load that
+        // delivers nothing leaves `ensureDisplayCurrent` — the mid-batch pull
+        // guard in front of every VBO reader that runs before the frame's flush
+        // — with no reason to re-upload for the rest of that frame. The
+        // SINGLE-PART interchange path above mutates `*mesh` IN PLACE, so the
+        // key's mesh-ADDRESS term does not rescue that case the way it rescues
+        // a document-replacing `.v3d` load. Same flags, same absence of a
+        // version bump, one delivery at the batch close; see
+        // `Mesh.publishChange`'s doc comment for the whole rule and
+        // `tests/test_bus_display_guard_after_load.d` for the witness.
+        active.publishChange(MeshChangeAll);
         // A document-replacing load (native .v3d, or a multi-part interchange
         // import that built layers) replaces the WHOLE layer list AND changes
         // the active layer — publish the whole-document layer mask. A single-
@@ -288,7 +305,10 @@ class FileLoad : Command {
             document.resetSelectionState();
             document.restoreItemSelection(prevSelection);
             auto active = document.activeMesh();
-            if (active !is null) active.noteChange(MeshChangeAll);
+            // TASK 1906 STAGE 2 — `publishChange` for the same reason as the
+            // apply tail above: this is the revert's last mesh publisher and
+            // nothing before it delivers.
+            if (active !is null) active.publishChange(MeshChangeAll);
             // Undo restores the prior layer list — another whole-document change.
             noteLayerChange(LayerChangeAll);
             return true;

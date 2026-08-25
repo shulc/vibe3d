@@ -21,6 +21,7 @@ module ui.viewport_render;
 
 import math;                 // Vec3, Viewport, ModelSpace, identityMatrix, matMul4
 import mesh;                 // Mesh
+import mesh_dirty            : g_displayEpochs;  // task 1906 stage 2a (row 17)
 import weightmap_view       : currentWeightMapName;  // task 1090
 import editmode;             // EditMode
 import seltype;              // SelType, viewportPickType
@@ -422,9 +423,24 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
             } else {
                 bg = *pp;
             }
-            if (bg.uploadedVersion != lyr.meshRef().mutationVersion) {
-                bg.gpu.upload(lyr.meshRef());
-                bg.uploadedVersion = lyr.meshRef().mutationVersion;
+            // Task 1906 stage 2a (row 17): keyed on the bus, not on
+            // `mutationVersion`. Background layers are read-only, so this key
+            // was never exposed to the version-silent drag — but it was the
+            // same duplicate contract, and a background mesh that changes
+            // (a primary switch, a wholesale replace, a load into a background
+            // layer) now reaches it through the one channel every other
+            // consumer uses.
+            {
+                // One `meshRef()` for the address, the key AND the upload —
+                // the accessor carries a debug assert and this runs per
+                // background layer per rendered cell per frame.
+                auto bm = &lyr.meshRef();
+                const size_t ba = cast(size_t)bm;
+                const ulong  be = g_displayEpochs.epochFor(ba);
+                if (!bg.uploaded.matches(ba, be)) {
+                    bg.gpu.upload(*bm);
+                    bg.uploaded.stamp(ba, be);
+                }
             }
 
             // Perf: attribute this layer's submissions to the BACKDROP slots.

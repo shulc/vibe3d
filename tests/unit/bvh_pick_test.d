@@ -90,10 +90,27 @@ unittest {
 }
 
 unittest {
-    // A version bump (mutationVersion) forces a rebuild — the surface-pick
-    // cache's OWN key, independent of pickFace's uploadVersion (REV-3: the
-    // two caches must never alias).
-    import std.math : fabs;
+    // A published POSITION change forces a rebuild — the surface-pick cache's
+    // OWN key, independent of pickFace's uploadVersion (REV-3: the two caches
+    // must never alias).
+    //
+    // TASK 1906 STAGE 2b — this block used to bump `src.mutationVersion` by
+    // hand, because that WAS the key. It is not any more, and the reason is a
+    // shipped defect rather than a refactor: an interactive gizmo drag is
+    // version-silent on Position, so the version never moved and the surface
+    // BVH served pre-drag geometry for the rest of the session
+    // (`tests/test_bus_surface_raycast_after_drag.d` ARM A is that red).
+    //
+    // The change class is delivered here by calling the LISTENER BODY
+    // directly, which is also the honest thing for a headless block: this
+    // `Mesh` is a stack local owned by no `Layer`, so `Mesh.publishChange`
+    // would be refused by `deliverPending`'s subject filter and reach no
+    // listener at all. `mesh_dirty.noteMeshChange` is what `app.d`'s hub
+    // calls with the delivered (address, flags), and it is public for exactly
+    // this use — the same arrangement `snap.invalidateSnapGrids()` has.
+    import std.math      : fabs;
+    import mesh_dirty    : noteMeshChange;
+    import mesh_edit_delta : MeshEditScope;
 
     Mesh src;
     src.vertices = [
@@ -109,15 +126,34 @@ unittest {
     assert(pick.pickSurfaceRay(Vec3(0, 5, 0), Vec3(0, -1, 0), src, ModelSpace.world(), hit1));
     assert(hit1.face == 0);
 
-    // Move the quad up to Y=2 and bump mutationVersion — a stale cache
-    // would still report the OLD (Y=0) intersection point.
+    // Move the quad up to Y=2 and bump `mutationVersion` WITHOUT publishing.
+    //
+    // THE CACHE MUST STILL ANSWER Y=0 HERE, AND THAT STALE READ IS THE POINT
+    // — do not "fix" this assert. It is the half that says which counter the
+    // key reads: if `mutationVersion` were still the key, this bump alone
+    // would rebuild and the hit would already be at Y=2. Restoring
+    // `_surfVersionKey = sourceMesh.mutationVersion` in `bvh_pick.d` reddens
+    // exactly this line. (No production path bumps the version without
+    // publishing: `commitChange` does both, which is why this is the honest
+    // way to isolate the key.)
     foreach (ref v; src.vertices) v.y += 2.0f;
     src.mutationVersion++;
+    SurfaceHit hitV;
+    assert(pick.pickSurfaceRay(Vec3(0, 5, 0), Vec3(0, -1, 0), src, ModelSpace.world(), hitV));
+    assert(fabs(hitV.point.y) < 1e-4f,
+        "a bare mutationVersion bump must NOT rebuild the surface BVH — the "
+      ~ "version is no longer this cache's key (task 1906 stage 2b)");
+
+    // Now PUBLISH the class the bus carries for a moved vertex — a cache that
+    // ignored it would still report the OLD (Y=0) intersection point.
+    noteMeshChange(cast(size_t)&src, MeshEditScope.Position);
 
     SurfaceHit hit2;
     assert(pick.pickSurfaceRay(Vec3(0, 5, 0), Vec3(0, -1, 0), src, ModelSpace.world(), hit2));
     assert(fabs(hit2.point.y - 2.0f) < 1e-4f,
-        "surface-pick cache should have rebuilt after mutationVersion bump");
+        "surface-pick cache should have rebuilt after a published Position "
+      ~ "change (task 1906 stage 2b: the key is the change-bus epoch for this "
+      ~ "mesh address, not mutationVersion)");
 }
 
 unittest {

@@ -24,6 +24,9 @@ import nfde;
 import app_version      : appAboutLines;
 import math;
 import mesh;
+// Task 1906 stage 2 — the bus-driven per-mesh-address dirty epochs the display
+// and cage/preview upload families key on (see mesh_dirty.d's header).
+import mesh_dirty       : MeshDirtyKey, g_displayEpochs, g_geomEpochs;
 import eventlog;
 import handler;
 import pipe_gizmo_host : PipeGizmoHost;
@@ -1727,6 +1730,14 @@ void main(string[] args) {
     // replayed drag there stays Position-only.
     if (playbackMode) {
         import change_bus : MeshChangeAll;
+        // TASK 1906 STAGE 2 — this one STAYS a `noteChange`, and the reason is
+        // ordering, not taste: the mesh-channel subscriber below (the hub that
+        // feeds `meshChangedFlags` AND `mesh_dirty`) is registered several
+        // hundred lines further down, so a `publishChange` here would deliver
+        // to an empty listener list and consume the undelivered word for
+        // nothing. `pendingChanges_` survives that either way and the first
+        // frame's per-layer feed at the flush site is what actually seeds the
+        // epochs — which is exactly what this line is for.
         mesh.noteChange(MeshChangeAll);
     }
 
@@ -1771,7 +1782,14 @@ void main(string[] args) {
     // Tracks what is currently uploaded to the GPU so the main loop can
     // re-upload when the preview toggles on/off or when the cage changes
     // while the preview is active.
-    ulong gpuUploadedVersion = ulong.max;
+    // TASK 1906 STAGE 2a (row 3) — was `ulong gpuUploadedVersion` compared
+    // against `mesh.mutationVersion`. That key could not see a version-silent
+    // gizmo drag at all; it only worked here because the flush-site upload
+    // above republishes on the suppressed-cage path. The key is now
+    // (mesh address, geometry-class bus epoch): the address term is the one
+    // `mutationVersion` never carried, and the epoch moves on exactly the
+    // class this upload cares about.
+    MeshDirtyKey gpuUploadedKey_;
     bool  gpuUploadedPreview;
     // TASK 1730 — the window in which the VBOs hold a limit surface whose
     // index space no longer matches the cage.
@@ -2004,9 +2022,43 @@ void main(string[] args) {
         // frame flush's own) into one frame-local word its six readers consume
         // below, at exactly the same place and in exactly the same order as
         // before. Per-frame aggregation is not lost; it moved out of the bus
-        // into the one consumer that wants it. `subjectAddr` is ignored until a
-        // consumer keys on it (stage 2).
-        changeBus.onMeshChanged((size_t, uint flags) { meshChangedFlags |= flags; });
+        // into the one consumer that wants it.
+        //
+        // TASK 1906 STAGE 2 — and now the hub is also where `subjectAddr`
+        // stops being ignored. (A delivery from `ChangeBus.flush` carries
+        // subject 0 and `mesh_dirty` ignores it; the frame drain feeds the
+        // same flags per layer at the flush site, where the subject is known.) `mesh_dirty.noteMeshChange` is the second half
+        // of this listener: it advances a per-mesh-address EPOCH for the
+        // display classes and for the geometry classes, and the consumers that
+        // used to poll `mesh.pendingChanges_` or a version counter
+        // (`ensureDisplayCurrent`, the flush-site upload, the cage/preview
+        // upload, `BgGpu`, the surface BVH) compare against those epochs at
+        // their own lazy recompute instead. ONE registration for all of them,
+        // deliberately: if this subscription were ever lost, `meshChangedFlags`
+        // would go with it and the viewport would stop updating loudly, rather
+        // than one cache going quietly stale.
+        //
+        // Still dirty-bit-only per §1.5 — two ORs and a counter bump, no mesh
+        // read, no allocation, no GL. `noteMeshChange` is `nothrow @nogc`.
+        //
+        // THE CLASSES ARE LOAD-BEARING AND THAT IS PINNED AS A PAIR by
+        // `tests/test_bus_epoch_position_class.d`: strip `Position` here AND
+        // at the per-layer feed in the flush block and the cage vertex VBO
+        // stops following an interactive transform. Stripping it here ALONE
+        // stays green (measured, task 1906 review round 2): the per-layer feed
+        // re-supplies the class at the top of the same flush block that then
+        // runs the upload, and no reader samples the epoch between the two
+        // writers until stage 3 retires the drain. It took a purpose-built
+        // cell — six existing tests, `test_bus_position_pixel` and
+        // `test_bus_surface_raycast_after_drag` among them, all stay green
+        // under that mutation, because every one of their rigs also publishes
+        // a bulk `MeshChangeAll` (a layer promotion, a reset) whose
+        // `Points|Polygons` advance the same epochs on their own.
+        changeBus.onMeshChanged((size_t subjectAddr, uint flags) {
+            meshChangedFlags |= flags;
+            import mesh_dirty : noteMeshChange;
+            noteMeshChange(subjectAddr, flags);
+        });
         changeBus.onSelectionChanged((uint domains) {
             selChangedDomains |= domains;
             ++fboSelEpoch;
@@ -2045,28 +2097,24 @@ void main(string[] args) {
     // display-relevant changes, run the full display refresh (GPU upload +
     // pick-cache resize/invalidate) NOW.
     //
-    // Bit-transfer dedup: serviced bits move OUT of `pendingChanges_` into
-    // the `displayEnsured_` shadow word (owner-tagged by mesh address), so
-    //   • N readers after one mutation refresh ONCE, not N times (a replayed
-    //     batch of motion events after an undo would otherwise re-upload +
-    //     reproject per event), and
-    //   • the flush-site upload skips bits the guard already serviced — no
-    //     double upload on command+pick frames.
-    // The frame drain ORs the shadow back into the aggregated `meshFlags`
-    // (then zeroes it), so the flush subscribers (subpatch gate, pick-cache
-    // block, gpu_select, symmetry/snap) still receive FULL flags; the debug
-    // MISSED-PUBLISHER check counts the shadow as pending for its owner.
+    // TASK 1906 STAGE 2a — the dedup is now ONE (address, epoch) stamp, and
+    // the two-word `displayEnsured_` / `displayEnsuredMesh_` shadow it
+    // replaces is gone along with its transfer-back block at the flush site.
     //
-    // Multi-layer: the guard only ever services the ACTIVE mesh (`mesh()`),
-    // so the shadow word is single-owner by construction. If the active
-    // layer switches mid-frame while bits are parked (a layer.select between
-    // two HTTP requests serviced in one tick), the parked bits are returned
-    // to their owner's `pendingChanges_` first — the drain aggregates across
-    // ALL layers, so nothing is lost; only the once-per-mutation dedup
-    // restarts (and `refreshDisplay`'s own active-mesh gate keeps a
-    // now-background owner from ever being re-uploaded).
-    uint  displayEnsured_     = 0;
-    Mesh* displayEnsuredMesh_ = null;
+    // What the shadow was for: the guard consumed bits out of
+    // `pendingChanges_`, so the frame drain had to be told which bits had
+    // already been serviced and by whom, and hand them back to the flush
+    // subscribers afterwards. With the display family keyed on the bus epoch
+    // instead, `pendingChanges_` is never touched here at all — every other
+    // subscriber keeps receiving full flags with no transfer-back, and the
+    // dedup is simply "have I already serviced THIS mesh at THIS epoch".
+    //
+    // Multi-layer: this stamp carries the mesh ADDRESS, so a layer switch
+    // mismatches it and re-services, and a background layer's dirt is no
+    // longer silently dropped by the frame drain — it sits in that address's
+    // epoch until the layer becomes active. (`refreshDisplay`'s own
+    // active-mesh gate still keeps a background owner from being uploaded.)
+    MeshDirtyKey displayServiced_;
     // A5 (post-gate fix): while the transform family drags, the VBO is
     // tool-owned (baseline + live u_model) — re-uploading LIVE verts would
     // double-apply the drag delta for any reader that renders with the tool
@@ -2076,20 +2124,22 @@ void main(string[] args) {
     // flags stay pending for the frame drain.
     bool delegate() displayVboOwnedByTool_ = null;
     void ensureDisplayCurrent() {
-        import display_sync : refreshDisplay, DisplayRefreshMask;
+        import display_sync : refreshDisplay;
+        import mesh_dirty   : g_displayEpochs;
         if (displayVboOwnedByTool_ !is null && displayVboOwnedByTool_()) return;
         Mesh* am = &mesh();
-        if (displayEnsuredMesh_ !is am && displayEnsured_ != 0) {
-            displayEnsuredMesh_.pendingChanges_ |= displayEnsured_;
-            displayEnsured_ = 0;
-        }
-        const uint f = am.pendingChanges_ & DisplayRefreshMask;
-        if (f) {
-            refreshDisplay(am, &gpu, &vertexCache(), &edgeCache(), &faceCache());
-            displayEnsured_    |= f;
-            displayEnsuredMesh_ = am;
-            am.pendingChanges_ &= ~f;
-        }
+        const size_t a = cast(size_t)am;
+        if (displayServiced_.matches(a, g_displayEpochs.epochFor(a))) return;
+        refreshDisplay(am, &gpu, &vertexCache(), &edgeCache(), &faceCache());
+        // STAMP WITH THE EPOCH READ **AFTER** THE REFRESH, and this is not
+        // tidiness — it is what stops a self-sustaining upload loop. Under an
+        // active subpatch preview `GpuMesh.upload` does not upload: it calls
+        // `commitChange(MeshEditScope.Position)` on the cage (mesh_gpu.d's
+        // `suppressCageUpload` arm), which DELIVERS, which advances this very
+        // epoch. Stamping a value read before the call would leave the stamp
+        // permanently one behind its own side effect, and every frame would
+        // "refresh" again for ever.
+        displayServiced_.stamp(a, g_displayEpochs.epochFor(a));
     }
 
     // Layers Stage 5 — background-layer GPU buffers. A side map (NOT a field on
@@ -3165,6 +3215,15 @@ void main(string[] args) {
         // 5. publish a bulk change on the new active mesh. (The required cache
         //    refresh stays MeshChangeAll — the on-screen geometry is a different
         //    mesh; the scope-down rider is deliberately NOT taken here.)
+        //    TASK 1906 STAGE 2 — a `noteChange` here is NOT the blind case the
+        //    command tails were, and it is worth saying why rather than
+        //    converting it reflexively. Two independent things already cover
+        //    this hook: step 3 above uploads the new active mesh and invalidates
+        //    the pick caches ITSELF, and `displayServiced_` (the bus-epoch key
+        //    the display guard stamps) carries the mesh ADDRESS — which by
+        //    definition just changed, so the guard mismatches and re-services
+        //    even with the epoch standing still. What this line is for is the
+        //    per-frame drain's subscribers, and they read `pendingChanges_`.
         active.noteChange(MeshChangeAll);
         // 6. publish the SEMANTIC layer event. This hook is the SINGLE funnel
         //    that fires iff the PRIMARY (active) Layer OBJECT genuinely changed
@@ -5925,9 +5984,42 @@ void main(string[] args) {
             // Active-layer flags only (not the cross-layer aggregate): an
             // undo landing on a background layer must not re-upload the
             // active one — same gate the command-side refresh had.
+            // TASK 1906 STAGE 2a — THE SECOND FEED, and it is here rather
+            // than inside the bus for a reason worth stating.
+            //
+            // Until stage 3 a mesh change reaches a consumer by TWO paths: the
+            // synchronous delivery at the edit boundary (which names its
+            // subject) and this per-frame drain of `pendingChanges_` (whose
+            // `changeBus.flush` names NO subject — it hands out the union over
+            // every layer). `mesh_dirty` refuses that subject-less aggregate,
+            // because acting on it would mark every mesh address it does not
+            // track as changed once per changed frame — and the address it
+            // does not track is precisely the static background mesh whose
+            // surface BVH the Topology Pen leans on.
+            //
+            // Here the subject IS known: each layer owns its own pending word.
+            // So the drain's information is fed per layer, from this loop, and
+            // BEFORE the upload site below so a publisher that only
+            // `noteChange`d still refreshes the display in the SAME frame it
+            // did before stage 2a. Read-only — the zeroing stays in the drain.
             {
-                import display_sync : DisplayRefreshMask;
-                const uint activeFlags = mesh.pendingChanges_;
+                import mesh_dirty : noteMeshChange;
+                foreach (layer; document.layers) {
+                    if (!layer.hasMesh) continue;
+                    // ONE `meshRef()` per layer, not two: the accessor carries
+                    // a debug assert, and this loop runs over every layer of
+                    // every frame.
+                    auto m = &layer.meshRef();
+                    noteMeshChange(cast(size_t)m, m.pendingChanges_);
+                }
+            }
+
+            {
+                // TASK 1906 STAGE 2a — the trigger is the bus epoch for THIS
+                // mesh address, not a pull on `mesh.pendingChanges_`. Same
+                // place, same gate, same dedup against the mid-batch guard
+                // (both stamp `displayServiced_`).
+                const size_t ma = cast(size_t)&mesh();
                 // A5 (post-gate fix): mid-gesture the transform family owns
                 // the VBO — baseline verts with the live drag delta applied
                 // via u_model on top (per-frame edits publish Position while
@@ -5936,11 +6028,18 @@ void main(string[] args) {
                 // delta (gpu_fold_parity / far_pivot_fold / chained_drag).
                 // Skip while dragging: only XfrmTransformTool overrides
                 // isDragging, and its mouseUp bake + commit publish resync
-                // the VBO at gesture end. Flags still drain to subscribers.
+                // the VBO at gesture end. Flags still reach every subscriber.
                 const bool toolOwnsVbo =
                     activeTool !is null && activeTool.isDragging();
-                if ((activeFlags & DisplayRefreshMask) && !toolOwnsVbo)
+                if (!toolOwnsVbo
+                    && !displayServiced_.matches(ma, g_displayEpochs.epochFor(ma)))
+                {
                     gpu.upload(mesh);
+                    // Epoch re-read AFTER the upload — the suppressed-cage arm
+                    // of `GpuMesh.upload` publishes `Position` itself. See
+                    // `ensureDisplayCurrent` for the loop this prevents.
+                    displayServiced_.stamp(ma, g_displayEpochs.epochFor(ma));
+                }
             }
 
             // Stage 0b — aggregate pending flags across ALL document layers,
@@ -5977,13 +6076,12 @@ void main(string[] args) {
                     // `lastSeenMutVer` entry — skip BEFORE the first read/seed,
                     // not after.
                     if (!layer.hasMesh) continue;
-                    // Guard-serviced bits count as pending for their owner —
-                    // without this, a mutation whose flags ensureDisplayCurrent
-                    // transferred into the shadow word would read as "version
-                    // advanced, zero flags" and latch a spurious warning.
-                    const lf = layer.meshRef().pendingChanges_
-                        | ((&layer.meshRef()) is displayEnsuredMesh_
-                               ? displayEnsured_ : 0u);
+                    // Task 1906 stage 2a: the `displayEnsured_` shadow term
+                    // this used to OR in is gone with the shadow itself — the
+                    // display guard no longer consumes bits out of
+                    // `pendingChanges_`, so what the drain sees IS what the
+                    // publishers wrote.
+                    const lf = layer.meshRef().pendingChanges_;
                     auto seen = layer in lastSeenMutVer;
                     if (seen is null) {
                         // First observation of this layer — seed, do not compare.
@@ -6019,13 +6117,9 @@ void main(string[] args) {
                 layer.meshRef().pendingSelDomains_ = 0;
             }
 
-            // Transfer-back (phase-2 dedup): bits `ensureDisplayCurrent`
-            // moved out of `pendingChanges_` (display already serviced
-            // mid-batch) still belong to THIS frame's flags for every flush
-            // subscriber — return them to the aggregate and reset the shadow.
-            meshFlags |= displayEnsured_;
-            displayEnsured_     = 0;
-            displayEnsuredMesh_ = null;
+            // (Task 1906 stage 2a deleted the transfer-back that stood here:
+            // `ensureDisplayCurrent` no longer moves bits out of
+            // `pendingChanges_`, so there is nothing to give back.)
 
             // Layer-structural changes are DOCUMENT-level, not per-mesh, so they
             // accumulate in a module-level word (change_bus.pendingLayerChanges)
@@ -6178,7 +6272,9 @@ void main(string[] args) {
             immutable bool staleOnScreen = ifs.previewIndexSpaceStale();
             bool wantPreview = subpatchPreview.active || staleOnScreen;
             gpu.suppressCageUpload = wantPreview;
-            bool versionChanged = gpuUploadedVersion != mesh.mutationVersion;
+            const size_t cageAddr = cast(size_t)&mesh();
+            bool versionChanged =
+                !gpuUploadedKey_.matches(cageAddr, g_geomEpochs.epochFor(cageAddr));
             bool stateChanged   = gpuUploadedPreview != wantPreview;
             // Task 1500 — the third trigger. For the FIRST Tab `stateChanged`
             // is true and the upload was guaranteed; for a REBUILD (`active`
@@ -6194,7 +6290,7 @@ void main(string[] args) {
             // PREVIOUS cage. The buffers already hold exactly what we want
             // drawn; the correct action is none.
             //
-            // `gpuUploadedVersion` is deliberately NOT advanced here either,
+            // `gpuUploadedKey_` is deliberately NOT advanced here either,
             // so the install frame still sees `versionChanged` and uploads.
             if (staleOnScreen) {
                 // Nothing. See above.
@@ -6211,6 +6307,14 @@ void main(string[] args) {
                     // when topology actually changed (Tab toggle on a new
                     // face selection, edge added, snapshot restore, etc.)
                     // or when transitioning preview off/on.
+                    // RECORDED REMAINDER (1906 §3.6, stage 4 census): this
+                    // term stays a VERSION compare, and deliberately.
+                    // `topologyVersion` is not a freshness signal about the
+                    // cage here — it is the INDEX SPACE identity of the
+                    // preview already on the GPU, i.e. "is the buffer laid out
+                    // for this same source topology, so positions can be
+                    // scattered instead of rebuilt". A change class cannot
+                    // answer that; only the identity of the layout can.
                     bool topoSame = !stateChanged
                         && gpuUploadedPreviewTopVersion
                            == subpatchPreview.sourceTopologyVersion;
@@ -6256,7 +6360,10 @@ void main(string[] args) {
                     // F-I1: a full mesh-work GPU upload fired this frame.
                     g_frames.bumpMeshCacheRebuild();
                 }
-                gpuUploadedVersion = mesh.mutationVersion;
+                // Re-read the epoch: this block's own `gpu.upload` can
+                // publish (the suppressed-cage arm), same fixpoint hazard as
+                // the flush-site upload above.
+                gpuUploadedKey_.stamp(cageAddr, g_geomEpochs.epochFor(cageAddr));
                 gpuUploadedPreview = wantPreview;
             }
         }
@@ -6350,18 +6457,41 @@ void main(string[] args) {
                 vertexCache.update(vp);
             }
 
-            // Change-notification bus, Stage 3 — gpu_select proactive
-            // invalidation. The GPU select buffer's per-mode slot key
-            // (mode, gpu.uploadVersion, view, proj, FBO size) is UNCHANGED:
-            // `uploadVersion` fingerprints exactly what is in the VBO and backs
-            // the mid-event-batch stale-VBO safety net (gpu_select.d:240-254).
-            // The bus only replaces the *trigger* side — until now the slots
-            // aged out lazily on the next pick when the key no longer matched.
-            // Clear them proactively the instant geometry/positions change this
-            // frame so the next pick never reads a slot rendered against a
-            // superseded VBO; the key remains the correctness backstop.
-            if (meshChangedFlags & (MeshEditScope.Position | MeshEditScope.Geometry))
-                gpuSelect.invalidate();
+            // TASK 1906 STAGE 2b (§3.2 row 5) — THE PROACTIVE `gpuSelect
+            // .invalidate()` THAT STOOD HERE IS DELETED, and this is the one
+            // place in stage 2 where the answer is "remove the bus term", not
+            // "remove the version term".
+            //
+            // The rule that decides it: key on the artifact you READ.
+            // `gpu_select` rasterises element IDs FROM THE VBO, and its slot
+            // key already carries `gpu.uploadVersion`, which fingerprints
+            // exactly what is in that buffer. A mesh-change trigger on top is
+            // not a second opinion, it is a WORSE one: the mesh can change
+            // without the VBO having been re-uploaded yet, and clearing a slot
+            // that still matches the buffer the next pick will actually
+            // rasterise only throws away a valid render. `uploadVersion`
+            // strictly dominates it.
+            // COVERAGE, MEASURED RATHER THAN CLAIMED (2026-08-25). The
+            // plan's mutation for this row — delete `Slot.uploadVer` from
+            // `gpu_select.d :: ensureSlot`'s predicate, expecting "an existing
+            // gpu-select pick test after a subdivide" to redden — reddened
+            // NOTHING in `test_lasso_select`, `test_falloff_lasso_paint`,
+            // `test_element_pick_fresh_hover`, `test_wireframe_select_through`.
+            // Deleting one half of a two-key cache on prose while the OTHER
+            // half is pinned by nothing is not a trade, so the gap was closed
+            // rather than recorded: `tests/test_gpu_select_slot_upload_key.d`.
+            //
+            // WHY EVERY PICK-SHAPED CANDIDATE MISSED, since it is the part
+            // that costs an afternoon to rediscover: `ensureSlot` invalidates
+            // EVERY OTHER MODE's slot after a re-render, and in Vertices mode
+            // the per-frame hover pass runs `ensureSlot(SelectMode.Vertex)`
+            // continuously — so a Face slot never survives to the next pick and
+            // a face route cannot observe a stale slot at all. The observable
+            // is ONE MODE HELD CONTINUOUSLY ACROSS A GEOMETRY CHANGE: park a
+            // vertex hover, `/api/transform` the cube by its own width, read
+            // `/api/toolpipe/eval`'s `hover.vertex` again. Dropping the
+            // `uploadVer` term then leaves the hover on the OLD vertex (6)
+            // while the new geometry puts vertex 7 at 1.3 px from the cursor.
 
             // Change-notification bus, Stage 3 addendum (task 0401) —
             // symmetry pairing + snap candidate-grid proactive invalidation.

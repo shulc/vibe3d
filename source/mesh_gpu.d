@@ -400,13 +400,17 @@ struct GpuMesh {
         // Why a bare bump is wrong: the subpatch-preview rebuild is gated on
         // the bus FLAG (`meshChangedFlags & (Position|Geometry|Marks)`, see the
         // rebuildIfStale call in app.d), NOT on mutationVersion. A version-only
-        // bump therefore triggers the main loop's GPU RE-UPLOAD
-        // (`gpuUploadedVersion != mutationVersion`) of a preview that was never
-        // REBUILT against the moved cage — the displayed surface goes stale /
-        // shifts, and the debug build trips the `change_bus: MISSED PUBLISHER`
-        // guard (mutationVersion advanced with no pending change flags).
-        // commitChange(Position) sets the flag AND bumps mutationVersion, so
-        // the preview rebuilds and the re-upload still fires.
+        // bump therefore triggers the main loop's GPU RE-UPLOAD (app.d's
+        // cage/preview block, `gpuUploadedKey_` — since task 1906 stage 2a an
+        // (address, bus-epoch) key, before that `mutationVersion`) of a preview
+        // that was never REBUILT against the moved cage — the displayed surface
+        // goes stale / shifts, and the debug build trips the
+        // `change_bus: MISSED PUBLISHER` guard (mutationVersion advanced with
+        // no pending change flags). commitChange(Position) sets the flag AND
+        // bumps mutationVersion, so the preview rebuilds and the re-upload
+        // still fires. NOTE for 1906 readers: this commit is a PUBLISHER on the
+        // upload path, so both epoch stamps in app.d re-read the epoch AFTER
+        // calling `upload` — see their comments.
         if (suppressCageUpload && edgeOrigin.length == 0 && vertOrigin.length == 0) {
             (cast(Mesh*)&mesh).commitChange(MeshEditScope.Position);
             return;

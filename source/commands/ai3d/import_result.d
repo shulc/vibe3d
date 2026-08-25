@@ -131,7 +131,11 @@ final class Ai3dImportResult : Command {
         doc.setActive(insertedIndex);
 
         inserted.meshRef().syncSelection();
-        inserted.meshRef().noteChange(MeshChangeAll);
+        // TASK 1906 STAGE 2 — `publishChange`, not `noteChange`: the command's
+        // LAST mesh publisher must DELIVER (`syncSelection()` does not), or the
+        // bus-keyed display family has nothing to react to inside this frame.
+        // See `Mesh.publishChange`'s doc comment.
+        inserted.meshRef().publishChange(MeshChangeAll);
         noteLayerChange(LayerChange.Added);
         fireSwitchIfChanged(prevLayer, prevIndex);
         applied = true;
@@ -156,7 +160,8 @@ final class Ai3dImportResult : Command {
         // case restoreSelection put it back that way and there is no active
         // mesh to note a change on. The layer-list change published below is
         // what rebuilds the caches.
-        if (active !is null) active.noteChange(MeshChangeAll);
+        // TASK 1906 STAGE 2 — `publishChange`, same reason as the apply tail.
+        if (active !is null) active.publishChange(MeshChangeAll);
         noteLayerChange(LayerChange.Removed);
         fireSwitchIfChanged(prevLayer, prevIndex);
         return true;

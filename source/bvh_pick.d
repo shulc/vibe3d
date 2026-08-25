@@ -4,6 +4,8 @@ import bvh.c;
 import math : Vec3, Viewport, screenRay, screenPointToRay, cross, ModelSpace;
 import mesh : Mesh, GpuMesh;
 import perf_probe : g_perf, Cat, g_fc;
+// Task 1906 stage 2b — the SURFACE tree's freshness key. See `pickSurfaceRay`.
+import mesh_dirty : MeshDirtyKey, g_geomEpochs;
 
 // ---------------------------------------------------------------------------
 // bvh_pick — CPU face picking via a nanort BVH ray-cast.
@@ -30,7 +32,7 @@ import perf_probe : g_perf, Cat, g_fc;
 // This module must NOT import `document.d` (it would be the only reason to)
 // — `ModelSpace` lives in `math.d`, which both this module and `document.d`
 // already import, so no new dependency is needed. Cache keys
-// (`_uploadVersion`/`_meshAddr`, `_surfVersionKey`/`_surfMeshAddr`) are
+// (`_uploadVersion`/`_meshAddr`, `_surfKey`) are
 // UNCHANGED by this — that is the point of transforming the query instead of
 // the cache.
 // ---------------------------------------------------------------------------
@@ -61,11 +63,12 @@ struct SurfaceHit {
 ///     `pickFace`. UNCHANGED by the P0 surface-pick addition below (a
 ///     pre-existing unit test asserts `_uploadVersion` by name — see
 ///     bottom of this file) — byte-identical path, byte-identical field.
-///   * `_surfHandle`/`_surfVersionKey`/`_surfMeshAddr`/`_surfTriToFace` —
-///     the NEW surface-pick cache (`pickSurface`/`pickSurfaceRay`), keyed
-///     on a caller-supplied `ulong` version (a background mesh may never
-///     be GPU-uploaded, so it can't key on `uploadVersion` — see
-///     doc/cons_constraint_plan-adjacent topology-pen P0 plan, risk R3).
+///   * `_surfHandle`/`_surfKey`/`_surfTriToFace` — the surface-pick cache
+///     (`pickSurface`/`pickSurfaceRay`), keyed on (mesh address, CHANGE-BUS
+///     epoch) since task 1906 stage 2b. It cannot key on `uploadVersion`
+///     (a background mesh may never be GPU-uploaded — topology-pen P0 plan,
+///     risk R3) and it MUST NOT key on `mutationVersion` — see
+///     `pickSurfaceRay`.
 /// The two caches are deliberately NOT unified: a single BvhPick instance
 /// that mixed both key domains could thrash (each call evicting the
 /// other's build) if ever used for both purposes. In practice every call
@@ -81,12 +84,14 @@ struct SurfaceHit {
 ///     after a primary switch — different objects that can share an
 ///     `uploadVersion`. Pinned by a stale-read block in
 ///     tests/unit/bvh_pick_test.d: delete the term and it goes red.
-///   * `_surfMeshAddr` (surface pick) is redundant TODAY: its only caller,
+///   * `_surfKey.addr` (surface pick) is redundant TODAY: its only caller,
 ///     `ConstrainStage`, already keys its `BvhPick[size_t]` map BY mesh
 ///     address (toolpipe/stages/constrain.d), so a given instance never sees
 ///     a second mesh. Kept, because the key belongs to the cache rather than
 ///     to one caller's bookkeeping — but a test for it would be asserting
-///     `constrain.d`'s AA, not this cache, so none was written.
+///     `constrain.d`'s AA, not this cache, so none was written. It is load-
+///     bearing in a second way since 1906: an epoch is per ADDRESS, and two
+///     meshes can sit at the same epoch.
 class BvhPick {
 private:
     dbvh_t* _handle;
@@ -96,8 +101,12 @@ private:
 
     // --- Surface-pick cache (pickSurface/pickSurfaceRay) — see class doc.
     dbvh_t* _surfHandle;
-    ulong   _surfVersionKey = ulong.max;
-    size_t  _surfMeshAddr;
+    // TASK 1906 STAGE 2b — was `ulong _surfVersionKey = ulong.max` holding
+    // `sourceMesh.mutationVersion`, plus a separate `size_t _surfMeshAddr`.
+    // Both terms survive inside `MeshDirtyKey`; what changed is WHICH counter
+    // the freshness half reads. See `pickSurfaceRay` for why the version was
+    // the wrong one.
+    MeshDirtyKey _surfKey;
     uint[]  _surfTriToFace;
 
 public:
@@ -120,8 +129,7 @@ public:
             dbvh_free(_surfHandle);
             _surfHandle = null;
         }
-        _surfVersionKey = ulong.max;
-        _surfMeshAddr   = 0;
+        _surfKey.clear();
     }
 
     ~this() { invalidate(); invalidateSurface(); }
@@ -184,11 +192,24 @@ public:
     /// CONS stage's background-mesh projection (topology-pen P0) — one
     /// `BvhPick` instance per background layer, keyed by mesh address.
     ///
-    /// The surface BVH is rebuilt lazily when (`sourceMesh.mutationVersion`,
-    /// `&sourceMesh`) diverges from the cached key — `mutationVersion` (not
-    /// `GpuMesh.uploadVersion`, see `pickFace`) because a background layer's
-    /// mesh may never be GPU-uploaded (headless tests, `/api/surface-raycast`
-    /// fixtures). `gpu` is OPTIONAL: null (the common case for a raw
+    /// The surface BVH is rebuilt lazily when (`&sourceMesh`, its CHANGE-BUS
+    /// geometry epoch) diverges from the cached key.
+    ///
+    /// TASK 1906 STAGE 2b — THIS KEY WAS `sourceMesh.mutationVersion`, AND
+    /// THAT WAS A LIVE BUG, not a stylistic choice. An interactive gizmo
+    /// Move/Rotate/Scale is version-silent on Position — `mutationVersion`
+    /// does not move at the drag steps NOR at the commit (CLAUDE.md, "The
+    /// exception that breaks version-keying") — and `invalidateSurface()` has
+    /// no caller outside this module, so every surface consumer read the
+    /// PRE-DRAG tree for the rest of the session. `mesh_dirty.g_geomEpochs` is
+    /// fed by the change bus, whose `Position` class IS published on that
+    /// path. It cannot key on `GpuMesh.uploadVersion` either (see `pickFace`):
+    /// a background layer's mesh may never be GPU-uploaded at all (headless
+    /// tests, `/api/surface-raycast` fixtures).
+    /// Pinned by `tests/test_bus_surface_raycast_after_drag.d` (ARM A red on
+    /// `main`, ARM B — the same displacement through `/api/transform`, which
+    /// bumps the version — green on both).
+    /// `gpu` is OPTIONAL: null (the common case for a raw
     /// background mesh) means "1:1 cage face map"; a non-null GpuMesh maps
     /// through `faceOriginGpu` exactly like `pickFace`'s subpatch-preview
     /// path, reserved for a future phase.
@@ -203,14 +224,10 @@ public:
         g_fc.bumpHoverPick();
         if (!ms.invertible) return false; // R2 — a singular M has no local ray
 
-        ulong  versionKey = sourceMesh.mutationVersion;
-        size_t srcAddr    = cast(size_t)&sourceMesh;
-        if (_surfHandle is null
-            || _surfVersionKey != versionKey
-            || _surfMeshAddr   != srcAddr)
-        {
-            rebuildSurface(sourceMesh, gpu, versionKey);
-        }
+        size_t srcAddr = cast(size_t)&sourceMesh;
+        ulong  epoch   = g_geomEpochs.epochFor(srcAddr);
+        if (_surfHandle is null || !_surfKey.matches(srcAddr, epoch))
+            rebuildSurface(sourceMesh, gpu, epoch);
         if (_surfHandle is null) return false;
 
         // §3.4 — cast in LOCAL space; `dirLocal` stays UN-NORMALIZED so
@@ -387,13 +404,15 @@ private:
     // Surface-pick rebuild — mirrors `rebuild()` above exactly (same fan
     // triangulation, same faceOriginGpu indirection when `gpu` is supplied)
     // but writes the SEPARATE `_surf*` fields and accepts a caller-supplied
-    // `versionKey` instead of hardcoding `gpu.uploadVersion` (a background
+    // freshness value instead of hardcoding `gpu.uploadVersion` (a background
     // mesh may never be GPU-uploaded — see `pickSurfaceRay`'s doc comment).
+    // Since task 1906 stage 2b that value is the caller's `g_geomEpochs`
+    // reading for this mesh address, not a mesh version counter.
     // Duplicated rather than shared with `rebuild()` so `pickFace`'s path
     // stays byte-identical with zero risk of the two caches interacting
     // (REV-3 of the topology-pen P0 plan).
     void rebuildSurface(const ref Mesh sourceMesh, const(GpuMesh)* gpu,
-                        ulong versionKey)
+                        ulong epoch)
     {
         invalidateSurface();
 
@@ -447,10 +466,8 @@ private:
         int nv = cast(int)sourceMesh.vertices.length;
         int nt = cast(int)ti;
         _surfHandle = dbvh_build(verts.ptr, nv, indices.ptr, nt);
-        if (_surfHandle !is null) {
-            _surfVersionKey = versionKey;
-            _surfMeshAddr   = cast(size_t)&sourceMesh;
-        }
+        if (_surfHandle !is null)
+            _surfKey.stamp(cast(size_t)&sourceMesh, epoch);
     }
 }
 

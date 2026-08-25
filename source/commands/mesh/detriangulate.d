@@ -61,7 +61,12 @@ class MeshDetriangulate : Command, Operator {
         mesh.detriangulateFacesByMask(mask);
         mesh.resetSelection();
 
-        mesh.noteChange(MeshEditScope.Geometry);
+        // TASK 1906 STAGE 2 — `publishChange`, not `noteChange`: this is the
+        // command's LAST mesh publisher, and a command's tail must DELIVER.
+        // `Mesh.publishChange`'s doc comment carries the whole rule and the
+        // reason (same flags, same version-silence, one delivery at the batch
+        // close — but structural instead of incidental).
+        mesh.publishChange(MeshEditScope.Geometry);
         return true;
     }
 

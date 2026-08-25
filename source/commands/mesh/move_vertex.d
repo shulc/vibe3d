@@ -55,9 +55,14 @@ class MeshMoveVertex : Command, Operator {
 
         // Change-notification (Stage 1): the forward apply moved a position but
         // historically did NOT bump mutationVersion (only revert did). Preserve
-        // that exactly — noteChange publishes the Position class WITHOUT touching
+        // that exactly — publishChange publishes the Position class WITHOUT touching
         // the counters, so the bus sees the move while the version stays put.
-        mesh.noteChange(MeshEditScope.Position);
+        // TASK 1906 STAGE 2 — `publishChange`, not `noteChange`: this is the
+        // command's LAST mesh publisher, and a command's tail must DELIVER.
+        // `Mesh.publishChange`'s doc comment carries the whole rule and the
+        // reason (same flags, same version-silence, one delivery at the batch
+        // close — but structural instead of incidental).
+        mesh.publishChange(MeshEditScope.Position);
 
         return true;
     }
