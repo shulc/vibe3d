@@ -41,13 +41,16 @@ module input_router;
 //
 // `EditorApp` fields already cover `vpm` and `layout`, referenced here bare
 // under `with (app) { ... }`, exactly as every `ui/panels.d` draw function
-// already does. The remaining fields below are main()-locals
-// `handleWindowEvent` reads/writes that EditorApp does not carry: `window`
-// (assigned once, by-value, like EditorApp's own `io`/`shader` fields),
-// `thickLineProgram`/`playbackMode` (also assigned once, by-value), and
-// `winW`/`winH`/`fbW`/`fbH` (mutated via `&winW` etc. inside this very
-// handler -- pointer-backed, exactly EditorApp's own Edit-class-1 rule for
-// an address-taken local).
+// already does. The remaining fields below are what `handleWindowEvent`
+// reads/writes that EditorApp does not carry: `window` (assigned once, by-
+// value, like EditorApp's own `io`/`shader` fields), `thickLineProgram`/
+// `playbackMode` (also assigned once, by-value), and `winW`/`winH`/`fbW`/
+// `fbH` (mutated via `&winW` etc. inside this very handler -- pointer-
+// backed, exactly EditorApp's own Edit-class-1 rule for an address-taken
+// local). `winW`/`winH` are still plain main()-locals; `fbW`/`fbH` point
+// into the input/frame cluster's own fields instead (task 0781 step 1a
+// moved their storage there -- see input_frame_state.d) -- the pointer
+// indirection here is unaffected either way.
 
 import bindbc.sdl;
 import bindbc.opengl;

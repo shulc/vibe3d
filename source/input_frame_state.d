@@ -26,13 +26,37 @@ module input_frame_state;
 // input_frame_state.d import cycle for a plain enum.
 //
 // Same seam as `InputRouter` (source/input_router.d) and `EditorApp`
-// (source/editor_app.d): a plain struct holding an `EditorApp app` by
-// value plus its own state/logic, constructed once in main() and threaded
-// through. Deliberately NOT a member of `EditorApp` itself (audit rule
-// A10 -- EditorApp already carries ~190 members) and NOT a member of
+// (source/editor_app.d): a class holding an `EditorApp app` by value plus
+// its own state/logic, constructed once in main() and threaded through.
+// Deliberately NOT a member of `EditorApp` itself (audit rule A10 --
+// EditorApp already carries ~190 members) and NOT a member of
 // `InputRouter` either -- 0781 stopped short of folding this surface into
 // InputRouter specifically because its production/consumption split does
 // not follow the router/frame boundary; it needed a third, separate home.
+//
+// `final class`, not a struct (task 0781 step 1a,
+// doc/input_state_cluster_plan.md §2.1): task 1040 (below) made it a
+// struct because at the time there was exactly one holder. Step 1a of
+// 0781's plan gives `InputRouter` a reference to this SAME object (task
+// 0781 step 2, not this commit) -- and `InputRouter` already holds its own
+// `EditorApp app` field by value, cheaply, because `EditorApp` is itself a
+// bag of pointers. `InputFrameState` is the opposite: the state lives IN
+// it. A struct field on `InputRouter` would silently give the router its
+// OWN `dragMode`/`rmbPath`/hover triple -- a router-side write would never
+// reach the frame body's reads, and nothing would fail to compile. A class
+// makes that misuse impossible to write instead of forbidden by a comment,
+// the same reason `document.d`'s `Layer` and `viewport.d`'s
+// `ViewportManager` are classes. `final` because nothing subclasses it and
+// the per-event `dragMode` read/write path keeps a devirtualized call.
+//
+// Step 1a also folds three more names into the cluster, by the same
+// producer/consumer argument as the original five: `fbW`/`fbH` (resize
+// writes, the frame body's viewport/DPI math reads), the viewport-hover
+// flag itself rather than a pointer back into main() (the frame body's
+// three writes now go through a same-name forwarder that reaches straight
+// into this object), and `previewIndexSpaceStale`'s body (task 1730's
+// index-space-staleness guard, read by the pick family and the frame
+// body). See each member below for the specific reasoning.
 //
 // THIS STEP MOVES ONLY THE STATE AND THE TWO FUNCTIONS' BODIES -- it does
 // not decide who calls them next (that is steps 2 and 3: the router, then
@@ -63,8 +87,10 @@ import d_imgui.imgui_h    : ImVec2;
 enum DragMode { None, Orbit, Zoom, Pan, Roll, Select, SelectAdd, SelectRemove }
 
 /// The input/frame shared-state cluster (task 1040). Constructed once in
-/// main(), wired the same way `InputRouter router` already is.
-struct InputFrameState {
+/// main() (`auto ifs = new InputFrameState();`), wired the same way
+/// `InputRouter router` already is. A `final class`, not a struct (task
+/// 0781 step 1a) -- see the module doc comment above.
+final class InputFrameState {
     EditorApp app;
 
     // ---- state: moved bodily from main() locals of the same name. Every
@@ -72,12 +98,20 @@ struct InputFrameState {
     //      name forwarding nested function declared at the field's
     //      original app.d declaration point (see app.d's Log for the exact
     //      lines) -- these three need no pointer back into main() (unlike
-    //      InputRouter's winW/fbW) because nothing outside this struct
+    //      InputRouter's winW/winH) because nothing outside this class
     //      reads them under their own name yet; the forwarders are, for
-    //      now, this struct's only callers. ----
+    //      now, this class's only callers. ----
     DragMode dragMode    = DragMode.None;
     ImVec2[] rmbPath;
     bool     anySpinning = false;
+
+    // Task 0781 step 1a: framebuffer size in physical pixels, folded in
+    // from main()'s own `fbW`/`fbH` locals by the same producer/consumer
+    // argument as the three fields above -- resize (input) writes them,
+    // the frame body's viewport/DPI math reads them. `InputRouter.fbWPtr`/
+    // `fbHPtr` point straight at these two fields now, the same way they
+    // already pointed at the main()-local pair before this step.
+    int fbW, fbH;
 
     // buildToolVts's own publish slot. Kept out of buildToolVts's own
     // stack frame for the same reason main() kept it out before the move
@@ -98,7 +132,7 @@ struct InputFrameState {
     //
     // Full six-parameter form, unlike `EditorApp.buildToolVts`'s own field
     // (still the narrow two-parameter delegate 0781 flagged as an ABI trap
-    // -- see this struct's module doc comment): this is the trap the owner
+    // -- see this class's module doc comment): this is the trap the owner
     // asked this task to fix. Whatever THIS cluster exposes IS the full
     // form, so a caller reaching it cannot silently get the short one the
     // way `EditorApp.buildToolVts`'s field-typed callers can.
@@ -115,19 +149,32 @@ struct InputFrameState {
         evaluateSubject(subj, vts, src, &gestureSlot);
     }
 
-    // `viewportInputAllowed`'s own backing flag stays a main()-local
-    // (`g_viewportWindowHovered`, app.d ~1805) -- deliberately NOT moved,
-    // because the not-yet-extracted frame body writes it directly at three
-    // sites (app.d ~7124/7669/7932) that this task must not touch.
-    // Pointer-backed, the same rule InputRouter already applies to
-    // winW/winH/fbW/fbH for exactly this "still read/written bare by code
-    // outside this cluster" reason.
-    bool* viewportHoveredPtr;
+    // Task 0781 step 1a: the flag itself, not a pointer back into main().
+    // Before this step the not-yet-extracted frame body wrote
+    // `g_viewportWindowHovered` (a main()-local `bool`) directly at three
+    // sites, so this class only held a pointer at it. Now app.d's own
+    // same-name forwarder (`g_viewportWindowHovered`, a `@property ref`
+    // like `dragMode`'s) reaches straight into this field, so the frame
+    // body's three writes land here with no indirection left to hold onto.
+    bool viewportWindowHovered;
 
-    // Verbatim body from app.d's main() (task 1040 relocation); only
-    // `g_viewportWindowHovered` became `*viewportHoveredPtr`.
+    // Verbatim body from app.d's main() (task 1040 relocation); reads
+    // `viewportWindowHovered` directly instead of through a pointer (task
+    // 0781 step 1a).
     bool viewportInputAllowed() {
         if (app.testMode) return !app.io.WantCaptureMouse;
-        return *viewportHoveredPtr;
+        return viewportWindowHovered;
+    }
+
+    // Task 0781 step 1a: relocated from a nested function of the same name
+    // in main() (task 1730's index-space-staleness guard -- see app.d's
+    // comment at the surviving forwarder for what this predicate protects).
+    // Reads through `app.subpatchPreview`/`app.gpuUploadedPreview` because
+    // both stay main() locals (doc/input_state_cluster_plan.md §2.3) --
+    // only the predicate itself moved.
+    bool previewIndexSpaceStale() {
+        return app.subpatchPreview.buildPending
+            && !app.subpatchPreview.buildPastCeiling()
+            && app.gpuUploadedPreview;
     }
 }

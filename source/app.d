@@ -1276,6 +1276,20 @@ void main(string[] args) {
         }
     }
 
+    // Task 0781 step 1a (doc/input_state_cluster_plan.md §2.1, §3 step 1a):
+    // the input/frame shared-state cluster's instance. Declared here,
+    // ahead of every one of its members' own forwarder declarations below
+    // (the earliest of them, now that `fbW`/`fbH` joined the cluster too),
+    // because a nested function/closure in D cannot forward-reference a
+    // not-yet-declared sibling or local -- every forwarder below needs
+    // `ifs` already in scope. A class now (this step flipped it from a
+    // struct -- see input_frame_state.d's own module comment for why), so
+    // this `new` is the one and only allocation for the whole run;
+    // `ifs.app` is wired later, once `EditorApp app` itself is fully
+    // assembled, at the same point `InputRouter.app` already is; nothing
+    // calls through `ifs` before then.
+    auto ifs = new InputFrameState();
+
     int winW = cliWinW, winH = cliWinH;
     // Persisted window size (when prefs is active and the user didn't pass an
     // explicit --window/--viewport) takes precedence and is used as EXACT
@@ -1375,9 +1389,18 @@ void main(string[] args) {
     if (loadOpenGL() < glSupport) { writeln("Failed to load OpenGL 3.3"); return; }
     writefln("OpenGL: %s", glGetString(GL_VERSION));
 
-    // Framebuffer size (may differ on HiDPI / Retina)
-    int fbW, fbH;
-    SDL_GL_GetDrawableSize(window, &fbW, &fbH);
+    // Framebuffer size (may differ on HiDPI / Retina). Task 0781 step 1a:
+    // storage moved into the input/frame cluster (`ifs.fbW`/`ifs.fbH`) --
+    // these two are now `@property ref` forwarders, the same pattern
+    // `dragMode` already uses, so every existing bare read/write site below
+    // stays textually unchanged. The one exception is address-of: `&fbW`
+    // now takes the FORWARDER FUNCTION's address, not the stored int's, so
+    // the site that needs the stored int's address spells it `&fbW()`/
+    // `&fbH()` (below) or reaches the field directly as `&ifs.fbW`/
+    // `&ifs.fbH` (InputRouter's wiring).
+    @property ref int fbW() { return ifs.fbW; }
+    @property ref int fbH() { return ifs.fbH; }
+    SDL_GL_GetDrawableSize(window, &fbW(), &fbH());
 
     // --perf disables vsync so the benchmark isn't capped at the display
     // refresh rate; --test disables it too so a hidden test window never blocks
@@ -1784,11 +1807,11 @@ void main(string[] args) {
     // false, the upload block swaps the cage in, and drawn and picked agree
     // again: a wedged build degrades to the pre-1730 flicker rather than to a
     // viewport that has stopped answering.
-    bool previewIndexSpaceStale() {
-        return subpatchPreview.buildPending
-            && !subpatchPreview.buildPastCeiling()
-            && gpuUploadedPreview;
-    }
+    // Task 0781 step 1a: body relocated to
+    // InputFrameState.previewIndexSpaceStale; this forwarder keeps every
+    // one of its existing bare call sites (the pick family, the mouse
+    // handlers, the frame body) untouched.
+    bool previewIndexSpaceStale() { return ifs.previewIndexSpaceStale(); }
     // Source topologyVersion of the last FULL preview upload. When this
     // matches the current preview's source topology, the preview mesh
     // layout (#faces, fan order, edge / vert filter mask) is identical
@@ -1916,33 +1939,19 @@ void main(string[] args) {
     // (optional-parens applies; 0 address-of sites so no &gpuSelect() edits needed).
     auto gpuSelect() { return vpm.views[vpm.activeId].gpuSel; }
 
-    // Task 1040: the input/frame shared-state cluster (source/
-    // input_frame_state.d) -- home for `dragMode`/`rmbPath`/`anySpinning`/
-    // `buildToolVts`/`viewportInputAllowed`, none of which the not-yet-
-    // extracted input-router (0781) or the not-yet-extracted frame body
-    // (0782) owns outright. Declared here, ahead of ALL FIVE of those
-    // names' own original positions below (this is the earliest of them),
-    // because a nested function/closure in D cannot forward-reference a
-    // not-yet-declared sibling or local (probed standalone, see the task
-    // Log) -- every forwarder below needs `ifs` already in scope. `ifs.app`
-    // is wired later, once `EditorApp app` itself is fully assembled, at
-    // the same point `InputRouter.app` already is (~InputRouter router
-    // construction, below); nothing calls through `ifs` before then.
-    InputFrameState ifs;
-
     // Phase 2 — input seam.  `g_viewportWindowHovered` is set each frame
     // by the "Viewport" ImGui window's IsWindowHovered() result.  The seam
     // function replaces the scattered `!io.WantCaptureMouse` reads so a
     // single flag controls whether 3D input reaches the picking / camera
     // orbit code.  In --test: byte-identical to the prior per-site checks.
     //
-    // NOT moved into `ifs` (task 1040): the not-yet-extracted frame body
-    // still writes this flag directly at three sites (~7135/~7943 below,
-    // both outside this task's scope) -- moving its storage would require
-    // touching that code. `ifs` holds a POINTER to it instead (wired
-    // alongside `ifs.app`, below), the same rule InputRouter already
-    // applies to winW/winH/fbW/fbH.
-    bool g_viewportWindowHovered = false;
+    // Task 0781 step 1a: now a `@property ref` forwarder into the input/
+    // frame cluster (`ifs.viewportWindowHovered`), the same pattern
+    // `dragMode` already uses, instead of a plain local `ifs` held a
+    // pointer at. The not-yet-extracted frame body's three direct writes
+    // stay textually unchanged (`g_viewportWindowHovered = true/false`)
+    // and now land straight in the cluster's own field.
+    @property ref bool g_viewportWindowHovered() { return ifs.viewportWindowHovered; }
     // Body relocated to InputFrameState.viewportInputAllowed (task 1040);
     // this forwarder keeps every one of its ~15 existing bare call sites
     // (inside the not-yet-extracted mouse handlers) untouched.
@@ -4815,8 +4824,12 @@ void main(string[] args) {
     // `app.layout`). `window`/`playbackMode`/`thickLineProgram` are
     // assigned exactly once in main(), well before this point, so the
     // by-value copies below are stable for the rest of the run;
-    // `winW`/`winH`/`fbW`/`fbH` are pointer-backed because
-    // handleWindowEvent mutates them via `&winW` etc.
+    // `winW`/`winH` are pointer-backed into main()'s own locals because
+    // handleWindowEvent mutates them via `&winW` etc. `fbW`/`fbH` point
+    // straight into the input/frame cluster's own fields instead (task
+    // 0781 step 1a moved their storage there) -- `&ifs.fbW`/`&ifs.fbH`,
+    // not `&fbW()`/`&fbH()` (the latter would take the FORWARDER
+    // function's address, not the stored int's).
     InputRouter router;
     router.app              = app;
     router.window           = window;
@@ -4824,8 +4837,8 @@ void main(string[] args) {
     router.thickLineProgram = thickLineProgram;
     router.winWPtr          = &winW;
     router.winHPtr          = &winH;
-    router.fbWPtr           = &fbW;
-    router.fbHPtr           = &fbH;
+    router.fbWPtr           = &ifs.fbW;
+    router.fbHPtr           = &ifs.fbH;
 
     // Task 1040 — the input/frame shared-state cluster (source/
     // input_frame_state.d). Wired HERE, same reasoning as `router.app`
@@ -4833,11 +4846,11 @@ void main(string[] args) {
     // (buildToolVts's body reads app.mesh/.editMode/.selTypeOrder/.vpm,
     // all wired well before this point; viewportInputAllowed reads app.io/
     // .testMode, wired by the 0419 LATE block, also before this point).
-    // `ifs.viewportHoveredPtr` is pointer-backed for the same reason
-    // router's winW/fbW are: the not-yet-extracted frame body still writes
-    // `g_viewportWindowHovered` directly.
-    ifs.app                = app;
-    ifs.viewportHoveredPtr = &g_viewportWindowHovered;
+    // No `viewportHoveredPtr` wiring any more (task 0781 step 1a): the
+    // flag itself moved into the cluster, and the not-yet-extracted frame
+    // body's three writes now go through the `g_viewportWindowHovered`
+    // forwarder straight into `ifs.viewportWindowHovered`.
+    ifs.app = app;
 
     // Task 1670 — wire the arm-time pose hook declared next to
     // `setActiveTool`. HERE, and not at `buildToolVts`'s own declaration a
