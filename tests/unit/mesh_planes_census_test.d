@@ -500,8 +500,6 @@ private immutable AllowEntry[] kAllow = [
         "site 14: extrudeEdgesByMask compaction (Stage D)", 1),
     AllowEntry("source/mesh_ops/extrude.d", "faces              = newFaces;",
         "sites 15/16/17: extrudeVerticesByMask, extrudeFacesByMask, smoothShiftFacesByMask (Stage D)", 3),
-    AllowEntry("source/mesh_ops/loop_slice.d", "faces = newFaces;",
-        "site 18: insertEdgeLoopsMulti — the one non-lock-step cell (Stage C)", 1),
     AllowEntry("source/mesh_ops/loop_slice.d", "m.vertices = [",
         "fresh-mesh test helper: makeTwoDisjointCubes (fixture-only, not version(unittest)-gated)", 1),
     AllowEntry("source/mesh_ops/revolve.d", "faces              = newFaces;",

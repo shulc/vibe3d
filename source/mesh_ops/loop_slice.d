@@ -740,10 +740,14 @@ mixin template MeshLoopSliceOps() {
         // `Mesh.carryPolyVertexMaps` (mechanism (c)) for the law and why a
         // second, interpolating pass is needed. Two things are recorded as the
         // split runs: the ORIGINAL face each emitted face came from (`newSrc`,
-        // pushed in lock-step with `newFaces`, `~0u` for a face with no single
-        // source), and the blend of original vertices behind every inserted
-        // vertex (`vertBlend`). Both are skipped entirely when no per-corner map
-        // is registered — the common case pays nothing.
+        // pushed in lock-step with `newFaces`, `kNoSource` (`~0u`) for a face
+        // with no single source), and the blend of original vertices behind
+        // every inserted vertex (`vertBlend`). Only `vertBlend` is skipped when
+        // no per-corner map is registered — `newSrc` is populated
+        // UNCONDITIONALLY since task 1902 Stage C, because it is also the
+        // newToOld correspondence `mesh_planes.rewriteFaces` needs below to
+        // carry the plane arrays (faceMaterial/facePart/faceSelectionOrder/
+        // faceSetMask), which must happen whether or not a UV map exists.
         //
         // Task 0830: the capture is now the OBLIGATION handle. From here to the
         // declaration below the per-corner plane is in flight and its default
@@ -936,8 +940,12 @@ mixin template MeshLoopSliceOps() {
         // lands below. `faces = newFaces` is a whole-array rebuild — without
         // this, `faceMarks` would stay aligned to the OLD `faces` slot
         // indices and every bit would land on the wrong (or a nonexistent)
-        // face.
-        // One estimate, named once, for all three lock-step arrays below — a
+        // face. `newWord` stays hand-tracked (task 1902 Stage C does not
+        // remove it): a Cap Sections face folds SEVERAL ring faces' words
+        // through `combineFaceMarksWords`, a value with no single "source
+        // face" — see the tail override of `mesh_planes.rewriteFaces`'s own
+        // (throwaway) carry, below.
+        // One estimate, named once, for both lock-step arrays below — a
         // `reserve(newWord.capacity)` reads the NEIGHBOUR's already-grown
         // capacity, so merely moving these declarations apart would silently
         // reserve 0 (task 0685 T12).
@@ -945,24 +953,21 @@ mixin template MeshLoopSliceOps() {
             faces.length + rings.length * positions.length * 4;
         uint[] newWord;
         newWord.reserve(faceArrayEstimate);
-        // Same lock-step law for the discrete polygon tags (task 0678 M1):
-        // `faces = newFaces` renumbers every face (a split ring face emits
-        // several sub-faces, shifting everything after it), so
-        // `faceMaterial`/`facePart` must be rebuilt in the same pass or every
-        // tag lands on the wrong face — resetSelection() only fixes the array
-        // LENGTH, not the indexing. Mirrors bevelEdgesByMask's newMat/newPart.
-        uint[] newMat, newPart;
-        newMat.reserve(faceArrayEstimate);
-        newPart.reserve(faceArrayEstimate);
-        ulong[] newSetMask;   // task 1060, Stage 5c — faceSetMask rides facePart's carry
-        newSetMask.reserve(faceArrayEstimate);
-        // Same lock-step law once more, for the CORNER-indexed planes (task
-        // 0682): the ORIGINAL face each emitted face came from, `~0u` when
-        // there is no single source (a section cap is stitched from a whole
-        // shell's boundary, which can span several ring faces). Only populated
-        // when a per-corner map exists; `carryPolyVertexMaps` reads it below.
+        // The newToOld correspondence (task 1902, mesh_planes.rewriteFaces):
+        // the ORIGINAL face each emitted face came from, `kNoSource` (`~0u`)
+        // when there is no single source (a section cap is stitched from a
+        // whole shell's boundary, which can span several ring faces). Now
+        // populated UNCONDITIONALLY (task 0682 only needed it when a
+        // per-corner map was active) — `rewriteFaces` below reads it to carry
+        // `faceMaterial`/`facePart`/`faceSelectionOrder`/`faceSetMask` in one
+        // pass, replacing the hand-built `newMat`/`newPart`/`newSetMask`
+        // arrays this site used to carry by hand (task 0678 M1 / task 1060
+        // Stage 5c) — a `faceAttrOr(X, newSrc[nf])` read at every index is
+        // exactly what those arrays computed. `carryPolyVertexMaps` (via
+        // `rw.carriedPerFace`, called from inside `rewriteFaces` now) still
+        // reads this same array for the corner-map obligation.
         uint[] newSrc;
-        if (carryUv) newSrc.reserve(faceArrayEstimate);
+        newSrc.reserve(faceArrayEstimate);
 
         // Read-only rail lookup for the absorb pass — returns the existing
         // midpoints on edge va→vb (in that direction) if it was split by a
@@ -1170,15 +1175,9 @@ mixin template MeshLoopSliceOps() {
             immutable size_t before = newFaces.length;
             splitFace(fi);
             immutable uint word = faceAttrOr(faceMarks, fi);
-            immutable uint mat  = faceAttrOr(faceMaterial, fi);
-            immutable uint part = faceAttrOr(facePart, fi);
-            immutable ulong setm = faceAttrOr(faceSetMask, fi);   // task 1060, Stage 5c
             foreach (i; before .. newFaces.length) {
                 newWord ~= word;
-                newMat  ~= mat;
-                newPart ~= part;
-                newSetMask ~= setm;
-                if (carryUv) newSrc ~= fi;   // every sub-face's UV island source
+                newSrc  ~= fi;   // every sub-face's plane + UV island source
             }
         }
 
@@ -1309,10 +1308,7 @@ mixin template MeshLoopSliceOps() {
                 else {
                     newFaces ~= faces[fi].dup;
                     newWord  ~= faceAttrOr(faceMarks, fi);
-                    newMat   ~= faceAttrOr(faceMaterial, fi);
-                    newPart  ~= faceAttrOr(facePart, fi);
-                    newSetMask ~= faceAttrOr(faceSetMask, fi);
-                    if (carryUv) newSrc ~= fi;
+                    newSrc   ~= fi;
                 }
             }
         } else {
@@ -1336,10 +1332,7 @@ mixin template MeshLoopSliceOps() {
                 }
                 newFaces ~= nf;
                 newWord  ~= faceAttrOr(faceMarks, fi);
-                newMat   ~= faceAttrOr(faceMaterial, fi);
-                newPart  ~= faceAttrOr(facePart, fi);
-                newSetMask ~= faceAttrOr(faceSetMask, fi);
-                if (carryUv) newSrc ~= fi;   // absorbed mids interpolate in THIS face
+                newSrc   ~= fi;   // absorbed mids interpolate in THIS face
             }
         }
 
@@ -1401,19 +1394,21 @@ mixin template MeshLoopSliceOps() {
                     newFaceIndices ~= cast(uint)(newFaces.length - 1);
                     newWord ~= capWord;
                     // Caps are NEW faces with no single source face (a shell
-                    // loop can stitch several ring faces), so they take the
-                    // default surface/part 0 — same as bevel's freshly created
-                    // faces, and same as what the pre-fix zero-fill produced
-                    // for the appended tail. Inheriting "some" ring face's
-                    // material would be AA-iteration-order nondeterministic.
-                    newMat  ~= 0u;
-                    newPart ~= 0u;
-                    newSetMask ~= 0UL;   // task 1060, Stage 5c — same "no source" default
-                    // No single source face for a cap (its loop can stitch
-                    // several ring faces), so its corners have no island to
-                    // interpolate in and stay ZERO — the pre-0682 drop
+                    // loop can stitch several ring faces): `kNoSource` makes
+                    // `mesh_planes.rewriteFaces` below default their
+                    // material/part/setmask to T.init (0/0/0UL) — the same
+                    // "no source" value this site wrote by hand before task
+                    // 1902's migration, and same as bevel's freshly created
+                    // faces. Inheriting "some" ring face's material would be
+                    // AA-iteration-order nondeterministic. No single source
+                    // face for a cap also means no island to interpolate its
+                    // corners in, so they stay ZERO too — the pre-0682 drop
                     // behaviour, kept deliberately rather than guessed at.
-                    if (carryUv) newSrc ~= ~0u;
+                    // (`kNoSource` resolves here because this file's body is a
+                    // `mixin template`: dmd 2.112 looks up its free
+                    // identifiers in the INSTANTIATION scope — `mesh.d`'s
+                    // import of `mesh_planes`, not this file's own.)
+                    newSrc ~= kNoSource;
                 }
             }
             capBoundaryLoops(loSet);
@@ -1465,19 +1460,22 @@ mixin template MeshLoopSliceOps() {
 
         if (splitPairsOut !is null) *splitPairsOut = splitSeams;
 
-        // Declare what became of the corners (task 0830). The correspondence is
-        // resolved against the capture `rw` took at entry — the OLD windings and
-        // their CSR offsets — so it must be stated BEFORE `faces` is replaced in
-        // the sense that the SOURCE must still be the old space; `rw` owns that
-        // copy, so the only real ordering rule left is "before the tail
-        // `buildLoops`", which consumes the declaration.
-        if (carryUv) {
-            assert(newSrc.length == newFaces.length,
-                   "insertEdgeLoopsMulti: newSrc/newFaces length mismatch");
-            declareCornerProvenance(rw.carriedPerFace(newFaces, newSrc, vertBlend));
-        }
+        // task 1902 Stage C — general rewriteFaces carry behaviour and
+        // rationale: source/mesh_planes.d's module header. Two facts specific
+        // to THIS site: `faceMarks` is carried too, but only as a THROWAWAY,
+        // immediately overridden below by the hand-tracked `newWord` via
+        // `setFaceMarksFrom(newWord, ~Marks.Select)` (a Cap Sections face
+        // folds several ring faces' words through `combineFaceMarksWords`,
+        // which the generic per-new-face carry cannot express for a
+        // `kNoSource` entry); and `rw` — this site's own
+        // `beginCornerRewrite()` handle, opened at entry — is passed straight
+        // through, so the corner-provenance declaration is issued ONCE,
+        // inside the primitive, instead of this call site doing it a second
+        // time.
+        assert(newSrc.length == newFaces.length,
+               "insertEdgeLoopsMulti: newSrc/newFaces length mismatch");
+        rewriteFaces(this, newFaces, FaceSource(newSrc), &rw, vertBlend);
 
-        faces = newFaces;
         // Rebuild faceMarks in lock-step with the just-replaced `faces`
         // (task 0389 — Template A, mirrors bevelEdgesByMask; generalized to
         // the whole word by task 0613 §4.2): `newWord` was populated 1:1
@@ -1490,14 +1488,7 @@ mixin template MeshLoopSliceOps() {
         // on resize).
         assert(newWord.length == faces.length,
                "insertEdgeLoopsMulti: newWord/newFaces length mismatch");
-        assert(newMat.length == faces.length && newPart.length == faces.length,
-               "insertEdgeLoopsMulti: newMat/newPart/newFaces length mismatch");
-        assert(newSetMask.length == faces.length,
-               "insertEdgeLoopsMulti: newSetMask/newFaces length mismatch");
         setFaceMarksFrom(newWord, ~Marks.Select);
-        faceMaterial = newMat;
-        facePart     = newPart;
-        faceSetMask  = newSetMask;
         rebuildEdges();
         buildLoops();
         resetSelection();   // resizes + clears all selection; calls commitChange

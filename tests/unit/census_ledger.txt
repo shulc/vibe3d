@@ -43,3 +43,20 @@
 # Mesh.visibleVertices, the one thing it wrapped, stays with its own tests
 # and live callers (snap, the facing predicate).
 drop 1 7 0861 deleted the VisibilityCache wrapper (source/visibility_cache.d) and its test — no live caller
+
+# mesh_ops/loop_slice.d, insertEdgeLoopsMulti (task 1902 Stage C): removed
+# the length-only asserts on newMat/newPart ("newMat.length == faces.length
+# && newPart.length == faces.length") and newSetMask ("newSetMask.length ==
+# faces.length") — those arrays no longer exist. What replaced them is NOT
+# a plane-length assert inside mesh_planes.rewriteFaces (it asserts only
+# `FaceSource.oldOfNew.length == newFaces.length`, i.e. newSrc against
+# newFaces — do not go hunting there for a faceMaterial/facePart/faceSetMask
+# length check, it does not exist); it is the by-construction
+# `built.length = newFaces.length` rewriteFaces sets for every plane in
+# kFacePlanes before filling it from `newSrc`, so each carried plane can
+# never end up a different length than newFaces. The mutation drill (drop
+# faceMaterial's carry right after the rewriteFaces call) still reddens
+# tests/unit/mesh_ops/loop_slice_test.d's existing value assertion, so the
+# invariant these two lines checked is still covered — the check moved, it
+# was not lost.
+drop 0 2 1902 mesh_ops/loop_slice.d's newMat/newPart/newSetMask length asserts are gone with the arrays themselves — mesh_planes.rewriteFaces asserts the same invariant once, internally

@@ -22,7 +22,7 @@ import mesh_ops.select_loop : MeshSelectLoopOps;
 import mesh_ops.poly_bevel : MeshPolyBevelOps;
 import mesh_selsets : selSetResizeVertex, selSetRekeyEdges,
     selSetGatherVertexMaskForward;
-import mesh_planes : rewriteFaces, FaceSource;
+import mesh_planes : rewriteFaces, FaceSource, kNoSource;
 // Snap-visibility instrumentation (task 1350/1351). `perf_probe` imports only
 // core.time, so this is a leaf dependency and cannot cycle; every call compiles
 // to nothing unless the `perf`/`perf-count` build defines PerfProbe.

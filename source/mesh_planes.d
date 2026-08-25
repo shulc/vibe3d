@@ -53,11 +53,38 @@ module mesh_planes;
 // `.identity()` — strictly more code and one more allocation per plane for
 // the same bytes. Stays hand-rolled (plan §6 Stage B; `mesh_planes_census_
 // test.d`'s tree-scan `kAllow` still names both of its `faces =`/
-// `vertices =` lines). The remaining face sites (`mesh_ops/*`) and the
-// vertex sites migrate family-by-family in later stages, each one
-// behaviour-preserving by construction (a byte-identical mesh, not a
-// corrected one — this task has no user-visible defect to fix, see the
-// plan's §0).
+// `vertices =` lines).
+//
+// STAGE C (this commit) migrates `mesh_ops/loop_slice.d`'s single site,
+// `insertEdgeLoopsMulti` — the one cell (`faceSelectionOrder`) that was NOT
+// already lock-step by hand, and the reason it went unnoticed: the tail
+// `resetSelection()` → `clearFaceSelection` zeroes that plane wholesale
+// regardless, so a mis-carried order stamp and a correctly-carried one
+// produce the same array (plan §6 Stage C — closes the gap structurally,
+// not visibly). Unlike Stage B, this site passes its OWN `beginCornerRewrite()`
+// handle (`rw`) straight through to `rewriteFaces` — `newSrc`, the
+// newToOld correspondence it already built for the corner-map obligation
+// (task 0682), is EXACTLY the per-new-face shape `rw.carriedPerFace()` wants
+// (plan §2.6), so the corner declaration is issued once, by the primitive,
+// instead of twice. `newSrc` is now populated UNCONDITIONALLY (previously
+// gated on a live PolyVertex map) since the plane carry needs it whether or
+// not a UV map exists; passing `&rw` unconditionally is inert when no map is
+// active (`CornerRewrite.carriedPerFace` on an inactive handle degrades to
+// `unchanged()` for free). `faceMarks` is the one plane this site's own
+// call still overrides right after `rewriteFaces` returns: a Cap Sections
+// face folds SEVERAL ring faces' words through `combineFaceMarksWords`
+// (`Marks.Hide`-identity AND/OR fold), a value with no single source face
+// that the generic per-new-face carry cannot express for a `kNoSource`
+// entry — so `rewriteFaces`'s own carry of `faceMarks` here is a throwaway,
+// immediately replaced by the site's hand-tracked `newWord` via
+// `setFaceMarksFrom(newWord, ~Marks.Select)`, unchanged from before the
+// migration (plan §2.7 — selection-bit/word policy stays at the call site).
+//
+// The remaining face sites (`mesh_ops/extrude.d`, `edge_bevel.d`,
+// `cleanup.d`, `revolve.d`, `bevel_vertex.d`) and the vertex sites migrate
+// family-by-family in later stages, each one behaviour-preserving by
+// construction (a byte-identical mesh, not a corrected one — this task has
+// no user-visible defect to fix, see the plan's §0).
 //
 // `commitChange`: the CALLER's, never the primitive's (plan §2.5). Every
 // migrated kernel already calls `rebuildEdges()`/`buildLoops()` and its own
