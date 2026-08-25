@@ -48,6 +48,13 @@ void cmd(string line) {
 void settle() { Thread.sleep(400.msecs); }
 void resetApp() { httpPost("/api/reset", "{}"); settle(); }
 
+// The panel is a floating window and `/api/reset` does not close it: a block
+// that leaves it open hands every later test on this worker a viewport with a
+// window over it (measured 2026-08-26: after this file + reset, 92 frames / 92
+// stat rebuilds in 400 ms; test_discard_census then reddened on CI twice). Every
+// block that opens it closes it on exit.
+void closePanel() { cmd("ui.statistics hide"); settle(); }
+
 void openPanelWith(string[] targets) {
     cmd("ui.statistics show");
     // JSON, not an argstring: a category key contains a SPACE ("Vertices/By
@@ -117,6 +124,7 @@ size_t selectedItems() {
 // --------------------------------------------------------------------------
 
 unittest { // `+` UNIONS with a selection it does not cover; `-` SUBTRACTS
+    scope(exit) closePanel();   // see closePanel: a leaked window is the next test's red
     resetApp();
     cmd("select.typeFrom polygon");
     cmd("select.drop polygon");
@@ -148,6 +156,7 @@ unittest { // `+` UNIONS with a selection it does not cover; `-` SUBTRACTS
 }
 
 unittest { // the INERT category is inert — paired with a LIVE neighbour, so
+    scope(exit) closePanel();   // see closePanel: a leaked window is the next test's red
            // the test can fail
     resetApp();
     cmd("select.typeFrom polygon");
@@ -172,6 +181,7 @@ unittest { // the INERT category is inert — paired with a LIVE neighbour, so
 }
 
 unittest { // a Material row fired in the WRONG MODE refuses and changes nothing
+    scope(exit) closePanel();   // see closePanel: a leaked window is the next test's red
     resetApp();
     cmd("select.typeFrom polygon");
     cmd("select.drop polygon");
@@ -195,6 +205,7 @@ unittest { // a Material row fired in the WRONG MODE refuses and changes nothing
 }
 
 unittest { // HIDDEN ELEMENTS — MEASURED here, not assumed (risk 8). The answer
+    scope(exit) closePanel();   // see closePanel: a leaked window is the next test's red
            // is frozen below and carried into the behaviour-gap registry.
     resetApp();
     // A stand with BOTH triangles and quads, so a SUBSET can be hidden and the
@@ -239,6 +250,7 @@ unittest { // HIDDEN ELEMENTS — MEASURED here, not assumed (risk 8). The answe
 }
 
 unittest { // THE ITEMS ROUND TRIP — one click, one undo entry, and the app
+    scope(exit) closePanel();   // see closePanel: a leaked window is the next test's red
            // survives the state that click produces
     resetApp();
     openPanelWith(["Items", "Items/By Type"]);

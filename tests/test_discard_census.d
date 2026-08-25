@@ -294,6 +294,14 @@ InputGuard readInputGuard() {
 }
 
 unittest { // THE CENSUS, both directions
+    // PRECONDITION, stated rather than inherited: the Statistics panel is a
+    // floating window that /api/reset does not close, so a predecessor on this
+    // worker that left it open would make the teardown below blame THIS sweep
+    // (CI 2026-08-25, twice: test_stat_panel_actions ran first on the worker).
+    // Close it here; the teardown then measures the sweep alone.
+    assert(fireCommand("ui.statistics", `{"_positional":["hide"]}`) == "ok",
+        "precondition: `ui.statistics hide` must be accepted, or the teardown below "
+        ~ "cannot tell a predecessor's leaked window from this sweep's");
     auto seeds = buildSeeds();
 
     auto reg       = getJson("/api/registry");
