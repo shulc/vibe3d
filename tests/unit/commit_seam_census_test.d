@@ -464,6 +464,7 @@ unittest // every beginEditBatch caller carries a scope(failure) abort
 // M-D1-MIXIN: the same for `mixin MeshConnectedMaskOps;` (task 1903 Stage D1).
 // M-D2-MIXIN: the same for `mixin MeshDecimateOps;` (task 1903 Stage D2).
 // M-D3-MIXIN: the same for `mixin MeshBridgeOps;` (task 1903 Stage D3).
+// M-E1-MIXIN: the same for `mixin MeshCleanupOps;` (task 1903 Stage E1).
 // ---------------------------------------------------------------------------
 
 unittest // the mixin count is falling, and the converted families stay converted
@@ -489,8 +490,8 @@ unittest // the mixin count is falling, and the converted families stay converte
     // 13 at the branch point; one family leaves per track-1 stage; 0 at Stage I.
     enum size_t kAtStart = 13;
     // C: MeshSelectLoopOps; D1: MeshConnectedMaskOps; D2: MeshDecimateOps;
-    // D3: MeshBridgeOps.
-    enum size_t kExpected = 9;
+    // D3: MeshBridgeOps; E1: MeshCleanupOps.
+    enum size_t kExpected = 8;
     assert(live.length == kExpected,
         format("source/mesh.d instantiates %d `mixin Mesh*Ops` templates; this "
              ~ "gate expects %d. Track 1 started at %d and every conversion "
@@ -504,7 +505,8 @@ unittest // the mixin count is falling, and the converted families stay converte
     static immutable string[] kConverted = ["MeshSelectLoopOps",        // Stage C
                                             "MeshConnectedMaskOps",     // Stage D1
                                             "MeshDecimateOps",          // Stage D2
-                                            "MeshBridgeOps"];           // Stage D3
+                                            "MeshBridgeOps",            // Stage D3
+                                            "MeshCleanupOps"];          // Stage E1
     foreach (name; kConverted)
         assert(!live.canFind(name),
             format("`mixin %s;` is back in struct Mesh. That family is free "
@@ -681,7 +683,10 @@ unittest // the mixin count is falling, and the converted families stay converte
     // family name including the receiver-less ones and fires at `dub build`
     // time. So: absent from this roster is not unguarded — it means "guarded
     // over there". A later stage must add its receiver-less helpers to that
-    // `static foreach` list, not invent a receiver for them here.
+    // `static foreach` list, not invent a receiver for them here. Stage E1's
+    // instance of the same class is a TYPE, not a function: `CollapsedFace_`
+    // was a private nested struct the mixin injected into `Mesh`, it has no
+    // signature to pin, and it is held by cleanup.d's own tripwire list.
     //
     // THE MUTATING RECEIVERS, each pinned WITH its parameter name AND the
     // delimiter after it. `ed` is not decoration: plan §4.3 step 3 requires one
@@ -771,6 +776,150 @@ unittest // the mixin count is falling, and the converted families stay converte
         immutable size_t rawWrites = countRawPositionWrites(br, firstHit);
         assert(rawWrites == 0,
             format("source/mesh_ops/bridge.d: %d raw position write(s) under "
+                 ~ "§5.7's predicate, expected 0 — this family had none before "
+                 ~ "the conversion and must gain none through it. First hit: "
+                 ~ "`%s`. `alias mesh this` means `ed.vertices[i] = p` COMPILES "
+                 ~ "inside a recording batch and records nothing, which is why "
+                 ~ "the boundary is a counted census and not a type "
+                 ~ "(task 1903 §5.7, M-V1).", rawWrites, firstHit));
+    }
+
+    // Stage E1 — the mesh-hygiene / orientation-repair family. Four mutating
+    // entries over the batch, three read-only detectors `mesh_analysis.d`
+    // SHARES over `ref const(Mesh)`, and that sharing is why the const half
+    // matters more here than anywhere so far: `mesh_analysis.degenerateFaceIndices`
+    // and friends hold a `const ref Mesh` and could not call a batch receiver
+    // at all, so a detector drifting to `ref MeshEditBatch` would not merely
+    // publish a change for a read — it would break the "the fix and the
+    // detector call the SAME code" contract task 0402 built this family on.
+    //
+    // NO §2.6 WIDENING ROW: this stage widened nothing, and that is checkable
+    // rather than assertable here. Every `Mesh` name cleanup.d reaches was
+    // already public before this commit, and the PROOF is that the module now
+    // compiles as its own translation unit with no mixin instantiation scope
+    // behind it — a missed widening is a `dub build` error, not a silent pass.
+    // Nor does it inherit anyone else's row: it calls none of §2.6's eleven
+    // names. (D3's own drill M-W2 added a fake `orientFaceConsistent(` call to
+    // THIS file to prove the caller-set scan below reddens; the scan walks
+    // `source/**`, so it still would.)
+    immutable clPath = buildPath(repoRoot, "source", "mesh_ops", "cleanup.d");
+    assert(exists(clPath), "cannot find source/mesh_ops/cleanup.d at " ~ clPath);
+    immutable cl = stripCommentsAndStrings(readText(clPath));
+    assert(countOccurrences(cl, "mixin template MeshCleanupOps") == 0,
+        "source/mesh_ops/cleanup.d still declares `mixin template "
+      ~ "MeshCleanupOps` — Stage E1 converted this family to free functions; "
+      ~ "a surviving template is either dead or a second implementation "
+      ~ "(task 1903 Stage E1).");
+
+    // THE MUTATING RECEIVERS. Three of the four take NO other parameter, so
+    // the delimiter that keeps the needle from being a mere PREFIX is `)`,
+    // not `,` (D2 review MINOR-1: without a delimiter, renaming `ed` -> `edb`
+    // leaves the pin green). `cleanupMesh` does take a second parameter and
+    // uses `,` like the D2/D3 rows.
+    static immutable string[] kNullaryBatchKernels = [
+        "unifyFaces", "cleanDegenerateFaces", "fixFaceOrientation",
+    ];
+    foreach (name; kNullaryBatchKernels)
+        assert(countOccurrences(cl, name ~ "(ref MeshEditBatch ed)") == 1,
+            format("source/mesh_ops/cleanup.d no longer declares `%s` over "
+                 ~ "`ref MeshEditBatch ed`. That receiver is the enforcement, "
+                 ~ "not the style: it is what makes a batchless call a COMPILE "
+                 ~ "error, so one hygiene sweep stamps, derives and delivers "
+                 ~ "once at close() instead of once per internal commit "
+                 ~ "(deleteFacesByMask, rewriteFaces, each compactUnreferenced) "
+                 ~ "(task 1903 §4.1, §5.2 E1).", name));
+    assert(countOccurrences(cl,
+            "cleanupMesh(ref MeshEditBatch ed, CleanupOptions o") == 1,
+        "source/mesh_ops/cleanup.d no longer declares `cleanupMesh` over "
+      ~ "`ref MeshEditBatch ed` with its CleanupOptions second parameter. That "
+      ~ "receiver is the enforcement, not the style, and this is the caller "
+      ~ "with the most to gain: a default sweep runs six committing stages "
+      ~ "inside one frame (task 1903 §4.1, §5.2 E1).");
+
+    // …and the two wrong spellings, absent, for all four.
+    static immutable string[] kBatchKernelsE1 = [
+        "unifyFaces", "cleanDegenerateFaces", "cleanupMesh",
+        "fixFaceOrientation",
+    ];
+    foreach (name; kBatchKernelsE1) {
+        assert(countOccurrences(cl, name ~ "(ref Mesh ") == 0,
+            format("`%s` has a `ref Mesh` receiver again — that compiles, and "
+                 ~ "it drops the batch: the kernel's internal commits go back "
+                 ~ "to stamping one at a time. If this is deliberate it is an "
+                 ~ "argument to make here, not a mechanical follow-on "
+                 ~ "(task 1903 Stage E1).", name));
+        assert(countOccurrences(cl, name ~ "(ref const(Mesh)") == 0,
+            format("`%s` cannot have a `ref const(Mesh)` receiver — it drops "
+                 ~ "or reshapes faces and compacts vertices away. Such an "
+                 ~ "overload could only exist by casting const away "
+                 ~ "(task 1903 Stage E1).", name));
+    }
+
+    // THE READ-ONLY RECEIVERS. `computeDuplicateFaceMask` and the nullary
+    // `computeOrientationFlipMask` overload take the receiver ALONE, so their
+    // delimiter is `)`; `isFaceDegenerate`, the bool overload and the two
+    // private helpers take a second parameter and use `,`.
+    foreach (name; ["computeDuplicateFaceMask", "computeOrientationFlipMask"])
+        assert(countOccurrences(cl, name ~ "(ref const(Mesh) m)") == 1,
+            format("source/mesh_ops/cleanup.d no longer declares `%s` over "
+                 ~ "`ref const(Mesh) m` in its receiver-only form. These are "
+                 ~ "the detectors source/mesh_analysis.d shares with the "
+                 ~ "mutating fixes, and it holds a `const ref Mesh`: a batch "
+                 ~ "receiver could not be called from there at all "
+                 ~ "(task 1903 Stage E1, plan §4.1).", name));
+    foreach (name; ["isFaceDegenerate", "computeCollapsedFace_",
+                    "faceAreaApprox_"])
+        assert(countOccurrences(cl, name ~ "(ref const(Mesh) m,") == 1,
+            format("source/mesh_ops/cleanup.d no longer declares `%s` over "
+                 ~ "`ref const(Mesh) m`. It only READS faces and positions to "
+                 ~ "decide; the const receiver is what states that, and it is "
+                 ~ "now ENFORCED at the seam rather than by a keyword the "
+                 ~ "mixin could have dropped at any time "
+                 ~ "(task 1903 Stage E1).", name));
+    assert(countOccurrences(cl,
+            "computeOrientationFlipMask(ref const(Mesh) m, bool restrictToSelection)") == 1,
+        "source/mesh_ops/cleanup.d no longer declares the two-argument "
+      ~ "`computeOrientationFlipMask` overload over `ref const(Mesh) m` — that "
+      ~ "is the one `mesh_analysis.inconsistentWindingFaces` calls with "
+      ~ "`false` so an analyze under an active selection still reports winding "
+      ~ "problems in unselected components (task 0402 Phase 4 review S2, "
+      ~ "task 1903 Stage E1).");
+    foreach (name; ["computeDuplicateFaceMask", "isFaceDegenerate",
+                    "computeOrientationFlipMask", "computeCollapsedFace_",
+                    "faceAreaApprox_"])
+        assert(countOccurrences(cl, name ~ "(ref MeshEditBatch") == 0,
+            format("`%s` took a `ref MeshEditBatch` receiver — that compiles, "
+                 ~ "and it means a call that changes nothing now opens an edit "
+                 ~ "batch and publishes a change. It also makes the detector "
+                 ~ "uncallable from source/mesh_analysis.d, which holds a "
+                 ~ "`const ref Mesh` (task 1903 Stage E1).", name));
+
+    // The family's declared scope lives ONCE, beside the kernels, for the
+    // reason D2 gave for kReduceEditScope: N copies at N call sites is N
+    // chances to drift, and the one that drifts is the one that stops matching
+    // MeshEditDelta.scope_ when track 2 turns this family's undo into a delta.
+    // The BEHAVIOURAL half — that the value is right, written out from the
+    // enum independently — is in tests/unit/mesh_ops/cleanup_test.d's
+    // recording block; this row only pins that there is one of it.
+    assert(countOccurrences(cl, "enum uint kCleanupEditScope =") == 1,
+        "source/mesh_ops/cleanup.d no longer declares `kCleanupEditScope` at "
+      ~ "module scope — the three commands and every test batch pass it, and a "
+      ~ "per-call-site literal is the drift this constant exists to prevent "
+      ~ "(task 1903 Stage E1).");
+
+    // §5.7 over this file, under the SAME predicate decimate and bridge are
+    // measured with. Expected 0, and 0 here is not a retirement but a
+    // statement about the family: no cleanup kernel moves an EXISTING vertex.
+    // A weld keeps the survivor's own coordinates, a dissolve and a compaction
+    // only DROP vertices, and the degenerate pass never touches `vertices`.
+    // That is why `kCleanupEditScope` carries no `Position` bit, and the
+    // behavioural twin of this row is the `Kind.SetPos == 0` assertion in
+    // tests/unit/mesh_ops/cleanup_test.d's recording block.
+    {
+        string firstHit;
+        immutable size_t rawWrites = countRawPositionWrites(cl, firstHit);
+        assert(rawWrites == 0,
+            format("source/mesh_ops/cleanup.d: %d raw position write(s) under "
                  ~ "§5.7's predicate, expected 0 — this family had none before "
                  ~ "the conversion and must gain none through it. First hit: "
                  ~ "`%s`. `alias mesh this` means `ed.vertices[i] = p` COMPILES "

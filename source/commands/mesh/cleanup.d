@@ -69,7 +69,25 @@ class MeshCleanup : Command, Operator {
         opts.weldEpsSq       = cast(double)dist_ * cast(double)dist_;
 
         snap = MeshSnapshot.capture(*mesh);
-        auto r = mesh.cleanupMesh(opts);
+
+        // TASK 1903 Stage E1 — the kernel takes `ref MeshEditBatch`, so the
+        // batch opens HERE, at the command boundary, and never inside the
+        // kernel (plan §4.1). This is the caller with the most to gain: a
+        // default sweep runs SIX stages, each of which commits at least once
+        // on its own (weld → Geometry, degenerate → Geometry, unify →
+        // Geometry + Points, two compactions → Points each). Inside the batch
+        // they defer and stamp once at `close()`.
+        //
+        // UNRECORDED and scoped to the kernel call ALONE, for the reasons
+        // spelled out at commands/mesh/unify.d: undo is still the whole-mesh
+        // `snap` above (plan §5.1), and the `!anyAffected()` rejection below
+        // must run outside the frame.
+        CleanupResult r;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kCleanupEditScope);
+            r = ed.cleanupMesh(opts);
+            ed.close();
+        }
         if (!r.anyAffected()) {
             snap = MeshSnapshot.init;
             return false;

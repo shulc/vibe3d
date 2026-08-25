@@ -49,6 +49,16 @@ import mesh;
 import math;
 import mesh_ops.cleanup;
 
+// TASK 1903 Stage E1 — `unifyFaces` is a free function over
+// `ref MeshEditBatch` now, so it cannot be called on a bare `Mesh`. UNRECORDED
+// because nothing here reads an op-log (see source/mesh_ops/cleanup.d).
+private size_t unifyOnce(ref Mesh m) {
+    auto ed = MeshEditBatch.unrecorded(m, kCleanupEditScope);
+    const n = ed.unifyFaces();
+    ed.close();
+    return n;
+}
+
 // ---------------------------------------------------------------------------
 // The frozen fixture
 // ---------------------------------------------------------------------------
@@ -430,7 +440,7 @@ unittest
 {
     auto m = rigMesh("cube");
     mirrorAll(m, Vec3(0, 0, 0), Vec3(1, 0, 0), 0.001f);
-    const size_t removed = m.unifyFaces();
+    const size_t removed = unifyOnce(m);
 
     auto want = mirrorCase("self_coincident_then_explicit_collapse")["result"];
     assert(removed == 6, format("expected 6 faces removed, got %d", removed));
@@ -501,7 +511,7 @@ unittest
         assert(m.faces.length == c["before"]["faces"].integer,
             format("%s: rig should start at %d faces", row,
                    c["before"]["faces"].integer));
-        m.unifyFaces();
+        unifyOnce(m);
         assert(m.faces.length == c["after"]["faces"].integer,
             format("%s: fixture says %d faces after the collapse, we have %d",
                    row, c["after"]["faces"].integer, m.faces.length));
@@ -531,7 +541,7 @@ unittest
         auto m = settle(vs.dup, fs.dup);
         auto c = collapseCase("coincident_but_unwelded");
         assert(m.vertices.length == c["before"]["vertices"].integer);
-        m.unifyFaces();
+        unifyOnce(m);
         assert(m.faces.length == c["after"]["faces"].integer,
             format("coincident_but_unwelded: fixture says %d faces survive, "
                    ~ "we have %d", c["after"]["faces"].integer, m.faces.length));
@@ -563,7 +573,7 @@ unittest
                 format("weld_then_collapse: %d edge(s) should carry %s faces",
                        count.integer, bucket));
         }
-        m.unifyFaces();
+        unifyOnce(m);
         assert(m.faces.length == c["after_collapse"]["faces"].integer,
             "and the collapse, run separately, is what removes them");
     }
@@ -578,7 +588,7 @@ unittest
                     [[0u, 1u, 2u, 3u], [0u, 1u, 2u, 4u]]);
     auto c = collapseCase("partial_overlap");
     assert(m.faces.length == c["before"]["faces"].integer);
-    m.unifyFaces();
+    unifyOnce(m);
     assert(m.faces.length == c["after"]["faces"].integer,
         format("partial_overlap: fixture says %d faces survive, we have %d",
                c["after"]["faces"].integer, m.faces.length));
@@ -588,7 +598,8 @@ unittest
 // T9 — SELF-RETIRING DIVERGENCE MARKER.
 //
 // The captured law keys the collapse on the cyclic RING (up to rotation and
-// reversal). Our `Mesh.unifyFaces` keys it on the sorted vertex SET, so it
+// reversal). Our `unifyFaces` (source/mesh_ops/cleanup.d) keys it on the
+// sorted vertex SET, so it
 // merges two polygons that share four vertices in an order that is neither a
 // rotation nor a reversal — one convex quad and one self-crossing one, which
 // the reference leaves alone.
@@ -610,7 +621,7 @@ unittest
     auto m = settle([Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0)],
                     [[0u, 1u, 2u, 3u], [0u, 2u, 1u, 3u]]);
     assert(m.faces.length == c["before"]["faces"].integer);
-    m.unifyFaces();
+    unifyOnce(m);
 
     const long reference = c["after"]["faces"].integer;
     const long oursFrozen = div["vibe3d_faces_after"].integer;

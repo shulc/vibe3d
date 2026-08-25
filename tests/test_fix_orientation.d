@@ -1,6 +1,7 @@
 // Tests for mesh.fixOrientation (task 0394 Part B) -- the "Fix Orientation"
-// cleanup op that heals inconsistently-wound faces (mesh.d's
-// Mesh.fixFaceOrientation). Corruption is injected the same way
+// cleanup op that heals inconsistently-wound faces (the free function
+// fixFaceOrientation in source/mesh_ops/cleanup.d, over ref MeshEditBatch --
+// task 1903 Stage E1 moved it off Mesh). Corruption is injected the same way
 // test_mesh_flip-style tests do: select a face via /api/select, then run
 // mesh.flip (an existing, already-tested command that reverses winding) to
 // deterministically reverse exactly one face of the default cube, without
@@ -43,6 +44,10 @@ JSONValue getModel() {
 
 long undoCount() {
     return parseJSON(cast(string) get(baseUrl ~ "/api/history"))["undo"].array.length;
+}
+
+JSONValue getChanges() {
+    return parseJSON(cast(string) get(baseUrl ~ "/api/changes"));
 }
 
 void selectFaces(int[] idx) {
@@ -138,4 +143,64 @@ unittest { // idempotent: a second run right after a successful fix is itself a 
     cast(void) post(baseUrl ~ "/api/command", `{"id":"mesh.fixOrientation"}`); // second run: already consistent
     assert(undoCount() == depthAfterFirst,
         "a second fixOrientation run on an already-consistent mesh must not add an undo entry");
+}
+
+// ---------------------------------------------------------------------------
+// The edit-seam observable of mesh.fixOrientation (task 1903 Stage E1). It is
+// invisible to every other test in this file: the healed winding is identical
+// whether or not `fixFaceOrientation` runs inside a batch. What separates
+// those worlds is the change-bus counters at /api/changes.
+// ---------------------------------------------------------------------------
+unittest { // mesh.fixOrientation runs its kernel inside ONE edit batch
+    postReset();
+    selectFaces([0]);
+
+    // POSITIVE CONTROL. Every assertion below is "this counter did not move",
+    // and a dead counter satisfies that for free. mesh.flip is the command
+    // this file already uses to INJECT the corruption, it mutates, and it is
+    // deliberately still batchless — so it is both the setup and the proof
+    // that the counter is alive.
+    auto c0 = getChanges();
+    postCommand(`{"id":"mesh.flip"}`);
+    auto c1 = getChanges();
+    const long ctrl = c1["unbatchedGeometryCommits"].integer
+                    - c0["unbatchedGeometryCommits"].integer;
+    assert(ctrl > 0,
+        format("positive control: an UNBATCHED command must tick "
+             ~ "unbatchedGeometryCommits, and mesh.flip ticked %d. A dead "
+             ~ "counter passes the assertions below for free "
+             ~ "(task 1903 §3.2 L2, M-DM).", ctrl));
+
+    auto before = getChanges();
+    postCommand(`{"id":"mesh.fixOrientation"}`);
+    auto after = getChanges();
+
+    const long unbatched = after["unbatchedGeometryCommits"].integer
+                         - before["unbatchedGeometryCommits"].integer;
+    assert(unbatched == 0,
+        format("mesh.fixOrientation made %d UNBATCHED geometry commit(s). The "
+             ~ "kernel's receiver is `ref MeshEditBatch`, so the "
+             ~ "flipFacesByMask commit must defer into the frame and stamp "
+             ~ "once at close(); a non-zero delta means the batch does not "
+             ~ "cover the kernel (task 1903 Stage E1, plan §3.2 L2). Pre-E1 "
+             ~ "this was +1.", unbatched));
+
+    // Anti-vacuity: a REJECTED fixOrientation moves no counter at all, so the
+    // zero above would be free. The undo entry is what says it applied.
+    assert(undoCount() > 0,
+        "mesh.fixOrientation recorded no undo entry — it was rejected, and "
+      ~ "the delta assertion above is vacuous on a rejected command");
+
+    assert(after["nestedBatchOpens"].integer
+        == c0["nestedBatchOpens"].integer,
+        "mesh.fixOrientation moved changeBus.nestedBatchOpens. Its batch is "
+      ~ "opened at the command boundary and nowhere else; this family has no "
+      ~ "intra-Mesh caller and therefore owes no transitional batch "
+      ~ "(task 1903 Stage E1, plan §4.4a).");
+    assert(after["batchLeaks"].integer == 0,
+        "a MeshEditBatch leaked (destroyed while still open): "
+      ~ after["batchLeaks"].integer.to!string);
+    assert(after["missedPublishers"].integer == 0,
+        "a mutationVersion bump reached the frame with no pending change: "
+      ~ after["missedPublishers"].integer.to!string);
 }

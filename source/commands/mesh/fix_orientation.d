@@ -13,7 +13,9 @@ import mesh_edit_delta : MeshEditScope;
 /// hand-built geometry) by making every manifold-adjacent face pair traverse
 /// their shared edge in OPPOSITE directions, seeded outward per connected
 /// component. Mirrors a reference open-source DCC's Recalculate Normals. See
-/// `Mesh.fixFaceOrientation` (mesh.d) for the full algorithm.
+/// `fixFaceOrientation` (source/mesh_ops/cleanup.d) for the full algorithm —
+/// Stage E1 made it a free function over `ref MeshEditBatch`, which is why the
+/// batch below opens here at the command boundary.
 ///
 /// Operates on the whole mesh, EXCEPT: if any face is currently selected,
 /// only the connected component(s) containing a selected face are touched
@@ -44,7 +46,20 @@ class MeshFixOrientation : Command, Operator {
         if (subj is null) return false;
 
         snap = MeshSnapshot.capture(*mesh);
-        size_t nFlipped = mesh.fixFaceOrientation();
+
+        // TASK 1903 Stage E1 — the kernel takes `ref MeshEditBatch`, so the
+        // batch opens HERE, at the command boundary, and never inside the
+        // kernel (plan §4.1). The batch is UNRECORDED because undo here is
+        // still the whole-mesh `snap` above (plan §5.1), and it is scoped to
+        // the kernel call ALONE so the `nFlipped == 0` rejection below runs
+        // outside the frame. See commands/mesh/unify.d for the full note,
+        // including why there is no `scope(failure)`.
+        size_t nFlipped;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kCleanupEditScope);
+            nFlipped = ed.fixFaceOrientation();
+            ed.close();
+        }
         if (nFlipped == 0) {
             snap = MeshSnapshot.init;
             return false;

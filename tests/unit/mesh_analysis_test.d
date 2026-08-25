@@ -8,6 +8,36 @@ import math : Vec3;
 import mesh : makeCube, makeGridPlane;
 import std.conv : to;
 import mesh_analysis;
+// TASK 1903 Stage E1 — the three mutating fixes this file runs as the
+// INDEPENDENT oracle for its detectors are free functions over
+// `ref MeshEditBatch` now. The imports above are SELECTIVE, so mesh.d's
+// `public import mesh_ops.cleanup;` does not reach here; name what is used.
+import mesh : MeshEditBatch;
+import mesh_ops.cleanup : kCleanupEditScope, unifyFaces, cleanDegenerateFaces,
+                          fixFaceOrientation;
+
+// UNRECORDED: these three calls exist to produce a MESH to compare against,
+// not an op-log (see source/mesh_ops/cleanup.d's header).
+private size_t unifyOnce(ref Mesh m) {
+    auto ed = MeshEditBatch.unrecorded(m, kCleanupEditScope);
+    const n = ed.unifyFaces();
+    ed.close();
+    return n;
+}
+
+private size_t cleanDegenerateOnce(ref Mesh m) {
+    auto ed = MeshEditBatch.unrecorded(m, kCleanupEditScope);
+    const n = ed.cleanDegenerateFaces();
+    ed.close();
+    return n;
+}
+
+private size_t fixOrientationOnce(ref Mesh m) {
+    auto ed = MeshEditBatch.unrecorded(m, kCleanupEditScope);
+    const n = ed.fixFaceOrientation();
+    ed.close();
+    return n;
+}
 
 unittest {
     // Coincident-vertex clusters, fidelity guard: a fixture with TWO
@@ -122,7 +152,7 @@ unittest {
         if (cast(uint)fi !in detectedSet) expectedSurvivors ~= sortedKey(m1.faces[fi]);
 
     Mesh m2 = buildFixture();
-    m2.cleanDegenerateFaces();
+    cleanDegenerateOnce(m2);
     immutable(uint)[][] actualSurvivors;
     foreach (fi; 0 .. m2.faces.length) actualSurvivors ~= sortedKey(m2.faces[fi]);
 
@@ -160,7 +190,7 @@ unittest {
         if (cast(uint)fi !in detectedSet) expectedSurvivors ~= m1.faces[fi][].dup;
 
     Mesh m2 = buildFixture();
-    m2.unifyFaces();
+    unifyOnce(m2);
     uint[][] actualSurvivors;
     foreach (fi; 0 .. m2.faces.length) actualSurvivors ~= m2.faces[fi][].dup;
 
@@ -226,7 +256,7 @@ unittest {
     assert(detected.length == 1, "expected exactly 1 face flagged, got " ~ detected.length.to!string);
 
     Mesh m2 = buildFixture();
-    m2.fixFaceOrientation();
+    fixOrientationOnce(m2);
     bool[] changed = new bool[](m1.faces.length);
     foreach (fi; 0 .. m1.faces.length)
         changed[fi] = (m1.faces[fi][] != m2.faces[fi][]);

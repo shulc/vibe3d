@@ -19,7 +19,16 @@ import mesh_ops.cut : MeshCutOps;
 public import mesh_ops.bridge;
 import mesh_ops.loop_slice : MeshLoopSliceOps, bandWalk, BandCell;
 import mesh_ops.revolve : MeshRevolveOps;
-import mesh_ops.cleanup : MeshCleanupOps;
+// task 1903 Stage E1: the mesh-hygiene / orientation-repair family is
+// module-level free functions — `unifyFaces`, `cleanDegenerateFaces`,
+// `cleanupMesh` and `fixFaceOrientation` over `ref MeshEditBatch`, the three
+// read-only detectors `mesh_analysis.d` shares over `ref const(Mesh)` — not a
+// mixin. PUBLIC so every `import mesh;` re-exports them and
+// `ed.cleanupMesh(opts)` / `mesh.computeOrientationFlipMask(false)` resolve
+// through UFCS (`doc/mesh_edit_seam_plan.md` §4.2). This keeps mesh.d the door
+// for the ops namespace; narrowing that is audit 0678 M9's job, not this
+// task's.
+public import mesh_ops.cleanup;
 import mesh_ops.edge_bevel : MeshEdgeBevelOps;
 import mesh_ops.bevel_fin : MeshBevelFinOps;
 import mesh_ops.bevel_vertex : MeshBevelVertexOps;
@@ -15013,9 +15022,18 @@ struct Mesh {
     // source/mesh_ops/revolve.d (task 0417, 0407 §B.V2).
     mixin MeshRevolveOps;
 
-    // Mesh hygiene + orientation-repair kernel family — see
-    // source/mesh_ops/cleanup.d (task 0417, 0407 §B.V2).
-    mixin MeshCleanupOps;
+    // Mesh hygiene + orientation-repair kernel family is NO LONGER a mixin:
+    // task 1903 Stage E1 made it module-level free functions in
+    // source/mesh_ops/cleanup.d — the four mutating entries over
+    // `ref MeshEditBatch`, so a hygiene sweep can no longer be reached without
+    // a batch and one `mesh.cleanup` stamps, derives and delivers ONCE instead
+    // of once per internal commit; the three read-only detectors
+    // `source/mesh_analysis.d` shares stay `ref const(Mesh)` and their call
+    // sites are unchanged. Re-exported by the `public import` at the top of
+    // this file. Do not reinstate the mixin: a member of `Mesh` BEATS a
+    // same-name UFCS free function silently, so it would rebind every call
+    // site to a dead body (`static assert` at the foot of that file, and the
+    // named roster in tests/unit/commit_seam_census_test.d).
 
     // Polygon decimation kernel (reduceToTarget) is NO LONGER a mixin: task
     // 1903 Stage D2 made it a module-level free function in
@@ -16354,10 +16372,13 @@ struct MeshEditBatch {
 
 
 // ---------------------------------------------------------------------------
-// CleanupOptions / CleanupResult  (used by Mesh.cleanupMesh)
+// CleanupOptions / CleanupResult  (used by `cleanupMesh`, which lives in
+// source/mesh_ops/cleanup.d — these two types stay HERE because
+// source/commands/mesh/cleanup.d constructs CleanupOptions directly and
+// moving them would be a second edit hiding inside a move, task 0417)
 // ---------------------------------------------------------------------------
 
-/// Options for Mesh.cleanupMesh(). All boolean stages default to their most
+/// Options for `cleanupMesh` (source/mesh_ops/cleanup.d). All boolean stages default to their most
 /// commonly useful values. `weldEpsSq` is the squared linear weld distance;
 /// the default 1e-10 corresponds to a linear threshold of 1e-5, matching the
 /// "auto" range of vert.merge.
@@ -16370,7 +16391,7 @@ struct CleanupOptions {
     double weldEpsSq       = 1e-10;  /// Weld threshold in squared distance.
 }
 
-/// Per-stage counts returned by Mesh.cleanupMesh().
+/// Per-stage counts returned by `cleanupMesh` (source/mesh_ops/cleanup.d).
 struct CleanupResult {
     size_t welded;       /// Vertices merged by weldCoincidentVertices.
     size_t degenerate;   /// Faces removed/rewritten by cleanDegenerateFaces.

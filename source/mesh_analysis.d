@@ -28,6 +28,16 @@ module mesh_analysis;
 // O(V + E + F) (see the perf-smoke unittest at the bottom).
 
 import mesh : Mesh;
+// Task 1903 Stage E1 moved the three hygiene/topology detectors this module
+// shares with the mutating fixes out of `struct Mesh` and into free functions
+// over `ref const(Mesh)` (`source/mesh_ops/cleanup.d`). The call sites below
+// are unchanged — UFCS keeps `mesh.isFaceDegenerate(fi)` verbatim — but the
+// import above is SELECTIVE, and a selective import does not carry the
+// `public import mesh_ops.cleanup;` mesh.d re-exports them through. So the
+// three names are listed here explicitly, which is also the honest statement
+// of where the shared decision code now lives.
+import mesh_ops.cleanup : computeDuplicateFaceMask, isFaceDegenerate,
+                          computeOrientationFlipMask;
 import math : Vec3;
 
 private float clamp01(float x) pure nothrow @safe @nogc {
@@ -101,8 +111,8 @@ uint[][] coincidentVertexClusters(const ref Mesh mesh, double epsSq = 1e-12) {
     return result;
 }
 
-/// Zero-area / degenerate face indices — faces `Mesh.cleanDegenerateFaces`
-/// would DROP entirely (fewer than 3 distinct vertices after
+/// Zero-area / degenerate face indices — faces `cleanDegenerateFaces`
+/// (source/mesh_ops/cleanup.d) would DROP entirely (fewer than 3 distinct vertices after
 /// consecutive-duplicate collapse, or a near-zero Newell-normal area).
 /// Ascending face-index order.
 uint[] degenerateFaceIndices(const ref Mesh mesh) {
@@ -113,7 +123,8 @@ uint[] degenerateFaceIndices(const ref Mesh mesh) {
 }
 
 /// Duplicate-face indices — later occurrences of an already-seen unordered
-/// vertex set, exactly what `Mesh.unifyFaces` would remove. Ascending
+/// vertex set, exactly what `unifyFaces` (source/mesh_ops/cleanup.d) would
+/// remove. Ascending
 /// face-index order (the FIRST occurrence of a repeated vertex set is never
 /// included — it is the one `unifyFaces` keeps).
 uint[] duplicateFaceIndices(const ref Mesh mesh) {
@@ -139,9 +150,10 @@ uint[] orphanVertexIndices(const ref Mesh mesh) {
 // ===========================================================================
 
 /// Face indices whose winding is inconsistent with their manifold-adjacent
-/// neighbors — exactly the set `Mesh.fixFaceOrientation` would flip.
-/// Ascending face-index order. PRECONDITION: mesh loops must already be
-/// built (see `Mesh.computeOrientationFlipMask`'s doc comment).
+/// neighbors — exactly the set `fixFaceOrientation`
+/// (source/mesh_ops/cleanup.d) would flip. Ascending face-index order.
+/// PRECONDITION: mesh loops must already be built (see
+/// `computeOrientationFlipMask`'s doc comment, same file).
 uint[] inconsistentWindingFaces(const ref Mesh mesh) {
     // false = analyze the WHOLE mesh (review S2): a read-only analyze must not
     // silently skip winding problems in unselected components when the artist

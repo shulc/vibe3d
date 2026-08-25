@@ -51,6 +51,18 @@ long undoCount() {
     return parseJSON(get("http://localhost:8080/api/history"))["undo"].array.length;
 }
 
+JSONValue getChanges() {
+    return parseJSON(get("http://localhost:8080/api/changes"));
+}
+
+// Required before mesh.triple, which the seam block below uses as its
+// positive control.
+void setPolygonMode() {
+    auto resp = post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    assert(parseJSON(resp)["status"].str == "ok",
+        "select.typeFrom polygon failed: " ~ resp);
+}
+
 // ---------------------------------------------------------------------------
 // poly.unify: standalone face-dedup
 // ---------------------------------------------------------------------------
@@ -302,4 +314,107 @@ unittest { // all-stages-off + orphan: true no-op, no undo entry (no-op contract
         "all-stages-off must not remove the orphan vert");
     assert(undoCount() == depthBefore,
         "all-stages-off must not add undo entry (no-op contract)");
+}
+
+// ---------------------------------------------------------------------------
+// The edit-seam observables of mesh.cleanup and poly.unify (task 1903 Stage
+// E1). These are invisible to every other test in this file: the geometry a
+// hygiene sweep produces is byte-identical whether or not the kernel runs
+// inside a batch. What separates those worlds is the change-bus counters at
+// /api/changes.
+// ---------------------------------------------------------------------------
+unittest { // both commands run their kernel inside ONE edit batch
+    postReset();
+    setPolygonMode();
+
+    // POSITIVE CONTROL, and it is not decoration. Every assertion below is
+    // "this counter did not move", and a dead counter — the g_isDocumentMesh
+    // predicate uninstalled, the endpoint reading a stale copy — satisfies
+    // that for free. So make the SAME counter move first, with a command that
+    // is deliberately still batchless: mesh.triple commits its geometry
+    // unbatched, exactly as mesh.cleanup did before Stage E1.
+    auto c0 = getChanges();
+    postCommand(`{"id":"mesh.triple"}`);
+    auto c1 = getChanges();
+    const long ctrl = c1["unbatchedGeometryCommits"].integer
+                    - c0["unbatchedGeometryCommits"].integer;
+    assert(ctrl > 0,
+        "positive control: an UNBATCHED command must tick "
+      ~ "unbatchedGeometryCommits, and mesh.triple ticked " ~ ctrl.to!string
+      ~ ". A dead counter passes the two assertions below for free "
+      ~ "(task 1903 §3.2 L2, M-DM).");
+
+    // (1) mesh.cleanup — the caller with the most to gain: a default sweep
+    // runs weld, degenerate, unify and two compactions, each of which commits
+    // at least once on its own. Inside the batch they all defer and stamp once
+    // at close(). The pre-E1 delta is a MEASURED number and it lives in the
+    // assertion's own message below, in one place: this comment used to carry
+    // a second copy of it, the two drifted (+7 here against +8 there) and the
+    // copy nothing reads is the one that was wrong.
+    postLoadMesh(dirtyMeshFixture());
+    auto b1 = getChanges();
+    postCommand(`{"id":"mesh.cleanup"}`);
+    auto a1 = getChanges();
+    const long unbatchedCleanup = a1["unbatchedGeometryCommits"].integer
+                                - b1["unbatchedGeometryCommits"].integer;
+    assert(unbatchedCleanup == 0,
+        "mesh.cleanup made " ~ unbatchedCleanup.to!string ~ " UNBATCHED "
+      ~ "geometry commit(s). The kernel's receiver is `ref MeshEditBatch`, so "
+      ~ "its commits must defer into the frame and stamp once at close(); a "
+      ~ "non-zero delta means the batch does not cover the kernel "
+      ~ "(task 1903 Stage E1, plan §3.2 L2). Pre-E1 this was +8.");
+
+    // …and the sweep actually did something, so the zero above is not the
+    // zero of a rejected command.
+    assert(getModel()["faceCount"].integer == 2,
+        "the sweep left " ~ getModel()["faceCount"].integer.to!string
+      ~ " faces, expected 2 — a rejected mesh.cleanup would move no counter "
+      ~ "at all and make the assertion above vacuous");
+
+    // (2) poly.unify — one kernel, two internal commits
+    // (deleteFacesByMask's Geometry and its compactUnreferenced's Points).
+    // Pre-E1 delta: in the message below, same rule as (1).
+    postLoadMesh(`{
+        "vertices":[[0,0,0],[1,0,0],[1,1,0],[0,1,0]],
+        "faces":[[0,1,2,3],[0,1,2,3]]
+    }`);
+    auto b2 = getChanges();
+    postCommand(`{"id":"poly.unify"}`);
+    auto a2 = getChanges();
+    const long unbatchedUnify = a2["unbatchedGeometryCommits"].integer
+                              - b2["unbatchedGeometryCommits"].integer;
+    assert(unbatchedUnify == 0,
+        "poly.unify made " ~ unbatchedUnify.to!string ~ " UNBATCHED geometry "
+      ~ "commit(s) (task 1903 Stage E1, plan §3.2 L2). Pre-E1 this was +2.");
+    assert(getModel()["faceCount"].integer == 1,
+        "poly.unify left " ~ getModel()["faceCount"].integer.to!string
+      ~ " faces, expected 1 — a rejected unify would make the assertion above "
+      ~ "vacuous");
+
+    // (3) The batches closed cleanly, nobody stamped without publishing, and
+    // no kernel opened one of its own (this family has NO intra-Mesh caller,
+    // so unlike D3's thicken/sweep it owes no transitional-batch debt — the
+    // delta below is what says so).
+    const long nested = a2["nestedBatchOpens"].integer
+                      - c0["nestedBatchOpens"].integer;
+    assert(nested == 0,
+        "the cleanup family moved changeBus.nestedBatchOpens by "
+      ~ nested.to!string ~ ", expected 0. Its batches are opened at the three "
+      ~ "command boundaries and nowhere else; a nested open means a kernel "
+      ~ "started opening one, which §2.3 rule 2 forbids (task 1903 Stage E1).");
+    assert(a2["batchLeaks"].integer == 0,
+        "a MeshEditBatch leaked (destroyed while still open): "
+      ~ a2["batchLeaks"].integer.to!string);
+    assert(a2["missedPublishers"].integer == 0,
+        "a mutationVersion bump reached the frame with no pending change: "
+      ~ a2["missedPublishers"].integer.to!string);
+    // Unrecorded at E1 by design — Stage L10 is where this becomes non-zero.
+    // L10, not L5: the L-table (plan §5.5) is keyed by COMMAND, and `unify`
+    // sits in the topo-misc/reindexing row beside collapse and weld, while L5
+    // is the cleanup/remesh row that owns `mesh.cleanup`.
+    assert(a2["opLogEntriesRecorded"].integer
+        == b2["opLogEntriesRecorded"].integer,
+        "poly.unify recorded op-log entries. Its batch is UNRECORDED until "
+      ~ "Stage L10 moves this command's undo off the whole-mesh snapshot; a "
+      ~ "recording batch here builds a log nothing reads (task 1903 §5.1).");
 }
