@@ -12,6 +12,7 @@ import math : Vec3, Viewport, ModelSpace, projectionSpace, projectToWindowFull,
               perpendicularFrame, rayTriangleIntersect,
               closestPointOnTriangle2D, triangulatePolygonEarClip;
 import mesh : Mesh;
+import mesh_dirty : MeshDirtyKey, g_geomEpochs;
 import toolpipe.packets : SnapPacket, SnapType, SnapMode;
 import toolpipe.guide   : SnapGuide, kGuidePrioritySeed;
 import perf_probe : g_perf, Cat;
@@ -89,12 +90,16 @@ bool snapPacketsEqual(const ref SnapPacket a, const ref SnapPacket b)
 // identical to pre-Stage-5.
 //
 // The candidate grids (below) are keyed per source SLOT so two layers' grids
-// can never alias even when their meshes happen to share a mutationVersion —
+// can never alias even when their meshes happen to share a freshness stamp —
 // the address term added in Stage 2 is the additional belt-and-braces guard.
 //
-// Set on the main thread once per frame; read by snapCursor on either the main
-// thread (interactive drags) or the HTTP server thread (`/api/snap` bridge), so
-// the same g_vgridMutex that guards the grids guards the source list.
+// Set on the main thread once per frame and read by snapCursor on the MAIN
+// thread only — the drag path directly, `/api/snap` and `/api/constrain` via
+// the main-thread bridge since task 0587 (see the THREAD SAFETY note on
+// snapCursor below). That main-thread-only fact is also what makes the
+// unsynchronised `g_geomEpochs.epochFor` read in queryCandidateGrid safe
+// against the hub's `note()` writes; g_vgridMutex guards the grids and this
+// list against re-entrancy, not against a second thread.
 private __gshared const(Mesh)*[] g_snapSources;
 
 // Parallel array (task 0617 Stage 4): g_snapSourceSpaces[i] is the
@@ -1488,12 +1493,15 @@ private bool closestOnPolygonSurface(const(uint)[] face,
 // O(edges) for Edge, O(faces) × per-face allocation for Polygon, etc).
 // At n=64 (4K verts) the geometric types cost ~150ms/frame; at 100K
 // they are catastrophic. The camera + viewport are static for the whole
-// duration of a drag, and interactive drags do NOT bump
-// `mesh.mutationVersion` (the moving verts are passed in `excludeVerts`
-// instead — see mesh.d's uploadVersion note). So we can project all
-// elements of a kind ONCE at drag start into a uniform screen-space
-// bucket grid and answer each frame's candidate query with a 3×3 cell
-// scan.
+// duration of a drag, and the elements that move with it are the ones the
+// query drops anyway (`excludeVerts`, see the ANY rule below). So we can
+// project all elements of a kind into a uniform screen-space bucket grid and
+// answer each frame's candidate query with a 3×3 cell scan.
+//
+// (This paragraph used to rest the design on `mesh.mutationVersion` not moving
+// during a drag. It never rested on that: the exclusion is what makes the
+// answer correct, and the key only decides how often the buckets are rebuilt.
+// Task 1906 stage 2c replaced that counter with the change bus's own epoch.)
 //
 // ONE GENERIC GRID, FIVE KINDS: `Kind` selects which per-element
 // projection feeds the grid:
@@ -1547,10 +1555,31 @@ private bool closestOnPolygonSurface(const(uint)[] face,
 // change with no measurement behind it. Recorded, not fixed. See the polygon
 // block in `snapCursor`.
 //
-// CACHE KEY (per kind): (vp.view, vp.proj, viewport rect) +
-// mesh.mutationVersion + element count + cellPx. All stable during a
-// drag ⇒ built once at drag start, reused every frame. Topology / non-
-// drag edits bump mutationVersion and force a rebuild.
+// CACHE KEY (per kind): (vp.view, vp.proj, viewport rect) + the mesh's
+// (address, CHANGE-BUS GEOMETRY EPOCH) + element count + cellPx. The camera
+// terms are stable during a drag; the epoch is not, and that is the point.
+//
+// TASK 1906 STAGE 2c — THE MESH TERM WAS `mesh.mutationVersion`, PLUS A
+// MANUAL `invalidateSnapGrids()` FROM THE FRAME FLUSH, AND THE PAIR OF THEM
+// WAS THE DEFECT. An interactive gizmo Move/Rotate/Scale is version-silent on
+// Position — `mutationVersion` moves neither at the drag steps nor at the
+// commit (CLAUDE.md, "The exception that breaks version-keying") — so the
+// version half could never see the gesture users make most, and the manual
+// half was a second, unkeyed channel that had to be remembered at every future
+// publisher. `mesh_dirty.g_geomEpochs` is fed by the change bus, whose
+// `Position` class IS published on that path, and it is keyed by SUBJECT
+// ADDRESS: an edit to the primary no longer drops a background layer's grid.
+// `invalidateSnapGrids()` survives for the one caller that is NOT a mesh
+// change (the active-layer switch) and for the unit tests — see its doc.
+//
+// THE NEW TERM IS NARROWER THAN THE OLD ONE, DELIBERATELY. `commitChange`
+// bumps `mutationVersion` for EVERY class, so a hide, a material write or a
+// selection used to rebuild all three grids; `g_geomEpochs` watches
+// `Position|Points|Polygons` only. Nothing else can move a projection —
+// `projectElementCells` reads `vertices` / `edges` / `faces` and nothing
+// more — and the hidden set is applied by the exact walk, never by the
+// buckets, so the narrowing drops rebuilds that could not have changed an
+// answer.
 //
 // EXCLUDE IS QUERY-TIME, NOT KEY: every element is indexed at build
 // time; the dragged set (excludeVerts) is applied at QUERY time. An
@@ -1559,18 +1588,26 @@ private bool closestOnPolygonSurface(const(uint)[] face,
 // (Polygon). See `kindExcluded` for why ANY and not ALL.
 //
 // THAT RULE IS ALSO WHAT KEEPS THIS CACHE HONEST, and it is the reason the
-// two paragraphs sit together. The key holds `mesh.mutationVersion`, which an
-// interactive drag deliberately does NOT bump (see mesh.d's uploadVersion
-// note), so the grid built at drag start is reused for the whole gesture while
-// the dragged verts move underneath it — every dragged element's stored
-// projection is stale from the second frame on. That is sound for exactly one
-// reason: a stale entry is an entry the query drops before the caller ever
-// sees it. Under ANY, "moves with the drag" and "excluded" are the SAME
-// predicate, so no stale entry can survive into a result and no result can be
-// stale. (Under the previous ALL rule they were different predicates, and
-// every partially-dragged element — an edge with one moving endpoint, a face
-// with one moving corner — was both stale AND returned.) A future change that
-// narrows the exclusion narrows this guarantee with it.
+// two paragraphs sit together. It does NOT depend on the key: the exclusion is
+// what makes a stale entry unreachable, and the key only decides how often one
+// can exist. Within a single motion event the tool computes its delta, asks
+// snap, and only THEN folds — so the buckets a query answers from were built
+// before this frame's displacement landed, whatever the key says. That is
+// sound for exactly one reason: a stale entry is an entry the query drops
+// before the caller ever sees it. Under ANY, "moves with the drag" and
+// "excluded" are the SAME predicate, so no stale entry can survive into a
+// result and no result can be stale. (Under the previous ALL rule they were
+// different predicates, and every partially-dragged element — an edge with one
+// moving endpoint, a face with one moving corner — was both stale AND
+// returned.) A future change that narrows the exclusion narrows this guarantee
+// with it.
+//
+// What the bus epoch buys on top is the case the exclusion CANNOT cover: an
+// element that moved in an EARLIER gesture and is a snap TARGET in this one.
+// It is not excluded (nobody is dragging it) and its stored projection
+// describes where it used to be, so a stale grid simply never offers it —
+// same call count, same code path, a silently missing candidate. Pinned by
+// `tests/test_bus_snap_grid_after_drag.d`.
 //
 // The non-active sources cannot go stale at all: background layers are never
 // being dragged, so they pass an empty exclude and their projections stay
@@ -1616,15 +1653,20 @@ private size_t kindCount(Kind k, const ref Mesh mesh) {
 }
 
 private struct CandidateGrid {
-    // Cache identity.
-    // Mesh ADDRESS is part of the key (layers Stage 2): two different layers'
-    // meshes can sit at the same `mutationVersion` (e.g. right after a
-    // layer.select swaps the snap source with no intervening mutation, or when
-    // an undo reverts a background layer back to a version another layer also
-    // holds). With one layer this term is constant ⇒ invisible. `size_t.max`
-    // forces a rebuild on first use.
-    size_t meshAddr = size_t.max;
-    ulong  meshVersion = ulong.max;
+    // Cache identity: (mesh address, change-bus geometry epoch) — the shape
+    // `MeshCacheKey{addr, mutationVersion}` had, with the counter replaced by
+    // the bus (task 1906 stage 2c; see the CACHE KEY paragraph in the section
+    // header).
+    //
+    // The ADDRESS half is unchanged in meaning and still load-bearing (layers
+    // Stage 2): two different layers' meshes can sit at the SAME epoch —
+    // trivially so, since a mesh nobody has edited reads the table's
+    // never-changed value — e.g. right after a `layer.select` re-points the
+    // snap source with no intervening mutation, or when an undo restores a
+    // background layer. With one layer this term is constant ⇒ invisible.
+    // A default `MeshDirtyKey` carries `epoch == ulong.max`, which is never a
+    // real epoch, so a fresh slot always rebuilds on first use.
+    MeshDirtyKey meshKey;
     float[16] view;
     float[16] proj;
     int    vpW, vpH, vpX, vpY;
@@ -1679,6 +1721,21 @@ private CandidateGrid* gridFor(int slot, Kind k) {
 /// defense (it also covers undo re-populating a background layer's colliding
 /// key); this blanket drop is the secondary one. Stage 5: this now drops every
 /// source slot's grids, not just the active one.
+///
+/// TASK 1906 STAGE 2c — IT HAS ONE PRODUCTION CALLER LEFT, AND THAT IS THE
+/// POINT. Until stage 2c `app.d`'s frame flush also called this on every
+/// `Position` frame, because the grid's `mutationVersion` term could not see a
+/// version-silent gizmo drag. That caller is GONE: the grid now carries the
+/// change bus's own geometry epoch for its mesh, so a mesh change invalidates
+/// exactly the slots built over the mesh that changed, at the source, with
+/// nothing to remember. What is left is the ACTIVE-LAYER SWITCH, which is not
+/// a mesh change at all — no mesh was edited, the snap SOURCE was re-pointed —
+/// so no epoch moves and no bus class describes it. The remaining callers are
+/// that hook and the unit tests, which drive it by hand because a stack `Mesh`
+/// belongs to no `Layer` and therefore never delivers (see
+/// `Mesh.deliverPending`'s subject filter). Do NOT re-add a flush-site caller:
+/// blanket-dropping every slot once per changed frame is what makes a static
+/// background layer's grid rebuild because the primary was edited.
 void invalidateSnapGrids() {
     synchronized (g_vgridMutex)
         foreach (ref set; g_gridSets)
@@ -1773,11 +1830,20 @@ private enum long MAX_GRID_INTS = 1 << 25;
 // `vp`, cell size `cellPx`. Indexes ALL elements (exclusion happens at
 // query time). EXTENT kinds insert each element into every cell its
 // projected bbox overlaps; POINT kinds insert into a single cell.
+//
+// `epoch` is the caller's `g_geomEpochs` reading for this mesh, passed in
+// rather than re-read: the two must be the SAME sample, or a change landing
+// between the miss and the stamp is recorded as already serviced.
 private void buildCandidateGrid(Kind k, int slot, const ref Mesh mesh,
-                                const ref Viewport vp, float cellPx) {
+                                const ref Viewport vp, float cellPx,
+                                size_t meshAddr, ulong epoch) {
+    // Both halves of the key are the caller's ONE sample (queryCandidateGrid
+    // took address and epoch together, before reading any geometry); the
+    // assert is what makes "sampled once" a fact rather than a sentence.
+    assert(meshAddr == cast(size_t)&mesh,
+           "buildCandidateGrid: the stamped address must be the mesh being built");
     auto g = gridFor(slot, k);
-    g.meshAddr    = cast(size_t)&mesh;
-    g.meshVersion = mesh.mutationVersion;
+    g.meshKey.stamp(meshAddr, epoch);
     g.view[]      = vp.view[];
     g.proj[]      = vp.proj[];
     g.vpW = vp.width;  g.vpH = vp.height;
@@ -2016,14 +2082,19 @@ private int[] queryCandidateGrid(Kind k, int slot, const ref Mesh mesh,
 
     auto g = gridFor(slot, k);
 
+    // The mesh half of the key, sampled ONCE (task 1906 stage 2c). Both terms
+    // go into the compare and, on a miss, into the stamp — see
+    // `buildCandidateGrid`.
+    const size_t meshAddr  = cast(size_t)&mesh;
+    const ulong  meshEpoch = g_geomEpochs.epochFor(meshAddr);
+
     // (Re)build if stale.
     if (!g.valid
-     || g.meshAddr    != cast(size_t)&mesh
-     || g.meshVersion != mesh.mutationVersion
+     || !g.meshKey.matches(meshAddr, meshEpoch)
      || g.elemCount   != n
      || g.cellPx      != outerRangePx
      || !sameViewport(*g, vp)) {
-        buildCandidateGrid(k, slot, mesh, vp, outerRangePx);
+        buildCandidateGrid(k, slot, mesh, vp, outerRangePx, meshAddr, meshEpoch);
         g = gridFor(slot, k);   // table may have reallocated on grow
     }
 
@@ -2118,15 +2189,32 @@ private void clearExcludeMembership(const(uint)[] exclude) {
 }
 
 // ---------------------------------------------------------------------------
-// Task 0401 — the vertex candidate grid must not serve a stale (pre-edit)
-// bucket layout after a VERSION-SILENT position edit. An interactive gizmo
-// Move/Rotate/Scale mutates vertex positions via `mesh.noteChange(Position)`
-// WITHOUT ever bumping `mutationVersion` — both on drag AND on commit (see
-// the warning above SubpatchPreview.deactivate() in mesh.d for why that is
-// deliberate) — so the grid's (meshAddr, meshVersion, ...) staleness key
-// alone cannot see the edit. Reproduces that exact version-silent path
-// directly rather than the scripted `/api/transform` path (which DOES bump
-// mutationVersion).
+// Task 0401 / task 1906 stage 2c — the vertex candidate grid must not serve a
+// stale (pre-edit) bucket layout after a VERSION-SILENT position edit. An
+// interactive gizmo Move/Rotate/Scale mutates vertex positions WITHOUT ever
+// bumping `mutationVersion` — both on drag AND on commit (see the warning
+// above SubpatchPreview.deactivate() in mesh.d for why that is deliberate) —
+// so a `mutationVersion` staleness term cannot see the edit at all.
+//
+// FOUR SEPARATE PINS, IN ORDER, AND EACH ONE ANSWERS A DIFFERENT MUTATION:
+//
+//   B. a bare `mutationVersion++` on moved geometry must NOT rebuild — this
+//      is what says the counter is OUT of the key. Restoring
+//      `g.meshVersion != mesh.mutationVersion` to the query turns this miss
+//      into a hit, and this line is where that shows up.
+//   C. `mesh_dirty.noteMeshChange(&cube, Position)` — the listener body —
+//      MUST rebuild. Dropping the epoch term from the key turns this hit into
+//      a miss.
+//   D. a second silent move with nobody told must NOT rebuild. Without it,
+//      C could be green because the grid rebuilds unconditionally.
+//   E. `invalidateSnapGrids()` must rebuild. This is the ACTIVE-LAYER SWITCH's
+//      channel — the one caller stage 2c did not replace — and nothing else
+//      in this file pins it.
+//
+// The class is delivered by calling the listener BODY directly, exactly as
+// `tests/unit/bvh_pick_test.d` does and for the same reason: a stack `Mesh`
+// belongs to no `Layer`, so `publishChange` would be refused by the subject
+// filter in `Mesh.deliverPending` and this block would pass vacuously.
 // ---------------------------------------------------------------------------
 unittest {
     import mesh                      : makeCube;
@@ -2163,15 +2251,17 @@ unittest {
     assert(cands0.canFind(0),
         "sanity: vertex 0 should be a candidate at its own screen position");
 
+    // --- B. the version counter is OUT of the key ---------------------------
+    // Version-silent geometry, then a bare `++` on the counter. A bare bump is
+    // exactly what CLAUDE.md forbids on a LIVE mesh (`missedPublishers`); this
+    // is a stack scratch no `Layer` owns, and the bump is the mutation probe
+    // itself — it must move nothing.
     ulong mutVerBefore = cube.mutationVersion;
-
-    // Version-silent edit — exactly what an interactive gizmo drag/commit
-    // does: move the vertex well clear of its old screen bucket, note the
-    // Position change class, never bump mutationVersion.
     cube.vertices[0] = cube.vertices[0] + Vec3(2.0f, 0, 0);
-    cube.noteChange(MeshEditScope.Position);
+    cube.noteChange(MeshEditScope.Position);   // accumulate-only: never delivers
     assert(cube.mutationVersion == mutVerBefore,
         "test setup must stay version-silent to mirror the gizmo path");
+    ++cube.mutationVersion;
 
     float px1, py1, ndc1;
     assert(projectToWindowFull(cube.vertices[0], vp, px1, py1, ndc1),
@@ -2180,28 +2270,56 @@ unittest {
     assert(dpx * dpx + dpy * dpy > 100.0f * 100.0f,
         "test setup must move the vertex well clear of its old screen bucket");
 
-    // OLD behaviour: without invalidateSnapGrids(), the grid's
-    // (meshAddr, meshVersion, ...) key is unchanged, so querying at the
-    // vertex's NEW screen position misses it — the grid is still bucketed
-    // by the pre-edit projection. Asserting this first proves the repro is
-    // real (guards against the test silently becoming a no-op).
-    auto candsStale = queryCandidateGrid(Kind.Vertex, 0, cube, vp,
+    auto candsVersionBumped = queryCandidateGrid(Kind.Vertex, 0, cube, vp,
                                          cast(int)px1, cast(int)py1, gatherPx, null);
-    assert(!candsStale.canFind(0),
-        "sanity: without invalidateSnapGrids() the grid must reproduce the "
-        ~ "historical stale-after-position-edit bug");
+    assert(!candsVersionBumped.canFind(0),
+        "task 1906 stage 2c: `mutationVersion` is NO LONGER a grid key term. "
+        ~ "The counter was bumped by hand over MOVED geometry and nobody told "
+        ~ "the change bus, so the grid must still be bucketed by the pre-edit "
+        ~ "projection and must NOT offer vertex 0 at its new screen position. "
+        ~ "A hit here means the version compare is back in queryCandidateGrid "
+        ~ "— and that compare is blind to the gesture users make most");
 
-    // NEW behaviour: app.d's bus flush calls invalidateSnapGrids() whenever
-    // meshChangedFlags carries Position this frame (task 0401) — simulate
-    // that call directly.
-    invalidateSnapGrids();
+    // --- C. the change-bus epoch IS the key ---------------------------------
+    {
+        import mesh_dirty : noteMeshChange;
+        noteMeshChange(cast(size_t)&cube, MeshEditScope.Position);
+    }
     auto candsFresh = queryCandidateGrid(Kind.Vertex, 0, cube, vp,
                                          cast(int)px1, cast(int)py1, gatherPx, null);
     assert(candsFresh.canFind(0),
-        "task 0401: invalidateSnapGrids() must force a rebuild against the "
-        ~ "moved vertex");
+        "task 1906 stage 2c: a delivered Position class must force the grid to "
+        ~ "rebuild against the moved vertex. A miss here means the "
+        ~ "(address, g_geomEpochs) term is gone from queryCandidateGrid's "
+        ~ "staleness check and every snap target that moved in an earlier "
+        ~ "gesture is silently unreachable");
 
-    assert(cube.mutationVersion == mutVerBefore,
+    // --- D. nobody told: no rebuild -----------------------------------------
+    // Without this, C would be satisfied by a grid that rebuilds every query.
+    cube.vertices[0] = cube.vertices[0] + Vec3(2.0f, 0, 0);
+    float px2, py2, ndc2;
+    assert(projectToWindowFull(cube.vertices[0], vp, px2, py2, ndc2),
+        "twice-moved vertex 0 should still project on-screen");
+    float dpx2 = px2 - px1, dpy2 = py2 - py1;
+    assert(dpx2 * dpx2 + dpy2 * dpy2 > 100.0f * 100.0f,
+        "test setup must move the vertex clear of its previous screen bucket");
+    auto candsStale = queryCandidateGrid(Kind.Vertex, 0, cube, vp,
+                                         cast(int)px2, cast(int)py2, gatherPx, null);
+    assert(!candsStale.canFind(0),
+        "a silent edit nobody published must NOT rebuild the grid — if it "
+        ~ "does, the cache is not a cache and C proves nothing");
+
+    // --- E. the manual channel the active-layer switch still uses -----------
+    invalidateSnapGrids();
+    auto candsManual = queryCandidateGrid(Kind.Vertex, 0, cube, vp,
+                                          cast(int)px2, cast(int)py2, gatherPx, null);
+    assert(candsManual.canFind(0),
+        "invalidateSnapGrids() must force a rebuild against the moved vertex. "
+        ~ "It lost its frame-flush caller in task 1906 stage 2c but it is "
+        ~ "still what the ACTIVE-LAYER SWITCH calls, and no mesh change class "
+        ~ "describes a re-pointed snap source");
+
+    assert(cube.mutationVersion == mutVerBefore + 1,
         "invalidateSnapGrids()/queryCandidateGrid must never mutate the "
         ~ "mesh's mutationVersion (that counter's version-silence on a "
         ~ "position edit is the intentional contract this fix works "
@@ -2209,18 +2327,29 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// Task 0833 — the candidate grid's `meshAddr` key term must be load-bearing.
+// Task 0833 / task 1906 stage 2c — the candidate grid's ADDRESS key term must
+// be load-bearing.
 //
 // The grid table is GLOBAL and keyed by (slot, kind), not by mesh: the same
 // slot 0 vertex grid serves whichever mesh the snapper is currently walking.
-// Two different layers' meshes can sit at an equal `mutationVersion` (two
-// cubes; or an undo that walks a background layer back onto a version another
-// layer also holds), and they have equal `elemCount` too — so on a
-// layer.select with no intervening mutation, `meshAddr` is the ONLY key term
-// that separates them. Its absence is precisely the aliasing bug this class
-// already produced once in this tree, which is why the term exists; the block
-// below is what makes deleting it observable rather than a matter of reading
-// the comment above the field.
+// Two different layers' meshes can sit at an equal freshness stamp — under the
+// old key an equal `mutationVersion` (two cubes; an undo that walks a
+// background layer back onto a version another layer also holds), and under
+// the bus epoch it is even easier, since two meshes NOBODY has edited both
+// read the table's never-changed value. They have equal `elemCount` too — so
+// on a `layer.select` with no intervening mutation the ADDRESS is the ONLY key
+// term that separates them. Its absence is precisely the aliasing bug this
+// class already produced once in this tree, which is why the term exists; the
+// block below is what makes deleting it observable rather than a matter of
+// reading the comment above the field.
+//
+// THE TWO MESHES ARE HEAP-ALLOCATED, AND THAT IS NOT A STYLE CHOICE. The key's
+// epoch half is looked up by raw address in a process-global table that other
+// unittest blocks in this same binary also write, and a STACK local can reuse
+// the address a neighbouring block already noted — which would give these two
+// meshes DIFFERENT epochs and let the epoch term refuse first, leaving the
+// address term (the whole subject of this block) untested. A fresh GC block is
+// an address no previous `noteMeshChange` can have named.
 //
 // This block lives in source/snap.d rather than tests/unit/ because
 // `queryCandidateGrid` and `CandidateGrid` are module-private — the same rule
@@ -2237,14 +2366,22 @@ unittest {
 
     invalidateSnapGrids();   // this block owns slot 0 for its duration
 
-    Mesh a = makeCube();
-    Mesh b = makeCube();
+    Mesh* ap = new Mesh; *ap = makeCube();
+    Mesh* bp = new Mesh; *bp = makeCube();
+    ref Mesh a() { return *ap; }
+    ref Mesh b() { return *bp; }
     // Direct position writes — no commitChange, so the two meshes stay at the
     // SAME mutationVersion (and the same vertex count).
     foreach (ref v; b.vertices) v = v + Vec3(3.0f, 0, 0);
     assert(a.mutationVersion == b.mutationVersion,
         "setup: the two meshes must collide on mutationVersion — that "
         ~ "collision IS the hazard, and with one layer it was invisible");
+    assert(g_geomEpochs.epochFor(cast(size_t)ap)
+        == g_geomEpochs.epochFor(cast(size_t)bp),
+        "setup: the two meshes must collide on the CHANGE-BUS EPOCH too. "
+        ~ "Neither has ever published, so both must read the epoch table's "
+        ~ "never-changed value — if they differ, the epoch term separates them "
+        ~ "and this block would prove nothing about the address term");
     assert(a.vertices.length == b.vertices.length,
         "setup: equal element counts, so `elemCount` cannot separate them "
         ~ "either");
@@ -2283,11 +2420,11 @@ unittest {
     auto candsB = queryCandidateGrid(Kind.Vertex, 0, b, vp,
                                      cast(int)px, cast(int)py, gatherPx, null);
     assert(candsB.length == 0,
-        "a second mesh at the SAME mutationVersion and element count must "
+        "a second mesh at the SAME change-bus epoch and element count must "
         ~ "force a grid rebuild, not answer out of the first mesh's buckets — "
         ~ "got " ~ candsB.length.to!string ~ " candidate(s); the grid's "
-        ~ "(meshAddr, meshVersion, …) key has lost its address term and two "
-        ~ "same-version layers are aliasing again");
+        ~ "(address, epoch) key has lost its address term and two "
+        ~ "same-stamp layers are aliasing again");
 
     invalidateSnapGrids();   // leave the shared table as this block found it
 }
@@ -2411,7 +2548,7 @@ unittest {
 
     // Same reason as the S1 block above: this module's other unittests
     // populate the slot-0 grids, and a fresh local Mesh can land on a recycled
-    // address with the same (zero) mutationVersion.
+    // address carrying the same (never-changed) bus epoch.
     invalidateSnapGrids();
 
     Viewport vp;

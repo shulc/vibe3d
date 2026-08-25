@@ -3209,8 +3209,15 @@ void main(string[] args) {
         edgeCache.resize(active.edges.length);      edgeCache.invalidate();
         faceCache.resize(active.vertices.length, active.faces.length);
         faceCache.invalidate();
-        // 4. blanket-invalidate the snap grids (address keys are the primary
-        //    defense; symmetry + subpatch preview self-invalidate on address).
+        // 4. blanket-invalidate the snap grids. Since task 1906 stage 2c this
+        //    is the ONLY production caller of `invalidateSnapGrids()`, and it
+        //    is here because a layer switch is not a mesh change: nothing was
+        //    edited, so no change class describes it and no bus epoch moves.
+        //    The grids' address key is the primary defense (a grid built over
+        //    the prior layer's mesh mismatches on address); this blanket drop
+        //    is the belt-and-braces one, and it also covers a slot table whose
+        //    SOURCE ORDER changed under it. Symmetry + the subpatch preview
+        //    self-invalidate on their own address terms.
         invalidateSnapGrids();
         // 5. publish a bulk change on the new active mesh. (The required cache
         //    refresh stays MeshChangeAll — the on-screen geometry is a different
@@ -6493,30 +6500,44 @@ void main(string[] args) {
             // `uploadVer` term then leaves the hover on the OLD vertex (6)
             // while the new geometry puts vertex 7 at 1.3 px from the cursor.
 
-            // Change-notification bus, Stage 3 addendum (task 0401) —
-            // symmetry pairing + snap candidate-grid proactive invalidation.
-            // Both cache on (address, mutationVersion, ...), same as the
-            // subpatch preview above and gpu_select just above. An
-            // interactive gizmo Move/Rotate/Scale is deliberately
-            // version-silent on Position — mutationVersion never bumps for
-            // a drag or its commit (see the warning above
-            // SubpatchPreview.deactivate() in mesh.d) — so those raw-
-            // mutationVersion keys alone would keep serving the pre-edit
-            // mirror pairing / snap candidates forever. Force both stale
-            // the instant a Position edit lands this frame; the version
-            // keys remain the correctness backstop for every other change
-            // class (topology, marks, layer switch).
-            if (meshChangedFlags & MeshEditScope.Position) {
-                import toolpipe.pipeline        : g_pipeCtx;
-                import toolpipe.stage           : TaskCode;
-                import toolpipe.stages.symmetry : SymmetryStage;
-                import snap                     : invalidateSnapGrids;
-                if (g_pipeCtx !is null)
-                    if (auto sym = cast(SymmetryStage)
-                                   g_pipeCtx.pipeline.findByTask(TaskCode.Symm))
-                        sym.invalidatePairingCache();
-                invalidateSnapGrids();
-            }
+            // TASK 1906 STAGE 2c (§3.3 rows 8, 9, 30) — THE PROACTIVE
+            // `invalidateSnapGrids()` + `sym.invalidatePairingCache()` PAIR
+            // THAT STOOD HERE IS DELETED. Both caches keyed on
+            // (address, mutationVersion); a gizmo drag is version-silent on
+            // Position, so neither key could see it and this block was the
+            // patch: on any Position frame, reach into two modules and drop
+            // their caches wholesale.
+            //
+            // What replaced it is the same move stages 2a/2b made — the caches
+            // carry `mesh_dirty`'s per-address GEOMETRY EPOCH instead of a
+            // version counter, and compare it at their own lazy recompute
+            // (`snap.queryCandidateGrid`, `SymmetryStage.evaluate`). Three
+            // things that were wrong here are right there:
+            //
+            //   * IT HAS A SUBJECT. This block dropped EVERY source slot's
+            //     grid because SOME layer changed. A background layer whose
+            //     mesh nobody touched now keeps its grid while the primary is
+            //     edited — the same property `mesh_dirty`'s header defends for
+            //     the Topology Pen's static background.
+            //   * IT NEEDS NO CALLER. A new publisher does not have to
+            //     remember this block exists; a delivered class advances the
+            //     epoch at the edit boundary.
+            //   * IT IS NARROWER. `commitChange` bumps `mutationVersion` for
+            //     every class, so a selection click used to invalidate the
+            //     pair table; the epoch watches Position|Points|Polygons,
+            //     which is exactly what the mirror search and the bucket
+            //     projections read.
+            //
+            // Pinned by `tests/test_bus_snap_grid_after_drag.d` and
+            // `tests/test_bus_symmetry_pairing_after_drag.d`, each with a
+            // scripted-`/api/transform` control arm that stays green when the
+            // version term is restored.
+            //
+            // `snap.invalidateSnapGrids()` still exists and still has ONE
+            // production caller — the active-layer-switch hook above. That is
+            // not a mesh change: no mesh was edited, the snap SOURCE was
+            // re-pointed, and no epoch moves for it. Do not re-add a caller
+            // here.
         }
         // Consume this frame's mesh-change flags. Stage 2 subscriber = the
         // screen-space pick caches; Stage 3 adds gpu_select (above) and gates

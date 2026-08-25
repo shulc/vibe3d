@@ -4,6 +4,7 @@ import std.format : format;
 
 import math    : Vec3, dot;
 import mesh    : Mesh;
+import mesh_dirty : MeshDirtyKey, g_geomEpochs;
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordSymm;
 // pipeline imports moved to packet-only — Phase 6 cleanup
@@ -77,9 +78,12 @@ class SymmetryStage : Stage, Operator {
                 cachedPlanePoint_  != pkt.planePoint  ||
                 cachedPlaneNormal_ != pkt.planeNormal ||
                 cachedEpsilon_     != epsilonWorld;
-            bool meshChanged =
-                cachedMeshAddr_        != cast(size_t)mesh_ ||
-                cachedMutationVersion_ != mesh_.mutationVersion;
+            // TASK 1906 STAGE 2c — the mesh half of the key is
+            // (address, change-bus GEOMETRY epoch), sampled ONCE so the
+            // compare and the stamp below cannot straddle a change.
+            const size_t meshAddr  = cast(size_t)mesh_;
+            const ulong  meshEpoch = g_geomEpochs.epochFor(meshAddr);
+            bool meshChanged = !cachedMeshKey_.matches(meshAddr, meshEpoch);
             bool topologyChanged = cachedTopology_ != topology;
             if (!cachedReady_ || planeChanged || meshChanged || topologyChanged) {
                 if (topology)
@@ -88,8 +92,7 @@ class SymmetryStage : Stage, Operator {
                 else
                     rebuildPairing(*mesh_, pkt,
                                    cachedPairOf_, cachedOnPlane_, cachedVertSign_);
-                cachedMeshAddr_        = cast(size_t)mesh_;
-                cachedMutationVersion_ = mesh_.mutationVersion;
+                cachedMeshKey_.stamp(meshAddr, meshEpoch);
                 cachedPlanePoint_      = pkt.planePoint;
                 cachedPlaneNormal_     = pkt.planeNormal;
                 cachedEpsilon_         = epsilonWorld;
@@ -139,17 +142,34 @@ private:
     @property Mesh* mesh_() const { return meshSrc_ ? meshSrc_() : null; }
     EditMode* editMode_;
 
-    // Pairing cache. Rebuilt when (mesh.mutationVersion, plane,
-    // epsilon) change. `cachedReady_` toggles to true after the first
+    // Pairing cache. Rebuilt when (mesh identity+freshness, plane, epsilon,
+    // topology mode) change. `cachedReady_` toggles to true after the first
     // successful rebuild so a stage that's enabled mid-session can
     // publish a stale-empty packet for one frame before the cache
     // catches up on the next evaluate.
-    // Mesh ADDRESS companion to cachedMutationVersion_ (layers Stage 2): the
-    // pairing pair-table aliases across layers if the pointer rebinds to a
-    // mesh at an equal mutationVersion. With one layer this is constant ⇒
-    // invisible. `size_t.max` forces a rebuild on first evaluate.
-    size_t cachedMeshAddr_        = size_t.max;
-    ulong  cachedMutationVersion_ = ulong.max;
+    //
+    // TASK 1906 STAGE 2c — THE FRESHNESS HALF WAS `mesh_.mutationVersion`,
+    // PROPPED UP BY A MANUAL `invalidatePairingCache()` FROM THE FRAME FLUSH,
+    // AND BOTH ARE GONE. `rebuildPairing` is a GEOMETRIC mirror search — for
+    // each vertex it looks for a partner within `epsilonWorld` of the
+    // mirrored position — so the pair table is a pure function of vertex
+    // POSITIONS, and an interactive gizmo drag moves those without bumping
+    // `mutationVersion`, at the drag steps or at the commit (CLAUDE.md, "The
+    // exception that breaks version-keying"). `mesh_dirty.g_geomEpochs` is fed
+    // by the change bus, whose `Position` class IS published on that path.
+    //
+    // The narrowing is deliberate and it is what makes this cheaper than the
+    // counter: `commitChange` bumps `mutationVersion` for EVERY class, so a
+    // selection click used to throw the pair table away, while the epoch
+    // watches `Position|Points|Polygons` — exactly what the search reads.
+    //
+    // The ADDRESS half is unchanged in meaning (layers Stage 2): the pair
+    // table aliases across layers if the pointer rebinds to a mesh carrying an
+    // equal stamp — trivially easy under the epoch, since a mesh nobody has
+    // edited reads the table's never-changed value. A default `MeshDirtyKey`
+    // carries `epoch == ulong.max`, which is never a real epoch, so the first
+    // `evaluate` always rebuilds.
+    MeshDirtyKey cachedMeshKey_;
     Vec3   cachedPlanePoint_      = Vec3(0, 0, 0);
     Vec3   cachedPlaneNormal_     = Vec3(0, 0, 0);
     float  cachedEpsilon_         = float.nan;
@@ -185,7 +205,7 @@ public:
         baseSide      = +1;
         // Drop the pairing cache too so the next evaluate rebuilds from
         // the post-reset mesh / plane rather than reusing stale pairs.
-        cachedMutationVersion_ = ulong.max;
+        cachedMeshKey_.clear();
         cachedPlanePoint_      = Vec3(0, 0, 0);
         cachedPlaneNormal_     = Vec3(0, 0, 0);
         cachedEpsilon_         = float.nan;
@@ -241,28 +261,27 @@ public:
         topology     = p.topology;
         epsilonWorld = p.epsilonWorld;
         baseSide     = p.baseSide;
-        // The pairing cache is keyed on (mutationVersion, plane, epsilon);
-        // restoring config that changes the plane / epsilon must invalidate it
-        // so the next evaluate() rebuilds the mirror table.
+        // The pairing cache is keyed on (mesh key, plane, epsilon); restoring
+        // config that changes the plane / epsilon must invalidate it so the
+        // next evaluate() rebuilds the mirror table.
         cachedReady_           = false;
-        cachedMutationVersion_ = ulong.max;
+        cachedMeshKey_.clear();
         publishState();
     }
 
-    /// Force the pairing cache (`pairOf` / `onPlane` / `vertSign`) to
-    /// rebuild on the next `evaluate()`. Task 0401: the staleness check in
-    /// `evaluate()` above keys on raw `mesh_.mutationVersion`, but an
-    /// interactive gizmo Move/Rotate/Scale updates vertex positions WITHOUT
-    /// bumping `mutationVersion` (both on drag and on commit — see the
-    /// warning above `SubpatchPreview.deactivate()` in mesh.d for why), so
-    /// that key alone cannot see a committed drag. The app.d change-bus
-    /// flush calls this whenever a Position edit landed this frame, mirror-
-    /// ing `snap.invalidateSnapGrids()`. Cheap — just drops `cachedReady_`
-    /// (same mechanism `restoreConfigFromPacket` already uses), no mesh
-    /// touch, no publish.
-    void invalidatePairingCache() {
-        cachedReady_ = false;
-    }
+    // TASK 1906 STAGE 2c — `invalidatePairingCache()` STOOD HERE AND IS GONE,
+    // not merely unused. It existed for task 0401: the staleness check in
+    // `evaluate()` keyed on raw `mesh_.mutationVersion`, which an interactive
+    // gizmo drag never bumps, so `app.d`'s frame flush had to reach in and
+    // drop `cachedReady_` on any `Position` frame. That was a second,
+    // un-keyed invalidation channel — it dropped the table for a change to
+    // ANY layer, and every future publisher had to remember it existed.
+    // `evaluate`'s key now carries this mesh's own change-bus epoch, so the
+    // signal arrives with a subject and needs no caller. Deleted rather than
+    // left callerless: a public invalidator with no caller is the shape that
+    // grows a caller back. The two config paths that must drop the table
+    // (`reset`, `restoreConfigFromPacket`) do it directly, where the reason is
+    // visible.
 
     /// Update `baseSide` from an anchor point **in the same space as
     /// `mesh.vertices[]`** — i.e. LOCAL to the layer, not world — typically
