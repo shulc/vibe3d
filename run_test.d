@@ -19,6 +19,19 @@
 
 module run_test;
 
+// The runner is a 12 MB process that mostly sleeps: in the run-lock wait
+// loop, in `wait()` on a worker's vibe3d, in HTTP polls. druntime's default
+// PARALLEL GC spawns one mark thread per core, and on this host those 31
+// idle threads were measured at 1 200-1 450 % CPU — contending on the mark
+// event's mutex (`Gcx.scanBackground` -> `Event.wait` -> `__lll_lock_wait`)
+// while the main thread slept in `Thread.sleep(1.seconds)` waiting for
+// another runner (2026-08-25: two waiting runners = 28 cores burnt for
+// nothing). The runner gains nothing from parallel marking; turn it off.
+// This must be `rt_options` in the SOURCE: `./run_test.d --DRT-gcopt=...`
+// never reaches the runner, because rdmd is itself a D program and druntime
+// strips `--DRT-*` from ITS argv first.
+extern(C) __gshared string[] rt_options = ["gcopt=parallel:0"];
+
 import std.algorithm : canFind, sort, each, map, sum, minIndex;
 import std.array     : array, appender, replace, join;
 import std.conv      : to, octal;
