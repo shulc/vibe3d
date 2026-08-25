@@ -1883,16 +1883,14 @@ mixin template MeshExtrudeOps() {
                 editRecorder_.recordReshapeFaces(reduceReshapeIdx, reduceReshapeBefore, reduceReshapeAfter);
             if (anyDrop) {
                 uint[][] keptFaces;
-                uint[]   keptWord;   // whole faceMarks word (task 0613 §4.2)
-                int[]    keptOrder;
-                uint[]   keptMaterial;
-                uint[]   keptPart;
-                ulong[]  keptSetMask;   // task 1060, Stage 5c
+                // task 1902: mesh_planes.rewriteFaces carries faceMarks/
+                // faceMaterial/facePart/faceSelectionOrder/faceSetMask from
+                // `faceRemap` (built below, oldToNew — this site already
+                // needs it kept AFTER the rewrite too, for the
+                // winding-consistency `addCandidate` lookups further down)
+                // in one pass — the hand-built kept*/keptWord arrays this
+                // site used to carry by hand are gone.
                 keptFaces.reserve(faces.length);
-                keptWord.reserve(faces.length);
-                keptOrder.reserve(faces.length);
-                keptMaterial.reserve(faces.length);
-                keptPart.reserve(faces.length);
                 FaceIdx[] droppedFaceIdx;
                 uint[][] droppedFaceLists;
                 uint[]   droppedFaceMat;
@@ -1917,26 +1915,20 @@ mixin template MeshExtrudeOps() {
                     faceRemap[fi] = cast(int)newIdx;
                     ++newIdx;
                     keptFaces    ~= f;
-                    keptWord     ~= faceAttrOr(faceMarks, fi);
-                    keptOrder    ~= faceAttrOr(faceSelectionOrder, fi);
-                    keptMaterial ~= faceAttrOr(faceMaterial, fi);
-                    keptPart     ~= faceAttrOr(facePart, fi);
-                    keptSetMask  ~= faceAttrOr(faceSetMask, fi);
                 }
                 if (recExtrude && droppedFaceIdx.length)
                     editRecorder_.recordRemoveFaces(droppedFaceIdx, droppedFaceLists,
                                                     droppedFaceMat, droppedFacePart, droppedFaceSub,
                                                     droppedFaceSetMask);
-                faces              = keptFaces;
+                rewriteFaces(this, keptFaces, FaceSource.fromOldToNew(faceRemap, keptFaces.length));
                 // Select ends up cleared regardless (clearFaceSelection() runs
                 // later in this function), so dropping it here via keepMask
                 // changes nothing observable — kept for consistency with
-                // every other compaction site.
-                setFaceMarksFrom(keptWord, ~Marks.Select);
-                faceSelectionOrder = keptOrder;
-                faceMaterial       = keptMaterial;
-                facePart           = keptPart;
-                faceSetMask        = keptSetMask;
+                // every other compaction site. `faceMarks` here is the array
+                // rewriteFaces just carried (one entry per keptFaces, at its
+                // own old index) — re-masking it in place mirrors
+                // Mesh.deleteFacesByMask's identical idiom.
+                setFaceMarksFrom(faceMarks, ~Marks.Select);
             } else {
                 foreach (fi; 0 .. facesLenBeforeCleanup) faceRemap[fi] = cast(int)fi;
             }
@@ -2370,43 +2362,49 @@ mixin template MeshExtrudeOps() {
             }
         }
 
-        // single rebuild pass: substituted/surviving faces then new faces
+        // single rebuild pass: substituted/surviving faces then new faces.
+        // `oldOfNew` (task 1902) is the total newToOld correspondence
+        // mesh_planes.rewriteFaces wants: identity over the head (every
+        // substituted/surviving face keeps its own old index fi), `nf.srcFi`
+        // over the tail (every freshly created rim/fan face inherits its
+        // material/part/setmask/marks from the ORIGINAL face it was cut
+        // from — `NewFaceSpec.srcFi`, previously only a partial, tail-only
+        // correspondence used for `newMat`/`newPart`/`newSetMask`/`newWord`,
+        // now flattened into ONE total array covering the whole new array).
         uint[][] newFaces;
-        uint[]   newMat;
-        uint[]   newPart;
-        ulong[]  newSetMask;   // task 1060, Stage 5c
-        int[]    newOrd;
-        uint[]   newWord;   // whole faceMarks word per new face (task 0613 §4.2)
+        uint[]   oldOfNew;
 
         foreach (fi; 0 .. origFaceCount) {
             auto orig  = faces[fi];
             newFaces ~= rebuildFaceWithVertexSubs(orig, fi in faceSubs);
-            newMat  ~=faceAttrOr(faceMaterial, fi);
-            newPart ~=faceAttrOr(facePart, fi);
-            newSetMask ~= faceAttrOr(faceSetMask, fi);
-            newOrd  ~=faceAttrOr(faceSelectionOrder, fi);
-            newWord ~= faceAttrOr(faceMarks, fi);
+            oldOfNew ~= fi;
         }
 
         foreach (nf; extraFaces) {
             newFaces ~= nf.verts;
-            newMat   ~=faceAttrOr(faceMaterial, nf.srcFi);
-            newPart  ~=faceAttrOr(facePart, nf.srcFi);
-            newSetMask ~= faceAttrOr(faceSetMask, nf.srcFi);
-            newOrd   ~= 0;
-            newWord  ~= faceAttrOr(faceMarks, nf.srcFi);
+            oldOfNew ~= nf.srcFi;
         }
 
-        faces              = newFaces;
-        faceMaterial       = newMat;
-        facePart           = newPart;
-        faceSetMask        = newSetMask;
-        faceSelectionOrder = newOrd;
+        rewriteFaces(this, newFaces, FaceSource(oldOfNew));
+        // faceSelectionOrder is the one plane where the hand-rolled kernel
+        // diverged per new-vs-surviving face: material/part/setmask/marks
+        // ALL inherit from `nf.srcFi` on the tail (which the primitive above
+        // now carries correctly through the same `oldOfNew`), but a freshly
+        // created rim/fan face must start UNSELECTED (order 0), never
+        // inheriting whatever order stamp its source face happened to carry
+        // (was `newOrd ~= 0;`, unconditionally, for every extraFaces entry).
+        // Patched back immediately after the call — the tail range is
+        // exactly `origFaceCount .. faces.length` since the head kept its
+        // own old indices and the primitive appends nothing — same shape as
+        // every other per-site plane override (plan §2.7).
+        foreach (i; cast(size_t) origFaceCount .. faces.length)
+            faceSelectionOrder[i] = 0;
 
         // Rebuild faceMarks from scratch (resize+zero ALL bits, then set from
-        // newWord) — was Subpatch-only; now carries the whole word (task 0613
-        // §4.2), so Hide rides this rebuild instead of being silently wiped.
-        setFaceMarksFrom(newWord, ~Marks.Select);
+        // the just-carried word) — was Subpatch-only; now carries the whole
+        // word (task 0613 §4.2), so Hide rides this rebuild instead of being
+        // silently wiped.
+        setFaceMarksFrom(faceMarks, ~Marks.Select);
 
         resizeVertexSelection();
         clearEdgeSelectionResize();
@@ -3340,33 +3338,31 @@ mixin template MeshExtrudeOps() {
         // Reconstruct faces + parallel arrays (deleteFacesByMask rebuild idiom).
         // Order: [non-selected originals] + [cap clones] + [wall quads].
         uint[][] newFaces;
-        uint[]   newMat;
-        uint[]   newPart;
-        ulong[]  newSetMask;   // task 1060, Stage 5c
-        int[]    newOrd;
-        uint[]   newWord;   // whole faceMarks word per new face (task 0613 §4.2)
+        // Per-NEW-FACE newToOld correspondence (task 1902,
+        // mesh_planes.rewriteFaces): an untouched face names itself, a cap
+        // names the face it was cloned from, a wall names the one selected
+        // face its boundary edge borders — built UNCONDITIONALLY (the plane
+        // carry runs whether or not a UV map exists), unlike the corner-level
+        // `gens`/`cornerCursor` bookkeeping below, which stays remapUv-gated
+        // exactly as before.
+        uint[] oldOfNew;
 
-        // Per-NEW-CORNER map provenance, appended in lockstep with `newFaces`
-        // (task 0697). Every corner here has a source: an untouched face reads
-        // itself, a cap reads the face it was cloned from, a wall reads the one
-        // selected face its boundary edge borders.
-        uint[]          srcOfCorner;
+        // Running per-CORNER offset for `gens` below (task 0697) — the
+        // GLOBAL new-corner index a wall's own corners start at. Previously
+        // read off a per-corner `srcOfCorner` array's `.length` (that array
+        // is gone: `oldOfNew` above is per-FACE, one entry per new face, not
+        // per corner), so the running total is now tracked directly. Stays
+        // remapUv-gated: only ever consumed inside `if (remapUv)` below, so
+        // an inactive handle leaves it at 0 exactly as before.
+        size_t cornerCursor = 0;
         PolyVertexGen[] gens;
-        void pushSrc(const uint[] f, size_t src) {
-            if (!remapUv) return;
-            foreach (_; f) srcOfCorner ~= cast(uint)src;
-        }
 
         // Non-selected originals, kept as-is.
         foreach (fi; 0 .. faces.length) {
             if (mask[fi]) continue;
             newFaces ~= faces[fi];
-            pushSrc(faces[fi], fi);
-            newMat   ~=faceAttrOr(faceMaterial, fi);
-            newPart  ~=faceAttrOr(facePart, fi);
-            newSetMask ~= faceAttrOr(faceSetMask, fi);
-            newOrd   ~=faceAttrOr(faceSelectionOrder, fi);
-            newWord  ~= faceAttrOr(faceMarks, fi);
+            oldOfNew ~= cast(uint) fi;
+            if (remapUv) cornerCursor += faces[fi].length;
         }
         immutable size_t capStart = newFaces.length;   // first cap index in newFaces
 
@@ -3378,12 +3374,8 @@ mixin template MeshExtrudeOps() {
             int island = islandOf[fi];
             foreach (k, vid; src) cloned[k] = vertMap[ivKey(island, vid)];
             newFaces ~= cloned;
-            pushSrc(cloned, fi);
-            newMat   ~=faceAttrOr(faceMaterial, fi);
-            newPart  ~=faceAttrOr(facePart, fi);
-            newSetMask ~= faceAttrOr(faceSetMask, fi);
-            newOrd   ~= 0;
-            newWord  ~= faceAttrOr(faceMarks, fi);
+            oldOfNew ~= cast(uint) fi;
+            if (remapUv) cornerCursor += cloned.length;
         }
 
         // Wall quads: one per boundary edge, oriented by the orientability rule.
@@ -3406,11 +3398,12 @@ mixin template MeshExtrudeOps() {
             // Wall traverses the shared top edge in the opposite direction.
             if (origAtoB) newFaces ~= [cloneB, cloneA, a, b];
             else          newFaces ~= [cloneA, cloneB, b, a];
+            oldOfNew ~= be.selFi;
             if (remapUv) {
                 // The wall skirts exactly ONE selected face — its island is the
                 // one every corner of this wall reads.
-                const size_t wallLoop0 = srcOfCorner.length;
-                pushSrc(newFaces[$ - 1], be.selFi);
+                const size_t wallLoop0 = cornerCursor;
+                cornerCursor += newFaces[$ - 1].length;
                 if (uvWall == UvWallLaw.SweepU) {
                     // Fresh wall parameterisation (frozen: `face_extrude_uv_sweep_u`)
                     // — u = 0 on the base ring, u = 1 on the top ring, v = the
@@ -3427,33 +3420,40 @@ mixin template MeshExtrudeOps() {
                     }
                 }
             }
-            newMat  ~=faceAttrOr(faceMaterial, be.selFi);
-            newPart ~=faceAttrOr(facePart, be.selFi);
-            newSetMask ~= faceAttrOr(faceSetMask, be.selFi);
-            newOrd  ~= 0;
-            // Task 0389: side wall inherits Subpatch from the extruded source
-            // face it skirts, same as its material/part above (task 0613 §4.2:
-            // now the whole word, so Hide inherits the same way).
-            newWord ~= faceAttrOr(faceMarks, be.selFi);
         }
 
-        // Relocate the per-corner map BEFORE `faces` is replaced — the carry
-        // reads the old windings — and before the tail `buildLoops`, which would
-        // otherwise see a length-wrong map and zero the WHOLE mesh's UV.
-        if (remapUv)
-            declareCornerProvenance(
-                rw.carried(newFaces, srcOfCorner, vertBlend, gens));
-
-        // Assign reconstructed arrays.
-        faces              = newFaces;
-        faceMaterial       = newMat;
-        facePart           = newPart;
-        faceSetMask        = newSetMask;
-        faceSelectionOrder = newOrd;
+        // task 1902: mesh_planes.rewriteFaces assigns `faces` AND carries
+        // faceMarks/faceMaterial/facePart/faceSelectionOrder/faceSetMask from
+        // `oldOfNew` in one pass, replacing the hand-built newMat/newPart/
+        // newSetMask/newOrd/newWord arrays this site used to carry by hand.
+        // `rw` — this site's OWN beginCornerRewrite() handle — is passed
+        // straight through: `rewriteFaces` calls `rw.carriedPerFace(newFaces,
+        // oldOfNew, vertBlend, gens)` internally, which is EXACTLY what this
+        // site's own `rw.carried(newFaces, srcOfCorner, vertBlend, gens)`
+        // computed before this migration — `srcOfCorner` was always
+        // block-constant per face (the removed `pushSrc` repeated ONE source
+        // value across every corner of the face it was building), which is
+        // precisely what `carriedPerFace` derives from a per-face array
+        // internally, so the two calls declare the same correspondence by
+        // construction. Unconditional — not gated by `remapUv`, unlike the
+        // old `if (remapUv) declareCornerProvenance(...)`: `carriedPerFace`
+        // on an inactive handle degrades to `unchanged()` for free (Stage C
+        // precedent, this module's header).
+        rewriteFaces(this, newFaces, FaceSource(oldOfNew), &rw, vertBlend, gens);
+        // faceSelectionOrder: cap clones AND wall quads must start UNSELECTED
+        // (order 0), never inheriting whatever order stamp their source face
+        // happened to carry (was `newOrd ~= 0;` for both ranges, unlike
+        // material/part/setmask/marks, which DO inherit from their source via
+        // `oldOfNew` above — the same per-plane divergence
+        // extrudeVerticesByMask has). Patched back immediately after the
+        // call — the immediately following reselect loop below overwrites
+        // the CAP portion of this range again (via selectFace); the WALL
+        // portion is what this line alone determines.
+        foreach (i; capStart .. faces.length) faceSelectionOrder[i] = 0;
         // Rebuild faceMarks from scratch: resize+zero ALL bits (clears stale
-        // Select from the old ordering), then set from newWord (task 0613
-        // §4.2 — was Subpatch-only).
-        setFaceMarksFrom(newWord, ~Marks.Select);
+        // Select from the old ordering), then set from the just-carried word
+        // (task 0613 §4.2 — was Subpatch-only).
+        setFaceMarksFrom(faceMarks, ~Marks.Select);
 
         // New selection = cap faces (so a follow-up op chains off the top).
         faceSelectionOrderCounter = 0;
@@ -3666,20 +3666,17 @@ mixin template MeshExtrudeOps() {
         // idiom). Order: [non-selected originals] + [cap clones] +
         // [thicken-retained originals, if any] + [wall quads].
         uint[][] newFaces;
-        uint[]   newMat;
-        uint[]   newPart;
-        ulong[]  newSetMask;   // task 1060, Stage 5c
-        int[]    newOrd;
-        uint[]   newWord;   // whole faceMarks word per new face (task 0613 §4.2)
+        // Per-NEW-FACE newToOld correspondence (task 1902,
+        // mesh_planes.rewriteFaces): an untouched face names itself, a cap
+        // and a thicken skin both name the face they were cloned/reversed
+        // from, a wall names the one selected face its boundary edge
+        // borders.
+        uint[]   oldOfNew;
 
         foreach (fi; 0 .. faces.length) {
             if (mask[fi]) continue;
             newFaces ~= faces[fi];
-            newMat   ~=faceAttrOr(faceMaterial, fi);
-            newPart  ~=faceAttrOr(facePart, fi);
-            newSetMask ~= faceAttrOr(faceSetMask, fi);
-            newOrd   ~=faceAttrOr(faceSelectionOrder, fi);
-            newWord  ~= faceAttrOr(faceMarks, fi);
+            oldOfNew ~= cast(uint) fi;
         }
         immutable size_t capStart = newFaces.length;
 
@@ -3693,11 +3690,7 @@ mixin template MeshExtrudeOps() {
             int island = islandOf[fi];
             foreach (k, vid; src) cloned[k] = vertMap[ivKey(island, vid)];
             newFaces ~= cloned;
-            newMat   ~=faceAttrOr(faceMaterial, fi);
-            newPart  ~=faceAttrOr(facePart, fi);
-            newSetMask ~= faceAttrOr(faceSetMask, fi);
-            newOrd   ~= 0;
-            newWord  ~= faceAttrOr(faceMarks, fi);
+            oldOfNew ~= cast(uint) fi;
         }
 
         // Thicken: retain the ORIGINAL (unmoved) face verts, winding
@@ -3709,16 +3702,12 @@ mixin template MeshExtrudeOps() {
                 reversed.length = src.length;
                 foreach (k, vid; src) reversed[$ - 1 - k] = vid;
                 newFaces ~= reversed;
-                newMat   ~=faceAttrOr(faceMaterial, fi);
-                newPart  ~=faceAttrOr(facePart, fi);
-                newSetMask ~= faceAttrOr(faceSetMask, fi);
-                newOrd   ~= 0;
                 // Task 0389: the retained skin is a reversed duplicate of the
                 // source face at its ORIGINAL position — inherit its whole
-                // marks word rather than always dropping it, so a Thicken on
-                // a subdiv-marked (or, now, hidden) face keeps both shells
-                // matching (task 0613 §4.2).
-                newWord  ~= faceAttrOr(faceMarks, fi);
+                // marks word (and material/part/setmask) rather than always
+                // dropping it, so a Thicken on a subdiv-marked (or, now,
+                // hidden) face keeps both shells matching (task 0613 §4.2).
+                oldOfNew ~= cast(uint) fi;
             }
         }
 
@@ -3739,22 +3728,33 @@ mixin template MeshExtrudeOps() {
             }
             if (origAtoB) newFaces ~= [cloneB, cloneA, a, b];
             else          newFaces ~= [cloneA, cloneB, b, a];
-            newMat  ~=faceAttrOr(faceMaterial, be.selFi);
-            newPart ~=faceAttrOr(facePart, be.selFi);
-            newSetMask ~= faceAttrOr(faceSetMask, be.selFi);
-            newOrd  ~= 0;
             // Task 0389: skin wall inherits Subpatch from the source face it
-            // skirts, same as its material/part above (task 0613 §4.2: now
-            // the whole word).
-            newWord ~= faceAttrOr(faceMarks, be.selFi);
+            // skirts, same as its material/part (task 0613 §4.2: now the
+            // whole word).
+            oldOfNew ~= be.selFi;
         }
 
-        faces              = newFaces;
-        faceMaterial       = newMat;
-        facePart           = newPart;
-        faceSetMask        = newSetMask;
-        faceSelectionOrder = newOrd;
-        setFaceMarksFrom(newWord, ~Marks.Select);
+        // task 1902: mesh_planes.rewriteFaces assigns `faces` AND carries
+        // faceMarks/faceMaterial/facePart/faceSelectionOrder/faceSetMask from
+        // `oldOfNew` in one pass, replacing the hand-built newMat/newPart/
+        // newSetMask/newOrd/newWord arrays this site used to carry by hand.
+        // `rw` is not opened at this site (no `beginCornerRewrite()` call —
+        // matches the unchanged `dropCornerProvenance(SweptSurfaceNoLaw)`
+        // below, a stated loss, task 0830), so `rewriteFaces` is called with
+        // no handle, same as extrudeEdgesByMask/extrudeVerticesByMask.
+        rewriteFaces(this, newFaces, FaceSource(oldOfNew));
+        // faceSelectionOrder: cap clones, thicken skins AND wall quads must
+        // all start UNSELECTED (order 0), never inheriting whatever order
+        // stamp their source face happened to carry (was `newOrd ~= 0;` for
+        // all three ranges, unlike material/part/setmask/marks, which DO
+        // inherit from their source via `oldOfNew` above — the same
+        // per-plane divergence extrudeFacesByMask/extrudeVerticesByMask
+        // have). Patched back immediately after the call — the immediately
+        // following reselect loop below overwrites the CAP portion of this
+        // range again (via selectFace); the thicken+wall portion is what
+        // this line alone determines.
+        foreach (i; capStart .. faces.length) faceSelectionOrder[i] = 0;
+        setFaceMarksFrom(faceMarks, ~Marks.Select);
 
         // New selection = cap faces (chains a follow-up op off the top, same
         // as extrudeFacesByMask). The retained thicken skin is NOT selected.

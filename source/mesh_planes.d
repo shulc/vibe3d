@@ -80,11 +80,44 @@ module mesh_planes;
 // `setFaceMarksFrom(newWord, ~Marks.Select)`, unchanged from before the
 // migration (plan §2.7 — selection-bit/word policy stays at the call site).
 //
-// The remaining face sites (`mesh_ops/extrude.d`, `edge_bevel.d`,
-// `cleanup.d`, `revolve.d`, `bevel_vertex.d`) and the vertex sites migrate
-// family-by-family in later stages, each one behaviour-preserving by
-// construction (a byte-identical mesh, not a corrected one — this task has
-// no user-visible defect to fix, see the plan's §0).
+// STAGE D (this commit) migrates all four `mesh_ops/extrude.d` sites — the
+// heaviest client (plan §6 Stage D). Sites 14 (`extrudeEdgesByMask`), 15
+// (`extrudeVerticesByMask`) and 17 (`smoothShiftFacesByMask`) pass `rw =
+// null` (each keeps its own bare `dropCornerProvenance(SweptSurfaceNoLaw)`,
+// a stated loss, unchanged); site 16 (`extrudeFacesByMask`) passes its own
+// `beginCornerRewrite()` handle straight through, same shape as Stage C —
+// its old `rw.carried(newFaces, srcOfCorner, …)` call is replaced by
+// `rewriteFaces`'s internal `rw.carriedPerFace(newFaces, oldOfNew, …)`,
+// which is the SAME declaration: `srcOfCorner` was always block-constant per
+// face (built by a helper that repeated one source value across every
+// corner of the face it was building), exactly what `carriedPerFace` derives
+// from a per-face array internally. Site 15's previously TAIL-ONLY
+// `NewFaceSpec.srcFi` correspondence is flattened into one TOTAL `oldOfNew`
+// (identity over the substituted/surviving head, `srcFi` over the freshly
+// created tail) — a mechanical change the plan called out explicitly.
+//
+// The one per-plane divergence found at Stage D, present at sites 15, 16 and
+// 17 alike: `faceSelectionOrder` does NOT follow `oldOfNew` the way
+// material/part/setmask/marks do. The hand-rolled kernels always zeroed a
+// freshly created face's order stamp (`newOrd ~= 0;`) rather than
+// inheriting it from the source face material/part/marks/setmask DO inherit
+// from — a real semantic difference the generic per-plane carry cannot
+// express (task 1902's "duplication semantics differ — STOP or override"
+// rule). Each site therefore patches `faceSelectionOrder` back to 0 over
+// exactly the created-face range, immediately after the `rewriteFaces` call
+// — the same "override right after the call" shape Stage C already
+// established for `faceMarks`, applied here to a different plane. Site 14's
+// compaction branch (only reachable when a far-vertex overshoot clamp
+// collapses a face to <3 corners) has no such divergence: it is a pure
+// substitution of `FaceSource.fromOldToNew(faceRemap, …)` for the hand-built
+// `kept*` arrays, using the SAME `faceRemap` the kernel's own downstream
+// winding-consistency pass still reads.
+//
+// The remaining face sites (`edge_bevel.d`, `cleanup.d`, `revolve.d`,
+// `bevel_vertex.d`) and the vertex sites migrate family-by-family in later
+// stages, each one behaviour-preserving by construction (a byte-identical
+// mesh, not a corrected one — this task has no user-visible defect to fix,
+// see the plan's §0).
 //
 // `commitChange`: the CALLER's, never the primitive's (plan §2.5). Every
 // migrated kernel already calls `rebuildEdges()`/`buildLoops()` and its own

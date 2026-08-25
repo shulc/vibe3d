@@ -680,3 +680,283 @@ unittest {
     }
 }
 
+// ===========================================================================
+// Task 1902 Stage D — value-carry witnesses for the four extrude.d
+// face-rewrite sites migrated onto mesh_planes.rewriteFaces. None of the
+// existing structural tests in tests/test_edge_extrude*.d / test_face_extrude*
+// / test_smooth_shift*.d assert a surviving/created face's faceMaterial or
+// facePart BY VALUE after the op (plan §8's "no existing test asserts extrude
+// material by value") — they check coincidence/orphan/winding/repeated-corner
+// invariants, which are satisfied identically whether or not a plane's carry
+// is byte-correct. These four are the missing witnesses, one per site.
+// ===========================================================================
+
+// Site 14 — extrudeEdgesByMask's degenerate-collapse COMPACTION branch
+// (`if (anyDrop) { … rewriteFaces(this, keptFaces, FaceSource.fromOldToNew(
+// faceRemap, keptFaces.length)); … }`). This branch only runs when a
+// far-vertex overshoot clamp collapses some face to <3 corners — the
+// ordinary (non-overshooting) extrude path never reaches it. Fixture: the
+// fuzz-0321b trapezoid (test 18, tests/test_edge_extrude.d) — an isosceles-
+// trapezoid frustum whose -X side face's four cap-miter corners mutually
+// converge to ONE point (its own centroid) when all four of its own edges
+// are selected with a large overshoot width, collapsing THAT ONE selected
+// face to a single vertex and dropping it. The other 5 original faces are
+// untouched by the collapse and must survive, in construction order, with
+// their OWN material/part — not the compacted array's zero-filled default,
+// and not a neighbour's value shifted in by a front-truncated slice (task
+// 0921's class).
+unittest {
+    import std.conv : to;
+
+    Mesh m;
+    uint v0 = m.addVertex(Vec3(-0.5, -0.5, -0.5));
+    uint v1 = m.addVertex(Vec3( 0.5, -0.5, -0.5));
+    uint v2 = m.addVertex(Vec3( 0.5,  0.5, -0.5));
+    uint v3 = m.addVertex(Vec3(-0.5,  0.5, -0.5));
+    uint v4 = m.addVertex(Vec3(-0.15, -0.15, 0.5));
+    uint v5 = m.addVertex(Vec3( 0.15, -0.15, 0.5));
+    uint v6 = m.addVertex(Vec3( 0.15,  0.15, 0.5));
+    uint v7 = m.addVertex(Vec3(-0.15,  0.15, 0.5));
+    m.addFace([v0, v3, v2, v1]);   // face 0 — bottom
+    m.addFace([v4, v5, v6, v7]);   // face 1 — top
+    m.addFace([v0, v4, v7, v3]);   // face 2 — -X side (collapses and drops)
+    m.addFace([v1, v2, v6, v5]);   // face 3 — +X side
+    m.addFace([v3, v7, v6, v2]);   // face 4 — +Y side
+    m.addFace([v0, v1, v5, v4]);   // face 5 — -Y side
+    m.resetSelection();
+
+    static immutable uint[6] wantMat  = [1000, 1001, 1002, 1003, 1004, 1005];
+    static immutable uint[6] wantPart = [2000, 2001, 2002, 2003, 2004, 2005];
+    foreach (fi; 0 .. 6) {
+        m.faceMaterial[fi] = wantMat[fi];
+        m.facePart[fi]     = wantPart[fi];
+    }
+
+    uint e04 = m.edgeIndex(v0, v4), e47 = m.edgeIndex(v4, v7);
+    uint e73 = m.edgeIndex(v7, v3), e30 = m.edgeIndex(v3, v0);
+    assert(e04 != ~0u && e47 != ~0u && e73 != ~0u && e30 != ~0u,
+        "trapezoid: -X side-face edges not found");
+    bool[] mask = new bool[](m.edges.length);
+    mask[e04] = mask[e47] = mask[e73] = mask[e30] = true;
+
+    size_t n = m.extrudeEdgesByMask(mask, 0.0f, 10.0f);
+    assert(n == 4, "trapezoid: expected 4 edges extruded, got " ~ n.to!string);
+
+    // Face 2 (the mutually-converging -X side) must have collapsed and
+    // dropped via the anyDrop compaction: 5 surviving originals + 8
+    // bridge/cap faces (2 per extruded edge).
+    assert(m.faces.length == 5 + 4 * 2,
+        "trapezoid: expected 5 surviving originals + 8 bridge/cap faces, got "
+        ~ m.faces.length.to!string);
+
+    // The 5 survivors keep their CONSTRUCTION order in the compacted array
+    // (Mesh.extrudeEdgesByMask's cleanup pass iterates faceIndices in order,
+    // skipping only the dropped index) — faces 0,1,3,4,5, landing at output
+    // positions 0..4.
+    static immutable uint[5] survivingMat  = [1000, 1001, 1003, 1004, 1005];
+    static immutable uint[5] survivingPart = [2000, 2001, 2003, 2004, 2005];
+    foreach (i; 0 .. 5) {
+        assert(m.faceMaterial[i] == survivingMat[i],
+            "trapezoid: surviving face at position " ~ i.to!string ~ " must "
+            ~ "keep its OWN material through the degenerate-collapse "
+            ~ "compaction (got " ~ m.faceMaterial[i].to!string ~ ", want "
+            ~ survivingMat[i].to!string ~ ")");
+        assert(m.facePart[i] == survivingPart[i],
+            "trapezoid: surviving face at position " ~ i.to!string ~ " must "
+            ~ "keep its OWN part through the degenerate-collapse compaction "
+            ~ "(got " ~ m.facePart[i].to!string ~ ", want "
+            ~ survivingPart[i].to!string ~ ")");
+    }
+}
+
+// Site 15 — extrudeVerticesByMask's single rebuild pass: identity head
+// (every substituted/surviving face keeps its own old index) + `nf.srcFi`
+// tail (every freshly created rim/fan face inherits material/part/marks
+// from the ORIGINAL face it was cut from) flattened into one total
+// `oldOfNew`. faceSelectionOrder is the one plane that does NOT follow this
+// rule — a rim/fan face must start unselected (order 0) regardless of its
+// source's own order stamp, patched back right after the primitive call.
+unittest {
+    import std.conv : to;
+
+    Mesh m = makeGridPlane(3);   // 3x3 grid, 9 quads; vertex 5 is interior (valence 4)
+    m.resetSelection();
+    foreach (fi; 0 .. m.faces.length) {
+        m.faceMaterial[fi] = cast(uint)(1000 + fi);
+        m.facePart[fi]     = cast(uint)(2000 + fi);
+    }
+    // A non-zero order stamp on ONE of vertex 5's four incident faces (face
+    // 4), so a bug that inherits faceSelectionOrder on the tail (instead of
+    // zeroing it) is observable rather than coincidentally already 0.
+    m.faceSelectionOrder[4] = 77;
+
+    bool[] mask = new bool[](m.vertices.length);
+    mask[5] = true;   // interior vertex shared by faces 0, 1, 3, 4
+
+    size_t n = m.extrudeVerticesByMask(mask, 0.0f, 0.1f);
+    assert(n == 1, "grid vertex-extrude: expected 1 accepted vertex, got " ~ n.to!string);
+    assert(m.faces.length == 9 + 4 * 2,
+        "grid vertex-extrude: expected 9 substituted + 8 rim/fan faces, got "
+        ~ m.faces.length.to!string);
+
+    // Head: every substituted/surviving original keeps its OWN material/part
+    // at its OWN old index.
+    foreach (fi; 0 .. 9) {
+        assert(m.faceMaterial[fi] == 1000 + fi,
+            "grid vertex-extrude: original face " ~ fi.to!string ~ " lost its material");
+        assert(m.facePart[fi] == 2000 + fi,
+            "grid vertex-extrude: original face " ~ fi.to!string ~ " lost its part");
+    }
+
+    // Tail: each rim/fan face inherits material/part from ITS OWN source
+    // face (one of 0, 1, 3, 4 — the four faces incident to vertex 5), and
+    // starts unselected regardless of that source's own order stamp.
+    foreach (fi; 9 .. m.faces.length) {
+        immutable uint mat = m.faceMaterial[fi];
+        assert(mat == 1000 || mat == 1001 || mat == 1003 || mat == 1004,
+            "grid vertex-extrude: rim/fan face " ~ fi.to!string ~ " material "
+            ~ "must inherit from one of its 4 incident source faces (got "
+            ~ mat.to!string ~ ")");
+        assert(m.facePart[fi] == mat - 1000 + 2000,
+            "grid vertex-extrude: rim/fan face " ~ fi.to!string ~ " part must "
+            ~ "come from the SAME source face as its material");
+        assert(m.faceSelectionOrder[fi] == 0,
+            "grid vertex-extrude: rim/fan face " ~ fi.to!string ~ " must "
+            ~ "start UNSELECTED (order 0), never inheriting its source's own "
+            ~ "order stamp (face 4's is 77)");
+    }
+}
+
+// Site 16 — extrudeFacesByMask's [non-selected originals] + [cap clones] +
+// [wall quads] rebuild. Cap clones and wall quads inherit material/part/
+// marks (including Subpatch) from their source face via `oldOfNew`, but —
+// like site 15 — must start unselected (order 0), patched back right after
+// the primitive call; the cap's own reselect loop (`selectFace`) then
+// re-stamps ONLY the cap range, so a wall quad's order is what actually
+// discriminates the override.
+unittest {
+    import std.conv : to;
+
+    Mesh m = makeGridPlane(3);
+    m.resetSelection();
+    foreach (fi; 0 .. m.faces.length) {
+        m.faceMaterial[fi] = cast(uint)(1000 + fi);
+        m.facePart[fi]     = cast(uint)(2000 + fi);
+    }
+    m.faceSelectionOrder[4] = 77;
+    m.setSubpatch(4, true);
+
+    bool[] mask = new bool[](m.faces.length);
+    mask[4] = true;   // the grid's centre face
+
+    size_t n = m.extrudeFacesByMask(mask, 0.3f);
+    assert(n == 1, "grid face-extrude: expected 1 face extruded, got " ~ n.to!string);
+    // 8 non-selected originals + 1 cap + 4 wall quads (face 4 has 4 boundary
+    // edges once removed from the otherwise-untouched grid).
+    assert(m.faces.length == 8 + 1 + 4,
+        "grid face-extrude: expected 8 originals + 1 cap + 4 walls, got "
+        ~ m.faces.length.to!string);
+
+    // The 8 non-selected originals keep their construction order (faces
+    // 0,1,2,3,5,6,7,8 — skipping the selected face 4), landing at output
+    // positions 0..7, each with its OWN material/part.
+    static immutable uint[8] survivingMat =
+        [1000, 1001, 1002, 1003, 1005, 1006, 1007, 1008];
+    static immutable uint[8] survivingPart =
+        [2000, 2001, 2002, 2003, 2005, 2006, 2007, 2008];
+    foreach (i; 0 .. 8) {
+        assert(m.faceMaterial[i] == survivingMat[i],
+            "grid face-extrude: non-selected face at position " ~ i.to!string
+            ~ " must keep its OWN material (got " ~ m.faceMaterial[i].to!string
+            ~ ", want " ~ survivingMat[i].to!string ~ ")");
+        assert(m.facePart[i] == survivingPart[i],
+            "grid face-extrude: non-selected face at position " ~ i.to!string
+            ~ " must keep its OWN part (got " ~ m.facePart[i].to!string
+            ~ ", want " ~ survivingPart[i].to!string ~ ")");
+    }
+
+    // The cap (position 8) and the 4 wall quads (positions 9..12) all
+    // inherit face 4's material/part/Subpatch.
+    foreach (i; 8 .. 13) {
+        assert(m.faceMaterial[i] == 1004,
+            "grid face-extrude: cap/wall at position " ~ i.to!string
+            ~ " must inherit face 4's material (got " ~ m.faceMaterial[i].to!string ~ ")");
+        assert(m.facePart[i] == 2004,
+            "grid face-extrude: cap/wall at position " ~ i.to!string
+            ~ " must inherit face 4's part (got " ~ m.facePart[i].to!string ~ ")");
+        assert(m.isFaceSubpatch(i),
+            "grid face-extrude: cap/wall at position " ~ i.to!string
+            ~ " must inherit face 4's Subpatch bit");
+    }
+    // The wall quads specifically must NOT inherit face 4's order stamp
+    // (77) — only the cap's own reselect loop stamps an order, and it never
+    // reaches the walls.
+    foreach (i; 9 .. 13)
+        assert(m.faceSelectionOrder[i] == 0,
+            "grid face-extrude: wall quad at position " ~ i.to!string
+            ~ " must start UNSELECTED (order 0), not inherit face 4's own "
+            ~ "order stamp (77)");
+}
+
+// Site 17 — smoothShiftFacesByMask's [non-selected originals] + [cap
+// clones] + [thicken-retained originals] + [wall quads] rebuild. Same
+// per-plane shape as site 16 (material/part/marks inherit via `oldOfNew`,
+// faceSelectionOrder is forced to 0 on every created face and patched back
+// after the call), exercised here with `thicken: true` so the third,
+// site-17-only range is covered too.
+unittest {
+    import std.conv : to;
+
+    Mesh m = makeGridPlane(3);
+    m.resetSelection();
+    foreach (fi; 0 .. m.faces.length) {
+        m.faceMaterial[fi] = cast(uint)(1000 + fi);
+        m.facePart[fi]     = cast(uint)(2000 + fi);
+    }
+    m.faceSelectionOrder[4] = 77;
+    m.setSubpatch(4, true);
+
+    bool[] mask = new bool[](m.faces.length);
+    mask[4] = true;
+
+    size_t n = m.smoothShiftFacesByMask(mask, 0.3f, 1.0f, true /* thicken */);
+    assert(n == 1, "grid smooth-shift: expected 1 face processed, got " ~ n.to!string);
+    // 8 non-selected originals + 1 cap + 1 thicken skin + 4 wall quads.
+    assert(m.faces.length == 8 + 1 + 1 + 4,
+        "grid smooth-shift: expected 8 originals + 1 cap + 1 thicken skin + "
+        ~ "4 walls, got " ~ m.faces.length.to!string);
+
+    static immutable uint[8] survivingMat =
+        [1000, 1001, 1002, 1003, 1005, 1006, 1007, 1008];
+    static immutable uint[8] survivingPart =
+        [2000, 2001, 2002, 2003, 2005, 2006, 2007, 2008];
+    foreach (i; 0 .. 8) {
+        assert(m.faceMaterial[i] == survivingMat[i],
+            "grid smooth-shift: non-selected face at position " ~ i.to!string
+            ~ " must keep its OWN material");
+        assert(m.facePart[i] == survivingPart[i],
+            "grid smooth-shift: non-selected face at position " ~ i.to!string
+            ~ " must keep its OWN part");
+    }
+
+    // Cap (8), thicken skin (9) and the 4 walls (10..13) all inherit face
+    // 4's material/part/Subpatch, and none inherit its order stamp (77)
+    // except the cap's own reselect stamp.
+    foreach (i; 8 .. 14) {
+        assert(m.faceMaterial[i] == 1004,
+            "grid smooth-shift: created face at position " ~ i.to!string
+            ~ " must inherit face 4's material (got " ~ m.faceMaterial[i].to!string ~ ")");
+        assert(m.facePart[i] == 2004,
+            "grid smooth-shift: created face at position " ~ i.to!string
+            ~ " must inherit face 4's part (got " ~ m.facePart[i].to!string ~ ")");
+        assert(m.isFaceSubpatch(i),
+            "grid smooth-shift: created face at position " ~ i.to!string
+            ~ " must inherit face 4's Subpatch bit");
+    }
+    foreach (i; 9 .. 14)
+        assert(m.faceSelectionOrder[i] == 0,
+            "grid smooth-shift: thicken skin / wall quad at position "
+            ~ i.to!string ~ " must start UNSELECTED (order 0), not inherit "
+            ~ "face 4's own order stamp (77)");
+}
+

@@ -496,10 +496,6 @@ private immutable AllowEntry[] kAllow = [
         "vertices.length = savedVertCount; // undo any addVertex from the per-vertex pass",
         "bevelEdgesByMask early-return rollback (both call sites) — restores "
       ~ "a saved count, not a renumbering", 2),
-    AllowEntry("source/mesh_ops/extrude.d", "faces              = keptFaces;",
-        "site 14: extrudeEdgesByMask compaction (Stage D)", 1),
-    AllowEntry("source/mesh_ops/extrude.d", "faces              = newFaces;",
-        "sites 15/16/17: extrudeVerticesByMask, extrudeFacesByMask, smoothShiftFacesByMask (Stage D)", 3),
     AllowEntry("source/mesh_ops/loop_slice.d", "m.vertices = [",
         "fresh-mesh test helper: makeTwoDisjointCubes (fixture-only, not version(unittest)-gated)", 1),
     AllowEntry("source/mesh_ops/revolve.d", "faces              = newFaces;",
