@@ -153,9 +153,17 @@ struct MeshSnapshot {
         mesh.resizeAllMeshMaps();
         // Snapshot restore rebuilds the WHOLE mesh — geometry, topology, marks
         // and materials may all have changed across the undo/redo. Emit the
-        // bulk All mask (which includes Geometry, so commitChange bumps both
+        // bulk All mask (which includes Geometry, so the stamp bumps both
         // mutationVersion and topologyVersion exactly as the old two lines did).
-        mesh.commitChange(MeshChangeAll);
+        //
+        // `commitRestored`, not `commitChange` (task 1903 §3.2 S4): this is a
+        // WHOLE-STATE restoration, not a mutation site the batch seam is
+        // closing, and it fires on every `/api/reset` revert and every
+        // snapshot-path undo. Ticking `changeBus.unbatchedGeometryCommits`
+        // here would give that counter a moving baseline it could never be
+        // asserted against. Everything else — the version bumps, the derive
+        // and the delivery — is identical.
+        mesh.commitRestored(MeshChangeAll);
     }
 
     // -------------------------------------------------------------------------
@@ -266,7 +274,8 @@ struct MeshSnapshot {
             mesh.faceSelectionOrderCounter   = faceSelectionOrderCounter;
         }
 
-        mesh.commitChange(MeshChangeAll);
+        // `commitRestored` — see restore() above (task 1903 §3.2 S4).
+        mesh.commitRestored(MeshChangeAll);
     }
 }
 

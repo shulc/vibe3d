@@ -5,7 +5,7 @@ import std.parallelism : parallel;
 import std.range : iota;
 import math;
 import editmode : EditMode;
-import mesh_edit_delta : MeshEditTracker, MeshEditScope;
+import mesh_edit_delta : MeshEditTracker, MeshEditScope, MeshEditDelta;
 import change_bus : SelDomain, changeBus;
 import mesh_ops.cut : MeshCutOps;
 import mesh_ops.bridge : MeshBridgeOps;
@@ -675,6 +675,217 @@ __gshared bool delegate(const(Mesh)*) g_isDocumentMesh;
 private bool deliverySubjectAccepted(const(Mesh)* m) {
     if (g_isDocumentMesh is null) return true;
     return g_isDocumentMesh(m);
+}
+
+// ---- Mesh-edit batch state (task 1903 §2.2a) ------------------------------
+// The undo-tracker batch, re-expressed as a STACK OF FRAMES KEYED BY `Mesh*`.
+//
+// Module scope, and for the reason this file already spells out twice above
+// (`g_hideDeriveDepth`, `g_deliveryDepth`): kernels that replace the whole
+// struct (`*mesh = subdivide(...)`, `*mesh = remesh(...)`, `commands/scene/
+// reset.d`) would reset an in-struct counter mid-batch, and the close would
+// then find depth 0, skip its stamp, and the edit would never publish.
+// Keying by ADDRESS survives those writers: `*mesh = value` assigns THROUGH
+// the pointer, so the address does not move, and `Layer` is a class with a
+// stable heap `mesh_`. The only way two edits could share one key is a
+// freed-then-reused address, and that needs a frame LEFT BEHIND on this stack
+// — which is what `changeBus.batchLeaks` is asserted 0 for.
+//
+// TASK 1903 S1 — TWO SPELLINGS OPEN A FRAME AND ONLY ONE OF THEM HAS A
+// DESTRUCTOR, so "a leaked handle" is NOT the sole path and this comment used
+// to say it was. `MeshEditBatch` pops in `~this` while the stack unwinds. The
+// older `Mesh.beginEditBatch` / `endEditBatch` pair has no handle at all: an
+// `Exception` escaping between them orphans the frame PERMANENTLY — every
+// later `commitChange` on that mesh defers forever, the app keeps running and
+// silently stops publishing, and `batchLeaks` stays 0 because nothing ticked
+// it. `Mesh.abortEditBatch()` is that pair's pop, and all four legacy callers
+// carry `scope(failure) mesh.abortEditBatch();`. The guard's presence at each
+// of the four is pinned by `tests/unit/commit_seam_census_test.d`, so removing
+// one is a red line rather than a silent regression.
+//
+// IT IS A DIFFERENT OBJECT FROM `g_deliveryDepth` (task 1906), with a
+// different lifetime and a different job — see that counter's declaration for
+// the contract both tasks cite. This stack records WHAT changed so undo can
+// revert it; that counter decides WHEN listeners are told.
+//
+// Thread-local by D's default, and that is correct here: nothing mutates a
+// live `Mesh` off the main thread (`source/subpatch_worker.d` is handed a
+// `CageSnapshot` and never reads the live mesh; remesh runs out of process).
+// If a future op ever commits off-main, this stack must become `__gshared`
+// and guarded, and `changeBus.batchLeaks` is what would show it first.
+// NB: the batch's DECLARED scope is not a field here. It is handed straight
+// to the recorder at the 0->1 transition (`MeshEditTracker.declare`, which is
+// what ends up in `MeshEditDelta.scope_` and drives the revert's own
+// `commitRestored`), and the close deliberately stamps `accum`, never the
+// declaration — see `closeEditFrame`. A copy on the frame would be state
+// nothing reads and everything could disagree with.
+private struct EditBatchFrame {
+    Mesh*            m;          // the subject, by address
+    uint             depth;      // nesting depth; only 0->1 and 1->0 do work
+    uint             accum;      // ORed by every deferred commitChange
+    MeshEditTracker* rec;        // null ⇒ unrecorded batch (plan §9)
+    bool             errored;    // a refused upgrade, or a nested leak
+    bool             deferSafe;  // !anyHideBitSet() at open — see commitChange
+}
+
+private EditBatchFrame[] g_editBatchStack;   // ≤2 entries in practice
+
+// The frame for `m`, or null. Innermost-first so a (refused) nested frame on
+// the same mesh is found before the outer one.
+//
+// THE POINTER IS AN INTERIOR POINTER INTO `g_editBatchStack` AND IS VALID ONLY
+// UNTIL THE NEXT `~=`. A push may reallocate the array and every frame pointer
+// handed out before it then aims at freed memory. The rule this file follows,
+// stated here rather than rediscovered: never hold a frame pointer across a
+// call that can open a batch. Every reader today re-looks-up instead
+// (`commitChange`, `refreshHiddenDerived`, `MeshEditBatch.recording`/`rec`/
+// `setVertexPos`), which is why they take the branch again rather than caching
+// the pointer; `pushEditFrame`'s own return is consumed by its caller before
+// anything else can push.
+pragma(inline, true)
+private EditBatchFrame* currentBatchFrame(const(Mesh)* m) {
+    if (g_editBatchStack.length == 0) return null;
+    foreach_reverse (i; 0 .. g_editBatchStack.length)
+        if (g_editBatchStack[i].m is m) return &g_editBatchStack[i];
+    return null;
+}
+
+// Open — or re-enter — the frame for `m`. Returns the frame, never null.
+//
+// The three inner/outer pairings are NOT symmetric (plan §2.3 rule 3):
+//   recording  inside recording   → allowed, depth++, counted
+//   unrecorded inside recording   → allowed, the inner request is IGNORED:
+//                                   the ops are part of the outer edit and
+//                                   must be in its op-log
+//   recording  inside unrecorded  → REFUSED. The alternative is a corrupt
+//                                   undo record, not a perf wart: the inner
+//                                   delta would be missing everything the
+//                                   outer did before it, and installing that
+//                                   as a history entry loses those ops.
+//
+// The refusal is a COUNTER, not a `debug assert`, and that is deliberate —
+// the same call this file already makes for `endHideDeriveBatch` ("clamped,
+// not asserted: an imbalance must not be a process death in one build kind
+// and a silent de-optimization in the other") and for `MeshEditBatch.~this`.
+// The unit lane builds with `-debug` and the suite lane without it, so a
+// `debug assert` here would be a hard death in one lane and invisible in the
+// other, and no single test could see both.
+//
+// `declared` reaches the RECORDER and nothing else (see `EditBatchFrame`), and
+// only at the 0->1 transition: a nested open may not re-declare the scope of
+// an edit it did not start (plan §2.3 rule 1). Doing it here rather than in
+// each opener is what keeps `Mesh.beginEditBatch` and `MeshEditBatch`'s
+// constructor from drifting on the one thing that ends up in the delta.
+private EditBatchFrame* pushEditFrame(Mesh* m, uint declared, MeshEditTracker* rec) {
+    if (auto f = currentBatchFrame(m)) {
+        ++f.depth;
+        ++changeBus.nestedBatchOpens;
+        if (rec !is null && f.rec is null) {
+            // The hard refusal. The frame stays UNRECORDED (the outermost
+            // batch owns the recording decision) and is marked errored so the
+            // inner close hands back `MeshEditDelta.init` rather than a
+            // truncated op-log.
+            f.errored = true;
+            ++changeBus.batchUpgradeRefusals;
+        }
+        return f;
+    }
+    // `m` is never null: both openers take it from a `ref Mesh` or `&this`.
+    g_editBatchStack ~= EditBatchFrame(m, 1, 0, rec, false, !m.anyHideBitSet());
+    if (rec !is null) rec.declare(cast(MeshEditScope)declared);
+    return &g_editBatchStack[$ - 1];
+}
+
+// Close the innermost frame for `m` and, at the 1->0 transition, stamp once.
+//
+// THIS IS THE ONLY PATH TO `Mesh.commitStamps` FROM A BATCH: both
+// `MeshEditBatch.close()` and the older `Mesh.endEditBatch()` spelling funnel
+// through here, so "one stamp per batch" is one function, not two that can
+// drift (plan §3.1 B4 — `endEditBatch` MUST stamp: the four legacy callers
+// hold zero `commitChange` of their own, their kernels commit INSIDE the
+// batch, and a pop-only close would silently stop `mesh.delete` bumping,
+// deriving and delivering).
+private MeshEditDelta closeEditFrame(Mesh* m, uint extraFlags) {
+    auto f = currentBatchFrame(m);
+    if (f is null) return MeshEditDelta.init;
+
+    // TASK 1903 S2 — `extraFlags` MUST GO THROUGH `noteChange`, exactly as
+    // every deferred `commitChange` in this batch already did. It is the only
+    // way into the stamp that does not, and skipping it breaks three things at
+    // once: `deliverPending` (riding `commitStamps`'s tail) would ship
+    // `undeliveredChanges_` WITHOUT these flags, so listeners never hear about
+    // the class the closer is declaring; `marksVersion` would miss a
+    // marks-affecting flag, which `selectionSignature`'s consumers key on; and
+    // with `accum == 0` the stamp would bump `mutationVersion` against
+    // `pendingChanges_ == 0`, which is precisely the shape app.d's per-frame
+    // guard counts as `changeBus.missedPublishers` — a counter the DoD
+    // requires to stay 0.
+    //
+    // Placed ABOVE the depth branch so the nested close behaves identically:
+    // its flags are OR-ed into the outer frame's `accum` for the stamp AND are
+    // in the pending words for the delivery, from one line.
+    if (extraFlags) m.noteChange(extraFlags);
+
+    if (f.depth > 1) {
+        // A nested close: fold its extra flags into the outer frame and hand
+        // back an empty delta. The outermost close is the one that stamps.
+        --f.depth;
+        f.accum |= extraFlags;
+        return MeshEditDelta.init;
+    }
+
+    MeshEditDelta d;
+    if (f.rec !is null && !f.errored) d = f.rec.finish();
+    else if (f.rec !is null)          cast(void)f.rec.finish();   // drain, discard
+
+    const uint flags   = f.accum | extraFlags;
+    const size_t nOps  = d.log.length;
+    popEditFrame(m);
+
+    // Stamp ONLY what actually committed. `f.declared` is the RECORDER's
+    // advisory scope, not a publication: a batch whose kernel refused (the
+    // `affected == 0` arm of `commands/mesh/delete.d` and `remove.d`) commits
+    // nothing today and must keep bumping nothing, or a refused command would
+    // advance `mutationVersion` and — since `declared` never went through
+    // `noteChange` — trip app.d's missed-publisher guard.
+    if (flags != 0) m.commitStamps(flags);
+
+    changeBus.opLogEntriesRecorded += nOps;
+    return d;
+}
+
+// Pop the innermost frame for `m`. Order-preserving for the rest of the stack.
+private void popEditFrame(Mesh* m) {
+    foreach_reverse (i; 0 .. g_editBatchStack.length) {
+        if (g_editBatchStack[i].m !is m) continue;
+        foreach (j; i + 1 .. g_editBatchStack.length)
+            g_editBatchStack[j - 1] = g_editBatchStack[j];
+        g_editBatchStack.length = g_editBatchStack.length - 1;
+        return;
+    }
+}
+
+// The LEAK path — `MeshEditBatch.~this` running during unwinding (plan §2.2c).
+// Pops without stamping, and marks an enclosing frame errored so its own close
+// does not hand back an op-log that is missing everything after the throw.
+private void popLeakedEditFrame(Mesh* m) {
+    auto f = currentBatchFrame(m);
+    if (f is null) return;
+    if (f.depth > 1) {
+        --f.depth;
+        f.errored = true;
+        return;
+    }
+    if (f.rec !is null) cast(void)f.rec.finish();
+    popEditFrame(m);
+}
+
+version (unittest) {
+    // The stack's own length, for the unit lane. Module scope and
+    // `version (unittest)` for the reason this file states three times above:
+    // a `debug {}` body is absent from a plain `-unittest` build, so a test
+    // over it would pass vacuously.
+    size_t editBatchStackLength() { return g_editBatchStack.length; }
 }
 
 version (unittest) {
@@ -1682,6 +1893,65 @@ struct Mesh {
     //       do not "fix" the missing call.
     void commitChange(uint flags) {
         noteChange(flags);
+
+        // TASK 1903 §3.1 — INSIDE AN EDIT BATCH, DECLARE ONLY. The class of
+        // the change is still recorded (`noteChange` above ran, so
+        // `pendingChanges_` and `undeliveredChanges_` already carry it); what
+        // is DEFERRED to the batch's close is the STAMP — the version bumps,
+        // the derive and, riding the same tail, 1906's delivery. `close()` is
+        // then the single site that advances a version for the whole edit.
+        if (auto f = currentBatchFrame(&this)) {
+            f.accum |= flags;
+            // B3 — THE ONE THING A BATCH MAY NOT DEFER. `refreshHiddenDerived`
+            // WRITES when something is hidden: it clears `Marks.Select` on
+            // every vertex/edge that became fully hidden. The observer is
+            // `selectVertex`, which refuses a vertex whose derived Hide bit is
+            // set — so a kernel that appends geometry and then selects its
+            // output silently loses the selection if the derive was deferred
+            // (task 1330 BLOCKER 2, pinned by this file's own REGIME-2
+            // unittest beside `anyHideBitSet`). `deferSafe` is armed
+            // `!anyHideBitSet()` at the 0->1 transition, exactly as
+            // `beginHideDeriveBatch` arms its own, and `refreshHiddenDerived`
+            // disarms it the moment it discovers a Hide bit. While it is
+            // false the derive runs INLINE on every Geometry commit, exactly
+            // as it does with no batch at all; only the stamp is deferred.
+            if ((flags & MeshEditScope.Geometry) && !f.deferSafe)
+                refreshHiddenDerived();
+            return;
+        }
+
+        // L2 (plan §3.2) — a Geometry-class commit that reached a DOCUMENT
+        // mesh outside any batch. Telemetry, per family, with a consumer: as
+        // each family migrates it opens a batch and its ops stop ticking this.
+        // The document-mesh term is not optional — every factory and importer
+        // builds a temporary `Mesh` through `addVertex`/`addFace`, which end
+        // in a per-element `commitChange`, and without the filter one
+        // `/api/reset` of the perf grid alone reads ~99 856. UNINSTALLED MEANS
+        // "NOT A DOCUMENT MESH" here — the opposite default from delivery's,
+        // and deliberately so: a filter is a refusal and must fail open, a
+        // counter is an observation and may fail closed (see
+        // `g_isDocumentMesh`'s declaration, which states both). The
+        // consequence is that this counter is a SUITE-LANE observable only; a
+        // unit case that reads it must install the predicate itself, or it is
+        // green in both directions.
+        if ((flags & MeshEditScope.Geometry)
+            && g_isDocumentMesh !is null && g_isDocumentMesh(&this))
+            ++changeBus.unbatchedGeometryCommits;
+
+        commitStamps(flags);
+    }
+
+    /// The tail of `commitChange`, verbatim — the version bumps, the derive
+    /// (or task 1330's deferral arm) and 1906's delivery. Split out so that a
+    /// batch can defer it and `close()` can run it exactly once.
+    ///
+    /// `private`, with THREE callers in this module and no others:
+    /// `commitChange` (the unbatched path), `commitRestored` (whole-state
+    /// restoration) and `closeEditFrame` (every batch close, whichever
+    /// spelling opened it). `tests/unit/commit_seam_census_test.d` asserts
+    /// that count on the comment-stripped text — a fourth caller is a new way
+    /// to advance a version stamp and must be argued for, not added.
+    private void commitStamps(uint flags) {
         ++mutationVersion;
         if (flags & MeshEditScope.Geometry) {
             ++topologyVersion;
@@ -1716,6 +1986,28 @@ struct Mesh {
             refreshHiddenDerived();
         }
         deliverPending();   // paths (b) and (c) — see the header above
+    }
+
+    /// WHOLE-STATE RESTORATION ONLY (task 1903 §3.2 S4/S5). The three internal
+    /// doors — `MeshSnapshot.restore` (twice) and `MeshEditDelta.finalize` —
+    /// re-publish a mesh they have just rewritten wholesale. They are not
+    /// mutation sites the batch seam is closing, so they must NOT tick
+    /// `changeBus.unbatchedGeometryCommits`: a counter that moves on every
+    /// `/api/reset` and every undo can never be asserted `== 0`, and asserting
+    /// it against a moving baseline is the "threshold derived from the
+    /// measurement" defect.
+    ///
+    /// Delivery is IDENTICAL to `commitChange`'s — 1906's `deliverPending()`
+    /// rides the tail `commitStamps` owns, so a restore publishes exactly as it
+    /// does today. The ONLY difference between the two entries is the counter.
+    ///
+    /// It never consults `g_editBatchStack`, on purpose: all three call sites
+    /// are outside any batch, and deferring a whole-state restore into someone
+    /// else's batch would let that batch's `accum` decide the class of an edit
+    /// it did not make.
+    void commitRestored(uint flags) {
+        noteChange(flags);
+        commitStamps(flags);
     }
 
     // Accumulate a SELECTION change (Stage 5): OR `Marks` into the mesh-class
@@ -2086,7 +2378,36 @@ struct Mesh {
     // when no batch is open (always, in Phase 1) the tracker adds zero cost and
     // every existing behavior is byte-for-byte unchanged. See
     // doc/undo_change_tracker_plan.md.
-    private MeshEditTracker* editRecorder_;
+    //
+    // TASK 1903 §2.2a — this is an ACCESSOR over `g_editBatchStack`, not a
+    // field, and the reason is the same one stated at `g_hideDeriveDepth`:
+    // kernels that replace the whole struct (`*mesh = subdivide(...)`) would
+    // swap in the new value's EMPTY tracker mid-record and orphan the one the
+    // caller is about to read. A recording batch allocates its tracker once
+    // and the module-level frame holds the pointer; the array may reallocate,
+    // the tracker cannot move.
+    //
+    // Every existing spelling still reads the same — `editRecorder_ !is null`,
+    // `editRecorder_.recordX(...)` — because a property returning a pointer is
+    // indistinguishable from a pointer field at the use site. The early-out on
+    // an empty stack keeps the no-batch cost at one length compare, which is
+    // what the "zero cost when no batch is open" sentence above promises.
+    //
+    // `const` ON A METHOD RETURNING A MUTABLE POINTER IS DELIBERATE, and
+    // `inout` cannot express it. The recorder is not part of `Mesh`'s state at
+    // all: it lives on the GC and is reached through the module-level frame
+    // stack, so `const(Mesh)` says nothing about whether it may be written —
+    // `this` is only the KEY of the lookup. The qualifier is here because the
+    // const readers need it (`isRecordingEdits`, `wantsFaceReindexRecording`,
+    // and the `const` mutation hooks that ask "is anyone recording?"); an
+    // `inout` return would instead propagate `Mesh`'s constness onto a
+    // different object's, which is the claim that is actually false.
+    pragma(inline, true)
+    private MeshEditTracker* editRecorder_() const {
+        if (g_editBatchStack.length == 0) return null;
+        auto f = currentBatchFrame(&this);
+        return f is null ? null : f.rec;
+    }
 
     // --- Edge-delete touched region (task 0474) ---------------------------
     // POSITIONS of the endpoints of the edges last handed to removeEdgesByMask
@@ -2125,21 +2446,64 @@ struct Mesh {
     // logging. `declared` is the advisory change scope. The pointer must
     // out-live the batch (callers stack-allocate a MeshEditTracker and pass its
     // address, then call endEditBatch before it leaves scope).
+    //
+    // TASK 1903 — the OLDER SPELLING of `MeshEditBatch`, kept for the four
+    // callers that predate the handle (`commands/mesh/delete.d`, `remove.d`,
+    // `tools/edit/edge_extend.d`, `edge_extrude.d`) and for the unit fixtures
+    // that drive the tracker directly. Same frame, same stack, same close.
     void beginEditBatch(MeshEditTracker* rec, MeshEditScope declared) {
-        editRecorder_ = rec;
-        if (rec !is null) rec.declare(declared);
+        // `pushEditFrame` owns the "only the OUTERMOST batch declares" rule
+        // (plan §2.3 rule 1), so this spelling and `MeshEditBatch`'s
+        // constructor cannot disagree about what lands in the delta's scope.
+        cast(void)pushEditFrame(&this, cast(uint)declared, rec);
     }
 
-    // Close the batch and return the finished, invertible delta. Detaches the
-    // recorder so subsequent mutations are untracked again.
-    import mesh_edit_delta : MeshEditDelta;
+    // Close the batch and return the finished, invertible delta.
+    //
+    // TASK 1903 §3.1 B4 — THIS STAMPS. It has to: the four callers above hold
+    // ZERO `commitChange` of their own (measured: 0/0/0/0), their kernels
+    // commit INSIDE the batch, and those commits now defer into the frame. A
+    // pop-only close would throw them away and `mesh.delete` would silently
+    // stop bumping `mutationVersion`, stop deriving the hide planes and stop
+    // delivering. `closeEditFrame` is the shared body with
+    // `MeshEditBatch.close()`, so the two spellings cannot drift.
     MeshEditDelta endEditBatch() {
-        MeshEditDelta d;
-        if (editRecorder_ !is null) {
-            d = editRecorder_.finish();
-            editRecorder_ = null;
-        }
-        return d;
+        return closeEditFrame(&this, 0);
+    }
+
+    /// TASK 1903 S1 — THE `beginEditBatch` PAIR'S UNWIND PATH.
+    ///
+    /// `MeshEditBatch` pops its frame from `~this`. This older spelling has no
+    /// handle and therefore no destructor, so an `Exception` escaping between
+    /// `beginEditBatch` and `endEditBatch` orphans the frame PERMANENTLY:
+    /// every later `commitChange` on this mesh finds it and defers forever, so
+    /// the app keeps running and silently stops bumping versions, deriving and
+    /// delivering — and `changeBus.batchLeaks` stays 0, because the counter
+    /// that would have shown it is the destructor's. The frame's `rec` also
+    /// points at the caller's stack `MeshEditTracker`, which is dead by then.
+    /// The four callers (`commands/mesh/delete.d`, `remove.d`,
+    /// `tools/edit/edge_extend.d`, `edge_extrude.d`) hold 66 `enforce` /
+    /// `throw new` sites' worth of kernel between the two calls.
+    ///
+    /// Each of the four spells `scope(failure) mesh.abortEditBatch();` right
+    /// after its open. `scope(failure)` stays ARMED for the rest of the
+    /// enclosing scope, i.e. past the successful `endEditBatch` — at three of
+    /// the four sites there are throwing statements after the close
+    /// (`refreshCaches`, `history.record`). So the no-frame early-out below is
+    /// load-bearing, not tidiness: without it a throw after a clean close
+    /// would tick `batchLeaks` for a batch that never leaked, and the suite
+    /// asserts that counter is 0.
+    ///
+    /// It never stamps: `popLeakedEditFrame` drops the accumulated flags on
+    /// the floor and marks an enclosing frame errored, exactly as the
+    /// destructor's path does. What it does NOT drop is `noteChange` — that
+    /// already ran, before the deferral early-out, so the flags are still in
+    /// `pendingChanges_` / `undeliveredChanges_` and the next commit on this
+    /// mesh carries them.
+    void abortEditBatch() {
+        if (currentBatchFrame(&this) is null) return;   // already closed
+        popLeakedEditFrame(&this);
+        ++changeBus.batchLeaks;     // the observable, asserted 0 by the suite
     }
 
     // True while a batch is open (test/introspection helper).
@@ -10326,6 +10690,10 @@ struct Mesh {
         // would be observable (task 1330). Cancel deferral for the rest of the
         // batch — every later commit in it derives eagerly, as before.
         g_hideDeriveDeferSafe = false;
+        // TASK 1903 §3.1 B3 — the edit batch takes the SAME disarm. A batch
+        // that hides something mid-op stops deferring the derive from that
+        // commit on; it is never re-armed inside a batch.
+        if (auto bf = currentBatchFrame(&this)) bf.deferSafe = false;
 
         if (hiddenDerivedHasFaceScratch_.length < vertexMarks.length)
             hiddenDerivedHasFaceScratch_.length = vertexMarks.length;
@@ -15112,6 +15480,181 @@ struct Mesh {
         return rebuildFacesWithChordSplits(splitFaceMask, isCutVert);
     }
 
+}
+
+// ---------------------------------------------------------------------------
+// MeshEditBatch — the write surface (task 1903 §2)
+// ---------------------------------------------------------------------------
+//
+// The noun for the thing `Mesh.beginEditBatch` already opens: one mutation
+// handle over one `Mesh`, whose CLOSE is the only thing that advances a
+// version stamp for the whole edit.
+//
+// WHY IT LIVES IN THIS FILE. D's `private` is module-private, and plain
+// `package` on a member of a dotless root module (`module mesh;`) is reachable
+// from NO other module at all — measured, with `package(mesh)` rejected
+// outright as a name conflict. A handle declared in its own module could not
+// touch the batch stack or `commitStamps` without making all of it `public`,
+// which is a wider door on `Mesh` than the one this task is closing.
+//
+// WHAT IT ADDS TO `Mesh`: nothing but `setVertexPos`. `alias mesh this`
+// reaches every existing mutator — `addVertex`, `addFace`, `deleteFacesByMask`,
+// the marks setters, the map setters — all of which are already tracker-hooked.
+// A parallel `MeshEditBatch.addFace` beside `Mesh.addFace` would be one guard
+// spelled twice, and the second spelling is the one that drifts.
+struct MeshEditBatch {
+    private Mesh* m_;
+    private bool  open_;
+
+    @disable this(this);   // non-copyable: a copy would double-close
+    @disable this();       // there is no batch without a subject
+
+    private this(Mesh* m, uint declared, MeshEditTracker* rec) {
+        m_ = m;
+        pushEditFrame(m, declared, rec);
+        open_ = true;
+    }
+
+    /// A RECORDING batch: the mutation hooks append to an op-log, and `close()`
+    /// hands back the invertible delta. This is the COMMIT path.
+    ///
+    /// The tracker is allocated on the GC and the frame holds the pointer, not
+    /// the mesh — a `*mesh = result` mid-batch therefore cannot orphan it.
+    this(return ref Mesh m, uint declared) {
+        this(&m, declared, new MeshEditTracker);
+    }
+
+    /// An UNRECORDED batch: no op-log, so every tracker hook takes its existing
+    /// `if (editRecorder_ is null) return;` first line and costs one predictable
+    /// branch — exactly today's batchless behaviour — while the STAMPS still
+    /// defer to `close()`. This is the interactive preview path (plan §9): a
+    /// recording batch opened per drag frame would build and throw away a full
+    /// op-log at 60 Hz. `close()` returns `MeshEditDelta.init`.
+    static MeshEditBatch unrecorded(return ref Mesh m, uint declared) {
+        return MeshEditBatch(&m, declared, null);
+    }
+
+    /// NEVER ASSERT HERE. This destructor runs during unwinding: an `Error`
+    /// raised in it REPLACES the exception the caller is already handling, and
+    /// the command funnel's `catch (Exception)` never sees it — the caller gets
+    /// a process exit instead of `status:error`. That is not hypothetical;
+    /// `source/commands/mesh` holds 66 `enforce`/`throw new` sites.
+    ///
+    /// Popping is not optional either. The frame is module-level, so leaving it
+    /// would make every later `commitChange` on this mesh defer forever: the
+    /// app keeps running and silently stops publishing. What the leak path
+    /// skips is the version bump, the derive and the delivery; what it does NOT
+    /// skip is `noteChange`, which already ran BEFORE the deferral early-out,
+    /// so the flags are still in `pendingChanges_`/`undeliveredChanges_` and
+    /// the next commit on this mesh carries them.
+    ~this() {
+        if (!open_) return;
+        popLeakedEditFrame(m_);
+        ++changeBus.batchLeaks;     // the observable, asserted 0 by the suite
+        open_ = false;
+    }
+
+    /// The subject. `alias mesh this` makes every `Mesh` member reachable
+    /// through the handle, so a converted kernel taking `ref MeshEditBatch`
+    /// keeps its existing body verbatim.
+    ref inout(Mesh) mesh() inout return { return *m_; }
+    alias mesh this;
+
+    /// THE ONLY COMMITTER. At the outermost depth this stamps once with
+    /// everything the batch's deferred `commitChange` calls accumulated, ORed
+    /// with `extraFlags`; a nested close folds its flags into the outer frame
+    /// and returns an empty delta.
+    MeshEditDelta close(uint extraFlags = 0) {
+        if (!open_) return MeshEditDelta.init;
+        // THIS HANDLE OWNS THE INNERMOST FRAME FOR ITS MESH. There is at most
+        // one frame per `Mesh*` — a nested open finds the existing frame and
+        // increments its depth rather than pushing a second — so "the
+        // innermost frame for `m_`" is the only frame for `m_`, and an open
+        // handle must find it. It cannot, in exactly one way: someone called
+        // the older `Mesh.endEditBatch()` (or `abortEditBatch()`) on a mesh a
+        // live handle owns, mixing the two spellings on one edit. That close
+        // has already stamped, and this one would then fall through to a
+        // silent `MeshEditDelta.init` — the delta the caller is about to
+        // install as a history entry, empty. Always-on `assert`, not `debug`:
+        // the suite lane compiles with a bare `dmd -unittest` and no `-debug`,
+        // and this is not a destructor, so raising here cannot replace an
+        // exception already in flight.
+        assert(currentBatchFrame(m_) !is null,
+            "MeshEditBatch.close: this handle is open but its mesh has no "
+          ~ "frame — the batch was already closed through the older "
+          ~ "Mesh.endEditBatch()/abortEditBatch() spelling. One edit, one "
+          ~ "spelling: mixing them loses the delta this close would return");
+        open_ = false;
+        return closeEditFrame(m_, extraFlags);
+    }
+
+    /// True while this batch is recording an op-log. Replaces the
+    /// `editRecorder_ !is null` spelling for code outside `mesh.d`.
+    bool recording() const {
+        auto f = currentBatchFrame(m_);
+        return f !is null && f.rec !is null && !f.errored;
+    }
+
+    /// The op-log recorder. Only valid while `recording()`.
+    ref MeshEditTracker rec() {
+        auto f = currentBatchFrame(m_);
+        assert(f !is null && f.rec !is null,
+            "MeshEditBatch.rec: this batch is not recording — guard with "
+          ~ "recording(), or open the batch with the recording constructor");
+        return *f.rec;
+    }
+
+    /// The one genuinely NEW write primitive (plan §2.5).
+    ///
+    /// A raw coordinate write is the single class of mutation the existing
+    /// hooks do not see: `mesh_ops/decimate.d` and `mesh_ops/extrude.d` both
+    /// assign `vertices[i]` directly, and under an open batch that produces no
+    /// op-log entry — so a delta undo would restore the topology and leave the
+    /// coordinates at their post-op values. `Kind.SetPos` has had a complete
+    /// forward+reverse apply in `mesh_edit_delta.d` and ZERO publishers; this
+    /// is its first.
+    ///
+    /// `alias mesh this` means `ed.vertices[i] = p` still compiles and still
+    /// records nothing. This method does not close that hole — it provides the
+    /// recorded alternative; the counted position-write census (plan §5.7) is
+    /// what closes it, per family.
+    void setVertexPos(uint vi, Vec3 p) {
+        if (vi >= m_.vertices.length) return;
+        const Vec3 before = m_.vertices[vi];
+        if (before == p) return;              // a no-op write records nothing
+        m_.vertices[vi] = p;
+        if (auto f = currentBatchFrame(m_))
+            if (f.rec !is null && !f.errored)
+                f.rec.recordSetPos([vi], [before], [p]);
+        m_.commitChange(MeshEditScope.Position);
+    }
+
+    /// The bulk form: one op-log entry and one `commitChange` for the whole
+    /// set, which is what keeps a kernel that moves N vertices from declaring
+    /// N times. Indices out of range, and writes that change nothing, are
+    /// dropped from BOTH the write and the record so the entry's before/after
+    /// arrays stay in step with each other.
+    void setVertexPositions(in uint[] idx, in Vec3[] to) {
+        assert(idx.length == to.length,
+            "MeshEditBatch.setVertexPositions: index and position arrays differ "
+          ~ "in length");
+        uint[] hitIdx;
+        Vec3[] before, after;
+        foreach (k, vi; idx) {
+            if (vi >= m_.vertices.length) continue;
+            const Vec3 b = m_.vertices[vi];
+            if (b == to[k]) continue;
+            m_.vertices[vi] = to[k];
+            hitIdx ~= vi;
+            before  ~= b;
+            after   ~= to[k];
+        }
+        if (hitIdx.length == 0) return;
+        if (auto f = currentBatchFrame(m_))
+            if (f.rec !is null && !f.errored)
+                f.rec.recordSetPos(hitIdx, before, after);
+        m_.commitChange(MeshEditScope.Position);
+    }
 }
 
 

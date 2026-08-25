@@ -196,6 +196,51 @@ struct ChangeBus {
     // `debug`); release builds leave it 0.
     ulong missedPublishers;
 
+    // --- The mesh-edit seam counters (task 1903 §5.8) ---------------------
+    // Five plain scalars, here rather than module-level in `mesh.d`, for one
+    // reason: `/api/changes` takes ONE `const snap = changeBus;` copy up front
+    // (task 0763) precisely so the response cannot contradict itself, and a
+    // counter living anywhere else would be read outside that copy. They are
+    // also not fields of `Mesh` — the six wholesale `*mesh = …` kernels would
+    // zero them — and not fields of the per-batch tracker, which dies at the
+    // batch close, i.e. once per drag frame.
+    //
+    // All five are asserted (`== 0`, or as a delta across a step) by the
+    // suite; `unbatchedGeometryCommits` additionally carries a POSITIVE
+    // control, because its document-mesh predicate can be uninstalled and then
+    // every `== 0` on it is vacuous.
+
+    /// 1->2 batch-depth transitions. A kernel never opens a batch — the
+    /// command or the tool does — so this counts command-calls-command, and a
+    /// test asserts it stays 0. A counter with a consumer, not a bit with none.
+    ulong nestedBatchOpens;
+
+    /// Geometry-class `commitChange` calls that reached a DOCUMENT mesh
+    /// outside any edit batch. Telemetry per family: as each family migrates,
+    /// its ops stop ticking this. Gated by `mesh.g_isDocumentMesh`, which
+    /// reads UNINSTALLED as "not a document mesh" — so this is a suite-lane
+    /// observable only, and a unit case that reads it must install the
+    /// predicate against its own mesh or be green in both directions.
+    ulong unbatchedGeometryCommits;
+
+    /// Recording batches opened inside an UNRECORDED one — a hard refusal
+    /// (`mesh.pushEditFrame`). The alternative to refusing is a corrupt undo
+    /// record: the inner delta would be missing everything the outer batch did
+    /// before it. This counter is the refusal's witness in BOTH build kinds,
+    /// which a `debug assert` could not be.
+    ulong batchUpgradeRefusals;
+
+    /// Op-log entries the closed batches recorded, summed. Read as a delta
+    /// across a step: zero across the frames of an interactive drag (the
+    /// preview path must be unrecorded), non-zero at the drop.
+    ulong opLogEntriesRecorded;
+
+    /// `MeshEditBatch` handles destroyed while still open — i.e. an exception
+    /// escaped between the open and the close. The destructor pops and ticks
+    /// this instead of asserting, because an `Error` raised during unwinding
+    /// replaces the exception the command funnel is already handling.
+    ulong batchLeaks;
+
     // Per-class running totals — how many flushes carried each mesh class.
     ulong totalPosition;
     ulong totalPoints;

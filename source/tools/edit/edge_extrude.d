@@ -572,6 +572,14 @@ private:
 
             auto rec = MeshEditTracker();
             mesh.beginEditBatch(&rec, MeshEditScope.Geometry | MeshEditScope.Marks);
+            // TASK 1903 S1 — the unwind path for the handle-less spelling.
+            // The kernel below holds `enforce`/`throw new` sites; without this
+            // an escaping `Exception` would leave the frame on
+            // `g_editBatchStack` forever and every later `commitChange` on
+            // this mesh would defer silently. `abortEditBatch` pops WITHOUT
+            // stamping and no-ops once the frame is gone, which matters
+            // because `scope(failure)` stays armed past the close.
+            scope(failure) mesh.abortEditBatch();
             auto mask = currentMask();
             mesh.extrudeEdgesByMask(mask, extrude_, width_);
             auto delta = mesh.endEditBatch();

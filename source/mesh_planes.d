@@ -332,26 +332,34 @@ enum string[string] kExemptPlanes = [
 // a regex over the source text, which is what put a wrong number (33) in an
 // earlier draft of that plan):
 //
-//   2026-08-25, task 1906 stage 0 — CURRENT:
-//     Mesh.tupleof.length                          == 56
+//   2026-08-25, task 1903 Stage A — CURRENT:
+//     Mesh.tupleof.length                          == 55
 //     count of those fields that are array-shaped  == 34
 //
+//   2026-08-25, task 1906 stage 0 — superseded: 56 / 34.
 //   2026-08-25, pre-1906 — superseded: 54 / 34.
 //
-// What moved and why it is not a plane: 1906 added
-// `Mesh.undeliveredChanges_` and `Mesh.undeliveredSelDomains_` — SCALARS, the
-// synchronous-delivery accumulator beside the existing per-frame
-// `pendingChanges_` / `pendingSelDomains_` pair, which are scalars here for
-// the same reason. They carry change CLASSES, not per-element data, so nothing
-// about them is carried through a face or vertex remap. The array-shaped count
-// is unmoved, which is exactly the signal the paired asserts exist to give.
+// What moved and why it is not a plane: 1903 Stage A REMOVED the
+// `Mesh.editRecorder_` FIELD. It is now a private accessor over the
+// module-level `g_editBatchStack` in `mesh.d` — a pointer to the open edit
+// batch's op-log recorder, never per-element data, and deliberately not a
+// field any more so that a kernel of the form `*mesh = subdivide(...)` cannot
+// swap in the new value's empty tracker mid-record. The array-shaped count is
+// unmoved, which is exactly the signal the paired asserts exist to give.
+//
+// 1906 had added `Mesh.undeliveredChanges_` and
+// `Mesh.undeliveredSelDomains_` — SCALARS, the synchronous-delivery
+// accumulator beside the existing per-frame `pendingChanges_` /
+// `pendingSelDomains_` pair, which are scalars here for the same reason. They
+// carry change CLASSES, not per-element data, so nothing about them is
+// carried through a face or vertex remap.
 // ---------------------------------------------------------------------------
 
 /// Count of `T`'s instance fields whose type is a dynamic or static array —
 /// the compile-time counterpart of `MeshMap.dup`'s own field-count tripwire
 /// (`source/mesh.d`: "MeshMap gained a field — add it to dup() before
 /// bumping this count"), scaled to a `static foreach` instead of hand-listed
-/// because `Mesh` has 56 fields where `MeshMap` has 6 (task 1906 stage 0 —
+/// because `Mesh` has 55 fields where `MeshMap` has 6 (task 1906 stage 0 —
 /// this sentence quoted 54 after the count above had already moved, which is
 /// the drift the single-current-figure rule in that block now prevents).
 template countArrayShapedFields(T) {
@@ -364,7 +372,7 @@ template countArrayShapedFields(T) {
     }();
 }
 
-static assert(Mesh.tupleof.length == 56,
+static assert(Mesh.tupleof.length == 55,
     "Mesh gained (or lost) an instance field. Classify it before bumping this "
   ~ "count: per-face data goes in kFacePlanes, per-vertex data in kVertPlanes "
   ~ "— INCLUDING data behind a wrapper struct such as FaceList, which is not "
@@ -375,7 +383,7 @@ static assert(Mesh.tupleof.length == 56,
   ~ "below to learn which KIND landed.");
 
 static assert(countArrayShapedFields!Mesh == 34,
-    "Mesh gained (or lost) an ARRAY-shaped field. If the 56-count above moved "
+    "Mesh gained (or lost) an ARRAY-shaped field. If the 55-count above moved "
   ~ "too, the new field is a plain array — a plane candidate, classify it. If "
   ~ "ONLY the count above moved, it is a scalar or a wrapper type.");
 

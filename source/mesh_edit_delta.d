@@ -2045,7 +2045,12 @@ private void finalize(ref Mesh m, MeshEditScope scope_,
     // loops, so it ALWAYS bumped topologyVersion before — preserve that
     // unconditionally for the (currently impossible) non-Geometry tracked delta,
     // keeping the counters byte-identical to the old two raw bumps.
-    m.commitChange(scope_);
+    // `commitRestored`, not `commitChange` (task 1903 §3.2 S4): replay is the
+    // third whole-state restoration door and fires on every delta undo AND
+    // redo. Same version bumps, same derive, same delivery; it just does not
+    // tick `changeBus.unbatchedGeometryCommits`, whose whole job is to count
+    // MUTATION sites that have not yet moved behind a batch.
+    m.commitRestored(scope_);
     // This raw bump touches topologyVersion only. It is decoupled from the
     // structVersion-keyed loops/edgeIndexMap validity stamp (mesh.d) — that
     // stamp is set by the rebuildEdges()+buildLoops() pair above, which

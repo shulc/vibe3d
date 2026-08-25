@@ -353,3 +353,82 @@ unittest {
         },
         "mesh.remove");
 }
+
+// ===========================================================================
+// M-EB (task 1903 §3.1 B4) — `mesh.delete` STILL PUBLISHES under the mesh-edit
+// seam.
+//
+// This command holds ZERO `commitChange` of its own: `MeshDelete.evaluate`
+// opens a `beginEditBatch`, its kernel (`deleteFacesByMask` /
+// `dissolveVerticesByMask`) commits INSIDE the batch, and `endEditBatch()`
+// closes it. Under the seam those commits DEFER into the batch frame, so an
+// `endEditBatch()` that only popped the frame — which is what the plan's
+// Revision 2 specified — would throw the whole edit's stamp away: no
+// `mutationVersion` bump, no hide derive, and (after task 1906) no delivery.
+// Nothing else in this file would notice: the geometry is still correct, the
+// undo still round-trips, and only the version-keyed consumers go stale.
+//
+// The observable is the per-layer `mutationVersion` at `/api/layers` — the
+// read-only diagnostic the cross-layer-undo test already reads.
+//
+// MUTATION: make `Mesh.endEditBatch()` pop without stamping →
+//   "mutationVersion did not advance across mesh.delete".
+// The tracker is forced ON for the cell, because with it OFF the command takes
+// the snapshot path, opens no batch at all, and the mutated line is never
+// executed — a tracker-off cell would be green either way.
+// ===========================================================================
+
+ulong primaryMutationVersion() {
+    auto js = parseJSON(cast(string)get(BASE ~ "/api/layers"));
+    foreach (l; js["layers"].array) {
+        if ("primary" in l && l["primary"].type == JSONType.true_) {
+            assert(l["mutationVersion"].type != JSONType.null_,
+                "the primary layer reports no mutationVersion — this cell "
+              ~ "cannot see whether the edit published");
+            return cast(ulong)l["mutationVersion"].integer;
+        }
+    }
+    assert(false, "/api/layers reports no primary layer");
+}
+
+unittest {
+    cmd("undo.tracker.on");
+    resetCube();
+    setMode("polygons");
+    postSelect("polygons", [0]);
+
+    const ulong before = primaryMutationVersion();
+    cmd("mesh.delete");
+    const ulong after = primaryMutationVersion();
+
+    assert(after > before,
+        "mutationVersion did not advance across mesh.delete (" ~
+        before.to!string ~ " -> " ~ after.to!string ~ ") — the command holds " ~
+        "no commitChange of its own, so its kernel's commits defer into the " ~
+        "edit batch and endEditBatch() is the only thing that can stamp them");
+
+    // …and exactly once: the whole point of the seam is that N primitive
+    // commits inside one batch produce ONE version bump, not N.
+    assert(after == before + 1,
+        "mesh.delete advanced mutationVersion by " ~ (after - before).to!string ~
+        "; expected exactly 1 — one closed batch is one stamp");
+
+    // The bus counters this task adds must all read 0 in a run that opened no
+    // nested batch, refused no upgrade and leaked no handle.
+    auto ch = parseJSON(cast(string)get(BASE ~ "/api/changes"));
+    assert(ch["batchLeaks"].integer == 0,
+        "changeBus.batchLeaks is non-zero — a MeshEditBatch was destroyed while "
+      ~ "still open, so its frame came off the stack without stamping");
+    assert(ch["batchUpgradeRefusals"].integer == 0,
+        "changeBus.batchUpgradeRefusals is non-zero — a recording batch was "
+      ~ "opened inside an unrecorded one");
+    assert(ch["nestedBatchOpens"].integer == 0,
+        "changeBus.nestedBatchOpens is non-zero — a kernel opened a batch of "
+      ~ "its own; the command or the tool opens it, never the kernel");
+    assert(ch["opLogEntriesRecorded"].integer > 0,
+        "changeBus.opLogEntriesRecorded stayed 0 across a tracker-path "
+      ~ "mesh.delete — the batch recorded no op-log entry");
+
+    // Leave the instance on the default path for whatever runs next.
+    postUndo();
+}

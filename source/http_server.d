@@ -2402,6 +2402,9 @@ class HttpServer {
                 `"totalLayerVisible":%d,` ~
                 `"totalLayerActive":%d,` ~
                 `"missedPublishers":%d,` ~
+                `"nestedBatchOpens":%d,"unbatchedGeometryCommits":%d,` ~
+                `"batchUpgradeRefusals":%d,"opLogEntriesRecorded":%d,` ~
+                `"batchLeaks":%d,` ~
                 `"deliveryCount":%d,` ~
                 `"lastDeliveryFlags":%d,"lastDeliverySelDomains":%d,` ~
                 `"currentTypeChanged":%d,"lastCurrentType":"%s"}`,
@@ -2418,6 +2421,13 @@ class HttpServer {
                 snap.totalLayerVisible,
                 snap.totalLayerActive,
                 snap.missedPublishers,
+                // Task 1903 §5.8 — the mesh-edit seam counters. Serialised
+                // from the SAME `snap` copy as everything else on this route,
+                // which is why they live on the bus and not module-level in
+                // `mesh.d`.
+                snap.nestedBatchOpens, snap.unbatchedGeometryCommits,
+                snap.batchUpgradeRefusals, snap.opLogEntriesRecorded,
+                snap.batchLeaks,
                 // Task 1906 stage 0 — the SYNCHRONOUS delivery boundary, as a
                 // counter. `deliveryCount` is what the per-command census and
                 // the delivery-granularity test read; `flushCount` beside it
