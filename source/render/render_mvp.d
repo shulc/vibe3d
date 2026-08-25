@@ -993,15 +993,14 @@ private bool updateSceneFromVibe3D(const(Mesh)* m, View v)
     const(Mesh)* sourceMesh = m;
     bool anySubpatch = m.hasAnySubpatch();
     if (anySubpatch) {
-        // Task 0401: `g.modelChangedSinceApplied` is the render-side bus
-        // accumulator (initIPR, above) — it already carries the Position
-        // bit whenever a gizmo drag/commit moved vertices without bumping
-        // mutationVersion, so pass it straight through instead of the
-        // stale-by-default `false`.
-        import change_bus : MeshEditScope;
-        const bool positionsDirty =
-            (g.modelChangedSinceApplied & MeshEditScope.Position) != 0;
-        g.iprSubpatch.rebuildIfStale(*m, g.iprSubdivDepth, null, positionsDirty);
+        // Task 0401 passed a `positionsDirty` flag derived from
+        // `g.modelChangedSinceApplied` (the render-side bus accumulator set up
+        // in initIPR) because the preview's own key was `mutationVersion`,
+        // which a gizmo drag never moves. TASK 1906 STAGE 2d retired that
+        // argument: `rebuildIfStale` reads the bus's per-mesh epoch itself, so
+        // the IPR path gets the same freshness as the editor path without the
+        // caller having to remember to hand it over.
+        g.iprSubpatch.rebuildIfStale(*m, g.iprSubdivDepth, null);
         sourceMesh = &g.iprSubpatch.mesh;
     }
 

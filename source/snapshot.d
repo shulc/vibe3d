@@ -237,6 +237,26 @@ struct MeshSnapshot {
         mesh.edgeSetMask                 = edgeSetMask.dup;
         mesh.polygonSetNames             = polygonSetNames.dup;
         mesh.faceSetMask                 = faceSetMask.dup;
+        // TASK 1906 STAGE 2d — A RESTORE IS A STRUCTURAL CHANGE AND MUST SAY SO.
+        //
+        // This method writes `edges` and `faces` DIRECTLY, bypassing every
+        // structural primitive on `Mesh` (`addEdge`, `rebuildEdges`,
+        // `rewriteFaces`), each of which bumps `structVersion` as part of its
+        // contract. The restore did not, so `structVersion` was the one counter
+        // an undo could leave lying: the op bumped it on the way out and the
+        // undo silently reverted the connectivity underneath it.
+        //
+        // That was survivable while `structVersion`'s only consumers stamped
+        // themselves inside the same call (`loopsStamp`, `edgeMapStamp` — both
+        // re-stamped by the `buildLoops()` immediately below, which is why the
+        // bump goes BEFORE it and not after). It stopped being survivable when
+        // stage 2d re-keyed two caches that outlive the call onto it —
+        // `Mesh.vertexAdjacencyCSR`'s memo and `PenSnapGuide.polyCount_` — and
+        // an undo that changes the edge list while the vertex count holds
+        // (drop two adjacent faces, undo) would serve the pre-undo answer.
+        // MEASURED, not reasoned: before this bump the restore left
+        // `structVersion` at delta 0 while `mutationVersion` moved by 1.
+        ++mesh.structVersion;
         mesh.buildLoops();
         mesh.resizeAllMeshMaps();
         // Snapshot restore rebuilds the WHOLE mesh — geometry, topology, marks
@@ -307,6 +327,9 @@ struct MeshSnapshot {
         mesh.edgeSetMask     = edgeSetMask.dup;
         mesh.polygonSetNames = polygonSetNames.dup;
         mesh.faceSetMask     = faceSetMask.dup;
+        // Task 1906 stage 2d — same direct `edges`/`faces` write, same reason,
+        // same placement before `buildLoops()`. See `restore` above.
+        ++mesh.structVersion;
         mesh.buildLoops();
         mesh.resizeAllMeshMaps();
 

@@ -15,7 +15,7 @@ module tools.edit.topology_pen.snap_guide;
 
 import std.math          : hypot;
 
-import mesh              : Mesh, MeshCacheKey;
+import mesh              : Mesh, MeshTopoKey;
 import math              : Vec3, Viewport, dot, screenPointToRay, projectToWindowFull;
 import document          : primaryModelSpace;
 import toolpipe.guide    : SnapGuide, GuideDrawState, kGuidePrioritySeed;
@@ -107,14 +107,36 @@ final class PenSnapGuide : SnapGuide {
 
     // The mesh the admission rule is evaluated against, and the border
     // classification of its edges. The counts are a CACHE, keyed on
-    // (address, mutationVersion) so a gesture that edits the mesh under
+    // (address, structVersion) so a gesture that edits the mesh under
     // the guide — Move writes on every motion event — re-derives them
     // instead of admitting against a stale topology. The pen's own scan
     // used to recompute them once per call, so this is never more work
     // and usually less.
-    private Mesh*        mesh_;
-    private int[]        polyCount_;
-    private MeshCacheKey polyKey_;
+    //
+    // TASK 1906 STAGE 2d (plan §3.4 row 19) — `MeshTopoKey`, not
+    // `MeshCacheKey`. `edgePolygonCounts()` counts how many faces own each
+    // edge: a pure function of `faces`, with no dependence whatever on where
+    // the vertices are. Keyed on `mutationVersion` it was re-derived by every
+    // scripted position command, every selection click and every material
+    // write.
+    //
+    // THE PLAN SAID `MeshStructKey` AND THE MEASUREMENT SAID NO — worth
+    // recording, because the name is the trap. `structVersion` is bumped by the
+    // primitives that write `edges`, not by every connectivity change:
+    // `deleteFacesByMask(..., keepFloatingEdges:true)` drops a quad and leaves
+    // it untouched, and this file's own pin
+    // (`tests/unit/tools/edit/topology_pen/gestures_test.d`, "FAILS ON A STALE
+    // CACHE") is exactly that cell — it went red on the `MeshStructKey`
+    // version. `topologyVersion` carries the `Points | Polygons` class, which
+    // is the face set. See mesh.d's `MeshTopoKey` for the measurement.
+    //
+    // A bus epoch was considered and rejected for the same reason as
+    // `Mesh.vertexAdjacencyCSR`'s memo: an epoch only advances for a mesh some
+    // `Document` layer owns, and this guide is driven headlessly over scratch
+    // meshes in its own tests.
+    private Mesh*       mesh_;
+    private int[]       polyCount_;
+    private MeshTopoKey polyKey_;
 
     /// `innerSnap`: when set, the interior opens up and every vertex is a
     /// candidate. The pen attribute, mirrored here rather than read

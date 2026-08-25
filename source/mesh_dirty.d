@@ -48,8 +48,9 @@ module mesh_dirty;
 // surface-BVH rebuild for a mesh nobody touched. There is no middle: the
 // round-robin cursor evicts on every insert once the table is full, and
 // `evicted_` moves with it. `kSlots` is therefore not a tuning knob but a
-// LAYER-COUNT CEILING, and it is set to 32 (512 bytes per watcher, two
-// watchers) rather than to the number of layers anyone has today. The cliff is
+// LAYER-COUNT CEILING, and it is set to 32 (512 bytes per watcher, four
+// watchers since stage 2d) rather than to the number of layers anyone has
+// today. The cliff is
 // pinned by the eviction unit test below, which asserts both sides of it.
 //
 // WHAT THIS KEY CANNOT SEE: ADDRESS REUSE (ABA). A consumer stamps `{A, e}`;
@@ -92,7 +93,7 @@ struct MeshDirtyEpochs {
     // paragraph for the measurement. At `kSlots` churning addresses a
     // never-changed address is never disturbed; at `kSlots + 1` it is disturbed
     // on EVERY round, each one an O(V+T) rebuild of a cache nothing dirtied.
-    // 32 slots cost 32*(8+8) = 512 bytes per watcher, two watchers, once — a
+    // 32 slots cost 32*(8+8) = 512 bytes per watcher, three watchers, once — a
     // price paid to put the cliff well past any document anyone edits, rather
     // than one layer past the documents we happen to test with.
     private enum int kSlots = 32;
@@ -178,6 +179,61 @@ __gshared MeshDirtyEpochs g_geomEpochs =
                              | MeshEditScope.Points
                              | MeshEditScope.Polygons);
 
+// TASK 1906 STAGE 2d — THERE IS NO ANY-CLASS WATCHER, AND THE REASONING THAT
+// BRIEFLY ADDED ONE IS RECORDED HERE BECAUSE IT IS PLAUSIBLE AND WRONG.
+//
+// The subpatch preview was keyed on `Mesh.mutationVersion`, and the argument
+// ran: `commitChange` bumps that counter for EVERY class, so a watcher with a
+// mask of `uint.max` is not a widening — it is the invalidation set the cache
+// already had, plus the version-silent gizmo path the counter cannot see.
+//
+// The premise is false. Not every class bump goes through `commitChange`:
+//   * `Mesh.noteSelectionChange` — the funnel under every marks setter — ORs
+//     in `Marks` and deliberately bumps NO version (its own unittest asserts
+//     that it must not);
+//   * `Mesh.noteChange(Visibility)` on the hide path, and `app.d`'s
+//     `noteChange(MeshChangeAll)`, are version-silent the same way.
+// All three reach a per-mesh epoch through `app.d`'s per-layer feed, so an
+// any-class epoch invalidates on a plain SELECTION CLICK, which the counter
+// never did. MEASURED: six version-silent `selectVertex` calls with a live
+// preview left the cage's `mutationVersion` at 13 and moved the preview's work
+// counter 1 -> 7 — an OSD stencil evaluate plus the VBO fan-out per picking
+// frame, where the cost had been zero.
+//
+// The preview therefore keys on `g_geomEpochs` (which carries the gizmo's
+// version-silent `Position`) AND on `mutationVersion` (which carries `Marks`
+// for Tab and `Material` for a crease weight, neither of which is in the
+// geometry mask). Two complementary terms, both required to hit; see
+// `Mesh.SubpatchPreview.sourceEpoch` / `.sourceVersion`.
+
+/// CONNECTIVITY classes only — `Points | Polygons`, i.e. `MeshEditScope
+/// .Geometry` with `Position` deliberately EXCLUDED (task 1906 stage 2d, plan
+/// §3.4 rows 14 and 15).
+///
+/// Consumers: `FalloffStage`'s selection-weight buffer and
+/// `ActionCenterStage`'s Local-mode cluster partition. They share one watcher
+/// because they are the same KIND of cache — a stage-owned derived structure
+/// that is a function of adjacency and of the selected set, and of nothing
+/// else. Both keep a `selectionSignature()` term, which is how the selected
+/// set reaches their keys exactly rather than through a change class.
+///
+/// THE EXCLUSION IS THE ENTIRE POINT OF THE WATCHER EXISTING. Neither cache
+/// depends on where the vertices ARE: `ActionCenterStage` recomputes cluster
+/// CENTRES from live positions on every call regardless, and
+/// `recomputeSelectionWeights` states its own position-independence and calls
+/// a kernel that takes no coordinates. Keyed on `g_geomEpochs`, which carries
+/// `Position` for the display, BVH and subpatch-preview families, both O(V+E)
+/// walks would re-run on every step of every gizmo drag. That is a
+/// regression, not parity: `mutationVersion` is version-silent through a drag,
+/// so both caches survive one intact today.
+///
+/// A wrong (wider) mask here leaves every VALUE both stages produce correct
+/// and moves only a count, so it is pinned by two rates rather than by a value:
+/// `toolpipe.stages.actcenter.g_acenClusterRebuilds` and
+/// `toolpipe.stages.falloff.g_falloffSelWeightRebuilds`.
+__gshared MeshDirtyEpochs g_topoEpochs =
+    MeshDirtyEpochs.forClasses(MeshEditScope.Geometry);
+
 /// The single fan-in the change-bus listener calls. Registered ONCE, from
 /// `app.d`'s existing mesh-channel hub, so there is exactly one subscription
 /// to lose: if it goes, the hub's own `meshChangedFlags` goes with it and the
@@ -187,9 +243,20 @@ __gshared MeshDirtyEpochs g_geomEpochs =
 /// same arrangement `snap.invalidateSnapGrids()` has: a headless unit test
 /// with no `app.d` and no `Document` (and therefore no delivery at all, see
 /// `Mesh.deliverPending`'s subject filter) drives it by hand.
+/// COST, stated because stage 2d added a watcher. `note()` is a linear scan of
+/// `kSlots` per watcher — a hit scans to the slot, a miss scans all 32 twice
+/// (once for the address, once for a free slot) before evicting. With three
+/// watchers a delivery is therefore up to 6 x 32 = 192 word compares, and
+/// there are up to two deliveries per changed layer per frame (the
+/// synchronous one at the edit boundary and the per-layer feed at the frame
+/// drain, until stage 3 retires the drain). That is the price of not widening
+/// an existing watcher's mask: `g_geomEpochs` carries the surface BVH and
+/// every snap grid, so folding a selection click into it would trade these
+/// compares for O(V+T) rebuilds.
 void noteMeshChange(size_t subjectAddr, uint flags) nothrow @nogc {
     g_displayEpochs.note(subjectAddr, flags);
     g_geomEpochs.note(subjectAddr, flags);
+    g_topoEpochs.note(subjectAddr, flags);
 }
 
 // ---------------------------------------------------------------------------
@@ -223,6 +290,68 @@ unittest {
         "a Marks-only change must not advance a Position watcher");
     w.note(A, MeshEditScope.Marks | MeshEditScope.Position);
     assert(w.epochFor(A) != a1, "a change that INCLUDES the class must advance");
+}
+
+unittest {
+    // THE STAGE-2d WATCHERS DISAGREE, AND THAT DISAGREEMENT IS THE WHOLE
+    // REASON MORE THAN ONE EXISTS. Driven through the real fan-in
+    // (`noteMeshChange`) on the real `__gshared` instances, because a local
+    // `forClasses(...)` pair would prove the struct works and say nothing
+    // about how the module wired them up — deleting `g_topoEpochs.note(...)`
+    // from `noteMeshChange` has to be visible here.
+    //
+    // The address is unique to this block and never a real `Mesh*`: the table
+    // is process-global and neighbouring unit blocks write it too.
+    const size_t A = 0xB0_1906_2D;
+    const ulong geomBefore = g_geomEpochs.epochFor(A);
+    const ulong topoBefore = g_topoEpochs.epochFor(A);
+    const ulong dispBefore = g_displayEpochs.epochFor(A);
+
+    noteMeshChange(A, MeshEditScope.Position);
+    assert(g_geomEpochs.epochFor(A) != geomBefore,
+        "a Position-only publish MUST advance the geometry epoch — that is "
+      ~ "the version-silent gizmo path `mutationVersion` cannot see, and the "
+      ~ "surface BVH, the snap grids and the subpatch preview's staleness key "
+      ~ "all ride on it");
+    assert(g_topoEpochs.epochFor(A) == topoBefore,
+        "a Position-only publish must NOT advance the connectivity epoch. If "
+      ~ "it does, BOTH its consumers' O(V+E) walks re-run on every step of "
+      ~ "every gizmo drag — ActionCenterStage's cluster MEMBERSHIP and "
+      ~ "FalloffStage's selection-weight bake, neither of which reads a vertex "
+      ~ "position. That is the regression this watcher's narrow mask exists to "
+      ~ "refuse, and it is invisible to every value assertion in either stage");
+
+    const ulong geomMid = g_geomEpochs.epochFor(A);
+    noteMeshChange(A, MeshEditScope.Polygons);
+    assert(g_topoEpochs.epochFor(A) != topoBefore,
+        "a Polygons publish MUST advance the connectivity epoch");
+    assert(g_geomEpochs.epochFor(A) != geomMid,
+        "and the geometry epoch advances on a connectivity class too — its "
+      ~ "mask is Position | Points | Polygons, not Position alone");
+
+    // MARKS AND MATERIAL ARE THE TWO CLASSES NO EPOCH HERE CARRIES FOR THE
+    // SUBPATCH PREVIEW, and that is deliberate: Tab writes `Marks` and a
+    // crease weight writes `Material`, both through `commitChange`, so the
+    // preview's SECOND key term (`mutationVersion`) is what sees them. If this
+    // block ever showed `g_geomEpochs` advancing on either, the preview would
+    // be back to rebuilding on every selection click.
+    const ulong geomMarks = g_geomEpochs.epochFor(A);
+    noteMeshChange(A, MeshEditScope.Marks);
+    assert(g_geomEpochs.epochFor(A) == geomMarks,
+        "a Marks-only publish (a selection click) must NOT advance the "
+      ~ "geometry epoch — that widening is the review finding stage 2d was "
+      ~ "landed on, measured at 6 extra subpatch-preview evaluations over 6 "
+      ~ "version-silent selectVertex calls");
+    const ulong dispMat = g_displayEpochs.epochFor(A);
+    noteMeshChange(A, MeshEditScope.Material);
+    assert(g_displayEpochs.epochFor(A) != dispMat,
+        "a Material publish (what Mesh.setCreaseWeight commits) must advance "
+      ~ "the DISPLAY epoch — `Material` is in DisplayRefreshMask, and this is "
+      ~ "the anti-vacuity arm for the assert above: the fan-in is alive and "
+      ~ "`g_geomEpochs` held still because of its mask, not because nothing "
+      ~ "was delivered");
+    assert(g_displayEpochs.epochFor(A) != dispBefore,
+        "trace: the display watcher moved at some point in this block");
 }
 
 unittest {

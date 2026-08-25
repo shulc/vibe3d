@@ -2433,6 +2433,11 @@ void main(string[] args) {
         // tools can share hovEdge + topology yet want different rings.
         bool sliceRing = activeTool !is null && activeTool.edgeLoopHoverSliceRing();
 
+        // recorded remainder (1906 §3.6): `topologyVersion` owns this compare
+        // and keeps it — the ring walk is a function of connectivity alone, and
+        // that counter is exactly `Points|Polygons`. Nothing here is
+        // position-dependent, so the 0401 class this task is about cannot
+        // reach it. Plan §3.4 row 20.
         if (loopHoverPrevEdge == hovEdge
             && loopHoverPrevTopo == mesh.topologyVersion
             && loopHoverPrevSlice == sliceRing
@@ -6249,8 +6254,21 @@ void main(string[] args) {
                     vertVbo:        gpu.vertVbo,
                     vertCount:      gpu.vertCount,
                 };
-                subpatchPreview.rebuildIfStale(mesh, subpatchDepth, &targets,
-                    (meshChangedFlags & MeshEditScope.Position) != 0);
+                // TASK 1906 STAGE 2d (plan §3.4 row 10, §5 row `2d`) — the
+                // `positionsDirty` argument is GONE, not merely defaulted.
+                // `rebuildIfStale` reads `mesh_dirty.g_geomEpochs` for this
+                // mesh's address at its own early-out, which is both
+                // subject-keyed (the flags word below is a document-wide OR)
+                // and able to see the version-silent gizmo path
+                // `mutationVersion` cannot. It keeps `mutationVersion` as a
+                // second required term, for the classes the geometry mask
+                // drops (Tab writes `Marks`, a crease weight writes
+                // `Material`) — an ANY-class epoch in place of the pair would
+                // re-evaluate the preview on every selection click, measured
+                // at 6 extra evaluations over 6 version-silent selectVertex
+                // calls. Deleting the epoch read is §5's named mutation for
+                // this row and reddens `tests/test_bus_position_pixel.d` ARM A.
+                subpatchPreview.rebuildIfStale(mesh, subpatchDepth, &targets);
             }
         }
 

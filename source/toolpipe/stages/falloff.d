@@ -8,7 +8,8 @@ import std.math      : abs;
 import math : Vec3, Viewport, dot, projectToWindowFull, aimSpace, ModelSpace;
 import document : primaryModelSpace;
 import std.math : sqrt;
-import mesh : Mesh, MapDomain, MeshCacheKey;
+import mesh : Mesh, MapDomain;
+import mesh_dirty : MeshDirtyKey, g_topoEpochs;  // task 1906 stage 2d (row 14)
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordWght, ToolSwitchTransient;
 import toolpipe.pipeline : g_pipeCtx;
@@ -18,6 +19,19 @@ import operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.stages.workplane : WorkplaneStage;
 import popup_state       : setStatePath;
 import params            : Param, ParamHints, IntEnumEntry, wireTagForValue, valueForWireTag;
+
+/// How many times `recomputeSelectionWeights` has REBUILT `selWeights_` — the
+/// O(V+E) ring-seed BFS plus its two allocations, not the cheap cache-gate
+/// check (task 1906 stage 2d).
+///
+/// The twin of `toolpipe.stages.actcenter.g_acenClusterRebuilds`, and there for
+/// the same reason: this row NARROWS its watcher's mask to `Points | Polygons`,
+/// and getting that wrong leaves every WEIGHT in this file correct while
+/// turning a once-per-selection recompute into a once-per-drag-step one. No
+/// value assertion can see that; only a rate can. Monotone, never reset;
+/// `__gshared` and always-on rather than `debug`, because the unit lane and the
+/// suite lane build with different flags.
+__gshared ulong g_falloffSelWeightRebuilds;
 
 // ---------------------------------------------------------------------------
 // Single-sourced enum token<->value tables (task 0184 / audit-2 C2). Each
@@ -222,11 +236,13 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
     // params (shape/in_/out_, dead for Selection but still folded into the
     // cache key — see storeSelCacheKey). ALL of those are frozen during a
     // transform drag (selection frozen, topology frozen — transform tools
-    // mutate vertex POSITIONS directly without bumping mesh.mutationVersion).
-    // So the map can be computed ONCE per drag and reused across the ~17
-    // iteration frames, instead of re-running the ring-seed BFS + Jacobi
-    // blur every pipe walk. We cache it keyed on (mutationVersion, editMode,
-    // selectionSignature, stepsI, shape, in_, out_); a key miss recomputes.
+    // mutate vertex POSITIONS directly, and since task 1906 stage 2d this
+    // cache's mesh term is the CONNECTIVITY epoch, which a position write does
+    // not move at all). So the map can be computed ONCE per drag and reused
+    // across the ~17 iteration frames, instead of re-running the ring-seed BFS
+    // + Jacobi blur every pipe walk. We cache it keyed on (address,
+    // connectivity epoch, editMode, selectionSignature, stepsI, shape, in_,
+    // out_); a key miss recomputes.
     private float[] selWeights_;
 
     // VertexMap: `config.mapName` (embedded above) names the active weight
@@ -237,21 +253,45 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
     private float[] vertexMapWeights_;
 
     // --- selWeights_ cache key (see recomputeSelectionWeights) ---
-    // mutationVersion bumps on every topology/geometry-structure edit and is
-    // NOT bumped by selection writes nor drag-time vertex moves. Selection
-    // lives in the Marks.Select bit and has no version counter, so a cheap
-    // FNV-1a rolling hash over the selected-element set is folded into the
-    // key (mirrors ActionCenterStage.selectionSignature). `_selCacheValid`
-    // is force-cleared whenever the non-Selection branch in evaluate() runs,
-    // so flipping the falloff type away from Selection and back recomputes.
-    // `_selKey` folds the (address, mutationVersion) pair a plain
-    // `_selCacheMutVer` used to carry — a stage cache lives OUTSIDE the Mesh
-    // it reads (mesh_ is a live delegate that can silently retarget to a
-    // different layer's primary), so the address term is required to stop
-    // two distinct Mesh instances at an equal mutationVersion from aliasing
-    // this cache. See mesh.d's MeshCacheKey doc comment.
+    // TASK 1906 STAGE 2d (plan §3.4 row 14) — the mesh half of this key is the
+    // change bus's per-mesh CONNECTIVITY epoch (`mesh_dirty.g_topoEpochs`,
+    // mask `Points | Polygons`), not `mutationVersion`.
+    //
+    // THE PLAN SAID `Position | Geometry | Marks` AND THE READ SITE SAYS
+    // OTHERWISE, so the deviation is recorded here rather than made quietly.
+    // `selWeights_` is a pure function of (adjacency, the selected vertex set,
+    // `steps`) — the comment on `recomputeSelectionWeights` states its
+    // position-independence and the kernel it calls takes no positions at all.
+    // So:
+    //   * `Position` must NOT be in the mask. Every step of every gizmo drag
+    //     publishes it, so a mask carrying it would re-run the O(V+E) ring-seed
+    //     BFS and its two allocations on every drag step — for a buffer that
+    //     cannot change. That is the same regression stage 2c refused for
+    //     `ActionCenterStage`, arriving one row later; today's
+    //     `mutationVersion` key is version-SILENT through a drag and this cache
+    //     survives one intact, so carrying Position would be a regression
+    //     rather than parity.
+    //   * `Marks` need not be in the mask, because the selected set reaches
+    //     this key by an EXACT route instead: `selectionSignature()`, a rolling
+    //     hash of the Select bits of the marks array the active edit mode reads.
+    //     That term is not new and is not being trusted for the first time — it
+    //     is what has always distinguished two selections at one version.
+    // What the epoch ADDS over `mutationVersion` is nothing at all for this
+    // cache; what it REMOVES is the whole-class over-invalidation the counter
+    // brought (a material write, a morph write, a selection click all bumped it).
+    //
+    // `_selCacheValid` is force-cleared whenever the non-Selection branch in
+    // evaluate() runs, so flipping the falloff type away from Selection and
+    // back recomputes.
+    //
+    // The ADDRESS term is unchanged in meaning and still load-bearing: a stage
+    // cache lives OUTSIDE the Mesh it reads (`mesh_` is a live delegate that
+    // can silently retarget to a different layer's primary), and two distinct
+    // Mesh instances trivially share an epoch — an untracked one reads the
+    // table's `evicted_` floor, so two scratch meshes share it BY
+    // CONSTRUCTION. See mesh_dirty.d's MeshDirtyKey doc comment.
     private bool   _selCacheValid    = false;
-    private MeshCacheKey _selKey;
+    private MeshDirtyKey _selKey;
     private int    _selCacheEditMode = -1;
     private ulong  _selCacheSelSig   = 0;
     private int    _selCacheSteps    = int.min;
@@ -330,7 +370,7 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
         // Drop the selection-weight cache so a fresh start recomputes.
         selWeights_.length = 0;
         _selCacheValid     = false;
-        _selKey.invalidate();
+        _selKey.clear();
         publishState();
     }
 
@@ -507,9 +547,10 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
     /// evaluate().
     void restoreConfigFromPacket(const ref FalloffPacket p) {
         config = p.config.dup();
-        // The Selection-weight cache is keyed on (mutationVersion, editMode,
-        // selectionSig, steps, shape, in_, out_); restoring config that changes
-        // any of those must invalidate it so the next evaluate() recomputes.
+        // The Selection-weight cache is keyed on (address, connectivity epoch,
+        // editMode, selectionSig, steps, shape, in_, out_); restoring config
+        // that changes any of those must invalidate it so the next evaluate()
+        // recomputes.
         _selCacheValid     = false;
         publishState();
     }
@@ -877,9 +918,15 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
         if (stepsI < 0) stepsI = 0;
         const int    editModeI = cast(int)(*editMode_);
         const ulong  selSig    = selectionSignature();
+        // Sampled ONCE per call, and the same sample is what a miss stamps —
+        // a publisher that fires mid-rebuild then leaves the stamp behind the
+        // live epoch and the next call recomputes (over-invalidation, the safe
+        // direction). Same shape as SymmetryStage's, stage 2c.
+        const size_t meshAddr  = cast(size_t)mesh_;
+        const ulong  meshEpoch = g_topoEpochs.epochFor(meshAddr);
         if (_selCacheValid
          && selWeights_.length == nVerts
-         && _selKey.matches(*mesh_)
+         && _selKey.matches(meshAddr, meshEpoch)
          && _selCacheEditMode == editModeI
          && _selCacheSelSig   == selSig
          && _selCacheSteps    == stepsI
@@ -917,6 +964,20 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
             return;
         }
 
+        // Test seam (task 1906 stage 2d), the twin of
+        // `toolpipe.stages.actcenter.g_acenClusterRebuilds` and there for the
+        // same reason: this row NARROWS its watcher's mask, and getting that
+        // wrong leaves every VALUE in this file correct while turning a
+        // once-per-selection recompute into a once-per-drag-step one. Only a
+        // rate can see that. ALWAYS ON, not `debug` — the unit lane and the
+        // suite lane build with different flags.
+        //
+        // Counted HERE and not at the cache gate: the empty-selection branch
+        // above returns without baking anything, so counting it there would
+        // make the number mean "the gate missed" rather than "the O(V+E) walk
+        // ran", and a rate is only worth asserting on if it counts the work.
+        ++g_falloffSelWeightRebuilds;
+
         bool[] inSel = new bool[](nVerts);
         foreach (vi; selVertsList) {
             if (vi >= 0 && cast(size_t)vi < nVerts) inSel[vi] = true;
@@ -925,7 +986,8 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
         // Vertex→neighbor CSR adjacency. Edge lengths are not needed — the
         // ring-seed BFS and the Jacobi blur both treat every in-selection
         // neighbour equally. Owned by Mesh itself and rebuilt only when
-        // mutationVersion moves — no per-call uint[][] GC churn.
+        // structVersion moves (task 1906 stage 2d re-keyed it off
+        // mutationVersion) — no per-call uint[][] GC churn.
         const(size_t)[] adjOffset;
         const(uint)[]    adjNeighbors;
         mesh_.vertexAdjacencyCSR(adjOffset, adjNeighbors);
@@ -949,7 +1011,7 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
             selWeights_[vi] = w * w * (3.0f - 2.0f * w);
         }
 
-        storeSelCacheKey(editModeI, selSig, stepsI);
+        storeSelCacheKey(meshAddr, meshEpoch, editModeI, selSig, stepsI);
     }
 
     // Cheap rolling hash of the Select bit across the marks array relevant
@@ -1081,7 +1143,7 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
         if (nV == 0) return;
         const(size_t)[] adjOffset;
         const(uint)[]    adjNeighbors;
-        m.vertexAdjacencyCSR(adjOffset, adjNeighbors);   // Mesh-owned, mutVer-cached
+        m.vertexAdjacencyCSR(adjOffset, adjNeighbors);   // Mesh-owned, structVer-cached
         auto visited = new bool[](nV);
         size_t[] stack;
         foreach (vi; anchorRing) {
@@ -1102,9 +1164,10 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
 
     // Record the current cache key as valid. Shape params are captured here
     // (not passed) since they are stage fields read directly.
-    void storeSelCacheKey(int editModeI, ulong selSig, int stepsI) {
+    void storeSelCacheKey(size_t meshAddr, ulong meshEpoch,
+                          int editModeI, ulong selSig, int stepsI) {
         _selCacheValid    = true;
-        _selKey.stamp(*mesh_);
+        _selKey.stamp(meshAddr, meshEpoch);
         _selCacheEditMode = editModeI;
         _selCacheSelSig   = selSig;
         _selCacheSteps    = stepsI;
@@ -1912,10 +1975,10 @@ unittest {
 
 // ---------------------------------------------------------------------------
 // M9 load-bearing aliasing proof: the sel-weight cache (_selKey) must NOT
-// alias two distinct Mesh instances that happen to share a mutationVersion.
+// alias two distinct Mesh instances that happen to share a freshness stamp.
 // mesh_ is a live delegate that can be repointed at a different primary
-// mid-session (a real layer switch), so the danger is real: without the
-// address term, `a` and `b` below have an EQUAL (mutVer, editMode, selSig,
+// mid-session (a real item-selection change), so the danger is real: without
+// the address term, `a` and `b` below have an EQUAL (stamp, editMode, selSig,
 // steps, shape, in_, out_) key and the cache would wrongly serve `a`'s
 // stale weights back for `b`.
 //
@@ -1923,29 +1986,48 @@ unittest {
 // neighbors are {1,3}, and 3 is unselected, so vertex 0 sits on the
 // selection BORDER (pinned weight 0). `b` is two disjoint edges 0-1 / 2-3
 // with the SAME selection {0,1,2}: vertex 0's only neighbor is 1 (selected),
-// so vertex 0 is INTERIOR (weight 1 at steps=0, no smoothing). Both meshes
-// are hand-forced to mutationVersion == 7 — the exact aliasing hazard M9
-// closes.
+// so vertex 0 is INTERIOR (weight 1 at steps=0, no smoothing).
+//
+// TASK 1906 STAGE 2d — TWO CHANGES, BOTH LOAD-BEARING FOR WHAT THIS BLOCK
+// PROVES:
+//   * the stamp is now `mesh_dirty.g_topoEpochs` — the watcher this block
+//     actually imports and asserts on — so the collision is no
+//     longer hand-forced — it is STRUCTURAL. Neither mesh is owned by a
+//     `Document`, so neither is in the epoch table, so both read its
+//     `evicted_` floor. The premise is asserted rather than assumed below,
+//     because if the two ever read DIFFERENT epochs the epoch term would
+//     refuse first and the address term — the entire subject of this block —
+//     would go untested.
+//   * the meshes are HEAP-allocated, not stack locals, for the reason stage
+//     2c hit in `snap.d`: the epoch table is process-global and keyed by RAW
+//     ADDRESS, and a stack local can reuse an address a neighbouring unit
+//     block already noted, which would break the collision the block needs.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : Mesh;
+    import mesh       : Mesh;
+    import mesh_dirty : g_topoEpochs;
 
-    Mesh a;
+    Mesh* a = new Mesh;
     a.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0)];
     a.resetSelection();
     a.addEdge(0, 1); a.addEdge(1, 2); a.addEdge(2, 3); a.addEdge(3, 0);
     a.selectVertex(0); a.selectVertex(1); a.selectVertex(2);
-    a.mutationVersion = 7;
 
-    Mesh b;
+    Mesh* b = new Mesh;
     b.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0)];
     b.resetSelection();
     b.addEdge(0, 1); b.addEdge(2, 3);
     b.selectVertex(0); b.selectVertex(1); b.selectVertex(2);
-    b.mutationVersion = 7;   // hand-forced EQUAL to a — the aliasing hazard
+
+    assert(g_topoEpochs.epochFor(cast(size_t)a)
+        == g_topoEpochs.epochFor(cast(size_t)b),
+        "setup: the two meshes MUST collide on the bus epoch — neither is "
+      ~ "Document-owned, so neither is in the table and both read `evicted_`. "
+      ~ "That collision IS the hazard; if it ever fails, the epoch term "
+      ~ "refuses first and this block stops testing the address term");
 
     EditMode em = EditMode.Vertices;
-    Mesh* meshPtr = &a;
+    Mesh* meshPtr = a;
     auto fs = new FalloffStage(() => meshPtr, &em);
     fs.steps = 0;   // no smoothing — border/interior read straight off isB
 
@@ -1955,10 +2037,10 @@ unittest {
     assert(abs(aVertex0 - 0.0f) < 1e-6f,
         "a: vertex 0 is a selection-border vert (neighbor 3 unselected) — weight must be 0");
 
-    // Repoint mesh_ at b — SAME mutationVersion, editMode, and selection
-    // signature (identical selected indices {0,1,2} at identical marks
-    // length) as a. Only the connectivity differs.
-    meshPtr = &b;
+    // Repoint mesh_ at b — SAME epoch, editMode, and selection signature
+    // (identical selected indices {0,1,2} at identical marks length) as a.
+    // Only the connectivity differs.
+    meshPtr = b;
     fs.recomputeSelectionWeights();
     float bVertex0 = fs.selWeights_[0];
     assert(abs(bVertex0 - 1.0f) < 1e-6f,
@@ -1966,7 +2048,101 @@ unittest {
         ~ "If this reads 0 (a's value), the address term was dropped from the cache "
         ~ "key and b wrongly reused a's cached weights.");
     assert(abs(aVertex0 - bVertex0) > 0.5f,
-        "a and b must diverge at vertex 0 — same mutationVersion + editMode + "
-        ~ "selection signature, different connectivity, and the MeshCacheKey "
+        "a and b must diverge at vertex 0 — same bus epoch + editMode + "
+        ~ "selection signature, different connectivity, and the MeshDirtyKey "
         ~ "address term is the only thing that can tell them apart");
+}
+
+// ---------------------------------------------------------------------------
+// TASK 1906 STAGE 2d — THE EPOCH TERM ITSELF, on ONE mesh, which the M9 block
+// above cannot see (it varies the ADDRESS and holds the stamp equal).
+//
+// The discriminating edit has to be one that changes `selWeights_` while every
+// NON-mesh term of the key holds: same editMode, same steps/shape/in/out, same
+// vertex count, and — the hard one — the same selection signature. Adding an
+// edge does exactly that: the selected set {0,1,2} is untouched, so `selSig`
+// is byte-identical, but vertex 0 stops being a selection-border vert once its
+// unselected neighbour 3 is gone from its ring. Nothing but the epoch can tell
+// the two states apart.
+//
+// Drives the listener body by hand (`noteMeshChange`), because a unit test has
+// no `Document`, and `Mesh.deliverPending`'s subject filter means a scratch
+// mesh gets no delivery at all — this IS how a headless test reaches the same
+// code the app's hub reaches.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh       : Mesh;
+    import mesh_dirty : noteMeshChange;
+    import mesh_edit_delta : MeshEditScope;
+
+    // Heap, not stack — see the M9 block above for why the epoch table's raw
+    // address keying makes a stack local unsafe here.
+    Mesh* m = new Mesh;
+    m.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0)];
+    m.resetSelection();
+    // Two disjoint edges 0-1 / 2-3, with {0,1,2} selected: vertex 0's only
+    // neighbour is 1 (selected) ⇒ INTERIOR ⇒ weight 1 at steps=0.
+    m.addEdge(0, 1); m.addEdge(2, 3);
+    m.selectVertex(0); m.selectVertex(1); m.selectVertex(2);
+
+    EditMode em = EditMode.Vertices;
+    Mesh* meshPtr = m;
+    auto fs = new FalloffStage(() => meshPtr, &em);
+    fs.steps = 0;
+
+    fs.recomputeSelectionWeights();
+    const ulong selSigBefore = fs.selectionSignature();
+    const float before = fs.selWeights_[0];
+    assert(abs(before - 1.0f) < 1e-6f,
+        "setup: vertex 0 must start INTERIOR (weight 1) or the change below "
+      ~ "has nothing to move");
+
+    // Connectivity change under a FROZEN selection. `addEdge` publishes
+    // `Polygons` and bumps `structVersion`; it does not touch the marks.
+    m.addEdge(0, 3);
+    noteMeshChange(cast(size_t)m, MeshEditScope.Polygons);
+    assert(fs.selectionSignature() == selSigBefore,
+        "setup: the selection signature MUST be unchanged — if the edit moved "
+      ~ "it, `selSig` would invalidate the cache and the epoch term would go "
+      ~ "untested (this is the cell, not a detail)");
+    assert(fs.selWeights_.length == m.vertices.length,
+        "setup: the vertex count must be unchanged, or the length term would "
+      ~ "invalidate instead");
+
+    fs.recomputeSelectionWeights();
+    assert(abs(fs.selWeights_[0]) < 1e-6f,
+        "task 1906 §3.4 row 14: vertex 0 now neighbours the UNSELECTED vertex "
+      ~ "3, so it is a selection-border vert and its weight must be 0. Reading "
+      ~ "1.0 means the sel-weight cache served its pre-edit answer: the bus "
+      ~ "epoch is the only key term that moved, and it was dropped or the "
+      ~ "watcher stopped being fed");
+
+    // ---- THE OTHER DIRECTION: the mask must NOT carry `Position`. ----------
+    // The plan asked for `Position | Geometry | Marks` here. A `Position` term
+    // leaves every weight above CORRECT and only moves a count — eight drag
+    // steps become eight O(V+E) rebuilds of a buffer that cannot change — so
+    // the assert that refuses it has to be a RATE. Same shape, and the same
+    // reason, as `ActionCenterStage`'s cluster-rebuild counter.
+    const ulong rebuildsBefore = g_falloffSelWeightRebuilds;
+    foreach (step; 0 .. 8) {
+        m.vertices[0] = m.vertices[0] + Vec3(0.01f, 0, 0);
+        noteMeshChange(cast(size_t)m, MeshEditScope.Position);
+        fs.recomputeSelectionWeights();
+    }
+    assert(g_falloffSelWeightRebuilds == rebuildsBefore,
+        "task 1906 §3.4 row 14: eight Position publishes must add ZERO "
+      ~ "sel-weight rebuilds. `selWeights_` is position-INDEPENDENT — the "
+      ~ "kernel takes adjacency, the selected set and `steps`, and no vertex "
+      ~ "coordinates at all. A count above the baseline means `Position` got "
+      ~ "into the watcher's mask and every step of every gizmo drag now re-runs "
+      ~ "the ring-seed BFS and its two allocations");
+
+    // ...and the cache is not simply deaf — the anti-vacuity half, without
+    // which the assert above is satisfied by a watcher nobody feeds.
+    m.addEdge(1, 2);
+    noteMeshChange(cast(size_t)m, MeshEditScope.Polygons);
+    fs.recomputeSelectionWeights();
+    assert(g_falloffSelWeightRebuilds == rebuildsBefore + 1,
+        "anti-vacuity: a Polygons publish MUST rebuild the weights. If this "
+      ~ "does not move, the Position assert above proves nothing");
 }

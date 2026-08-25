@@ -355,6 +355,15 @@ private:
     // this against the CURRENT mesh; a mismatch means some OTHER path (reset,
     // layer switch) touched the mesh since, and the preview is dropped rather
     // than committed/restored against the wrong target.
+    // recorded remainder (1906 §3.6): `mutationVersion` owns this key and
+    // KEEPS it. This is not a cache — it is an IDENTITY guard, asked between
+    // mouse events: "is the baseline I armed still the mesh I armed it on, at
+    // the state I armed it in?". A bus class answers a different question
+    // ("did anything change"), and the guard's correct response to any change
+    // at all is the same one — drop the armed preview. Replacing an equality
+    // on a monotone counter with a subscription would also make the answer
+    // depend on when the bus last delivered, which replay determinism forbids.
+    // Plan §3.4 row 18.
     MeshCacheKey armedKey_;
     // The WORLD-space viewport `draw()` was handed (task 0619 rename). Its
     // only reader is the **Closest** election in `onMouseMotion`, which runs
@@ -1043,6 +1052,7 @@ public:
             // commits/cancels first. If the mesh underneath the armed
             // preview was swapped/clobbered since our last touch, drop it
             // instead of re-engaging against the wrong target.
+            // recorded remainder (1906 §3.6): `mutationVersion` — an IDENTITY guard, not a cache; see the `armedKey_` field note.
             if (seeds_.length == 0 || !armedKey_.matches(*mesh)) {
                 dropArmedPreview();
                 return false;
@@ -1525,6 +1535,7 @@ private:
     // WRONG mesh.
     void rebuildCut() {
         if (!before_.filled || seeds_.length == 0) return;
+        // recorded remainder (1906 §3.6): `mutationVersion` — an IDENTITY guard, not a cache; see the `armedKey_` field note.
         if (!armedKey_.matches(*mesh)) { dropArmedPreview(); return; }
         // Perf (task 1370) — AFTER the guard(s) above, never on the first
         // line: an early-out must record no sample, or `count` tallies
@@ -1575,6 +1586,7 @@ private:
 
     void commitEdit() {
         if (history is null || factory is null || !before_.filled) return;
+        // recorded remainder (1906 §3.6): `mutationVersion` — an IDENTITY guard, not a cache; see the `armedKey_` field note.
         if (!armedKey_.matches(*mesh)) {
             // The mesh underneath us was swapped/clobbered (scene reset,
             // active-layer switch) since our last touch — the standing
@@ -1598,6 +1610,7 @@ private:
         // Same hazard as commitEdit: only restore `before_` if the mesh is
         // still the one we armed against (armedKey_ match) — otherwise there
         // is nothing safely ours to restore; just drop the state.
+        // recorded remainder (1906 §3.6): `mutationVersion` — an IDENTITY guard, not a cache; see the `armedKey_` field note.
         if (armedKey_.matches(*mesh) && before_.filled) before_.restore(*mesh);
         dropArmedPreview();
         refreshCaches();

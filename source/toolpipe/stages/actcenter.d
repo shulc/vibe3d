@@ -4,7 +4,8 @@ import std.format : format;
 
 import math    : Vec3, Pin, Viewport, screenRay, screenPointToRay, rayPlaneIntersect, applyAffine,
                  ModelSpace;
-import mesh    : Mesh, MeshCacheKey;
+import mesh    : Mesh;
+import mesh_dirty : MeshDirtyKey, g_topoEpochs;  // task 1906 stage 2d (row 15)
 import editmode : EditMode;
 import seltype : SelType;
 import toolpipe.stage    : Stage, TaskCode, ordAcen, ToolSwitchTransient;
@@ -14,6 +15,20 @@ import toolpipe.packets  : SymmetryPacket, ActionCenterPacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import popup_state       : setStatePath;
 import document          : Layer;
+
+/// How many times `computeLocalClustersFull` has rebuilt the Local-mode
+/// cluster MEMBERSHIP partition — the O(V+E) walk, not the per-call centre
+/// recompute (task 1906 stage 2d).
+///
+/// It exists so the NARROWING can be pinned in the direction that costs.
+/// `_clusterKey`'s watcher (`mesh_dirty.g_topoEpochs`) deliberately omits
+/// `Position`, and the failure mode of getting that wrong is invisible to
+/// every value assertion in this file: widen the mask and the partition is
+/// still CORRECT, it is merely rebuilt on every step of every drag. Only a
+/// rate can see that, so here is the rate. Monotone, never reset;
+/// `__gshared` and always-on rather than `debug`, because the unit lane and
+/// the suite lane build with different flags.
+__gshared ulong g_acenClusterRebuilds;
 
 // ---------------------------------------------------------------------------
 // ActionCenterStage — phase 7.2a. Sits at ordinal 0x60. Replaces
@@ -393,23 +408,35 @@ private:
     // partition (`_cachedClusterOf` + count) and the vertex adjacency it was
     // built from are cached and reused while the key holds.
     //
-    // Cache key: (address, mutationVersion, editMode, selectionSignature).
-    // mutationVersion bumps on every topology/geometry-structure edit (always
-    // paired with topologyVersion) and is NOT bumped by selection writes NOR
-    // by drag-time vertex moves — so it alone cannot detect a selection
-    // change. Selection lives in the Marks.Select bit of
-    // vertexMarks/edgeMarks/faceMarks and has no version counter, so we fold
-    // a cheap rolling hash of the relevant marks array's Select bits into the
-    // key. Edit mode picks which cluster variant runs, so it is part of the
-    // key too. `_clusterKey` (a MeshCacheKey) additionally folds in the
-    // mesh's address: this cache lives on the STAGE, not on the Mesh, and
-    // `mesh_` is a live delegate that can silently retarget to a different
-    // primary layer — two distinct Mesh instances can share an equal
-    // mutationVersion, so the address term is required to stop this cache
-    // from serving one layer's stale partition back for another. See
-    // mesh.d's MeshCacheKey doc comment.
+    // Cache key: (address, CONNECTIVITY epoch, editMode, selectionSignature).
+    //
+    // TASK 1906 STAGE 2d (plan §3.4 row 15) — the mesh half is
+    // `mesh_dirty.g_topoEpochs`, a bus watcher whose mask is `Points |
+    // Polygons` and DELIBERATELY NOT `Position`. This is the one row of family
+    // 4 that NARROWS, and the narrowing is the reason the watcher exists
+    // rather than reusing `g_geomEpochs` (which carries Position for the
+    // display and BVH families): cluster MEMBERSHIP is a function of
+    // connectivity and of the selected set, never of where the vertices are,
+    // and the centres below are recomputed from live positions on every call
+    // regardless. Keyed on anything that moves during a drag, the O(V+E)
+    // membership walk would re-run on every step of every gesture — a
+    // regression, not parity, because `mutationVersion` is version-silent
+    // through a drag and this partition survives one today.
+    //
+    // Selection lives in the Marks.Select bit of vertexMarks/edgeMarks/
+    // faceMarks and no epoch in this watcher's mask carries it, so the rolling
+    // hash of the relevant marks array (`selectionSignature`) is what detects a
+    // selection change — as it always was; `mutationVersion` merely also moved.
+    // Edit mode picks which cluster variant runs, so it is part of the key too.
+    //
+    // The ADDRESS term is unchanged in meaning: this cache lives on the STAGE,
+    // not on the Mesh, and `mesh_` is a live delegate that can silently
+    // retarget to a different primary layer. Two distinct Mesh instances share
+    // an epoch trivially — an untracked one reads the table's `evicted_`
+    // floor — so the address is what stops one layer's partition being served
+    // for another. See mesh_dirty.d's MeshDirtyKey doc comment.
     bool   _cacheValid       = false;
-    MeshCacheKey _clusterKey;
+    MeshDirtyKey _clusterKey;
     int    _cachedEditMode   = -1;
     ulong  _cachedSelSig     = 0;
     int    _cachedClusterCnt = 0;
@@ -462,7 +489,7 @@ public:
     /// mid-session, so this is a belt-and-braces hook for explicit resets.)
     private void invalidateClusterCache() {
         _cacheValid     = false;
-        _clusterKey.invalidate();
+        _clusterKey.clear();
         _cachedEditMode = -1;
         _cachedSelSig   = 0;
     }
@@ -1299,17 +1326,28 @@ private:
         if (mesh_ is null) return;
 
         // --- Cache key check --------------------------------------------------
-        // Membership is invariant while (mutationVersion, editMode, selSig) all
-        // hold; only centers (read from live mesh_.vertices) change per frame.
+        // Membership is invariant while (address, connectivity epoch, editMode,
+        // selSig) all hold; only centers (read from live mesh_.vertices) change
+        // per frame.
         const int   edMode  = cast(int)(*editMode_);
         const ulong selSig  = selectionSignature();
+        // Sampled once; the same sample is what a miss stamps. See the field's
+        // comment for why this watcher's mask excludes `Position`.
+        const size_t meshAddr  = cast(size_t)mesh_;
+        const ulong  meshEpoch = g_topoEpochs.epochFor(meshAddr);
         const bool  hit = _cacheValid
-                       && _clusterKey.matches(*mesh_)
+                       && _clusterKey.matches(meshAddr, meshEpoch)
                        && _cachedEditMode == edMode
                        && _cachedSelSig   == selSig
                        && _cachedClusterOf.length == mesh_.vertices.length;
 
         if (!hit) {
+            // Test seam (task 1906 stage 2d). ALWAYS ON, not `debug`: the two
+            // gates build with different flags, so a `debug`-only counter is
+            // untestable from the suite lane. It counts the MEMBERSHIP walk —
+            // the O(V+E) half — not the per-call centre recompute below, which
+            // is meant to run every frame.
+            ++g_acenClusterRebuilds;
             // MISS: rebuild membership (O(V+E) via cached adjacency) and the
             // partition, then stamp the new key.
             _cachedClusterOf.length = mesh_.vertices.length;
@@ -1327,7 +1365,7 @@ private:
                     buildVertClusterMembership(_cachedClusterOf, _cachedClusterCnt);
                     break;
             }
-            _clusterKey.stamp(*mesh_);
+            _clusterKey.stamp(meshAddr, meshEpoch);
             _cachedEditMode = edMode;
             _cachedSelSig   = selSig;
             _cacheValid     = true;
@@ -1994,38 +2032,47 @@ unittest {
 
 // ---------------------------------------------------------------------------
 // M9 load-bearing aliasing proof: the Local-mode cluster cache (_clusterKey)
-// must NOT alias two distinct Mesh instances that happen to share a
-// mutationVersion. mesh_ is a live delegate that can be repointed at a
-// different primary mid-session (a real layer switch), so the danger is
-// real: without the address term, `a` and `b` below have an EQUAL (mutVer,
-// editMode, selSig) key and the cache would wrongly serve `a`'s stale
-// partition back for `b`.
+// must NOT alias two distinct Mesh instances that happen to share a freshness
+// stamp. mesh_ is a live delegate that can be repointed at a different primary
+// mid-session (a real item-selection change), so the danger is real: without
+// the address term, `a` and `b` below have an EQUAL (stamp, editMode, selSig)
+// key and the cache would wrongly serve `a`'s stale partition back for `b`.
 //
 // `a` is a 4-cycle 0-1-2-3-0 with ALL 4 verts selected: fully connected —
 // exactly 1 cluster. `b` is two disjoint edges 0-1 / 2-3 with the SAME
 // selection (all 4 verts): two separate components — exactly 2 clusters.
-// Both meshes are hand-forced to mutationVersion == 7 — the exact aliasing
-// hazard M9 closes.
+//
+// TASK 1906 STAGE 2d — the stamp is now `mesh_dirty.g_topoEpochs`, so the
+// collision is STRUCTURAL rather than hand-forced: neither mesh is owned by a
+// `Document`, so neither is in the epoch table and both read its `evicted_`
+// floor. Asserted below rather than assumed — if the two ever read different
+// epochs, the epoch term refuses first and the address term goes untested.
+// Heap-allocated for the reason stage 2c hit in `snap.d`: the table is keyed by
+// RAW ADDRESS and a stack local can reuse one a neighbouring block noted.
 // ---------------------------------------------------------------------------
 unittest {
-    import mesh : Mesh;
+    import mesh       : Mesh;
+    import mesh_dirty : g_topoEpochs;
 
-    Mesh a;
+    Mesh* a = new Mesh;
     a.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0)];
     a.resetSelection();
     a.addEdge(0, 1); a.addEdge(1, 2); a.addEdge(2, 3); a.addEdge(3, 0);
     a.selectVertex(0); a.selectVertex(1); a.selectVertex(2); a.selectVertex(3);
-    a.mutationVersion = 7;
 
-    Mesh b;
+    Mesh* b = new Mesh;
     b.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0)];
     b.resetSelection();
     b.addEdge(0, 1); b.addEdge(2, 3);
     b.selectVertex(0); b.selectVertex(1); b.selectVertex(2); b.selectVertex(3);
-    b.mutationVersion = 7;   // hand-forced EQUAL to a — the aliasing hazard
+
+    assert(g_topoEpochs.epochFor(cast(size_t)a)
+        == g_topoEpochs.epochFor(cast(size_t)b),
+        "setup: the two meshes MUST collide on the connectivity epoch — that "
+      ~ "collision IS the hazard, and without it the address term is untested");
 
     EditMode em = EditMode.Vertices;
-    Mesh* meshPtr = &a;
+    Mesh* meshPtr = a;
     auto acs = new ActionCenterStage(() => meshPtr, &em);
 
     Vec3[] centersA; int[] clusterOfA;
@@ -2033,16 +2080,96 @@ unittest {
     assert(acs._cachedClusterCnt == 1,
         "a: a 4-cycle with all verts selected must form exactly 1 cluster");
 
-    // Repoint mesh_ at b — SAME mutationVersion and editMode, and the SAME
-    // selection signature (all 4 verts selected in both) as a. Only the
-    // connectivity differs.
-    meshPtr = &b;
+    // Repoint mesh_ at b — SAME epoch and editMode, and the SAME selection
+    // signature (all 4 verts selected in both) as a. Only the connectivity
+    // differs.
+    meshPtr = b;
     Vec3[] centersB; int[] clusterOfB;
     acs.computeLocalClustersFull(centersB, clusterOfB);
     assert(acs._cachedClusterCnt == 2,
         "b: two disjoint edges must form exactly 2 clusters. If this reads 1 "
         ~ "(a's value), the address term was dropped from the cache key and "
         ~ "b wrongly reused a's cached partition.");
+}
+
+// ---------------------------------------------------------------------------
+// TASK 1906 STAGE 2d — THE NARROWING, PINNED IN THE DIRECTION THAT COSTS.
+//
+// `_clusterKey`'s watcher (`g_topoEpochs`) omits `Position` on purpose. Get
+// that wrong — reuse `g_geomEpochs`, or widen the mask — and NO value in this
+// file changes: the partition is still correct, it is merely rebuilt O(V+E)
+// times per gesture instead of once. A count is the only channel that sees it,
+// which is what `g_acenClusterRebuilds` is for.
+//
+// Two halves, and the second is the one that stops the first being vacuous:
+//   (A) a run of Position publishes must add exactly ONE rebuild (the first
+//       call's cold miss) — this is the property the narrow mask buys;
+//   (B) a Polygons publish must add one MORE — without it, half (A) would be
+//       satisfied by a watcher that is never fed at all, or by a cache that
+//       has stopped keying on the mesh entirely.
+//
+// THE FIXTURE IS TWO DISJOINT EDGES (0-1 and 2-3), NOT A CHAIN, and that is a
+// correction rather than a detail. Half (B) closes with a VALUE assert on the
+// rebuilt partition, and over a chain 0-1,1-2,2-3 with all four vertices
+// selected the four are ALREADY one component before the closing edge is
+// added — so "exactly 1 cluster" held on the stale partition too and the
+// assert could not come out any other way. Two components take 2 -> 1 when
+// `addEdge(3, 0)` joins them, which is a number the pre-publish cache does not
+// have.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh            : Mesh;
+    import mesh_dirty      : noteMeshChange;
+    import mesh_edit_delta : MeshEditScope;
+
+    Mesh* m = new Mesh;   // heap — see the M9 block above
+    m.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0)];
+    m.resetSelection();
+    m.addEdge(0, 1); m.addEdge(2, 3);   // TWO components — see the header
+    m.selectVertex(0); m.selectVertex(1); m.selectVertex(2); m.selectVertex(3);
+
+    EditMode em = EditMode.Vertices;
+    Mesh* meshPtr = m;
+    auto acs = new ActionCenterStage(() => meshPtr, &em);
+
+    const ulong base = g_acenClusterRebuilds;
+    Vec3[] centers; int[] clusterOf;
+    acs.computeLocalClustersFull(centers, clusterOf);
+    assert(g_acenClusterRebuilds == base + 1,
+        "setup: the first call must be a cold miss, or this block counts "
+      ~ "nothing");
+    assert(acs._cachedClusterCnt == 2,
+        "setup: two disjoint edges must partition into 2 clusters. This is the "
+      ~ "number the closing assert below has to CHANGE — over a chain the four "
+      ~ "vertices are already one component and that assert would hold on the "
+      ~ "stale partition too");
+
+    // Eight drag steps: move a vertex and publish `Position`, exactly as an
+    // interactive gizmo gesture does (it publishes and bumps no version).
+    foreach (step; 0 .. 8) {
+        m.vertices[0] = m.vertices[0] + Vec3(0.01f, 0, 0);
+        noteMeshChange(cast(size_t)m, MeshEditScope.Position);
+        acs.computeLocalClustersFull(centers, clusterOf);
+    }
+    assert(g_acenClusterRebuilds == base + 1,
+        "task 1906 §3.4 row 15: eight Position publishes must add ZERO cluster "
+      ~ "rebuilds. Cluster MEMBERSHIP does not depend on where the vertices "
+      ~ "are; the centres are recomputed from live positions every call "
+      ~ "regardless. A count of base+9 means the watcher's mask picked up "
+      ~ "`Position` — correct output, O(V+E) per drag step");
+
+    // ...and the cache is not simply deaf: a connectivity publish MUST rebuild.
+    m.addEdge(3, 0);
+    noteMeshChange(cast(size_t)m, MeshEditScope.Polygons);
+    acs.computeLocalClustersFull(centers, clusterOf);
+    assert(g_acenClusterRebuilds == base + 2,
+        "anti-vacuity: a Polygons publish MUST rebuild the partition. If this "
+      ~ "does not move, the assert above is satisfied by a watcher nobody "
+      ~ "feeds and proves nothing");
+    assert(acs._cachedClusterCnt == 1,
+        "and the rebuilt partition must be the NEW one: the edge just added "
+      ~ "joins the two disjoint components, so the count must fall 2 -> 1. A "
+      ~ "cache that served the pre-publish partition reads 2 here");
 }
 
 // ---------------------------------------------------------------------------

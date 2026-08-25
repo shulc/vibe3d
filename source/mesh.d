@@ -601,6 +601,50 @@ struct MeshStructKey {
     }
 }
 
+/// The `Points | Polygons` variant of `MeshCacheKey`, for a cache whose content
+/// is a function of the FACE SET — `faces`, or a per-element count derived from
+/// it — rather than of `edges` (task 1906 stage 2d).
+///
+/// IT EXISTS BECAUSE `structVersion` DOES NOT MEAN WHAT ITS NAME SUGGESTS, AND
+/// THAT WAS MEASURED, NOT REASONED (2026-08-25). `structVersion` is bumped by
+/// the primitives that WRITE `edges` — `addEdge`, `rebuildEdges`,
+/// `rebuildEdgesFromFaces`, the face-append primitive — and by nothing else.
+/// A face-set change that leaves the edge list alone therefore moves it NOT AT
+/// ALL: `deleteFacesByMask(mask, keepOrphans:true, keepFloatingEdges:true)`
+/// takes a 4-quad grid to 3 quads with `structVersion` unchanged (measured;
+/// `topologyVersion` went 4 → 5 on the same call, and `mutationVersion` 4 → 5).
+/// So `MeshStructKey` is correct for a cache over `edges` and SILENTLY WRONG
+/// for a cache over `faces` — which is how `PenSnapGuide`'s border counts,
+/// re-keyed onto it, went stale on a face delete.
+///
+/// `topologyVersion` is the counter that tracks that class: `commitChange`
+/// bumps it for `Points | Polygons` (see §3.6 of doc/bus_sync_listeners_plan.md,
+/// where it is recorded with exactly that owner class). It OVER-invalidates —
+/// a subpatch-mark toggle and a crease-weight write both bump it while `faces`
+/// holds still — and that is the safe direction.
+///
+/// Same address term, same reasoning, as the other two key types above.
+///
+/// Use `MeshCacheKey` when the cached value depends on where the vertices ARE;
+/// `MeshStructKey` when it depends on the EDGE set; this one when it depends on
+/// the FACE set.
+struct MeshTopoKey {
+    size_t addr    = size_t.max;
+    ulong  topoVer = ulong.max;
+
+    bool matches(ref Mesh m) const {
+        return addr == cast(size_t)&m && topoVer == m.topologyVersion;
+    }
+    void stamp(ref Mesh m) {
+        addr    = cast(size_t)&m;
+        topoVer = m.topologyVersion;
+    }
+    void invalidate() {
+        addr    = size_t.max;
+        topoVer = ulong.max;
+    }
+}
+
 /// Hermite ease-in/ease-out, `3t²-2t³` — the Bridge Twist per-ring blend
 /// curve (task 0357, see `Mesh.bridgeTwistedVertex`). `t` is assumed in
 /// [0,1]; not clamped since every call site already guarantees that range.
@@ -1340,7 +1384,7 @@ struct Mesh {
 
     // Shared CSR vertex→neighbor adjacency (flattened neighbor list + a
     // per-vertex [offset, offset+1] bounds pair). Lazily rebuilt on read
-    // whenever `mutationVersion` moves — mirrors the lazy-invalidation
+    // whenever `structVersion` moves — mirrors the lazy-invalidation
     // discipline the toolpipe stages used to keep as private per-stage
     // copies (`ensureVertexAdjacency` in FalloffStage / ActionCenterStage)
     // before this provider replaced them. Co-locating the cache on `Mesh`
@@ -1348,27 +1392,56 @@ struct Mesh {
     // Mesh-owned cache can never be shared across two different Mesh
     // instances the way a stage-owned cache (keyed only on mutationVersion,
     // silently retargeted to a new primary layer) could.
+    //
+    // TASK 1906 STAGE 2d (plan §3.4 row 12) — THE KEY IS `structVersion`, NOT
+    // `mutationVersion`, AND NOT A BUS EPOCH. Three readings decide it:
+    //   * `mutationVersion` was simply the WRONG counter. This table is a pure
+    //     function of `edges` and `vertices.length`; `commitChange` bumps
+    //     `mutationVersion` for every class, so every scripted position
+    //     command, every selection click and every material write threw away a
+    //     connectivity table that could not have changed. `structVersion` is
+    //     bumped by the edge/face structural primitives and by nothing else.
+    //   * a bus EPOCH (`mesh_dirty`) was rejected for this row, unlike rows
+    //     10/14/15: an epoch only advances for a mesh the Document owns (the
+    //     delivery subject filter plus `app.d`'s per-layer feed), and this memo
+    //     is read on SCRATCH meshes all over the tree — every `mesh_ops` temp,
+    //     every unittest cage. Those would key on a frozen epoch and serve a
+    //     stale table forever.
+    //   * the `vertices.length` guard below is NOT redundant under either key:
+    //     `addVertex` commits `Points` and bumps `mutationVersion` but NOT
+    //     `structVersion`, so the length term is what catches a vertex append.
+    //     What it does NOT catch — and this is the trap, because the guard
+    //     reads like a general safety net — is any edit that changes `edges`
+    //     while `vertices.length` holds. Deleting every face with
+    //     `keepOrphans: true` is exactly that shape (E -> 0, V unchanged), so
+    //     the length term covers ONE direction only and the counter has to be
+    //     right about the other; see `rebuildEdges`'s `else if (hadEdges)` arm
+    //     and CELL 4 of the unittest below.
     // INVARIANT: these slices must never be shared live across a
     // mutating value copy of a Mesh. The rebuild writes in place when the
     // vertex count is unchanged, so a copy that keeps the source's slice
     // headers alive AND matches its version would be corrupted silently.
     // Safe today because every live Mesh copy is source-dies / fresh-local
-    // / snapshot-.dup + a mutationVersion bump (which forces a rebuild).
-    private ulong    _adjCsrVer = ulong.max;
+    // / snapshot-.dup + a structVersion bump (which forces a rebuild) — the
+    // restore paths in `source/snapshot.d` assign `edges` DIRECTLY, bypassing
+    // every structural primitive, and bump `structVersion` themselves for
+    // exactly this reason. See the comment at that bump before removing it.
+    private ulong    _adjCsrStructVer = ulong.max;
     private size_t[] _adjCsrOffset;
     private uint[]   _adjCsrNeighbors;
 
     // Return the CSR vertex→neighbor adjacency for this mesh: `offset` has
     // length `vertices.length + 1`; the neighbors of vertex `v` are
     // `neighbors[offset[v] .. offset[v + 1]]`. Rebuilt only when
-    // `mutationVersion` has moved since the last call (or the vertex count
-    // changed), so repeated calls within one topology/selection-frozen drag
-    // are O(1) after the first. Out-of-range edge endpoints (defensive —
+    // `structVersion` has moved since the last call (or the vertex count
+    // changed), so repeated calls within one topology-frozen drag — or one
+    // selection-frozen frame, or a run of scripted position commands — are
+    // O(1) after the first. Out-of-range edge endpoints (defensive —
     // should not occur post-buildLoops) are skipped rather than indexing
     // out of bounds.
     void vertexAdjacencyCSR(out const(size_t)[] offset, out const(uint)[] neighbors) {
         const size_t nV = vertices.length;
-        if (_adjCsrVer != mutationVersion || _adjCsrOffset.length != nV + 1) {
+        if (_adjCsrStructVer != structVersion || _adjCsrOffset.length != nV + 1) {
             // Counting pass → per-vertex degree, then prefix-sum into offsets.
             _adjCsrOffset.length = nV + 1;
             _adjCsrOffset[] = 0;
@@ -1387,7 +1460,7 @@ struct Mesh {
                 _adjCsrNeighbors[cursor[e[0]]++] = e[1];
                 _adjCsrNeighbors[cursor[e[1]]++] = e[0];
             }
-            _adjCsrVer = mutationVersion;
+            _adjCsrStructVer = structVersion;
         }
         offset    = _adjCsrOffset;
         neighbors = _adjCsrNeighbors;
@@ -1395,23 +1468,31 @@ struct Mesh {
 
     // ---------------------------------------------------------------------------
     // Task 0401 — negative/regression check: a TOPOLOGY-keyed cache must NOT
-    // rebuild on a position-only edit. vertexAdjacencyCSR keys purely on
-    // `mutationVersion` by design (topology never changed by a vertex move) —
-    // unlike the 3 caches this task fixes (subpatch preview / symmetry pairing /
-    // snap grid), which needed a Position-bus-driven invalidation ON TOP of
-    // their existing mutationVersion key. This test proves the fix did not
-    // widen — the version-silent noteChange(Position) contract stays exactly as
-    // silent to mutationVersion as before, so vertexAdjacencyCSR provably does
-    // not thrash on every gizmo drag frame.
+    // rebuild on a position-only edit. vertexAdjacencyCSR is connectivity-keyed
+    // by design (topology never changed by a vertex move) — unlike the 3 caches
+    // task 0401 fixed (subpatch preview / symmetry pairing / snap grid), which
+    // needed a Position-driven invalidation ON TOP of their version key. This
+    // test proves that fix did not widen — the version-silent
+    // noteChange(Position) contract stays exactly as silent as before, so
+    // vertexAdjacencyCSR provably does not thrash on every gizmo drag frame.
+    //
+    // TASK 1906 STAGE 2d — THIS BLOCK ALONE DOES NOT TEST THE KEY, and saying
+    // so is the point of the second cell below. Cell 1 (0401's, unchanged)
+    // drives the VERSION-SILENT half: `noteChange` bumps no counter at all, so
+    // it passes under `mutationVersion` keying and under `structVersion`
+    // keying alike — reverting stage 2d's re-key leaves it GREEN. Cell 2
+    // drives the SCRIPTED half, which is the half the re-key is about.
     // ---------------------------------------------------------------------------
     unittest {
         import change_bus : MeshEditScope;
+        import std.conv   : to;
 
+        // ---- CELL 1 (task 0401): the version-SILENT position edit. --------
         Mesh m = makeCube();
         const(size_t)[] offA;
         const(uint)[]    nbA;
         m.vertexAdjacencyCSR(offA, nbA);
-        ulong csrVerAfterBuild = m._adjCsrVer;
+        ulong csrVerAfterBuild = m._adjCsrStructVer;
         ulong mutVerBefore     = m.mutationVersion;
 
         // Version-silent edit — exactly what an interactive gizmo drag/commit
@@ -1425,7 +1506,7 @@ struct Mesh {
         const(size_t)[] offB;
         const(uint)[]    nbB;
         m.vertexAdjacencyCSR(offB, nbB);
-        assert(m._adjCsrVer == csrVerAfterBuild,
+        assert(m._adjCsrStructVer == csrVerAfterBuild,
             "task 0401: a position-only edit must NOT force the adjacency CSR "
             ~ "to rebuild — it stays topology-keyed by design and must be "
             ~ "unaffected by the Position-bus invalidation this task adds to "
@@ -1433,6 +1514,174 @@ struct Mesh {
         assert(offA is offB && nbA is nbB,
             "no rebuild occurred ⇒ vertexAdjacencyCSR must hand back the "
             ~ "exact same cached arrays, not freshly rebuilt ones");
+
+        // ---- CELL 2 (task 1906 stage 2d): the SCRIPTED position edit. -----
+        // `commitChange(Position)` is what `/api/transform` and every scripted
+        // move command end in. It bumps `mutationVersion` and touches no
+        // connectivity, so under the old key it threw the whole CSR away — for
+        // a table that is a pure function of `edges`. THIS is the assert the
+        // re-key exists for, and cell 1 above cannot see it.
+        const ulong structVerBeforeCommit = m.structVersion;
+        const ulong csrVerBeforeCommit    = m._adjCsrStructVer;
+        m.vertices[1] = m.vertices[1] + Vec3(0, 0.25f, 0);
+        m.commitChange(MeshEditScope.Position);
+        assert(m.mutationVersion != mutVerBefore,
+            "setup: commitChange(Position) MUST bump mutationVersion — if it "
+            ~ "stopped doing so this cell would pass vacuously under either key");
+        assert(m.structVersion == structVerBeforeCommit,
+            "setup: a position commit must move no connectivity counter");
+
+        const(size_t)[] offC;
+        const(uint)[]    nbC;
+        m.vertexAdjacencyCSR(offC, nbC);
+        assert(m._adjCsrStructVer == csrVerBeforeCommit,
+            "task 1906 §3.4 row 12: a SCRIPTED position edit (commitChange("
+            ~ "Position), which DOES bump mutationVersion) must NOT rebuild the "
+            ~ "adjacency CSR. The table is a pure function of `edges`; keyed on "
+            ~ "mutationVersion it was thrown away by every scripted move, every "
+            ~ "selection click and every material write");
+        assert(offB is offC && nbB is nbC,
+            "no rebuild occurred ⇒ the same cached arrays must come back");
+
+        // ---- CELL 3: the restore path, which bypasses every primitive. ----
+        // `MeshSnapshot.restore` assigns `edges` DIRECTLY. Under a
+        // connectivity key that is only sound because the restore bumps
+        // `structVersion` itself; without that bump an undo that changes the
+        // edge list while the vertex count holds serves the pre-undo adjacency.
+        import snapshot : MeshSnapshot;
+        auto snap = MeshSnapshot.capture(m);
+        // Drop two ADJACENT faces so their shared edge loses every owner: the
+        // edge COUNT changes while the vertex count does not, which is what
+        // makes the `vertices.length` guard unable to cover for the key.
+        size_t victim = size_t.max;
+        foreach (fi; 1 .. m.faces.length) {
+            int sharedVerts = 0;
+            foreach (v; m.faces[fi])
+                foreach (v0; m.faces[0])
+                    if (v == v0) ++sharedVerts;
+            if (sharedVerts >= 2) { victim = fi; break; }
+        }
+        assert(victim != size_t.max, "setup: a cube face must have a neighbour");
+        uint[][] keptFaces;
+        foreach (fi, f; m.faces) if (fi != 0 && fi != victim) keptFaces ~= f.dup;
+        m.faces = keptFaces;
+        m.rebuildEdgesFromFaces();
+        m.buildLoops();
+        const size_t nVertsCut = m.vertices.length;
+        const size_t nEdgesCut = m.edges.length;
+        const(size_t)[] offD;
+        const(uint)[]    nbD;
+        m.vertexAdjacencyCSR(offD, nbD);
+        assert(nbD.length == nEdgesCut * 2, "setup: CSR must describe the cut mesh");
+
+        snap.restore(m);
+        assert(m.vertices.length == nVertsCut,
+            "setup: the restore must NOT change the vertex count, or the length "
+            ~ "guard would rebuild the CSR and this cell would be vacuous");
+        assert(m.edges.length != nEdgesCut,
+            "setup: the restore MUST change the edge list, or there is nothing "
+            ~ "for a stale CSR to be wrong about");
+        const(size_t)[] offE;
+        const(uint)[]    nbE;
+        m.vertexAdjacencyCSR(offE, nbE);
+        assert(nbE.length == m.edges.length * 2,
+            "task 1906 stage 2d: a snapshot restore that changes connectivity "
+            ~ "MUST invalidate the adjacency CSR. `MeshSnapshot.restore` writes "
+            ~ "`edges` directly, bypassing every structural primitive, so it "
+            ~ "bumps `structVersion` itself — delete that bump and this reads "
+            ~ "the pre-undo adjacency, silently, for the rest of the session");
+
+        // ---- CELL 3b: the SECOND restore entry point. ---------------------
+        // `snapshot.d` bumps `structVersion` in TWO places, and cell 3 above
+        // witnesses only the first. `restoreGeometryKeepSelection` is the
+        // T-SEP undo path (a geometry-only revert that keeps the live
+        // selection); it writes `edges`/`faces` directly exactly as `restore`
+        // does, so it needs — and has — its own bump. Delete THAT one and
+        // cell 3 stays green, which is what makes this arm a separate cell
+        // rather than a second assert on the same call.
+        //
+        // The setup that reaches it is the same shape and not a coincidence:
+        // the element counts must DIFFER from the live mesh for the CSR to
+        // have anything to be wrong about, and differing counts are precisely
+        // what sends the method down its snapshot-marks branch.
+        auto snap2 = MeshSnapshot.capture(m);
+        const size_t nVertsFull = m.vertices.length;
+        const size_t nEdgesFull = m.edges.length;
+        uint[][] keptFaces2;
+        foreach (fi, f; m.faces) if (fi != 0 && fi != victim) keptFaces2 ~= f.dup;
+        m.faces = keptFaces2;
+        m.rebuildEdgesFromFaces();
+        m.buildLoops();
+        const size_t nEdgesCut2 = m.edges.length;
+        assert(m.vertices.length == nVertsFull,
+            "setup: the cut must not change the vertex count, or the length "
+            ~ "guard rebuilds the CSR and this cell is vacuous");
+        assert(nEdgesCut2 != nEdgesFull,
+            "setup: the cut must change the edge list");
+        const(size_t)[] offF;
+        const(uint)[]    nbF;
+        m.vertexAdjacencyCSR(offF, nbF);
+        assert(nbF.length == nEdgesCut2 * 2, "setup: CSR must describe the cut mesh");
+
+        snap2.restoreGeometryKeepSelection(m);
+        assert(m.vertices.length == nVertsFull,
+            "setup: the restore must NOT change the vertex count");
+        assert(m.edges.length != nEdgesCut2,
+            "setup: the restore MUST change the edge list");
+        const(size_t)[] offG;
+        const(uint)[]    nbG;
+        m.vertexAdjacencyCSR(offG, nbG);
+        assert(nbG.length == m.edges.length * 2,
+            "task 1906 stage 2d: `restoreGeometryKeepSelection` writes `edges` "
+            ~ "directly too, so it carries its own `++structVersion`. Delete "
+            ~ "that second bump and a T-SEP geometry undo serves the pre-undo "
+            ~ "adjacency — cell 3 above does not cover it, it drives the other "
+            ~ "entry point");
+
+        // ---- CELL 4 (task 1906 stage 2d): `edges` EMPTIED, nothing back. --
+        // The one reachable edit where BOTH guard terms are silent under the
+        // `structVersion` key: `rebuildEdges` clears `edges` unconditionally
+        // and used to bump only when it inserted something back, so a mesh
+        // whose every face is gone took `edges` N -> 0 at structVersion delta
+        // 0, with `vertices.length` held by `keepOrphans`. Reachable from
+        // `mesh.remove` in Polygons mode with everything selected
+        // (`commands/mesh/remove.d` -> `deleteFacesByMask(mask, keepOrphans:
+        // true)`); the pre-2d `mutationVersion` key caught it for free because
+        // the face delete commits. `rebuildEdges`'s `else if (hadEdges)` arm
+        // is what puts it back — revert that arm and the assert below reads
+        // the cube's 24 stale neighbour entries.
+        //
+        // `MeshEditDelta.revert` needs no bump of its own: its `finalize`
+        // calls `rebuildEdges`, so the same arm covers the replay path.
+        Mesh z = makeCube();
+        const(size_t)[] offZ;
+        const(uint)[]    nbZ;
+        z.vertexAdjacencyCSR(offZ, nbZ);
+        assert(nbZ.length == z.edges.length * 2 && nbZ.length > 0,
+            "setup: the cube's CSR must be built and non-empty, or there is "
+            ~ "nothing for a stale table to serve");
+        const size_t nVertsZ  = z.vertices.length;
+        const ulong  structZ0 = z.structVersion;
+        bool[] everyFace = new bool[](z.faces.length);
+        everyFace[] = true;
+        z.deleteFacesByMask(everyFace, /*keepOrphans*/ true);
+        assert(z.edges.length == 0 && z.faces.length == 0,
+            "setup: every face and therefore every edge must be gone");
+        assert(z.vertices.length == nVertsZ,
+            "setup: keepOrphans must hold the vertex count, or the CSR's "
+            ~ "`vertices.length` guard rebuilds and this cell is vacuous");
+        assert(z.structVersion != structZ0,
+            "the clear-to-empty must bump `structVersion`: it is a write to "
+            ~ "`edges`, and `edges` is what the CSR memo is a function of");
+        const(size_t)[] offZ2;
+        const(uint)[]    nbZ2;
+        z.vertexAdjacencyCSR(offZ2, nbZ2);
+        assert(nbZ2.length == 0,
+            "task 1906 stage 2d: deleting every face with keepOrphans empties "
+            ~ "`edges` while the vertex count holds — neither the counter nor "
+            ~ "the length guard fires unless `rebuildEdges` bumps on a clear "
+            ~ "that inserts nothing back. Got " ~ nbZ2.length.to!string
+            ~ " neighbour entries over a mesh with no edges at all");
     }
 
     // --- Per-element marks (single source of truth) ----------------------
@@ -1732,12 +1981,20 @@ struct Mesh {
     /// O(1): true iff the loops family (loops/faceLoop/vertLoop/loopEdge)
     /// was built for the CURRENT structVersion.
     bool loopsValid() const {
+        // recorded remainder (1906 §3.6): `structVersion` owns this compare and
+        // KEEPS it. Both stamps are read INSIDE a command — add verts, then ask
+        // connectivity in the next statement — and a subscription cannot be
+        // call-granular: the bus delivers at the edit BOUNDARY, which is after
+        // the question has already been asked. Plan §3.4 row 13.
         return loopsState_ == DerivedState.Valid && loopsStamp == structVersion;
     }
     /// O(1): true iff edgeIndexMap is populated AND in sync with the current
     /// structVersion (false while deliberately deferred — e.g. between
     /// addFaceFast calls and the caller's terminal buildLoops()).
     bool edgeMapUsable() const {
+        // recorded remainder (1906 §3.6): `structVersion`, same reason as
+        // `loopsValid` just above — an intra-command question the bus is not
+        // granular enough to answer. Plan §3.4 row 13.
         return edgeMapState_ == DerivedState.Valid && edgeMapStamp == structVersion;
     }
     /// Explicitly mark the loops family + edgeIndexMap DeliberatelyEmpty —
@@ -7833,6 +8090,12 @@ struct Mesh {
     // the kernels do.
     void rebuildEdges() {
         version (unittest) ++g_rebuildEdgesRuns;   // task 1471 instrument
+        // TASK 1906 STAGE 2d — the PRE-clear edge count, read before the clear
+        // that follows. Emptying a non-empty `edges` IS a write to `edges`,
+        // and `vertexAdjacencyCSR` is keyed on `structVersion` now; see the
+        // `else if (hadEdges)` arm at the bottom of this function for the
+        // reachable edit that made the `inserted` gate alone insufficient.
+        const bool hadEdges = edges.length > 0;
         edges.length = 0;
         edgeIndexMap.clear();
         // TASK 1333 — the commits are REMOVED here, not deferred.
@@ -7930,6 +8193,39 @@ struct Mesh {
             edgeMapStamp  = structVersion;
             edgeMapState_ = DerivedState.Valid;
             commitChange(MeshEditScope.Polygons);
+        }
+        else if (hadEdges) {
+            // TASK 1906 STAGE 2d — ZERO INSERTS OVER A NON-EMPTY `edges`, the
+            // case the `inserted` gate alone cannot see, and it is REACHABLE,
+            // not theoretical: `mesh.remove` in Polygons mode with everything
+            // selected calls `deleteFacesByMask(mask, keepOrphans: true)`
+            // (source/commands/mesh/remove.d), which empties `faces` and
+            // leaves `vertices` untouched. `edges` goes N -> 0, the loop above
+            // visits no corner, so `inserted` stays false — yet `edges` HAS
+            // changed, and `edges` is the whole input of the CSR adjacency
+            // memo besides `vertices.length`, which is unchanged here and so
+            // cannot cover for the counter. Measured on a cube before this
+            // arm existed: V=8 E=12 -> E=0 with structVersion +0, and
+            // `vertexAdjacencyCSR` kept serving its 24 stale neighbour
+            // entries for the rest of the session.
+            //
+            // This restores the invalidation the PRE-2d `mutationVersion` key
+            // had for free (the face delete commits and bumps that counter),
+            // so the arm is not a new guarantee — it is the one term the
+            // re-key would otherwise have dropped.
+            //
+            // `++structVersion` alone already makes `edgeMapUsable()` false
+            // (it compares `edgeMapStamp == structVersion`); the explicit
+            // Stale is the same statement made locally, so a reader does not
+            // have to re-derive it from the stamp compare. No `commitChange`
+            // here on purpose: the callers that reach this path
+            // (`deleteFacesByMask`, `mesh_edit_delta`'s replay finalize) commit
+            // their own class for the face removal that caused it, and this
+            // arm must not invent a second publish. The NO-EDGES-BEFORE case
+            // (`hadEdges` false) is untouched and stays byte-identical to the
+            // behaviour the `if (inserted)` arm's own note describes.
+            ++structVersion;
+            edgeMapState_ = DerivedState.Stale;
         }
     }
     void addFace(uint[] idx) {
@@ -16509,9 +16805,9 @@ struct SubpatchTrace {
 /// Cached subdivision preview of a source (cage) mesh. When `active`
 /// is true, `mesh`/`trace` hold the OpenSubdiv-emitted limit geometry;
 /// otherwise the cage should be rendered directly and this struct is
-/// inert. The cache rebuilds lazily when `source.mutationVersion` or
-/// `depth` changes; drag-frame position updates go through the cached
-/// `osdAccel` stencil table without touching topology.
+/// inert. The cache rebuilds lazily when the cage's change-bus GEOMETRY epoch,
+/// its `mutationVersion` or `depth` changes; drag-frame position updates go
+/// through the cached `osdAccel` stencil table without touching topology.
 struct SubpatchPreview {
     Mesh          mesh;
     SubpatchTrace trace;
@@ -16523,6 +16819,56 @@ struct SubpatchPreview {
     /// With one layer this is constant ⇒ invisible. `size_t.max` forces a
     /// rebuild on first call.
     size_t        sourceMeshAddr        = size_t.max;
+    /// TASK 1906 STAGE 2d (plan §3.4 row 10) — the freshness half of the
+    /// staleness key is TWO terms, `sourceEpoch` here and `sourceVersion`
+    /// below, and the early-out needs BOTH to match. Together with
+    /// `sourceMeshAddr` the epoch half is a `mesh_dirty.MeshDirtyKey` in two
+    /// fields; the address stays a field of its own because the position-only
+    /// fast path below reads it separately.
+    ///
+    /// THE EPOCH IS `mesh_dirty.g_geomEpochs` — `Position | Points |
+    /// Polygons`, the same watcher the surface BVH and the cage VBO read, and
+    /// NOT an any-class one. What it buys is the case `mutationVersion` cannot
+    /// see: an interactive gizmo Move/Rotate/Scale updates `source.vertices`
+    /// WITHOUT bumping `source.mutationVersion` — both on drag AND on commit
+    /// (see the warning above `deactivate()`) — so the pre-0401 (address,
+    /// mutationVersion, depth) key was unchanged even though the cage had
+    /// moved. Task 0401 patched that with a `positionsDirty` flag passed in by
+    /// `app.d`, which put the consumer's invalidation decision at the CALL
+    /// SITE and left the IPR caller to remember it separately; the epoch
+    /// carries the same information at the lazy recompute, where the artifact
+    /// is read, and that parameter is gone with it.
+    ///
+    /// WHY THE COUNTER STAYED RATHER THAN BEING REPLACED — this is the review
+    /// finding the stage was landed on, and the reasoning it replaces
+    /// ("`commitChange` bumps `mutationVersion` for every class, so an
+    /// any-class epoch is not a widening") is FALSE. Not every class bump goes
+    /// through `commitChange`: `Mesh.noteSelectionChange` — the funnel under
+    /// every marks setter — publishes `Marks` and deliberately bumps NO
+    /// version, and `noteChange(Visibility)` and `app.d`'s
+    /// `noteChange(MeshChangeAll)` are version-silent the same way. All three
+    /// reach a per-mesh epoch through `app.d`'s per-layer feed. An any-class
+    /// epoch therefore invalidates this cache on a plain SELECTION CLICK,
+    /// which the counter never did: MEASURED at six `selectVertex` calls with
+    /// a live preview — cage `mutationVersion` 13 -> 13, preview work 1 -> 7,
+    /// i.e. the OSD stencil evaluate plus the VBO fan-out on every frame in
+    /// which the user picks something. With the split key that delta is 0
+    /// (`tests/unit/subpatch_osd_test.d`, the "version-silent selection
+    /// clicks" block).
+    ///
+    /// `ulong.max` is never a real epoch, so a fresh preview always rebuilds.
+    ulong         sourceEpoch           = ulong.max;
+    /// The SECOND freshness term, and the one that carries every class
+    /// `g_geomEpochs` deliberately drops. `Tab`/`setSubpatch` write `Marks`,
+    /// `setCreaseWeight` writes `Material`; neither is in the geometry mask,
+    /// and both MUST rebuild the preview (a missed crease rebuild presents as
+    /// "the written weight does nothing" — task 1062 §3). Both go through
+    /// `commitChange`, so both move `mutationVersion`, and that is exactly the
+    /// half of the old key worth keeping. The two terms are complementary, not
+    /// redundant: neither alone is the invalidation set this cache needs.
+    ///
+    /// A term can only ever ADD rebuilds, never remove one, so the 0401
+    /// guarantee is unaffected by its presence.
     ulong         sourceVersion         = ulong.max;
     /// Last source.topologyVersion we built against. While
     /// `source.topologyVersion` is unchanged but mutationVersion
@@ -16817,9 +17163,10 @@ struct SubpatchPreview {
     /// are absent too, because they are re-evaluated from the LIVE cage at
     /// reception (`evaluateFromCage`), so a version-silent drag during a
     /// build cannot produce a stale surface and must not be allowed to
-    /// invalidate the build either — `positionsDirty` is raised on every drag
-    /// frame, so a positions-sensitive key would mean a build that never
-    /// completes while the user is dragging.
+    /// invalidate the build either — a `Position` publish (task 1906 stage 2d;
+    /// formerly the `positionsDirty` flag) lands on every drag frame, so a
+    /// positions-sensitive key would mean a build that never completes while
+    /// the user is dragging.
     ///
     /// The HIDE mask is in the key: it changes which limit faces are kept, so
     /// it changes the preview's index space. The change bus already treats it
@@ -16866,6 +17213,7 @@ struct SubpatchPreview {
         // dispatch again on every one of them.
         depth                 = d;
         sourceMeshAddr        = cast(size_t)&source;
+        sourceEpoch           = stampSourceEpoch(source);
         sourceVersion         = source.mutationVersion;
         sourceTopologyVersion = source.topologyVersion;
 
@@ -16965,6 +17313,7 @@ struct SubpatchPreview {
         active                = true;
         depth                 = d;
         sourceMeshAddr        = cast(size_t)&source;
+        sourceEpoch           = stampSourceEpoch(source);
         sourceVersion         = source.mutationVersion;
         sourceTopologyVersion = source.topologyVersion;
         reusablePreviewKey    = computeReusablePreviewKey(source, d);
@@ -17024,7 +17373,7 @@ struct SubpatchPreview {
     ///
     /// A scene reset replaces the source mesh IN PLACE (same heap address,
     /// fresh contents), so a still-`active` preview whose cached
-    /// (sourceMeshAddr, sourceVersion, depth) key happens to match the
+    /// (sourceMeshAddr, sourceEpoch, sourceVersion, depth) key happens to match the
     /// replacement would be left live by `rebuildIfStale`'s early-out — a
     /// cross-reset state leak. While the preview is live,
     /// `GpuMesh.suppressCageUpload` turns a tool-side cage upload into a bare
@@ -17037,6 +17386,7 @@ struct SubpatchPreview {
     void deactivate() {
         active                = false;
         sourceMeshAddr        = size_t.max;
+        sourceEpoch           = ulong.max;
         sourceVersion         = ulong.max;
         sourceTopologyVersion = ulong.max;
         depth                 = -1;
@@ -17113,27 +17463,41 @@ struct SubpatchPreview {
     /// pieces that didn't make it onto GPU. Caller (app.d main loop)
     /// supplies gpu.{face,edge,vert}Vbo + matching counts.
     ///
-    /// `positionsDirty` (task 0401): set true when the caller's
-    /// change-notification bus flush saw a Position edit since the last
-    /// call. An interactive gizmo Move/Rotate/Scale updates
-    /// `source.vertices` WITHOUT bumping `source.mutationVersion` — both on
-    /// drag AND on commit (see the warning above `deactivate()`) — so the
-    /// (address, mutationVersion, depth) key just below can be, and after a
-    /// committed drag IS, unchanged even though the cage moved. Skipping
-    /// that raw-version early-out on a dirty signal lets the call fall
-    /// through to the position-only fast path a few lines down (still
-    /// gated on an UNCHANGED `source.topologyVersion`, so it never masks a
-    /// real topology change) or, failing that, a full `rebuild`. Defaults
-    /// to `false` so a caller with no bus signal in scope (the IPR path)
-    /// keeps the original version-only behaviour.
+    /// The epoch to stamp for `source`, read from the change bus's per-mesh
+    /// GEOMETRY table (task 1906 stage 2d). One place, because the three
+    /// rebuild entry points (`rebuild`, `dispatchBuild`, `pumpAsyncBuild`)
+    /// each stamp at their own moment and one of them silently reading a
+    /// different table than the early-out does is the whole failure mode of a
+    /// split key. The `mutationVersion` half is stamped alongside it at every
+    /// one of those sites — see `sourceVersion`.
+    private static ulong stampSourceEpoch(ref const Mesh source) nothrow @nogc {
+        import mesh_dirty : g_geomEpochs;
+        return g_geomEpochs.epochFor(cast(size_t)&source);
+    }
+
+    /// TASK 1906 STAGE 2d — there is no `positionsDirty` parameter any more.
+    /// The staleness key's freshness half is two terms read here at the lazy
+    /// recompute: `mesh_dirty.g_geomEpochs` for this mesh's address, and
+    /// `source.mutationVersion`. See `sourceEpoch` / `sourceVersion` for why
+    /// it takes both and why an any-class epoch alone is a widening rather
+    /// than parity. A caller with no bus in scope (a unit test over a scratch
+    /// cage no `Document` owns, and therefore no delivery at all) drives the
+    /// listener body by hand:
+    /// `mesh_dirty.noteMeshChange(cast(size_t)&cage, flags)`.
+    ///
+    /// The epoch is sampled ONCE, here, and that same sample is what the
+    /// rebuild stamps. A publisher that fires DURING the rebuild therefore
+    /// leaves the stamp behind the live epoch and the next call rebuilds
+    /// again — over-invalidation, which is the safe direction.
     void rebuildIfStale(ref const Mesh source, int d,
-                         const(GpuFanOutTargets)* targets = null,
-                         bool positionsDirty = false) {
+                         const(GpuFanOutTargets)* targets = null) {
         lastRefreshFannedOut    = false;
         lastRefreshSkipNonFace  = false;
         const srcAddr = cast(size_t)&source;
-        if (!positionsDirty
-            && sourceMeshAddr == srcAddr
+        import mesh_dirty : g_geomEpochs;
+        const ulong srcEpoch = g_geomEpochs.epochFor(srcAddr);
+        if (sourceMeshAddr == srcAddr
+            && sourceEpoch == srcEpoch
             && sourceVersion == source.mutationVersion && depth == d)
             return;
         // Position-only fast path: SAME source mesh, cage topology + depth
@@ -17190,7 +17554,8 @@ struct SubpatchPreview {
             }
             ++mesh.mutationVersion;
             sourceMeshAddr = srcAddr;
-            sourceVersion = source.mutationVersion;
+            sourceEpoch    = srcEpoch;
+            sourceVersion  = source.mutationVersion;
             return;
         }
         if (!active && d > 0 && source.hasAnySubpatch()
@@ -17200,6 +17565,7 @@ struct SubpatchPreview {
         {
             depth                 = d;
             sourceMeshAddr        = srcAddr;
+            sourceEpoch           = srcEpoch;
             sourceVersion         = source.mutationVersion;
             sourceTopologyVersion = source.topologyVersion;
             active                = true;
@@ -17255,6 +17621,7 @@ struct SubpatchPreview {
     void rebuild(ref const Mesh source, int d) {
         depth                 = d;
         sourceMeshAddr        = cast(size_t)&source;
+        sourceEpoch           = stampSourceEpoch(source);
         sourceVersion         = source.mutationVersion;
         sourceTopologyVersion = source.topologyVersion;
         if (d <= 0) {

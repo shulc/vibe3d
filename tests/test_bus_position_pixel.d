@@ -16,10 +16,12 @@
 // later, in the same frame.
 //
 // That does not make this file a test that cannot fail. It makes its
-// discriminating mutation a LATER one, and the plan says so itself: §5 row
-// `2d` ("delete `positionsDirty`'s dirty-bit source") names ARM A as its red,
-// and stage 3 (delete the per-frame `pendingChanges_` drain) is when the
-// stage-1 publish sites become load-bearing for these pixels. Until then this
+// discriminating mutation a LATER one. Measured at stage 2d (plan §2.4): ARM A
+// rides `g_geomEpochs` fed by the hub — removing the per-frame drain (2d-6b)
+// or the uploader's `commitChange(Position)` leaves it green — so the mutation
+// this file reddens for is a stripped `Position` class at BOTH feeds
+// (`test_bus_epoch_position_class` carries that pin), and stage 3's drain
+// deletion is pinned by the same-batch cells, not here. Until then this
 // is the FROZEN EVIDENCE of the 0401 cell: what the drag must do to the limit
 // surface, pinned in the one channel — rendered pixels — that a version key,
 // a draw-call census and a cage-position read all fail to see.

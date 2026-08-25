@@ -85,11 +85,25 @@ private final class Rig {
     }
 
     /// One frame of the editor's main loop, as far as this task is concerned:
-    /// the subpatch preview is asked to catch up with the cage. `true` for
-    /// `positionsDirty` mirrors app.d on a frame whose bus flush carried
-    /// Position — which is every frame of a drag.
+    /// the change bus hands this mesh's pending classes to the epoch table and
+    /// the subpatch preview is asked to catch up with the cage.
+    ///
+    /// TASK 1906 STAGE 2d — the `noteMeshChange` line replaces the `true` this
+    /// used to pass for `positionsDirty`, and it mirrors app.d MORE closely
+    /// than the flag did: app.d's per-layer feed at the frame drain hands
+    /// `noteMeshChange` exactly this mesh's own `pendingChanges_`, per layer,
+    /// with the subject address. A scratch mesh no `Document` owns gets no
+    /// delivery of its own (`Mesh.deliverPending`'s subject filter), so a
+    /// headless rig drives the listener body directly.
     void frame(int depth = 2) {
-        preview.rebuildIfStale(mesh, depth, null, true);
+        import mesh_dirty : noteMeshChange;
+        noteMeshChange(cast(size_t)&mesh, mesh.pendingChanges_);
+        // The drain's half. app.d's feed is read-only because the drain zeroes
+        // the word once per frame; a rig that only reads it re-publishes the
+        // cage's build-time `Points | Polygons` on every call and invalidates
+        // for a reason that is not the edit under test.
+        mesh.pendingChanges_ = 0;
+        preview.rebuildIfStale(mesh, depth);
     }
 }
 

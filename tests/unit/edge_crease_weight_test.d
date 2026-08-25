@@ -422,6 +422,43 @@ unittest {
 }
 
 // The headline risk (§3): a weight written the obvious way must invalidate
+// ---------------------------------------------------------------------------
+// TASK 1906 STAGE 2d — the bus feed, by hand.
+//
+// `SubpatchPreview.rebuildIfStale` keys its freshness half on TWO terms: the
+// change bus's per-mesh GEOMETRY epoch and `source.mutationVersion`. In the
+// editor that epoch is advanced by `app.d`'s change-bus hub and by its
+// per-layer feed at the frame drain. A unit test has neither — and
+// `Mesh.deliverPending`'s subject filter means a scratch cage no `Document`
+// owns gets no delivery at all — so the listener BODY is driven directly,
+// which is what `mesh_dirty`'s header says a headless test should do.
+//
+// The blocks below would in fact invalidate on the VERSION term alone
+// (`setCreaseWeight` commits `Material`, `setSubpatch` commits `Marks`, and
+// both go through `commitChange`). The feed is here so the rig is the app's
+// sequence rather than a subset of it: if the version term is ever dropped
+// again these blocks must still be driving the same listener the editor does.
+//
+// Reading `pendingChanges_` rather than naming a class keeps this honest: it
+// is byte-for-byte what `app.d`'s per-layer feed hands the same function, so a
+// mutator that changes which class it publishes cannot silently desync the
+// test from the app.
+//
+// THE ZEROING IS NOT OPTIONAL AND IT IS NOT TIDINESS. `app.d`'s feed is
+// read-only because the drain (`ChangeBus.flush` -> `Mesh`'s per-layer reset)
+// zeroes the word for it, once per frame. A headless rig that only reads it
+// re-publishes the SAME accumulated word on every call — and a cage carries
+// `Points | Polygons` from the moment it was built, so every feed would move
+// the GEOMETRY epoch and the blocks below would invalidate for a reason that
+// has nothing to do with the crease weight they are about. Measured: without
+// the zeroing, dropping the preview's `mutationVersion` key term left this
+// whole file GREEN.
+private void feedBus(ref Mesh cage) {
+    import mesh_dirty : noteMeshChange;
+    noteMeshChange(cast(size_t)&cage, cage.pendingChanges_);
+    cage.pendingChanges_ = 0;   // the drain's half, which app.d does elsewhere
+}
+
 // BOTH cache layers, or it presents to the user as "the weight does
 // nothing". This is the position-only fast-path case: the FIRST-ever
 // buildPreview call always takes the full-rebuild path regardless of any
@@ -446,11 +483,13 @@ unittest {
     // (and therefore identical) sharp edges -- 0.3/0.8 both saturate at
     // level 1 and would pass this assertion even with the bump removed.
     cage.setCreaseWeight(ei, 0.02f);
+    feedBus(cage);
     sp.rebuildIfStale(cage, 1);
     assert(sp.active);
     Vec3[] afterFirst = sp.mesh.vertices.dup;
 
     cage.setCreaseWeight(ei, 0.05f);
+    feedBus(cage);
     sp.rebuildIfStale(cage, 1);
     Vec3[] afterSecond = sp.mesh.vertices.dup;
 
@@ -474,6 +513,7 @@ unittest {
     cage.setCreaseWeight(ei, 0.02f);
 
     SubpatchPreview sp;
+    feedBus(cage);
     sp.rebuildIfStale(cage, 1);
     assert(sp.active && sp.reusablePreviewReady);
     Vec3[] beforeToggle = sp.mesh.vertices.dup;
@@ -483,6 +523,7 @@ unittest {
     // branch clears `active` WITHOUT touching reusablePreviewReady/Key; a
     // depth<=0 call clears the key too and would not exercise this path).
     foreach (fi; 0 .. cage.faces.length) cage.setSubpatch(fi, false);
+    feedBus(cage);
     sp.rebuildIfStale(cage, 1);
     assert(!sp.active);
 
@@ -491,6 +532,7 @@ unittest {
 
     // Toggle back ON.
     foreach (fi; 0 .. cage.faces.length) cage.setSubpatch(fi, true);
+    feedBus(cage);
     sp.rebuildIfStale(cage, 1);
     assert(sp.active);
     Vec3[] afterToggle = sp.mesh.vertices.dup;

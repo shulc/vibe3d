@@ -811,6 +811,15 @@ private:
     // baseline (reverting face indices), so these activation-time indices stay
     // valid across the whole session. Empty ⇒ whole-mesh cut.
     uint[]   restrictFaces_;
+    // recorded remainder (1906 §3.6): `mutationVersion` owns this key and
+    // KEEPS it. This is not a cache — it is an IDENTITY guard, asked between
+    // mouse events: "is the baseline I armed still the mesh I armed it on, at
+    // the state I armed it in?". A bus class answers a different question
+    // ("did anything change"), and the guard's correct response to any change
+    // at all is the same one — drop the armed preview. Replacing an equality
+    // on a monotone counter with a subscription would also make the answer
+    // depend on when the bus last delivered, which replay determinism forbids.
+    // Plan §3.4 row 18.
     MeshCacheKey armedKey_;      // mesh identity+version guard for the deferred commit
     // The WORLD-space viewport `draw()` was handed (task 0619 rename). Every
     // one of its uses was re-read and every one is genuinely WORLD: the
@@ -1761,6 +1770,7 @@ private:
     // preview (armedKey_ mismatch) rather than baking a bogus entry.
     void commitCurrentSlice() {
         if (!previewLive_ || !haveBefore_ || !before_.filled) return;
+        // recorded remainder (1906 §3.6): `mutationVersion` — an IDENTITY guard, not a cache; see the `armedKey_` field note.
         if (!armedKey_.matches(*mesh)) return;   // mesh swapped since last preview — drop
         if (history is null || factory is null) return;
         auto cmd  = factory();

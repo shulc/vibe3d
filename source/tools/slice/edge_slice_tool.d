@@ -160,7 +160,16 @@ private:
     bool         scrubbing_;   // the last latched point's `t` is being dragged
     bool         built_;       // true once the last bake actually produced a cut
     int          dragPart_ = -1;
-    MeshCacheKey armedKey_;    // mesh identity+version guard (scene reset / layer switch)
+    // recorded remainder (1906 §3.6): `mutationVersion` owns this key and
+    // KEEPS it. This is not a cache — it is an IDENTITY guard, asked between
+    // mouse events: "is the baseline I armed still the mesh I armed it on, at
+    // the state I armed it in?". A bus class answers a different question
+    // ("did anything change"), and the guard's correct response to any change
+    // at all is the same one — drop the armed preview. Replacing an equality
+    // on a monotone counter with a subscription would also make the answer
+    // depend on when the bus last delivered, which replay determinism forbids.
+    // Plan §3.4 row 18.
+    MeshCacheKey armedKey_;    // mesh identity+version guard (scene reset / item-selection change)
     // The WORLD-space viewport `draw()` was handed (task 0619 rename). All
     // five uses were re-read and classified:
     //   * `tFromLocalRailClick` — the **Closest** aiming kind (§1.3), which
@@ -990,6 +999,7 @@ private:
             return;
         }
         if (latchedPoints_.length < 2) { cancelLiveEdit(); return; }
+        // recorded remainder (1906 §3.6): `mutationVersion` — an IDENTITY guard, not a cache; see the `armedKey_` field note.
         if (!armedKey_.matches(*mesh)) {
             // The mesh underneath us was swapped/clobbered since our last
             // touch — nothing safely ours to commit.
@@ -1029,6 +1039,7 @@ private:
     void cancelLiveEdit() {
         // Restores chainBefore_ — the WHOLE chain, never a per-segment
         // baseline — so Esc/RMB/redo-cancel unwinds every baked segment.
+        // recorded remainder (1906 §3.6): `mutationVersion` — an IDENTITY guard, not a cache; see the `armedKey_` field note.
         if (armedKey_.matches(*mesh) && chainBefore_.filled) chainBefore_.restore(*mesh);
         dropArmedPreview();
         refreshCaches();
@@ -1047,6 +1058,7 @@ private:
     // write) until it is itself latched by a real click.
     void rebuildPreview() {
         if (!chainBefore_.filled || latchedPoints_.length == 0) return;
+        // recorded remainder (1906 §3.6): `mutationVersion` — an IDENTITY guard, not a cache; see the `armedKey_` field note.
         if (!armedKey_.matches(*mesh)) { dropArmedPreview(); return; }
         // Perf (task 1370) — AFTER the guard(s) above, never on the first
         // line: an early-out must record no sample, or `count` tallies

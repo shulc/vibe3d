@@ -1756,6 +1756,12 @@ struct OsdAccel {
         // and this function runs while the live preview is still on screen.
         // The receiver adopts the pointer, on the main thread, in
         // `installResult`.
+        // recorded remainder (1906 §3.6): this key is a CONTENT HASH and no
+        // counter or bus class can replace it. It is SLOT ADDRESSING in a
+        // shared LRU whose entries are reused across meshes and depths, not a
+        // freshness check: "something changed" cannot pick a slot, only "which
+        // content" can. Owned by nothing on `Mesh` — the hash above is the
+        // whole key. See plan §3.4 row 11 for the provenance split.
         auto look = lookupCachedTopology(topoKey);
         osdc_topology_t* osdLocal;
         if (look.hit) {

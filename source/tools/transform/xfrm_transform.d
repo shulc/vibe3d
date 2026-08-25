@@ -5334,6 +5334,14 @@ private:
     // stamp. The armed counter is a guarantee, not a filter. See
     // `change_bus.regradeCensusArmedChecks`.
     private bool regradeStampCurrent() const {
+        // recorded remainder (1906 §3.6): `mutationVersion` owns this compare
+        // and KEEPS it. It is a GESTURE IDENTITY stamp, not a cache key — "is
+        // the mesh still at the state my last apply left it in?" — and §2.3's
+        // census (run 2026-08-25) found the two candidate terms UNDECIDABLE at
+        // this read site rather than equal: the only cell where the version
+        // term and the undo-epoch term could differ is never evaluated. An
+        // undecidable equivalence is not a licence to substitute. Plan §3.4
+        // row 21.
         const bool armed = (lastAppliedGestureMutationVersion != ulong.max);
         const bool byVersion =
             (mesh.mutationVersion == lastAppliedGestureMutationVersion);

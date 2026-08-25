@@ -699,6 +699,16 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
             //    never reach `drawEdges` (`MarkView` answers false past its
             //    end, so a short mask degrades to "nothing highlighted"
             //    silently — no crash to notice).
+            // recorded remainder (1906 §3.6): `structVersion` owns the first
+            // term and KEEPS it, but read the division of labour before
+            // trusting it alone. Measured at stage 2d: `structVersion` tracks
+            // writes to `edges`, NOT to `faces` — a face delete that leaves the
+            // edge list intact moves it not at all (see mesh.d's `MeshTopoKey`
+            // for the cell). What actually carries a face-set change here is
+            // the THIRD term, the marks diff: every face-set mutator resizes or
+            // rewrites `faceMarks`. That term is a CONTENT compare, not a
+            // version poll, and a bus class would be strictly coarser than the
+            // bit-level answer it already gets. Plan §3.4 row 16.
             bool selChanged = !faceSelEdgesKey.matches(mesh)
                            || faceSelEdgesCache.length != mesh.edges.length
                            || marksBitDiffer(faceSelEdgesPrevSel, mesh.faceMarks,

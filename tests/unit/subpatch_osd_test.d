@@ -245,12 +245,23 @@ unittest {
     import mesh : SubpatchPreview;
     import change_bus : MeshEditScope;
 
+    import mesh_dirty : noteMeshChange;
+
     Mesh cage = makeCube();
     cage.resizeSubpatch();
     foreach (fi; 0 .. cage.faces.length) cage.setSubpatch(fi, true);
 
     SubpatchPreview preview;
-    preview.rebuildIfStale(cage, 1, null, false);
+    // TASK 1906 STAGE 2d — the bus feed by hand. `rebuildIfStale` keys on the
+    // change bus's per-mesh epoch now, and a scratch cage no `Document` owns
+    // gets no delivery at all (`Mesh.deliverPending`'s subject filter), so the
+    // listener BODY is called directly — the arrangement `mesh_dirty`'s header
+    // documents for a headless test. The address is a stack local, which is
+    // safe HERE (unlike the two-cage block further down, which needs two
+    // addresses to COLLIDE): this block only needs one address's epoch to hold
+    // still across a call and then move, and nothing else runs in between.
+    noteMeshChange(cast(size_t)&cage, cage.pendingChanges_);
+    preview.rebuildIfStale(cage, 1);
     assert(preview.active, "preview should activate on a fully-subpatched cube");
     Vec3[] before = preview.mesh.vertices.dup;
     ulong topoVerBefore = cage.topologyVersion;
@@ -270,24 +281,31 @@ unittest {
         return false;
     }
 
-    // OLD behaviour (positionsDirty=false, the pre-fix default): the
-    // (address, mutationVersion, depth) key is unchanged, so the preview
-    // stays frozen at the pre-edit shape. Asserting this first proves the
-    // repro is real (guards against the test accidentally becoming a
-    // no-op if the cube/depth stop triggering the fast path).
-    preview.rebuildIfStale(cage, 1, null, false);
+    // OLD behaviour — the edit happened but NOBODY WAS TOLD. `noteChange`
+    // accumulates and never delivers, and nothing has fed the epoch, so the
+    // staleness key is unchanged and the preview stays frozen at the pre-edit
+    // shape. Asserting this first proves the repro is real (guards against
+    // the test accidentally becoming a no-op if the cube/depth stop
+    // triggering the fast path). Under the pre-2d code this arm read
+    // `positionsDirty=false`; the sentence it makes is the same one — a
+    // signal the consumer never receives cannot invalidate anything, and
+    // `mutationVersion` is version-silent on this path.
+    preview.rebuildIfStale(cage, 1);
     assert(!previewMoved(),
-        "sanity: positionsDirty=false must reproduce the historical "
-        ~ "stale-preview bug (mutationVersion alone cannot see a "
-        ~ "version-silent position edit)");
+        "sanity: an unannounced version-silent position edit must reproduce "
+        ~ "the historical stale-preview bug (mutationVersion alone cannot see "
+        ~ "a version-silent position edit, and no epoch has moved)");
 
-    // NEW behaviour (positionsDirty=true — what app.d's bus flush now
-    // passes whenever meshChangedFlags carries Position this frame):
-    // preview must re-derive from the moved cage.
-    preview.rebuildIfStale(cage, 1, null, true);
+    // NEW behaviour — the SAME edit, delivered. This is what the editor does
+    // on every frame of a gizmo drag: the change bus carries `Position` to the
+    // hub, the hub advances this mesh's epoch, and the preview re-derives from
+    // the moved cage.
+    noteMeshChange(cast(size_t)&cage, MeshEditScope.Position);
+    preview.rebuildIfStale(cage, 1);
     assert(previewMoved(),
-        "task 0401: positionsDirty=true must re-derive the preview from "
-        ~ "the moved cage instead of returning the frozen pre-edit shape");
+        "task 0401 / task 1906 row 10: a DELIVERED Position change must "
+        ~ "re-derive the preview from the moved cage instead of returning the "
+        ~ "frozen pre-edit shape");
 
     // Topology must be untouched by a pure position edit or by the fix:
     // topologyVersion only advances on a Geometry-class change, and the
@@ -480,8 +498,8 @@ unittest {
 
 // ---------------------------------------------------------------------------
 // Task 0833, cache half — `SubpatchPreview.rebuildIfStale`'s
-// (sourceMeshAddr, mutationVersion, depth) key must not let two DIFFERENT
-// cages at an equal mutationVersion alias.
+// (sourceMeshAddr, geometry epoch, mutationVersion, depth) key must not let
+// two DIFFERENT cages at an equal (epoch, version) pair alias.
 //
 // This is the class that has already produced a live bug in this tree: two
 // same-version layers aliased in the version-keyed caches until a per-mesh-
@@ -505,8 +523,18 @@ unittest {
     import std.conv : to;
     import std.math : fabs;
 
-    static Mesh subpatchedCube(float dx) {
-        Mesh c = makeCube();
+    import mesh_dirty : g_geomEpochs;
+
+    static Mesh* subpatchedCube(float dx) {
+        // HEAP, not a stack local, and that is stage 2c's lesson rather than
+        // style: the epoch table is process-global and keyed by RAW ADDRESS,
+        // and neighbouring unit blocks in this same binary write it. A stack
+        // local can reuse an address a neighbour already noted, which would
+        // give the two cages DIFFERENT epochs — the epoch term would then
+        // refuse first and the address term, the entire subject of this block,
+        // would go untested.
+        Mesh* c = new Mesh;
+        *c = makeCube();
         c.resizeSubpatch();
         foreach (fi; 0 .. c.faces.length) c.setSubpatch(fi, true);
         // Direct position write — no commitChange, so the two cages stay at
@@ -516,11 +544,21 @@ unittest {
         return c;
     }
 
-    Mesh cageA = subpatchedCube(0.0f);
-    Mesh cageB = subpatchedCube(10.0f);
+    Mesh* cageA = subpatchedCube(0.0f);
+    Mesh* cageB = subpatchedCube(10.0f);
+    // BOTH freshness terms must collide, or the one that does not would refuse
+    // first and the address term — the entire subject of this block — would go
+    // untested. They collide for two different reasons and both are asserted:
+    // the epoch because neither cage is Document-owned (so neither is in the
+    // table and both read its `evicted_` floor), the version because
+    // `subpatchedCube` runs the identical sequence of committing calls on each
+    // and then writes positions directly, without a commit.
+    assert(g_geomEpochs.epochFor(cast(size_t)cageA)
+        == g_geomEpochs.epochFor(cast(size_t)cageB),
+        "setup: the two cages must collide on the bus geometry epoch");
     assert(cageA.mutationVersion == cageB.mutationVersion,
-        "setup: the two cages must collide on mutationVersion — that collision "
-        ~ "IS the hazard, and with one layer it was invisible");
+        "setup: the two cages must collide on mutationVersion too — that pair "
+        ~ "of collisions IS the hazard, and with one layer it was invisible");
     assert(cageA.vertices.length == cageB.vertices.length,
         "setup: equal vertex counts, so no other key term separates them");
 
@@ -531,20 +569,107 @@ unittest {
     }
 
     SubpatchPreview preview;
-    preview.rebuildIfStale(cageA, 1, null, false);
+    preview.rebuildIfStale(*cageA, 1);
     assert(preview.active, "setup: a fully-subpatched cube must activate");
     assert(fabs(centroidX(preview.mesh)) < 0.5f,
         "setup: cage A's preview must sit at the origin, got "
         ~ centroidX(preview.mesh).to!string);
 
     // The switch. Only the SOURCE ADDRESS differs from the previous call.
-    preview.rebuildIfStale(cageB, 1, null, false);
+    preview.rebuildIfStale(*cageB, 1);
     assert(fabs(centroidX(preview.mesh) - 10.0f) < 0.5f,
-        "a second cage at the SAME mutationVersion and depth must re-derive "
-        ~ "the preview, not serve the first cage's — got centroid x "
-        ~ centroidX(preview.mesh).to!string
-        ~ "; the (address, version, depth) key has lost its address term and "
-        ~ "two same-version layers are aliasing again");
+        "a second cage at the SAME bus epoch, the SAME mutationVersion and the "
+        ~ "same depth must re-derive the preview, not serve the first cage's — "
+        ~ "got centroid x " ~ centroidX(preview.mesh).to!string
+        ~ "; the (address, epoch, version, depth) key has lost its address "
+        ~ "term and two same-stamp layers are aliasing again");
+}
+
+// ---------------------------------------------------------------------------
+// TASK 1906 STAGE 2d — A SELECTION CLICK MUST COST THE SUBPATCH PREVIEW
+// NOTHING, and this is the block that says so.
+//
+// The stage first keyed the preview's freshness half on an ANY-CLASS bus
+// watcher, on the reading that `commitChange` bumps `mutationVersion` for
+// every class, so "any class" reproduced the invalidation set the counter
+// already had. It does not. `Mesh.noteSelectionChange` — the funnel under
+// every marks setter, and therefore under every pick — ORs in `Marks` and
+// deliberately bumps NO version, and `app.d`'s per-layer feed hands that
+// mesh's `pendingChanges_` straight to the epoch table. So an any-class epoch
+// moves on a plain selection click and the preview re-evaluates: with a live
+// preview that is the OSD stencil evaluate plus the VBO fan-out, per picking
+// frame, where the cost had been exactly zero.
+//
+// THE MUTATION THIS BLOCK REDDENS: re-key `SubpatchPreview.stampSourceEpoch`
+// and `rebuildIfStale` onto a `forClasses(uint.max)` watcher (or drop
+// `sourceVersion` and widen `g_geomEpochs`'s mask to `uint.max`). Measured on
+// this fixture before the split key: work delta 6 over 6 clicks.
+//
+// The work counter is the PREVIEW mesh's own `mutationVersion`: every path
+// out of `rebuildIfStale` that does work bumps it — the position-only fast
+// path, the reusable-preview resurrection and the full rebuild alike — so a
+// delta of 0 means no path ran, not merely that no full rebuild did.
+//
+// ANTI-VACUITY, because "nothing happened" is what a broken rig also reports:
+// the second half publishes a version-silent `Position` exactly as a gizmo
+// drag frame does and requires the work counter to MOVE. Without it this
+// block would pass over a preview that had gone inert, a cage that never
+// activated, or a `noteMeshChange` nobody wired up.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh       : Mesh, SubpatchPreview, makeCube;
+    import mesh_dirty : noteMeshChange;
+    import change_bus : MeshEditScope;
+    import std.conv   : to;
+
+    // HEAP, for the reason the block above states: the epoch table is keyed by
+    // raw address and neighbouring unit blocks in this binary write it.
+    Mesh* cage = new Mesh;
+    *cage = makeCube();
+    cage.resizeSubpatch();
+    foreach (fi; 0 .. cage.faces.length) cage.setSubpatch(fi, true);
+    cage.resetSelection();
+
+    SubpatchPreview sp;
+    noteMeshChange(cast(size_t)cage, cage.pendingChanges_);
+    cage.pendingChanges_ = 0;          // the frame drain zeroes it
+    sp.rebuildIfStale(*cage, 1);
+    assert(sp.active, "setup: a fully-subpatched cube must activate");
+
+    const ulong work0 = sp.mesh.mutationVersion;
+    const ulong mv0   = cage.mutationVersion;
+
+    // Six picking frames. `selectVertex` is a marks setter: it goes through
+    // `noteSelectionChange`, which publishes `Marks` and bumps no version.
+    // `noteMeshChange` with the mesh's own `pendingChanges_` is byte-for-byte
+    // what app.d's per-layer feed hands the listener at the frame drain.
+    foreach (i; 0 .. 6) {
+        cage.selectVertex(cast(uint)i);
+        noteMeshChange(cast(size_t)cage, cage.pendingChanges_);
+        cage.pendingChanges_ = 0;
+        sp.rebuildIfStale(*cage, 1);
+    }
+    assert(cage.mutationVersion == mv0,
+        "setup: the clicks must stay VERSION-SILENT, or the `mutationVersion` "
+        ~ "term would legitimately invalidate and this block would be testing "
+        ~ "nothing about the epoch's mask");
+    assert(sp.mesh.mutationVersion == work0,
+        "task 1906 stage 2d: six version-silent SELECTION clicks must cost the "
+        ~ "subpatch preview ZERO work — `Marks` is not in `g_geomEpochs`'s mask "
+        ~ "and no version moved. Got a work delta of "
+        ~ (sp.mesh.mutationVersion - work0).to!string
+        ~ ": the freshness key has been widened to an any-class watcher and "
+        ~ "every pick now runs the OSD stencil evaluate plus the VBO fan-out");
+
+    // ANTI-VACUITY: the same rig, the same call, a class that IS in the mask.
+    foreach (ref v; cage.vertices) v = v + Vec3(0.01f, 0, 0);
+    noteMeshChange(cast(size_t)cage, MeshEditScope.Position);
+    sp.rebuildIfStale(*cage, 1);
+    assert(sp.mesh.mutationVersion != work0,
+        "anti-vacuity: a version-silent POSITION publish — one gizmo drag "
+        ~ "frame — MUST make the preview work. If this does not move, the "
+        ~ "zero above is satisfied by a preview that went inert, and task "
+        ~ "0401's whole fix is gone with it");
 }
 
 // ---------------------------------------------------------------------------
