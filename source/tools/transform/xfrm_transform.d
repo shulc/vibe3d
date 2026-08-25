@@ -4883,8 +4883,11 @@ private:
     bool takeEdge(FalloffStage stage, int ei) {
         auto edge = mesh.edges[ei];
         // Anchor = edge midpoint (centroid of the two endpoints),
-        // click-independent — Mesh.edgeCentroid (mesh_ops/connected_mask.d).
-        writeElementAnchor(mesh.edgeCentroid(cast(uint)ei));
+        // click-independent — `edgeCentroid` (mesh_ops/connected_mask.d), a
+        // free function over `ref const(Mesh)` since task 1903 Stage D1.
+        // `mesh` is a `Mesh*`: the member call auto-dereferenced, the UFCS
+        // free function does not — hence `(*mesh).`.
+        writeElementAnchor((*mesh).edgeCentroid(cast(uint)ei));
         if (stage !is null) {
             stage.anchorRing = [cast(uint)edge[0], cast(uint)edge[1]];
             updateConnectMask(stage, cast(int)edge[0]);
@@ -4925,9 +4928,12 @@ private:
 
     // Connected-component BFS seeded at the picked vert, written into
     // FalloffStage.connectMask. Active only when connect != Ignore.
-    // The BFS itself moved to Mesh.connectedComponentMask
+    // The BFS itself moved to `connectedComponentMask`
     // (source/mesh_ops/connected_mask.d, xfrm Phase B) — this wrapper keeps
-    // the Ignore / seed-bounds guards and the stage write.
+    // the Ignore / seed-bounds guards and the stage write. Task 1903 Stage D1
+    // turned it into a free function over `ref Mesh` (it calls the memoizing
+    // `vertexAdjacencyCSR`, so it cannot be `const`); it writes nothing and
+    // opens no edit batch. `(*mesh).` below: UFCS does not deref a `Mesh*`.
     void updateConnectMask(FalloffStage stage, int seedVi) {
         if (stage.connect == ElementConnect.Ignore) {
             stage.connectMask = null;
@@ -4937,7 +4943,7 @@ private:
             stage.connectMask = null;
             return;
         }
-        stage.connectMask = mesh.connectedComponentMask(cast(size_t)seedVi);
+        stage.connectMask = (*mesh).connectedComponentMask(cast(size_t)seedVi);
     }
 
     FalloffStage activeFalloffStage() const {

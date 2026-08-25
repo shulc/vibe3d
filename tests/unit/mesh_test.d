@@ -18,7 +18,11 @@ import mesh_ops.revolve : MeshRevolveOps;
 import mesh_ops.cleanup : MeshCleanupOps;
 import mesh_ops.edge_bevel : MeshEdgeBevelOps;
 import mesh_ops.extrude : MeshExtrudeOps;
-import mesh_ops.connected_mask : MeshConnectedMaskOps;
+// (`import mesh_ops.connected_mask : MeshConnectedMaskOps;` was here until task
+// 1903 Stage D1 turned that family into free functions — the template name no
+// longer exists. Nothing in this file ever NAMED any of the templates imported
+// above; they came across with the 0706 move of mesh.d's unittest blocks and
+// each track-1 stage sheds its own line.)
 import std.algorithm.sorting : sort;
 import std.math : cos, sin, PI;
 import std.format : format;

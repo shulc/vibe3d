@@ -343,6 +343,7 @@ unittest // every beginEditBatch caller carries a scope(failure) abort
 //
 // M-C-MIXIN: paste `mixin MeshSelectLoopOps;` back into struct Mesh (keeping
 // the free functions) → this block reddens naming MeshSelectLoopOps.
+// M-D1-MIXIN: the same for `mixin MeshConnectedMaskOps;` (task 1903 Stage D1).
 // ---------------------------------------------------------------------------
 
 unittest // the mixin count is falling, and the converted families stay converted
@@ -367,7 +368,7 @@ unittest // the mixin count is falling, and the converted families stay converte
 
     // 13 at the branch point; one family leaves per track-1 stage; 0 at Stage I.
     enum size_t kAtStart = 13;
-    enum size_t kExpected = 12;          // Stage C converted MeshSelectLoopOps
+    enum size_t kExpected = 11;          // C: MeshSelectLoopOps; D1: MeshConnectedMaskOps
     assert(live.length == kExpected,
         format("source/mesh.d instantiates %d `mixin Mesh*Ops` templates; this "
              ~ "gate expects %d. Track 1 started at %d and every conversion "
@@ -376,9 +377,10 @@ unittest // the mixin count is falling, and the converted families stay converte
              ~ "without updating this number. Live: %s "
              ~ "(task 1903 §4.5)", live.length, kExpected, kAtStart, live));
 
-    // …and these are gone BY NAME. `MeshSelectLoopOps` cannot come back beside
+    // …and these are gone BY NAME. A converted family cannot come back beside
     // its free functions without silently taking every call site with it.
-    static immutable string[] kConverted = ["MeshSelectLoopOps"];
+    static immutable string[] kConverted = ["MeshSelectLoopOps",        // Stage C
+                                            "MeshConnectedMaskOps"];    // Stage D1
     foreach (name; kConverted)
         assert(!live.canFind(name),
             format("`mixin %s;` is back in struct Mesh. That family is free "
@@ -407,4 +409,42 @@ unittest // the mixin count is falling, and the converted families stay converte
       ~ "a free function over `ref const(Mesh)` — if the receiver changed, say "
       ~ "why here: `ref const(Mesh)` is what keeps `mesh.selectLoopEdges(seed)` "
       ~ "compiling verbatim at ~40 call sites (task 1903 §4.1).");
+
+    // Stage D1, the same two claims for the connected-mask family — written out
+    // rather than folded into a loop, because the RECEIVER assertion below is
+    // family-specific and its message is the whole point of having it.
+    immutable cmPath = buildPath(repoRoot, "source", "mesh_ops", "connected_mask.d");
+    assert(exists(cmPath), "cannot find source/mesh_ops/connected_mask.d at " ~ cmPath);
+    immutable cm = stripCommentsAndStrings(readText(cmPath));
+    assert(countOccurrences(cm, "mixin template MeshConnectedMaskOps") == 0,
+        "source/mesh_ops/connected_mask.d still declares `mixin template "
+      ~ "MeshConnectedMaskOps` — Stage D1 converted this family to free "
+      ~ "functions; a surviving template is either dead or a second "
+      ~ "implementation (task 1903 Stage D1).");
+
+    // The receivers are DIFFERENT inside this one family, and that is the
+    // finding D1 added to the plan's two-receiver table (§4.1): a query that
+    // writes no mesh data can still be uncallable through `const`, because
+    // `Mesh.vertexAdjacencyCSR` MEMOIZES. `ref Mesh` is the honest receiver for
+    // that — and it is emphatically NOT a `MeshEditBatch`, which would defer
+    // and publish a change for a call that changes nothing observable. If a
+    // later stage widens `connectedComponentMask` to a batch receiver, that is
+    // a decision to argue for here, not a mechanical follow-on.
+    assert(countOccurrences(cm, "connectedComponentMask(ref Mesh m") == 1,
+        "source/mesh_ops/connected_mask.d no longer declares "
+      ~ "`connectedComponentMask` over `ref Mesh` — if it became "
+      ~ "`ref const(Mesh)` it cannot compile (`vertexAdjacencyCSR` memoizes and "
+      ~ "is non-const), and if it became `ref MeshEditBatch` then a read-only "
+      ~ "query now opens an edit batch, which is a behaviour change nothing "
+      ~ "asked for (task 1903 Stage D1, plan §4.1).");
+    assert(countOccurrences(cm, "connectedComponentMask(ref const(Mesh)") == 0,
+        "a `ref const(Mesh)` overload of `connectedComponentMask` can only exist by "
+      ~ "casting const away to reach the memoizing `vertexAdjacencyCSR` — that is the "
+      ~ "receiver this family refused, not a second convenience (task 1903 Stage D1).");
+    assert(countOccurrences(cm, "edgeCentroid(ref const(Mesh) m") == 1,
+        "source/mesh_ops/connected_mask.d no longer declares `edgeCentroid` "
+      ~ "over `ref const(Mesh)` — it reads two vertices and nothing else, so "
+      ~ "the const receiver is what states that, and it is what keeps "
+      ~ "`mesh.edgeCentroid(ei)` compiling verbatim in xfrm_transform.d "
+      ~ "(task 1903 Stage D1).");
 }

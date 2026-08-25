@@ -17,7 +17,13 @@ import mesh_ops.edge_bevel : MeshEdgeBevelOps;
 import mesh_ops.bevel_fin : MeshBevelFinOps;
 import mesh_ops.bevel_vertex : MeshBevelVertexOps;
 import mesh_ops.extrude : MeshExtrudeOps;
-import mesh_ops.connected_mask : MeshConnectedMaskOps;
+// task 1903 Stage D1: the connected-mask family is module-level free functions
+// (`connectedComponentMask` over `ref Mesh`, `edgeCentroid` over
+// `ref const(Mesh)`), not a mixin. PUBLIC so every `import mesh;` re-exports
+// them and `mesh.connectedComponentMask(vi)` keeps resolving through UFCS
+// unchanged (`doc/mesh_edit_seam_plan.md` §4.2). This keeps mesh.d the door for
+// the ops namespace; narrowing that is audit 0678 M9's job, not this task's.
+public import mesh_ops.connected_mask;
 // task 1903 Stage C: the select.loop family is module-level free functions over
 // `ref const(Mesh)`, not a mixin. PUBLIC so every `import mesh;` re-exports them
 // and `mesh.selectLoopEdges(seed)` keeps resolving through UFCS unchanged
@@ -14620,9 +14626,17 @@ struct Mesh {
     mixin MeshExtrudeOps;
 
     // Connected-component vertex mask (connectedComponentMask BFS) +
-    // edgeCentroid — extracted from xfrm_transform.d (xfrm Phase B); see
-    // source/mesh_ops/connected_mask.d.
-    mixin MeshConnectedMaskOps;
+    // edgeCentroid — extracted from xfrm_transform.d (xfrm Phase B) — is NO
+    // LONGER a mixin: task 1903 Stage D1 made it module-level free functions in
+    // source/mesh_ops/connected_mask.d (`connectedComponentMask` over
+    // `ref Mesh`, because it calls the memoizing `vertexAdjacencyCSR` and so
+    // cannot be `const`; `edgeCentroid` over `ref const(Mesh)`), re-exported by
+    // the `public import` at the top of this file. Do not reinstate the
+    // `MeshConnectedMaskOps` mixin here — a member BEATS a same-name UFCS free
+    // function, so the mixin would silently take every call back and the
+    // conversion would mean nothing (`doc/mesh_edit_seam_plan.md` Revision 2
+    // caveat 1; tests/unit/commit_seam_census_test.d reddens by name if it
+    // returns, and connected_mask.d's own `static assert` reddens at build).
 
     // -----------------------------------------------------------------------
     // insertEdgePoint — factored from cutByPlane Pass-1.
