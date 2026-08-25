@@ -136,8 +136,8 @@ private Fingerprint take(Mesh* mm) {
     f.mutationVersion      = mm.mutationVersion;
     f.topologyVersion      = mm.topologyVersion;
     f.structVersion        = mm.structVersion;
-    f.pendingChanges       = mm.pendingChanges_;
-    f.pendingSelDomains    = mm.pendingSelDomains_;
+    f.pendingChanges       = mm.undeliveredChanges_;
+    f.pendingSelDomains    = mm.undeliveredSelDomains_;
     return f;
 }
 

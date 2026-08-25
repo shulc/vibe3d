@@ -386,7 +386,42 @@ struct LinkSlot {
 ///   (b) any `Mesh*` captured by a history entry is an interior pointer
 ///       the GC traces, so a layer whose edits are still on the undo stack
 ///       cannot dangle even after the layer is deleted from `layers[]`.
+/// Monotone source for `Layer.birthId`. `__gshared` and main-thread-only, like
+/// every other document-model global; starts at 1 so 0 can mean "never seated".
+private __gshared ulong g_nextLayerBirthId = 0;
+
 final class Layer {
+    /// THE LAYER'S IDENTITY, and the close on the address-reuse (ABA) hazard
+    /// the epoch tables carry (task 1906 stage 3; `source/mesh_dirty.d`'s
+    /// header states the hazard as a sequence).
+    ///
+    /// Every cache in the tree that is keyed on a mesh ADDRESS is really keyed
+    /// on "the mesh that lived at this address when I stamped". Two `Layer`
+    /// objects can occupy the same address one after the other — the first
+    /// collected, the second allocated into the same block — and the second
+    /// need not publish anything, so an epoch compare alone cannot tell them
+    /// apart. This id can: it is minted once, here, and never copied,
+    /// restored or reassigned.
+    ///
+    /// IT IS ON `Layer` RATHER THAN ON `Mesh` DELIBERATELY. A `ulong` on `Mesh`
+    /// would be copied by every wholesale `*mesh = …` kernel and written by
+    /// `MeshSnapshot.restore`, so a layer could inherit a scratch mesh's
+    /// identity and an UNDO could restore one — the single thing an identity
+    /// must never do. Here it is structurally impossible: `Layer` is a class,
+    /// its identity is its heap address, and no struct assignment or snapshot
+    /// reaches this field.
+    immutable ulong birthId;
+
+    /// Mint the identity and register it against this layer's mesh address.
+    /// `Layer` has no other constructor, so every `new Layer` in the tree goes
+    /// through here — the same "the compiler is the completeness proof"
+    /// argument `Command.apply`'s `final` carries.
+    this() {
+        birthId = ++g_nextLayerBirthId;
+        import mesh_dirty : noteMeshBirth;
+        noteMeshBirth(cast(size_t)&mesh_, birthId);
+    }
+
     // Task 0615 Stage 5: PRIVATE + renamed from the public `mesh`. This is the
     // enforcement mechanism, not cosmetics — every direct payload consumer
     // outside this module becomes a compile error, and the compiler's error

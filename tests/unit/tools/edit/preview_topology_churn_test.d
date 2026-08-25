@@ -82,28 +82,70 @@ private final class Rig {
         // owns the upload" — exactly this rig's situation — and it turns the
         // upload into the Position-class publish the tools need. No GL.
         gpu.suppressCageUpload = true;
+        // Hold a delivery batch open for this rig's whole life — see `frame`
+        // and `release`. Opened LAST, so the `resize*` publishers above
+        // deliver and zero exactly as they always did; what the batch has to
+        // hold is the EDITS the blocks below make.
+        import mesh : beginDeliveryBatchGlobal;
+        beginDeliveryBatchGlobal();
     }
 
+    /// How many `frame()` calls handed the epoch table a NON-EMPTY word.
+    /// Read once, in `release()` — see there for what it is guarding.
+    size_t fedNonEmpty;
+
     /// One frame of the editor's main loop, as far as this task is concerned:
-    /// the change bus hands this mesh's pending classes to the epoch table and
-    /// the subpatch preview is asked to catch up with the cage.
+    /// the change bus hands this mesh's accumulated classes to the epoch table
+    /// and the subpatch preview is asked to catch up with the cage.
     ///
     /// TASK 1906 STAGE 2d — the `noteMeshChange` line replaces the `true` this
-    /// used to pass for `positionsDirty`, and it mirrors app.d MORE closely
-    /// than the flag did: app.d's per-layer feed at the frame drain hands
-    /// `noteMeshChange` exactly this mesh's own `pendingChanges_`, per layer,
-    /// with the subject address. A scratch mesh no `Document` owns gets no
-    /// delivery of its own (`Mesh.deliverPending`'s subject filter), so a
-    /// headless rig drives the listener body directly.
+    /// used to pass for `positionsDirty`, and it mirrors the editor more
+    /// closely than the flag did: what the hub listener receives is exactly
+    /// this mesh's own change classes, with its subject address.
+    ///
+    /// STAGE 3 REVIEW (M2) — THE WORD IS ONLY STILL THERE BECAUSE THE RIG
+    /// HOLDS A DELIVERY BATCH. Two sentences this comment used to carry were
+    /// wrong by stage 3: there is no per-layer feed at a frame drain any more
+    /// (both are deleted), and a scratch mesh no `Document` owns is NOT
+    /// exempt from delivery — `Mesh.deliverPending`'s subject filter is
+    /// fail-OPEN when `g_isDocumentMesh` is uninstalled, which is every
+    /// headless test. So each publisher below would deliver, and a delivery
+    /// TAKES AND ZEROES this pair: without the batch opened in the ctor the
+    /// line below fed the listener a ZERO on every frame and every staleness
+    /// assertion in this file was free. Inside a batch a publish only
+    /// REGISTERS, which is the state a command's kernel runs in.
     void frame(int depth = 2) {
         import mesh_dirty : noteMeshChange;
-        noteMeshChange(cast(size_t)&mesh, mesh.pendingChanges_);
-        // The drain's half. app.d's feed is read-only because the drain zeroes
-        // the word once per frame; a rig that only reads it re-publishes the
-        // cage's build-time `Points | Polygons` on every call and invalidates
-        // for a reason that is not the edit under test.
-        mesh.pendingChanges_ = 0;
+        if (mesh.undeliveredChanges_ != 0) ++fedNonEmpty;
+        noteMeshChange(cast(size_t)&mesh, mesh.undeliveredChanges_);
+        // What the real delivery would have done. A rig that only READ the
+        // word would re-publish the cage's build-time `Points | Polygons` on
+        // every call and invalidate for a reason that is not the edit under
+        // test — the settle loops below would then never settle.
+        mesh.undeliveredChanges_ = 0;
         preview.rebuildIfStale(mesh, depth);
+    }
+
+    /// Close the ctor's delivery batch. Every block calls this through a
+    /// `scope(exit)` on the line after its `new Rig(...)`.
+    ///
+    /// THE ASSERT IS THE ANTI-VACUITY ARM, and it is a per-block check rather
+    /// than a per-frame one on purpose: many `frame()` calls in this file are
+    /// SETTLE frames with genuinely nothing pending, so a per-frame
+    /// `assert(word != 0)` would redden on a healthy rig. What cannot be true
+    /// of a healthy rig is that NOT ONE frame in a whole block carried a
+    /// class — that only happens when the batch is gone and the publishers'
+    /// own deliveries have taken every word.
+    void release() {
+        import mesh : endDeliveryBatchGlobal;
+        endDeliveryBatchGlobal();
+        assert(fedNonEmpty > 0,
+            "RIG: not one frame handed the epoch table a non-empty change "
+          ~ "word. The delivery batch this rig opens is what keeps "
+          ~ "`undeliveredChanges_` readable (a publisher DELIVERS since task "
+          ~ "1906 stage 3, and a delivery take-and-zeroes it), so a zero here "
+          ~ "means the batch is gone and every staleness assertion in this "
+          ~ "block is free");
     }
 }
 
@@ -172,6 +214,7 @@ private bool positionsDiffer(in Vec3[] a, in Vec3[] b) {
 // ---------------------------------------------------------------------------
 unittest {
     auto rig = new Rig(flatGrid(3), EditMode.Edges);
+    scope(exit) rig.release();
     rig.mesh.selectEdge(0);
 
     rig.frame();
@@ -202,6 +245,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     auto rig = new Rig(subdividedGrid(3), EditMode.Edges);
+    scope(exit) rig.release();
     rig.mesh.selectEdge(0);
     rig.mesh.selectEdge(1);
 
@@ -281,6 +325,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     auto rig = new Rig(subdividedGrid(3), EditMode.Edges);
+    scope(exit) rig.release();
     rig.mesh.selectEdge(0);
     rig.mesh.selectEdge(1);
     rig.frame();
@@ -338,6 +383,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     auto rig = new Rig(subdividedCube(), EditMode.Edges);
+    scope(exit) rig.release();
     rig.mesh.selectEdge(0);
     rig.frame();
     assert(rig.preview.active, "rig must actually subdivide");
@@ -401,6 +447,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     auto rig = new Rig(subdividedCube(), EditMode.Edges);
+    scope(exit) rig.release();
     rig.mesh.selectEdge(0);
     rig.frame();
     assert(rig.preview.active, "rig must actually subdivide");
@@ -455,6 +502,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     auto rig = new Rig(subdividedCube(), EditMode.Edges);
+    scope(exit) rig.release();
     rig.mesh.selectEdge(0);
     rig.frame();
     assert(rig.preview.active, "rig must actually subdivide");
@@ -504,6 +552,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     auto rig = new Rig(subdividedCube(), EditMode.Polygons);
+    scope(exit) rig.release();
     rig.mesh.selectFace(0);
     rig.frame();
     assert(rig.preview.active, "rig must actually subdivide");

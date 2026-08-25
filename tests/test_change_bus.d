@@ -77,7 +77,16 @@ void cmd(string s) {
 // Snapshot of the bus counters at one instant.
 struct Changes {
     ulong flushCount;
-    uint  lastFlushFlags;
+    // TASK 1906 STAGE 3 — `lastFlushFlags` is GONE from the wire, and this
+    // file's three asserts on it were RE-READ rather than repointed by name.
+    // `flush` no longer carries the mesh channel: it drains the three
+    // document-level accumulators only, so `flushCount` does not move for a
+    // mesh edit and the frame's mesh word no longer exists. What those asserts
+    // were about — "the class this command published" — is `lastDeliveryFlags`,
+    // the word of the most recent synchronous delivery, and `deliveryCount` is
+    // the counter to settle on.
+    ulong deliveryCount;
+    uint  lastDeliveryFlags;
     uint  lastSelDomains;
     uint  lastLayerKinds;
     ulong totalPosition, totalPoints, totalPolygons, totalMarks, totalMaterial;
@@ -93,8 +102,9 @@ struct Changes {
 Changes readChanges() {
     auto j = getJson("/api/changes");
     Changes c;
-    c.flushCount     = j["flushCount"].integer;
-    c.lastFlushFlags = cast(uint)j["lastFlushFlags"].integer;
+    c.flushCount        = j["flushCount"].integer;
+    c.deliveryCount     = j["deliveryCount"].integer;
+    c.lastDeliveryFlags = cast(uint)j["lastDeliveryFlags"].integer;
     c.lastSelDomains = cast(uint)j["lastSelDomains"].integer;
     c.lastLayerKinds = cast(uint)j["lastLayerKinds"].integer;
     c.totalPosition  = j["totalPosition"].integer;
@@ -127,14 +137,18 @@ bool meshCountersUnchanged(Changes before, Changes after) {
         && after.totalMaterial == before.totalMaterial;
 }
 
-// Wait until at least one more flush has been delivered since `before`, so the
-// per-frame flush has drained whatever the just-issued command accumulated.
-// (Commands accumulate on the mesh; the main-loop flush delivers next frame.)
+// Wait until at least one more MESH DELIVERY has been made since `before`.
+//
+// TASK 1906 STAGE 3 — this settled on `flushCount` and could not any more: a
+// mesh edit does not move that counter, so every call here would have spun the
+// full 3 s and returned a reading nobody had waited for. `deliveryCount` is the
+// mesh channel's own counter, and since delivery is SYNCHRONOUS with the edit
+// the wait is now usually one poll long rather than one frame.
 Changes settleAfter(Changes before) {
     foreach (i; 0 .. 60) {                 // up to ~3s
         Thread.sleep(dur!"msecs"(50));
         auto now = readChanges();
-        if (now.flushCount > before.flushCount) return now;
+        if (now.deliveryCount > before.deliveryCount) return now;
     }
     return readChanges();
 }
@@ -167,10 +181,10 @@ unittest {
     assert(after.totalPoints == before.totalPoints
         && after.totalPolygons == before.totalPolygons,
         "move_vertex must NOT publish Geometry");
-    assert((after.lastFlushFlags & POSITION) != 0,
-        "last flush should carry Position; got " ~ to!string(after.lastFlushFlags));
-    assert((after.lastFlushFlags & GEOMETRY) == 0,
-        "last flush must not carry Geometry; got " ~ to!string(after.lastFlushFlags));
+    assert((after.lastDeliveryFlags & POSITION) != 0,
+        "last delivery should carry Position; got " ~ to!string(after.lastDeliveryFlags));
+    assert((after.lastDeliveryFlags & GEOMETRY) == 0,
+        "last delivery must not carry Geometry; got " ~ to!string(after.lastDeliveryFlags));
 }
 
 // mesh.subdivide → Points|Polygons (Geometry); undo + redo re-publish the class.
@@ -209,8 +223,8 @@ unittest {
     post(baseUrl ~ "/api/reset", "");          // the reset under test
     auto after = settleAfter(before);
 
-    assert((after.lastFlushFlags & ALLBITS) == ALLBITS,
-        "reset must publish the All mask; got " ~ to!string(after.lastFlushFlags));
+    assert((after.lastDeliveryFlags & ALLBITS) == ALLBITS,
+        "reset must publish the All mask; got " ~ to!string(after.lastDeliveryFlags));
     assert(after.totalPosition > before.totalPosition
         && after.totalPoints   > before.totalPoints
         && after.totalPolygons > before.totalPolygons

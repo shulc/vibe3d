@@ -36,6 +36,25 @@ import operator               : VectorStack;
 void symmetricSelectVertex(Mesh* mesh, Viewport vp, EditMode em,
                            int vi, bool deselect)
 {
+    // TASK 1906 STAGE 3 — THE INTERACTIVE PICK'S DELIVERY BOUNDARY, and it is
+    // here because this module IS that boundary: `mesh.selectVertex/Edge/Face`
+    // publish through `noteSelectionChange`, which accumulates and never
+    // delivers, and the editor's click / paint / lasso paths reach them only
+    // through these three helpers (`input_router.d`, `input_frame_state.d` and
+    // `/api/pick` in `http_providers.d`). Measured, not assumed: with delivery
+    // consuming the frame-drain words, `test_selection` / `test_lasso_select` /
+    // `test_falloff_lasso_paint` / `test_element_pick_fresh_hover` left ~860
+    // frames of `flags=Marks sel=Vertex|Edge|Face` for the drain, and a
+    // per-call-site census of the six scalar setters named exactly one caller
+    // at delivery depth 0: this file.
+    //
+    // ONE delivery per picked ELEMENT, covering the element and its mirror —
+    // hence the batch: the counterpart write must not be a second delivery, and
+    // a helper that returned early (symmetry off, pair table not built) must
+    // still deliver the write it already made, which is what the `scope(exit)`
+    // pair guarantees at all five return points.
+    mesh.beginDeliveryBatch();
+    scope(exit) { mesh.deliverAccumulated(); mesh.endDeliveryBatch(); }
     if (deselect) mesh.deselectVertex(vi);
     else          mesh.selectVertex(vi);
 
@@ -60,6 +79,9 @@ void symmetricSelectVertex(Mesh* mesh, Viewport vp, EditMode em,
 void symmetricSelectEdge(Mesh* mesh, Viewport vp, EditMode em,
                          int ei, bool deselect)
 {
+    // One delivery per picked element — see `symmetricSelectVertex`.
+    mesh.beginDeliveryBatch();
+    scope(exit) { mesh.deliverAccumulated(); mesh.endDeliveryBatch(); }
     if (deselect) mesh.deselectEdge(ei);
     else          mesh.selectEdge(ei);
 
@@ -86,6 +108,9 @@ void symmetricSelectEdge(Mesh* mesh, Viewport vp, EditMode em,
 void symmetricSelectFace(Mesh* mesh, Viewport vp, EditMode em,
                          int fi, bool deselect)
 {
+    // One delivery per picked element — see `symmetricSelectVertex`.
+    mesh.beginDeliveryBatch();
+    scope(exit) { mesh.deliverAccumulated(); mesh.endDeliveryBatch(); }
     if (deselect) mesh.deselectFace(fi);
     else          mesh.selectFace(fi);
 

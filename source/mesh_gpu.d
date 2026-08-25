@@ -1083,8 +1083,19 @@ struct GpuMesh {
         // Preview is currently displayed; cage-indexed scatter writes would
         // corrupt the VBO. Signal a mutation and let the main loop rebuild
         // the preview instead.
+        //
+        // TASK 1906 STAGE 3 (plan §Stage 3 item 5) — this was a BARE
+        // `++mutationVersion`, i.e. a version bump with no publish, which is
+        // exactly the shape `changeBus.missedPublishers` exists to count. It
+        // never tripped the guard only because the sibling arm in `upload()`
+        // publishes on the same frame path and the OLD guard was maskable by
+        // any publisher in the frame. The re-pointed guard is per-mesh and not
+        // maskable, so the choice was "convert or exempt": converted, matching
+        // the sibling verbatim, since `commitChange(Position)` sets the class
+        // AND bumps the version and the sibling's own comment argues at length
+        // that the bare bump is the wrong half of that pair.
         if (suppressCageUpload) {
-            ++(cast(Mesh*)&mesh).mutationVersion;
+            (cast(Mesh*)&mesh).commitChange(MeshEditScope.Position);
             return;
         }
         ++uploadVersion;

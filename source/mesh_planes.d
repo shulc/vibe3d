@@ -332,10 +332,11 @@ enum string[string] kExemptPlanes = [
 // a regex over the source text, which is what put a wrong number (33) in an
 // earlier draft of that plan):
 //
-//   2026-08-25, task 1903 Stage A — CURRENT:
-//     Mesh.tupleof.length                          == 55
+//   2026-08-25, task 1906 stage 3 — CURRENT:
+//     Mesh.tupleof.length                          == 54
 //     count of those fields that are array-shaped  == 34
 //
+//   2026-08-25, task 1903 Stage A — superseded: 55 / 34.
 //   2026-08-25, task 1906 stage 0 — superseded: 56 / 34.
 //   2026-08-25, pre-1906 — superseded: 54 / 34.
 //
@@ -347,12 +348,22 @@ enum string[string] kExemptPlanes = [
 // swap in the new value's empty tracker mid-record. The array-shaped count is
 // unmoved, which is exactly the signal the paired asserts exist to give.
 //
-// 1906 had added `Mesh.undeliveredChanges_` and
-// `Mesh.undeliveredSelDomains_` — SCALARS, the synchronous-delivery
-// accumulator beside the existing per-frame `pendingChanges_` /
-// `pendingSelDomains_` pair, which are scalars here for the same reason. They
-// carry change CLASSES, not per-element data, so nothing about them is
-// carried through a face or vertex remap.
+// What moved at 1906 stage 3, and the array-shaped count did NOT — which is
+// the paired asserts working as designed, since all three are scalars:
+//
+//   ADDED   `Mesh.stampedVersion_` — `mutationVersion` as of the last stamp
+//           made through `commitStamps`, i.e. the witness the missed-publisher
+//           guard compares against.
+//   REMOVED `Mesh.pendingChanges_` and `Mesh.pendingSelDomains_` — the
+//           per-frame drain words. Stage 3 deleted the drain in `source/app.d`
+//           that read and zeroed them; every publisher now delivers
+//           synchronously, so the second accumulator had no reader left.
+//
+// None of the three carries per-element data, so nothing about them is carried
+// through a face or vertex remap and none belongs in a plane table. The layer
+// IDENTITY that stage 3 also added is deliberately NOT here: it is a field of
+// `Layer`, not of `Mesh`, so that no wholesale `*mesh = …` and no
+// `MeshSnapshot.restore` can copy or restore it (see `document.Layer.birthId`).
 // ---------------------------------------------------------------------------
 
 /// Count of `T`'s instance fields whose type is a dynamic or static array —
@@ -372,7 +383,7 @@ template countArrayShapedFields(T) {
     }();
 }
 
-static assert(Mesh.tupleof.length == 55,
+static assert(Mesh.tupleof.length == 54,
     "Mesh gained (or lost) an instance field. Classify it before bumping this "
   ~ "count: per-face data goes in kFacePlanes, per-vertex data in kVertPlanes "
   ~ "— INCLUDING data behind a wrapper struct such as FaceList, which is not "
@@ -383,7 +394,7 @@ static assert(Mesh.tupleof.length == 55,
   ~ "below to learn which KIND landed.");
 
 static assert(countArrayShapedFields!Mesh == 34,
-    "Mesh gained (or lost) an ARRAY-shaped field. If the 55-count above moved "
+    "Mesh gained (or lost) an ARRAY-shaped field. If the 54-count above moved "
   ~ "too, the new field is a plain array — a plane candidate, classify it. If "
   ~ "ONLY the count above moved, it is a scalar or a wrapper type.");
 

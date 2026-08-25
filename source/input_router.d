@@ -1152,6 +1152,51 @@ struct InputRouter {
                 // anchor on local mesh coordinates themselves, so handing
                 // them `vpLocal` would apply the item transform twice (R10).
                 // ---------------------------------------------------------
+
+                // TASK 1906 STAGE 3 (review M1) — THE GESTURE IS THE DELIVERY
+                // BOUNDARY HERE, NOT THE ELEMENT.
+                //
+                // Every `symmetricSelect*` call below opens a batch of its own
+                // that closes per PICKED ELEMENT, and this block picks as many
+                // elements as the band encloses. Without this outer batch a
+                // single RMB lasso over a dense grid was one bus delivery PER
+                // FACE — measured on `grid n=64`: 3 417 faces selected, 3 417
+                // deliveries; at n=316 a full-viewport band is tens of
+                // thousands, each one a fan-out to every listener. (A wall-clock
+                // figure once stood here and was withdrawn at the stage-3 review:
+                // back-to-back, 29 040 deliveries vs 1 measured 381 vs 382 ms —
+                // under 1 ms in total; the batch is justified by the unbounded
+                // O(N) contract, not by a cost.) The
+                // public SDK this seam follows batches selection at the
+                // SERVICE and hands a listener ONE add/remove per batch per
+                // selection type; per element is the shape it exists to
+                // prevent.
+                //
+                // It wraps the CLEAR as well as the selects, deliberately: an
+                // unmodified lasso is `clearFaceSelection()` followed by N
+                // selects, and those are one gesture, not two.
+                //
+                // Nested, so the inner per-element batches degrade to
+                // register-only and the close here delivers ONCE. The
+                // `scope(exit)` covers the whole `if` body including the
+                // `return` the preview-stale branch takes; it fires before
+                // `commitInteractiveSelEdit()` below, which is the undo
+                // session's boundary and not the bus's.
+                //
+                // THERE IS NO ABORT ARM, and that is a finding rather than an
+                // omission — see `doc/bus_sync_listeners_plan.md` §1.4. The
+                // whole gesture (band close, clear, select) happens inside
+                // THIS mouse-up handler; there is no window in which the batch
+                // is open and a cancel could arrive. And a discard would be
+                // wrong in kind even if there were one: what accumulates here
+                // is INVALIDATION for marks that have already been written, so
+                // dropping it under-invalidates rather than undoing anything.
+                app.mesh.beginDeliveryBatch();
+                scope(exit) {
+                    app.mesh.deliverAccumulated();
+                    app.mesh.endDeliveryBatch();
+                }
+
                 SDL_Keymod mods = SDL_GetModState();
                 bool shift = (mods & KMOD_SHIFT) != 0;
                 bool ctrl  = (mods & KMOD_CTRL)  != 0;

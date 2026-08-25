@@ -1728,18 +1728,14 @@ void main(string[] args) {
     // replayed events themselves emit their own per-op classes afterward.) The
     // HTTP /api/play-events test driver deliberately does NOT do this, so a
     // replayed drag there stays Position-only.
-    if (playbackMode) {
-        import change_bus : MeshChangeAll;
-        // TASK 1906 STAGE 2 — this one STAYS a `noteChange`, and the reason is
-        // ordering, not taste: the mesh-channel subscriber below (the hub that
-        // feeds `meshChangedFlags` AND `mesh_dirty`) is registered several
-        // hundred lines further down, so a `publishChange` here would deliver
-        // to an empty listener list and consume the undelivered word for
-        // nothing. `pendingChanges_` survives that either way and the first
-        // frame's per-layer feed at the flush site is what actually seeds the
-        // epochs — which is exactly what this line is for.
-        mesh.noteChange(MeshChangeAll);
-    }
+    // TASK 1906 STAGE 3 — the seed itself MOVED, to just after the hub
+    // subscriber is registered (search `playbackMode` there). The stage-2 note
+    // here was right about the ordering and wrong about the remedy: a
+    // `publishChange` at THIS point would deliver into an empty listener list,
+    // and the reason that used to be survivable was the per-frame drain, which
+    // re-supplied the word a frame later. With the drain gone the only fix is
+    // to publish where a listener exists, so the line went to the listener
+    // instead of the listener waiting for the line.
 
     // Subpatch preview: cached subdivision of the cage mesh, rebuilt lazily
     // when mesh.mutationVersion or depth changes. Depth is user-adjustable;
@@ -2024,13 +2020,16 @@ void main(string[] args) {
         // before. Per-frame aggregation is not lost; it moved out of the bus
         // into the one consumer that wants it.
         //
-        // TASK 1906 STAGE 2 — and now the hub is also where `subjectAddr`
-        // stops being ignored. (A delivery from `ChangeBus.flush` carries
-        // subject 0 and `mesh_dirty` ignores it; the frame drain feeds the
-        // same flags per layer at the flush site, where the subject is known.) `mesh_dirty.noteMeshChange` is the second half
+        // TASK 1906 STAGE 3 — THIS IS THE ONLY FEED into `mesh_dirty`, and it
+        // always names a subject. Stage 2 introduced a second one (a per-layer
+        // loop at the flush site, re-supplying the same word out of
+        // `Mesh.pendingChanges_`) because `ChangeBus.flush` delivered with
+        // subject 0 and `mesh_dirty` refuses a subject-less aggregate; stage 3
+        // took the mesh channel off the flush entirely and both went away.
+        // `mesh_dirty.noteMeshChange` is the second half
         // of this listener: it advances a per-mesh-address EPOCH for the
         // display classes and for the geometry classes, and the consumers that
-        // used to poll `mesh.pendingChanges_` or a version counter
+        // used to poll a per-frame word or a version counter
         // (`ensureDisplayCurrent`, the flush-site upload, the cage/preview
         // upload, `BgGpu`, the surface BVH) compare against those epochs at
         // their own lazy recompute instead. ONE registration for all of them,
@@ -2041,19 +2040,23 @@ void main(string[] args) {
         // Still dirty-bit-only per §1.5 — two ORs and a counter bump, no mesh
         // read, no allocation, no GL. `noteMeshChange` is `nothrow @nogc`.
         //
-        // THE CLASSES ARE LOAD-BEARING AND THAT IS PINNED AS A PAIR by
-        // `tests/test_bus_epoch_position_class.d`: strip `Position` here AND
-        // at the per-layer feed in the flush block and the cage vertex VBO
-        // stops following an interactive transform. Stripping it here ALONE
-        // stays green (measured, task 1906 review round 2): the per-layer feed
-        // re-supplies the class at the top of the same flush block that then
-        // runs the upload, and no reader samples the epoch between the two
-        // writers until stage 3 retires the drain. It took a purpose-built
-        // cell — six existing tests, `test_bus_position_pixel` and
-        // `test_bus_surface_raycast_after_drag` among them, all stay green
-        // under that mutation, because every one of their rigs also publishes
-        // a bulk `MeshChangeAll` (a layer promotion, a reset) whose
-        // `Points|Polygons` advance the same epochs on their own.
+        // THE CLASSES ARE LOAD-BEARING, AND SINCE STAGE 3 THIS IS THE ONLY
+        // PLACE THEY CAN BE STRIPPED. `tests/test_bus_epoch_position_class.d`
+        // pins it: drop `Position` from this listener and the cage vertex VBO
+        // stops following an interactive transform.
+        //
+        // The pin USED to need a PAIR of mutations — here and at a second,
+        // per-layer feed at the top of the flush block — because that feed
+        // re-supplied the class before the upload ran, so stripping this site
+        // alone stayed green (measured, task 1906 review round 2). Stage 3
+        // deleted the second feed, so the pair collapsed to one site and the
+        // mutation row is a single line again. What made the old pin so hard
+        // to write is worth keeping: six existing tests,
+        // `test_bus_position_pixel` and `test_bus_surface_raycast_after_drag`
+        // among them, stay green under that mutation, because every one of
+        // their rigs also publishes a bulk `MeshChangeAll` (a layer
+        // promotion, a reset) whose `Points|Polygons` advance the same epochs
+        // on their own — so a purpose-built cell is still what pins it.
         changeBus.onMeshChanged((size_t subjectAddr, uint flags) {
             meshChangedFlags |= flags;
             import mesh_dirty : noteMeshChange;
@@ -2063,6 +2066,24 @@ void main(string[] args) {
             selChangedDomains |= domains;
             ++fboSelEpoch;
         });
+
+        // Bulk transition (change-notification bus, Stage 1; MOVED here at
+        // stage 3): launching a recorded session (`--playback <file>`) is a
+        // fresh-scene boundary — publish All once so the first frame rebuilds
+        // every cache from the loaded state. (The replayed events themselves
+        // emit their own per-op classes afterwards.) The HTTP /api/play-events
+        // test driver deliberately does NOT do this, so a replayed drag there
+        // stays Position-only.
+        //
+        // IT SITS BELOW THE REGISTRATION ABOVE ON PURPOSE. Delivery is
+        // synchronous, so the seed reaches exactly the listeners that exist
+        // when it fires; before stage 3 the same line stood a few hundred
+        // lines higher and relied on the per-frame drain to re-supply its word
+        // after the hub had been registered.
+        if (playbackMode) {
+            import change_bus : MeshChangeAll;
+            mesh.publishChange(MeshChangeAll);
+        }
     }
 
     // `Mesh.visibleVertices` is not used from this loop — the lasso path
@@ -2101,27 +2122,27 @@ void main(string[] args) {
     // the two-word `displayEnsured_` / `displayEnsuredMesh_` shadow it
     // replaces is gone along with its transfer-back block at the flush site.
     //
-    // What the shadow was for: the guard consumed bits out of
-    // `pendingChanges_`, so the frame drain had to be told which bits had
-    // already been serviced and by whom, and hand them back to the flush
-    // subscribers afterwards. With the display family keyed on the bus epoch
-    // instead, `pendingChanges_` is never touched here at all — every other
-    // subscriber keeps receiving full flags with no transfer-back, and the
-    // dedup is simply "have I already serviced THIS mesh at THIS epoch".
+    // What the shadow was for: the guard consumed bits out of a per-frame
+    // pending word, so the frame drain that also read that word had to be told
+    // which bits had already been serviced and by whom, and hand them back to
+    // the flush subscribers afterwards. With the display family keyed on the
+    // bus epoch instead, no pending word is touched here at all, and the dedup
+    // is simply "have I already serviced THIS mesh at THIS epoch". (Stage 3
+    // then deleted the drain and the word outright.)
     //
     // Multi-layer: this stamp carries the mesh ADDRESS, so a layer switch
     // mismatches it and re-services, and a background layer's dirt is no
-    // longer silently dropped by the frame drain — it sits in that address's
-    // epoch until the layer becomes active. (`refreshDisplay`'s own
-    // active-mesh gate still keeps a background owner from being uploaded.)
+    // longer silently dropped — it sits in that address's epoch until the
+    // layer becomes active. (`refreshDisplay`'s own active-mesh gate still
+    // keeps a background owner from being uploaded.)
     MeshDirtyKey displayServiced_;
     // A5 (post-gate fix): while the transform family drags, the VBO is
     // tool-owned (baseline + live u_model) — re-uploading LIVE verts would
     // double-apply the drag delta for any reader that renders with the tool
     // matrix. Late-bound predicate (lifecycleRecordHook pattern: null until
     // wired after `activeTool` is declared below); when it fires, readers
-    // keep the pre-bus mid-drag semantics (VBO as the tool left it) and the
-    // flags stay pending for the frame drain.
+    // keep the pre-bus mid-drag semantics (VBO as the tool left it); the
+    // epochs still advance, so the next non-tool-owned frame re-uploads.
     bool delegate() displayVboOwnedByTool_ = null;
     void ensureDisplayCurrent() {
         import display_sync : refreshDisplay;
@@ -3227,16 +3248,20 @@ void main(string[] args) {
         // 5. publish a bulk change on the new active mesh. (The required cache
         //    refresh stays MeshChangeAll — the on-screen geometry is a different
         //    mesh; the scope-down rider is deliberately NOT taken here.)
-        //    TASK 1906 STAGE 2 — a `noteChange` here is NOT the blind case the
-        //    command tails were, and it is worth saying why rather than
-        //    converting it reflexively. Two independent things already cover
-        //    this hook: step 3 above uploads the new active mesh and invalidates
-        //    the pick caches ITSELF, and `displayServiced_` (the bus-epoch key
-        //    the display guard stamps) carries the mesh ADDRESS — which by
-        //    definition just changed, so the guard mismatches and re-services
-        //    even with the epoch standing still. What this line is for is the
-        //    per-frame drain's subscribers, and they read `pendingChanges_`.
-        active.noteChange(MeshChangeAll);
+        //    TASK 1906 STAGE 3 — this WAS the one `noteChange` whose only
+        //    channel was the per-frame drain, and the stage-2 comment here said
+        //    so in as many words ("what this line is for is the per-frame
+        //    drain's subscribers, and they read `pendingChanges_`"). It was also
+        //    the only residue the stage-3 census measured: with delivery
+        //    consuming the drain words, `layer.add` and `layer.duplicate` were
+        //    the two commands that still left `flags=0x3f` for the flush.
+        //    Publishing instead is strictly MORE information, not less — the
+        //    drain's own delivery carried `subjectAddr == 0`, which `mesh_dirty`
+        //    refuses by design, so the three epoch tables never saw this hook at
+        //    all; a publish names the NEW mesh and advances them for its
+        //    address. Step 3 above and the address term in `displayServiced_`
+        //    still cover the display half independently, as they did before.
+        active.publishChange(MeshChangeAll);
         // 6. publish the SEMANTIC layer event. This hook is the SINGLE funnel
         //    that fires iff the PRIMARY (active) Layer OBJECT genuinely changed
         //    (Stage 2a: `active()` == `primary`, so `fireSwitchIfChanged` keys on
@@ -5993,42 +6018,34 @@ void main(string[] args) {
             //     (subscribers are invalidate-only and never read the VBO).
             // No cache resize/invalidate here — the flag-driven block after
             // the flush already services vc/ec/fc from meshChangedFlags.
-            // Active-layer flags only (not the cross-layer aggregate): an
-            // undo landing on a background layer must not re-upload the
-            // active one — same gate the command-side refresh had.
-            // TASK 1906 STAGE 2a — THE SECOND FEED, and it is here rather
-            // than inside the bus for a reason worth stating.
+            // Active-layer only: an undo landing on a background layer must not
+            // re-upload the active one — same gate the command-side refresh
+            // had, and since stage 3 the epoch stamp carries the ADDRESS, so
+            // the two are the same test.
+            // TASK 1906 STAGE 3 — THE SECOND FEED IS GONE, and so is the drain
+            // it read. Until this stage a mesh change reached a consumer by TWO
+            // paths: the synchronous delivery at the edit boundary (which names
+            // its subject) and a per-frame drain of `Mesh.pendingChanges_`,
+            // whose own `changeBus.flush` named NO subject — it handed out the
+            // union over every layer, which `mesh_dirty` had to refuse. The
+            // drain's information was therefore re-fed PER LAYER from this
+            // block, where the address was known.
             //
-            // Until stage 3 a mesh change reaches a consumer by TWO paths: the
-            // synchronous delivery at the edit boundary (which names its
-            // subject) and this per-frame drain of `pendingChanges_` (whose
-            // `changeBus.flush` names NO subject — it hands out the union over
-            // every layer). `mesh_dirty` refuses that subject-less aggregate,
-            // because acting on it would mark every mesh address it does not
-            // track as changed once per changed frame — and the address it
-            // does not track is precisely the static background mesh whose
-            // surface BVH the Topology Pen leans on.
+            // What made the deletion possible is that every publisher now
+            // delivers: `Command.apply` offers its mesh at the batch close, the
+            // interactive pick helpers in `symmetry_pick.d` open a batch of
+            // their own, and every selection WRITER on `Mesh` (the six scalar
+            // setters, the three bulk `clear*`, `applySelectedFrom_`) is a
+            // delivering publisher. Measured rather than argued: with delivery
+            // consuming the drain words, a 33-test focused suite left ZERO
+            // frames of residue for the drain to carry, from ~1670 before.
             //
-            // Here the subject IS known: each layer owns its own pending word.
-            // So the drain's information is fed per layer, from this loop, and
-            // BEFORE the upload site below so a publisher that only
-            // `noteChange`d still refreshes the display in the SAME frame it
-            // did before stage 2a. Read-only — the zeroing stays in the drain.
-            {
-                import mesh_dirty : noteMeshChange;
-                foreach (layer; document.layers) {
-                    if (!layer.hasMesh) continue;
-                    // ONE `meshRef()` per layer, not two: the accessor carries
-                    // a debug assert, and this loop runs over every layer of
-                    // every frame.
-                    auto m = &layer.meshRef();
-                    noteMeshChange(cast(size_t)m, m.pendingChanges_);
-                }
-            }
-
+            // DO NOT PUT A FEED BACK HERE. A consumer that needs a class it is
+            // not getting is a publisher that is not publishing; fix the
+            // publisher.
             {
                 // TASK 1906 STAGE 2a — the trigger is the bus epoch for THIS
-                // mesh address, not a pull on `mesh.pendingChanges_`. Same
+                // mesh address, not a pull on a per-frame pending word. Same
                 // place, same gate, same dedup against the mid-batch guard
                 // (both stamp `displayServiced_`).
                 const size_t ma = cast(size_t)&mesh();
@@ -6054,99 +6071,84 @@ void main(string[] args) {
                 }
             }
 
-            // Stage 0b — aggregate pending flags across ALL document layers,
-            // then flush once. Each layer's mesh accumulates its own
-            // `pendingChanges_`/`pendingSelDomains_` independently; we OR them
-            // into the frame's flags and zero each layer's pending set. With the
-            // single layer that exists in 0b this is byte-equivalent to draining
-            // the one global mesh: the active layer's flags ARE the frame's
-            // flags, and no other layer is ever mutated.
-            uint meshFlags  = 0;
-            uint selDomains = 0;
-
-            // Shadow cross-check (Stage 1, debug builds only; retired in Stage
-            // 6). The bus trades blanket per-frame invalidation for precision, so
-            // a MISSED publisher (a mutation that bumped mutationVersion but
-            // forgot to noteChange/commitChange) would silently leave a stale
-            // cache. Going per-layer: a missed publisher on a BACKGROUND mesh
-            // must still trip it, so the stamp is per-Layer (a `ulong[Layer]`
-            // map) rather than one function-local. The stamp SEEDS LAZILY — the
-            // first time the flush sees a layer it records the current
-            // mutationVersion WITHOUT comparing, so a freshly built layer
-            // (layered load / import / future layer.add) whose mutationVersion
-            // is already non-zero does not false-positive on its first flush.
+            // ---- THE MISSED-PUBLISHER GUARD (task 0462), RE-POINTED -------
+            // The bus trades blanket per-frame invalidation for precision, so
+            // a MISSED publisher — a mutation site that bumped
+            // `mutationVersion` but never noteChange/commitChange'd — silently
+            // leaves every bus-keyed cache stale. This block is the only
+            // reader of that condition, and `changeBus.missedPublishers` is
+            // its test-introspectable form (asserted to stay 0 by
+            // `tests/test_change_bus.d`, `test_nonmesh_items.d`,
+            // `test_reduce.d`).
+            //
+            // WHAT CHANGED AT STAGE 3, and it is the whole reason this block
+            // was rewritten rather than left alone. The old test was
+            // FRAME-SHAPED: "`mutationVersion` moved while `pendingChanges_`
+            // reads 0", which needed the per-frame drain to zero that word for
+            // it and a per-`Layer` map of last-seen versions to compare
+            // against. Stage 3 deleted the drain, so the old form would have
+            // been PERMANENTLY GREEN — a check that cannot come out
+            // differently. It was also maskable: any other publisher on the
+            // same mesh in the same frame filled the word and hid the bare
+            // bump.
+            //
+            // The new witness is `Mesh.stampedVersion_`, written ONLY by
+            // `Mesh.commitStamps` — the one funnel allowed to advance
+            // `mutationVersion` — so the invariant is a per-mesh equality that
+            // no other publisher can restore. It needs no frame, no drain, no
+            // map and no lazy seeding: a freshly built layer whose factory
+            // already advanced the version advanced the stamp with it.
+            //
+            // Re-sync after counting, so ONE bare bump is counted ONCE rather
+            // than on every frame for the rest of the session (the counter is
+            // read as a DELTA across a step).
+            //
+            // `debug` because this is a diagnostic, and the editor binary the
+            // suite drives is built by `dub build` at the default `debug`
+            // buildType. THE MUTATION ROW FOR THIS READ SITE: put a bare
+            // `++mesh().mutationVersion;` anywhere in this block and
+            // `tests/test_change_bus.d`'s `missedPublishers` assertion must go
+            // red; delete this block and the same mutation goes green again.
             debug {
                 import core.stdc.stdio : fprintf, stderr;
-                import document : Layer;
-                import change_bus : changeBus;
-                static ulong[Layer] lastSeenMutVer;
-                static bool  warnedMissedPublisher = false;
-
+                static bool warnedMissedPublisher = false;
                 foreach (layer; document.layers) {
-                    // Task 0615 Stage 4 (R7): a non-mesh layer never advances
-                    // a mutationVersion, so it must never get a
-                    // `lastSeenMutVer` entry — skip BEFORE the first read/seed,
-                    // not after.
+                    // Task 0615 Stage 4 (R7): a non-mesh layer has no version
+                    // to witness — skip before the accessor, which carries a
+                    // debug assert of its own.
                     if (!layer.hasMesh) continue;
-                    // Task 1906 stage 2a: the `displayEnsured_` shadow term
-                    // this used to OR in is gone with the shadow itself — the
-                    // display guard no longer consumes bits out of
-                    // `pendingChanges_`, so what the drain sees IS what the
-                    // publishers wrote.
-                    const lf = layer.meshRef().pendingChanges_;
-                    // recorded remainder (1906 §3.6): `mutationVersion` owns
-                    // the compare below and CANNOT be migrated — this is the
-                    // shadow check that catches a version bump made WITHOUT a
-                    // publish (`changeBus.missedPublishers`, read at
-                    // /api/changes, asserted to stay 0). A bus epoch is the
-                    // very signal a missed publisher fails to produce, so
-                    // keying this on one would make it agree by construction:
-                    // the check would be green exactly when it should be red.
-                    auto seen = layer in lastSeenMutVer;
-                    if (seen is null) {
-                        // First observation of this layer — seed, do not compare.
-                        lastSeenMutVer[layer] = layer.meshRef().mutationVersion;
-                    } else if (layer.meshRef().mutationVersion != *seen && lf == 0) {
-                        // Test-introspectable count (via /api/changes) — always
-                        // ticks, even after the one-shot stderr line latches, so
-                        // a regression test can assert it stays 0 (task 0462).
-                        changeBus.missedPublishers++;
-                        if (!warnedMissedPublisher) {
-                            fprintf(stderr,
-                                "change_bus: MISSED PUBLISHER — mutationVersion " ~
-                                "advanced (%llu) with no pending change flags; a " ~
-                                "mutation site bumped the version but did not " ~
-                                "noteChange/commitChange.\n",
-                                cast(ulong)layer.meshRef().mutationVersion);
-                            warnedMissedPublisher = true;
-                        }
-                        lastSeenMutVer[layer] = layer.meshRef().mutationVersion;
-                    } else {
-                        lastSeenMutVer[layer] = layer.meshRef().mutationVersion;
+                    // ONE `meshRef()` per layer: this loop runs every frame.
+                    auto lm = &layer.meshRef();
+                    // recorded remainder (1906 §3.6): `mutationVersion` OWNS
+                    // this compare and cannot be migrated. The condition under
+                    // test IS "a version moved with no publish", so a bus
+                    // epoch — the very signal a missed publisher fails to
+                    // produce — would make the check agree by construction:
+                    // green exactly when it should be red. The other term,
+                    // `stampedVersion_`, is written only by `commitStamps`,
+                    // which is the funnel the invariant is about.
+                    if (lm.mutationVersion == lm.stampedVersion_) continue;
+                    changeBus.missedPublishers++;
+                    if (!warnedMissedPublisher) {
+                        fprintf(stderr,
+                            "change_bus: MISSED PUBLISHER — mutationVersion " ~
+                            "advanced (%llu) past the last commitStamps stamp " ~
+                            "(%llu); a mutation site bumped the version but " ~
+                            "did not noteChange/commitChange.\n",
+                            cast(ulong)lm.mutationVersion,
+                            cast(ulong)lm.stampedVersion_);
+                        warnedMissedPublisher = true;
                     }
+                    lm.stampedVersion_ = lm.mutationVersion;
                 }
             }
-
-            foreach (layer; document.layers) {
-                // Task 0615 Stage 4 (R7): same skip as the debug loop above —
-                // a non-mesh layer has no pending flags to aggregate.
-                if (!layer.hasMesh) continue;
-                meshFlags  |= layer.meshRef().pendingChanges_;
-                selDomains |= layer.meshRef().pendingSelDomains_;
-                layer.meshRef().pendingChanges_    = 0;
-                layer.meshRef().pendingSelDomains_ = 0;
-            }
-
-            // (Task 1906 stage 2a deleted the transfer-back that stood here:
-            // `ensureDisplayCurrent` no longer moves bits out of
-            // `pendingChanges_`, so there is nothing to give back.)
 
             // Layer-structural changes are DOCUMENT-level, not per-mesh, so they
             // accumulate in a module-level word (change_bus.pendingLayerChanges)
             // rather than on any Mesh. Drain read-and-zero here, in the same
-            // single flush site, and deliver it as flush's third arg (delivered
-            // LAST, after meshChanged + selectionChanged). The next frame drains
-            // it again, so it survives /api/reset without stranding.
+            // single flush site, and deliver it as flush's LAYER arg (delivered
+            // after the item-selection domain). The next frame drains it again,
+            // so it survives /api/reset without stranding.
             import change_bus : pendingLayerChanges;
             uint layerKinds = pendingLayerChanges;
             pendingLayerChanges = 0;
@@ -6156,7 +6158,7 @@ void main(string[] args) {
             // layer kinds and is OR-ed into the SELECTION word here, drained
             // read-and-zero. Survives /api/reset like pendingLayerChanges.
             import change_bus : pendingItemSelDomain;
-            selDomains |= pendingItemSelDomain;
+            uint itemSelDomains = pendingItemSelDomain;
             pendingItemSelDomain = 0;
 
             // Current-type flips are session-level (the SelType recent-ordering
@@ -6169,7 +6171,7 @@ void main(string[] args) {
             SelType newType     = pendingCurrentType;
             pendingCurrentTypeSet = false;
 
-            changeBus.flush(meshFlags, selDomains, layerKinds,
+            changeBus.flush(itemSelDomains, layerKinds,
                             typeChanged, newType);
         }
 

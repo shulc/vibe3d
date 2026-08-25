@@ -253,14 +253,24 @@ unittest {
 
     SubpatchPreview preview;
     // TASK 1906 STAGE 2d — the bus feed by hand. `rebuildIfStale` keys on the
-    // change bus's per-mesh epoch now, and a scratch cage no `Document` owns
-    // gets no delivery at all (`Mesh.deliverPending`'s subject filter), so the
-    // listener BODY is called directly — the arrangement `mesh_dirty`'s header
-    // documents for a headless test. The address is a stack local, which is
-    // safe HERE (unlike the two-cage block further down, which needs two
-    // addresses to COLLIDE): this block only needs one address's epoch to hold
-    // still across a call and then move, and nothing else runs in between.
-    noteMeshChange(cast(size_t)&cage, cage.pendingChanges_);
+    // change bus's per-mesh epoch now, and no `app.d` hub is registered in a
+    // unittest binary, so the listener BODY is called directly — the
+    // arrangement `mesh_dirty`'s header documents for a headless test. (The
+    // subject filter does NOT stop a scratch cage: `g_isDocumentMesh` is
+    // UNINSTALLED here and delivery is fail-OPEN, so this cage's own
+    // publishers do deliver — they just deliver to nobody. What that costs is
+    // the accumulator: a delivery take-and-zeroes it, which is why the two
+    // feeds below name a CLASS instead of reading `undeliveredChanges_`.)
+    // The address is a stack local, which is safe HERE (unlike the two-cage
+    // block further down, which needs two addresses to COLLIDE): this block
+    // only needs one address's epoch to hold still across a call and then
+    // move, and nothing else runs in between.
+    //
+    // The seed word is deliberately not asserted non-empty: the FIRST
+    // `rebuildIfStale` builds unconditionally (`active` starts false), so this
+    // line is a seed, not the signal under test. The signal is the named
+    // `MeshEditScope.Position` feed further down.
+    noteMeshChange(cast(size_t)&cage, cage.undeliveredChanges_);
     preview.rebuildIfStale(cage, 1);
     assert(preview.active, "preview should activate on a fully-subpatched cube");
     Vec3[] before = preview.mesh.vertices.dup;
@@ -594,8 +604,8 @@ unittest {
 // every class, so "any class" reproduced the invalidation set the counter
 // already had. It does not. `Mesh.noteSelectionChange` — the funnel under
 // every marks setter, and therefore under every pick — ORs in `Marks` and
-// deliberately bumps NO version, and `app.d`'s per-layer feed hands that
-// mesh's `pendingChanges_` straight to the epoch table. So an any-class epoch
+// deliberately bumps NO version, and the setter's own DELIVERY hands that
+// `Marks` word straight to the epoch table. So an any-class epoch
 // moves on a plain selection click and the preview re-evaluates: with a live
 // preview that is the OSD stencil evaluate plus the VBO fan-out, per picking
 // frame, where the cost had been exactly zero.
@@ -619,7 +629,7 @@ unittest {
 unittest {
     import mesh       : Mesh, SubpatchPreview, makeCube;
     import mesh_dirty : noteMeshChange;
-    import change_bus : MeshEditScope;
+    import change_bus : MeshEditScope, changeBus;
     import std.conv   : to;
 
     // HEAP, for the reason the block above states: the epoch table is keyed by
@@ -631,8 +641,7 @@ unittest {
     cage.resetSelection();
 
     SubpatchPreview sp;
-    noteMeshChange(cast(size_t)cage, cage.pendingChanges_);
-    cage.pendingChanges_ = 0;          // the frame drain zeroes it
+    noteMeshChange(cast(size_t)cage, MeshEditScope.Geometry);
     sp.rebuildIfStale(*cage, 1);
     assert(sp.active, "setup: a fully-subpatched cube must activate");
 
@@ -640,13 +649,32 @@ unittest {
     const ulong mv0   = cage.mutationVersion;
 
     // Six picking frames. `selectVertex` is a marks setter: it goes through
-    // `noteSelectionChange`, which publishes `Marks` and bumps no version.
-    // `noteMeshChange` with the mesh's own `pendingChanges_` is byte-for-byte
-    // what app.d's per-layer feed hands the listener at the frame drain.
+    // `noteSelectionChange`, which ORs in `Marks` and bumps no version, and
+    // since stage 3 the setter itself DELIVERS that word.
+    //
+    // THE FEED NAMES THE CLASS, AND THAT IS A CORRECTION (review of stage 3,
+    // M2). It used to read `cage.undeliveredChanges_` — "byte-for-byte what
+    // app.d's per-layer feed hands the listener". Both halves of that sentence
+    // died at stage 3: the per-layer feed is gone, and the accumulator it read
+    // is TAKEN AND ZEROED by the setter's own delivery one line earlier. So
+    // the rig was handing the epoch table a ZERO on all six iterations and
+    // the assertion below was free. Verified: an
+    // `assert(cage.undeliveredChanges_ != 0)` inserted at the old feed reddens
+    // on iteration 1.
+    //
+    // `Marks` is not a guess about what the setter publishes — the assert
+    // inside the loop reads it off the DELIVERY the bus was actually handed,
+    // so a setter that changed its class desyncs loudly instead of silently.
     foreach (i; 0 .. 6) {
+        const ulong deliveriesBefore = changeBus.deliveryCount;
         cage.selectVertex(cast(uint)i);
-        noteMeshChange(cast(size_t)cage, cage.pendingChanges_);
-        cage.pendingChanges_ = 0;
+        assert(changeBus.deliveryCount == deliveriesBefore + 1
+            && changeBus.lastDeliverySubject == cast(size_t)cage
+            && changeBus.lastDeliveryFlags == MeshEditScope.Marks,
+            "RIG: `selectVertex` must be a delivering publisher of exactly "
+            ~ "`Marks` for THIS cage — the feed below hands the epoch table "
+            ~ "that class by name, and this is what keeps the name honest");
+        noteMeshChange(cast(size_t)cage, MeshEditScope.Marks);
         sp.rebuildIfStale(*cage, 1);
     }
     assert(cage.mutationVersion == mv0,

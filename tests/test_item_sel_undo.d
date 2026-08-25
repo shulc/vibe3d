@@ -142,6 +142,7 @@ void redoOk(string why) {
 
 struct Changes {
     long flushCount;
+    long deliveryCount;
     long totalPosition;
     long totalSelItem;
     long currentTypeChanged;
@@ -153,6 +154,7 @@ Changes changes() {
     auto j = getJson("/api/changes");
     Changes c;
     c.flushCount          = j["flushCount"].integer;
+    c.deliveryCount       = j["deliveryCount"].integer;
     c.totalPosition       = j["totalPosition"].integer;
     c.totalSelItem        = j["totalSelItem"].integer;
     c.currentTypeChanged  = j["currentTypeChanged"].integer;
@@ -167,6 +169,7 @@ Changes changes() {
 // Counters are deltas off a process-wide bus; none may ever decrease.
 void assertMonotonic(Changes before, Changes after, string at) {
     assert(after.flushCount          >= before.flushCount,          "flushCount regressed at: " ~ at);
+    assert(after.deliveryCount       >= before.deliveryCount,       "deliveryCount regressed at: " ~ at);
     assert(after.totalPosition       >= before.totalPosition,       "totalPosition regressed at: " ~ at);
     assert(after.totalSelItem        >= before.totalSelItem,        "totalSelItem regressed at: " ~ at);
     assert(after.currentTypeChanged  >= before.currentTypeChanged,  "currentTypeChanged regressed at: " ~ at);
@@ -176,9 +179,15 @@ void assertMonotonic(Changes before, Changes after, string at) {
     assert(after.totalLayerReordered >= before.totalLayerReordered, "totalLayerReordered regressed at: " ~ at);
 }
 
-// Run `op`, then poll until `pick(now) > pick(before)` AND a flush advanced —
-// the per-frame flush delivers what the command accumulated. Asserts coherence
-// and returns the post-op snapshot.
+// Run `op`, then poll until `pick(now) > pick(before)` AND a publication
+// advanced. Asserts coherence and returns the post-op snapshot.
+//
+// TASK 1906 STAGE 3 — the second conjunct was `flushCount` and had to be
+// RE-READ, not dropped. It said "a delivery window elapsed", and the per-frame
+// flush was the only witness for that. Since stage 3 a MESH edit no longer
+// moves `flushCount` (the flush carries only the document-level channels), so
+// the window's witness is `flushCount + deliveryCount` — either channel moving
+// means the bus did work for this step, and the picked counter says WHICH.
 Changes expectPublish(string label, long delegate(Changes) pick, void delegate() op) {
     auto before = changes();
     op();
@@ -186,7 +195,9 @@ Changes expectPublish(string label, long delegate(Changes) pick, void delegate()
     bool advanced = false;
     for (int i = 0; i < 40; ++i) {
         now = changes();
-        if (pick(now) > pick(before) && now.flushCount > before.flushCount) {
+        if (pick(now) > pick(before)
+            && (now.flushCount + now.deliveryCount)
+                 > (before.flushCount + before.deliveryCount)) {
             advanced = true; break;
         }
         Thread.sleep(dur!"msecs"(25));
@@ -199,9 +210,13 @@ Changes expectPublish(string label, long delegate(Changes) pick, void delegate()
 }
 
 // Drain any deferred change-bus flush that is still in-flight before taking a
-// counter snapshot. The bus delivers once per frame (source/app.d flush site);
+// counter snapshot. The DOCUMENT-level channels (layer kinds, item selection,
+// current type) still deliver once per frame at source/app.d's flush site;
 // cmd() returns on HTTP status:ok BEFORE that frame's flush, so snapshots taken
-// immediately after a cmd() may precede delivery.
+// immediately after a cmd() may precede delivery. It keys on `flushCount`
+// deliberately and that is still right after task 1906 stage 3: the MESH
+// channel is synchronous now and has nothing in flight to wait for, so an
+// early "already quiescent" here is the truth rather than a miss.
 //
 // Discipline (mirrors expectPublish): capture the current flushCount, then poll
 // until it advances AND a subsequent read is stable (two equal flushCounts ~25ms

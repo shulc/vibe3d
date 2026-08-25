@@ -7,6 +7,18 @@ public import mesh_edit_delta : MeshEditScope;
 import seltype : SelType;
 import change_bus;
 
+// TASK 1906 STAGE 3 — WHICH CHANNEL A BLOCK DRIVES CHANGED, AND THE BLOCKS WERE
+// RE-READ RATHER THAN PATCHED. `ChangeBus.flush` no longer carries the mesh
+// channel at all: since stage 3 it drains only the three DOCUMENT-level
+// accumulators (layer kinds, the Item selection domain, the current-type flip),
+// and every mesh/geometry-selection change is delivered by `deliverMesh` at the
+// edit boundary. So a block that used to pass mesh flags to `flush` was not
+// testing "the flush"; it was testing the MESH CHANNEL through the only entry
+// point that then existed, and it now drives `deliverMesh`. `flushCount` and
+// `lastSelDomains` keep their names and mean the document-level channel;
+// `lastFlushFlags` is gone rather than left reading zero.
+enum size_t kSubj = 0xB0;   // a stand-in subject address; deliverMesh needs one
+
 // Accumulate-coalesce: multiple noteChange-style ORs combine, and flush sees
 // the union once.
 unittest {
@@ -19,12 +31,12 @@ unittest {
 
     const combined = MeshEditScope.Position | MeshEditScope.Points
                    | MeshEditScope.Polygons;
-    bus.flush(combined, 0, 0);
+    bus.deliverMesh(kSubj, combined, 0);
 
-    assert(calls == 1, "one delivery per flush");
+    assert(calls == 1, "one delivery per deliverMesh");
     assert(seen == combined, "all coalesced bits delivered");
-    assert(bus.flushCount == 1);
-    assert(bus.lastFlushFlags == combined);
+    assert(bus.deliveryCount == 1);
+    assert(bus.lastDeliveryFlags == combined);
     assert(bus.totalPosition == 1 && bus.totalPoints == 1
         && bus.totalPolygons == 1);
 }
@@ -36,14 +48,14 @@ unittest {
     int calls = 0;
     bus.onMeshChanged((size_t, uint) { ++calls; });
 
-    bus.flush(MeshEditScope.Marks, 0, 0);
+    bus.deliverMesh(kSubj, MeshEditScope.Marks, 0);
     assert(calls == 1);
     assert(bus.totalMarks == 1);
 
-    // Second flush with nothing pending: no delivery.
-    bus.flush(0, 0, 0);
-    assert(calls == 1, "zero-arg flush must not re-deliver");
-    assert(bus.flushCount == 1, "no-op flush does not bump the counter");
+    // Second delivery with nothing pending: no delivery.
+    bus.deliverMesh(kSubj, 0, 0);
+    assert(calls == 1, "an empty delivery must not re-deliver");
+    assert(bus.deliveryCount == 1, "no-op delivery does not bump the counter");
 }
 
 // flush with both args zero is a complete no-op: no counter bump, no call.
@@ -53,11 +65,12 @@ unittest {
     bus.onMeshChanged((size_t, uint) { ++meshCalls; });
     bus.onSelectionChanged((uint) { ++selCalls; });
 
-    bus.flush(0, 0, 0);
+    bus.flush(0, 0);
+    bus.deliverMesh(kSubj, 0, 0);
 
     assert(meshCalls == 0 && selCalls == 0);
-    assert(bus.flushCount == 0);
-    assert(bus.lastFlushFlags == 0 && bus.lastSelDomains == 0);
+    assert(bus.flushCount == 0 && bus.deliveryCount == 0);
+    assert(bus.lastSelDomains == 0);
 }
 
 // Selection domains are delivered to selSubs after meshSubs, with per-domain
@@ -69,7 +82,8 @@ unittest {
     bus.onMeshChanged((size_t, uint f) { meshSeen = f; meshOrder = order++; });
     bus.onSelectionChanged((uint d) { selSeen = d; selOrder = order++; });
 
-    bus.flush(MeshEditScope.Marks, SelDomain.Vertex | SelDomain.Face, 0);
+    bus.deliverMesh(kSubj, MeshEditScope.Marks,
+                    SelDomain.Vertex | SelDomain.Face);
 
     assert(meshSeen == MeshEditScope.Marks);
     assert(selSeen == (SelDomain.Vertex | SelDomain.Face));
@@ -86,14 +100,14 @@ unittest {
     bool tripped = false;
     bus.onMeshChanged((size_t, uint) {
         try {
-            bus.flush(MeshEditScope.Position, 0, 0); // illegal re-entry
+            bus.deliverMesh(kSubj, MeshEditScope.Position, 0); // illegal re-entry
         } catch (AssertError) {
             tripped = true;
         }
     });
 
-    bus.flush(MeshEditScope.Marks, 0, 0);
-    assert(tripped, "re-entering flush from a subscriber must assert");
+    bus.deliverMesh(kSubj, MeshEditScope.Marks, 0);
+    assert(tripped, "re-entering delivery from a subscriber must assert");
 }
 
 // SelDomain.Item (#4 Stage 2a) delivers on the SELECTION channel like the
@@ -105,7 +119,7 @@ unittest {
     int  selCalls = 0;
     bus.onSelectionChanged((uint d) { selSeen = d; ++selCalls; });
 
-    bus.flush(0, SelDomain.Item, 0);
+    bus.flush(SelDomain.Item, 0);
 
     assert(selCalls == 1, "item selection delivers on the selection channel");
     assert(selSeen == SelDomain.Item, "carries the Item domain bit");
@@ -115,14 +129,28 @@ unittest {
     assert(bus.lastSelDomains == SelDomain.Item);
 }
 
-// Item coalesces with geometry domains in a single selection word.
+// TASK 1906 STAGE 3 — the block that used to assert "Item coalesces with the
+// geometry domains in a single selection word" asserts the law that REPLACED
+// it: the two now arrive on the same channel from DIFFERENT sites, because
+// Item has no owning `Mesh` to hang an edit boundary on and the geometry
+// domains do. Both still reach `selSubs`, and each still ticks only its own
+// total — that is what makes them one channel rather than two.
 unittest {
     ChangeBus bus;
-    uint selSeen = 0;
-    bus.onSelectionChanged((uint d) { selSeen = d; });
-    bus.flush(0, SelDomain.Vertex | SelDomain.Item, 0);
-    assert(selSeen == (SelDomain.Vertex | SelDomain.Item));
-    assert(bus.totalSelVertex == 1 && bus.totalSelItem == 1);
+    uint[] selSeen;
+    bus.onSelectionChanged((uint d) { selSeen ~= d; });
+
+    bus.deliverMesh(kSubj, MeshEditScope.Marks, SelDomain.Vertex);
+    bus.flush(SelDomain.Item, 0);
+
+    assert(selSeen == [cast(uint)SelDomain.Vertex, cast(uint)SelDomain.Item],
+        "both domains reach the SAME subscriber, in the order they were made");
+    assert(bus.totalSelVertex == 1 && bus.totalSelItem == 1,
+        "each site ticks only its own total");
+    assert(bus.lastSelDomains == SelDomain.Item,
+        "`lastSelDomains` is the FLUSH's word, so it carries Item only");
+    assert(bus.lastDeliverySelDomains == SelDomain.Vertex,
+        "the delivery's word is the geometry half");
 }
 
 // noteItemSelectionChange OR-accumulates into the module-level pending word and
@@ -148,7 +176,7 @@ unittest {
     bus.onLayerChanged((uint k) { seen |= k; ++calls; });
 
     const combined = LayerChange.Added | LayerChange.ActiveChanged;
-    bus.flush(0, 0, combined);
+    bus.flush(0, combined);
 
     assert(calls == 1, "one delivery per flush");
     assert(seen == combined, "all coalesced layer bits delivered");
@@ -164,11 +192,11 @@ unittest {
     int calls = 0;
     bus.onLayerChanged((uint) { ++calls; });
 
-    bus.flush(0, 0, LayerChange.Reordered);
+    bus.flush(0, LayerChange.Reordered);
     assert(calls == 1);
     assert(bus.totalLayerReordered == 1);
 
-    bus.flush(0, 0, 0);
+    bus.flush(0, 0);
     assert(calls == 1, "zero-arg flush must not re-deliver");
     assert(bus.flushCount == 1, "no-op flush does not bump the counter");
 }
@@ -183,8 +211,12 @@ unittest {
     bus.onSelectionChanged((uint d) { selSeen = d; selOrder = order++; });
     bus.onLayerChanged((uint k) { layerSeen = k; layerOrder = order++; });
 
-    bus.flush(MeshEditScope.Marks, SelDomain.Vertex,
-              LayerChange.Renamed | LayerChange.ActiveChanged);
+    // TASK 1906 STAGE 3 — two calls, because the mesh channel left the flush.
+    // The ORDER claim survives intact and is still worth pinning: a subscriber
+    // reacting to a layer event must already have seen this edit's mesh and
+    // selection invalidation.
+    bus.deliverMesh(kSubj, MeshEditScope.Marks, SelDomain.Vertex);
+    bus.flush(0, LayerChange.Renamed | LayerChange.ActiveChanged);
 
     assert(meshSeen == MeshEditScope.Marks);
     assert(selSeen == SelDomain.Vertex);
@@ -202,7 +234,7 @@ unittest {
     bus.onMeshChanged((size_t, uint) { ++meshCalls; });
     bus.onLayerChanged((uint) { ++layerCalls; });
 
-    bus.flush(0, 0, LayerChange.VisibilityChanged);
+    bus.flush(0, LayerChange.VisibilityChanged);
 
     assert(meshCalls == 0, "no mesh delivery when meshFlags==0");
     assert(layerCalls == 1, "layer delivery must not be swallowed by the early-out");
@@ -218,33 +250,35 @@ unittest {
     bool tripped = false;
     bus.onLayerChanged((uint) {
         try {
-            bus.flush(0, 0, LayerChange.Added); // illegal re-entry
+            bus.flush(0, LayerChange.Added); // illegal re-entry
         } catch (AssertError) {
             tripped = true;
         }
     });
 
-    bus.flush(0, 0, LayerChange.Removed);
+    bus.flush(0, LayerChange.Removed);
     assert(tripped, "re-entering flush from a layer subscriber must assert");
 }
 
 // A current-type-only flush (mesh/sel/layer all zero) is NOT swallowed by the
 // early-out, delivers the new SelType once, and bumps the counter.
 unittest {
+    // TASK 1906 STAGE 3 — the current-type SUBSCRIBER PORT was deleted (it had
+    // no listener and no consumer of the delegate), so the observable is the
+    // COUNTER pair, which `/api/changes` reports and two suite tests read. The
+    // claim is unchanged: a type-only flush must not be swallowed by the
+    // early-out.
     ChangeBus bus;
-    int  meshCalls = 0, typeCalls = 0;
-    SelType seen = SelType.Vertex;
+    int meshCalls = 0;
     bus.onMeshChanged((size_t, uint) { ++meshCalls; });
-    bus.onCurrentTypeChanged((SelType t) { seen = t; ++typeCalls; });
 
-    bus.flush(0, 0, 0, true, SelType.Polygon);
+    bus.flush(0, 0, true, SelType.Polygon);
 
     assert(meshCalls == 0, "no mesh delivery when meshFlags==0");
-    assert(typeCalls == 1, "current-type delivery must not be swallowed by the early-out");
-    assert(seen == SelType.Polygon, "delivers the newly-current type");
-    assert(bus.flushCount == 1);
+    assert(bus.flushCount == 1,
+        "current-type delivery must not be swallowed by the early-out");
     assert(bus.currentTypeChanged == 1, "currentTypeChanged counter ticks");
-    assert(bus.lastCurrentType == SelType.Polygon);
+    assert(bus.lastCurrentType == SelType.Polygon, "records the newly-current type");
 }
 
 // `typeChanged == false` carries NO current-type flip even with a non-default
@@ -252,36 +286,43 @@ unittest {
 // frame that does a mesh/sel edit).
 unittest {
     ChangeBus bus;
-    int typeCalls = 0;
-    bus.onCurrentTypeChanged((SelType) { ++typeCalls; });
 
-    bus.flush(MeshEditScope.Marks, 0, 0);              // 3-arg: typeChanged defaults false
-    bus.flush(MeshEditScope.Marks, 0, 0, false, SelType.Edge); // explicit false
-    assert(typeCalls == 0, "no current-type delivery when typeChanged is false");
+    bus.flush(SelDomain.Item, 0);              // 2-arg: typeChanged defaults false
+    bus.flush(SelDomain.Item, 0, false, SelType.Edge); // explicit false
     assert(bus.currentTypeChanged == 0, "counter does not tick without a flip");
+    assert(bus.flushCount == 2, "…and the flushes themselves still happened, "
+      ~ "so the assert above is not vacuous");
 }
 
-// Current-type is delivered LAST, after mesh/sel/layer.
+// Delivery order across the three channels that HAVE subscribers.
+//
+// TASK 1906 STAGE 3 — this block used to end "→ currentType", and that fourth
+// term is gone with the current-type subscriber port. Said plainly rather than
+// quietly dropped: the port had no listener, so the only thing that could ever
+// observe its position in the order was this test. What remains is the order
+// three real subscriber lists are delivered in.
 unittest {
     ChangeBus bus;
-    int order = 0, meshOrder = -1, selOrder = -1, layerOrder = -1, typeOrder = -1;
+    int order = 0, meshOrder = -1, selOrder = -1, layerOrder = -1;
     bus.onMeshChanged((size_t, uint) { meshOrder = order++; });
     bus.onSelectionChanged((uint) { selOrder = order++; });
     bus.onLayerChanged((uint) { layerOrder = order++; });
-    bus.onCurrentTypeChanged((SelType) { typeOrder = order++; });
 
-    bus.flush(MeshEditScope.Marks, SelDomain.Vertex,
-              LayerChange.ActiveChanged, true, SelType.Edge);
+    // Two sites since stage 3 (see the block above), one order.
+    bus.deliverMesh(kSubj, MeshEditScope.Marks, SelDomain.Vertex);
+    bus.flush(0, LayerChange.ActiveChanged, true, SelType.Edge);
 
-    assert(meshOrder == 0 && selOrder == 1 && layerOrder == 2 && typeOrder == 3,
-        "delivery order: mesh → sel → layer → currentType");
+    assert(meshOrder == 0 && selOrder == 1 && layerOrder == 2,
+        "delivery order: mesh → sel → layer");
+    assert(bus.currentTypeChanged == 1,
+        "the flip still counts — the channel lost its port, not its counter");
 }
 
 // A current-type flip alone (no mesh/sel) ticks currentTypeChanged but NOT the
 // selection or mesh counters — a mode switch is not selection content.
 unittest {
     ChangeBus bus;
-    bus.flush(0, 0, 0, true, SelType.Edge);
+    bus.flush(0, 0, true, SelType.Edge);
     assert(bus.currentTypeChanged == 1);
     assert(bus.totalSelVertex == 0 && bus.totalSelEdge == 0 && bus.totalSelFace == 0,
         "a type flip publishes NO selection domain");
@@ -349,8 +390,8 @@ unittest {
     {
         ChangeBus bus;
         const before = bus.docRevision();
-        bus.flush(MeshEditScope.Maps, 0, 0);
-        assert(bus.totalMaps == 1, "a Maps flush is counted");
+        bus.deliverMesh(kSubj, MeshEditScope.Maps, 0);
+        assert(bus.totalMaps == 1, "a Maps delivery is counted");
         assert(bus.docRevision() == before + 1,
             "a per-element MAP write is PERSISTED document content (.v3d "
           ~ "meshMaps / edgeMaps, .lwo VMAPs), so it must move docRevision -- "
@@ -360,7 +401,7 @@ unittest {
     {
         ChangeBus bus;
         const before = bus.docRevision();
-        bus.flush(MeshEditScope.MapsDisplay, 0, 0);
+        bus.deliverMesh(kSubj, MeshEditScope.MapsDisplay, 0);
         assert(bus.totalMapsDisplay == 1,
             "the display-only route is still DELIVERED (the GPU must "
           ~ "re-upload) and still observable");
@@ -564,12 +605,19 @@ unittest {
     assert(!changeBus.delivering, "the guard releases on the way out");
 }
 
-// (e) The frame flush and the edit-boundary delivery are INDEPENDENT counter
-//     families, and that is load-bearing rather than tidy: until the last
-//     frame-drain consumer leaves, the same mutation is delivered twice (once
-//     here, once out of `Mesh.pendingChanges_` at the frame flush). A per-class
-//     total bumped on both paths would double `docRevision()` and make a clean
-//     document read dirty after one edit.
+// (e) THE PER-CLASS TOTALS RIDE THE DELIVERY, and this block is the INVERSION
+//     of what it asserted before stage 3. It used to say "no per-class total
+//     moves on the delivery path", and the reason was explicit: the same
+//     mutation was delivered TWICE — once here, once out of the per-frame
+//     drain — so a total bumped on both paths would double `docRevision()` and
+//     make a clean document read dirty after one edit. Stage 3 deleted the
+//     drain, which made the delivery the ONLY path; leaving the totals on the
+//     flush would have stopped `docRevision()` moving on a mesh edit at all,
+//     and with it the title asterisk and the quit-save prompt.
+//
+//     `flushCount` still must NOT move: it counts the DOCUMENT-level channel,
+//     and a mesh edit is not one. That half is unchanged and is what keeps this
+//     block from passing under "just bump everything everywhere".
 unittest {
     ChangeBus bus;
     const beforeRev = bus.docRevision();
@@ -578,14 +626,16 @@ unittest {
     assert(bus.deliveryCount == 1, "deliverMesh counts its own deliveries");
     assert(bus.lastDeliverySubject == 0xDEAD);
     assert(bus.lastDeliverySelDomains == SelDomain.Vertex);
-    assert(bus.flushCount == 0 && bus.lastFlushFlags == 0,
-        "a delivery is NOT a flush: the per-frame counters must not move");
-    assert(bus.totalPosition == 0 && bus.totalMaps == 0
-        && bus.totalSelVertex == 0,
-        "no per-class total moves on the delivery path — the frame flush "
-      ~ "still drains the same mutation out of pendingChanges_");
-    assert(bus.docRevision() == beforeRev,
-        "docRevision (the unsaved-changes counter) must not double-count");
+    assert(bus.flushCount == 0,
+        "a mesh delivery is NOT a document-level flush");
+    assert(bus.totalPosition == 1 && bus.totalMaps == 1
+        && bus.totalSelVertex == 1,
+        "every per-class total the delivery carried moves exactly once");
+    assert(bus.totalSelItem == 0,
+        "Item is the flush's domain and cannot arrive on this path");
+    assert(bus.docRevision() == beforeRev + 2,
+        "docRevision counts the two PERSISTED classes (Position, Maps) and "
+      ~ "not the selection domain — a selection is not saved content");
 }
 
 // ===========================================================================
@@ -784,4 +834,89 @@ unittest {
       ~ "wholesale `*mesh = <scratch>` assignment into the layer's mesh and "
       ~ "are carried by the next delivering publisher there. Zeroing on "
       ~ "rejection drops them and every listener under-invalidates");
+}
+
+// ===========================================================================
+// TASK 1906 STAGE 3 — EVERY SELECTION WRITER ON `Mesh` DELIVERS, and this is
+// the half of the stage that `Command.apply`'s anchor cannot reach.
+//
+// The anchor offers the COMMAND'S OWN mesh at the batch close. Two shapes fall
+// outside it, and both were measured on the live app before this landed:
+//   * a TOOL. The Topology Pen's undo path calls `mesh.selectVertex` at
+//     delivery depth 0 — a gesture is not a `Command.apply` — and was the last
+//     frame of drain residue the stage-3 census found.
+//   * a command that writes marks on a mesh that is NOT its own.
+//     `select.set.apply` walks every foreground layer; the anchor's single
+//     offer reaches one of them.
+//
+// So the writers deliver, and `noteSelectionChange` beside them deliberately
+// does not: it is also the funnel `refreshHiddenDerived` uses mid-`commitStamps`,
+// where an early delivery would land BEFORE the derive that `commitChange`'s
+// documented order puts first.
+//
+// Mutations, each in isolation (each reddens ONE clause):
+//   * drop `deliverPending()` from the six scalar setters  ⇒ (1)
+//   * drop it from the three bulk `clear*`                 ⇒ (2)
+//   * drop it from `applySelectedFrom_`                    ⇒ (3)
+//
+// Note what is NOT asserted here: a count on a LOOP. Inside a batch these only
+// register; outside one a tool-sized loop delivers per element. THAT IS ONLY
+// AFFORDABLE BECAUSE THE MESH-SIZED LOOPS ARE BATCHED AT THE GESTURE, which is
+// a claim about the editor and cannot be made from a bare `Mesh` — it is
+// pinned over HTTP by `tests/test_bus_delivery_granularity.d` blocks (4)/(5)
+// (an RMB lasso selecting hundreds of faces ⇒ ONE delivery; a lasso that moved
+// no mark ⇒ zero) and block (6) (a paint stroke ⇒ one delivery per element it
+// ADDS, measured 42 for 42 over 120 motion events). Blocks (1)-(3) of that
+// file pin a twelve-step GIZMO DRAG and say nothing about a pick ceiling —
+// this sentence used to point at them, which was the wrong witness.
+// ===========================================================================
+unittest {
+    import mesh : Mesh, makeCube;
+
+    Mesh m = makeCube();
+    m.syncSelection();
+    m.resetSelection();
+
+    // (1) the scalar writer — the tool path.
+    {
+        const before = changeBus.deliveryCount;
+        m.selectVertex(0);
+        assert(changeBus.deliveryCount == before + 1,
+            "a scalar selection write outside any command must deliver — a "
+          ~ "tool gesture is not a `Command.apply` and has no batch to close");
+        assert((changeBus.lastDeliverySelDomains & SelDomain.Vertex) != 0,
+            "…carrying the domain it wrote");
+    }
+
+    // (2) the bulk clear.
+    {
+        const before = changeBus.deliveryCount;
+        m.clearVertexSelection();               // drops a LIVE selection
+        assert(changeBus.deliveryCount == before + 1,
+            "clearing a live selection must deliver — this is the editor's "
+          ~ "click-empty-space-to-deselect path, called straight from "
+          ~ "`input_router.d` with no command around it");
+        const after = changeBus.deliveryCount;
+        m.clearVertexSelection();               // already empty: inert
+        assert(changeBus.deliveryCount == after,
+            "…and clearing an ALREADY-EMPTY selection must NOT: the "
+          ~ "compare-before-set guard is what keeps a delivering writer from "
+          ~ "publishing on every no-op call");
+    }
+
+    // (3) the bulk apply — the `select.set.apply` shape.
+    {
+        bool[] sel; sel.length = m.vertices.length;
+        sel[3] = true;
+        const before = changeBus.deliveryCount;
+        m.setVerticesSelectedFrom(sel);
+        assert(changeBus.deliveryCount == before + 1,
+            "a bulk selection apply must deliver — `select.set.apply` writes "
+          ~ "marks on every foreground layer's mesh, and the command anchor "
+          ~ "offers only its own");
+        const after = changeBus.deliveryCount;
+        m.setVerticesSelectedFrom(sel);         // identical: inert
+        assert(changeBus.deliveryCount == after,
+            "…and an identical re-apply must NOT");
+    }
 }

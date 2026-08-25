@@ -60,21 +60,28 @@ module mesh_dirty;
 // mesh that no longer exists. Exposed today: `ConstrainStage._bgBvh[size_t]`
 // and `item_pick._bvh[size_t]`, both keyed by RAW ADDRESS; `BgGpu` is safe
 // because its map is keyed by `Layer` IDENTITY, which the GC keeps alive.
-// NOT FIXED, and deliberately: it is pre-existing IN KIND — `MeshCacheKey`'s
-// `{addr, mutationVersion}` had exactly the same hole, and a fresh mesh starts
-// at version 0 the same way it starts at epoch `evicted_` — and every normal
-// layer-creation path (`layer.add`, `file.load`, `ai3d.importResult`) does
-// publish. Closing it needs a monotone per-mesh birth id, which is a `Mesh`
-// field and therefore stage 3's business, not this module's.
+// CLOSED AT STAGE 3, by `noteMeshBirth` below, and the closing datum lives on
+// `Layer` rather than on `Mesh` — see that function for why the choice matters.
+// A birth at an address that already carried a DIFFERENT birth advances every
+// watcher for that address, so a stamp taken against the previous occupant
+// misses whether or not the new occupant ever publishes. That covers the two
+// raw-address consumers above for free: both hold a `BvhPick` whose own
+// `_surfKey` is one of these epoch keys, so the container's staleness is the
+// key's staleness. The birth table is fixed-size like the watchers, and its
+// FULL-TABLE arm answers "assume a different occupant" rather than "first
+// use" — so eviction over-invalidates here too, and cannot reopen the hazard
+// it was added to close (`MeshBirthTable.observe`).
 //
-// THE SUBJECT IS ALWAYS KNOWN, so there is no wildcard. `ChangeBus.flush` —
-// the per-frame drain, alive until stage 3 — delivers with `subjectAddr == 0`
-// ("the union of every layer's pending classes, subject unknown"), and that
-// delivery is IGNORED here. It is not lost: `app.d`'s flush block feeds this
-// module per LAYER, from each layer's own `pendingChanges_`, at the top of the
-// same block — where the subject IS known. Accepting the aggregate instead
-// would poison every untracked address once per changed frame, which is the
-// same regression the paragraph above refuses.
+// THE SUBJECT IS ALWAYS KNOWN, so there is no wildcard, and since stage 3 that
+// is true by construction rather than by filtering. `ChangeBus.flush` used to
+// deliver with `subjectAddr == 0` ("the union of every layer's pending classes,
+// subject unknown") and this module ignored it, with `app.d`'s flush block
+// re-feeding the same information per layer where the address WAS known. Stage
+// 3 deleted both halves: the mesh channel left the flush entirely, so every
+// delivery reaching here names a real subject. The `subjectAddr == 0` refusal
+// in `note()` stays as a guard, because accepting an aggregate would poison
+// every untracked address once per changed frame — the regression the
+// paragraph above refuses.
 //
 // MAIN THREAD ONLY, exactly like the bus it is fed from (plan §1.8): every
 // delivery is main-thread by construction (mutating HTTP endpoints reach the
@@ -204,12 +211,14 @@ __gshared MeshDirtyEpochs g_geomEpochs =
 //     that it must not);
 //   * `Mesh.noteChange(Visibility)` on the hide path, and `app.d`'s
 //     `noteChange(MeshChangeAll)`, are version-silent the same way.
-// All three reach a per-mesh epoch through `app.d`'s per-layer feed, so an
-// any-class epoch invalidates on a plain SELECTION CLICK, which the counter
-// never did. MEASURED: six version-silent `selectVertex` calls with a live
-// preview left the cage's `mutationVersion` at 13 and moved the preview's work
-// counter 1 -> 7 — an OSD stencil evaluate plus the VBO fan-out per picking
-// frame, where the cost had been zero.
+// All three reach a per-mesh epoch — since stage 3 through the DELIVERY the
+// writer itself makes (`Mesh.deliverPending`), where stage 2 reached it through
+// `app.d`'s per-layer feed at the frame drain. Either way an any-class epoch
+// invalidates on a plain SELECTION CLICK, which the counter never did.
+// MEASURED: six version-silent `selectVertex` calls with a live preview left
+// the cage's `mutationVersion` at 13 and moved the preview's work counter
+// 1 -> 7 — an OSD stencil evaluate plus the VBO fan-out per picking frame,
+// where the cost had been zero.
 //
 // The preview therefore keys on `g_geomEpochs` (which carries the gizmo's
 // version-silent `Position`) AND on `mutationVersion` (which carries `Marks`
@@ -258,9 +267,8 @@ __gshared MeshDirtyEpochs g_topoEpochs =
 /// `kSlots` per watcher — a hit scans to the slot, a miss scans all 32 twice
 /// (once for the address, once for a free slot) before evicting. With three
 /// watchers a delivery is therefore up to 6 x 32 = 192 word compares, and
-/// there are up to two deliveries per changed layer per frame (the
-/// synchronous one at the edit boundary and the per-layer feed at the frame
-/// drain, until stage 3 retires the drain). That is the price of not widening
+/// there is ONE delivery per edit boundary since stage 3 retired the frame
+/// drain and its second feed. That is the price of not widening
 /// an existing watcher's mask: `g_geomEpochs` carries the surface BVH and
 /// every snap grid, so folding a selection click into it would trade these
 /// compares for O(V+T) rebuilds.
@@ -268,6 +276,224 @@ void noteMeshChange(size_t subjectAddr, uint flags) nothrow @nogc {
     g_displayEpochs.note(subjectAddr, flags);
     g_geomEpochs.note(subjectAddr, flags);
     g_topoEpochs.note(subjectAddr, flags);
+}
+
+// ---------------------------------------------------------------------------
+// THE ABA CLOSE (task 1906 stage 3).
+// ---------------------------------------------------------------------------
+//
+// The hazard, stated as the sequence that produces it: a consumer stamps
+// `{A, e}`; the `Layer` whose mesh lives at address A is collected; a NEW
+// `Layer` is allocated and its mesh lands at the SAME address A; it publishes
+// nothing, so `epochFor(A)` still reads `e`, `matches` is true and the consumer
+// serves the previous mesh's cache for the new one.
+//
+// WHY THE IDENTITY LIVES ON `Layer` AND NOT ON `Mesh`, which is the question
+// the plan left open. A `ulong` on `Mesh` is copied by every wholesale
+// `*mesh = …` kernel (~15 of them) and written by `MeshSnapshot.restore`, so a
+// layer would silently inherit a scratch mesh's identity — or its own past
+// one — and an undo would RESTORE an identity, which is the one thing an
+// identity must never do. `Layer` is a class with a stable heap address, the
+// property the whole document model already leans on; its id cannot be copied
+// by a struct assignment, cannot be captured by a snapshot, and is exactly the
+// object whose reuse of an address IS the hazard.
+//
+// WHY THE EPOCH IS THE SIGNAL rather than a new term in `MeshDirtyKey`. Every
+// address-keyed consumer in the tree already compares an epoch for its
+// address — the two raw-address maps (`ConstrainStage._bgBvh`,
+// `item_pick._bvh`) hold `BvhPick` objects whose own `_surfKey` is one of these
+// keys. Advancing the epoch on a changed birth therefore reaches all of them
+// through the compare they already make, with no new term to thread through
+// ten stamp sites and no site left to forget.
+//
+// COST OF THE FAIL-SAFE ARM, measured (stage-3 review round 2): the unit
+// binary constructs a Layer at ~248 sites, so the full-table arm fires 1 551+
+// times per `dub test --config=tests`, each a `noteMeshChange(addr, uint.max)`
+// against all three watchers (and a bump of their `evicted_`). Deterministic
+// per build and green at 278 modules — but any exact rebuild-COUNT assertion
+// (`g_acenClusterRebuilds`, `g_falloffSelWeightRebuilds`, the preview count)
+// is sensitive to how many layers earlier modules built. If a count test ever
+// moves for no reason of its own, the remedy is a test-only reset seam here,
+// not a wider ceiling.
+private struct MeshBirthTable {
+    private enum int kSlots = 32;   // one per layer, same ceiling as a watcher
+    private size_t[kSlots] addr_;
+    private ulong[kSlots]  birth_;
+    private int            next_;
+
+    /// Returns true when the address may now be occupied by a DIFFERENT birth
+    /// than the one it last held. "Held none" WITH A FREE SLOT is the ordinary
+    /// first-use case and answers false — a fresh address has no stamp against
+    /// it to invalidate. "Held none" on a FULL table answers true, because a
+    /// full table cannot tell first use from a record it has already evicted;
+    /// see the eviction arm below.
+    bool observe(size_t a, ulong birth) nothrow @nogc {
+        foreach (i; 0 .. kSlots) {
+            if (addr_[i] == a) {
+                const bool changed = birth_[i] != birth;
+                birth_[i] = birth;
+                return changed;
+            }
+        }
+        foreach (i; 0 .. kSlots) {
+            if (addr_[i] == 0) { addr_[i] = a; birth_[i] = birth; return false; }
+        }
+        // FULL ⇒ THE ANSWER IS "ASSUME A DIFFERENT OCCUPANT", NOT "FIRST USE"
+        // (review of stage 3, M3). Reaching here means the table has evicted,
+        // or is about to, and an evicted address LOSES its record: the next
+        // `observe` for it finds nothing and — if this path answered `false`,
+        // as it first did — advanced no epoch. That is UNDER-invalidation, the
+        // one direction the whole `mesh_dirty` design refuses, and it is
+        // SILENT: a consumer stamped against the previous occupant keeps
+        // matching and serves the collected layer's cache for the new one.
+        //
+        // The cell: 33 births at 33 distinct addresses, then a re-birth at
+        // address #1 with a different id. Under `false` the stamp still
+        // matches; under `true` it misses. (The unit block below drives it.)
+        //
+        // The price of `true` is ONE spurious epoch advance per `new Layer()`
+        // once a document is past `kSlots` layers — over-invalidation, bounded
+        // by the layer-construction rate, and the same direction
+        // `MeshDirtyEpochs.evicted_` already takes for exactly this reason. A
+        // document that never fills the table pays nothing: this path is not
+        // reached at all while a free slot exists, so the ordinary first-use
+        // case above still answers `false`.
+        const int i = next_;
+        next_ = (next_ + 1) % kSlots;
+        addr_[i]  = a;
+        birth_[i] = birth;
+        return true;
+    }
+
+    /// Test seam: what birth this table last recorded for `a` (0 = none).
+    ulong birthAt(size_t a) const nothrow @nogc {
+        foreach (i; 0 .. kSlots) if (addr_[i] == a) return birth_[i];
+        return 0;
+    }
+}
+
+private __gshared MeshBirthTable g_births;
+
+/// Called from `Layer`'s constructor with the address of that layer's mesh and
+/// the layer's own monotone birth id. Advances every watcher for the address
+/// when the occupant changed.
+void noteMeshBirth(size_t meshAddr, ulong birthId) nothrow @nogc {
+    if (meshAddr == 0) return;
+    if (g_births.observe(meshAddr, birthId))
+        noteMeshChange(meshAddr, uint.max);
+}
+
+/// Test seam — see `MeshBirthTable.birthAt`.
+ulong notedBirthAt(size_t meshAddr) nothrow @nogc {
+    return g_births.birthAt(meshAddr);
+}
+
+// ---------------------------------------------------------------------------
+// THE ABA CELL (task 1906 stage 3). Address reuse is FORCED, not hoped for.
+//
+// The GC cannot be asked to place a new `Layer` at a collected one's address,
+// so a cell that allocated two layers and waited would be measuring the
+// allocator, not the law. What the law actually says is per-address and
+// birth-keyed, so the cell states it that way: the same address, two births,
+// and a key stamped against the first.
+//
+// Mutation this is the red for: delete the `noteMeshChange(meshAddr, uint.max)`
+// line from `noteMeshBirth`. Then the second birth advances nothing, the stamp
+// still matches, and the first assert below reddens in those words.
+// ---------------------------------------------------------------------------
+unittest {
+    // An address no other cell in this module uses (they take 0x1000/0x2000).
+    enum size_t A = 0x00ABA000;
+
+    noteMeshBirth(A, 101);                       // layer #101's mesh lands at A
+    noteMeshChange(A, MeshEditScope.Position);   // it publishes; a consumer stamps
+    MeshDirtyKey k;
+    k.stamp(A, g_geomEpochs.epochFor(A));
+    assert(k.matches(A, g_geomEpochs.epochFor(A)),
+        "PREMISE: a stamp taken right after a change must read fresh — without "
+      ~ "this the cell below could pass on a key that never matched at all");
+
+    // #101 is collected; layer #102 is allocated into the SAME block and
+    // publishes NOTHING. Before stage 3 the consumer served #101's cache to
+    // #102: same address, same epoch, `matches` true.
+    noteMeshBirth(A, 102);
+    assert(!k.matches(A, g_geomEpochs.epochFor(A)),
+        "ABA: a DIFFERENT mesh now occupies address A and published nothing, "
+      ~ "yet the key stamped against its predecessor still matched — the "
+      ~ "consumer would serve the collected layer's cache");
+
+    // The other half, and it is what stops the fix from being "invalidate on
+    // every construction": re-observing the SAME birth must move nothing, or a
+    // document that merely re-registers its layers would drop every cache.
+    MeshDirtyKey k2;
+    k2.stamp(A, g_geomEpochs.epochFor(A));
+    noteMeshBirth(A, 102);
+    assert(k2.matches(A, g_geomEpochs.epochFor(A)),
+        "the SAME birth at the same address is not a change and must not "
+      ~ "advance an epoch");
+    assert(notedBirthAt(A) == 102, "the table records the current occupant");
+}
+
+// ---------------------------------------------------------------------------
+// THE ABA CELL, PAST THE TABLE'S CEILING (review of stage 3, M3).
+//
+// The block above proves the close works while the birth table still holds a
+// record for the address. This one proves it survives EVICTION, which is the
+// case the first cut got wrong: a row per `new Layer()`, never freed, and once
+// 32 addresses have been seen the round-robin cursor drops one on every
+// insert. An evicted address's next birth used to read as first-use and
+// advance nothing — under-invalidation, and silent.
+//
+// It is a separate block from the one above because the two need DIFFERENT
+// table states (below the ceiling, past it) and the table is process-global:
+// running them in one block would make the second depend on how many slots the
+// first happened to leave.
+//
+// Mutation this is the red for: change `return true;` back to `return false;`
+// on `MeshBirthTable.observe`'s eviction arm. Then the re-birth at `A1`
+// advances nothing, the stamp still matches, and the second assert reddens in
+// those words. (The FIRST assert is the anti-vacuity arm: it says the eviction
+// actually happened, so a green second assert cannot be "the table never
+// filled".)
+// ---------------------------------------------------------------------------
+unittest {
+    // Addresses no other cell in this module uses.
+    enum size_t A1     = 0x00E0_0000;
+    enum size_t kChurn = 0x00E1_0000;
+
+    // 1. The layer whose mesh lives at A1 is seated.
+    noteMeshBirth(A1, 1000);
+
+    // 2. Enough OTHER layers to guarantee A1's record is gone, whatever state
+    //    the shared table was in when this block started: 2 * kSlots inserts
+    //    fill the table and then overwrite every slot once through the
+    //    round-robin cursor. (A bare `kSlots + 1` would evict SOMETHING, not
+    //    necessarily A1 — the cursor's phase is not this block's to know.)
+    foreach (i; 0 .. 2 * MeshBirthTable.kSlots)
+        noteMeshBirth(kChurn + i * 0x40, 2000 + i);
+    assert(notedBirthAt(A1) == 0,
+        "PREMISE: A1's birth record must have been EVICTED — without that this "
+      ~ "cell exercises the in-table path the block above already covers, and "
+      ~ "its verdict below would be free");
+
+    // 3. A consumer stamps against A1's CURRENT occupant, AFTER the churn (the
+    //    churn moves untracked addresses' epochs through `evicted_`, so a
+    //    stamp taken before it would miss for the wrong reason).
+    MeshDirtyKey k;
+    k.stamp(A1, g_geomEpochs.epochFor(A1));
+    assert(k.matches(A1, g_geomEpochs.epochFor(A1)),
+        "PREMISE: a stamp just taken must read fresh");
+
+    // 4. That layer is collected and a NEW one lands at the same address,
+    //    publishing nothing. The table holds no record for A1, so it cannot
+    //    prove the occupant is unchanged — and must not pretend it can.
+    noteMeshBirth(A1, 9001);
+    assert(!k.matches(A1, g_geomEpochs.epochFor(A1)),
+        "ABA PAST THE CEILING: the birth table had EVICTED this address, so a "
+      ~ "re-birth there read as first use and advanced no epoch — the key "
+      ~ "stamped against the collected layer still matched and the consumer "
+      ~ "would serve its cache to the new one. An evicted record must "
+      ~ "over-invalidate, never under-invalidate");
 }
 
 // ---------------------------------------------------------------------------
@@ -380,8 +606,10 @@ unittest {
         "an EVICTED address must read as changed (it falls back to `evicted_`), "
       ~ "never as still-fresh");
 
-    // The subject-less aggregate is IGNORED, and that is deliberate: app.d
-    // feeds the same flags per layer, with the address, from the drain.
+    // The subject-less aggregate is IGNORED, and since stage 3 nothing
+    // produces one: `ChangeBus.flush` no longer carries the mesh channel at
+    // all, so every delivery reaching here names a real subject. The refusal
+    // stays as a guard — see the header.
     auto w2 = MeshDirtyEpochs.forClasses(MeshEditScope.Position);
     w2.note(A, MeshEditScope.Position);
     const ulong a2 = w2.epochFor(A);

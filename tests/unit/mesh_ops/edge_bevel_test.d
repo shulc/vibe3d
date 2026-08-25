@@ -6101,8 +6101,8 @@ unittest { // byte-stable reject test 14 (Decision A-5, doc/edge_bevel_freeend_c
         immutable ulong mutationBefore = mm.mutationVersion;
         immutable ulong topologyBefore = mm.topologyVersion;
         immutable ulong structBefore = mm.structVersion;
-        immutable uint pendingBefore = mm.pendingChanges_;
-        immutable uint pendingSelBefore = mm.pendingSelDomains_;
+        immutable uint pendingBefore = mm.undeliveredChanges_;
+        immutable uint pendingSelBefore = mm.undeliveredSelDomains_;
         MeshEditTracker recorder;
         mm.beginEditBatch(&recorder, MeshEditScope.Geometry);
         assert(mm.isRecordingEdits());
@@ -6124,8 +6124,8 @@ unittest { // byte-stable reject test 14 (Decision A-5, doc/edge_bevel_freeend_c
                mm.selectedFaces == selectedFacesBefore,
             "open-fan cap preflight must leave selection byte-identical");
         assert(mm.mutationVersion == mutationBefore && mm.topologyVersion == topologyBefore &&
-               mm.structVersion == structBefore && mm.pendingChanges_ == pendingBefore &&
-               mm.pendingSelDomains_ == pendingSelBefore,
+               mm.structVersion == structBefore && mm.undeliveredChanges_ == pendingBefore &&
+               mm.undeliveredSelDomains_ == pendingSelBefore,
             "open-fan cap preflight must not bump versions or pending changes");
         assert(recorder.isEmpty(), "open-fan cap preflight must not write an edit record");
         assert(mm.endEditBatch().isEmpty(), "open-fan cap preflight must finish with an empty delta");

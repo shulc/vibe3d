@@ -1,13 +1,25 @@
 module change_bus;
 
 // ---------------------------------------------------------------------------
-// Change-notification bus — Stage 0 core (no subscribers yet).
+// Change-notification bus.
 //
 // One in-process publish-subscribe bus replacing per-consumer version polling
-// and blanket per-frame cache invalidation. Mesh mutations accumulate
-// change-class flags on the Mesh (pendingChanges_ / pendingSelDomains_); the
-// main loop drains them once per frame into `changeBus.flush(...)`, which
-// fans the flags out to registered subscriber delegates.
+// and blanket per-frame cache invalidation.
+//
+// TWO DELIVERY SITES SINCE TASK 1906 STAGE 3, and which one a channel uses is
+// decided by whether it has an owning `Mesh`:
+//
+//   * `deliverMesh` — SYNCHRONOUS, at the edit boundary. Carries the mesh
+//     classes and the three geometry selection domains, always with a real
+//     subject address. `Mesh.deliverPending()` calls it at the tail of
+//     `commitChange` / `publishChange` / a delivery batch's close.
+//   * `flush` — once per frame, from `source/app.d`. Carries only the
+//     DOCUMENT-level channels, which have no owning mesh to hang a boundary
+//     on: layer kinds, the `Item` selection domain, and the current-type flip.
+//
+// Stage 3 deleted the third arrangement that used to exist: a per-frame drain
+// of `Mesh.pendingChanges_` that handed the union over every layer to `flush`
+// with NO subject. Both those fields are gone with it.
 //
 // The change-class vocabulary IS the existing `MeshEditScope` enum from
 // mesh_edit_delta.d — re-exported here, NOT redefined. The selection-domain
@@ -135,18 +147,26 @@ struct ChangeBus {
     alias MeshSubscriber        = void delegate(size_t subjectAddr, uint flags) nothrow;
     alias SelSubscriber         = void delegate(uint domains) nothrow;
     alias LayerSubscriber       = void delegate(uint kinds) nothrow;
-    alias CurrentTypeSubscriber = void delegate(SelType t) nothrow;
 
     MeshSubscriber[]  meshSubs;
     SelSubscriber[]   selSubs;
+    // KEPT WITH 0 SUBSCRIBERS AND A REAL CONSUMER, and the distinction is the
+    // point (task 1906 stage 3, plan item 3). Nothing registers here, but the
+    // layer channel's COUNTERS feed `docRevision()` → `io.doc_state` → the
+    // window-title asterisk and the quit save prompt. "No subscribers" is not
+    // "no consumers"; `doc/layer_change_bus_plan.md` said otherwise and was
+    // corrected.
     LayerSubscriber[] layerSubs;
-    // The current-type channel — the `Current(type)` analog the layer-change
-    // (Stage-5) work deferred to selection-types #4. Carries the newly-current
-    // SelType when the front of the recent-ordering flips. Delivered LAST, after
-    // the mesh/sel/layer channels (see flush). Invalidate-only, no unsubscribe.
-    // DOCUMENT-level: it has no owning `Mesh`, so it stays on the frame flush
-    // and `deliverMesh` never touches it (task 1906 §1.6).
-    CurrentTypeSubscriber[] currentTypeSubs;
+    // THE CURRENT-TYPE SUBSCRIBER PORT IS GONE (task 1906 stage 3, plan item
+    // 2). It had 0 subscribers AND 0 consumers of the delegate — a listener
+    // port with no listener, which the plan refuses to leave standing because
+    // an unexercised seam is an untested one. What survives is the CHANNEL's
+    // observable half: `noteCurrentType` still accumulates the flip,
+    // `flush` still counts it (`currentTypeChanged`, `lastCurrentType`) and
+    // `/api/changes` still reports both. The trade, stated rather than
+    // discovered: the claim "currentTypeChanged is delivered LAST, after
+    // mesh/sel/layer" had its only witness in the deleted port and is gone with
+    // it; the ordering that still HAS a witness is mesh → sel → layer.
 
     // Re-entrancy guard, shared by `flush` and `deliverMesh`: a listener must
     // not re-enter delivery, and — since task 1906 made delivery synchronous
@@ -162,20 +182,32 @@ struct ChangeBus {
     // --- Debug / test-introspectable counters -----------------------------
     // Plain fields so tests (and the future /api/changes endpoint) can read
     // them directly. Updated on every non-empty flush.
-    ulong flushCount;        // number of flushes that actually delivered
-    uint  lastFlushFlags;    // mesh flags of the most recent delivered flush
-    uint  lastSelDomains;    // selection domains of the most recent delivery
+    // TASK 1906 STAGE 3 — WHAT THESE MEAN NOW, because the meaning CHANGED and
+    // a test that read them as deltas has to be re-read rather than fixed.
+    // `flush` no longer carries the mesh channel at all: it drains the three
+    // DOCUMENT-level accumulators (layer kinds, item-selection domain,
+    // current-type flip) and nothing else. So `flushCount` counts
+    // document-level flushes — a pure mesh edit does not move it — and
+    // `lastSelDomains` can only ever be `SelDomain.Item`. The mesh half's
+    // replacements are `deliveryCount` / `lastDeliveryFlags` /
+    // `lastDeliverySelDomains` below.
+    //
+    // `lastFlushFlags` is GONE (from the struct and from `/api/changes`)
+    // rather than left reading 0: a field that is always zero is a green that
+    // cannot come out differently, and three asserts were reading it as the
+    // frame's mesh word.
+    ulong flushCount;        // number of DOCUMENT-level flushes that delivered
+    uint  lastSelDomains;    // selection domains of the most recent flush (Item only)
     uint  lastLayerKinds;    // layer-change kinds of the most recent delivery
     SelType lastCurrentType; // the type made current by the most recent delivery
 
     // --- Synchronous-delivery counters (task 1906 stage 0) ----------------
     // A SEPARATE family from the flush counters above, deliberately: the frame
-    // flush still drains `Mesh.pendingChanges_` for the same mutation, so a
-    // per-class total incremented on BOTH paths would count every edit twice
-    // and `docRevision()` — which decides whether the document is dirty —
-    // would move at twice its rate. `deliverMesh` therefore touches only these
-    // four fields, and `tests/test_change_bus.d`'s exact per-frame deltas stay
-    // byte-for-byte what they were.
+    // flush used to drain `Mesh.pendingChanges_` for the SAME mutation, so a
+    // per-class total incremented on both paths would have counted every edit
+    // twice and `docRevision()` — which decides whether the document is dirty
+    // — would have moved at twice its rate. Stage 3 deleted that drain, which
+    // is why the per-class totals now live on this path (see `deliverMesh`).
     //
     // Plain always-on fields (not `version (unittest)`): `/api/changes` reads
     // them from the editor binary, which is where the per-command census and
@@ -320,13 +352,6 @@ struct ChangeBus {
         if (dg !is null) layerSubs ~= dg;
     }
 
-    // Register a current-type subscriber. Fires when the front of the recent
-    // selection-type ordering flips (the `Current(type)` analog), delivered
-    // LAST of the four channels. Invalidate-only, no unsubscribe (v1).
-    void onCurrentTypeChanged(CurrentTypeSubscriber dg) {
-        if (dg !is null) currentTypeSubs ~= dg;
-    }
-
     /// "Is a listener running right now?" — the read half of the contract
     /// guard, for the companion asserts in `Mesh.noteChange` /
     /// `noteSelectionChange` / `publishChange`. Those catch an illegal publish
@@ -348,9 +373,9 @@ struct ChangeBus {
     //
     // `typeChanged` gates the current-type channel: when true, `newType` is the
     // type promoted to current. (SelType has no None sentinel, hence the bool.)
-    void flush(uint meshFlags, uint selDomains, uint layerKinds,
+    void flush(uint itemSelDomains, uint layerKinds,
                bool typeChanged = false, SelType newType = SelType.Vertex) nothrow {
-        if (meshFlags == 0 && selDomains == 0 && layerKinds == 0 && !typeChanged)
+        if (itemSelDomains == 0 && layerKinds == 0 && !typeChanged)
             return;
 
         assert(!delivering_,
@@ -360,22 +385,14 @@ struct ChangeBus {
         scope (exit) delivering_ = false;
 
         ++flushCount;
-        lastFlushFlags = meshFlags;
-        lastSelDomains = selDomains;
+        lastSelDomains = itemSelDomains;
         lastLayerKinds = layerKinds;
 
-        if (meshFlags & MeshEditScope.Position) ++totalPosition;
-        if (meshFlags & MeshEditScope.Points)   ++totalPoints;
-        if (meshFlags & MeshEditScope.Polygons) ++totalPolygons;
-        if (meshFlags & MeshEditScope.Marks)    ++totalMarks;
-        if (meshFlags & MeshEditScope.Material) ++totalMaterial;
-        if (meshFlags & MeshEditScope.Maps)        ++totalMaps;
-        if (meshFlags & MeshEditScope.MapsDisplay) ++totalMapsDisplay;
-
-        if (selDomains & SelDomain.Vertex) ++totalSelVertex;
-        if (selDomains & SelDomain.Edge)   ++totalSelEdge;
-        if (selDomains & SelDomain.Face)   ++totalSelFace;
-        if (selDomains & SelDomain.Item)   ++totalSelItem;
+        // The MESH classes and the three GEOMETRY selection domains are counted
+        // in `deliverMesh`, not here — since stage 3 they never reach the flush
+        // at all (task 1906 §1.6/§1.7). `SelDomain.Item` is the one selection
+        // domain with no owning `Mesh`, so it is the one this site still counts.
+        if (itemSelDomains & SelDomain.Item) ++totalSelItem;
 
         if (layerKinds & LayerChange.Added)             ++totalLayerAdded;
         if (layerKinds & LayerChange.Removed)           ++totalLayerRemoved;
@@ -387,18 +404,18 @@ struct ChangeBus {
 
         if (typeChanged) { ++currentTypeChanged; lastCurrentType = newType; }
 
-        // Subject 0: the per-frame flush ORs every layer's pending word into
-        // one delivery, so there is no single mesh it is about. A subscriber
-        // that keys on the address treats 0 as "unknown — invalidate on the
-        // flags alone", which is exactly today's behaviour.
-        if (meshFlags != 0)
-            foreach (dg; meshSubs) dg(0, meshFlags);
-        if (selDomains != 0)
-            foreach (dg; selSubs) dg(selDomains);
+        // THE MESH CHANNEL IS GONE FROM THIS SITE (task 1906 stage 3). It used
+        // to fan out the per-frame union with `subjectAddr == 0` — "unknown
+        // subject, invalidate on the flags alone" — which `mesh_dirty` had to
+        // refuse outright, because acting on it marks every address it does not
+        // track as changed once per changed frame. Every mesh change is now
+        // delivered by `deliverMesh` at the edit boundary, with a real subject.
+        if (itemSelDomains != 0)
+            foreach (dg; selSubs) dg(itemSelDomains);
         if (layerKinds != 0)
             foreach (dg; layerSubs) dg(layerKinds);
-        if (typeChanged)
-            foreach (dg; currentTypeSubs) dg(newType);
+        // No current-type fan-out: that port had no listener and was deleted at
+        // stage 3. The flip is still COUNTED above, which is its only consumer.
     }
 
     // --- Synchronous delivery (task 1906 stage 0) -------------------------
@@ -415,12 +432,9 @@ struct ChangeBus {
     // they stay on the frame flush (§1.6).
     //
     // WHAT IT DELIBERATELY DOES NOT TOUCH, and this is not tidiness: neither
-    // `flushCount`/`lastFlushFlags` nor any per-class total. Until the last
-    // frame-drain consumer leaves, the SAME mutation is delivered twice — once
-    // here, once out of `Mesh.pendingChanges_` at the frame flush — so a total
-    // bumped on both paths would double `docRevision()` and make a clean
-    // document read dirty after one edit. Stage 0 is therefore byte-identical
-    // on every counter an existing test reads.
+    // `flushCount` — that one is the DOCUMENT-level channel's counter and this
+    // is the mesh channel. (It also did not touch the per-class totals until
+    // stage 3; the reason and the move are written at the bump site below.)
     // `nothrow` IS KEPT, AND THE PRICE IS NAMED (task 1906 review S4).
     //
     // `nothrow` is the compile-time half of the listener contract: it is what
@@ -476,6 +490,58 @@ struct ChangeBus {
         lastDeliveryFlags       = meshFlags;
         lastDeliverySelDomains  = selDomains;
 
+        // THE PER-CLASS TOTALS MOVED HERE AT STAGE 3, and the comment above
+        // that used to forbid it named the exact condition for the move: they
+        // were kept off this path only while the SAME mutation was delivered
+        // twice — once here, once out of `Mesh.pendingChanges_` at the frame
+        // flush — because a total bumped on both paths would double
+        // `docRevision()` and make a clean document read dirty after one edit.
+        // The frame drain is gone, so this is now the only path, and leaving
+        // the totals on the flush would have stopped `docRevision()` moving on
+        // a mesh edit at all: the title asterisk and the quit-save prompt both
+        // read it (`io.doc_state`).
+        //
+        // THE RATE, stated per PATH because it is not one number (review of
+        // stage 3, M1). Every row below is measured, and every row has a
+        // witness in `tests/test_bus_delivery_granularity.d`:
+        //
+        //   * a scripted command — ONE delivery, one bump, exactly as one
+        //     command was one flush before (blocks (2), (3));
+        //   * a multi-step gizmo drag — once per gesture STEP, where it used
+        //     to be once per FRAME (block (1));
+        //   * an interactive LASSO — ONCE for the whole gesture, because
+        //     `input_router.d`'s commit block holds a delivery batch open
+        //     across it. Without that batch it is once per PICKED ELEMENT:
+        //     measured 838 and 3 417 for one band over `grid n=32` / `n=64`
+        //     (blocks (4), (5));
+        //   * a PAINT stroke — once per element the stroke ADDS, not once per
+        //     motion event and not once per pick. The stroke picks twice per
+        //     cursor position (the motion event and the frame sweep) and the
+        //     setters' compare-before-set guard is what collapses the second
+        //     one; measured 42 deliveries for 42 vertices over 120 motions
+        //     (block (6)).
+        //
+        // What is NOT true, and what this comment used to say, is that the
+        // rate is 1:1 with a flush everywhere. A pick path had no flush
+        // granularity to inherit — its classes reached the bus through the
+        // frame drain, i.e. at most once per frame however many elements were
+        // touched — so for those the per-gesture batches above are what keeps
+        // the new rate comparable to the old one.
+        if (meshFlags & MeshEditScope.Position) ++totalPosition;
+        if (meshFlags & MeshEditScope.Points)   ++totalPoints;
+        if (meshFlags & MeshEditScope.Polygons) ++totalPolygons;
+        if (meshFlags & MeshEditScope.Marks)    ++totalMarks;
+        if (meshFlags & MeshEditScope.Material) ++totalMaterial;
+        if (meshFlags & MeshEditScope.Maps)        ++totalMaps;
+        if (meshFlags & MeshEditScope.MapsDisplay) ++totalMapsDisplay;
+
+        // The three GEOMETRY selection domains. `SelDomain.Item` never reaches
+        // here — item selection is document-level and has no owning mesh, so it
+        // stays on the frame flush, which is the one site that counts it.
+        if (selDomains & SelDomain.Vertex) ++totalSelVertex;
+        if (selDomains & SelDomain.Edge)   ++totalSelEdge;
+        if (selDomains & SelDomain.Face)   ++totalSelFace;
+
         if (meshFlags != 0)
             foreach (dg; meshSubs) dg(subjectAddr, meshFlags);
         if (selDomains != 0)
@@ -501,8 +567,8 @@ void noteLayerChange(uint kinds) {
 }
 
 // Item-selection pending accumulator. Item (layer) selection is a DOCUMENT-level
-// selection domain — there is no single Mesh whose `pendingSelDomains_` it could
-// ride (mesh selection domains are geometry marks). So, exactly like
+// selection domain — there is no single Mesh whose edit boundary it could ride
+// (mesh selection domains are geometry marks). So, exactly like
 // `pendingLayerChanges`, it accumulates in a module-level global beside the bus
 // and is OR-ed into the SELECTION word at the single per-frame flush site
 // (app.d), drained read-and-zero there. A frame that selects/deselects items

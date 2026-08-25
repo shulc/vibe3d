@@ -533,3 +533,42 @@ unittest {  // the quadratic-oracle regression. `foregroundLayersInto` used to
         ~ "SINGLE call at this size (extrapolated from the 84.6 ms measured "
         ~ "at 256 layers)");
 }
+
+// ===========================================================================
+// TASK 1906 STAGE 3 — `Layer` MINTS AN IDENTITY AND REGISTERS IT.
+//
+// `source/mesh_dirty.d`'s own ABA cell proves the LAW (a changed birth at an
+// address advances every watcher for it). This proves the other half — that
+// the law is actually wired to the object whose address reuse is the hazard —
+// and it is a separate cell because the two fail for different reasons: the
+// law can be correct with nothing calling it, and the call can be present
+// against a law that does nothing.
+//
+// Mutations, each in isolation:
+//   * delete `birthId = ++g_nextLayerBirthId;` from `Layer.this()`
+//     ⇒ block (1) reddens: two layers share the id 0.
+//   * delete the `noteMeshBirth(...)` call from `Layer.this()`
+//     ⇒ block (2) reddens: the table has no record for the layer's mesh.
+// ===========================================================================
+unittest {
+    import document  : Layer;
+    import mesh_dirty : notedBirthAt;
+
+    auto a = new Layer();
+    auto b = new Layer();
+
+    // (1) The identity is MINTED, once per layer, and monotone.
+    assert(a.birthId != 0 && b.birthId != 0,
+        "every Layer mints a nonzero identity — 0 is the 'never seated' value");
+    assert(b.birthId > a.birthId,
+        "the identity is monotone, so a later layer can never be mistaken for "
+      ~ "an earlier one that occupied the same address");
+
+    // (2) …and REGISTERED against the address the caches key on. Without this
+    //     the mint is a field nobody reads.
+    assert(notedBirthAt(cast(size_t)&a.meshRef()) == a.birthId,
+        "Layer's constructor must register its identity against its mesh "
+      ~ "address — that registration is the whole ABA close");
+    assert(notedBirthAt(cast(size_t)&b.meshRef()) == b.birthId,
+        "…for every layer, not just the first");
+}

@@ -439,25 +439,51 @@ unittest {
 // sequence rather than a subset of it: if the version term is ever dropped
 // again these blocks must still be driving the same listener the editor does.
 //
-// Reading `pendingChanges_` rather than naming a class keeps this honest: it
-// is byte-for-byte what `app.d`'s per-layer feed hands the same function, so a
-// mutator that changes which class it publishes cannot silently desync the
-// test from the app.
+// Reading the mesh's own accumulator rather than naming a class keeps this
+// honest: it is exactly what the mutator published, so a mutator that changes
+// which class it publishes cannot silently desync the test from the app.
 //
-// THE ZEROING IS NOT OPTIONAL AND IT IS NOT TIDINESS. `app.d`'s feed is
-// read-only because the drain (`ChangeBus.flush` -> `Mesh`'s per-layer reset)
-// zeroes the word for it, once per frame. A headless rig that only reads it
-// re-publishes the SAME accumulated word on every call — and a cage carries
-// `Points | Polygons` from the moment it was built, so every feed would move
-// the GEOMETRY epoch and the blocks below would invalidate for a reason that
-// has nothing to do with the crease weight they are about. Measured: without
-// the zeroing, dropping the preview's `mutationVersion` key term left this
-// whole file GREEN.
+// THE ZEROING IS NOT OPTIONAL AND IT IS NOT TIDINESS. A rig that only READ the
+// word would re-publish the SAME accumulated classes on every call — and a
+// cage carries `Points | Polygons` from the moment it was built, so every feed
+// would move the GEOMETRY epoch and the blocks below would invalidate for a
+// reason that has nothing to do with the crease weight they are about.
+// Measured: without the zeroing, dropping the preview's `mutationVersion` key
+// term left this whole file GREEN.
+//
+// AND THE WORD ONLY EXISTS TO BE READ BECAUSE ITS CALLERS HOLD A DELIVERY
+// BATCH OPEN (review of stage 3, M2). Since stage 3 every publisher DELIVERS,
+// and `Mesh.deliverPending` TAKES AND ZEROES this pair before handing it to
+// the bus — the subject filter does not save a scratch cage, it is fail-OPEN
+// when `g_isDocumentMesh` is uninstalled, which is every headless test. So
+// without the batch this function fed the epoch table a ZERO on all five
+// calls and every staleness assertion in the two blocks below was free.
+// Inside a batch a publish only REGISTERS, which is the same state a
+// command's kernel runs in and the state this rig was written against.
+//
+// The assert is the anti-vacuity arm and it belongs HERE rather than at the
+// call sites: it fires the moment somebody removes a batch, or moves a feed
+// to a point where nothing has been published.
 private void feedBus(ref Mesh cage) {
     import mesh_dirty : noteMeshChange;
-    noteMeshChange(cast(size_t)&cage, cage.pendingChanges_);
-    cage.pendingChanges_ = 0;   // the drain's half, which app.d does elsewhere
+    assert(cage.undeliveredChanges_ != 0,
+        "RIG: the change accumulator is EMPTY at a feed — either the caller "
+      ~ "dropped its `beginDeliveryBatchGlobal` (so the publisher's own "
+      ~ "delivery took the word) or nothing was published since the last "
+      ~ "feed. Either way the epoch table is being handed a ZERO and the "
+      ~ "staleness assertions below cannot fail");
+    noteMeshChange(cast(size_t)&cage, cage.undeliveredChanges_);
+    cage.undeliveredChanges_ = 0;   // what the real delivery would have done
 }
+
+/// The two blocks below hold one of these for their whole body — see
+/// `feedBus`. Spelled out at each site rather than hidden in a helper struct
+/// so the `scope(exit)` is visible beside the mesh whose accumulator it keeps.
+private enum string kHoldDelivery = q{
+    import mesh : beginDeliveryBatchGlobal, endDeliveryBatchGlobal;
+    beginDeliveryBatchGlobal();
+    scope(exit) endDeliveryBatchGlobal();
+};
 
 // BOTH cache layers, or it presents to the user as "the weight does
 // nothing". This is the position-only fast-path case: the FIRST-ever
@@ -471,6 +497,7 @@ private void feedBus(ref Mesh cage) {
 // assertion below while leaving the first green (see the task report).
 unittest {
     Mesh cage = makeCube();
+    mixin(kHoldDelivery);
     cage.resizeSubpatch();
     foreach (fi; 0 .. cage.faces.length) cage.setSubpatch(fi, true);
     uint ei = cage.edgeIndex(6, 7);
@@ -504,6 +531,7 @@ unittest {
 // verified 2026-08-17 to redden this test (see the task report).
 unittest {
     Mesh cage = makeCube();
+    mixin(kHoldDelivery);
     cage.resizeSubpatch();
     foreach (fi; 0 .. cage.faces.length) cage.setSubpatch(fi, true);
     uint ei = cage.edgeIndex(6, 7);

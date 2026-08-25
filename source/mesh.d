@@ -972,7 +972,7 @@ private MeshEditDelta closeEditFrame(Mesh* m, uint extraFlags) {
     // the class the closer is declaring; `marksVersion` would miss a
     // marks-affecting flag, which `selectionSignature`'s consumers key on; and
     // with `accum == 0` the stamp would bump `mutationVersion` against
-    // `pendingChanges_ == 0`, which is precisely the shape app.d's per-frame
+    // no publish at all, which is precisely the shape app.d's per-frame
     // guard counts as `changeBus.missedPublishers` — a counter the DoD
     // requires to stay 0.
     //
@@ -2104,31 +2104,48 @@ struct Mesh {
             "edgeIndexMap read while stale/empty — a topology mutator skipped rebuildEdges()/buildLoops()");
     }
 
-    // --- Change-notification accumulation (doc/change_notification_bus_plan) -
+    // --- The change-notification accumulator (task 1906 §1.2) --------------
     // OR-accumulated change-class flags (MeshEditScope bits) and selection
-    // domains (change_bus.SelDomain bits) since the last per-frame flush. The
-    // main loop drains these into changeBus.flush(...) once per frame and then
-    // zeroes them. Pending state lives HERE (not on the bus) so that, when the
-    // layer/document model lands, each Layer.mesh can accumulate independently.
-    // Stage 0: populated by commitChange() at the converted version-bump sites;
-    // no subscribers consume it yet.
-    uint      pendingChanges_;     // MeshEditScope bits
-    uint      pendingSelDomains_;  // change_bus.SelDomain bits
-
-    // --- The SYNCHRONOUS-delivery accumulator (task 1906 §1.2) ------------
-    // A SECOND pair beside the frame-drain words above, not a replacement for
-    // them. `pendingChanges_` keeps its once-per-frame lifetime until its last
-    // consumer leaves; these two are taken-and-zeroed by `deliverPending()` at
-    // the edit boundary.
+    // domains (change_bus.SelDomain bits) that have not yet been handed to the
+    // bus. Taken-and-zeroed by `deliverPending()` at the edit boundary.
     //
-    // They must be separate, and the reason is a live guard: app.d's per-frame
-    // shadow check latches a "missed publisher" whenever a layer's
-    // mutationVersion advanced while its `pendingChanges_` reads 0. If delivery
-    // took-and-zeroed THAT word, the guard would fire on every mutation and
-    // `changeBus.missedPublishers` — which a test asserts stays 0 — would
-    // invert into a permanent false positive.
+    // THERE USED TO BE A SECOND PAIR beside these — `undeliveredChanges_` /
+    // `undeliveredSelDomains_`, drained once per frame by `source/app.d`'s flush
+    // block. Stage 3 deleted both, and with them the two-path delivery model:
+    // every publisher now delivers, so a per-frame union with no subject has
+    // nothing left to carry (the drain's own `changeBus.flush` named
+    // `subjectAddr == 0`, which `mesh_dirty` refused by design anyway).
+    //
+    // The pair existed for one live reason, and that reason is gone too:
+    // app.d's shadow check used to read "mutationVersion moved while
+    // `undeliveredChanges_` reads 0", so a delivery that took-and-zeroed the same
+    // word would have made the guard fire on every mutation. Since stage 3 the
+    // guard reads `mutationVersion == stampedVersion_` instead — a per-mesh
+    // equality that needs no frame, no drain and no second word.
     uint      undeliveredChanges_;     // MeshEditScope bits, not yet delivered
     uint      undeliveredSelDomains_;  // change_bus.SelDomain bits, not yet delivered
+
+    // --- The missed-publisher witness (task 1906 stage 3) -----------------
+    // `mutationVersion` as of the last STAMP made through `commitStamps` — the
+    // one funnel that is allowed to advance it. The invariant is therefore a
+    // per-mesh equality, `mutationVersion == stampedVersion_`, and a mesh that
+    // fails it has had its version bumped by something that published nothing:
+    // exactly what `changeBus.missedPublishers` counts (task 0462).
+    //
+    // IT REPLACES A FRAME-SHAPED TEST WITH A PER-MESH ONE, and that is the
+    // whole reason it exists. Until stage 3 the guard read
+    // "`mutationVersion` moved while `undeliveredChanges_` reads 0", which needed
+    // the per-frame drain to zero that word for it — so deleting the drain
+    // would have left the old form permanently green (the word is never
+    // cleared again), i.e. a check that cannot come out differently. It was
+    // also MASKABLE: any other publisher on the same mesh in the same frame
+    // filled `undeliveredChanges_` and hid the bare bump. This one is not — the
+    // equality is restored only by a real stamp.
+    //
+    // Read by the `debug` shadow check in `source/app.d`'s flush block, which
+    // re-syncs after counting so one bare bump is counted once rather than
+    // every frame afterwards.
+    ulong     stampedVersion_;
 
     // Accumulate-only: OR the given MeshEditScope flags into the pending set.
     // Does NOT bump the version counters, so it is safe inside loops and safe
@@ -2141,7 +2158,7 @@ struct Mesh {
     /// frame of the one gesture that matters.
     ///
     /// It hangs off the SAME two funnels that publish `MeshEditScope.Marks`
-    /// and nothing else writes `pendingChanges_`, so its coverage is exactly
+    /// and nothing else writes the accumulator, so its coverage is exactly
     /// the Marks publication's coverage — which is already load-bearing (the
     /// display-refresh mask and the GPU-select invalidation both key on it) and
     /// already gated (`changeBus.missedPublishers`). A new invariant would have
@@ -2167,10 +2184,10 @@ struct Mesh {
         assert(!changeBus.delivering,
             "change_bus: a listener published a mesh change — listeners are " ~
             "dirty-bit-only (set your own flag, recompute lazily at the reader)");
-        pendingChanges_ |= flags;
-        // Accumulate-only here too: `noteChange` keeps its "safe inside loops,
-        // safe mid-drag" contract and does NOT deliver. The next delivering
-        // publisher (`publishChange` / `commitChange`) takes this word.
+        // Accumulate-only: `noteChange` keeps its "safe inside loops, safe
+        // mid-drag" contract and does NOT deliver. The next delivering
+        // publisher (`publishChange` / `commitChange`, or the command anchor at
+        // `Command.apply`'s close) takes this word.
         undeliveredChanges_ |= flags;
         if (flags & kMarksAffecting) ++marksVersion;
     }
@@ -2200,7 +2217,7 @@ struct Mesh {
     /// That is INCIDENTAL: reorder those two lines, or drop the
     /// `resetSelection()`, and the command silently stops delivering. Since
     /// stage 2a the display family and the geometry family key on the BUS
-    /// EPOCH rather than on a pull of `pendingChanges_`, so a command that
+    /// EPOCH rather than on a per-frame pull, so a command that
     /// delivers nothing leaves `ensureDisplayCurrent` — the mid-batch pull
     /// guard in front of every VBO reader that runs before the frame's flush —
     /// with no reason to re-upload, for the rest of that frame.
@@ -2212,6 +2229,29 @@ struct Mesh {
     /// transform path say so at their sites); it is wrong as a command's tail.
     void publishChange(uint flags) {
         noteChange(flags);
+        deliverPending();
+    }
+
+    /// THE COMMAND-LEVEL DELIVERY ANCHOR (task 1906 stage 3). Hand whatever has
+    /// accumulated to the bus, adding no class of its own.
+    ///
+    /// It exists because the "convert every command's tail to `publishChange`"
+    /// rule above cannot reach the SELECTION family, and that was measured
+    /// rather than argued: `select.invert`, `select.byStat.{vertex,edge,polygon}`
+    /// and their siblings never call a publisher at all — the marks setters they
+    /// drive end in `noteSelectionChange`, which accumulates and never delivers.
+    /// Fired one per `/api/reset` on the live app, each of them moved
+    /// `deliveryCount` by 0 and `flushCount` by 1: their whole channel was the
+    /// per-frame drain this stage deletes.
+    ///
+    /// So the conversion is made STRUCTURALLY, at `Command.apply`'s `scope(exit)`
+    /// — the same `final` wrapper that already owns the delivery batch — instead
+    /// of by editing seventeen tails and hoping the eighteenth remembers. A
+    /// command that published nothing has empty words here and this is a no-op;
+    /// a command that already delivered has been through `deliverPending` and is
+    /// either registered in the batch's pending set (deduped by pointer) or
+    /// zeroed, so the delivery COUNT per command stays exactly one either way.
+    void deliverAccumulated() {
         deliverPending();
     }
 
@@ -2235,10 +2275,15 @@ struct Mesh {
         // then) and put it in `g_deliveryPendingMeshes`; by the close the
         // resolver no longer finds it, so `flushDeliveryPending`'s
         // `deliverPending()` rejects and the synchronous delivery never
-        // happens. Harmless in stage 0 — nothing keys on the subject yet and
-        // the per-frame flush still ORs `pendingChanges_` to every listener —
-        // and it is fixed structurally in stage 2 by holding a `Layer` handle
-        // instead of a `Mesh*` (review S2).
+        // happens. Stage 0 called this harmless because the per-frame flush
+        // still ORed a subject-less union to every listener; STAGE 3 DELETED
+        // THAT FLUSH, so say what is true now instead: the dropped delivery is
+        // for a mesh whose layer no longer exists, so no epoch-keyed consumer
+        // can be asked about it — every one of them keys on an ADDRESS that is
+        // no longer in `document.layers`. The `undelivered*_` words are kept
+        // (see below), so if that same mesh is ever re-linked its next
+        // delivering publisher carries them. Holding a `Layer` handle instead
+        // of a `Mesh*` (review S2) remains the structural fix.
         //
         // Rejection deliberately leaves `undelivered*_` ALONE rather than
         // zeroing it. A kernel that builds a scratch mesh and then hands it
@@ -2334,7 +2379,7 @@ struct Mesh {
 
         // TASK 1903 §3.1 — INSIDE AN EDIT BATCH, DECLARE ONLY. The class of
         // the change is still recorded (`noteChange` above ran, so
-        // `pendingChanges_` and `undeliveredChanges_` already carry it); what
+        // `undeliveredChanges_` already carries it); what
         // is DEFERRED to the batch's close is the STAMP — the version bumps,
         // the derive and, riding the same tail, 1906's delivery. `close()` is
         // then the single site that advances a version for the whole edit.
@@ -2391,6 +2436,11 @@ struct Mesh {
     /// to advance a version stamp and must be argued for, not added.
     private void commitStamps(uint flags) {
         ++mutationVersion;
+        // The missed-publisher witness (task 1906 stage 3). Set HERE, beside
+        // the bump it witnesses and above both of this function's exits, so
+        // "the version moved through the stamp funnel" and "the version moved"
+        // are the same event by construction. See `stampedVersion_`.
+        stampedVersion_ = mutationVersion;
         if (flags & MeshEditScope.Geometry) {
             ++topologyVersion;
             // Task 1330: inside a batch the derive is deferred to the batch's
@@ -2477,7 +2527,7 @@ struct Mesh {
     }
 
     // Accumulate a SELECTION change (Stage 5): OR `Marks` into the mesh-class
-    // pending set AND the given selection-domain bit into pendingSelDomains_.
+    // pending set AND the given selection-domain bit into undeliveredSelDomains_.
     // Deliberately does NOT bump mutationVersion — selection is a Marks-class
     // change, not a version-bumping geometry change, and the marks setters have
     // always been version-stable (a property other systems rely on; e.g. the
@@ -2491,11 +2541,13 @@ struct Mesh {
         assert(!changeBus.delivering,
             "change_bus: a listener published a selection change — listeners " ~
             "are dirty-bit-only (set your own flag, recompute lazily)");
-        pendingChanges_     |= MeshEditScope.Marks;
-        pendingSelDomains_  |= cast(uint)domain;
-        // Accumulate-only, like noteChange: the next delivering publisher takes
-        // these. A bare selection edit therefore rides the commit that follows
-        // it, or the frame flush, exactly as it does today.
+        // Accumulate-only, like noteChange: the delivering publisher that takes
+        // these is the WRITER that called it — since stage 3 every selection
+        // writer on `Mesh` (the six scalar setters, the three bulk `clear*`,
+        // `applySelectedFrom_`) calls `deliverPending()` right after. This
+        // funnel itself must NOT, because `refreshHiddenDerived` uses it
+        // mid-`commitStamps`, where a delivery would land BEFORE the derive
+        // that `commitChange`'s documented order puts first.
         undeliveredChanges_    |= MeshEditScope.Marks;
         undeliveredSelDomains_ |= cast(uint)domain;
         ++marksVersion;     // see the field: this is the SECOND of two funnels
@@ -2507,26 +2559,35 @@ struct Mesh {
 
         // Single setters accumulate Marks + the matching domain bit, and stay
         // version-stable (selection is not a version-bumping geometry change).
+        //
+        // TASK 1906 STAGE 3 — THE BATCH IS WHAT MAKES THE ACCUMULATOR READABLE.
+        // The setters are delivering publishers now, and a delivery takes and
+        // ZEROES `undelivered*_`, so outside a batch these asserts would read a
+        // word the setter has already handed over. Inside one the delivery only
+        // REGISTERS, which is the same state the pre-stage-3 rig observed and
+        // the same state every command's kernel runs in.
         {
             Mesh m = makeCube();
             m.resetSelection();
-            m.pendingChanges_ = 0; m.pendingSelDomains_ = 0;
+            beginDeliveryBatchGlobal();
+            scope(exit) endDeliveryBatchGlobal();
+            m.undeliveredChanges_ = 0; m.undeliveredSelDomains_ = 0;
             const ver0 = m.mutationVersion;
             const top0 = m.topologyVersion;
 
             m.selectVertex(0);
-            assert(m.pendingChanges_ & MeshEditScope.Marks, "selectVertex notes Marks");
-            assert(m.pendingSelDomains_ & SelDomain.Vertex, "selectVertex notes Vertex domain");
+            assert(m.undeliveredChanges_ & MeshEditScope.Marks, "selectVertex notes Marks");
+            assert(m.undeliveredSelDomains_ & SelDomain.Vertex, "selectVertex notes Vertex domain");
 
             m.selectEdge(0);
-            assert(m.pendingSelDomains_ & SelDomain.Edge, "selectEdge notes Edge domain");
+            assert(m.undeliveredSelDomains_ & SelDomain.Edge, "selectEdge notes Edge domain");
 
             m.selectFace(0);
-            assert(m.pendingSelDomains_ & SelDomain.Face, "selectFace notes Face domain");
+            assert(m.undeliveredSelDomains_ & SelDomain.Face, "selectFace notes Face domain");
 
             // All three domains accumulate (OR), and NO version bump occurred —
             // marks setters must remain version-stable.
-            assert(m.pendingSelDomains_ ==
+            assert(m.undeliveredSelDomains_ ==
                 (SelDomain.Vertex | SelDomain.Edge | SelDomain.Face),
                 "domains OR-accumulate");
             assert(m.mutationVersion == ver0, "selection must NOT bump mutationVersion");
@@ -2534,27 +2595,30 @@ struct Mesh {
         }
 
         // Bulk setXSelectedFrom compares-before-set: a no-op re-apply of the SAME
-        // selection does not publish; a real change does.
+        // selection does not publish; a real change does. Batched for the same
+        // reason as the block above.
         {
             Mesh m = makeCube();
             m.resetSelection();
-            m.pendingChanges_ = 0; m.pendingSelDomains_ = 0;
+            beginDeliveryBatchGlobal();
+            scope(exit) endDeliveryBatchGlobal();
+            m.undeliveredChanges_ = 0; m.undeliveredSelDomains_ = 0;
             bool[] sel; sel.length = m.vertices.length;
             sel[2] = true;
 
             m.setVerticesSelectedFrom(sel);           // real change
-            assert(m.pendingSelDomains_ & SelDomain.Vertex, "first apply publishes");
+            assert(m.undeliveredSelDomains_ & SelDomain.Vertex, "first apply publishes");
 
-            m.pendingChanges_ = 0; m.pendingSelDomains_ = 0;
+            m.undeliveredChanges_ = 0; m.undeliveredSelDomains_ = 0;
             m.setVerticesSelectedFrom(sel);           // identical re-apply: no-op
-            assert(m.pendingSelDomains_ == 0,
+            assert(m.undeliveredSelDomains_ == 0,
                 "re-applying identical selection must NOT publish");
-            assert((m.pendingChanges_ & MeshEditScope.Marks) == 0,
+            assert((m.undeliveredChanges_ & MeshEditScope.Marks) == 0,
                 "no-op restore must NOT note Marks");
 
             sel[2] = false; sel[5] = true;            // actual change
             m.setVerticesSelectedFrom(sel);
-            assert(m.pendingSelDomains_ & SelDomain.Vertex,
+            assert(m.undeliveredSelDomains_ & SelDomain.Vertex,
                 "a real selection change publishes again");
         }
 
@@ -2621,19 +2685,22 @@ struct Mesh {
             assert(m.edgeSelectionOrderCounter == 2, "edge counter untouched by bulk deselect");
         }
 
-        // clear* compares-before-set: clearing an already-empty selection is inert.
+        // clear* compares-before-set: clearing an already-empty selection is
+        // inert. Batched for the same reason as the blocks above (stage 3).
         {
             Mesh m = makeCube();
             m.resetSelection();
-            m.pendingChanges_ = 0; m.pendingSelDomains_ = 0;
+            beginDeliveryBatchGlobal();
+            scope(exit) endDeliveryBatchGlobal();
+            m.undeliveredChanges_ = 0; m.undeliveredSelDomains_ = 0;
             m.clearFaceSelection();                   // nothing selected → inert
-            assert(m.pendingSelDomains_ == 0,
+            assert(m.undeliveredSelDomains_ == 0,
                 "clearing empty face selection must NOT publish");
 
             m.selectFace(1);
-            m.pendingChanges_ = 0; m.pendingSelDomains_ = 0;
+            m.undeliveredChanges_ = 0; m.undeliveredSelDomains_ = 0;
             m.clearFaceSelection();                   // drops a live selection
-            assert(m.pendingSelDomains_ & SelDomain.Face,
+            assert(m.undeliveredSelDomains_ & SelDomain.Face,
                 "clearing a live face selection publishes Face");
         }
     }
@@ -2964,8 +3031,8 @@ struct Mesh {
     /// the floor and marks an enclosing frame errored, exactly as the
     /// destructor's path does. What it does NOT drop is `noteChange` — that
     /// already ran, before the deferral early-out, so the flags are still in
-    /// `pendingChanges_` / `undeliveredChanges_` and the next commit on this
-    /// mesh carries them.
+    /// `undeliveredChanges_` / `undeliveredSelDomains_` and the next commit on
+    /// this mesh carries them.
     void abortEditBatch() {
         if (currentBatchFrame(&this) is null) return;   // already closed
         popLeakedEditFrame(&this);
@@ -8888,13 +8955,27 @@ struct Mesh {
     // Select bit was actually set (clearing an already-empty selection is a
     // no-op and must not publish — e.g. the unconditional clearVertex/Face
     // calls topology mutators run on edge-only edits).
+    //
+    // TASK 1906 STAGE 3 — THEY DELIVER, and `noteSelectionChange` beside them
+    // still does not. The difference is measured, not stylistic: the editor's
+    // "click empty space to deselect" and the lasso's replace-mode pre-clear
+    // call these three from `source/input_router.d` OUTSIDE any command and
+    // outside the interactive pick helpers, so before this they reached the bus
+    // only through the per-frame drain — the last four frames of residue the
+    // stage-3 census measured, after the command anchor and `symmetry_pick`
+    // had taken the other ~1670. A bulk clear is an edit boundary by nature
+    // (one call, behind a compare-guard) so a delivery here cannot loop, which
+    // is exactly what is NOT true of the scalar `selectVertex` family and why
+    // that one keeps the accumulate-only funnel and a batch around its caller.
+    // Inside a command or a pick batch this only registers, so the
+    // one-delivery-per-operation count is unchanged.
     void clearVertexSelection() {
         bool any = false;
         foreach (m; vertexMarks) if (m & Marks.Select) { any = true; break; }
         foreach (ref m; vertexMarks) m &= ~Marks.Select;
         vertexSelectionOrder[] = 0;
         vertexSelectionOrderCounter = 0;
-        if (any) noteSelectionChange(SelDomain.Vertex);
+        if (any) { noteSelectionChange(SelDomain.Vertex); deliverPending(); }
     }
     void clearEdgeSelection() {
         bool any = false;
@@ -8902,7 +8983,7 @@ struct Mesh {
         foreach (ref m; edgeMarks) m &= ~Marks.Select;
         edgeSelectionOrder[] = 0;
         edgeSelectionOrderCounter = 0;
-        if (any) noteSelectionChange(SelDomain.Edge);
+        if (any) { noteSelectionChange(SelDomain.Edge); deliverPending(); }
     }
     void clearFaceSelection() {
         // Mask ONLY the Select bit — Subpatch shares this word and must
@@ -8912,7 +8993,7 @@ struct Mesh {
         foreach (ref m; faceMarks) m &= ~Marks.Select;
         faceSelectionOrder[] = 0;
         faceSelectionOrderCounter = 0;
-        if (any) noteSelectionChange(SelDomain.Face);
+        if (any) { noteSelectionChange(SelDomain.Face); deliverPending(); }
     }
 
     // --- Per-element selection-array resize primitives ---------------------
@@ -10413,7 +10494,16 @@ struct Mesh {
             if (want) marks[i] |=  Marks.Select;
             else { marks[i] &= ~Marks.Select; order[i] = 0; }
         }
-        if (changed) noteSelectionChange(dom);
+        // TASK 1906 STAGE 3 — DELIVERS, for the same reason the `clear*` trio
+        // beside it does, and with a caller that proves the point: the census
+        // found ONE residual frame after the command anchor and the pick
+        // helpers, and it was `select.set.apply` — a command that walks EVERY
+        // foreground layer and writes marks on meshes that are not its own
+        // `Command.mesh`, so the anchor's single offer could not reach them.
+        // A bulk write behind a compare-guard is an edit boundary and cannot
+        // loop; inside a batch this only registers, so the per-operation
+        // delivery count is unchanged.
+        if (changed) { noteSelectionChange(dom); deliverPending(); }
     }
     void setVerticesSelectedFrom(const bool[] src) {
         applySelectedFrom_(vertexMarks, vertexSelectionOrder, src, SelDomain.Vertex);
@@ -11696,43 +11786,148 @@ struct Mesh {
     // Same invariant as applySelectedFrom_ above (§3.1) — refuse to select a
     // hidden element. Checked first so a refusal touches neither the order
     // counter nor the bus publish.
+    //
+    // TASK 1906 STAGE 3 — THESE SIX DELIVER, and after them EVERY selection
+    // write on a `Mesh` does. That is the point: `noteSelectionChange` stays
+    // accumulate-only (it is also the funnel `refreshHiddenDerived` uses
+    // mid-commit, where an early delivery would break `commitChange`'s
+    // documented "deliver after the derive" order), while the WRITERS a caller
+    // actually reaches are delivering publishers. The census reached this
+    // conclusion by exhaustion rather than by design: the command anchor took
+    // ~1670 residual frames, `symmetry_pick` the interactive picks, the bulk
+    // `clear*`/`applySelectedFrom_` trio the rest — and the last frame standing
+    // was a TOOL (Topology Pen's undo path) calling `selectVertex` at delivery
+    // depth 0, because a tool gesture is not a `Command.apply`.
+    //
+    // The cost of delivering per element rather than per gesture is paid only
+    // OUTSIDE a batch: inside one — every command, and the pick helpers — this
+    // registers the mesh and the close still delivers exactly once. The
+    // unbatched loops that remain are tool-sized (a loop, a ring), not
+    // mesh-sized.
     void selectVertex(int idx) {
         if (vertexMarks[idx] & Marks.Hide) return;
-        if ((vertexMarks[idx] & Marks.Select) == 0)
-            vertexSelectionOrder[idx] = ++vertexSelectionOrderCounter;
+        // ALREADY SELECTED IS A NO-OP, AND SINCE STAGE 3 THAT HAS A PRICE
+        // (review of stage 3, M1). This setter DELIVERS, so re-selecting
+        // an element that is already selected cost a whole bus delivery
+        // and a fan-out to every listener for a mark that did not move.
+        // It is not a corner case: a paint stroke picks TWICE per cursor
+        // position — once from the motion event (`doSelectPickAt`) and
+        // once from the frame's own picker sweep — and the second pick
+        // lands on the element the first just took. MEASURED on a
+        // 120-motion stroke over `grid n=32`: 280 deliveries without this
+        // guard, i.e. 2.34 per motion, where the stroke changes the
+        // selection at most once per motion.
+        //
+        // The guard is the whole of the write: the order slot is ALREADY
+        // only assigned on the 0->1 transition below, so an element whose
+        // Select bit is set has nothing left for this call to do. Refusing
+        // here therefore also skips `marksVersion`, which is correct —
+        // `selectionSignature` is a function of the marks, and the marks
+        // did not change.
+        if (vertexMarks[idx] & Marks.Select) return;
+        vertexSelectionOrder[idx] = ++vertexSelectionOrderCounter;
         vertexMarks[idx] |= Marks.Select;
         noteSelectionChange(SelDomain.Vertex);
+        deliverPending();
     }
     void deselectVertex(int idx) {
+        // COMPARE BEFORE SET, like the three bulk `clear*` siblings and
+        // for the same reason, which got sharper at stage 3 (review MINOR
+        // 6): these setters DELIVER now, so a redundant deselect — the
+        // ordinary case for a ctrl-drag paint stroke passing twice over an
+        // unselected element — costs a whole bus delivery and a fan-out to
+        // every listener for a mark that did not move. The state this
+        // writes is exactly (Select bit, pick order), so the guard reads
+        // both; a `Marks.Select`-only test would skip a stale order value.
+        if ((vertexMarks[idx] & Marks.Select) == 0 && vertexSelectionOrder[idx] == 0) return;
         vertexMarks[idx] &= ~Marks.Select;
         vertexSelectionOrder[idx] = 0;
         noteSelectionChange(SelDomain.Vertex);
+        deliverPending();
     }
 
     void selectEdge(int idx) {
         if (edgeMarks[idx] & Marks.Hide) return;
-        if ((edgeMarks[idx] & Marks.Select) == 0)
-            edgeSelectionOrder[idx] = ++edgeSelectionOrderCounter;
+        // ALREADY SELECTED IS A NO-OP, AND SINCE STAGE 3 THAT HAS A PRICE
+        // (review of stage 3, M1). This setter DELIVERS, so re-selecting
+        // an element that is already selected cost a whole bus delivery
+        // and a fan-out to every listener for a mark that did not move.
+        // It is not a corner case: a paint stroke picks TWICE per cursor
+        // position — once from the motion event (`doSelectPickAt`) and
+        // once from the frame's own picker sweep — and the second pick
+        // lands on the element the first just took. MEASURED on a
+        // 120-motion stroke over `grid n=32`: 280 deliveries without this
+        // guard, i.e. 2.34 per motion, where the stroke changes the
+        // selection at most once per motion.
+        //
+        // The guard is the whole of the write: the order slot is ALREADY
+        // only assigned on the 0->1 transition below, so an element whose
+        // Select bit is set has nothing left for this call to do. Refusing
+        // here therefore also skips `marksVersion`, which is correct —
+        // `selectionSignature` is a function of the marks, and the marks
+        // did not change.
+        if (edgeMarks[idx] & Marks.Select) return;
+        edgeSelectionOrder[idx] = ++edgeSelectionOrderCounter;
         edgeMarks[idx] |= Marks.Select;
         noteSelectionChange(SelDomain.Edge);
+        deliverPending();
     }
     void deselectEdge(int idx) {
+        // COMPARE BEFORE SET, like the three bulk `clear*` siblings and
+        // for the same reason, which got sharper at stage 3 (review MINOR
+        // 6): these setters DELIVER now, so a redundant deselect — the
+        // ordinary case for a ctrl-drag paint stroke passing twice over an
+        // unselected element — costs a whole bus delivery and a fan-out to
+        // every listener for a mark that did not move. The state this
+        // writes is exactly (Select bit, pick order), so the guard reads
+        // both; a `Marks.Select`-only test would skip a stale order value.
+        if ((edgeMarks[idx] & Marks.Select) == 0 && edgeSelectionOrder[idx] == 0) return;
         edgeMarks[idx] &= ~Marks.Select;
         edgeSelectionOrder[idx] = 0;
         noteSelectionChange(SelDomain.Edge);
+        deliverPending();
     }
 
     void selectFace(int idx) {
         if (faceMarks[idx] & Marks.Hide) return;
-        if ((faceMarks[idx] & Marks.Select) == 0)
-            faceSelectionOrder[idx] = ++faceSelectionOrderCounter;
+        // ALREADY SELECTED IS A NO-OP, AND SINCE STAGE 3 THAT HAS A PRICE
+        // (review of stage 3, M1). This setter DELIVERS, so re-selecting
+        // an element that is already selected cost a whole bus delivery
+        // and a fan-out to every listener for a mark that did not move.
+        // It is not a corner case: a paint stroke picks TWICE per cursor
+        // position — once from the motion event (`doSelectPickAt`) and
+        // once from the frame's own picker sweep — and the second pick
+        // lands on the element the first just took. MEASURED on a
+        // 120-motion stroke over `grid n=32`: 280 deliveries without this
+        // guard, i.e. 2.34 per motion, where the stroke changes the
+        // selection at most once per motion.
+        //
+        // The guard is the whole of the write: the order slot is ALREADY
+        // only assigned on the 0->1 transition below, so an element whose
+        // Select bit is set has nothing left for this call to do. Refusing
+        // here therefore also skips `marksVersion`, which is correct —
+        // `selectionSignature` is a function of the marks, and the marks
+        // did not change.
+        if (faceMarks[idx] & Marks.Select) return;
+        faceSelectionOrder[idx] = ++faceSelectionOrderCounter;
         faceMarks[idx] |= Marks.Select;
         noteSelectionChange(SelDomain.Face);
+        deliverPending();
     }
     void deselectFace(int idx) {
+        // COMPARE BEFORE SET, like the three bulk `clear*` siblings and
+        // for the same reason, which got sharper at stage 3 (review MINOR
+        // 6): these setters DELIVER now, so a redundant deselect — the
+        // ordinary case for a ctrl-drag paint stroke passing twice over an
+        // unselected element — costs a whole bus delivery and a fan-out to
+        // every listener for a mark that did not move. The state this
+        // writes is exactly (Select bit, pick order), so the guard reads
+        // both; a `Marks.Select`-only test would skip a stale order value.
+        if ((faceMarks[idx] & Marks.Select) == 0 && faceSelectionOrder[idx] == 0) return;
         faceMarks[idx] &= ~Marks.Select;
         faceSelectionOrder[idx] = 0;
         noteSelectionChange(SelDomain.Face);
+        deliverPending();
     }
 
     void clear() {
@@ -16246,8 +16441,8 @@ struct MeshEditBatch {
     /// app keeps running and silently stops publishing. What the leak path
     /// skips is the version bump, the derive and the delivery; what it does NOT
     /// skip is `noteChange`, which already ran BEFORE the deferral early-out,
-    /// so the flags are still in `pendingChanges_`/`undeliveredChanges_` and
-    /// the next commit on this mesh carries them.
+    /// so the flags are still in `undeliveredChanges_`/`undeliveredSelDomains_`
+    /// and the next commit on this mesh carries them.
     ~this() {
         if (!open_) return;
         popLeakedEditFrame(m_);

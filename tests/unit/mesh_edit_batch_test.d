@@ -771,12 +771,12 @@ unittest // the guard stays armed past a CLEAN close, and must not invent a leak
 //
 // `extraFlags` was the ONE way into `commitStamps` that skipped `noteChange`.
 // Every deferred `commitChange` in a batch went through it (that is where
-// `pendingChanges_`, `undeliveredChanges_` and `marksVersion` are written);
+// `undeliveredChanges_`, `undeliveredChanges_` and `marksVersion` are written);
 // the closer's own flags did not. Three consequences, all asserted below:
 // `deliverPending` shipped `undeliveredChanges_` WITHOUT them, so no listener
 // heard the class the closer was declaring; `marksVersion` missed a
 // marks-affecting flag; and with `accum == 0` the stamp bumped
-// `mutationVersion` against `pendingChanges_ == 0`, which is exactly the shape
+// `mutationVersion` against `undeliveredChanges_ == 0`, which is exactly the shape
 // app.d's per-frame shadow check latches as `changeBus.missedPublishers` — a
 // counter the DoD requires to stay 0.
 //
@@ -795,7 +795,7 @@ unittest // close(extraFlags) routes them through noteChange
     // Zero the frame-drain word: `makeCube` itself commits per face, so
     // without this the "did the extra flag arrive" test reads a bit that was
     // already set and cannot come out differently.
-    m.pendingChanges_ = 0;
+    m.undeliveredChanges_ = 0;
 
     const ulong mvBefore    = m.mutationVersion;
     const ulong marksBefore = m.marksVersion;
@@ -811,11 +811,19 @@ unittest // close(extraFlags) routes them through noteChange
     assert(m.mutationVersion == mvBefore + 1,
         format("close(extraFlags) did not stamp (mutationVersion moved by %d, "
              ~ "expected 1)", m.mutationVersion - mvBefore));
-    assert((m.pendingChanges_ & MeshEditScope.Marks) != 0,
-        format("close(extraFlags) advanced mutationVersion but left "
-             ~ "pendingChanges_ at 0x%x — that is precisely the state app.d's "
-             ~ "per-frame guard latches as changeBus.missedPublishers, which "
-             ~ "the DoD requires to stay 0", m.pendingChanges_));
+    // TASK 1906 STAGE 3 — READ OFF THE DELIVERY, not off the accumulator. The
+    // close DELIVERS, and a delivery takes and zeroes `undelivered*_`, so the
+    // word this used to inspect is empty by the time the assert runs. What the
+    // block is about is unchanged and is still the missed-publisher shape:
+    // the class the close stamped a version for must have been PUBLISHED.
+    assert((changeBus.lastDeliveryFlags & MeshEditScope.Marks) != 0,
+        format("close(extraFlags) advanced mutationVersion but delivered "
+             ~ "0x%x — that is precisely the state app.d's per-frame guard "
+             ~ "latches as changeBus.missedPublishers, which the DoD requires "
+             ~ "to stay 0", changeBus.lastDeliveryFlags));
+    assert(m.mutationVersion == m.stampedVersion_,
+        "the guard's own equality: a stamp that published leaves "
+      ~ "`mutationVersion` and `stampedVersion_` in step");
     assert(m.marksVersion == marksBefore + 1,
         format("marksVersion moved by %d across close(Marks); expected 1 — a "
              ~ "marks-affecting extra flag that skips noteChange never reaches "
@@ -839,7 +847,7 @@ unittest // a NESTED close's extra flags are published too
     // `accum`) but never the delivery.
     auto m = makeCube();
     m.syncSelection();
-    m.pendingChanges_ = 0;
+    m.undeliveredChanges_ = 0;
 
     const ulong mvBefore = m.mutationVersion;
 
@@ -854,10 +862,63 @@ unittest // a NESTED close's extra flags are published too
         cast(void)outer.close();
     }
 
-    assert((m.pendingChanges_ & MeshEditScope.Marks) != 0,
-        format("a nested close(Marks) left pendingChanges_ at 0x%x — its "
-             ~ "flags reached the outer frame's accum but never noteChange",
-               m.pendingChanges_));
+    // Read off the delivery, same reason as the block above (stage 3).
+    assert((changeBus.lastDeliveryFlags & MeshEditScope.Marks) != 0,
+        format("a nested close(Marks) delivered 0x%x — its flags reached the "
+             ~ "outer frame's accum but never noteChange",
+               changeBus.lastDeliveryFlags));
     assert(m.mutationVersion == mvBefore + 1,
         "the outermost close must stamp the inner close's extra flags once");
+}
+
+// ===========================================================================
+// TASK 1906 STAGE 3 — THE MISSED-PUBLISHER WITNESS, as a datum rather than as
+// a frame.
+//
+// `source/app.d`'s `debug` shadow check counts `changeBus.missedPublishers`
+// whenever a layer's `mutationVersion != stampedVersion_`. That guard runs in
+// the editor's frame loop and no unit test can reach it; what a unit test CAN
+// reach is the equality it reads, and that equality is the whole of the claim:
+// `commitStamps` is the one funnel allowed to advance the version, and it
+// writes the witness beside the bump.
+//
+// The suite half is the NEGATIVE control that already exists
+// (`tests/test_change_bus.d` asserts `missedPublishers` stays 0 across a real
+// session). This is the POSITIVE one: a version bump made outside the funnel
+// must be VISIBLE, or the counter is a green that cannot come out differently.
+//
+// Mutations, each in isolation:
+//   * delete `stampedVersion_ = mutationVersion;` from `Mesh.commitStamps`
+//     ⇒ block (1) reddens — a legitimate commit reads as a missed publisher.
+//   * make `stampedVersion_` track `mutationVersion` unconditionally (e.g. a
+//     `@property` that returns `mutationVersion`)
+//     ⇒ block (2) reddens — the bare bump becomes invisible.
+// ===========================================================================
+unittest {
+    import mesh : Mesh, makeCube;
+    import mesh_edit_delta : MeshEditScope;
+
+    Mesh m = makeCube();
+
+    // (1) A commit through the funnel leaves the two in step.
+    m.commitChange(MeshEditScope.Position);
+    assert(m.mutationVersion == m.stampedVersion_,
+        format("a commitChange left mutationVersion at %d and the stamp at "
+             ~ "%d — app.d's shadow check would count this legitimate edit as "
+             ~ "a MISSED PUBLISHER on the next frame",
+               m.mutationVersion, m.stampedVersion_));
+
+    // (2) A bare bump — the shape the counter exists to catch — breaks it.
+    ++m.mutationVersion;
+    assert(m.mutationVersion != m.stampedVersion_,
+        "a version bump made outside `commitStamps` published nothing, and "
+      ~ "the witness did not notice — that is exactly the state "
+      ~ "`changeBus.missedPublishers` exists to count, and with this equality "
+      ~ "holding the counter can never move");
+
+    // (3) …and a later real commit re-syncs, so ONE bare bump is counted once
+    //     rather than for ever after.
+    m.commitChange(MeshEditScope.Marks);
+    assert(m.mutationVersion == m.stampedVersion_,
+        "a real commit after a bare bump must restore the equality");
 }

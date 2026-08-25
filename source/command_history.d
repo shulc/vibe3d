@@ -1080,6 +1080,17 @@ final class CommandHistory {
     }
 
     bool undo() {
+        // Task 1906 stage 3 (review round 2, R2-1): an undo/redo is a
+        // command-level operation and delivers ONCE, exactly as `Command.apply`
+        // does for the forward run. `Command.revert()` is a plain virtual with
+        // no batch of its own, and a delta replay restores a selection one
+        // element at a time (`mesh_edit_delta.finalize` -> `selectEdge`), so
+        // without this batch the undo of a 3 000-edge remove delivered 3 003
+        // times where the forward command delivered once (measured). Nested
+        // batches coalesce, so a revert that opens its own is unaffected.
+        { import mesh : beginDeliveryBatchGlobal, endDeliveryBatchGlobal;
+          beginDeliveryBatchGlobal(); }
+        scope(exit) { import mesh : endDeliveryBatchGlobal; endDeliveryBatchGlobal(); }
         if (_lockout) return false;
         if (undoStack.length == 0) return false;
 
@@ -1186,6 +1197,17 @@ final class CommandHistory {
     }
 
     bool redo() {
+        // Task 1906 stage 3 (review round 2, R2-1): an undo/redo is a
+        // command-level operation and delivers ONCE, exactly as `Command.apply`
+        // does for the forward run. `Command.revert()` is a plain virtual with
+        // no batch of its own, and a delta replay restores a selection one
+        // element at a time (`mesh_edit_delta.finalize` -> `selectEdge`), so
+        // without this batch the undo of a 3 000-edge remove delivered 3 003
+        // times where the forward command delivered once (measured). Nested
+        // batches coalesce, so a revert that opens its own is unaffected.
+        { import mesh : beginDeliveryBatchGlobal, endDeliveryBatchGlobal;
+          beginDeliveryBatchGlobal(); }
+        scope(exit) { import mesh : endDeliveryBatchGlobal; endDeliveryBatchGlobal(); }
         if (_lockout) return false;
         if (redoStack.length == 0) return false;
 

@@ -222,9 +222,39 @@ class Command {
     // layer lifecycle command defers anything into that window. Giving
     // `revert()` a batch of its own remains a separate change with its own
     // witness.
+    // TASK 1906 STAGE 3 — THE CLOSE ALSO OFFERS THIS COMMAND'S OWN MESH, and
+    // that is what lets the per-frame drain go.
+    //
+    // The batch close delivers every mesh that REGISTERED itself, and a mesh
+    // registers only through `deliverPending` — i.e. only if some publisher
+    // inside the command called `publishChange` / `commitChange`. A command
+    // whose publishers are all accumulate-only (`noteChange`,
+    // `noteSelectionChange`) therefore delivered NOTHING, and reached the bus
+    // only through the frame drain of `Mesh.pendingChanges_`. Measured on the
+    // live app, one command per `/api/reset`: `select.invert` and
+    // `select.byStat.{vertex,edge,polygon}` each moved `deliveryCount` by 0
+    // while moving `flushCount` by 1 and `totalMarks` by 1.
+    //
+    // The offer is made HERE rather than in seventeen selection commands for
+    // the same reason `apply()` is `final`: a command written next year is
+    // anchored the day it compiles. It costs nothing when there is nothing to
+    // say (`deliverPending` returns on two empty words) and it cannot double a
+    // delivery — inside the batch it only REGISTERS, and `noteDeliveryPending`
+    // dedupes by pointer, so a command that already published still delivers
+    // exactly once, at the close.
+    //
+    // A null `mesh` is skipped and that is a NAMED gap, not an oversight: a
+    // command that holds no mesh of its own (`BoxLiveEditCommand`, constructed
+    // `super(null, …)`) can still drive commits on one it reaches through a
+    // tool or a Document layer — those commits deliver on their own, register
+    // themselves, and ride the same close. What is not covered is a null-mesh
+    // command whose ONLY publisher is accumulate-only; none exists today.
     final bool apply() {
         beginDeliveryBatchGlobal();
-        scope(exit) endDeliveryBatchGlobal();
+        scope(exit) {
+            if (mesh !is null) mesh.deliverAccumulated();
+            endDeliveryBatchGlobal();
+        }
         return applyImpl();
     }
 

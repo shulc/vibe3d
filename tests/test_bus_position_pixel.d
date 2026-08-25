@@ -7,24 +7,33 @@
 // ===========================================================================
 // Measured on `main` at stage 1 (2026-08-25), and it CORRECTS the plan's §5
 // row `1` prediction: ARM A IS GREEN ON `main`, and it is green with the
-// stage-1 publish sites reverted to `noteChange` as well. The display path is
-// already correct today, and the reason is structural rather than lucky —
-// `app.d`'s hub (`changeBus.onMeshChanged` → `meshChangedFlags`) is fed by BOTH
-// delivery paths, the synchronous one and the once-per-frame flush, and the
-// flush sits ABOVE the subpatch-preview poll in the loop body. So a drag whose
-// class only reaches `pendingChanges_` still reaches the preview, one flush
-// later, in the same frame.
+// stage-1 publish sites reverted to `noteChange` as well. The display path was
+// already correct then, and the reason was structural rather than lucky —
+// `app.d`'s hub (`changeBus.onMeshChanged` → `meshChangedFlags`) was fed by
+// BOTH delivery paths, the synchronous one and the once-per-frame flush of
+// `Mesh.pendingChanges_`, and the flush sat ABOVE the subpatch-preview poll in
+// the loop body. So a drag whose class only reached the accumulator still
+// reached the preview, one flush later, in the same frame.
+//
+// STAGE 3 CLOSED THAT SECOND PATH: the mesh channel left `ChangeBus.flush`
+// entirely and the drain is deleted, so the hub is fed by the synchronous
+// delivery ALONE. That removes the reason ARM A was green under a reverted
+// publish — but it does NOT turn this file into a live guard, because the
+// paragraph below stands unchanged: the channel that actually carries a
+// version-silent drag to the limit surface was never identified, and starving
+// both paths at once left both arms green.
 //
 // That does not make this file a test that cannot fail. It makes its
 // discriminating mutation a LATER one. Measured at stage 2d (plan §2.4): ARM A
 // rides `g_geomEpochs` fed by the hub — removing the per-frame drain (2d-6b)
 // or the uploader's `commitChange(Position)` leaves it green — so the mutation
-// this file reddens for is a stripped `Position` class at BOTH feeds
-// (`test_bus_epoch_position_class` carries that pin), and stage 3's drain
-// deletion is pinned by the same-batch cells, not here. Until then this
-// is the FROZEN EVIDENCE of the 0401 cell: what the drag must do to the limit
-// surface, pinned in the one channel — rendered pixels — that a version key,
-// a draw-call census and a cage-position read all fail to see.
+// this file reddens for is a stripped `Position` class at the hub subscriber
+// (`test_bus_epoch_position_class` carries that pin, and since stage 3 deleted
+// the second feed that pin is ONE line rather than a pair), and stage 3's
+// drain deletion is pinned by the same-batch cells, not here. What this file
+// is, then, is the FROZEN EVIDENCE of the 0401 cell: what the drag must do to
+// the limit surface, pinned in the one channel — rendered pixels — that a
+// version key, a draw-call census and a cage-position read all fail to see.
 //
 // AND THE "SECOND PATH TO THE HUB" IS NOT THE WHOLE REASON (review S5,
 // measured 2026-08-25 in an rsync'd scratch copy). The review asked for a
@@ -43,9 +52,11 @@
 // So the channel that carries a version-silent drag to the limit surface is
 // still UNIDENTIFIED, and identifying it is a stage-3 prerequisite rather than
 // a nicety: stage 3 deletes the per-frame drain, and it must know what it is
-// deleting. Until then, no mutation of the PUBLISH side can redden this file,
-// and the honest statement of what it currently pins is the frozen evidence
-// above — not a live guard.
+// deleting. IT STILL IS unidentified — stage 3 shipped the deletion with the
+// question open, on the evidence that the same starve-both-paths mutation
+// leaves both arms green either way. So no mutation of the PUBLISH side can
+// redden this file, and the honest statement of what it pins is the frozen
+// evidence above — not a live guard.
 //
 // The live staleness this task's survey did find (the surface BVH,
 // `bvh_pick.d :: pickSurfaceRay` keyed on `mutationVersion` with no bus term

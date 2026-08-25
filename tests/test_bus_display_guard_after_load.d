@@ -6,10 +6,13 @@
 // ===========================================================================
 // Since stage 2a `ensureDisplayCurrent` — the pull guard in front of every VBO
 // reader that can run BEFORE a frame's flush — no longer pulls
-// `mesh.pendingChanges_`. It compares a `(mesh address, display-class bus
-// epoch)` stamp. The epoch is advanced by exactly two things: a SYNCHRONOUS
-// bus delivery (which names its subject), and the per-layer feed at the top of
-// the flush block. Every pull-guard call site runs BEFORE that block.
+// a per-frame pending word. It compares a `(mesh address, display-class bus
+// epoch)` stamp. Since stage 3 the epoch is advanced by exactly ONE thing: a
+// SYNCHRONOUS bus delivery, which always names its subject. (Stage 2a had a
+// second advancer — a per-layer feed at the top of the flush block, re-supplying
+// `Mesh.pendingChanges_` where the address was known; stage 3 deleted the drain
+// and the feed together.) Every pull-guard call site runs BEFORE the flush
+// block, which is why the second advancer never rescued this cell anyway.
 //
 // So a command that MUTATES the mesh and only `noteChange`s — accumulate, no
 // delivery — leaves the guard with nothing to react to for the rest of the
@@ -311,7 +314,7 @@ unittest {
              ~ "GPU buffers, so the ID buffer still holds the PRE-import mesh "
              ~ "— i.e. the command mutated the mesh and told the change bus "
              ~ "nothing (a `noteChange` tail never delivers, and since stage "
-             ~ "2a the guard keys on the bus epoch, not on pendingChanges_)",
+             ~ "2a the guard keys on the bus epoch, not on a pending word)",
                sel.to!string, vid));
 
     postJson("/api/reset", "");

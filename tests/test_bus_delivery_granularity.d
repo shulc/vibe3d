@@ -1,10 +1,36 @@
+// Task 1906 — DELIVERY GRANULARITY: HOW OFTEN THE BUS FIRES PER GESTURE.
+//
+// Six blocks, and they pin three DIFFERENT ceilings — read the block headers
+// before assuming one covers another:
+//   (1) a gizmo DRAG        — once per gesture STEP, never per vertex
+//   (2) the flag word       — an assignment, not a union
+//   (3) a selection COMMAND — exactly once
+//   (4) an interactive LASSO— exactly once for the whole gesture (stage 3)
+//   (5) a lasso that moved no mark — ZERO (stage 3)
+//   (6) a paint STROKE      — once per element ADDED, not per motion (stage 3)
+//
+// Blocks (4)-(6) were added by the stage-3 review: (1) bounds a per-APPLY
+// publisher whose count is twelve whatever the mesh size is, so it is not a
+// witness for the PICK paths, where the per-element shape actually appeared.
+//
+// Original header follows.
+//
 // Task 1906 stage 1, plan row `0-R6` — THE DRAG DELIVERS ONCE PER GESTURE
-// STEP, AND `lastFlushFlags` IS THE LAST DELIVERY RATHER THAN A FRAME UNION.
+// STEP, AND THE FLAG WORD IS THE LAST DELIVERY RATHER THAN A UNION.
+//
+// TASK 1906 STAGE 3 — THE FIELD THIS FILE WATCHES CHANGED ITS NAME AND ITS
+// OWNER, and block (2) was re-read rather than repointed. It watched
+// `lastFlushFlags`, the per-frame flush's mesh word; stage 3 took the mesh
+// channel off the flush entirely and deleted that field. The property it
+// pinned — "the word NAMES the most recent publication and does not
+// accumulate" — is now `lastDeliveryFlags`, assigned by `ChangeBus.deliverMesh`,
+// and mutation row `0-R6` transfers verbatim: make that assignment a `|=` and
+// this block reddens because a union can never LOSE the drag's Position bit.
 //
 // ---------------------------------------------------------------------------
 // Why this file exists when `tests/test_change_bus.d` already asserts flags
 // ---------------------------------------------------------------------------
-// `test_change_bus.d` has three `lastFlushFlags` asserts. Every one of them is
+// `test_change_bus.d` has three flag-word asserts. Every one of them is
 // a SINGLE-COMMIT scripted case — one command, one flush — and on a single
 // commit "the last delivery's flags" and "the union of this frame's flags" are
 // the SAME WORD. So all three stay green under either semantics, and neither
@@ -21,7 +47,7 @@
 // Before stage 1 the three interactive-apply sites
 // (`tools/transform/xfrm_apply.d` x2, `tools/transform/transform.d ::
 // uploadToGpu`) called `mesh.noteChange(Position)`, which ACCUMULATES and
-// never delivers: the class sat in `pendingChanges_` until the frame flush,
+// never delivers: the class sat in `undeliveredChanges_` until the frame flush,
 // and `deliveryCount` — the synchronous-delivery counter — did not move AT
 // ALL for a whole drag. Measured on `main` before this change: a 12-step drag
 // moved `deliveryCount` by 0.
@@ -58,13 +84,13 @@
 // before it believes any count, and retries the grab if it did not.
 //
 // ---------------------------------------------------------------------------
-// (2) `lastFlushFlags` IS AN ASSIGNMENT — the `mesh.subdivide` control
+// (2) THE FLAG WORD IS AN ASSIGNMENT — the `mesh.subdivide` control
 // ---------------------------------------------------------------------------
-// `change_bus.ChangeBus.flush` does `lastFlushFlags = meshFlags`, so the field
-// names the most recent NON-EMPTY flush and nothing older. Mutation row
-// `0-R6`: make it `|=` instead. Every existing assert stays green; this block
-// reddens, because after a drag has put `Position` in the word, a
-// `mesh.subdivide` flush carries `Geometry` and NO `Position` — and a union
+// `change_bus.ChangeBus.deliverMesh` does `lastDeliveryFlags = meshFlags`, so
+// the field names the most recent NON-EMPTY delivery and nothing older.
+// Mutation row `0-R6`: make it `|=` instead. Every existing assert stays green;
+// this block reddens, because after a drag has put `Position` in the word, a
+// `mesh.subdivide` delivery carries `Geometry` and NO `Position` — and a union
 // can never LOSE a bit.
 //
 // `mesh.subdivide` is the right control for a second reason: it is a command
@@ -126,9 +152,8 @@ void cmd(string line) {
 void settle() { Thread.sleep(200.msecs); }
 
 long deliveries()    { return getJson("/api/changes")["deliveryCount"].integer; }
-long flushes()       { return getJson("/api/changes")["flushCount"].integer; }
-uint lastFlushFlags() {
-    return cast(uint)getJson("/api/changes")["lastFlushFlags"].integer;
+uint lastDeliveryFlagsNow() {
+    return cast(uint)getJson("/api/changes")["lastDeliveryFlags"].integer;
 }
 
 double[3] vert0() {
@@ -200,7 +225,7 @@ unittest {
         format("a %d-step gizmo drag must deliver at least once per step; "
              ~ "deliveryCount moved by %d. A 0 is the pre-stage-1 shape "
              ~ "exactly: the three interactive-apply sites called "
-             ~ "`noteChange`, which accumulates into pendingChanges_ and "
+             ~ "`noteChange`, which accumulates into undeliveredChanges_ and "
              ~ "waits for the frame flush, so no synchronous delivery "
              ~ "happened for the whole gesture", kSteps, delta));
     // The other side of the band: ONCE PER APPLY, NEVER PER VERTEX. A publish
@@ -221,7 +246,7 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// (2) `lastFlushFlags` names the LAST flush, not the union of the session.
+// (2) `lastDeliveryFlags` names the LAST delivery, not the union of the session.
 // ---------------------------------------------------------------------------
 unittest {
     postJson("/api/reset", "");
@@ -235,33 +260,32 @@ unittest {
     cmd("tool.set move off");
     settle();
 
-    const uint afterDrag = lastFlushFlags();
+    const uint afterDrag = lastDeliveryFlagsNow();
     assert((afterDrag & kPosition) != 0,
-        format("PREMISE: after a move-arrow drag the most recent flush must "
+        format("PREMISE: after a move-arrow drag the most recent delivery must "
              ~ "carry Position (%d); got %d. Without this the next assert "
              ~ "cannot distinguish an assignment from a union — there would "
              ~ "be no Position bit for a union to keep",
                kPosition, afterDrag));
 
     const long dBefore = deliveries();
-    const long fBefore = flushes();
     postJson("/api/command", `{"id":"mesh.subdivide"}`);
     settle();
 
-    assert(flushes() > fBefore,
-        "PREMISE: the subdivide must produce a flush of its own — with no "
-      ~ "new flush `lastFlushFlags` still names the drag and the assert "
+    assert(deliveries() > dBefore,
+        "PREMISE: the subdivide must produce a DELIVERY of its own — with no "
+      ~ "new delivery `lastDeliveryFlags` still names the drag and the assert "
       ~ "below would pass for the wrong reason");
 
-    const uint afterSubdivide = lastFlushFlags();
+    const uint afterSubdivide = lastDeliveryFlagsNow();
     assert((afterSubdivide & kGeometry) != 0,
-        format("PREMISE: the subdivide's flush must carry Geometry "
+        format("PREMISE: the subdivide's delivery must carry Geometry "
              ~ "(Points|Polygons = %d); got %d", kGeometry, afterSubdivide));
 
-    // THE CELL. Under `lastFlushFlags |= meshFlags` this word would still
+    // THE CELL. Under `lastDeliveryFlags |= meshFlags` this word would still
     // carry the drag's Position bit.
     assert((afterSubdivide & kPosition) == 0,
-        format("`lastFlushFlags` must name the LAST delivered flush, not the "
+        format("`lastDeliveryFlags` must name the LAST delivery, not the "
              ~ "union of the session: the subdivide moved no vertex in place, "
              ~ "so Position (%d) must be GONE from the word. Got %d — a union "
              ~ "can never lose a bit, which is exactly what mutation row "
@@ -270,7 +294,7 @@ unittest {
     // The stage-2 precondition, in executable form: this command's last mesh
     // publisher is a `noteChange`, and `noteChange` never delivers.
     const long dDelta = deliveries() - dBefore;
-    writefln("[bus granularity] mesh.subdivide: lastFlushFlags=%d, "
+    writefln("[bus granularity] mesh.subdivide: lastDeliveryFlags=%d, "
            ~ "deliveryCount delta=%d", afterSubdivide, dDelta);
     const uint lastDelivery =
         cast(uint)getJson("/api/changes")["lastDeliveryFlags"].integer;
@@ -292,4 +316,398 @@ unittest {
              ~ "delivers exactly one accumulated word\", and a mask test "
              ~ "would let that word gain or lose a class unobserved",
                kSubdivideDelivery, kPosition, lastDelivery));
+}
+
+// ---------------------------------------------------------------------------
+// (3) TASK 1906 STAGE 3 — A SELECTION-ONLY COMMAND DELIVERS, AND EXACTLY ONCE.
+// ---------------------------------------------------------------------------
+// This is the witness for the stage-3 precondition conversion, and the number
+// it pins was MEASURED on both sides.
+//
+// Before stage 3: `select.invert` and the `select.byStat.*` family moved
+// `deliveryCount` by **0**. They never call a publisher at all — the marks
+// setters they drive end in `noteSelectionChange`, which accumulates and never
+// delivers — so their whole channel was the per-frame drain of
+// `Mesh.pendingChanges_` that stage 3 deletes. Fired one per `/api/reset` on
+// the live app, each of them showed `deliveryCount +0, flushCount +1,
+// totalMarks +1`.
+//
+// After stage 3: **1**, structurally. Two changes make it so, and either one
+// alone would leave a hole:
+//   * `Command.apply`'s `scope(exit)` OFFERS the command's own mesh to the
+//     delivery batch it already opened, so a command whose publishers are all
+//     accumulate-only still delivers at the close;
+//   * the selection WRITERS on `Mesh` deliver, which covers the meshes a
+//     command touches that are not its own (`select.set.apply` walks every
+//     foreground layer) and the tool paths that are not commands at all.
+//
+// MUTATIONS, each in isolation:
+//   * delete the `mesh.deliverAccumulated()` line from `Command.apply`'s
+//     `scope(exit)` ⇒ this block reddens with delta 0 …
+//   * … only if the writers are ALSO reverted; with the writers delivering,
+//     the count survives the anchor's removal, which is why the assert below
+//     is an EQUALITY (a second delivery would mean the two mechanisms stopped
+//     coalescing) and why the header says either alone leaves a hole.
+//
+// The control is the FIRST assert: `select.invert` must actually change the
+// selection, or "one delivery" would be a claim about a command that did
+// nothing.
+unittest {
+    postJson("/api/reset", "");
+    settle();
+
+    const long selBefore =
+        getJson("/api/selection")["selectedVertices"].array.length;
+    assert(selBefore == 0,
+        format("PREMISE: a fresh /api/reset must leave nothing selected; got "
+             ~ "%d — the invert below would then be a different edit",
+               selBefore));
+
+    const long dBefore = deliveries();
+    cmd("select.invert");
+    settle();
+    const long dDelta = deliveries() - dBefore;
+
+    const long selAfter =
+        getJson("/api/selection")["selectedVertices"].array.length;
+    assert(selAfter == 8,
+        format("PREMISE: select.invert on an empty selection must select all "
+             ~ "eight cube vertices; got %d — with no selection change there "
+             ~ "would be nothing to deliver and the count below would be a "
+             ~ "claim about a command that did nothing", selAfter));
+
+    assert(dDelta == 1,
+        format("a selection-only command must deliver EXACTLY ONCE. Got %d. "
+             ~ "0 is the pre-stage-3 shape — the command's only publisher is "
+             ~ "`noteSelectionChange`, which accumulates and never delivers, "
+             ~ "so its classes reached the bus only through the per-frame "
+             ~ "drain this stage deleted. Above 1 means the command anchor and "
+             ~ "the delivering writers stopped coalescing into one batch",
+               dDelta));
+}
+
+// ---------------------------------------------------------------------------
+// (4) TASK 1906 STAGE 3 (review M1) — AN INTERACTIVE LASSO DELIVERS ONCE PER
+//     GESTURE, NOT ONCE PER PICKED ELEMENT.
+// ---------------------------------------------------------------------------
+// THE CEILING THIS PINS IS THE ONE BLOCK (1) DOES NOT. Block (1) bounds a
+// twelve-step GIZMO DRAG, whose publisher is per-apply and whose count is
+// therefore twelve whatever the mesh size is. It says nothing about the PICK
+// paths, and those are where the per-element shape actually appeared: since
+// stage 3 every selection writer on `Mesh` delivers, `symmetry_pick.d`'s
+// helpers batch per PICKED ELEMENT, and the lasso commit loops over every
+// enclosed face. MEASURED on this tree with the batch removed:
+//
+//     grid n=32 → 838 faces selected → deliveryCount +838
+//     grid n=64 → 3 417 faces        → deliveryCount +3 417
+//
+// i.e. the count is O(selected elements) for ONE gesture — every one a fan-out
+// to every listener. With the gesture batch in `input_router.d`'s lasso commit
+// block: +1 and +1.
+//
+// THE MUTATION ROW: delete the `app.mesh.beginDeliveryBatch()` /
+// `scope(exit) { deliverAccumulated(); endDeliveryBatch(); }` pair from the
+// lasso commit block in `source/input_router.d`. This block then reddens with
+// a delta in the hundreds, and the message names the count.
+//
+// WHY A GRID AND NOT THE DEFAULT CUBE. On a cube the whole mesh is six faces,
+// so "once per gesture" and "once per element" differ by at most six and a
+// flake in either direction reads as the other. The grid makes the two
+// hypotheses differ by three orders of magnitude.
+//
+// WHY THE CAMERA IS BELOW THE PLANE: the grid's Newell-method winding makes
+// the Polygons-lasso front-facing pre-check reject every face from the default
+// above-plane camera, so the gesture would select NOTHING and the count would
+// be 0 under both hypotheses. `elevation:-0.4` is the same setup the frame
+// lane's `lasso-dense` scenario uses, and the selected-count floor below is
+// what proves it took.
+// ---------------------------------------------------------------------------
+
+/// A closed rectangular RMB band, in the shape `EventPlayer` replays. Local to
+/// this file rather than in `drag_helpers`: it is the only consumer, and the
+/// helper modules carry no `unittest` of their own by rule.
+string buildLassoLog(int vpX, int vpY, int vpW, int vpH,
+                     int cx, int cy, int halfW, int halfH,
+                     int stepsPerSide = 20) {
+    enum int kRMask = 4;   // SDL_BUTTON_RMASK
+    string log = format(
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
+        vpX, vpY, vpW, vpH);
+    int[2][5] corners = [
+        [cx - halfW, cy - halfH], [cx + halfW, cy - halfH],
+        [cx + halfW, cy + halfH], [cx - halfW, cy + halfH],
+        [cx - halfW, cy - halfH],
+    ];
+    double t = 50.0;
+    log ~= format(
+        `{"t":%.3f,"type":"SDL_MOUSEBUTTONDOWN","btn":3,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        t, corners[0][0], corners[0][1]);
+    int lastX = corners[0][0], lastY = corners[0][1];
+    foreach (side; 0 .. 4) {
+        int x0 = corners[side][0],     y0 = corners[side][1];
+        int x1 = corners[side + 1][0], y1 = corners[side + 1][1];
+        foreach (i; 1 .. stepsPerSide + 1) {
+            int x = x0 + cast(int)((cast(double)(x1 - x0) * i) / stepsPerSide);
+            int y = y0 + cast(int)((cast(double)(y1 - y0) * i) / stepsPerSide);
+            t += 10.0;
+            log ~= format(
+                `{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":%d,"mod":0}` ~ "\n",
+                t, x, y, x - lastX, y - lastY, kRMask);
+            lastX = x; lastY = y;
+        }
+    }
+    t += 10.0;
+    log ~= format(
+        `{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":3,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        t, lastX, lastY);
+    return log;
+}
+
+/// An LMB press-drag-release across the mesh — the paint stroke, one motion
+/// event per step.
+string buildPaintLog(int vpX, int vpY, int vpW, int vpH,
+                     int x0, int y0, int x1, int y1, int motions) {
+    enum int kLMask = 1;   // SDL_BUTTON_LMASK
+    string log = format(
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
+        vpX, vpY, vpW, vpH);
+    double t = 50.0;
+    log ~= format(
+        `{"t":%.3f,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        t, x0, y0);
+    int lx = x0, ly = y0;
+    foreach (i; 1 .. motions + 1) {
+        int x = x0 + cast(int)((cast(double)(x1 - x0) * i) / motions);
+        int y = y0 + cast(int)((cast(double)(y1 - y0) * i) / motions);
+        t += 16.0;
+        log ~= format(
+            `{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":%d,"mod":0}` ~ "\n",
+            t, x, y, x - lx, y - ly, kLMask);
+        lx = x; ly = y;
+    }
+    t += 16.0;
+    log ~= format(
+        `{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,"y":%d,"clicks":1,"mod":0}` ~ "\n",
+        t, lx, ly);
+    return log;
+}
+
+long selectedFaceCount() {
+    return getJson("/api/selection")["selectedFaces"].array.length;
+}
+long selectedVertexCount() {
+    return getJson("/api/selection")["selectedVertices"].array.length;
+}
+
+/// Reset to a dense grid, put the current type on `mode`, and look at it from
+/// below so the Polygons-lasso front-facing pre-check accepts the faces.
+void gridSceneBelow(int n, string mode) {
+    postJson("/api/reset?type=grid&n=" ~ n.to!string, "");
+    postJson("/api/select", `{"mode":"` ~ mode ~ `","indices":[]}`);
+    postJson("/api/camera", `{"elevation":-0.4}`);
+    settle();
+}
+
+unittest {
+    gridSceneBelow(32, "polygons");
+
+    auto cam = fetchCamera(BASE);
+    const int cx    = cam.vpX + cam.width  / 2;
+    const int cy    = cam.vpY + cam.height / 2;
+    const int halfW = cast(int)(cam.width  * 0.30);
+    const int halfH = cast(int)(cam.height * 0.30);
+
+    const long dBefore = deliveries();
+    playAndWait(buildLassoLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                              cx, cy, halfW, halfH), BASE);
+    settle();
+    const long dDelta   = deliveries() - dBefore;
+    const long selected = selectedFaceCount();
+
+    // THE POSITIVE CONTROL, and it is load-bearing exactly as block (1)'s is:
+    // a lasso that selected nothing delivers once per nothing, so `dDelta == 1`
+    // would read as a pass under the per-element shape too.
+    assert(selected > 100,
+        format("PREMISE: the band must enclose hundreds of faces, or 'one "
+             ~ "delivery per gesture' and 'one per element' are the same "
+             ~ "number and the assert below is free. Got %d selected — the "
+             ~ "camera elevation or the grid reset did not take", selected));
+
+    assert(dDelta == 1,
+        format("an interactive LASSO must deliver ONCE for the whole gesture. "
+             ~ "Got %d deliveries for %d selected faces. A delta near the "
+             ~ "selected count is the per-ELEMENT shape: the gesture batch "
+             ~ "around the lasso commit block in `source/input_router.d` is "
+             ~ "gone, `symmetricSelect*`'s per-element batch is closing at "
+             ~ "depth 0 again, and one full-viewport band on a dense mesh is "
+             ~ "tens of thousands of fan-outs to every listener",
+               dDelta, selected));
+}
+
+// ---------------------------------------------------------------------------
+// (5) THE ZERO ARM — a gesture that changes no selection delivers NOTHING.
+// ---------------------------------------------------------------------------
+// This is the closest representable thing to the batch-ABORT half of the
+// selection-service contract this seam follows (provenance in doc/, not here —
+// no proprietary symbol names in tracked source), and the difference is worth
+// stating rather than papering over: an abort there discards a batch of
+// selection changes that were themselves rolled back. Our
+// batch accumulates INVALIDATION for marks already written, so a discard would
+// under-invalidate rather than undo — and there is no window for one anyway,
+// because the whole lasso (band close, clear, select) runs inside a single
+// mouse-up handler. What we CAN state, and what a listener actually cares
+// about, is that a gesture which moves no mark produces no delivery.
+//
+// MUTATION ROW: delete the `if (any)` compare-before-set guard from
+// `Mesh.clearFaceSelection` (or from `selectFace`). The empty band then
+// publishes a `Marks` change for a selection that did not move and this block
+// reddens with delta 1.
+// ---------------------------------------------------------------------------
+unittest {
+    gridSceneBelow(32, "polygons");
+    assert(selectedFaceCount() == 0,
+        "PREMISE: the grid reset must leave nothing selected, or the band "
+      ~ "below would legitimately deliver the clear");
+
+    auto cam = fetchCamera(BASE);
+    // A two-pixel band in the viewport's top-left corner: >= 3 path points, so
+    // the lasso commit block IS entered and the clear IS reached, but nothing
+    // is enclosed.
+    const long dBefore = deliveries();
+    playAndWait(buildLassoLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                              cam.vpX + 3, cam.vpY + 3, 1, 1), BASE);
+    settle();
+    const long dDelta = deliveries() - dBefore;
+
+    assert(selectedFaceCount() == 0,
+        "PREMISE: the degenerate band must still enclose nothing");
+    assert(dDelta == 0,
+        format("a lasso gesture that moved no mark must deliver NOTHING; got "
+             ~ "%d. Something on the gesture path publishes unconditionally — "
+             ~ "a clear or a setter lost its compare-before-set guard",
+               dDelta));
+}
+
+// ---------------------------------------------------------------------------
+// (6) A PAINT STROKE DELIVERS ONCE PER ELEMENT IT ADDS — never once per
+//     MOTION EVENT, and never once per PICK.
+// ---------------------------------------------------------------------------
+// THE LAW, and it is an EQUALITY rather than a band because the measurement
+// says it can be: over a stroke that starts from an empty selection, the
+// number of deliveries equals the number of elements the stroke SELECTED.
+// Measured on `grid n=32`, three runs: 60 motions → 34 deliveries / 34
+// vertices; 120 motions → 42 / 42, twice.
+//
+// TWO SEPARATE FACTS MAKE THAT TRUE, and the equality is what holds both:
+//
+//   * a pick writes the element AND its symmetry counterpart, and
+//     `symmetry_pick.d` batches the pair into ONE delivery;
+//   * a pick that lands on an element already selected delivers NOTHING,
+//     because `Mesh.selectVertex/Edge/Face` compare before they set.
+//
+// The second is not a corner case: a stroke picks TWICE per cursor position —
+// once from the motion event (`InputRouter.doSelectPickAt`) and once from the
+// frame's own picker sweep — so without the guard the count is ~2.34x the
+// motion count and has nothing to do with what was selected. MEASURED with the
+// guard removed: 120 motions → 280 deliveries against 42 selected vertices.
+//
+// WHY THE STROKE IS NOT ONE BATCH, stated because the public SDK would make it
+// one: the highlight must follow the cursor DURING the stroke, and the sel
+// channel is what tells the FBO selection key to re-render. Holding one batch
+// from mouse-down to mouse-up would defer every invalidation to the drop and
+// freeze the highlight for the whole gesture. The per-gesture batch is
+// therefore right for the LASSO (which commits in a single handler) and wrong
+// for the paint stroke; the ceiling that applies here is per-CHANGE.
+//
+// MUTATION ROWS:
+//   * delete the `if (marks[idx] & Marks.Select) return;` guard from
+//     `Mesh.selectVertex` ⇒ deliveries jump to ~2.34 per motion and this block
+//     reddens with the two numbers side by side;
+//   * delete the `mesh.beginDeliveryBatch()` pair from
+//     `symmetry_pick.symmetricSelectVertex` and turn symmetry on ⇒ the pair
+//     write becomes two deliveries and the equality breaks upward.
+// ---------------------------------------------------------------------------
+unittest {
+    gridSceneBelow(32, "vertices");
+    assert(selectedVertexCount() == 0,
+        "PREMISE: the grid reset must leave nothing selected");
+
+    auto cam = fetchCamera(BASE);
+    const int y  = cam.vpY + cam.height / 2;
+    const int x0 = cam.vpX + cast(int)(cam.width * 0.2);
+    const int x1 = cam.vpX + cast(int)(cam.width * 0.8);
+    enum int kMotions = 120;
+
+    const long dBefore = deliveries();
+    playAndWait(buildPaintLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                              x0, y, x1, y, kMotions), BASE);
+    settle();
+    const long dDelta   = deliveries() - dBefore;
+    const long selected = selectedVertexCount();
+
+    // POSITIVE CONTROL: the stroke must have painted something, and enough of
+    // it that "once per added element" and "once per motion event" are
+    // different numbers.
+    assert(selected > 5 && selected < kMotions,
+        format("PREMISE: the stroke must select several vertices and FEWER "
+             ~ "than its %d motion events, or the equality below cannot tell "
+             ~ "the per-change law from a per-motion one. Got %d",
+               kMotions, selected));
+
+    assert(dDelta == selected,
+        format("a paint stroke must deliver exactly once per element it ADDS. "
+             ~ "Got %d deliveries for %d newly selected vertices over %d "
+             ~ "motion events. Above the selected count means a re-pick on an "
+             ~ "already-selected element is publishing again (the "
+             ~ "compare-before-set guard in `Mesh.selectVertex`), or the "
+             ~ "symmetry pair is delivering twice (the batch in "
+             ~ "`symmetry_pick.symmetricSelectVertex`)",
+               dDelta, selected, kMotions));
+}
+
+// ---------------------------------------------------------------------------
+// (7) TASK 1906 STAGE 3 (review round 2, R2-1) — AN UNDO DELIVERS ONCE, LIKE
+// THE COMMAND IT REVERSES.
+//
+// `Command.apply` is `final` and opens the global delivery batch, so a forward
+// `mesh.remove` over N edges delivers once. `Command.revert()` is a plain
+// virtual with no batch, and a tracker delta restores the pre-op selection one
+// element at a time (`mesh_edit_delta.finalize` -> `selectEdge` per recorded
+// edge), each a delivering publisher since stage 3. Measured before the fix on
+// `grid n=40`: forward 1, UNDO 3 003, redo 1 — the per-element shape the lasso
+// batch (block 4) removed from the interactive path, surviving on the undo
+// path. The fix is the same global batch, opened in `CommandHistory.undo()`
+// and `redo()`. The law pinned here is an EQUALITY on both directions.
+// ---------------------------------------------------------------------------
+unittest {
+    gridSceneBelow(40, "edges");
+    enum int kEdges = 3000;
+    string idx;
+    foreach (i; 0 .. kEdges) idx ~= (i ? "," : "") ~ i.to!string;
+    postJson("/api/select", `{"mode":"edges","indices":[` ~ idx ~ `]}`);
+
+    const long d0 = deliveries();
+    cmd("mesh.remove");
+    const long dForward = deliveries() - d0;
+    assert(dForward == 1,
+        format("PREMISE: the forward mesh.remove over %d edges must deliver "
+             ~ "exactly once (Command.apply's batch); got %d", kEdges, dForward));
+
+    const long d1 = deliveries();
+    postJson("/api/undo", "");
+    const long dUndo = deliveries() - d1;
+    assert(dUndo == 1,
+        format("UNDO of a %d-edge remove delivered %d time(s), expected exactly 1. "
+             ~ "The per-element shape is back on the undo path: the tracker delta "
+             ~ "restores the selection with one `selectEdge` per recorded edge and "
+             ~ "each one delivers unless CommandHistory.undo() holds the global "
+             ~ "delivery batch (task 1906 stage 3, review round 2 R2-1: measured "
+             ~ "3 003 before the fix).", kEdges, dUndo));
+
+    const long d2 = deliveries();
+    postJson("/api/redo", "");
+    const long dRedo = deliveries() - d2;
+    assert(dRedo == 1,
+        format("REDO delivered %d time(s), expected exactly 1 — CommandHistory.redo() "
+             ~ "must hold the same batch undo() does", dRedo));
 }

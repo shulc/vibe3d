@@ -161,19 +161,20 @@ void assertNoLockout(string at) {
 // /api/changes — read counters as deltas across a step. The bus is process-wide
 // and NOT reset between steps, so we snapshot and diff. A model mutation that
 // touched a layer's positions must advance totalPosition (a missed publisher
-// would leave it stalled). flushCount must advance every step (the per-frame
+// would leave it stalled). deliveryCount must advance every step (the
 // flush keeps running). These prove the change-bus stays coherent through the
 // cross-layer churn.
 // ---------------------------------------------------------------------------
 
 struct Changes {
-    long flushCount, totalPosition, totalPoints, totalPolygons;
+    long flushCount, deliveryCount, totalPosition, totalPoints, totalPolygons;
 }
 
 Changes changes() {
     auto j = getJson("/api/changes");
     Changes c;
     c.flushCount    = j["flushCount"].integer;
+    c.deliveryCount = j["deliveryCount"].integer;
     c.totalPosition = j["totalPosition"].integer;
     c.totalPoints   = j["totalPoints"].integer;
     c.totalPolygons = j["totalPolygons"].integer;
@@ -190,8 +191,15 @@ void expectPositionPublish(string label, void delegate() op) {
     bool advanced = false;
     for (int i = 0; i < 30; ++i) {
         auto now = changes();
+        // TASK 1906 STAGE 3 — the second conjunct was `flushCount`, and it had
+        // to be RE-READ rather than dropped for convenience. It was there to
+        // say "a delivery window actually elapsed", which the per-frame flush
+        // was the only witness for. Since stage 3 the flush carries only the
+        // DOCUMENT-level channels, so a pure mesh edit never moves it and the
+        // conjunct could only ever be false. `deliveryCount` is the mesh
+        // channel's own counter and says exactly what the old one meant.
         if (now.totalPosition > before.totalPosition
-            && now.flushCount > before.flushCount) { advanced = true; break; }
+            && now.deliveryCount > before.deliveryCount) { advanced = true; break; }
         Thread.sleep(dur!"msecs"(20));
     }
     assert(advanced,
@@ -479,19 +487,21 @@ unittest {
     assert(bBack, "undo of delete restored B's geometry while A stayed active");
 
     // Change-bus health with the restored background layer present. The bus
-    // counts only DELIVERED flushes (a quiescent frame is a no-op that does not
-    // bump flushCount), so we prove liveness with a real mutation on the active
-    // layer A and confirm it is delivered while B sits in the background — i.e.
-    // the all-layer drain didn't wedge on the background layer. Counters stay
-    // monotonic throughout.
+    // counts only DELIVERED changes (a quiescent frame is a no-op), so we prove
+    // liveness with a real mutation on the active layer A and confirm it is
+    // delivered while B sits in the background — i.e. nothing wedged on the
+    // background layer. Counters stay monotonic throughout.
+    //
+    // TASK 1906 STAGE 3 — the liveness counter is `deliveryCount`, not
+    // `flushCount`: the mesh channel left the per-frame flush, so an
+    // active-layer edit no longer moves the flush counter at all.
     auto a = changes();
     expectPositionPublish("active-layer edit with a background layer present", {
         moveVertexActive([0.5, -0.5, -0.5], [2.0, -0.5, -0.5]);   // edit active A
     });
     auto b = changes();
-    assert(b.flushCount > a.flushCount,
-        "an active-layer mutation is delivered by the flush with a background "
-        ~ "layer present");
+    assert(b.deliveryCount > a.deliveryCount,
+        "an active-layer mutation is delivered with a background layer present");
     assert(b.totalPosition > a.totalPosition,
         "the active-layer position change reached the bus");
     assert(b.totalPoints >= a.totalPoints && b.totalPolygons >= a.totalPolygons,

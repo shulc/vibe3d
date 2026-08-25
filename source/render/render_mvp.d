@@ -249,9 +249,13 @@ static assert((DisplayEpochMask & kRenderTriggers) != kRenderTriggers
 /// bridge call, no re-flush. That honors the bus contract (subscribers are
 /// invalidate-only) and the render-boundary rule (render reacts to a modeling
 /// dirty-signal; it never calls back into modeling). Delivery runs on the main
-/// thread inside `changeBus.flush`, and the accumulators are read/cleared on
-/// the main thread in tick / updateSceneFromVibe3D — single-threaded ownership,
-/// no synchronisation needed.
+/// thread inside `changeBus.deliverMesh` — the EDIT BOUNDARY, since task 1906
+/// stage 3 took the mesh channel off the per-frame `changeBus.flush` entirely —
+/// and the accumulators are read/cleared on the main thread in tick /
+/// updateSceneFromVibe3D. Single-threaded ownership, no synchronisation needed.
+/// The practical difference for the IPR: the flags now arrive DURING the
+/// mutation rather than at the next frame boundary, so the accumulator is
+/// already set by the time the frame's tick reads it.
 void initIPR()
 {
     import change_bus : changeBus;

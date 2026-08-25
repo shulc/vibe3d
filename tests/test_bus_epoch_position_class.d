@@ -6,10 +6,9 @@
 // WHY THIS FILE EXISTS
 // ===========================================================================
 // Stage 2a made the display family key on `mesh_dirty.g_displayEpochs`, whose
-// listener (`noteMeshChange`, fed from the change-bus hub AND from the flush
-// block's per-layer loop) forwards a mutation's CHANGE CLASSES. Nothing pinned
-// that the classes matter. Measured at review time (2026-08-25): strip
-// `Position` from BOTH feeds — `noteMeshChange(addr, flags & ~Position)` — and
+// listener (`noteMeshChange`) forwards a mutation's CHANGE CLASSES. Nothing
+// pinned that the classes matter. Measured at review time (2026-08-25): strip
+// `Position` from the feed — `noteMeshChange(addr, flags & ~Position)` — and
 // `test_bus_position_pixel`, `test_bus_surface_raycast_after_drag`,
 // `test_display_bus_refresh`, `test_subpatch_move`, `test_gpu_fold_parity` and
 // `test_far_pivot_fold` are ALL still green. Six tests, no discrimination.
@@ -46,9 +45,19 @@
 // and a buffer that still holds the pre-transform cube; only the readback can
 // tell them apart.
 //
+// TASK 1906 STAGE 3 — THIS IS NOW A SINGLE-FEED CELL, and that closes hole N1.
+// Until stage 3 there were TWO feeds into `noteMeshChange`: the change-bus hub
+// and a per-layer loop at the top of `app.d`'s flush block, re-supplying the
+// same word from `Mesh.pendingChanges_`. The pair was pinned only TOGETHER —
+// stripping `Position` at the hub ALONE stayed green, because the drain
+// re-supplied the class at the top of the same block that then ran the upload,
+// and no reader sampled the epoch between the two writers. Stage 3 deleted the
+// drain and its feed, so the hub is the only writer and the mutation below is a
+// single-site one. RE-MEASURED under exactly that single-site mutation
+// (2026-08-25): this file reddens with the message quoted below.
+//
 // MUTATION (measured 2026-08-25): `flags & ~MeshEditScope.Position` at the hub
-// (`app.d`'s `changeBus.onMeshChanged`) and at the per-layer feed in the flush
-// block →
+// (`app.d`'s `changeBus.onMeshChanged`), the ONLY feed →
 //   the cage vertex VBO holds vertex 0 at x=-0.500 while the mesh has it at
 //   x=1.500 (max |mesh - VBO| = 2.0)
 // because the flush-site upload's `displayServiced_` stamp still matches.

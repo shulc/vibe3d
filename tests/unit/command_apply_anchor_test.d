@@ -192,3 +192,68 @@ unittest {
     assert(changeBus.lastDeliverySubject == cast(size_t)&m,
         "...and it names the mesh the command wrote, not the null one it holds");
 }
+
+// ===========================================================================
+// TASK 1906 STAGE 3 — THE CLOSE ALSO OFFERS THE COMMAND'S OWN MESH, and this
+// is the anchor's OWN witness.
+//
+// WHY IT NEEDS ONE OF ITS OWN, measured rather than assumed. Stage 3 shipped
+// two mechanisms that both make a selection command deliver: this offer, and
+// the delivering selection WRITERS on `Mesh`. Run against `select.invert` over
+// HTTP they are REDUNDANT — deleting either alone leaves
+// `tests/test_bus_delivery_granularity.d` block (3) green (measured
+// 2026-08-25), and only deleting BOTH reddens it with delta 0. A mechanism
+// whose only test passes without it is not tested.
+//
+// The shape only the OFFER can serve is a command whose terminal publisher is
+// `noteChange` — legal, documented, and the exact case
+// `Mesh.publishChange`'s doc block warns about. There is no such command in
+// the tree today, so the honest way to have one is to write it here, the same
+// argument the file's header already makes for `LoopCommitProbe`.
+//
+// Mutation: delete `if (mesh !is null) mesh.deliverAccumulated();` from
+// `Command.apply`'s `scope(exit)` ⇒ this block reddens with 0 deliveries.
+// ===========================================================================
+private class NoteOnlyProbe : Command {
+    this(Mesh* mesh, ref View view, EditMode editMode) {
+        super(mesh, view, editMode);
+    }
+    override string name()  const { return "test.noteOnly"; }
+    override string label() const { return "Note-only probe"; }
+    protected override bool applyImpl() {
+        if (mesh is null) return false;
+        // Accumulate-only, and NOTHING else. `noteChange` bumps no version and
+        // never delivers; without the close's offer this command's classes
+        // reach no listener at all.
+        mesh.noteChange(MeshEditScope.Material);
+        return true;
+    }
+}
+
+unittest {
+    Mesh m = makeCube();
+    m.syncSelection();
+    m.commitChange(MeshEditScope.Marks);   // drain whatever the fixture left
+
+    View v = new View(0, 0, 800, 600);
+    auto cmd = new NoteOnlyProbe(&m, v, EditMode.Polygons);
+
+    const beforeVer   = m.mutationVersion;
+    const beforeCount = changeBus.deliveryCount;
+    assert(cmd.apply(), "the probe must actually run — a refusal would make "
+                      ~ "every assertion below vacuous");
+
+    assert(m.mutationVersion == beforeVer,
+        "PREMISE: `noteChange` must stay version-silent, or this probe would "
+      ~ "be testing `commitChange` by another name");
+
+    assert(changeBus.deliveryCount == beforeCount + 1,
+        "a command whose ONLY publisher is `noteChange` must still deliver "
+      ~ "exactly once: the class is real, it just has no delivering publisher "
+      ~ "of its own, and `Command.apply`'s close is what hands it over. Before "
+      ~ "task 1906 stage 3 the per-frame drain of `Mesh.pendingChanges_` did "
+      ~ "that a frame later; the drain is gone");
+
+    assert((changeBus.lastDeliveryFlags & MeshEditScope.Material) != 0,
+        "…and the delivery carries the class the command actually noted");
+}

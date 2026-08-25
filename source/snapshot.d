@@ -424,6 +424,20 @@ struct SelectionSnapshot {
     }
 
     void restore(ref Mesh mesh) const {
+        // TASK 1906 STAGE 3 — THE SELECTION-UNDO DELIVERY BOUNDARY. The three
+        // bulk setters below publish through `noteSelectionChange`, which
+        // accumulates and never delivers, and this method is reached from a
+        // command's `revert()` — the one path `Command.apply`'s delivery batch
+        // deliberately does NOT wrap. So before this, a selection-only undo
+        // reached the bus solely through the per-frame drain: it was the last
+        // two frames of residue the stage-3 census measured, after the command
+        // anchor, `symmetry_pick` and the bulk clears had taken the rest.
+        //
+        // The batch is what makes it ONE delivery for the three domains rather
+        // than three, and it also makes this correct when a caller already has
+        // a batch open (it nests; the outer close delivers).
+        mesh.beginDeliveryBatch();
+        scope(exit) { mesh.deliverAccumulated(); mesh.endDeliveryBatch(); }
         mesh.setVerticesSelectedFrom(selectedVertices);
         mesh.setEdgesSelectedFrom(selectedEdges);
         mesh.setFacesSelectedFrom(selectedFaces);

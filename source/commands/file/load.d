@@ -240,9 +240,7 @@ class FileLoad : Command {
         // fresh heap address — resolve it through the document rather than the
         // fire-time `*mesh` pointer (which still points at the prior layer).
         // A single-part interchange import mutated `*mesh` in place, so it stays
-        // the active mesh. Freshly built BACKGROUND layers keep clean
-        // pendingChanges_ + unseeded shadow stamps (lazy-seeded on first flush);
-        // only the ACTIVE mesh gets noteChange below.
+        // the active mesh. Only the ACTIVE mesh gets the bulk publish below.
         Mesh* active = docSnapped ? document.activeMesh() : mesh;
 
         // Task 0654: a `.v3d` saved with an empty item selection loads with no
@@ -261,10 +259,11 @@ class FileLoad : Command {
         active.syncSelection();
         // Bulk transition: the load REPLACED the active mesh — every cache must
         // invalidate. The All class goes on the NEW active mesh (the fresh
-        // struct reset pending + counters to 0). Freshly built background layers
-        // (v2 multi-layer files) start with clean pendingChanges_ and unseeded
-        // shadow stamps; the per-layer flush lazily seeds them on first sight,
-        // so a layered load does not trip the MISSED-PUBLISHER check.
+        // struct reset the accumulators + counters to 0). A freshly built
+        // background layer (v2 multi-layer files) starts with `mutationVersion`
+        // and `stampedVersion_` both at whatever its factory left them — equal,
+        // because both move only through `commitStamps` — so a layered load
+        // does not trip the MISSED-PUBLISHER check.
         //
         // TASK 1906 STAGE 2 — `publishChange`, not `noteChange`, and this site
         // is the one that was MEASURED blind (review of stage 2a/2b). It is the
@@ -272,7 +271,7 @@ class FileLoad : Command {
         // nothing, so `file.load` produced ZERO subject-carrying deliveries —
         // only the subject-less per-frame aggregate, which `mesh_dirty`
         // deliberately ignores. Since stage 2a the display family keys on the
-        // bus epoch instead of pulling `pendingChanges_`, so a load that
+        // bus epoch instead of pulling a per-frame word, so a load that
         // delivers nothing leaves `ensureDisplayCurrent` — the mid-batch pull
         // guard in front of every VBO reader that runs before the frame's flush
         // — with no reason to re-upload for the rest of that frame. The

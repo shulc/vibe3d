@@ -2486,7 +2486,7 @@ class HttpServer {
             const snap = changeBus;
             response.statusCode = 200;
             response.body = format(
-                `{"flushCount":%d,"lastFlushFlags":%d,"lastSelDomains":%d,` ~
+                `{"flushCount":%d,"lastSelDomains":%d,` ~
                 `"lastLayerKinds":%d,` ~
                 `"totalPosition":%d,"totalPoints":%d,"totalPolygons":%d,` ~
                 `"totalMarks":%d,"totalMaterial":%d,` ~
@@ -2506,7 +2506,7 @@ class HttpServer {
                 `"regradeCensusArmedChecks":%d,` ~
                 `"regradeCensusDisagreements":%d,` ~
                 `"currentTypeChanged":%d,"lastCurrentType":"%s"}`,
-                snap.flushCount, snap.lastFlushFlags,
+                snap.flushCount,
                 snap.lastSelDomains, snap.lastLayerKinds,
                 snap.totalPosition, snap.totalPoints,
                 snap.totalPolygons, snap.totalMarks,
@@ -2528,9 +2528,11 @@ class HttpServer {
                 snap.batchLeaks,
                 // Task 1906 stage 0 — the SYNCHRONOUS delivery boundary, as a
                 // counter. `deliveryCount` is what the per-command census and
-                // the delivery-granularity test read; `flushCount` beside it
-                // still counts the once-per-frame drain, and the two are
-                // deliberately independent (see change_bus.deliverMesh).
+                // the delivery-granularity test read. `flushCount` beside it
+                // counts the DOCUMENT-level flush (layer kinds, item selection,
+                // current type) — since stage 3 a mesh edit does not move it at
+                // all, and `lastFlushFlags` is gone from this payload rather
+                // than left reading 0 (see change_bus.flush).
                 //
                 // `lastDeliverySubject` is NOT published (review NIT). It is a
                 // raw heap address: it discloses the process's layout, it is
