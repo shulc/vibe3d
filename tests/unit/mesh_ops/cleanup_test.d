@@ -391,3 +391,70 @@ unittest { // selection-restricted: with an active face selection, only the
         if (m.faces[a.faces.length + fi][] != originalB[fi][]) bStillCorrupt = true;
     assert(bStillCorrupt, "component B (not selected) must be left untouched -- still corrupted");
 }
+
+// Site 11 (task 1902 Stage E) — cleanDegenerateFaces's single rewrite pass:
+// every surviving face's SOLE plane source is its OWN old index, carried by
+// `mesh_planes.rewriteFaces` (`FaceSource(oldOfNew)`, identity over the
+// kept range). No existing test in this file asserts material/part/set-
+// membership by value — every prior unittest checks only counts and shape.
+// The dropped face sits in the MIDDLE (face 2 of 5), not the tail — task
+// 0921's front-truncated-slice class: a bug that reads `faceMaterial[newIdx]`
+// instead of `faceMaterial[oldIdx]` would leave every survivor AFTER the
+// drop wearing its NEIGHBOUR's value, which a tail-only drop cannot expose.
+unittest {
+    import std.conv : to;
+    import mesh_selsets : selSetEditPolygon, SetEditMode;
+
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0),  Vec3(1,0,0),  Vec3(0,1,0),    // face 0
+        Vec3(10,0,0), Vec3(11,0,0), Vec3(10,1,0),   // face 1
+        Vec3(20,0,0), Vec3(21,0,0), Vec3(22,0,0),   // face 2 — collinear (dropped)
+        Vec3(30,0,0), Vec3(31,0,0), Vec3(30,1,0),   // face 3
+        Vec3(40,0,0), Vec3(41,0,0), Vec3(40,1,0),   // face 4
+    ];
+    m.faces = [
+        [0u,1u,2u], [3u,4u,5u], [6u,7u,8u], [9u,10u,11u], [12u,13u,14u],
+    ];
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.resetSelection();
+
+    static immutable uint[5] wantMat  = [1000, 1001, 1002, 1003, 1004];
+    static immutable uint[5] wantPart = [2000, 2001, 2002, 2003, 2004];
+    foreach (fi; 0 .. 5) {
+        m.faceMaterial[fi] = wantMat[fi];
+        m.facePart[fi]     = wantPart[fi];
+    }
+    // A polygon set on face 4 only, so faceSetMask is non-uniform too.
+    bool[] polySel = new bool[](5);
+    polySel[4] = true;
+    selSetEditPolygon(m, "S", SetEditMode.replace, polySel);
+
+    size_t n = m.cleanDegenerateFaces();
+    assert(n >= 1, "collinear middle face must be removed");
+    assert(m.faces.length == 4,
+        "expected 4 survivors after dropping the middle face, got "
+        ~ m.faces.length.to!string);
+
+    // Survivors 0,1,3,4 land at compacted positions 0,1,2,3 — each keeping
+    // its OWN material/part, not a front-truncated slice of the original.
+    static immutable uint[4] survivingMat  = [1000, 1001, 1003, 1004];
+    static immutable uint[4] survivingPart = [2000, 2001, 2003, 2004];
+    foreach (i; 0 .. 4) {
+        assert(m.faceMaterial[i] == survivingMat[i],
+            "cleanDegenerateFaces: survivor at position " ~ i.to!string
+            ~ " must keep its OWN material through the middle-drop "
+            ~ "compaction (got " ~ m.faceMaterial[i].to!string ~ ", want "
+            ~ survivingMat[i].to!string ~ ")");
+        assert(m.facePart[i] == survivingPart[i],
+            "cleanDegenerateFaces: survivor at position " ~ i.to!string
+            ~ " must keep its OWN part through the middle-drop compaction "
+            ~ "(got " ~ m.facePart[i].to!string ~ ", want "
+            ~ survivingPart[i].to!string ~ ")");
+    }
+    // Old face 4 (now at compacted position 3) must keep its set membership.
+    assert(m.faceSetMask[3] != 0,
+        "cleanDegenerateFaces: surviving face's set membership must follow "
+        ~ "it through the middle-drop compaction");
+}

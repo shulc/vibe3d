@@ -209,23 +209,20 @@ mixin template MeshBevelVertexOps() {
             }
         }
 
-        // single rebuild pass: rewritten faces then cap faces
+        // single rebuild pass: rewritten faces then cap faces. `oldOfNew` is
+        // the newToOld correspondence mesh_planes.rewriteFaces wants —
+        // identity for (a) (every survivor keeps its OWN old index, so its
+        // own material/part/setmask/order/marks ride through unchanged),
+        // capSrc[vi] for (b) (a cap face's attrs are donor-carried, task
+        // 1240's `capSrc`, not the chamfer 0u literal).
         uint[][] newFaces;
-        uint[]   newMat;
-        uint[]   newPart;
-        ulong[]  newSetMask;   // task 1060, Stage 5c
-        int[]    newOrd;
-        uint[]   newWord;   // whole faceMarks word per new face (task 0613 §4.2)
+        uint[]   oldOfNew;
 
         // (a) surviving / substituted faces
         foreach (fi; 0 .. faces.length) {
-            auto orig  = faces[fi];
+            auto orig = faces[fi];
             newFaces ~= rebuildFaceWithVertexSubs(orig, cast(uint)fi in faceSubs);
-            newMat  ~=faceAttrOr(faceMaterial, fi);
-            newPart ~=faceAttrOr(facePart, fi);
-            newSetMask ~= faceAttrOr(faceSetMask, fi);
-            newOrd  ~=faceAttrOr(faceSelectionOrder, fi);
-            newWord ~= faceAttrOr(faceMarks, fi);
+            oldOfNew ~= cast(uint)fi;
         }
 
         // (b) cap faces — attrs carried from capSrc, not the chamfer 0u literal.
@@ -239,25 +236,25 @@ mixin template MeshBevelVertexOps() {
             uint[] capRing = capRings[cast(uint)vi];
             if (capRing.length < 3) continue;   // valence 2 ⇒ no cap (measured)
 
-            uint srcFi = capSrc[cast(uint)vi];
             newFaces ~= capRing.dup;
-            newMat   ~=faceAttrOr(faceMaterial, srcFi);
-            newPart  ~=faceAttrOr(facePart, srcFi);
-            newSetMask ~= faceAttrOr(faceSetMask, srcFi);
-            newOrd   ~= 0;
-            newWord  ~= faceAttrOr(faceMarks, srcFi);
+            oldOfNew ~= capSrc[cast(uint)vi];
         }
 
-        // (c) commit arrays
-        faces              = newFaces;
-        faceMaterial       = newMat;
-        facePart           = newPart;
-        faceSetMask        = newSetMask;
-        faceSelectionOrder = newOrd;
+        // (c) commit arrays. `rewriteFaces` carries faceMaterial/facePart/
+        // faceSetMask/faceMarks/faceSelectionOrder through `oldOfNew`, but a
+        // cap face must start UNSELECTED (order 0), never inheriting its
+        // donor's stamp the other four planes DO inherit (plan §2.7a) — the
+        // hand-rolled code always zeroed the cap range's order (`newOrd ~=
+        // 0;`), never the survived range's (inherited by identity), which
+        // the carry already reproduces via oldOfNew[i] == i.
+        rewriteFaces(this, newFaces, FaceSource(oldOfNew));
+        foreach (i; capStart .. faces.length) faceSelectionOrder[i] = 0;
 
-        // Rebuild faceMarks: zero all, then restore the whole word (task 0613
-        // §4.2 — was Subpatch-only).
-        setFaceMarksFrom(newWord, ~Marks.Select);
+        // Re-mask the just-carried word in place — src here IS faceMarks
+        // (self-aliasing; see Mesh.setFaceMarksFrom's own doc comment for
+        // why that is safe) — was Subpatch-only; now carries the whole word
+        // (task 0613 §4.2).
+        setFaceMarksFrom(faceMarks, ~Marks.Select);
 
         faceSelectionOrderCounter = 0;
         foreach (fi; capStart .. faces.length)

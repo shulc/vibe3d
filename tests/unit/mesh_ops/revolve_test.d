@@ -297,3 +297,86 @@ unittest { // revolveProfileEx (d): spiral offset at a >=360deg angle span
         "spiral offset: last ring expected XZ~(1,0) after a full turn, got ("
         ~ lastRingV0.x.to!string ~ "," ~ lastRingV0.z.to!string ~ ")");
 }
+
+// Site 19 (task 1902 Stage E) — extrudePathStep_'s single rebuild pass:
+// [non-selected originals] (identity oldOfNew) + [cap clones] (source `fi`)
+// + [wall quads] (source `be.selFi`). No existing test in this file asserts
+// material/part by value. TWO non-adjacent faces are selected (a 3x3 grid's
+// opposite corners, faces 0 and 8 — no shared edge, so they form two
+// SEPARATE islands) with distinct materials, so per-wall attribution is
+// testable: a bug that let one island's walls read the OTHER island's
+// source face would not show on a single-face selection.
+unittest {
+    import std.conv : to;
+
+    Mesh m = makeGridPlane(3);   // 3x3 grid, 9 quads, row-major fi = row*3+col
+    m.resetSelection();
+    foreach (fi; 0 .. m.faces.length) {
+        m.faceMaterial[fi] = cast(uint)(1000 + fi);
+        m.facePart[fi]     = cast(uint)(2000 + fi);
+    }
+    // Non-zero order stamps on BOTH source faces, so a bug that inherits a
+    // created face's order from its source (instead of zeroing it) is
+    // observable on either island.
+    m.faceSelectionOrder[0] = 71;
+    m.faceSelectionOrder[8] = 79;
+
+    bool[] mask = new bool[](m.faces.length);
+    mask[0] = true;   // top-left corner
+    mask[8] = true;   // bottom-right corner — no edge shared with face 0
+
+    size_t added = m.extrudeAlongPath(mask, [Vec3(0,0,0), Vec3(0,0,1)], true);
+    assert(added > 0, "extrudePathStep_: expected the single-span band to add faces");
+
+    // 7 non-selected originals + 2 cap clones (one per island) + 8 wall
+    // quads (a corner face has 4 boundary edges in its own single-face
+    // island — none shared with another SELECTED face — so 4 walls per
+    // island x 2 islands).
+    assert(m.faces.length == 7 + 2 + 8,
+        "extrudePathStep_: expected 7 survivors + 2 caps + 8 walls, got "
+        ~ m.faces.length.to!string);
+
+    // Survivors (old faces 1..7, in order) land at compacted positions 0..6,
+    // each keeping its OWN material/part.
+    foreach (i; 0 .. 7) {
+        immutable uint oldFi = cast(uint)(i + 1);
+        assert(m.faceMaterial[i] == 1000 + oldFi,
+            "extrudePathStep_: survivor at position " ~ i.to!string
+            ~ " must keep its OWN material");
+        assert(m.facePart[i] == 2000 + oldFi,
+            "extrudePathStep_: survivor at position " ~ i.to!string
+            ~ " must keep its OWN part");
+    }
+
+    // Cap range (positions 7,8): toCloneFace walks selected faces in
+    // increasing `fi` order, so position 7 is face 0's cap, position 8 is
+    // face 8's cap — deterministic.
+    assert(m.faceMaterial[7] == 1000 && m.facePart[7] == 2000,
+        "extrudePathStep_: face 0's cap must inherit its material/part");
+    assert(m.faceMaterial[8] == 1008 && m.facePart[8] == 2008,
+        "extrudePathStep_: face 8's cap must inherit its material/part");
+
+    // Wall range (positions 9..16): `bEdges` is built by iterating an
+    // associative array (`edgeFaces`), so the ORDER within the wall range
+    // is not guaranteed — attribute by VALUE instead: exactly 4 walls must
+    // read face 0's material/part, exactly 4 must read face 8's, and every
+    // wall's faceSelectionOrder must be 0 (never inheriting its source's
+    // own stamp of 71 or 79 — plan §2.7a, and unlike the cap range this
+    // portion is NOT re-selected by the tail loop below, so it is the one
+    // that actually discriminates the override).
+    size_t from0 = 0, from8 = 0;
+    foreach (i; 9 .. 17) {
+        immutable uint mat = m.faceMaterial[i], part = m.facePart[i];
+        if (mat == 1000 && part == 2000) ++from0;
+        else if (mat == 1008 && part == 2008) ++from8;
+        else assert(false, "extrudePathStep_: wall at position " ~ i.to!string
+            ~ " must inherit material/part from ONE of the two source faces "
+            ~ "(got mat=" ~ mat.to!string ~ " part=" ~ part.to!string ~ ")");
+        assert(m.faceSelectionOrder[i] == 0,
+            "extrudePathStep_: wall at position " ~ i.to!string
+            ~ " must start UNSELECTED (order 0), never inheriting its "
+            ~ "source face's own order stamp (71 or 79)");
+    }
+    assert(from0 == 4, "extrudePathStep_: expected 4 walls from face 0's island, got " ~ from0.to!string);
+    assert(from8 == 4, "extrudePathStep_: expected 4 walls from face 8's island, got " ~ from8.to!string);
+}

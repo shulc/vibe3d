@@ -1531,11 +1531,19 @@ mixin template MeshEdgeBevelOps() {
         // rails.  Rounded strip faces are emitted directly below and are not
         // threaded a second time.
         uint[][] newFaces;
-        uint[]   newMat;
-        uint[]   newPart;
-        ulong[]  newSetMask;   // task 1060, Stage 5c
-        int[]    newOrd;
-        uint[]   newWord;   // whole faceMarks word per new face (task 0613 §4.2)
+        uint[]   oldOfNew;   // newToOld correspondence — task 1902, mesh_planes.rewriteFaces
+                              // carries faceMarks/faceMaterial/facePart/faceSelectionOrder/
+                              // faceSetMask from this in one pass.
+        // Two chamfer-strip faces below fold TWO source faces' faceMarks
+        // into one word (combineFaceMarksWords) — a value no single
+        // `oldOfNew` entry can express (kNoSource zeroes all five planes
+        // uniformly). Recorded here (new-face index → folded word) and
+        // patched onto `faceMarks` right after `rewriteFaces`, before the
+        // tail `setFaceMarksFrom` masks Select out of everything (plan
+        // §2.7a: "two edge_bevel.d sites of a shape the primitive cannot
+        // express directly").
+        uint[] chamferWordIdx;
+        uint[] chamferWordVal;
 
         // Per-corner island of the face `newFaces[i]` reads, for the paths that
         // have one (task 0697). Registered by index, never in lockstep, so an
@@ -1557,11 +1565,7 @@ mixin template MeshEdgeBevelOps() {
             if (remapUvB)
                 noteSrc(newFaces.length - 1,
                         uniformSrc(newFaces[$ - 1].length, cast(uint)fi));
-            newMat  ~=faceAttrOr(faceMaterial, fi);
-            newPart ~=faceAttrOr(facePart, fi);
-            newSetMask ~= faceAttrOr(faceSetMask, fi);
-            newOrd  ~=faceAttrOr(faceSelectionOrder, fi);
-            newWord ~= faceAttrOr(faceMarks, fi);
+            oldOfNew ~= cast(uint)fi;
         }
 
         // Emit the chamfer strip per qualifying edge.  At L>0 every endpoint
@@ -1590,7 +1594,9 @@ mixin template MeshEdgeBevelOps() {
                 // slid out of (task 0697).
                 if (remapUvB)
                     noteSrc(newFaces.length - 1, [sp.fL, sp.fL, sp.fR, sp.fR]);
-                newMat ~= 0u; newPart ~= 0u; newSetMask ~= 0UL; newOrd ~= 0; newWord ~= word;
+                oldOfNew ~= kNoSource;
+                chamferWordIdx ~= cast(uint)(newFaces.length - 1);
+                chamferWordVal ~= word;
                 continue;
             }
 
@@ -1617,7 +1623,9 @@ mixin template MeshEdgeBevelOps() {
                 if (remapUvB)
                     noteSrc(newFaces.length - 1,
                             [srcAt(t), srcAt(t), srcAt(t + 1), srcAt(t + 1)]);
-                newMat ~= 0u; newPart ~= 0u; newSetMask ~= 0UL; newOrd ~= 0; newWord ~= word;
+                oldOfNew ~= kNoSource;
+                chamferWordIdx ~= cast(uint)(newFaces.length - 1);
+                chamferWordVal ~= word;
             }
         }
 
@@ -1750,11 +1758,7 @@ mixin template MeshEdgeBevelOps() {
                         foreach (b; 0 .. L) foreach (a; 0 .. L) {
                             newFaces ~= [gv(i, a, b), gv(i, a + 1, b),
                                          gv(i, a + 1, b + 1), gv(i, a, b + 1)];
-                            newMat  ~=faceAttrOr(faceMaterial, srcFi);
-                            newPart ~=faceAttrOr(facePart, srcFi);
-                            newSetMask ~= faceAttrOr(faceSetMask, srcFi);
-                            newOrd  ~= 0;
-                            newWord ~= faceAttrOr(faceMarks, srcFi);
+                            oldOfNew ~= srcFi;
                         }
                     continue;
                 }
@@ -1842,22 +1846,14 @@ mixin template MeshEdgeBevelOps() {
                         foreach (b; 0 .. L) foreach (a; 0 .. L) {
                             newFaces ~= [gv(i, a, b), gv(i, a + 1, b),
                                          gv(i, a + 1, b + 1), gv(i, a, b + 1)];
-                            newMat  ~=faceAttrOr(faceMaterial, srcFi);
-                            newPart ~=faceAttrOr(facePart, srcFi);
-                            newSetMask ~= faceAttrOr(faceSetMask, srcFi);
-                            newOrd  ~= 0;
-                            newWord ~= faceAttrOr(faceMarks, srcFi);
+                            oldOfNew ~= srcFi;
                         }
                     continue;
                 }
             }
 
             newFaces ~= ring;
-            newMat  ~=faceAttrOr(faceMaterial, srcFi);
-            newPart ~=faceAttrOr(facePart, srcFi);
-            newSetMask ~= faceAttrOr(faceSetMask, srcFi);
-            newOrd  ~= 0;
-            newWord ~= faceAttrOr(faceMarks, srcFi);
+            oldOfNew ~= srcFi;
         }
 
         // Emit one free-end / partial-fan cap per `freeEndCapRing` vertex
@@ -1950,11 +1946,7 @@ mixin template MeshEdgeBevelOps() {
                 foreach (ref f; gridFaces) {
                     if (flip) reverse(f);
                     newFaces ~= f;
-                    newMat  ~=faceAttrOr(faceMaterial, srcFiN);
-                    newPart ~=faceAttrOr(facePart, srcFiN);
-                    newSetMask ~= faceAttrOr(faceSetMask, srcFiN);
-                    newOrd  ~= 0;
-                    newWord ~= faceAttrOr(faceMarks, srcFiN);
+                    oldOfNew ~= srcFiN;
                 }
                 continue;
             }
@@ -2004,23 +1996,35 @@ mixin template MeshEdgeBevelOps() {
                 }
                 noteSrc(newFaces.length - 1, threadedSrc);
             }
-            newMat  ~=faceAttrOr(faceMaterial, srcFi);
-            newPart ~=faceAttrOr(facePart, srcFi);
-            newSetMask ~= faceAttrOr(faceSetMask, srcFi);
-            newOrd  ~= 0;
-            newWord ~= faceAttrOr(faceMarks, srcFi);
+            oldOfNew ~= srcFi;
         }
 
-        // Assign reconstructed arrays.
-        faces              = newFaces;
-        faceMaterial       = newMat;
-        facePart           = newPart;
-        faceSetMask        = newSetMask;
-        faceSelectionOrder = newOrd;
+        // Assign reconstructed arrays. `rw` is NOT passed here (`rw = null`):
+        // `rwB` (opened at the top of this function) declares its own per-
+        // corner correspondence through `.carried()` after the SECOND
+        // rewrite below (the merge pass) — the shared-`rwB` constraint
+        // (plan §2.6): this kernel opens ONE handle and rewrites `faces`
+        // TWICE, declaring only once.
+        rewriteFaces(this, newFaces, FaceSource(oldOfNew));
+        // The two chamfer-strip faces above fold two source faces'
+        // faceMarks into one word no single `oldOfNew` entry can express —
+        // patch them onto the just-carried `faceMarks` before the tail
+        // re-mask below strips Select from everything.
+        foreach (i, idx; chamferWordIdx) faceMarks[idx] = chamferWordVal[i];
+        // faceSelectionOrder: every face from `chamferStart` on is CREATED
+        // (chamfer strip, hub caps, free-end caps) and must start
+        // UNSELECTED (order 0), never inheriting whatever stamp its source
+        // face happened to carry (was `newOrd ~= 0;` at every one of those
+        // emission points, unlike material/part/setmask/marks, which DO
+        // inherit via `oldOfNew` above — plan §2.7a). The base range
+        // (0 .. chamferStart) keeps its OWN order, already correct via
+        // `oldOfNew`'s identity mapping there.
+        foreach (i; chamferStart .. faces.length) faceSelectionOrder[i] = 0;
 
-        // Rebuild faceMarks: zero all, then restore the whole word (task 0613
-        // §4.2 — was Subpatch-only).
-        setFaceMarksFrom(newWord, ~Marks.Select);
+        // Re-mask the just-carried word in place — src here IS faceMarks
+        // (self-aliasing; see Mesh.setFaceMarksFrom's own doc comment for
+        // why that is safe).
+        setFaceMarksFrom(faceMarks, ~Marks.Select);
 
         // task 0436: new-vertex merge. `toolcards/edge.bevel/
         // clamp_findings.md` — geometry-only pass ("Follow-up pass —
@@ -2124,20 +2128,17 @@ mixin template MeshEdgeBevelOps() {
         // (an emission path changed shape underneath) falls back to no source at
         // all rather than to a shifted one.
         uint[][] mergedSrc;
-        // Task 0921 twin: gathered in survivor order, keyed by each face's OLD
-        // index `fi` — the SAME shape (and the same defect) as the sibling
-        // collapse in `Mesh.applyVertexRemap` (source/mesh.d), which this merge
-        // pass otherwise duplicates verbatim. Without this, a face collapsed
-        // below 3 corners anywhere but the array's tail (Case C) left every
-        // survivor after it wearing a front-truncated slice of the
-        // pre-collapse material/part/marks arrays instead of its own values —
-        // the per-corner (UV) relocate just below already gets this right, so
-        // the site already knows the space moved.
-        uint[]   mergedWord;   // whole faceMarks word per survivor (Select dropped below)
-        int[]    mergedOrder;
-        uint[]   mergedMaterial;
-        uint[]   mergedPart;
-        ulong[]  mergedSetMask;   // task 1060, Stage 5c
+        // Task 0921 twin: `faceRemap` below is gathered in survivor order,
+        // keyed by each face's OLD index `fi` — the SAME shape (and the
+        // same defect, once) as the sibling collapse in
+        // `Mesh.applyVertexRemap` (source/mesh.d). Without this, a face
+        // collapsed below 3 corners anywhere but the array's tail (Case C)
+        // would leave every survivor after it wearing a front-truncated
+        // slice of the pre-collapse material/part/marks arrays instead of
+        // its own values — `mesh_planes.rewriteFaces`'s
+        // `FaceSource.fromOldToNew(faceRemap, ...)` below carries each
+        // survivor from its OWN old index `fi`, same as the per-corner (UV)
+        // relocate just below already does.
         foreach (fi, f; faces) {
             uint[] kept;
             uint[] keptSrc;
@@ -2158,26 +2159,24 @@ mixin template MeshEdgeBevelOps() {
             if (kept.length >= 3) {
                 faceRemap[fi] = cast(int)mergedFaces.length;
                 mergedFaces ~= kept;
-                mergedWord     ~= faceAttrOr(faceMarks, fi);
-                mergedOrder    ~= faceAttrOr(faceSelectionOrder, fi);
-                mergedMaterial ~= faceAttrOr(faceMaterial, fi);
-                mergedPart     ~= faceAttrOr(facePart, fi);
-                mergedSetMask  ~= faceAttrOr(faceSetMask, fi);
                 if (remapUvB) mergedSrc ~= keptSrc;
             } else {
                 faceRemap[fi] = -1; // whole face collapsed below 3 corners (Case C)
             }
         }
-        faces = mergedFaces;
+        // `rw` is NOT passed here (`rw = null`): `rwB` declares its own
+        // per-corner correspondence through `.carried()` right below, on a
+        // shape `rewriteFaces`'s own per-NEW-FACE parameter does not match
+        // — the shared-`rwB` constraint (plan §2.6): this kernel opens ONE
+        // handle and rewrites `faces` twice (the rebuild pass above, this
+        // merge pass here), declaring only once, after this second rewrite.
+        rewriteFaces(this, mergedFaces, FaceSource.fromOldToNew(faceRemap, mergedFaces.length));
         // Select is about to be fully re-derived below (chamfer + hub-cap
-        // faces via `selectFace`), so it is dropped here same as every other
-        // compaction site; Subpatch/Hide are NOT re-derived below and must
-        // ride the gather above.
-        setFaceMarksFrom(mergedWord, ~Marks.Select);
-        faceSelectionOrder = mergedOrder;
-        faceMaterial       = mergedMaterial;
-        facePart           = mergedPart;
-        faceSetMask        = mergedSetMask;
+        // faces via `selectFace`), so it is dropped here same as every
+        // other compaction site; Subpatch/Hide are NOT re-derived below and
+        // must ride the carry above. Self-aliasing (src is faceMarks) — see
+        // Mesh.setFaceMarksFrom's own doc comment for why that is safe.
+        setFaceMarksFrom(faceMarks, ~Marks.Select);
 
         // Relocate the per-corner map now that `faces` is final and BEFORE the
         // tail `buildLoops`, which would otherwise see a length-wrong map and

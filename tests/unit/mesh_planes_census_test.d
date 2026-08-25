@@ -483,23 +483,20 @@ private immutable AllowEntry[] kAllow = [
     AllowEntry("source/mesh.d", "sub.vertices = cur;",
         "subdivide builder: smoothSubdivide — `sub` is a working-copy local Mesh", 1),
 
-    // --- source/mesh_ops/*.d: production sites (Stages C/D/E) ---
-    AllowEntry("source/mesh_ops/bevel_vertex.d", "faces              = newFaces;",
-        "site 10: bevelVerticesByMask (Stage E)", 1),
-    AllowEntry("source/mesh_ops/cleanup.d", "faces              = newFaces;",
-        "site 11: cleanDegenerateFaces (Stage E)", 1),
-    AllowEntry("source/mesh_ops/edge_bevel.d", "faces              = newFaces;",
-        "site 12: bevelEdgesByMask rebuild pass — passes rw = null (shared-rwB constraint, §2.6) (Stage E)", 1),
-    AllowEntry("source/mesh_ops/edge_bevel.d", "faces = mergedFaces;",
-        "site 13: bevelEdgesByMask pool-merge pass (Stage E)", 1),
+    // --- source/mesh_ops/*.d: production sites ---
+    // Stage E (task 1902) migrated sites 10/11/12/13/19 onto
+    // mesh_planes.rewriteFaces — their hand-rolled `faces = newFaces;` /
+    // `faces = mergedFaces;` lines are gone from the source text, so all
+    // five former entries here are DEAD and removed in this same commit,
+    // per this file's own header comment. `poly_bevel.d` was never in this
+    // list: measured (plan §6 Stage E), it has no `faces = …` rewrite site
+    // at all (append-only) — the card's family list overstated it.
     AllowEntry("source/mesh_ops/edge_bevel.d",
         "vertices.length = savedVertCount; // undo any addVertex from the per-vertex pass",
         "bevelEdgesByMask early-return rollback (both call sites) — restores "
       ~ "a saved count, not a renumbering", 2),
     AllowEntry("source/mesh_ops/loop_slice.d", "m.vertices = [",
         "fresh-mesh test helper: makeTwoDisjointCubes (fixture-only, not version(unittest)-gated)", 1),
-    AllowEntry("source/mesh_ops/revolve.d", "faces              = newFaces;",
-        "site 19: extrudePathStep_ (Stage E)", 1),
 ];
 
 private bool allowed(string file, string text) {

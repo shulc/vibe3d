@@ -470,20 +470,12 @@ mixin template MeshRevolveOps() {
         foreach (fi; 0 .. faces.length) if (mask[fi]) toCloneFace ~= fi;
 
         uint[][] newFaces;
-        uint[]   newMat;
-        uint[]   newPart;
-        ulong[]  newSetMask;   // task 1060, Stage 5c
-        int[]    newOrd;
-        uint[]   newWord;   // whole faceMarks word per new face (task 0613 §4.2)
+        uint[]   oldOfNew;   // newToOld correspondence — task 1902, mesh_planes.rewriteFaces
 
         foreach (fi; 0 .. faces.length) {
             if (mask[fi]) continue;
             newFaces ~= faces[fi];
-            newMat   ~= fi < faceMaterial.length       ? faceMaterial[fi]       : 0u;
-            newPart  ~= fi < facePart.length           ? facePart[fi]           : 0u;
-            newSetMask ~= fi < faceSetMask.length      ? faceSetMask[fi]        : 0UL;
-            newOrd   ~= fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0;
-            newWord  ~= fi < faceMarks.length          ? faceMarks[fi]          : 0u;
+            oldOfNew ~= cast(uint)fi;
         }
         immutable size_t facesBefore = faces.length;
         immutable size_t capStart    = newFaces.length;
@@ -495,11 +487,7 @@ mixin template MeshRevolveOps() {
             int island = islandOf[fi];
             foreach (k, vid; src) cloned[k] = vertMap[ivKey(island, vid)];
             newFaces ~= cloned;
-            newMat   ~= fi < faceMaterial.length ? faceMaterial[fi] : 0u;
-            newPart  ~= fi < facePart.length     ? facePart[fi]     : 0u;
-            newSetMask ~= fi < faceSetMask.length ? faceSetMask[fi] : 0UL;
-            newOrd   ~= 0;
-            newWord  ~= fi < faceMarks.length ? faceMarks[fi] : 0u;
+            oldOfNew ~= cast(uint)fi;
         }
         immutable size_t capCount = toCloneFace.length;
 
@@ -516,26 +504,29 @@ mixin template MeshRevolveOps() {
             }
             if (origAtoB) newFaces ~= [cloneB, cloneA, a, b];
             else          newFaces ~= [cloneA, cloneB, b, a];
-            newMat  ~= be.selFi < faceMaterial.length ? faceMaterial[be.selFi] : 0u;
-            newPart ~= be.selFi < facePart.length     ? facePart[be.selFi]     : 0u;
-            newSetMask ~= be.selFi < faceSetMask.length ? faceSetMask[be.selFi] : 0UL;
-            newOrd  ~= 0;
             // Task 0389: revolve wall quads inherit Subpatch from their source
             // profile edge's face, like extrudeFacesByMask — so revolving a
             // subdiv profile keeps the swept surface subdiv (bounds-guarded).
             // Task 0613 §4.2: now the whole word, so Hide inherits too.
-            newWord ~= be.selFi < faceMarks.length ? faceMarks[be.selFi] : 0u;
+            // Carried by `rewriteFaces` below via `oldOfNew`.
+            oldOfNew ~= cast(uint)be.selFi;
         }
 
-        faces              = newFaces;
-        faceMaterial       = newMat;
-        facePart           = newPart;
-        faceSetMask        = newSetMask;
-        faceSelectionOrder = newOrd;
+        // faceSelectionOrder: cap clones and wall quads must both start
+        // UNSELECTED (order 0), never inheriting whatever order stamp their
+        // source face happened to carry (was `newOrd ~= 0;` for both
+        // ranges, unlike material/part/setmask/marks, which DO inherit from
+        // their source via `oldOfNew` above — plan §2.7a). Patched back
+        // immediately after the call — the reselect loop below overwrites
+        // the CAP portion of this range again (via selectFace); the wall
+        // portion is what this line alone determines.
+        rewriteFaces(this, newFaces, FaceSource(oldOfNew));
+        foreach (i; capStart .. faces.length) faceSelectionOrder[i] = 0;
 
-        // Rebuild faceMarks from scratch: resize+zero ALL bits, then set from
-        // newWord (task 0613 §4.2 — was Subpatch-only).
-        setFaceMarksFrom(newWord, ~Marks.Select);
+        // Re-mask the just-carried word in place — src here IS faceMarks
+        // (self-aliasing; see Mesh.setFaceMarksFrom's own doc comment for
+        // why that is safe).
+        setFaceMarksFrom(faceMarks, ~Marks.Select);
 
         // New selection = cap faces (chains a follow-up op off the top,
         // and lets the top-level extrudeAlongPath loop derive the next

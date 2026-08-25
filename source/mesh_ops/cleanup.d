@@ -175,17 +175,11 @@ mixin template MeshCleanupOps() {
         uint[] oldLoopOfNewLoop;
 
         uint[][] newFaces;
-        uint[]   newWord;   // whole faceMarks word per survivor (task 0613 §4.2)
-        int[]    newOrder;
-        uint[]   newMaterial;
-        uint[]   newPart;
-        ulong[]  newSetMask;   // task 1060, Stage 5c
+        uint[]   oldOfNew;   // newToOld correspondence — task 1902, mesh_planes.rewriteFaces
+                              // carries faceMarks/faceMaterial/facePart/faceSelectionOrder/
+                              // faceSetMask from this in one pass.
         newFaces.reserve(faces.length);
-        newWord.reserve(faces.length);
-        newOrder.reserve(faces.length);
-        newMaterial.reserve(faces.length);
-        newPart.reserve(faces.length);
-        newSetMask.reserve(faces.length);
+        oldOfNew.reserve(faces.length);
 
         size_t removed = 0;
         size_t fixed   = 0;
@@ -207,18 +201,13 @@ mixin template MeshCleanupOps() {
 
             // Face is kept; count it as fixed if its arity changed.
             if (f.length != face.length) ++fixed;
-            newFaces    ~= f;
-            // faceAttrOr(faceMarks, fi), not the allocating `isSubpatch`
-            // @property — same O(F²)-in-a-loop trap as deleteFacesByMask
-            // above (task 0396). Carries the WHOLE word (Subpatch + Hide),
-            // not just Subpatch (task 0613 §4.2). (Code review NIT: this
-            // used to be a hand-rolled ternary that the comment already
-            // described as `faceAttrOr` — now it actually is one.)
-            newWord     ~= faceAttrOr(faceMarks, fi);
-            newOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
-            newMaterial ~= (fi < faceMaterial.length      ? faceMaterial[fi]      : 0u);
-            newPart     ~= (fi < facePart.length          ? facePart[fi]          : 0u);
-            newSetMask  ~= (fi < faceSetMask.length       ? faceSetMask[fi]       : 0UL);
+            newFaces ~= f;
+            // Old index `fi` is this survivor's SOLE plane source, carried
+            // by `rewriteFaces` below — the WHOLE faceMarks word (Subpatch +
+            // Hide, not just Subpatch — task 0613 §4.2), not the allocating
+            // `isSubpatch` @property (same O(F²)-in-a-loop trap as
+            // deleteFacesByMask, task 0396).
+            oldOfNew ~= cast(uint)fi;
             if (remapUv)
                 foreach (sc; srcCorner)
                     oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, sc);
@@ -227,12 +216,16 @@ mixin template MeshCleanupOps() {
         // Early return: nothing changed — no commitChange, no version bump.
         if (removed == 0 && fixed == 0) return 0;
 
-        faces              = newFaces;
-        setFaceMarksFrom(newWord, ~Marks.Select);
-        faceSelectionOrder = newOrder;
-        faceMaterial       = newMaterial;
-        facePart           = newPart;
-        faceSetMask        = newSetMask;
+        // `rw` (this site's OWN beginCornerRelocate() handle) is NOT passed
+        // to rewriteFaces: it declares through `.relocated()` on a per-CORNER
+        // correspondence built above, a different shape from the primitive's
+        // own per-NEW-FACE `rw.carriedPerFace()` call — same reasoning as
+        // Mesh.deleteFacesByMask (Stage B site 3).
+        rewriteFaces(this, newFaces, FaceSource(oldOfNew));
+        // Re-mask the just-carried word in place — src here IS faceMarks
+        // (self-aliasing; see Mesh.setFaceMarksFrom's own doc comment for
+        // why that is safe).
+        setFaceMarksFrom(faceMarks, ~Marks.Select);
         if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
 
         clearFaceSelectionResize();
