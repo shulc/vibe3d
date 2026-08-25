@@ -458,3 +458,67 @@ unittest {
         "cleanDegenerateFaces: surviving face's set membership must follow "
         ~ "it through the middle-drop compaction");
 }
+
+// Task 1902 Step 0 review addition — the site-11 witness above checks
+// faceMaterial/facePart by value and faceSetMask only ONE-SIDED (a survivor
+// that IS a set member reads nonzero); neither proves a survivor that is
+// NOT a member reads zero, nor that faceMarks (the plane the Hide bit lives
+// in) is carried by VALUE rather than by some blanket copy. Same
+// middle-drop fixture (face 2 dropped, collinear), so the compacted-
+// position mapping is identical: old face 3 -> position 2, old face 4 ->
+// position 3.
+unittest {
+    import std.conv : to;
+    import mesh_selsets : selSetEditPolygon, SetEditMode;
+
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0),  Vec3(1,0,0),  Vec3(0,1,0),    // face 0
+        Vec3(10,0,0), Vec3(11,0,0), Vec3(10,1,0),   // face 1
+        Vec3(20,0,0), Vec3(21,0,0), Vec3(22,0,0),   // face 2 — collinear (dropped)
+        Vec3(30,0,0), Vec3(31,0,0), Vec3(30,1,0),   // face 3
+        Vec3(40,0,0), Vec3(41,0,0), Vec3(40,1,0),   // face 4
+    ];
+    m.faces = [
+        [0u,1u,2u], [3u,4u,5u], [6u,7u,8u], [9u,10u,11u], [12u,13u,14u],
+    ];
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.resetSelection();
+
+    // Face 4 is HIDDEN before the compaction; faces 0/1/3 stay visible.
+    m.setFaceHidden(4, true);
+
+    // A polygon set on face 4 only, so faceSetMask is non-uniform (mirrors
+    // the site-11 witness above).
+    bool[] polySel = new bool[](5);
+    polySel[4] = true;
+    selSetEditPolygon(m, "S", SetEditMode.replace, polySel);
+
+    size_t n = m.cleanDegenerateFaces();
+    assert(n >= 1, "collinear middle face must be removed");
+    assert(m.faces.length == 4,
+        "expected 4 survivors after dropping the middle face, got "
+        ~ m.faces.length.to!string);
+
+    // faceMarks (Hide) by VALUE: old face 4 (now position 3) stays hidden;
+    // old face 3 (now position 2) was never hidden and must not have picked
+    // up the bit through a mis-indexed carry.
+    assert(m.isFaceHidden(3) && !m.isFaceHidden(2),
+        "cleanDegenerateFaces: faceMarks (Hide) must follow each survivor "
+        ~ "by its OWN old index through the middle-drop compaction (got "
+        ~ "isFaceHidden(2)=" ~ m.isFaceHidden(2).to!string
+        ~ " isFaceHidden(3)=" ~ m.isFaceHidden(3).to!string ~ ")");
+
+    // faceSetMask two-sided: position 3 (old 4) IS a member, position 2
+    // (old 3) is NOT — a carry that stamped every survivor with the SAME
+    // (e.g. the last-seen) mask word would pass a one-sided check but fail
+    // this one.
+    assert(m.faceSetMask[3] != 0,
+        "cleanDegenerateFaces: surviving face's set membership must follow "
+        ~ "it through the middle-drop compaction");
+    assert(m.faceSetMask[2] == 0,
+        "cleanDegenerateFaces: a surviving face that was NOT a set member "
+        ~ "must not read as one after the middle-drop compaction (got "
+        ~ m.faceSetMask[2].to!string ~ ")");
+}

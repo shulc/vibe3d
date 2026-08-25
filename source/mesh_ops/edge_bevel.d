@@ -2019,6 +2019,20 @@ mixin template MeshEdgeBevelOps() {
         // inherit via `oldOfNew` above — plan §2.7a). The base range
         // (0 .. chamferStart) keeps its OWN order, already correct via
         // `oldOfNew`'s identity mapping there.
+        //
+        // Task 1902 Step 0 review finding: this override's effect is USUALLY
+        // invisible from outside this function, because the tail below
+        // (`faceSelectionOrderCounter = 0; foreach (fi; chamferStart ..
+        // rebuiltFaceCount) { ... selectFace(newFi); }`) re-selects every
+        // created face that is NOT hidden — not "unconditionally", `selectFace`
+        // early-returns on `Marks.Hide` — and overwrites `faceSelectionOrder`
+        // for each one it touches regardless of what this override left. The
+        // override is observable only for a created face whose donor's
+        // `Marks.Hide` bit rode through the `faceMarks` carry above (§2.7):
+        // that face is skipped by the tail reselect, so this line — not the
+        // reselect — is what leaves its order at 0. See the hub-cap witness
+        // in `tests/unit/mesh_ops/edge_bevel_test.d` (K3 L0 hub-cap donor
+        // hidden before bevel).
         foreach (i; chamferStart .. faces.length) faceSelectionOrder[i] = 0;
 
         // Re-mask the just-carried word in place — src here IS faceMarks

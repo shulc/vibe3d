@@ -2084,6 +2084,69 @@ unittest { // bevelEdgesByMask: K=3 junction Round Level 0 — the flat N-gon
     assertBevelManifoldClean(m, "K3 L0 flat cap");
 }
 
+// Task 1902 Step 0 review addition — site 12's `chamferStart .. faces.length`
+// order-zero override had NO witness anywhere in the suite (the card's own
+// mutation drill, row E-EB3, recorded "NOTHING reddens" after checking both
+// `dub test --config=tests` and a focused HTTP run — an honest gap, not an
+// oversight). The override is invisible from outside `bevelEdgesByMask`
+// because its own tail (`faceSelectionOrderCounter = 0; foreach (fi;
+// chamferStart .. rebuiltFaceCount) { ... selectFace(newFi); }`) re-selects
+// every created face immediately afterward — UNLESS that face is hidden,
+// since `selectFace` early-returns on `Marks.Hide`. Hiding the hub cap's
+// donor face makes the override observable: `faceMarks` (Hide included)
+// carries onto the cap through the same `oldOfNew` correspondence that would
+// otherwise let it inherit the donor's `faceSelectionOrder` too (plan §2.7),
+// and the tail reselect then skips the (now-hidden) cap, leaving this
+// override as the cap's sole order writer.
+//
+// Reuses the K3 L0 fixture immediately above (same cube corner, same three
+// edges at vertex 6, Round Level 0): a standalone probe over this exact
+// setup (task 1902 Step 0, not guessed) printed `facesAroundVertex(6) ==
+// [4, 1, 3]` on a fresh cube, so `hubCapSrc[6] == vFaces[0] == 4` — the hub
+// cap lands at output index 9 (`[8, 9, 10]`, the same triangle `wantFaces`
+// names above) and inherits face 4's material/marks verbatim.
+unittest {
+    import std.conv : to;
+
+    auto m = makeCube();
+    m.resetSelection();
+    foreach (fi; 0 .. m.faces.length) m.faceMaterial[fi] = cast(uint)(1000 + fi);
+    // Measured donor for vertex 6's hub cap (see comment above): face 4.
+    enum uint donor = 4u;
+    m.faceSelectionOrder[donor] = 77;
+    m.setFaceHidden(donor, true);
+
+    bool[] mask; mask.length = m.edges.length; mask[] = false;
+    foreach (pair; [[6u,5u], [6u,2u], [6u,7u]]) {
+        int ei = findEdge(m, pair[0], pair[1]);
+        assert(ei >= 0);
+        mask[ei] = true;
+    }
+    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 3);
+    assert(m.faces.length == 10, "K3 L0 hub-cap witness: expected the "
+        ~ "reference 10 faces, got " ~ m.faces.length.to!string);
+
+    // The hub cap is output index 9 ([8,9,10], the same triangle the K3 L0
+    // freeze above names) and must have inherited the donor's material AND
+    // its Hide bit through the `faceMarks` carry (plan §2.7).
+    assert(m.faces[9][] == [8u, 9u, 10u],
+        "K3 L0 hub-cap witness: hub cap must still land at output index 9");
+    assert(m.faceMaterial[9] == 1000 + donor,
+        "K3 L0 hub-cap witness: hub cap must inherit its donor's material");
+    assert(m.isFaceHidden(9),
+        "K3 L0 hub-cap witness: hub cap must inherit Hide from its hidden "
+        ~ "donor (faceMarks carried verbatim, plan §2.7)");
+
+    // The load-bearing assertion: the order-zero override, not the tail
+    // reselect (which skipped this face because it is hidden), must be what
+    // leaves the hub cap's order at 0 — deleting the override leaves it at
+    // the donor's stamped 77 instead.
+    assert(m.faceSelectionOrder[9] == 0,
+        "K3 L0 hub-cap witness: hub cap must start at rank 0, not inherit "
+        ~ "its hidden donor's faceSelectionOrder stamp (order-zero override, "
+        ~ "plan §2.7a) — got " ~ m.faceSelectionOrder[9].to!string);
+}
+
 unittest { // bevelEdgesByMask: a K3 junction whose far endpoints are valence-4
            // FREE ENDS must not assert. Regression for a crash that reached a
            // user (`rounded edge bevel rail must be approved before
