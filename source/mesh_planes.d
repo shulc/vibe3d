@@ -313,28 +313,47 @@ enum string[string] kExemptPlanes = [
 // gate; together they classify what landed (plan §3 L1):
 //
 //   uint[] faceDummy;      -> BOTH red   -> plain array, plane candidate
-//   ulong  dummyStamp;     -> 54 red only -> scalar, bump 54 and say why
-//   FaceList faceDummy2;   -> 54 red only (L2 catches it BY NAME) -> a
+//   ulong  dummyStamp;     -> 56 red only -> scalar, bump 56 and say why
+//   FaceList faceDummy2;   -> 56 red only (L2 catches it BY NAME) -> a
 //                             wrapper type, exactly the case an array-only
 //                             assert cannot see (`FaceList` is not
 //                             `isDynamicArray`, and its own doc comment says
 //                             a CSR-backed sibling is coming).
 //
-// Measured 2026-08-25 (`dmd -o- -c -i -version=WithAI` plus the project's
-// five dependency import paths, `pragma(msg)` on `Mesh.tupleof.length` and
-// on a `static foreach` count of the array-shaped subset — the plan's
-// recorded command; NOT a regex over the source text, which is what put a
-// wrong number (33) in an earlier draft of this plan):
+// THE LIVE NUMBERS ARE THE ONES IN THE TWO `static assert`s BELOW. Keep this
+// block a single current statement plus a history line — an earlier revision
+// left the pre-task measurement in place and added the new one underneath, so
+// one dated block asserted 54 and 56 at once and the `countArrayShapedFields`
+// message below still quoted the retired figure.
 //
-//   Mesh.tupleof.length                          == 54
-//   count of those fields that are array-shaped  == 34
+// Measured (`dmd -o- -c -i -version=WithAI` plus the project's five dependency
+// import paths, `pragma(msg)` on `Mesh.tupleof.length` and on a `static
+// foreach` count of the array-shaped subset — the plan's recorded command; NOT
+// a regex over the source text, which is what put a wrong number (33) in an
+// earlier draft of that plan):
+//
+//   2026-08-25, task 1906 stage 0 — CURRENT:
+//     Mesh.tupleof.length                          == 56
+//     count of those fields that are array-shaped  == 34
+//
+//   2026-08-25, pre-1906 — superseded: 54 / 34.
+//
+// What moved and why it is not a plane: 1906 added
+// `Mesh.undeliveredChanges_` and `Mesh.undeliveredSelDomains_` — SCALARS, the
+// synchronous-delivery accumulator beside the existing per-frame
+// `pendingChanges_` / `pendingSelDomains_` pair, which are scalars here for
+// the same reason. They carry change CLASSES, not per-element data, so nothing
+// about them is carried through a face or vertex remap. The array-shaped count
+// is unmoved, which is exactly the signal the paired asserts exist to give.
 // ---------------------------------------------------------------------------
 
 /// Count of `T`'s instance fields whose type is a dynamic or static array —
 /// the compile-time counterpart of `MeshMap.dup`'s own field-count tripwire
 /// (`source/mesh.d`: "MeshMap gained a field — add it to dup() before
 /// bumping this count"), scaled to a `static foreach` instead of hand-listed
-/// because `Mesh` has 54 fields where `MeshMap` has 6.
+/// because `Mesh` has 56 fields where `MeshMap` has 6 (task 1906 stage 0 —
+/// this sentence quoted 54 after the count above had already moved, which is
+/// the drift the single-current-figure rule in that block now prevents).
 template countArrayShapedFields(T) {
     enum size_t countArrayShapedFields = () {
         size_t n = 0;
@@ -345,7 +364,7 @@ template countArrayShapedFields(T) {
     }();
 }
 
-static assert(Mesh.tupleof.length == 54,
+static assert(Mesh.tupleof.length == 56,
     "Mesh gained (or lost) an instance field. Classify it before bumping this "
   ~ "count: per-face data goes in kFacePlanes, per-vertex data in kVertPlanes "
   ~ "— INCLUDING data behind a wrapper struct such as FaceList, which is not "
@@ -356,7 +375,7 @@ static assert(Mesh.tupleof.length == 54,
   ~ "below to learn which KIND landed.");
 
 static assert(countArrayShapedFields!Mesh == 34,
-    "Mesh gained (or lost) an ARRAY-shaped field. If the 54-count above moved "
+    "Mesh gained (or lost) an ARRAY-shaped field. If the 56-count above moved "
   ~ "too, the new field is a plain array — a plane candidate, classify it. If "
   ~ "ONLY the count above moved, it is a scalar or a wrapper type.");
 

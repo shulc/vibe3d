@@ -195,6 +195,37 @@ class Command {
             //
             // The pointer is captured so the exit hook cannot close a
             // DIFFERENT mesh than the one it opened.
+            //
+            // TASK 1906 — THIS PAIR IS ALSO THE DELIVERY BOUNDARY, and there is
+            // deliberately no second pair beside it.
+            //
+            // `beginHideDeriveBatch` opens a delivery batch and
+            // `endHideDeriveBatch` closes it after its derive flush
+            // (`source/mesh.d`, review S3), so one command that moves 8 vertices
+            // or appends 400 faces produces exactly ONE synchronous delivery,
+            // and that delivery lands after the derived hide planes are current.
+            // An earlier cut of this task put a second `beginDeliveryBatch` /
+            // `scope(exit) endDeliveryBatch` pair immediately above this one and
+            // relied on `scope(exit)` being LIFO to order the two closes — a
+            // contract a reader could break by tidying two adjacent blocks, and
+            // one that six `beginHideDeriveBatch` call sites in `mesh.d` did not
+            // honour at all.
+            //
+            // ANCHOR AND ITS KNOWN GAP (plan §1.4 (c), anchor (ii), owner's
+            // default). This is the `Operator` branch, so the commands that
+            // `override bool apply()` instead of implementing `evaluate` never
+            // reach it and are OUTSIDE any delivery batch. That gap is BOUNDED,
+            // not silent: a listener is dirty-bit-only and idempotent, so N
+            // deliveries where 1 was wanted is a parity and perf wart, never a
+            // corruption — and today no override-`apply()` command commits more
+            // than once per apply, which is INCIDENTAL, not structural.
+            //
+            // THE GAP HAS A CLOSING DATE. The owner chose the template-method
+            // split (`final bool apply()` wrapping `protected bool applyImpl()`,
+            // completeness proven by "cannot override final function") on
+            // 2026-08-25, to land as stage 0b. That wrapper opens the OUTERMOST
+            // delivery batch; the pair below then nests inside it and keeps
+            // doing its own job, which is the hide-derive ordering.
             Mesh* hideBatchMesh = mesh;
             if (hideBatchMesh !is null) {
                 hideBatchMesh.beginHideDeriveBatch();

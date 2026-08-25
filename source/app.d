@@ -1645,6 +1645,26 @@ void main(string[] args) {
         import command : g_editTargetResolver;
         g_editTargetResolver = () => document.hasEditTarget();
     }
+    // TASK 1906 review B1 — the same shape, one layer down: "is this `Mesh` a
+    // mesh the document owns?". `Mesh.deliverPending` consults it before a
+    // synchronous change delivery reaches any listener, so a scratch instance —
+    // the bevel preview's private `cage_`, a `makeCube()` under construction, a
+    // kernel's half-built output — cannot drive the live document's caches
+    // through this hub. `mesh.d` cannot import `document.d` for the same reason
+    // `command.d` cannot, hence the resolver. Uninstalled means DELIVER (see
+    // the declaration): headless unit tests have no `Document`.
+    //
+    // IT CANNOT BE INSTALLED EARLIER, and that is fine. The lambda closes over
+    // `document`, which is `Document.bootstrap(makeCube())` above — so the six
+    // `addFace` commits inside that `makeCube()` run with the resolver still
+    // null and are therefore DELIVERED unfiltered. Harmless, and not by luck:
+    // `changeBus.meshSubs` is empty until the hub registers far below, so those
+    // six deliveries reach nobody. They do advance `changeBus.deliveryCount`,
+    // which is why every test on this counter reads a DELTA.
+    {
+        import mesh : g_isDocumentMesh;
+        g_isDocumentMesh = (const(Mesh)* m) => document.ownsMesh(m);
+    }
     // Task 0617 — install the primary-layer ModelSpace resolver (mirrors
     // `activeMeshResolver` right below): every picking entry point that
     // needs "the current primary layer's transform" but has no `Document`
@@ -1972,7 +1992,15 @@ void main(string[] args) {
     ulong fboSelEpoch = 0;
     {
         import change_bus : changeBus;
-        changeBus.onMeshChanged((uint flags) { meshChangedFlags |= flags; });
+        // Task 1906 stage 0 — the mesh channel carries the subject's address
+        // as well as the flags. This hub is the per-frame AGGREGATOR: it ORs
+        // every delivery (synchronous ones at the edit boundary, plus the
+        // frame flush's own) into one frame-local word its six readers consume
+        // below, at exactly the same place and in exactly the same order as
+        // before. Per-frame aggregation is not lost; it moved out of the bus
+        // into the one consumer that wants it. `subjectAddr` is ignored until a
+        // consumer keys on it (stage 2).
+        changeBus.onMeshChanged((size_t, uint flags) { meshChangedFlags |= flags; });
         changeBus.onSelectionChanged((uint domains) {
             selChangedDomains |= domains;
             ++fboSelEpoch;

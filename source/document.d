@@ -914,6 +914,39 @@ struct Document {
     /// plain `l is null` check does not catch this; `indexOf` does.
     bool isMember(const(Layer) l) const { return l !is null && indexOf(l) != layers.length; }
 
+    /// Does some item in this document own the mesh STORAGE at `m`? — the
+    /// address question, and deliberately not the identity one (task 1906,
+    /// review B1).
+    ///
+    /// `Mesh` is a value field inside `Layer` (`mesh_`), so "this pointer is a
+    /// document mesh" can only be asked as "does it alias some layer's mesh
+    /// field". There is no back-pointer from a `Mesh` to its `Layer` — a
+    /// `Mesh` does not know it is owned — and there cannot be one while
+    /// kernels replace the whole struct with `*mesh = …` (that assignment
+    /// would copy a stale owner along with the geometry). So the walk over
+    /// `layers` IS the mechanism, not a shortcut around a missing one.
+    ///
+    /// It answers on `&l.mesh_` rather than on `l.meshOrNull()` on purpose:
+    /// `meshOrNull` gates on `hasMesh`, i.e. on the layer's KIND, and the
+    /// question here is about STORAGE. A layer whose kind changed still owns
+    /// the same bytes, and a pointer into them is still a pointer a listener
+    /// may legitimately be told about.
+    ///
+    /// This is what `app.d` installs into `mesh.g_isDocumentMesh`, the one
+    /// symbol tasks 1906 (delivery subject filter) and 1903 (mutation-path
+    /// counter) share. `nothrow` although that symbol's type is not: 1906's
+    /// caller runs INSIDE a mesh edit (`Mesh.deliverPending`), where an
+    /// escaping exception would abandon a half-finished mutation, and a
+    /// `nothrow` body converts implicitly to the throwing delegate type.
+    bool ownsMesh(const(Mesh)* m) const nothrow {
+        if (m is null) return false;
+        foreach (l; layers) {
+            if (l is null) continue;
+            if (&l.mesh_ is m) return true;
+        }
+        return false;
+    }
+
     /// Every item that still links to `target`, in `layers` order — the
     /// REVERSE of a forward-only link, and therefore a full sweep of the item
     /// list (O(items × slots)). There is no back-edge to consult: the target

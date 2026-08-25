@@ -196,7 +196,7 @@ void initIPR()
                               | MeshEditScope.Geometry   // Points | Polygons
                               | MeshEditScope.Marks       // Tab → subpatch
                               | MeshEditScope.Material;
-    changeBus.onMeshChanged((uint flags) {
+    changeBus.onMeshChanged((size_t, uint flags) {
         const uint relevant = flags & kRenderTriggers;
         if (relevant) {
             g.modelChangedSinceSeen    |= relevant;

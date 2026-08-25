@@ -15,7 +15,7 @@ unittest {
     ChangeBus bus;
     uint seen = 0;
     int  calls = 0;
-    bus.onMeshChanged((uint f) { seen |= f; ++calls; });
+    bus.onMeshChanged((size_t, uint f) { seen |= f; ++calls; });
 
     const combined = MeshEditScope.Position | MeshEditScope.Points
                    | MeshEditScope.Polygons;
@@ -34,7 +34,7 @@ unittest {
 unittest {
     ChangeBus bus;
     int calls = 0;
-    bus.onMeshChanged((uint) { ++calls; });
+    bus.onMeshChanged((size_t, uint) { ++calls; });
 
     bus.flush(MeshEditScope.Marks, 0, 0);
     assert(calls == 1);
@@ -50,7 +50,7 @@ unittest {
 unittest {
     ChangeBus bus;
     int meshCalls = 0, selCalls = 0;
-    bus.onMeshChanged((uint) { ++meshCalls; });
+    bus.onMeshChanged((size_t, uint) { ++meshCalls; });
     bus.onSelectionChanged((uint) { ++selCalls; });
 
     bus.flush(0, 0, 0);
@@ -66,7 +66,7 @@ unittest {
     ChangeBus bus;
     uint meshSeen = 0, selSeen = 0;
     int order = 0, meshOrder = -1, selOrder = -1;
-    bus.onMeshChanged((uint f) { meshSeen = f; meshOrder = order++; });
+    bus.onMeshChanged((size_t, uint f) { meshSeen = f; meshOrder = order++; });
     bus.onSelectionChanged((uint d) { selSeen = d; selOrder = order++; });
 
     bus.flush(MeshEditScope.Marks, SelDomain.Vertex | SelDomain.Face, 0);
@@ -84,7 +84,7 @@ unittest {
 
     ChangeBus bus;
     bool tripped = false;
-    bus.onMeshChanged((uint) {
+    bus.onMeshChanged((size_t, uint) {
         try {
             bus.flush(MeshEditScope.Position, 0, 0); // illegal re-entry
         } catch (AssertError) {
@@ -179,7 +179,7 @@ unittest {
     ChangeBus bus;
     uint meshSeen = 0, selSeen = 0, layerSeen = 0;
     int order = 0, meshOrder = -1, selOrder = -1, layerOrder = -1;
-    bus.onMeshChanged((uint f) { meshSeen = f; meshOrder = order++; });
+    bus.onMeshChanged((size_t, uint f) { meshSeen = f; meshOrder = order++; });
     bus.onSelectionChanged((uint d) { selSeen = d; selOrder = order++; });
     bus.onLayerChanged((uint k) { layerSeen = k; layerOrder = order++; });
 
@@ -199,7 +199,7 @@ unittest {
 unittest {
     ChangeBus bus;
     int meshCalls = 0, layerCalls = 0;
-    bus.onMeshChanged((uint) { ++meshCalls; });
+    bus.onMeshChanged((size_t, uint) { ++meshCalls; });
     bus.onLayerChanged((uint) { ++layerCalls; });
 
     bus.flush(0, 0, LayerChange.VisibilityChanged);
@@ -234,7 +234,7 @@ unittest {
     ChangeBus bus;
     int  meshCalls = 0, typeCalls = 0;
     SelType seen = SelType.Vertex;
-    bus.onMeshChanged((uint) { ++meshCalls; });
+    bus.onMeshChanged((size_t, uint) { ++meshCalls; });
     bus.onCurrentTypeChanged((SelType t) { seen = t; ++typeCalls; });
 
     bus.flush(0, 0, 0, true, SelType.Polygon);
@@ -265,7 +265,7 @@ unittest {
 unittest {
     ChangeBus bus;
     int order = 0, meshOrder = -1, selOrder = -1, layerOrder = -1, typeOrder = -1;
-    bus.onMeshChanged((uint) { meshOrder = order++; });
+    bus.onMeshChanged((size_t, uint) { meshOrder = order++; });
     bus.onSelectionChanged((uint) { selOrder = order++; });
     bus.onLayerChanged((uint) { layerOrder = order++; });
     bus.onCurrentTypeChanged((SelType) { typeOrder = order++; });
@@ -370,4 +370,418 @@ unittest {
             "binding a morph target to look at it is not an edit -- it must "
           ~ "not dirty a clean, freshly-opened document");
     }
+}
+
+// ===========================================================================
+// TASK 1906 stage 0 — SYNCHRONOUS DELIVERY AT THE EDIT BOUNDARY.
+//
+// These blocks drive the GLOBAL `changeBus`, not a local one, because that is
+// where `Mesh.deliverPending()` delivers — a synchronous delivery is made by
+// the mesh, not by the caller, so there is no seam at which a local bus could
+// be substituted. Every assertion is therefore a DELTA on `deliveryCount`, and
+// the two blocks that register a listener restore `changeBus.meshSubs` on the
+// way out (v1 has no unsubscribe; restoring the slice is the equivalent, and
+// it keeps a leaked listener from firing in every later module of the shared
+// unittest binary).
+//
+// Mutations these are the red for (plan §5, stage 0 rows):
+//   * `Mesh.deliverPending()` → early `return` before `changeBus.deliverMesh`
+//     ⇒ block (a) reddens.
+//   * delete `++g_deliveryDepth` in `Mesh.beginDeliveryBatch`
+//     ⇒ block (b) reddens on its FIRST assert (8 deliveries, not 0).
+//   * a listener that publishes ⇒ blocks (d1)/(d2) redden.
+// ===========================================================================
+
+// (a) ONE delivery per commitChange, outside any batch.
+unittest {
+    import mesh : Mesh, makeCube;
+
+    Mesh m = makeCube();
+    m.syncSelection();
+
+    const before = changeBus.deliveryCount;
+    m.commitChange(MeshEditScope.Position);
+    assert(changeBus.deliveryCount == before + 1,
+        "one commitChange at delivery depth 0 must deliver exactly once");
+    assert(changeBus.lastDeliverySubject == cast(size_t)&m,
+        "the delivery names its SUBJECT: every consumer in this tree already "
+      ~ "keys its cache on the mesh address, so the payload speaks that "
+      ~ "language (MeshCacheKey.addr, BvhPick._meshAddr, CandidateGrid.meshAddr)");
+    assert((changeBus.lastDeliveryFlags & MeshEditScope.Position) != 0,
+        "the delivery carries the class that was committed");
+
+    m.commitChange(MeshEditScope.Position);
+    assert(changeBus.deliveryCount == before + 2,
+        "a second commit is a second delivery — delivery is per EDIT, not "
+      ~ "per frame");
+}
+
+// (b) N commits inside ONE delivery batch = ONE delivery, at the close.
+unittest {
+    import mesh : Mesh, makeCube;
+
+    Mesh m = makeCube();
+    m.syncSelection();
+
+    const before = changeBus.deliveryCount;
+    m.beginDeliveryBatch();
+    foreach (i; 0 .. 8)
+        m.commitChange(MeshEditScope.Position);
+    assert(changeBus.deliveryCount == before,
+        "an open delivery batch must deliver NOTHING — this is what stops one "
+      ~ "command that moves 8 vertices (or appends 400 faces) from firing one "
+      ~ "delivery per element");
+    m.endDeliveryBatch();
+    assert(changeBus.deliveryCount == before + 1,
+        "the batch close delivers exactly once");
+    assert((changeBus.lastDeliveryFlags & MeshEditScope.Position) != 0,
+        "the coalesced delivery carries the union of the batch's classes");
+}
+
+// (c) `noteChange` alone delivers nothing, and its flags ride the NEXT
+//     delivering publisher. This is the accumulate-only contract that keeps
+//     the ~30 in-loop note sites (and the version-silent mid-drag path) free.
+unittest {
+    import mesh : Mesh, makeCube;
+
+    Mesh m = makeCube();
+    m.syncSelection();
+    m.commitChange(MeshEditScope.Marks);   // drain anything the fixture left
+
+    const before = changeBus.deliveryCount;
+    m.noteChange(MeshEditScope.Position);
+    assert(changeBus.deliveryCount == before,
+        "noteChange accumulates and does NOT deliver");
+
+    m.commitChange(MeshEditScope.Material);
+    assert(changeBus.deliveryCount == before + 1,
+        "the next delivering publisher delivers once");
+    assert((changeBus.lastDeliveryFlags & MeshEditScope.Position) != 0
+        && (changeBus.lastDeliveryFlags & MeshEditScope.Material) != 0,
+        "...carrying BOTH the noted class and its own — a noted change is "
+      ~ "deferred, never dropped");
+}
+
+// (c2) `publishChange` delivers WITHOUT bumping a version counter. This is the
+//      version-silent delivering publisher the interactive transform path needs:
+//      counters own STRUCTURE, the bus's Position class owns POSITION.
+unittest {
+    import mesh : Mesh, makeCube;
+
+    Mesh m = makeCube();
+    m.syncSelection();
+
+    const before   = changeBus.deliveryCount;
+    const mutVer   = m.mutationVersion;
+    const topoVer  = m.topologyVersion;
+    m.publishChange(MeshEditScope.Position);
+    assert(changeBus.deliveryCount == before + 1,
+        "publishChange delivers at depth 0");
+    assert(m.mutationVersion == mutVer && m.topologyVersion == topoVer,
+        "...and bumps NO version counter — a mutationVersion bump here would "
+      ~ "cancel an in-session falloff re-grade, which is the whole reason the "
+      ~ "drag is version-silent");
+}
+
+// (d1) A listener that PUBLISHES trips the always-on contract assert. The
+//      companion assert in `Mesh.noteChange` is what fires here — at the
+//      offending line, one frame earlier than `deliverMesh`'s own re-entry
+//      guard would.
+unittest {
+    import core.exception : AssertError;
+    import mesh : Mesh, makeCube;
+
+    Mesh m = makeCube();
+    m.syncSelection();
+
+    auto saved = changeBus.meshSubs;
+    scope (exit) changeBus.meshSubs = saved;
+
+    Mesh* mp = &m;
+    bool tripped = false;
+    // The listener's OWN re-entry stop. It is not part of the contract; it is
+    // what makes the mutation drill produce a legible red instead of a crash.
+    // With the guards removed, the illegal publish would deliver again, call
+    // this listener again, and recurse until the stack ran out — a segfault,
+    // from which no assertion message survives. With the stop, the same
+    // mutation leaves `tripped` false and this block reddens by its own message.
+    int depth = 0;
+    // The AssertError is caught INSIDE the listener, exactly as the two
+    // flush-re-entrancy blocks above do it, and that placement is load-bearing
+    // rather than stylistic: `deliverMesh` is `nothrow`, and the compiler emits
+    // no unwind cleanup for an `Error` passing through a nothrow function — so
+    // letting the error escape the listener would skip the `scope (exit)` that
+    // releases `delivering_` and latch the guard for the rest of this shared
+    // unittest binary. In production that path ends the process, so it cannot
+    // latch anything; only a test that catches and carries on has to care.
+    changeBus.onMeshChanged((size_t, uint) {
+        if (depth > 0) return;
+        ++depth;
+        // Illegal: a listener may write only its own dirty state.
+        try { mp.commitChange(MeshEditScope.Position); }
+        catch (AssertError) { tripped = true; }
+        catch (Exception)   {}
+        --depth;
+    });
+
+    m.commitChange(MeshEditScope.Marks);
+    assert(tripped,
+        "a listener that publishes a mesh change must trip the contract "
+      ~ "assert — listeners are dirty-bit-only");
+    assert(!changeBus.delivering,
+        "the guard releases on the way out, so one violation does not wedge "
+      ~ "the bus for every later publisher");
+}
+
+// (d2) A listener that RE-ENTERS delivery directly trips `deliverMesh`'s own
+//      always-on guard. Separate block from (d1): druntime stops a module at
+//      its first failed assert, so a shared block would hide whichever half
+//      ran second.
+unittest {
+    import core.exception : AssertError;
+    import mesh : Mesh, makeCube;
+
+    Mesh m = makeCube();
+    m.syncSelection();
+
+    auto saved = changeBus.meshSubs;
+    scope (exit) changeBus.meshSubs = saved;
+
+    bool tripped = false;
+    int  depth   = 0;   // the same re-entry stop, for the same reason as (d1)
+    changeBus.onMeshChanged((size_t addr, uint f) {
+        if (depth > 0) return;
+        ++depth;
+        // Caught inside the listener — see (d1) for why that placement is
+        // required rather than incidental.
+        try { changeBus.deliverMesh(addr, f, 0); }   // illegal re-entry
+        catch (AssertError) { tripped = true; }
+        --depth;
+    });
+
+    m.commitChange(MeshEditScope.Marks);
+    assert(tripped, "re-entering deliverMesh from a listener must assert");
+    assert(!changeBus.delivering, "the guard releases on the way out");
+}
+
+// (e) The frame flush and the edit-boundary delivery are INDEPENDENT counter
+//     families, and that is load-bearing rather than tidy: until the last
+//     frame-drain consumer leaves, the same mutation is delivered twice (once
+//     here, once out of `Mesh.pendingChanges_` at the frame flush). A per-class
+//     total bumped on both paths would double `docRevision()` and make a clean
+//     document read dirty after one edit.
+unittest {
+    ChangeBus bus;
+    const beforeRev = bus.docRevision();
+    bus.deliverMesh(0xDEAD, MeshEditScope.Position | MeshEditScope.Maps,
+                    SelDomain.Vertex);
+    assert(bus.deliveryCount == 1, "deliverMesh counts its own deliveries");
+    assert(bus.lastDeliverySubject == 0xDEAD);
+    assert(bus.lastDeliverySelDomains == SelDomain.Vertex);
+    assert(bus.flushCount == 0 && bus.lastFlushFlags == 0,
+        "a delivery is NOT a flush: the per-frame counters must not move");
+    assert(bus.totalPosition == 0 && bus.totalMaps == 0
+        && bus.totalSelVertex == 0,
+        "no per-class total moves on the delivery path — the frame flush "
+      ~ "still drains the same mutation out of pendingChanges_");
+    assert(bus.docRevision() == beforeRev,
+        "docRevision (the unsaved-changes counter) must not double-count");
+}
+
+// ===========================================================================
+// TASK 1906 review B1 / S2 — THE DELIVERY SUBJECT FILTER.
+//
+// `Mesh` is a plain struct, so without a filter every instance in the process
+// publishes to the live document's listeners. Measured before the fix:
+// `MeshSnapshot.restore` on the bevel preview's private `cage_` delivered
+// `0x3f` once per mouse-motion frame, `makeCube()` delivered 6, and
+// `makeGridPlane(316)` delivered 99 856 — all of them into `app.d`'s hub,
+// whose `Geometry` arm runs `syncSelection` plus a full pick-cache
+// invalidation.
+//
+// These blocks install a rejecting `mesh.g_isDocumentMesh` and assert the
+// delivery does not happen, then take it away and assert it does. Both halves
+// are needed and neither is redundant: the FIRST is the fix, and the SECOND
+// pins the "uninstalled ⇒ deliver" rule that keeps every other headless block
+// in this file — none of which has a `Document` — from passing vacuously.
+//
+// Mutation (plan §Мутация, row `0-B1`): delete the
+// `if (!deliverySubjectAccepted(&this)) return;` line at the top of
+// `Mesh.deliverPending` ⇒ block (f) reddens on its first assert, and block (g)
+// reddens on the pending-set assert.
+// ===========================================================================
+
+// (f) A mesh no `Layer` owns delivers NOTHING when the filter rejects it, and
+//     delivers normally when no filter is installed.
+unittest {
+    import mesh : Mesh, makeCube, g_isDocumentMesh;
+
+    Mesh scratch = makeCube();
+    scratch.syncSelection();
+
+    auto savedFilter = g_isDocumentMesh;
+    scope (exit) g_isDocumentMesh = savedFilter;
+
+    // Reject EVERYTHING — the app installs `document.ownsMesh`, and for a mesh
+    // no layer owns that is what this returns.
+    int asked = 0;
+    g_isDocumentMesh = (const(Mesh)*) { ++asked; return false; };
+
+    const before = changeBus.deliveryCount;
+    scratch.commitChange(MeshEditScope.Position);
+    // THE LAW FIRST, THE PRECONDITION SECOND, and that order is load-bearing.
+    // Asserting `asked > 0` first would make it the check that reddens when
+    // the filter is deleted — a precondition masking the law, which is the
+    // failure shape this project pays for most. In this order the mutation
+    // reddens the sentence that describes what is broken, and `asked` still
+    // catches the other failure (a filter that is present but never consulted,
+    // where some UNRELATED reason suppressed the delivery and this block would
+    // otherwise be green over a fix that does nothing).
+    assert(changeBus.deliveryCount == before,
+        "a commit on a mesh no Layer owns must reach NO listener: app.d's hub "
+      ~ "would OR it into meshChangedFlags and invalidate the live document's "
+      ~ "pick caches from a private scratch mesh");
+    assert(asked > 0,
+        "the filter was never consulted — the suppression above came from "
+      ~ "somewhere else, so this block proves nothing about it");
+
+    // The uninstalled rule, on the SAME mesh, so the two arms differ in
+    // nothing but the filter.
+    g_isDocumentMesh = null;
+    scratch.commitChange(MeshEditScope.Position);
+    assert(changeBus.deliveryCount == before + 1,
+        "uninstalled means DELIVER — every headless unit test in this tree "
+      ~ "builds a bare Mesh with no Document, so a fail-closed default would "
+      ~ "make the whole delivery family pass vacuously");
+
+    // ...and an ACCEPTING filter behaves like the uninstalled one, which is
+    // what proves the previous arm measured the filter's ANSWER and not merely
+    // its presence.
+    g_isDocumentMesh = (const(Mesh)*) => true;
+    scratch.commitChange(MeshEditScope.Position);
+    assert(changeBus.deliveryCount == before + 2,
+        "an accepting filter delivers");
+}
+
+// (g) S2 — a rejected mesh never enters the DEFERRED set either. That set
+//     outlives the call that appends to it, so a stack-local `Mesh` in it is a
+//     pointer to a dead frame by the time the batch closes (measured: a second
+//     delivery reading flags=0x0 and a garbage selDomains). The filter runs
+//     ABOVE the depth check in `deliverPending` for exactly this reason.
+unittest {
+    import mesh : Mesh, makeCube, g_isDocumentMesh, deliveryPendingSetLength;
+
+    Mesh scratch = makeCube();
+    scratch.syncSelection();
+
+    auto savedFilter = g_isDocumentMesh;
+    scope (exit) g_isDocumentMesh = savedFilter;
+    g_isDocumentMesh = (const(Mesh)*) => false;
+
+    const before = changeBus.deliveryCount;
+    scratch.beginDeliveryBatch();
+    assert(deliveryPendingSetLength() == 0, "fixture: the batch opens empty");
+    foreach (i; 0 .. 4)
+        scratch.commitChange(MeshEditScope.Position);
+    assert(deliveryPendingSetLength() == 0,
+        "a rejected mesh must never be appended to the deferred-delivery set "
+      ~ "— that array is drained after the frame that appended to it, so a "
+      ~ "stack-local Mesh in it is a dangling pointer");
+    scratch.endDeliveryBatch();
+    assert(changeBus.deliveryCount == before,
+        "...and the batch close therefore delivers nothing for it");
+    assert(deliveryPendingSetLength() == 0, "the close leaves the set empty");
+}
+
+// (h) The ACCEPTED mesh still coalesces through the deferred set — the control
+//     for (g). Without it, (g) is green on a `deliverPending` that lost the
+//     ability to defer at all.
+unittest {
+    import mesh : Mesh, makeCube, g_isDocumentMesh, deliveryPendingSetLength;
+
+    Mesh subject = makeCube();
+    subject.syncSelection();
+
+    auto savedFilter = g_isDocumentMesh;
+    scope (exit) g_isDocumentMesh = savedFilter;
+    g_isDocumentMesh = (const(Mesh)* m) => m is &subject;
+
+    const before = changeBus.deliveryCount;
+    subject.beginDeliveryBatch();
+    foreach (i; 0 .. 4)
+        subject.commitChange(MeshEditScope.Position);
+    assert(deliveryPendingSetLength() == 1,
+        "an accepted mesh IS deferred — exactly once, however many commits");
+    subject.endDeliveryBatch();
+    assert(changeBus.deliveryCount == before + 1,
+        "and the close delivers it once");
+}
+
+// (i) A REJECTED subject KEEPS its `undelivered*_` words — and they ride a
+//     wholesale `*mesh = <scratch>` assignment into the mesh a `Layer` owns,
+//     where the next delivering publisher carries them out.
+//
+//     This is the rule `Mesh.deliverPending`'s rejection arm states ("Rejection
+//     deliberately leaves `undelivered*_` ALONE rather than zeroing it"), and
+//     it is the reason ~15 wholesale-assign kernels do not silently lose the
+//     classes their scratch mesh accumulated. Over-invalidation is the safe
+//     direction; a zero on rejection is the other one.
+//
+//     IT HAS NO WITNESS OVER HTTP, WHICH IS WHY IT IS PINNED HERE.
+//     `tests/test_bus_delivery_subject.d` block (1) asserts the reset's one
+//     delivery carries 14 — but 14 is exactly `mesh.resetSelection()`'s own
+//     `commitChange(Geometry | Marks)`, and every class `makeCube()` (or any
+//     other `/api/reset` primitive) accumulates on its scratch is a SUBSET of
+//     it. Zeroing on rejection leaves that assert green. Measured: the reviewer
+//     rewrote the rejection arm to zero both words and the HTTP block still
+//     PASSED. So the discriminating cell is a class the DOCUMENT-side publisher
+//     does not re-commit, and no reset arm has one.
+//
+//     `Maps` is that class here: the scratch commits it, the document mesh
+//     commits only `Position`, so the bit can ONLY have arrived by the carry.
+//
+//     MUTATION: give `Mesh.deliverPending`'s rejection arm a body —
+//     `{ undeliveredChanges_ = 0; undeliveredSelDomains_ = 0; return; }` ⇒ this
+//     block reddens on its last assert. (The B1 blocks (f)/(g) stay green: they
+//     measure that the rejected mesh does not DELIVER, not what it retains.)
+unittest {
+    import mesh : Mesh, makeCube, g_isDocumentMesh;
+
+    // `docMesh` stands in for a `Layer`'s `mesh_` field; `scratch` for the
+    // stack-local a kernel builds beside it. The filter separates them by
+    // ADDRESS, which is exactly what `Document.ownsMesh` does.
+    Mesh docMesh;
+    Mesh scratch;
+
+    auto savedFilter = g_isDocumentMesh;
+    scope (exit) g_isDocumentMesh = savedFilter;
+    g_isDocumentMesh = (const(Mesh)* m) => m is &docMesh;
+
+    const beforeScratch = changeBus.deliveryCount;
+    scratch = makeCube();                       // 6 rejected Geometry commits
+    scratch.syncSelection();
+    scratch.commitChange(MeshEditScope.Maps);   // the carried class
+    assert(changeBus.deliveryCount == beforeScratch,
+        "fixture: the scratch mesh is REJECTED, so nothing above delivered — "
+      ~ "if it did, the flags below would have left by the front door and this "
+      ~ "block would be measuring the wrong path");
+
+    // The wholesale hand-over: the whole struct is copied, `undelivered*_`
+    // included, into the mesh that actually owns the geometry.
+    docMesh = scratch;
+
+    const before = changeBus.deliveryCount;
+    docMesh.commitChange(MeshEditScope.Position);
+    assert(changeBus.deliveryCount == before + 1,
+        "the accepted mesh delivers once");
+    assert((changeBus.lastDeliveryFlags & MeshEditScope.Position) != 0,
+        "...carrying its own class");
+
+    // THE LAW. `Maps` is not committed anywhere on the document side; the only
+    // way this bit can be in the delivery is that the rejection kept it.
+    assert((changeBus.lastDeliveryFlags & MeshEditScope.Maps) != 0,
+        "a rejected delivery must KEEP its undelivered classes: they ride the "
+      ~ "wholesale `*mesh = <scratch>` assignment into the layer's mesh and "
+      ~ "are carried by the next delivering publisher there. Zeroing on "
+      ~ "rejection drops them and every listener under-invalidates");
 }

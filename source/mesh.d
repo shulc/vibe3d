@@ -6,7 +6,7 @@ import std.range : iota;
 import math;
 import editmode : EditMode;
 import mesh_edit_delta : MeshEditTracker, MeshEditScope;
-import change_bus : SelDomain;
+import change_bus : SelDomain, changeBus;
 import mesh_ops.cut : MeshCutOps;
 import mesh_ops.bridge : MeshBridgeOps;
 import mesh_ops.loop_slice : MeshLoopSliceOps, bandWalk, BandCell;
@@ -612,6 +612,71 @@ private int     g_hideDeriveDepth;
 private bool    g_hideDeriveDeferSafe;
 private Mesh*[] g_hideDerivePendingMeshes;
 
+// ---- Delivery-batch state (task 1906) -------------------------------------
+// The depth counter that decides WHEN a synchronous change delivery reaches
+// listeners: > 0 ⇒ delivery is deferred to the batch close. Module scope for
+// the SAME reason spelled out three lines above — a kernel of the form
+// `*mesh = subdivide(...)` would reset an in-struct counter mid-batch and
+// leave the close unbalanced.
+//
+// IT IS A DIFFERENT OBJECT FROM `Mesh.beginEditBatch`/`endEditBatch` (the
+// 1902/1903 undo-delta tracker pair further down this file), with a different
+// lifetime and a different job: the tracker records WHAT changed so undo can
+// revert it; this counter decides WHEN listeners are told. Neither is
+// implemented in terms of the other and neither may be assumed open when the
+// other is. Delivery lives inside `commitChange`, so a batch that DEFERS
+// `commitChange` defers delivery with it — there is no second seam.
+private int     g_deliveryDepth;
+private Mesh*[] g_deliveryPendingMeshes;
+
+// ---- Is this mesh a DOCUMENT mesh? (task 1906 review B1) ------------------
+// The resolver that answers "does some `Layer` own the storage at this
+// address". `app.d` installs `document.ownsMesh` into it right beside
+// `command.g_editTargetResolver`, which is the precedent this follows exactly:
+// `mesh.d` must not import `document.d` (it is compiled into headless unit
+// tests that hold a bare `Mesh` with no `Document` in sight), so the question
+// is asked through a delegate rather than a call.
+//
+// WHY DELIVERY NEEDS IT. `Mesh` is a plain struct, so a `commitChange` on ANY
+// instance would otherwise reach every listener: `MeshSnapshot.restore` on the
+// bevel preview's private `cage_` (the first line of
+// `tools/edit/preview_rebuild.d :: PreviewRebuild.run`, once per mouse-motion
+// frame) delivers `0x3f`; `makeCube()` delivers 6 (one per `addFace`);
+// `makeGridPlane(316)` delivers ~99 856. `app.d`'s hub ORs those into
+// `meshChangedFlags`, whose `Geometry` arm runs `syncSelection` plus a full
+// pick-cache invalidation — a private scratch mesh would drive the live
+// document's caches. Filtering at the SOURCE also keeps a stack-local `Mesh`
+// out of `g_deliveryPendingMeshes` (review S2), which is the only reason that
+// set cannot name a dead frame.
+//
+// SHARED SYMBOL — task 1903 declares the same resolver for its
+// mutation-path counter, and there must be exactly one. Its name and type are
+// therefore fixed here: `bool delegate(const(Mesh)*)`, not `nothrow`
+// (`document.ownsMesh` IS nothrow and converts implicitly, so the stricter
+// caller loses nothing).
+//
+// THE UNINSTALLED RULE IS NOT THE SAME FOR BOTH CONSUMERS, AND THAT IS
+// DELIBERATE — do not "unify" it:
+//
+//   * DELIVERY (1906, `deliverPending` below) reads null as **DELIVER**. Every
+//     headless unit test in this tree builds a bare `Mesh` with no `Document`,
+//     and the delivery blocks in `tests/unit/change_bus_test.d` assert on
+//     exactly those meshes; "uninstalled ⇒ reject" would make every one of
+//     them pass vacuously. Same rule, same reason, as
+//     `command.g_editTargetResolver`'s "uninstalled means there is a target".
+//   * 1903's L2 COUNTER reads null as **not a document mesh**, because it is a
+//     suite-lane-only observable and counting scratch meshes would swamp it.
+//
+// A filter is a REFUSAL and must fail open; a counter is an OBSERVATION and
+// may fail closed.
+__gshared bool delegate(const(Mesh)*) g_isDocumentMesh;
+
+// The one place that rule is spelled: uninstalled ⇒ deliver.
+private bool deliverySubjectAccepted(const(Mesh)* m) {
+    if (g_isDocumentMesh is null) return true;
+    return g_isDocumentMesh(m);
+}
+
 version (unittest) {
     // How many times the derive actually ran. Module scope (not a `Mesh`
     // field) so a `*mesh = …` kernel cannot silently zero the count a test is
@@ -642,6 +707,52 @@ version (unittest) {
     size_t g_spinCollisions;     // spins whose new diagonal already existed
     ulong[] g_spinCollisionKeys; // the diagonals those spins landed on
     size_t g_spinsApplied;       // spins the last spinEdgesByKeys performed (S)
+}
+
+// The deferred-delivery set, shaped exactly like `noteHideDerivePending` /
+// `flushHideDerivePending` below. A set rather than "the batch's own mesh" so a
+// mutation of a mesh OTHER than the one the batch was opened on (a background
+// layer, a mesh a kernel built beside the primary) cannot strand its flags in
+// `undeliveredChanges_` until some unrelated later commit picks them up.
+// Appended to only when there is something to deliver, so a command that never
+// touches a mesh costs no allocation at all.
+private void noteDeliveryPending(Mesh* m) {
+    if (m is null) return;
+    // TASK 1906 review S2 — THE SET MUST NEVER NAME A NON-DOCUMENT MESH.
+    // This array outlives the call that appends to it (it is drained at the
+    // batch close), so a stack-local `Mesh` appended here becomes a pointer to
+    // a dead frame the moment its kernel returns: the measured symptom was a
+    // second delivery reading `flags=0x0` and a garbage `selDomains`. The
+    // filter in `deliverPending` runs BEFORE this call and is what makes that
+    // unrepresentable; this assert is what keeps a future caller from adding a
+    // second, unfiltered path to the set.
+    //
+    // The STRUCTURAL fix is to hold a `Layer` handle instead of a `Mesh*` —
+    // deferred to stage 2, when consumers key on the subject and there is a
+    // reason to resolve one (plan §S2).
+    assert(deliverySubjectAccepted(m),
+        "change_bus: a mesh no Layer owns reached the deferred-delivery set — "
+      ~ "the g_isDocumentMesh filter must run BEFORE noteDeliveryPending, or "
+      ~ "the set can name a dead stack frame");
+    foreach (p; g_deliveryPendingMeshes) if (p is m) return;
+    g_deliveryPendingMeshes ~= m;
+}
+
+version (unittest) {
+    // How many meshes the open delivery batch has deferred. `version
+    // (unittest)` and not `debug {}`, for the reason this file already records
+    // three times: a `debug` body is absent from a plain `-unittest` build,
+    // so a test over it would pass vacuously.
+    size_t deliveryPendingSetLength() { return g_deliveryPendingMeshes.length; }
+}
+
+// Deliver once per mesh the batch deferred, then clear the set. Take-and-clear
+// BEFORE iterating (same shape as flushHideDerivePending) so a listener that
+// illegally publishes cannot grow the set we are walking.
+private void flushDeliveryPending() {
+    auto pending = g_deliveryPendingMeshes;
+    g_deliveryPendingMeshes = null;
+    foreach (m; pending) if (m !is null) m.deliverPending();
 }
 
 private void noteHideDerivePending(Mesh* m) {
@@ -1336,6 +1447,21 @@ struct Mesh {
     uint      pendingChanges_;     // MeshEditScope bits
     uint      pendingSelDomains_;  // change_bus.SelDomain bits
 
+    // --- The SYNCHRONOUS-delivery accumulator (task 1906 §1.2) ------------
+    // A SECOND pair beside the frame-drain words above, not a replacement for
+    // them. `pendingChanges_` keeps its once-per-frame lifetime until its last
+    // consumer leaves; these two are taken-and-zeroed by `deliverPending()` at
+    // the edit boundary.
+    //
+    // They must be separate, and the reason is a live guard: app.d's per-frame
+    // shadow check latches a "missed publisher" whenever a layer's
+    // mutationVersion advanced while its `pendingChanges_` reads 0. If delivery
+    // took-and-zeroed THAT word, the guard would fire on every mutation and
+    // `changeBus.missedPublishers` — which a test asserts stays 0 — would
+    // invert into a permanent false positive.
+    uint      undeliveredChanges_;     // MeshEditScope bits, not yet delivered
+    uint      undeliveredSelDomains_;  // change_bus.SelDomain bits, not yet delivered
+
     // Accumulate-only: OR the given MeshEditScope flags into the pending set.
     // Does NOT bump the version counters, so it is safe inside loops and safe
     // mid-drag (where the intentional version-stability invariant must hold).
@@ -1362,8 +1488,124 @@ struct Mesh {
                                       | MeshEditScope.Polygons;
 
     void noteChange(uint flags) {
+        // The companion contract assert (task 1906 §1.5). It catches an
+        // illegal publish AT the offending line instead of one delivery later,
+        // and it catches the case `deliverMesh`'s own assert structurally
+        // cannot: a publish made while a DELIVERY BATCH is open only
+        // accumulates, so it never re-enters delivery to be seen there.
+        // Always-on, for the same lane reason as the guard itself — the suite
+        // tests are compiled `dmd -unittest` with no `-debug`, so a `debug {}`
+        // body would be absent from exactly the binary under test.
+        assert(!changeBus.delivering,
+            "change_bus: a listener published a mesh change — listeners are " ~
+            "dirty-bit-only (set your own flag, recompute lazily at the reader)");
         pendingChanges_ |= flags;
+        // Accumulate-only here too: `noteChange` keeps its "safe inside loops,
+        // safe mid-drag" contract and does NOT deliver. The next delivering
+        // publisher (`publishChange` / `commitChange`) takes this word.
+        undeliveredChanges_ |= flags;
         if (flags & kMarksAffecting) ++marksVersion;
+    }
+
+    /// Accumulate + DELIVER, without touching the version counters — the
+    /// version-silent delivering publisher (task 1906 §1.2).
+    ///
+    /// The third of three publisher entry points, and the row that distinguishes
+    /// them:
+    ///
+    ///   noteChange     accumulates, no version bump, NO delivery
+    ///   publishChange  accumulates, no version bump, delivers at depth 0
+    ///   commitChange   accumulates, bumps versions,  delivers at depth 0
+    ///
+    /// It exists for the interactive transform path, whose mid-gesture applies
+    /// must stay version-silent (a `mutationVersion` bump there cancels an
+    /// in-session falloff re-grade) while still telling position-dependent
+    /// listeners that vertices moved. Version counters own STRUCTURE; the bus's
+    /// `Position` class owns POSITION.
+    void publishChange(uint flags) {
+        noteChange(flags);
+        deliverPending();
+    }
+
+    /// Hand the undelivered words to the bus, unless a delivery batch is open.
+    ///
+    /// Take-and-zero happens BEFORE the delegates run, so a listener that
+    /// (illegally) publishes cannot make this loop.
+    private void deliverPending() {
+        // TASK 1906 review B1 — THE SUBJECT FILTER, AND IT IS THE FIRST THING
+        // HERE ON PURPOSE. `Mesh` is a struct: without this, every scratch
+        // instance in the tree publishes to the live document's listeners (see
+        // `g_isDocumentMesh`'s declaration for the three measured counts). It
+        // must sit ABOVE the depth check, not below it, so a rejected mesh
+        // never reaches `noteDeliveryPending` either — that is the whole of
+        // review S2's guarantee that the deferred set cannot name a dead stack
+        // frame.
+        //
+        // THE ONE CASE THIS FILTER DROPS A DELIVERY, named rather than
+        // discovered later: a layer UNLINKED between a deferring commit and
+        // the batch close. The commit was accepted (the layer owned the mesh
+        // then) and put it in `g_deliveryPendingMeshes`; by the close the
+        // resolver no longer finds it, so `flushDeliveryPending`'s
+        // `deliverPending()` rejects and the synchronous delivery never
+        // happens. Harmless in stage 0 — nothing keys on the subject yet and
+        // the per-frame flush still ORs `pendingChanges_` to every listener —
+        // and it is fixed structurally in stage 2 by holding a `Layer` handle
+        // instead of a `Mesh*` (review S2).
+        //
+        // Rejection deliberately leaves `undelivered*_` ALONE rather than
+        // zeroing it. A kernel that builds a scratch mesh and then hands it
+        // over wholesale (`*mesh = makeCube()`, ~15 sites) copies those words
+        // into the document mesh with the geometry they describe, and the
+        // next delivering publisher on THAT mesh carries them. Over-
+        // invalidation is the safe direction; a zero here would be the other
+        // one.
+        if (!deliverySubjectAccepted(&this)) return;
+        if (g_deliveryDepth > 0) {
+            // Deferred: remember this mesh so the batch close delivers it, but
+            // only if it actually has something to say.
+            if (undeliveredChanges_ != 0 || undeliveredSelDomains_ != 0)
+                noteDeliveryPending(&this);
+            return;
+        }
+        const uint f = undeliveredChanges_;
+        const uint d = undeliveredSelDomains_;
+        if (f == 0 && d == 0) return;
+        undeliveredChanges_    = 0;
+        undeliveredSelDomains_ = 0;
+        changeBus.deliverMesh(cast(size_t)&this, f, d);
+    }
+
+    /// Open a delivery batch: every `commitChange` / `publishChange` until the
+    /// matching close accumulates instead of delivering, and the close delivers
+    /// ONCE per mesh touched. In production the open is
+    /// `beginHideDeriveBatch`, whose one caller is `Command.apply` — so one
+    /// command that moves 8 vertices, or appends 400 faces, is one delivery.
+    /// (Stage 0b's template-method split moves the outermost open to
+    /// `Command.apply`'s `final apply()` wrapper; this pair then nests inside
+    /// it, harmlessly, as a second net for the 148 override-`apply()`
+    /// commands.)
+    ///
+    /// Shaped and named after `beginHideDeriveBatch`/`endHideDeriveBatch`: the
+    /// depth lives at module scope, so `this` is not read here (a wholesale
+    /// `*mesh = …` inside the batch must not reset it). It stays a `Mesh`
+    /// method so the call site reads like its hide-derive twin, whose LIFO
+    /// ordering in `Command.apply` it depends on.
+    void beginDeliveryBatch() {
+        ++g_deliveryDepth;
+    }
+
+    /// Close a delivery batch; at depth 0, deliver every mesh the batch
+    /// deferred. Clamped rather than asserted, exactly like
+    /// `endHideDeriveBatch`: an imbalance must not be a process death in one
+    /// build kind and a silent, sticky "never deliver again" in the other.
+    void endDeliveryBatch() {
+        if (g_deliveryDepth <= 0) {
+            g_deliveryDepth = 0;
+            flushDeliveryPending();
+            return;
+        }
+        if (--g_deliveryDepth == 0)
+            flushDeliveryPending();
     }
 
     // Accumulate + bump the version counters, reproducing EXACTLY the existing
@@ -1371,6 +1613,39 @@ struct Mesh {
     // only when the change carries a Geometry class (Points | Polygons). This
     // is the drop-in replacement for the raw `++mutationVersion;
     // ++topologyVersion;` lines at the internal mutation sites.
+    // TASK 1906 — commitChange DELIVERS. Order inside the body, and every step
+    // of it is load-bearing:
+    //
+    //   1. noteChange(flags)            — accumulate (both words, + marksVersion)
+    //   2. ++mutationVersion; ++topologyVersion for a Geometry class
+    //   3. refreshHiddenDerived()       — or the g_hideDeriveDepth deferral arm
+    //   4. deliverPending()             — the listeners
+    //
+    // AFTER the version bump, because the consumers that keep a version term as
+    // their correctness backstop would otherwise re-stamp themselves from a
+    // version this mutation has not advanced yet, and read as fresh forever.
+    //
+    // AFTER `refreshHiddenDerived`, because a listener's downstream lazy
+    // recompute reads the derived hide planes (hidden verts/edges leave the VBO
+    // at upload time). Delivering before them publishes a mesh whose derived
+    // state contradicts its marks.
+    //
+    // THERE ARE THREE EXITS, NOT TWO, AND TWO INSERTION POINTS COVER THEM:
+    //
+    //   (a) Geometry + the hide-derive deferral arm → `return` inside the `if`.
+    //       The derive is DEFERRED to `endHideDeriveBatch`, so "after the
+    //       derive" is met not here but by `endHideDeriveBatch` itself, which
+    //       runs its derive flush and THEN closes the delivery batch that
+    //       `beginHideDeriveBatch` opened (task 1906 review S3). This arm
+    //       therefore only ever ACCUMULATES; the assert below states the
+    //       implication it relies on. Before S3 the same guarantee lived in
+    //       `Command.apply`'s `scope(exit)` declaration order, where six of the
+    //       call sites in this file could not see it.
+    //   (b) Geometry, not deferred → the derive ran; the tail delivers.
+    //   (c) NOT Geometry (a Position-only or Marks-only commit) → the `if` is
+    //       never entered and `refreshHiddenDerived` is never called. The
+    //       "after the derive" rule is VACUOUSLY satisfied here, not violated —
+    //       do not "fix" the missing call.
     void commitChange(uint flags) {
         noteChange(flags);
         ++mutationVersion;
@@ -1383,7 +1658,20 @@ struct Mesh {
             // beginHideDeriveBatch's rule. `noteHideDerivePending` makes the
             // batch close derive this mesh once.
             if (g_hideDeriveDepth > 0 && g_hideDeriveDeferSafe) {
+                // Path (a) is only safe inside a delivery batch — the derived
+                // hide planes are still the PRE-edit ones here and only
+                // `endHideDeriveBatch` makes them current. `beginHideDeriveBatch`
+                // opens a delivery batch precisely so this holds at every call
+                // site (task 1906 review S3); the assert is what makes a stray
+                // direct `endDeliveryBatch()` a failure instead of a silent
+                // early delivery. Always-on, no `debug`: the suite lane compiles
+                // this file with a bare `dmd -unittest` and no `-debug`.
+                assert(g_deliveryDepth > 0,
+                    "mesh: a deferred hide-derive commit outside a delivery "
+                  ~ "batch — beginHideDeriveBatch opens one so delivery lands "
+                  ~ "AFTER endHideDeriveBatch's derive flush");
                 noteHideDerivePending(&this);
+                deliverPending();   // path (a) — see the header above
                 return;
             }
             // Hide (task 0613, §1.2): the derived vertex/edge planes ride
@@ -1393,6 +1681,7 @@ struct Mesh {
             // nothing when nothing is hidden anywhere.
             refreshHiddenDerived();
         }
+        deliverPending();   // paths (b) and (c) — see the header above
     }
 
     // Accumulate a SELECTION change (Stage 5): OR `Marks` into the mesh-class
@@ -1405,8 +1694,18 @@ struct Mesh {
     // lasso/paint setters call it once after a compare-before-set guard so a
     // no-op restore does not spuriously publish.
     void noteSelectionChange(SelDomain domain) {
+        // Companion contract assert — same reason as `noteChange`'s. This
+        // funnel does not go through `noteChange`, so it needs its own.
+        assert(!changeBus.delivering,
+            "change_bus: a listener published a selection change — listeners " ~
+            "are dirty-bit-only (set your own flag, recompute lazily)");
         pendingChanges_     |= MeshEditScope.Marks;
         pendingSelDomains_  |= cast(uint)domain;
+        // Accumulate-only, like noteChange: the next delivering publisher takes
+        // these. A bare selection edit therefore rides the commit that follows
+        // it, or the frame flush, exactly as it does today.
+        undeliveredChanges_    |= MeshEditScope.Marks;
+        undeliveredSelDomains_ |= cast(uint)domain;
         ++marksVersion;     // see the field: this is the SECOND of two funnels
     }
 
@@ -9431,7 +9730,37 @@ struct Mesh {
     // optimization permanently off, with no symptom) under `-release`.
     // Module scope is thread-local in D, which is what we want: a worker
     // mutating its own Mesh gets its own counter.
+    // TASK 1906 review S3 — THIS PAIR OWNS THE DELIVERY BATCH TOO, and that
+    // coupling is the fix rather than a convenience.
+    //
+    // `Mesh.commitChange`'s path (a) — a `Geometry` commit while the derive is
+    // DEFERRED — is only safe if a delivery batch is open, because on that path
+    // the derived hidden-vertex/hidden-edge planes are brought up to date by
+    // `endHideDeriveBatch` and by nothing else. Delivering there at depth 0
+    // would hand listeners a mesh whose derived state contradicts its marks.
+    //
+    // That safety used to be PROSE plus a declaration-order convention in
+    // `Command.apply` (delivery pair declared first, so LIFO `scope(exit)`
+    // closed it last). Two things were wrong with it: the convention is
+    // invisible at every OTHER `beginHideDeriveBatch` call site — seven
+    // unittests in this file open a hide-derive batch with no delivery batch and
+    // would have delivered with stale planes — and a reader who "tidies" the two
+    // blocks into a nicer order in `command.d` silently breaks it.
+    //
+    // Opening and closing the delivery batch HERE makes the hazard
+    // unrepresentable instead of merely forbidden: `g_hideDeriveDepth > 0`
+    // now IMPLIES `g_deliveryDepth > 0` by construction, at every call site
+    // that exists or will exist, and the close order (derive flush, THEN
+    // delivery) is one function's statement order rather than two `scope(exit)`
+    // bodies in another file. `commitChange`'s path (a) asserts the implication
+    // so a stray direct `endDeliveryBatch()` cannot quietly undo it.
+    //
+    // The 1903 convergence contract is unaffected: delivery still happens
+    // inside `commitChange`, the depth pair is still internal, and this is not
+    // the undo-tracker batch (`beginEditBatch`/`endEditBatch`) being implemented
+    // in terms of anything.
     void beginHideDeriveBatch() {
+        beginDeliveryBatch();          // strictly encloses the hide-derive batch
         if (g_hideDeriveDepth == 0)
             g_hideDeriveDeferSafe = !anyHideBitSet();
         ++g_hideDeriveDepth;
@@ -9441,13 +9770,27 @@ struct Mesh {
     void endHideDeriveBatch() {
         // Clamped, not asserted: an imbalance must not be a process death in
         // one build kind and a silent permanent de-optimization in the other.
+        // `endDeliveryBatch` clamps the same way, so an unbalanced close leaves
+        // both counters at 0 rather than one of them stuck.
         if (g_hideDeriveDepth <= 0) {
             g_hideDeriveDepth = 0;
             flushHideDerivePending();
+            endDeliveryBatch();
             return;
         }
         if (--g_hideDeriveDepth == 0)
             flushHideDerivePending();
+        // AFTER the derive flush on every path — this statement order IS the
+        // ordering guarantee `tests/unit/delivery_after_hide_derive_test.d`
+        // pins. What the flush itself publishes is a `noteSelectionChange` (the
+        // Select ∧ Hide = ∅ clear inside `refreshHiddenDerived`) — an
+        // ACCUMULATE-ONLY funnel, not a commit: it ORs into `undelivered*_` and
+        // never calls `deliverPending`. So those bits ride the ONE delivery
+        // this close is about to make for the same mesh rather than making a
+        // second one — and they ride it because the deferred `commitChange`
+        // already put that mesh in `g_deliveryPendingMeshes`; an accumulate-only
+        // note puts nothing there itself.
+        endDeliveryBatch();
     }
 
     // The three-plane word-OR on its own — the question `refreshHiddenDerived`

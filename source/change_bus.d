@@ -21,6 +21,27 @@ module change_bus;
 // no unsubscribe (subscribers live for the app lifetime), no per-element
 // payloads. Subscribers are invalidate-only by contract: they must NOT mutate
 // the mesh or re-enter flush (enforced by the reentrancy guard below).
+//
+// TASK 1906 stage 0 — SYNCHRONOUS DELIVERY AT THE EDIT BOUNDARY.
+// `deliverMesh` is a SECOND entry point beside `flush`, called from
+// `Mesh.deliverPending()` at the tail of `Mesh.commitChange` /
+// `Mesh.publishChange`, i.e. INSIDE the mutation rather than once per frame.
+// Two consequences that shape everything below:
+//
+//   * a listener now runs while a mesh edit is in progress, so the contract is
+//     tighter than "invalidate-only": a listener may write ONLY ITS OWN DIRTY
+//     STATE. It may not read the mesh, mutate anything, touch GL, publish, or
+//     re-enter delivery. The recompute is LAZY, at the reader. `nothrow` on
+//     every listener alias is the compile-time half of that; the always-on
+//     `assert(!delivering_, …)` in `deliverMesh` is the run-time half.
+//   * delivery carries the SUBJECT's address, because every consumer in this
+//     tree already keys its cache on the mesh address (`MeshCacheKey.addr`,
+//     `BvhPick._meshAddr`, `CandidateGrid.meshAddr`, …). One global port that
+//     names its subject speaks the language they already speak, and needs no
+//     `change_bus → mesh` import.
+//
+// `deliverMesh` deliberately shares NOTHING with `flush`'s counters — see its
+// own comment for why double-counting would dirty a clean document.
 // ---------------------------------------------------------------------------
 
 public import mesh_edit_delta : MeshEditScope;
@@ -96,21 +117,47 @@ enum uint LayerChangeAll =
 // ---------------------------------------------------------------------------
 struct ChangeBus {
     // Subscriber delegate arrays. Appended once at startup via the registration
-    // helpers below; never removed in v1. flush() iterates these.
-    void delegate(uint flags)[]   meshSubs;
-    void delegate(uint domains)[] selSubs;
-    void delegate(uint kinds)[]   layerSubs;
+    // helpers below; never removed in v1. flush() and deliverMesh() iterate
+    // these.
+    //
+    // R7 (task 1906) — EVERY subscriber alias is `nothrow`, and that is the whole
+    // enforcement of "a listener does not throw". A synchronous listener runs
+    // inside `Mesh.commitChange`, AFTER the version bump: a throwing body would
+    // abandon the edit half-done, with the counters already advanced. `nothrow`
+    // is checked by the COMPILER at every registration site, which is the only
+    // enforcement here that cannot be forgotten. `deliverMesh` deliberately does
+    // NOT wrap its loop in a try/catch — a wrap would swallow the contract
+    // violation instead of preventing it.
+    //
+    // `subjectAddr` on the mesh channel is `cast(size_t)&mesh` of the mesh that
+    // changed; it is 0 on the per-frame `flush`, which ORs every layer's pending
+    // word together and so has NO single subject.
+    alias MeshSubscriber        = void delegate(size_t subjectAddr, uint flags) nothrow;
+    alias SelSubscriber         = void delegate(uint domains) nothrow;
+    alias LayerSubscriber       = void delegate(uint kinds) nothrow;
+    alias CurrentTypeSubscriber = void delegate(SelType t) nothrow;
+
+    MeshSubscriber[]  meshSubs;
+    SelSubscriber[]   selSubs;
+    LayerSubscriber[] layerSubs;
     // The current-type channel — the `Current(type)` analog the layer-change
     // (Stage-5) work deferred to selection-types #4. Carries the newly-current
     // SelType when the front of the recent-ordering flips. Delivered LAST, after
     // the mesh/sel/layer channels (see flush). Invalidate-only, no unsubscribe.
-    void delegate(SelType t)[]    currentTypeSubs;
+    // DOCUMENT-level: it has no owning `Mesh`, so it stays on the frame flush
+    // and `deliverMesh` never touches it (task 1906 §1.6).
+    CurrentTypeSubscriber[] currentTypeSubs;
 
-    // Reentrancy guard: a subscriber must not re-enter flush (nor mutate the
-    // mesh, which could note new changes mid-delivery). The assert turns a
-    // contract violation into a hard failure in debug builds rather than a
-    // silent corruption.
-    private bool flushing_;
+    // Re-entrancy guard, shared by `flush` and `deliverMesh`: a listener must
+    // not re-enter delivery, and — since task 1906 made delivery synchronous
+    // with the mutation — must not publish or mutate the mesh either, because
+    // that IS a re-entry. Renamed from `flushing_` when the second entry point
+    // landed: the state it names is "a listener is running", not "we are in
+    // flush". The assert on it is ALWAYS-ON (no `debug`, no `version`): it is
+    // the contract's only run-time enforcement and it must be reachable in
+    // every lane, including the suite-test binaries `run_test.d` compiles with
+    // a bare `dmd -unittest` and no `-debug`.
+    private bool delivering_;
 
     // --- Debug / test-introspectable counters -----------------------------
     // Plain fields so tests (and the future /api/changes endpoint) can read
@@ -120,6 +167,24 @@ struct ChangeBus {
     uint  lastSelDomains;    // selection domains of the most recent delivery
     uint  lastLayerKinds;    // layer-change kinds of the most recent delivery
     SelType lastCurrentType; // the type made current by the most recent delivery
+
+    // --- Synchronous-delivery counters (task 1906 stage 0) ----------------
+    // A SEPARATE family from the flush counters above, deliberately: the frame
+    // flush still drains `Mesh.pendingChanges_` for the same mutation, so a
+    // per-class total incremented on BOTH paths would count every edit twice
+    // and `docRevision()` — which decides whether the document is dirty —
+    // would move at twice its rate. `deliverMesh` therefore touches only these
+    // four fields, and `tests/test_change_bus.d`'s exact per-frame deltas stay
+    // byte-for-byte what they were.
+    //
+    // Plain always-on fields (not `version (unittest)`): `/api/changes` reads
+    // them from the editor binary, which is where the per-command census and
+    // the delivery-granularity test look. Tests read them as DELTAS, like every
+    // other counter on this endpoint.
+    ulong  deliveryCount;         // synchronous deliveries that reached a listener
+    size_t lastDeliverySubject;   // `cast(size_t)&mesh` of the most recent subject
+    uint   lastDeliveryFlags;     // mesh flags of the most recent DELIVERY
+    uint   lastDeliverySelDomains;// selection domains of the most recent DELIVERY
 
     // Missed-publisher count (task 0462). Incremented by the per-frame debug
     // guard in app.d whenever a layer's mutationVersion advanced with ZERO
@@ -191,11 +256,14 @@ struct ChangeBus {
     }
 
     // --- Registration -----------------------------------------------------
-    void onMeshChanged(void delegate(uint flags) dg) {
+    // The mesh channel carries the subject's ADDRESS as well as the flags
+    // (task 1906 §1.1). A subscriber that does not care passes an unnamed
+    // first parameter.
+    void onMeshChanged(MeshSubscriber dg) {
         if (dg !is null) meshSubs ~= dg;
     }
 
-    void onSelectionChanged(void delegate(uint domains) dg) {
+    void onSelectionChanged(SelSubscriber dg) {
         if (dg !is null) selSubs ~= dg;
     }
 
@@ -203,16 +271,26 @@ struct ChangeBus {
     // are invalidate-only (must NOT mutate the document or re-enter flush) and
     // live for the app lifetime (no unsubscribe in v1). Delivered LAST, after
     // meshChanged + selectionChanged (see flush).
-    void onLayerChanged(void delegate(uint kinds) dg) {
+    void onLayerChanged(LayerSubscriber dg) {
         if (dg !is null) layerSubs ~= dg;
     }
 
     // Register a current-type subscriber. Fires when the front of the recent
     // selection-type ordering flips (the `Current(type)` analog), delivered
     // LAST of the four channels. Invalidate-only, no unsubscribe (v1).
-    void onCurrentTypeChanged(void delegate(SelType t) dg) {
+    void onCurrentTypeChanged(CurrentTypeSubscriber dg) {
         if (dg !is null) currentTypeSubs ~= dg;
     }
+
+    /// "Is a listener running right now?" — the read half of the contract
+    /// guard, for the companion asserts in `Mesh.noteChange` /
+    /// `noteSelectionChange` / `publishChange`. Those catch an illegal publish
+    /// AT the offending line; the always-on assert inside `deliverMesh` below
+    /// catches the same violation when it re-enters delivery. Both are needed:
+    /// a publish made while a DELIVERY BATCH is open does not re-enter
+    /// delivery at all (it only accumulates), so `deliverMesh`'s assert alone
+    /// would never see it.
+    bool delivering() const nothrow @nogc { return delivering_; }
 
     // --- Flush ------------------------------------------------------------
     // Deliver accumulated mesh flags + selection domains + layer kinds + an
@@ -226,15 +304,15 @@ struct ChangeBus {
     // `typeChanged` gates the current-type channel: when true, `newType` is the
     // type promoted to current. (SelType has no None sentinel, hence the bool.)
     void flush(uint meshFlags, uint selDomains, uint layerKinds,
-               bool typeChanged = false, SelType newType = SelType.Vertex) {
+               bool typeChanged = false, SelType newType = SelType.Vertex) nothrow {
         if (meshFlags == 0 && selDomains == 0 && layerKinds == 0 && !typeChanged)
             return;
 
-        assert(!flushing_,
+        assert(!delivering_,
             "change_bus: subscriber re-entered flush (subscribers are " ~
             "invalidate-only and must not mutate the mesh or re-flush)");
-        flushing_ = true;
-        scope (exit) flushing_ = false;
+        delivering_ = true;
+        scope (exit) delivering_ = false;
 
         ++flushCount;
         lastFlushFlags = meshFlags;
@@ -264,14 +342,99 @@ struct ChangeBus {
 
         if (typeChanged) { ++currentTypeChanged; lastCurrentType = newType; }
 
+        // Subject 0: the per-frame flush ORs every layer's pending word into
+        // one delivery, so there is no single mesh it is about. A subscriber
+        // that keys on the address treats 0 as "unknown — invalidate on the
+        // flags alone", which is exactly today's behaviour.
         if (meshFlags != 0)
-            foreach (dg; meshSubs) dg(meshFlags);
+            foreach (dg; meshSubs) dg(0, meshFlags);
         if (selDomains != 0)
             foreach (dg; selSubs) dg(selDomains);
         if (layerKinds != 0)
             foreach (dg; layerSubs) dg(layerKinds);
         if (typeChanged)
             foreach (dg; currentTypeSubs) dg(newType);
+    }
+
+    // --- Synchronous delivery (task 1906 stage 0) -------------------------
+    // The edit-boundary entry point. Called from `Mesh.deliverPending()` at
+    // delivery-batch depth 0, i.e. at the tail of `commitChange` /
+    // `publishChange`, AFTER the version bump and AFTER `refreshHiddenDerived`
+    // (`source/mesh.d :: commitChange` states the ordering and why each half
+    // of it is load-bearing).
+    //
+    // Carries the mesh + selection channels ONLY, in the same fixed order
+    // `flush` documents (meshChanged → selectionChanged). `layerChanged` and
+    // `currentTypeChanged` are DOCUMENT-level with no owning `Mesh` to hang a
+    // synchronous boundary on, and their only consumer is a counter poller, so
+    // they stay on the frame flush (§1.6).
+    //
+    // WHAT IT DELIBERATELY DOES NOT TOUCH, and this is not tidiness: neither
+    // `flushCount`/`lastFlushFlags` nor any per-class total. Until the last
+    // frame-drain consumer leaves, the SAME mutation is delivered twice — once
+    // here, once out of `Mesh.pendingChanges_` at the frame flush — so a total
+    // bumped on both paths would double `docRevision()` and make a clean
+    // document read dirty after one edit. Stage 0 is therefore byte-identical
+    // on every counter an existing test reads.
+    // `nothrow` IS KEPT, AND THE PRICE IS NAMED (task 1906 review S4).
+    //
+    // `nothrow` is the compile-time half of the listener contract: it is what
+    // makes `format`, `writeln` and `logWarn` inside a listener a COMPILE
+    // ERROR rather than a runtime surprise, and a dirty-bit set — which is all
+    // a listener is allowed to do — costs nothing to declare. That is the good
+    // news, and it is why the attribute stays.
+    //
+    // The price: an `Error` raised inside this frame — the asserts below, or an
+    // `AssertError` from a listener — DOES NOT RELEASE `delivering_`. dmd emits
+    // no unwind cleanup in a `nothrow` frame, so the `scope (exit)` never runs
+    // and the guard latches on. That is deliberate, because in production the
+    // latch is unreachable rather than survivable:
+    //
+    //   * `app.d` never catches `Error` (nothing in the main loop does), and
+    //     `/api/command` is marshalled onto the main thread — so an `Error`
+    //     here ends the process. A guard that never releases in a process that
+    //     is already dying costs nothing.
+    //   * `flush` gained `nothrow` in this same change. Its two pre-existing
+    //     re-entrancy test blocks stay green ONLY because they catch the
+    //     `AssertError` INSIDE the listener, where the guard's `scope (exit)`
+    //     is still ahead of them. A test that let the error escape the listener
+    //     would latch `delivering_` for every later module in the shared
+    //     unittest binary; the two synchronous-delivery blocks in
+    //     `tests/unit/change_bus_test.d` copy that placement for that reason,
+    //     and say so.
+    //   * `assert` is compiled OUT under `-release`. Of the buildTypes in
+    //     `dub.json`, `perf` and `check-release` set `releaseMode`, as does the
+    //     shipped `--build=release`; NONE of them is a lane that runs tests. So
+    //     the guard is present in every lane that could observe a violation,
+    //     and absent only where an already-validated build is being timed.
+    //
+    // The alternative — dropping `nothrow` and wrapping the loop in a
+    // `try`/`catch` — was rejected in §1.5: it would swallow the contract
+    // violation instead of preventing it, and it would give back the
+    // compile-time half for nothing.
+    void deliverMesh(size_t subjectAddr, uint meshFlags, uint selDomains) nothrow {
+        if (meshFlags == 0 && selDomains == 0) return;
+
+        // THE GUARD. Always-on — no `debug`, no `version` — because a listener
+        // that publishes, mutates the mesh, or re-enters delivery corrupts an
+        // edit in progress, and the lane that compiles this into a suite-test
+        // binary (`dmd -unittest`, no `-debug`) is exactly the lane a
+        // `debug {}` body would be absent from.
+        assert(!delivering_,
+            "change_bus: a listener mutated the mesh, published, or " ~
+            "re-entered delivery — listeners are dirty-bit-only");
+        delivering_ = true;
+        scope (exit) delivering_ = false;
+
+        ++deliveryCount;
+        lastDeliverySubject     = subjectAddr;
+        lastDeliveryFlags       = meshFlags;
+        lastDeliverySelDomains  = selDomains;
+
+        if (meshFlags != 0)
+            foreach (dg; meshSubs) dg(subjectAddr, meshFlags);
+        if (selDomains != 0)
+            foreach (dg; selSubs) dg(selDomains);
     }
 }
 

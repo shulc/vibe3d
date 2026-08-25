@@ -2402,6 +2402,8 @@ class HttpServer {
                 `"totalLayerVisible":%d,` ~
                 `"totalLayerActive":%d,` ~
                 `"missedPublishers":%d,` ~
+                `"deliveryCount":%d,` ~
+                `"lastDeliveryFlags":%d,"lastDeliverySelDomains":%d,` ~
                 `"currentTypeChanged":%d,"lastCurrentType":"%s"}`,
                 snap.flushCount, snap.lastFlushFlags,
                 snap.lastSelDomains, snap.lastLayerKinds,
@@ -2416,6 +2418,23 @@ class HttpServer {
                 snap.totalLayerVisible,
                 snap.totalLayerActive,
                 snap.missedPublishers,
+                // Task 1906 stage 0 — the SYNCHRONOUS delivery boundary, as a
+                // counter. `deliveryCount` is what the per-command census and
+                // the delivery-granularity test read; `flushCount` beside it
+                // still counts the once-per-frame drain, and the two are
+                // deliberately independent (see change_bus.deliverMesh).
+                //
+                // `lastDeliverySubject` is NOT published (review NIT). It is a
+                // raw heap address: it discloses the process's layout, it is
+                // different on every run so no test can assert a value, and the
+                // only useful question over the wire — "WHICH layer changed" —
+                // needs a stable index this endpoint has no `Document` to
+                // resolve. The field stays on the bus for the unit blocks that
+                // assert identity against `&mesh`; it gets a wire form in stage
+                // 2, when a consumer keys on the subject and there is something
+                // to key.
+                snap.deliveryCount,
+                snap.lastDeliveryFlags, snap.lastDeliverySelDomains,
                 snap.currentTypeChanged,
                 selTypeToken(snap.lastCurrentType));
         }
