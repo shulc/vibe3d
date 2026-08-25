@@ -2400,9 +2400,10 @@ mixin template MeshExtrudeOps() {
         foreach (i; cast(size_t) origFaceCount .. faces.length)
             faceSelectionOrder[i] = 0;
 
-        // Rebuild faceMarks from scratch (resize+zero ALL bits, then set from
-        // the just-carried word) — was Subpatch-only; now carries the whole
-        // word (task 0613 §4.2), so Hide rides this rebuild instead of being
+        // Re-mask the just-carried word in place — src here IS faceMarks
+        // (self-aliasing; see Mesh.setFaceMarksFrom's own doc comment for
+        // why that is safe) — was Subpatch-only; now carries the whole word
+        // (task 0613 §4.2), so Hide rides this rebuild instead of being
         // silently wiped.
         setFaceMarksFrom(faceMarks, ~Marks.Select);
 
@@ -3450,8 +3451,9 @@ mixin template MeshExtrudeOps() {
         // the CAP portion of this range again (via selectFace); the WALL
         // portion is what this line alone determines.
         foreach (i; capStart .. faces.length) faceSelectionOrder[i] = 0;
-        // Rebuild faceMarks from scratch: resize+zero ALL bits (clears stale
-        // Select from the old ordering), then set from the just-carried word
+        // Re-mask the just-carried word in place — src here IS faceMarks
+        // (self-aliasing; see Mesh.setFaceMarksFrom's own doc comment for
+        // why that is safe), dropping stale Select from the old ordering
         // (task 0613 §4.2 — was Subpatch-only).
         setFaceMarksFrom(faceMarks, ~Marks.Select);
 

@@ -9252,6 +9252,18 @@ struct Mesh {
             ~ "a slip to 0 (or to ~uint.max) would silently wipe "
             ~ "Subpatch/Hide too");
     }
+    unittest { // self-aliasing (src is faceMarks itself) survives, per the
+        // doc comment above this method's body — every mesh_planes.
+        // rewriteFaces-migrated call site passes faceMarks as its own src.
+        Mesh m;
+        m.faceMarks = [Marks.Select | Marks.Hide, Marks.Select | Marks.Subpatch];
+        m.setFaceMarksFrom(m.faceMarks, ~Marks.Select);
+        assert(m.faceMarks == [cast(uint) Marks.Hide, cast(uint) Marks.Subpatch],
+            "setFaceMarksFrom: passing faceMarks as its own src must still "
+            ~ "read each word before overwriting it — a resize+zero "
+            ~ "reading of this method's body would wipe every word to 0 "
+            ~ "instead of masking it");
+    }
     // Bulk face-plane write, same shape as setFaceMarksFrom above (raw —
     // no commitChange, used by bulk/internal writers; a user-facing bulk
     // hide command calls this then refreshHiddenDerived() itself, exactly
