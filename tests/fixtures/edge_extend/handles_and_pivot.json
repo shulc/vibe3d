@@ -29,7 +29,7 @@
     "scaleX": 1.0, "scaleY": 1.0, "scaleZ": 1.0,
     "segments": 1, "inset": 0.0, "shift": 0.0,
     "moveHandle": true, "rotateHandle": false, "scaleHandle": false,
-    "planeHandle": "none", "localHandle": false, "haul": "global"
+    "planeHandle": "none", "localBank": false, "haul": "global"
   },
   "rig": {
     "description": "Open 5-vertex, 2-triangle mesh placed off the origin with no axis-aligned edge and no face normal along a world axis. The two selected edges share one vertex and differ in length by about 13x, so the selected subset's bounding-box mid and its vertex centroid are far apart; the two unselected vertices push the whole-mesh bounding box away from the selected subset's.",
