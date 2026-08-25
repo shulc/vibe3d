@@ -329,11 +329,99 @@ unittest {
         m.facePart.to!string);
     assert(m.faceSelectionOrder == [1, 2, 0],
         "removeFacesReverse: faceSelectionOrder must shift in lockstep with "
-      ~ "faceMarks (both insert 0, not a restored value — the ORDER STAMP "
-      ~ "is not recorded by this entry, same documented limit as the "
-      ~ "re-inserted face's own Select bit), not be left to finalize()'s "
-      ~ "tail length-grow which pads the array's OWN new tail instead of the "
-      ~ "index the face actually landed at — got " ~
+      ~ "faceMarks and, with no `faceOrd` carried on THIS entry (it is left "
+      ~ "unset/empty above), fall back to inserting 0 — the documented "
+      ~ "fallback for an entry recorded before task 1902 Stage H (or a "
+      ~ "hand-built fixture with no ord), not the general rule — not be "
+      ~ "left to finalize()'s tail length-grow which pads the array's OWN "
+      ~ "new tail instead of the index the face actually landed at — got " ~
+        m.faceSelectionOrder.to!string);
+
+    // Task 1902 Stage H, review finding B1: when `faceOrd` IS carried, the
+    // re-inserted face must get its OWN recorded rank instead of the
+    // unconditional-0 fallback exercised just above. Same tail-reinsertion
+    // shape, fresh mesh + entry so the two cases stay independent (`m`
+    // above has already been mutated by the first revert).
+    Mesh m2;
+    m2.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0),
+                   Vec3(2, 0, 0), Vec3(3, 0, 0), Vec3(2, 1, 0)];
+    m2.addFace([0u, 1u, 2u]);
+    m2.addFace([3u, 4u, 5u]);
+    m2.buildLoops();
+    m2.syncSelection();
+    m2.faceMaterial       = [100u, 111u];
+    m2.facePart            = [10u, 11u];
+    m2.faceSelectionOrder = [1, 2];
+
+    MeshOpEntry removeEntryOrd;
+    removeEntryOrd.kind      = MeshOpEntry.Kind.RemoveFaces;
+    removeEntryOrd.fIdx      = [FaceIdx.assumeFaceSpace(2)];   // the TAIL of the pre-drop, 3-face mesh
+    removeEntryOrd.faceLists = [[6u, 7u, 8u]];
+    removeEntryOrd.faceMat   = [122u];
+    removeEntryOrd.facePrt   = [12u];
+    removeEntryOrd.faceSub   = [0u];
+    removeEntryOrd.faceOrd   = [7];   // the dropped face's own recorded rank
+
+    MeshEditDelta deltaOrd;
+    deltaOrd.scope_ = MeshEditScope.Polygons;
+    deltaOrd.log    = [removeEntryOrd];
+
+    m2.vertices ~= [Vec3(4, 0, 0), Vec3(5, 0, 0), Vec3(4, 1, 0)];
+
+    assert(deltaOrd.revert(m2), "reverse replay must succeed");
+    assert(m2.faces.length == 3, "setup: the tail face must come back");
+    assert(m2.faceSelectionOrder == [1, 2, 7],
+        "removeFacesReverse: when `faceOrd` IS carried, a re-inserted face "
+      ~ "must restore its OWN recorded faceSelectionOrder rank (task 1902 "
+      ~ "Stage H, review finding B1) — not the earlier unconditional-0 "
+      ~ "insert — got " ~ m2.faceSelectionOrder.to!string);
+}
+
+// ---------------------------------------------------------------------------
+// Task 1902 Stage H, review finding B1 — PRODUCTION WITNESS. The two blocks
+// above prove `removeFacesReverse`'s own carry logic against a HAND-BUILT
+// `MeshOpEntry`; they say nothing about whether any real producer actually
+// passes `ord` into `recordRemoveFaces`. A call site that dropped the
+// argument (`deleteFacesByMask`, `dissolveVerticesByMask`,
+// `removeEdgesByMask`, `mesh_ops.extrude.extrudeEdgesByMask`) would leave
+// every hand-built fixture green while every real delete lost its
+// `faceSelectionOrder` rank on undo. Drive the REAL producer instead:
+// `Mesh.deleteFacesByMask` wrapped in `beginEditBatch`/`endEditBatch` — the
+// same shape `commands/mesh/delete.d` uses under the tracker — on an open
+// (non-manifold-closed) fixture where the DROPPED face carries a non-zero
+// `faceSelectionOrder` rank.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.conv : to;
+
+    // Open fixture: two disjoint triangles, no shared edges.
+    Mesh m;
+    m.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0),
+                  Vec3(2, 0, 0), Vec3(3, 0, 0), Vec3(2, 1, 0)];
+    m.addFace([0u, 1u, 2u]);
+    m.addFace([3u, 4u, 5u]);
+    m.buildLoops();
+    m.syncSelection();
+    // Face 1 (about to be dropped) carries a non-zero pick-order rank; face 0
+    // (the survivor) stays at 0 so the assertion below cannot pass by both
+    // slots coincidentally holding the same value.
+    m.faceSelectionOrder = [0, 9];
+
+    MeshEditTracker rec;
+    m.beginEditBatch(&rec, MeshEditScope.Polygons);
+    const removed = m.deleteFacesByMask([false, true]);
+    auto delta = m.endEditBatch();
+    assert(removed == 1, "setup: exactly the second triangle must drop");
+    assert(m.faces.length == 1, "setup: one face survives the delete");
+
+    assert(delta.revert(m), "reverse replay must succeed");
+    assert(m.faces.length == 2, "undo must re-insert the dropped face");
+    assert(m.faceSelectionOrder == [0, 9],
+        "production witness: Mesh.deleteFacesByMask's recordRemoveFaces call "
+      ~ "must pass the dropped face's OWN faceSelectionOrder rank through to "
+      ~ "the MeshOpEntry (task 1902 Stage H, review finding B1) — dropping "
+      ~ "the `ord` argument at the call site restores 0 here instead of the "
+      ~ "recorded rank 9, and no hand-built fixture would catch it — got " ~
         m.faceSelectionOrder.to!string);
 }
 

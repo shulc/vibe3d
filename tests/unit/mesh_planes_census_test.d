@@ -145,6 +145,100 @@ private bool hasSubstring(string haystack, string needle) {
 }
 
 // ===========================================================================
+// MeshOpEntry — the SECOND enumeration site (task 1902 Stage H, plan §7.3).
+//
+// `MeshOpEntry`'s `faceMat`/`facePrt`/`faceSub`/`faceSetMsk`/`faceOrd` group
+// is a hand-maintained parallel-plane list, exactly like `kFacePlanes` — and
+// until this task it was one short (no `faceOrd`, plan §7.3's own finding).
+// L1's `static assert(Mesh.tupleof.length == 54, …)` fires when a new
+// per-face FIELD lands on `Mesh`, but it names `mesh_planes.d`, never this
+// struct — a plane added to `kFacePlanes` with no matching `MeshOpEntry`
+// field is invisible to L1 and to L2 (L2 walks `Mesh.tupleof`, not
+// `MeshOpEntry.tupleof`). This is that missing guard.
+// ===========================================================================
+
+/// `kFacePlanes` name -> `MeshOpEntry` field name (or `null` when the entry
+/// deliberately carries something NARROWER, with the reason spelled out).
+/// `faceMarks` has no direct counterpart: only its Subpatch BIT rides the
+/// drop set, via `faceSub` — a pre-existing, documented limit of
+/// `RemoveFaces`'s own reverse (Select/Hide are restored through their own
+/// delta kinds, not this one; `FaceReindex` inherits the same limit rather
+/// than inventing a new one, see its own Kind doc in mesh_edit_delta.d).
+package enum string[string] kFacePlaneToEntryField = [
+    "faceMarks":          "faceSub",
+    "faceMaterial":       "faceMat",
+    "facePart":           "facePrt",
+    "faceSelectionOrder": "faceOrd",
+    "faceSetMask":        "faceSetMsk",
+];
+
+unittest // L1/L2 for MeshOpEntry: every kFacePlanes name maps to a real MeshOpEntry field
+{
+    import mesh_edit_delta : MeshOpEntry;
+
+    // Non-vacuity: the map itself must name every kFacePlanes entry — a plane
+    // added to kFacePlanes with no corresponding line here is exactly the gap
+    // this guard exists to close (§7.3 M-analogue: the mutation is "add a
+    // plane, don't touch this file").
+    foreach (name; kFacePlanesOnce)
+        assert((name in kFacePlaneToEntryField) !is null,
+               format("kFacePlanes entry `%s` has no corresponding line in "
+                    ~ "kFacePlaneToEntryField (tests/unit/"
+                    ~ "mesh_planes_census_test.d) — MeshOpEntry (source/"
+                    ~ "mesh_edit_delta.d) is the SECOND enumeration site "
+                    ~ "(plan §7.3): classify what, if anything, the op-log "
+                    ~ "entry carries for this plane.", name));
+
+    // Each mapped name must be a REAL field on MeshOpEntry — a typo or a
+    // rename on either side reddens here, not silently.
+    foreach (facePlane, entryField; kFacePlaneToEntryField) {
+        bool found = false;
+        static foreach (fieldName; FieldNameTuple!MeshOpEntry) {
+            if (fieldName == entryField) found = true;
+        }
+        assert(found,
+               format("kFacePlaneToEntryField[\"%s\"] = \"%s\", but "
+                    ~ "MeshOpEntry (source/mesh_edit_delta.d) has no field "
+                    ~ "of that name", facePlane, entryField));
+    }
+
+    // Symmetric direction: every per-face-shaped MeshOpEntry field used by
+    // RemoveFaces/FaceReindex is named on the RIGHT side of the map above (or
+    // is `faceOldOfNew`/`oldFaceCount`/`newFaceLists` — FaceReindex's own
+    // correspondence/geometry payload, not a carried PLANE, so exempt by the
+    // same reasoning kFacePlanes's own kExemptPlanes uses for `faces`).
+    static immutable string[] kEntryPlaneExempt = [
+        "faceOldOfNew", "oldFaceCount", "newFaceLists",
+        // WINDING (geometry) payloads, not per-face PLANES — the same
+        // distinction kFacePlanes's own kExemptPlanes draws for `faces`
+        // itself ("the SUBJECT rewriteFaces assigns, not a plane it
+        // carries"). AddFaces/RemoveFaces/FaceReindex's `faceLists` and
+        // ReshapeFaces's `faceListsBefore`/`faceListsAfter` are all vertex-
+        // index lists, never a per-face scalar/bitword/id.
+        "faceLists", "faceListsBefore", "faceListsAfter",
+        // Review finding B2 (task 1902 Stage H review): FaceReindex's own
+        // captured PRE-rewrite winding for the subset of SURVIVORS whose
+        // winding changed across the rewrite — same WINDING exemption as
+        // `faceLists`/`newFaceLists` just above, not a kFacePlanes plane.
+        "faceSurvivorIdx", "faceSurvivorLists",
+    ];
+    string[] mappedEntryFields;
+    foreach (facePlane, entryField; kFacePlaneToEntryField) mappedEntryFields ~= entryField;
+    static foreach (fieldName; FieldNameTuple!MeshOpEntry) {
+        static if (fieldName.length >= 4 && fieldName[0 .. 4] == "face") {
+            if (!inList(fieldName, mappedEntryFields) && !inList(fieldName, kEntryPlaneExempt))
+                assert(false,
+                       "MeshOpEntry field `" ~ fieldName ~ "` (source/"
+                     ~ "mesh_edit_delta.d) is per-face-shaped by name but "
+                     ~ "appears in NEITHER kFacePlaneToEntryField's value "
+                     ~ "side NOR kEntryPlaneExempt (both in tests/unit/"
+                     ~ "mesh_planes_census_test.d) — classify it: which "
+                     ~ "kFacePlanes entry does it carry, or why is it exempt?");
+        }
+    }
+}
+
+// ===========================================================================
 // The tree-scan gate.
 //
 // Reuses the comment/string/scope-nesting lexer shape from

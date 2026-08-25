@@ -186,7 +186,12 @@ unittest {
             case RemoveFaces:    sawRemoveFaces = true; break;
             case AddVerts: case SetPos: case AddFaces: case ReshapeFaces:
             case SelectionDelta: case SubpatchDelta: case MaterialDelta:
-            case EdgeSelByEnds:  case MeshMapDelta:   case HideDelta: break;
+            case EdgeSelByEnds:  case MeshMapDelta:   case HideDelta:
+            // task 1902 Stage H: FaceReindex is disarmed by default
+            // (MeshEditTracker.wantsFaceReindex == false) and this test's
+            // `MeshEditTracker()` never opts in, so it cannot appear in
+            // `delta.log` here — added only to satisfy the `final switch`.
+            case FaceReindex: break;
         }
     }
     assert(sawReindex,     "(b) log must contain Reindex");

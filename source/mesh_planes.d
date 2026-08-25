@@ -150,7 +150,7 @@ module mesh_planes;
 // test.d` asserts this module's own source text names none of them.
 // ---------------------------------------------------------------------------
 
-import mesh : Mesh, PolyVertexBlend, PolyVertexGen;
+import mesh : Mesh, PolyVertexBlend, PolyVertexGen, FaceIdx;
 import math : Vec3;
 import std.format : format;
 import std.traits : isDynamicArray, isStaticArray;
@@ -247,11 +247,15 @@ struct VertSource {
 //
 // SIBLING LIST: `source/mesh_edit_delta.d`'s `MeshOpEntry` carries its own
 // hand-maintained per-face group (`faceMat`/`facePrt`/`faceSub`/
-// `faceSetMsk`, plus `faceOrd` — task 1902 Stage H) for the undo/redo
-// op-log. The two lists are independent (one is the LIVE-mesh carry, the
-// other is a REPLAY payload) but describe the same five per-face planes, so
-// a new entry in `kFacePlanes` below is a new field `MeshOpEntry` should
-// probably also carry — check that file when extending this one.
+// `faceSetMsk`/`faceOrd` — task 1902 Stage H added `faceOrd`, closing the
+// gap this comment used to flag) for the undo/redo op-log. The two lists
+// are independent (one is the LIVE-mesh carry, the other is a REPLAY
+// payload) but describe the same five per-face planes, so a new entry in
+// `kFacePlanes` below is a new field `MeshOpEntry` should probably also
+// carry — check that file when extending this one. Executable side of this
+// cross-reference: `tests/unit/mesh_planes_census_test.d`'s
+// `kFacePlaneToEntryField` unittest walks `kFacePlanes` against
+// `MeshOpEntry`'s field set by name and reddens when the two diverge.
 // ---------------------------------------------------------------------------
 
 /// The per-face planes carried by `rewriteFaces`.
@@ -408,6 +412,68 @@ void rewriteFaces(ref Mesh m, uint[][] newFaces, in FaceSource src,
                 ~ "over the new face array, or a plane silently truncates",
                   src.oldOfNew.length, newFaces.length));
 
+    // Task 1902 Stage H — the op-log seam (plan §7.1). Captured BEFORE the
+    // carry loop below overwrites `m`'s plane arrays: the drop set's whole
+    // point is "the planes of an old face no new face names", and once the
+    // `static foreach` below runs, those old values are gone. Gated on
+    // `wantsFaceReindexRecording()` — the tracker's own opt-in, default
+    // FALSE and unset by every production site (plan §7.1) — so a disarmed
+    // rewrite (every rewrite today) pays exactly one bool+null check here
+    // and allocates nothing.
+    const bool wantFaceReindexRecord = m.wantsFaceReindexRecording();
+    FaceIdx[] recDropIdx;
+    uint[][]  recDropLists;
+    uint[]    recDropMat, recDropPrt, recDropSub;
+    ulong[]   recDropSetMsk;
+    int[]     recDropOrd;
+    FaceIdx[] recSurvIdx;      // review finding B2
+    uint[][]  recSurvLists;    // review finding B2
+    uint      recOldFaceCount;
+    if (wantFaceReindexRecord) {
+        recOldFaceCount = cast(uint) m.faces.length;
+        // Which old index is named by at least one new face — the complement
+        // is the drop set, same "named by no new face" test §7.2 describes —
+        // and, for a survivor, the FIRST new index naming it: the same
+        // tie-break `applyFaceReindexReverse` uses ("all such copies are
+        // equal … within one entry", plan §7.2).
+        bool[] named = new bool[](recOldFaceCount);
+        uint[] firstNewOfOld = new uint[](recOldFaceCount);
+        firstNewOfOld[] = uint.max;
+        foreach (nf, of; src.oldOfNew) {
+            if (of == kNoSource || of >= recOldFaceCount) continue;
+            named[of] = true;
+            if (firstNewOfOld[of] == uint.max) firstNewOfOld[of] = cast(uint) nf;
+        }
+        foreach (fi; m.faceIndices) {
+            if (!named[fi]) {
+                recDropIdx    ~= fi;
+                recDropLists  ~= m.faces[fi].dup;
+                recDropMat    ~= (fi < m.faceMaterial.length) ? m.faceMaterial[fi] : 0;
+                recDropPrt    ~= (fi < m.facePart.length) ? m.facePart[fi] : 0;
+                recDropSub    ~= (m.isFaceSubpatch(fi) ? 1u : 0u);
+                recDropSetMsk ~= (fi < m.faceSetMask.length) ? m.faceSetMask[fi] : 0UL;
+                recDropOrd    ~= (fi < m.faceSelectionOrder.length) ? m.faceSelectionOrder[fi] : 0;
+                continue;
+            }
+            // Review finding B2: a survivor's winding at reverse time would
+            // otherwise be read off the CURRENT (post-reindex) mesh — the
+            // POST-rewrite winding, not always the PRE-rewrite one this
+            // survivor actually had (e.g. `Mesh.removeVertsByMask` drops a
+            // corner from a kept face's list while its old index still
+            // survives). `m.faces[fi]` is still the OLD winding here (the
+            // carry loop below has not run yet), so compare it against the
+            // NEW winding the caller is about to install at this face's
+            // first naming new index and capture the old one whenever they
+            // differ — the common case (unchanged winding) costs nothing
+            // beyond this one comparison.
+            const uint nf = firstNewOfOld[fi];
+            if (nf < newFaces.length && newFaces[nf] != m.faces[fi]) {
+                recSurvIdx   ~= fi;
+                recSurvLists ~= m.faces[fi].dup;
+            }
+        }
+    }
+
     // NOTE ON SHAPE: `__traits(getMember, m, n)` is used DIRECTLY (assigned
     // into `built` at the end) rather than bound once through
     // `alias plane = …;`. Measured (a 3-line repro, both directions):
@@ -446,6 +512,25 @@ void rewriteFaces(ref Mesh m, uint[][] newFaces, in FaceSource src,
             rw.carriedPerFace(newFaces, src.oldOfNew, blendOfNewVertex, gens));
 
     m.faces = newFaces;
+
+    // Task 1902 Stage H, continued: the entry needs the POST-rewrite
+    // windings too — `applyFaceReindexForward`'s replay literally re-calls
+    // this primitive (plan §7.2: "one implementation, so replay and live
+    // edit cannot drift"), and a duplicate/create face's winding is not
+    // derivable from `src.oldOfNew` alone (a spatial array/mirror copy uses
+    // NEW vertex indices, not its ancestor's — measured against
+    // `arrayFacesGrid`/`mirrorFacesPlane`, the two duplicate-producing sites
+    // §7.2 names). This is a correction to §7.2's field table, recorded in
+    // the task card's `## Лог`, not a silent addition.
+    if (wantFaceReindexRecord) {
+        uint[][] recNewLists;
+        recNewLists.reserve(newFaces.length);
+        foreach (l; newFaces) recNewLists ~= l.dup;
+        m.recordFaceReindexIfWanted(src.oldOfNew.dup, recOldFaceCount, recNewLists,
+                                    recDropIdx, recDropLists, recDropMat, recDropPrt,
+                                    recDropSub, recDropSetMsk, recDropOrd,
+                                    recSurvIdx, recSurvLists);
+    }
 }
 
 /// The vertex sibling of `rewriteFaces`: assign `newVerts` AND carry every

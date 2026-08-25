@@ -1897,6 +1897,7 @@ mixin template MeshExtrudeOps() {
                 uint[]   droppedFacePart;
                 uint[]   droppedFaceSub;
                 ulong[]  droppedFaceSetMask;   // task 1060 review SHOULD-FIX 4 — rides facePart's carry
+                int[]    droppedFaceOrd;       // task 1902 Stage H — rides facePart's carry too
                 size_t newIdx = 0;
                 foreach (fi; faceIndices) {
                     auto f = faces[fi];
@@ -1909,6 +1910,7 @@ mixin template MeshExtrudeOps() {
                             droppedFacePart  ~= faceAttrOr(facePart, fi);
                             droppedFaceSub   ~= (isFaceSubpatch(fi) ? 1u : 0u);
                             droppedFaceSetMask ~= faceAttrOr(faceSetMask, fi);
+                            droppedFaceOrd   ~= faceAttrOr(faceSelectionOrder, fi);
                         }
                         continue;
                     }
@@ -1919,7 +1921,7 @@ mixin template MeshExtrudeOps() {
                 if (recExtrude && droppedFaceIdx.length)
                     editRecorder_.recordRemoveFaces(droppedFaceIdx, droppedFaceLists,
                                                     droppedFaceMat, droppedFacePart, droppedFaceSub,
-                                                    droppedFaceSetMask);
+                                                    droppedFaceSetMask, droppedFaceOrd);
                 rewriteFaces(this, keptFaces, FaceSource.fromOldToNew(faceRemap, keptFaces.length));
                 // Select ends up cleared regardless (clearFaceSelection() runs
                 // later in this function), so dropping it here via keepMask

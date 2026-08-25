@@ -27,6 +27,10 @@ import mesh;            // Mesh, Marks, edgeKey (mutual import — see note belo
 import math : Vec3;
 import mesh_selsets : selSetRekeyEdges, selSetGatherVertexMaskForward,
     selSetGatherVertexMaskReverse, selSetDropFilterVertexMask;
+import mesh_planes : kNoSource, FaceSource, rewriteFaces;   // task 1902 Stage H —
+    // FaceReindex forward replay is the primitive itself (plan §7.2: "one
+    // implementation, so replay and live edit cannot drift"). No cycle:
+    // mesh_planes.d does not import mesh_edit_delta.d.
 
 // NOTE on the mesh <-> mesh_edit_delta mutual import: D handles mutual module
 // imports fine; there is no module-ctor cycle here (these are plain structs +
@@ -167,6 +171,31 @@ struct MeshOpEntry {
                         //   faceLists; faceMat; facePrt; faceSub
         ReshapeFaces,   // fIdx; faceListsBefore / faceListsAfter
         Reindex,        // perm = old->new vertex remap (~0u = dropped)
+        FaceReindex,    // task 1902 Stage H — the face analogue of Reindex,
+                        //   and mesh_planes.rewriteFaces's own op-log
+                        //   publisher (doc/reindex_primitive_plan.md §7).
+                        //   Forward: faceOldOfNew (newToOld correspondence,
+                        //   mesh_planes.kNoSource = no ancestor) + newFaceLists
+                        //   (the post-rewrite windings — NOT derivable from
+                        //   faceOldOfNew alone: a duplicate/create face's
+                        //   winding can use vertices its ancestor never had,
+                        //   e.g. an array/mirror copy — a correction to §7.2's
+                        //   field table, recorded in the task card) replay
+                        //   through rewriteFaces itself. Reverse: the drop
+                        //   set — fIdx (dropped OLD indices, ascending) /
+                        //   faceLists / faceMat / facePrt / faceSub /
+                        //   faceSetMsk / faceOrd, the SAME fields RemoveFaces
+                        //   carries — for the old faces named by NO new face;
+                        //   a SURVIVING old face (named by >=1 new face) is
+                        //   restored from the CURRENT (post-reindex, i.e.
+                        //   pre-reversal) mesh at its FIRST naming new index
+                        //   instead, since that data is still live at
+                        //   reverse-time and needs no separate capture.
+                        //   oldFaceCount is NOT derivable as max(faceOldOfNew)+1
+                        //   — the highest old index may itself be the one
+                        //   dropped. DISARMED by default: no production
+                        //   recorder sets MeshEditTracker.wantsFaceReindex, so
+                        //   this kind is produced only by its own unittest.
         SelectionDelta, // markIdx + markBefore / markAfter (Select bit, by element)
         SubpatchDelta,  // markIdx + markBefore / markAfter (Subpatch bit, by face)
         HideDelta,      // markIdx + markBefore / markAfter (Hide bit, by face — task 0613)
@@ -202,13 +231,46 @@ struct MeshOpEntry {
     FaceIdx[] fIdx;
     Vec3[]    pos, posBefore, posAfter;
     uint[][]  faceLists, faceListsBefore, faceListsAfter;
-    uint[]    faceMat;                 // RemoveFaces: per-face material
-    uint[]    facePrt;                 // RemoveFaces: per-face part id
-    uint[]    faceSub;                 // RemoveFaces: per-face subpatch bit (0/1)
-    ulong[]   faceSetMsk;              // RemoveFaces: per-face selection-set membership
-                                        //   (task 1060, review SHOULD-FIX 4 — carried the
-                                        //   same way facePrt is, not the earlier 0-insert)
+    uint[]    faceMat;                 // RemoveFaces / FaceReindex: per-face material
+    uint[]    facePrt;                 // RemoveFaces / FaceReindex: per-face part id
+    uint[]    faceSub;                 // RemoveFaces / FaceReindex: per-face subpatch bit (0/1)
+    ulong[]   faceSetMsk;              // RemoveFaces / FaceReindex: per-face selection-set
+                                        //   membership (task 1060, review SHOULD-FIX 4 —
+                                        //   carried the same way facePrt is, not the
+                                        //   earlier 0-insert)
+    int[]     faceOrd;                 // RemoveFaces / FaceReindex: per-face faceSelectionOrder
+                                        //   (task 1902 Stage H — RemoveFaces did not carry
+                                        //   this before; a pre-existing gap the new kind
+                                        //   must not inherit, plan §7.3)
     uint[]    perm;                    // Reindex: old->new remap
+
+    // --- FaceReindex-only payload (task 1902 Stage H) ----------------------
+    uint[]    faceOldOfNew;            // forward newToOld correspondence, one entry
+                                        //   per NEW face; mesh_planes.kNoSource = no
+                                        //   ancestor. fIdx/faceLists/faceMat/facePrt/
+                                        //   faceSub/faceSetMsk/faceOrd above hold the
+                                        //   DROP SET (old faces named by no new face).
+    uint      oldFaceCount;            // pre-rewrite face count — NOT derivable as
+                                        //   max(faceOldOfNew)+1, see the Kind doc above.
+    uint[][]  newFaceLists;            // the post-rewrite windings passed to
+                                        //   rewriteFaces at record time (see the Kind
+                                        //   doc above for why this is needed).
+    FaceIdx[] faceSurvivorIdx;         // review finding B2: ascending OLD indices of
+                                        //   SURVIVING faces (named by >=1 new face) whose
+                                        //   winding CHANGED across the rewrite — e.g.
+                                        //   Mesh.removeVertsByMask drops a corner from a
+                                        //   kept face's list while its old index still
+                                        //   survives. A survivor whose winding did NOT
+                                        //   change is cheaper to restore straight off the
+                                        //   live (post-reindex) mesh at reverse time (see
+                                        //   applyFaceReindexReverse), so this pair only
+                                        //   ever holds the subset that actually differs —
+                                        //   a WINDING payload, not a kFacePlanes plane
+                                        //   (same exemption faceLists/newFaceLists get,
+                                        //   tests/unit/mesh_planes_census_test.d).
+    uint[][]  faceSurvivorLists;       // their PRE-rewrite windings, parallel to
+                                        //   faceSurvivorIdx; captured by mesh_planes.
+                                        //   rewriteFaces BEFORE it overwrites m.faces.
 
     // Sparse marks/subpatch/material deltas. For SelectionDelta the element
     // index is into the array named by `selDomain`; before/after hold the
@@ -664,6 +726,47 @@ private bool renumbersCorners(in MeshOpEntry[] log) {
             case MeshOpEntry.Kind.AddFaces:
             case MeshOpEntry.Kind.RemoveFaces:
                 return true;
+            case MeshOpEntry.Kind.FaceReindex:
+                // Review finding S5, correcting this comment's earlier claim
+                // (measured, not inspected — both halves below were verified
+                // live by mutation, task 1902 Stage H review, 2026-08-25).
+                // This `case` is NOT what keeps a FaceReindex corner-safe:
+                // deleting this one line (letting FaceReindex fall through to
+                // `default: break;`, i.e. answer `false`) leaves the full
+                // `--config=tests` lane green. What IS load-bearing is the
+                // pair of unconditional
+                // `m.dropCornerProvenance(CornerDrop.DeltaReplayDeclined)`
+                // calls inside `applyFaceReindexForward`/`applyFaceReindexReverse`
+                // themselves — deleting BOTH of those reddens `mesh.d`'s own
+                // `debug assert(false, "corner provenance: a face rewrite
+                // reached buildLoops without declaring …")` at the tail of
+                // `resizePolyVertexMaps()` (task 0901's "closed census"
+                // assert: reaching that fallback loop AT ALL, once every
+                // kernel is meant to declare, is itself the failure it
+                // guards). Mechanism: each `dropCornerProvenance` call runs,
+                // per entry, well before `finalize()`'s tail ever asks THIS
+                // predicate anything, and sets `pendingCornerProvenance_` to
+                // a `Dropped` declaration. `finalize()` then calls
+                // `buildLoops()`, which consumes that declaration inside
+                // `resizePolyVertexMaps()` and returns from its FIRST branch
+                // (`decl.kind() == Dropped`) — before `finalize()` even
+                // reaches its own `if (!carried && cornersRenumbered)
+                // m.dropPolyVertexMaps();` line below, and before
+                // `resizePolyVertexMaps()`'s own length-insurance tail loop
+                // (where the assert above lives) is ever reached. Remove
+                // BOTH declarations and neither `decl.declared()` nor
+                // `wasArmed` is ever true (no site here opens
+                // `beginCornerRewrite()`), so control falls through every
+                // earlier branch into that tail loop — which is exactly the
+                // state task 0901 declared unreachable. Kept `true` here
+                // anyway, belt-and-braces, for a hypothetical future path
+                // that reaches `finalize()` with a FaceReindex entry but
+                // WITHOUT going through `applyFaceReindexForward`/`Reverse`'s
+                // own declaration — but 1903 must not mistake removing this
+                // `case` for removing the protection: the two
+                // `dropCornerProvenance` calls are the mechanism, this
+                // `return true;` is not.
+                return true;
             case MeshOpEntry.Kind.ReshapeFaces:
                 foreach (i, ref before; e.faceListsBefore) {
                     if (i >= e.faceListsAfter.length) return true;  // malformed ⇒ assume the worst
@@ -686,6 +789,15 @@ private bool renumbersCorners(in MeshOpEntry[] log) {
 struct MeshEditTracker {
     private MeshOpEntry[] log_;
     private MeshEditScope declared_ = MeshEditScope.None;
+
+    /// Does this recorder want `FaceReindex` entries? Default FALSE. 1903
+    /// turns it on per-op as it retires the redundant Add/Remove/Reshape
+    /// records that already describe the same change. Shipping it on would
+    /// double-revert: `mesh.d` (12 tracker calls) and `extrude.d` (9) already
+    /// record their face changes through those other kinds, and a second
+    /// entry describing the SAME change is not extra safety, it is a second,
+    /// conflicting revert applied to one edit (plan §7.1).
+    bool wantsFaceReindex = false;
 
     void declare(MeshEditScope s) { declared_ = s; }
 
@@ -782,7 +894,7 @@ struct MeshEditTracker {
     /// safe. A future caller that wants to KEEP its arrays must `.dup` at the
     /// call site — the cost then lands on the one caller that needs it.
     void recordRemoveFaces(FaceIdx[] idx, uint[][] lists, uint[] mat, uint[] prt, uint[] sub,
-                           ulong[] setm = null) {
+                           ulong[] setm = null, int[] ord = null) {
         if (idx.length == 0) return;
         MeshOpEntry e;
         e.kind       = MeshOpEntry.Kind.RemoveFaces;
@@ -792,6 +904,7 @@ struct MeshEditTracker {
         e.facePrt    = prt;
         e.faceSub    = sub;
         e.faceSetMsk = setm;
+        e.faceOrd    = ord;   // task 1902 Stage H — see MeshOpEntry.faceOrd's own doc
         log_ ~= e;
     }
 
@@ -811,6 +924,47 @@ struct MeshEditTracker {
         MeshOpEntry e;
         e.kind = MeshOpEntry.Kind.Reindex;
         e.perm = perm.dup;
+        log_ ~= e;
+    }
+
+    // Task 1902 Stage H — the face analogue, called from
+    // `mesh_planes.rewriteFaces` (through `Mesh.recordFaceReindexIfWanted`,
+    // the cross-module seam) right after the live carry runs. TAKES
+    // OWNERSHIP of every array passed in (same convention as
+    // `recordRemoveFaces`, task 0680) — the caller (`rewriteFaces`) builds
+    // them immediately before this call and never touches them again.
+    // Does NOT gate on `wantsFaceReindex` itself — the caller already did,
+    // via `Mesh.wantsFaceReindexRecording()` — so this method unconditionally
+    // appends; callers that skip the gate get an entry regardless, which is
+    // why `Mesh.recordFaceReindexIfWanted` re-checks the flag before calling.
+    void recordFaceReindex(uint[] oldOfNew, uint oldFaceCount, uint[][] newFaceLists,
+                           FaceIdx[] dropIdx, uint[][] dropLists, uint[] dropMat,
+                           uint[] dropPrt, uint[] dropSub, ulong[] dropSetMsk,
+                           int[] dropOrd, FaceIdx[] survIdx, uint[][] survLists) {
+        // Review finding B3: this used to read
+        // `if (oldOfNew.length == 0 && newFaceLists.length == 0) return;` —
+        // `oldOfNew.length` is `newFaces.length` at the call site, which is
+        // ALSO zero for the destructive "drop every face" rewrite (select-all
+        // + delete), not only for the genuine no-op "0 old faces in, 0 new
+        // faces out". That guard silently swallowed the whole drop set on
+        // exactly the case it most needed to record. `oldFaceCount == 0`
+        // names the real no-op: nothing existed before AND nothing exists
+        // after.
+        if (oldFaceCount == 0 && newFaceLists.length == 0) return;
+        MeshOpEntry e;
+        e.kind              = MeshOpEntry.Kind.FaceReindex;
+        e.faceOldOfNew      = oldOfNew;
+        e.oldFaceCount      = oldFaceCount;
+        e.newFaceLists      = newFaceLists;
+        e.fIdx              = dropIdx;
+        e.faceLists         = dropLists;
+        e.faceMat           = dropMat;
+        e.facePrt           = dropPrt;
+        e.faceSub           = dropSub;
+        e.faceSetMsk        = dropSetMsk;
+        e.faceOrd           = dropOrd;
+        e.faceSurvivorIdx   = survIdx;      // review finding B2
+        e.faceSurvivorLists = survLists;    // review finding B2
         log_ ~= e;
     }
 
@@ -941,6 +1095,9 @@ private void applyForward(ref Mesh m, ref const MeshOpEntry e) {
         case MeshOpEntry.Kind.Reindex:
             applyReindexForward(m, e.perm);
             break;
+        case MeshOpEntry.Kind.FaceReindex:
+            applyFaceReindexForward(m, e);
+            break;
         case MeshOpEntry.Kind.SelectionDelta:
             patchSelection(m, e.selDomain, e.markIdx, e.markAfter);
             break;
@@ -984,7 +1141,7 @@ private void applyReverse(ref Mesh m, ref const MeshOpEntry e) {
                 m.faces.length = f0;
             break;
         case MeshOpEntry.Kind.RemoveFaces:
-            removeFacesReverse(m, e.fIdx, e.faceLists, e.faceMat, e.facePrt, e.faceSub, e.faceSetMsk);
+            removeFacesReverse(m, e.fIdx, e.faceLists, e.faceMat, e.facePrt, e.faceSub, e.faceSetMsk, e.faceOrd);
             break;
         case MeshOpEntry.Kind.ReshapeFaces:
             // NEGATIVE CONTROL (test only): stub ReshapeFaces^-1 to a no-op
@@ -997,6 +1154,9 @@ private void applyReverse(ref Mesh m, ref const MeshOpEntry e) {
             break;
         case MeshOpEntry.Kind.Reindex:
             applyReindexReverse(m, e.perm);
+            break;
+        case MeshOpEntry.Kind.FaceReindex:
+            applyFaceReindexReverse(m, e);
             break;
         case MeshOpEntry.Kind.SelectionDelta:
             patchSelection(m, e.selDomain, e.markIdx, e.markBefore);
@@ -1197,6 +1357,182 @@ private void applyReindexReverse(ref Mesh m, in uint[] perm) {
             // It must reference a kept vert, so inv[vid] is defined.
             if (vid < inv.length) vid = inv[vid];
         }
+}
+
+// ---------------------------------------------------------------------------
+// FaceReindex forward/reverse (task 1902 Stage H, plan §7.2). Unlike
+// Reindex (vertex-only, a pure permutation with no content change),
+// FaceReindex's forward direction is the LIVE primitive itself — see
+// applyFaceReindexForward's own comment for why a face's winding cannot be
+// re-derived from the correspondence alone.
+// ---------------------------------------------------------------------------
+
+// Forward: redo. `rewriteFaces` IS the recorded operation (plan §7.2's "one
+// implementation, so replay and live edit cannot drift") — this just hands
+// it back the same `newFaceLists`/`faceOldOfNew` the live edit built. Safe to
+// call unconditionally even on a mesh with an OPEN, armed batch: replay only
+// ever runs after `Mesh.endEditBatch()` has detached the recorder (this
+// entry's own log has already been finished by then), so `rewriteFaces`'s own
+// internal `wantsFaceReindexRecording()` check reads `editRecorder_ is null`
+// and records nothing — no double-append.
+private void applyFaceReindexForward(ref Mesh m, ref const MeshOpEntry e) {
+    // Review finding B3: `e.faceOldOfNew.length == 0` used to read as
+    // "nothing to redo" and return early — but it is ALSO the shape of a
+    // redo whose rewrite drops every face (`newFaces.length == 0`, e.g.
+    // select-all + delete). That early return refused to redo exactly the
+    // entry `recordFaceReindex`'s own B3 fix now records. `rewriteFaces`
+    // already handles `newFaces.length == 0` correctly on its own (every
+    // generated plane carries zero elements, `m.faces` becomes empty), so no
+    // guard is needed here at all — the guard belongs solely at the record
+    // site, and the two must agree on what "no-op" means (`oldFaceCount ==
+    // 0`, not `faceOldOfNew.length == 0`).
+    uint[][] nf;
+    nf.reserve(e.newFaceLists.length);
+    foreach (l; e.newFaceLists) nf ~= l.dup;
+    rewriteFaces(m, nf, FaceSource(e.faceOldOfNew));
+    // `rewriteFaces` is called with `rw = null` — same as 15 of the 19 live
+    // sites (plan §2.6) — so it declares nothing about the PolyVertex corner
+    // map itself. Those 15 sites each pair `rw = null` with their OWN bare
+    // `dropCornerProvenance(CornerDrop.…)` call; this is FaceReindex's:
+    // `CornerDrop.DeltaReplayDeclined` exists for exactly this ("the replay
+    // normally carries the plane itself … and reaches this only when the
+    // carry DECLINES" — mesh_corner_maps.d's own doc comment on that value).
+    // `CornerCarry` (above) has no `Kind.FaceReindex` case yet (1903 owns
+    // generalising it, plan §7.5), so the carry always declines for this
+    // kind — an EXPLICIT drop here is what keeps `buildLoops()` from either
+    // asserting (a length mismatch it cannot explain) or, worse, silently
+    // leaving a length-correct-by-COINCIDENCE map sitting on the wrong
+    // faces' corners.
+    m.dropCornerProvenance(CornerDrop.DeltaReplayDeclined);
+}
+
+// Reverse: undo. Rebuilds the pre-reindex `faces` (and its five carried
+// planes) at exactly `oldFaceCount` slots:
+//   * an old index NAMED by >=1 new index restores from the CURRENT mesh
+//     (still in its post-reindex state at this point in the LIFO replay) at
+//     its FIRST naming new index — that data is live, not archived, because
+//     the forward carry put it there verbatim via the same correspondence;
+//   * an old index named by NO new index (the drop set) restores from
+//     fIdx/faceLists/faceMat/facePrt/faceSub/faceSetMsk/faceOrd, captured
+//     before the forward rewrite ran (same fields RemoveFaces carries).
+// A `kNoSource` new face names no old index at all, so it contributes to
+// neither bucket and simply vanishes — correct, per plan §7.2: "they had no
+// prior existence".
+private void applyFaceReindexReverse(ref Mesh m, ref const MeshOpEntry e) {
+    // Review finding S4: this function used to open with
+    // `if (e.oldFaceCount == 0) return;` — read as "nothing to undo", but it
+    // is ALSO the shape of undoing a rewrite FROM an empty mesh (a
+    // create-only op: `oldFaceCount == 0`, `faceOldOfNew` all `kNoSource`).
+    // The correct reverse of THAT is to truncate every plane back to length
+    // 0, which is exactly what the code below does on its own when
+    // `e.oldFaceCount == 0` (every `rest*` array below is sized `0`) — no
+    // special case needed, just no early exit to skip it.
+    enum uint kNoneYet = uint.max;
+    uint[] firstNew;
+    firstNew.length = e.oldFaceCount;
+    firstNew[] = kNoneYet;
+    foreach (nf, of; e.faceOldOfNew) {
+        if (of == kNoSource || of >= e.oldFaceCount) continue;
+        if (firstNew[of] == kNoneYet) firstNew[of] = cast(uint) nf;
+    }
+
+    // Review finding B2: a survivor's winding, read off the CURRENT
+    // (post-reindex) mesh at `nf`, is the POST-rewrite winding — not always
+    // the PRE-rewrite one this entry must restore (e.g.
+    // `Mesh.removeVertsByMask` drops a corner from a kept face's list while
+    // its old index still survives). `mesh_planes.rewriteFaces` captures the
+    // pre-rewrite winding for exactly the survivors where it differs
+    // (`faceSurvivorIdx`/`faceSurvivorLists` — see their own doc comment in
+    // `MeshOpEntry`); build an old-index -> capture-slot lookup once so the
+    // restore loop below can prefer a captured winding over the live mesh.
+    uint[] survivorSlot;
+    survivorSlot.length = e.oldFaceCount;
+    survivorSlot[] = kNoneYet;
+    foreach (i, of; e.faceSurvivorIdx)
+        if (of < e.oldFaceCount) survivorSlot[of] = cast(uint) i;
+
+    uint[][] restFaces;  restFaces.length  = e.oldFaceCount;
+    uint[]   restMarks;  restMarks.length  = e.oldFaceCount;
+    uint[]   restMat;    restMat.length    = e.oldFaceCount;
+    uint[]   restPrt;    restPrt.length    = e.oldFaceCount;
+    int[]    restOrd;    restOrd.length    = e.oldFaceCount;
+    ulong[]  restSetMsk; restSetMsk.length = e.oldFaceCount;
+
+    foreach (of; 0 .. e.oldFaceCount) {
+        const uint nf = firstNew[of];
+        if (nf == kNoneYet) continue;   // filled from the drop set below
+        // Bounds-guard the survivor-list read too, house style with the
+        // fields around it: `faceSurvivorIdx`/`faceSurvivorLists` are meant
+        // to stay parallel, but nothing in the type enforces it, and
+        // `survivorSlot[of]` is built from `faceSurvivorIdx`'s own indices —
+        // a malformed/hand-built entry with a shorter `faceSurvivorLists`
+        // would otherwise index it out of bounds instead of falling back.
+        restFaces[of]  = (survivorSlot[of] != kNoneYet
+                          && survivorSlot[of] < e.faceSurvivorLists.length)
+                        ? e.faceSurvivorLists[survivorSlot[of]].dup
+                        : ((nf < m.faces.length) ? m.faces[nf].dup : null);
+        restMarks[of]  = (nf < m.faceMarks.length) ? m.faceMarks[nf] : 0;
+        restMat[of]    = (nf < m.faceMaterial.length) ? m.faceMaterial[nf] : 0;
+        restPrt[of]    = (nf < m.facePart.length) ? m.facePart[nf] : 0;
+        restOrd[of]    = (nf < m.faceSelectionOrder.length) ? m.faceSelectionOrder[nf] : 0;
+        restSetMsk[of] = (nf < m.faceSetMask.length) ? m.faceSetMask[nf] : 0UL;
+    }
+    // Overlay the drop set. Same documented limit RemoveFaces's own reverse
+    // has always had: the dropped face's whole `faceMarks` word (Select /
+    // Hide) is NOT captured by this entry, only its Subpatch bit (`faceSub`,
+    // restored by name below, after `m.faceMarks` exists at its new length) —
+    // see removeFacesReverse's own comment for why.
+    foreach (i, fi; e.fIdx) {
+        if (fi >= e.oldFaceCount) continue;
+        restFaces[fi]  = (i < e.faceLists.length) ? e.faceLists[i].dup : null;
+        restMat[fi]    = (i < e.faceMat.length) ? e.faceMat[i] : 0;
+        restPrt[fi]    = (i < e.facePrt.length) ? e.facePrt[i] : 0;
+        restOrd[fi]    = (i < e.faceOrd.length) ? e.faceOrd[i] : 0;
+        restSetMsk[fi] = (i < e.faceSetMsk.length) ? e.faceSetMsk[i] : 0UL;
+    }
+
+    // Review finding S6 (nit): a malformed entry must not send a
+    // zero-length face into `buildLoops` — every old index in
+    // `[0, oldFaceCount)` must be named either by `faceOldOfNew` (a
+    // surviving/duplicated new face, `firstNew[of] != kNoneYet`) or by the
+    // drop set (`fIdx`, overlaid just above). Cheap: reuses the two passes
+    // above, one extra `bool[]`. `debug { }`, not a plain block: this is a
+    // coverage ASSERTION, not a repair — under `-release` it must do no
+    // work at all, matching the identical `debug { assert(...) }` shape at
+    // `Mesh.dropCornerProvenance`'s own corner-space check (mesh.d).
+    debug {
+        bool[] covered;
+        covered.length = e.oldFaceCount;
+        foreach (of; 0 .. e.oldFaceCount) if (firstNew[of] != kNoneYet) covered[of] = true;
+        foreach (fi; e.fIdx) if (fi < e.oldFaceCount) covered[fi] = true;
+        foreach (of; 0 .. e.oldFaceCount)
+            assert(covered[of],
+                   "applyFaceReindexReverse: malformed entry — an old face "
+                 ~ "index is named by neither faceOldOfNew nor the drop set "
+                 ~ "(fIdx); reverse cannot rebuild it and would leave a "
+                 ~ "zero-length face for buildLoops");
+    }
+
+    m.faces              = restFaces;
+    m.faceMarks          = restMarks;
+    m.faceMaterial       = restMat;
+    m.facePart           = restPrt;
+    m.faceSelectionOrder = restOrd;
+    m.faceSetMask        = restSetMsk;
+
+    if (e.faceSub.length == e.fIdx.length)
+        foreach (i, fi; e.fIdx)
+            if (fi < m.faces.length)
+                m.setFaceSubpatch(fi, e.faceSub[i] != 0);
+
+    // Same declared-drop obligation as applyFaceReindexForward's own comment
+    // — this function assigns `m.faces` directly (no `rewriteFaces` call, so
+    // no `rw` parameter to have passed null in the first place), but the
+    // PolyVertex corner map is exactly as undeclared-for here, and
+    // `buildLoops()` (later, in `finalize()`) enforces the same precondition
+    // regardless of which code path rewrote `faces`. Runs unconditionally,
+    // including when `oldFaceCount == 0` (S4 above).
+    m.dropCornerProvenance(CornerDrop.DeltaReplayDeclined);
 }
 
 // ---------------------------------------------------------------------------
@@ -1439,12 +1775,17 @@ private void removeFacesForward(ref Mesh m, in FaceIdx[] idx) {
 
 private void removeFacesReverse(ref Mesh m, in FaceIdx[] idx, in uint[][] lists,
                                 in uint[] mat, in uint[] prt, in uint[] sub,
-                                in ulong[] setm = null) {
+                                in ulong[] setm = null, in int[] ord = null) {
     // NEGATIVE CONTROL (test only): stub RemoveFaces^-1 to a no-op under
     // -version=UndoNegControlRemoveFaces so the delete/remove round-trip proves
     // the face re-insertion inverse is load-bearing (without it the deleted
     // faces never come back on undo → face count diverges from the pre-op mesh).
     version (UndoNegControlRemoveFaces) return;
+    // Task 1902 Stage H (plan §7.3): `faceSelectionOrder` is now carried the
+    // same way `facePrt`/`faceSetMsk` are — an entry recorded before this
+    // task (or a hand-built test fixture with no `ord`) falls back to the
+    // pre-existing "insert 0" behaviour, unchanged.
+    const bool haveOrd = ord.length == idx.length;
     // Insert ascending so later indices stay valid.
     foreach (i, fi; idx) {
         if (fi <= m.faces.length)
@@ -1466,14 +1807,12 @@ private void removeFacesReverse(ref Mesh m, in FaceIdx[] idx, in uint[][] lists,
         // faceSelectionOrder shifts in LOCKSTEP too (task 0922 — the reverse
         // twin of the forward drop-filter fixed above). SelectionDelta only
         // ever patches the Select BIT (see patchSelection below); it does not
-        // touch the pick-order stamp, so without this insert the order array
-        // would be left to finalize()'s tail length-grow — an append at the
-        // TAIL, not at `fi` — misaligning every surviving face's stamp after
-        // the re-inserted one, same as `faceMarks` would without its own
-        // insert just above. Insert 0 (not manually selected): a re-inserted
-        // face's own pick-order rank is not carried by this entry, same
-        // documented limit as its Select bit.
-        if (fi <= m.faceSelectionOrder.length) m.faceSelectionOrder.insertInPlace(fi, 0);
+        // touch the pick-order stamp. Task 1902 Stage H: when `ord` is
+        // carried, insert the DROPPED face's own recorded stamp instead of
+        // the earlier unconditional 0 — the same carried/not-carried split
+        // `facePrt`/`faceSetMsk` already use below.
+        if (fi <= m.faceSelectionOrder.length)
+            m.faceSelectionOrder.insertInPlace(fi, haveOrd ? ord[i] : 0);
     }
     // Restore parallel per-face arrays (material / part / subpatch) where
     // carried. The face SELECT bit is restored by the SelectionDelta /

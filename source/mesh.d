@@ -1812,6 +1812,37 @@ struct Mesh {
     // True while a batch is open (test/introspection helper).
     bool isRecordingEdits() const { return editRecorder_ !is null; }
 
+    // --- Task 1902 Stage H: the FaceReindex op-log seam --------------------
+    // `mesh_planes.rewriteFaces` needs to query and call the recorder, but
+    // `editRecorder_` is module-private to THIS module and `mesh_planes.d`
+    // is a separate one — these two public methods are the seam, mirroring
+    // `isRecordingEdits()`'s existing shape. Kept out of `mesh_edit_delta.d`
+    // deliberately: `MeshEditTracker.wantsFaceReindex` is the tracker's OWN
+    // opt-in field (plan §7.1), these are just the `Mesh`-side reachability.
+
+    /// Does the currently-open batch (if any) want `FaceReindex` entries?
+    /// Default answer is `false` whenever no batch is open OR the open
+    /// batch's recorder has not opted in (plan §7.1 — no production site
+    /// does, in this task).
+    bool wantsFaceReindexRecording() const {
+        return editRecorder_ !is null && editRecorder_.wantsFaceReindex;
+    }
+
+    /// Record a `FaceReindex` entry if (and only if) the open batch wants
+    /// one — re-checked here defensively; the only caller today
+    /// (`mesh_planes.rewriteFaces`) already gates its own capture on
+    /// `wantsFaceReindexRecording()`, so this second check costs one branch
+    /// on an already-decided-armed path, never a surprise no-op.
+    void recordFaceReindexIfWanted(uint[] oldOfNew, uint oldFaceCount, uint[][] newFaceLists,
+                                   FaceIdx[] dropIdx, uint[][] dropLists, uint[] dropMat,
+                                   uint[] dropPrt, uint[] dropSub, ulong[] dropSetMsk,
+                                   int[] dropOrd, FaceIdx[] survIdx, uint[][] survLists) {
+        if (editRecorder_ is null || !editRecorder_.wantsFaceReindex) return;
+        editRecorder_.recordFaceReindex(oldOfNew, oldFaceCount, newFaceLists,
+                                        dropIdx, dropLists, dropMat, dropPrt, dropSub,
+                                        dropSetMsk, dropOrd, survIdx, survLists);
+    }
+
     // Resize selection arrays to match geometry and clear them.
     // Call after any wholesale geometry replacement — `catmullClarkOsd`,
     // an importer building a fresh Mesh, `reset`.
@@ -3515,6 +3546,7 @@ struct Mesh {
         uint[]   droppedFacePart;
         uint[]   droppedFaceSub;
         ulong[]  droppedFaceSetMask;   // task 1060 review SHOULD-FIX 4 — rides facePart's carry
+        int[]    droppedFaceOrd;       // task 1902 Stage H — rides facePart's carry too
         const bool recDelete = editRecorder_ !is null;
         // Task 0680 — the delta for a bulk face removal used to cost TWO GC
         // allocations per removed face: `f.dup` here, then a second copy of
@@ -3541,6 +3573,7 @@ struct Mesh {
             droppedFacePart.reserve(willDrop);
             droppedFaceSub.reserve(willDrop);
             droppedFaceSetMask.reserve(willDrop);
+            droppedFaceOrd.reserve(willDrop);
             droppedFlat.length = corners;
         }
         // PolyVertex remap, mechanism (a): surviving faces keep their corner
@@ -3569,6 +3602,7 @@ struct Mesh {
                     droppedFacePart  ~= faceAttrOr(facePart, i);
                     droppedFaceSub   ~= (isFaceSubpatch(i) ? 1u : 0u);
                     droppedFaceSetMask ~= faceAttrOr(faceSetMask, i);
+                    droppedFaceOrd   ~= faceAttrOr(faceSelectionOrder, i);
                 }
                 continue;
             }
@@ -3601,7 +3635,7 @@ struct Mesh {
             recordPolyVertexPayload(droppedFaceIdx);
             editRecorder_.recordRemoveFaces(droppedFaceIdx, droppedFaceLists,
                                             droppedFaceMat, droppedFacePart, droppedFaceSub,
-                                            droppedFaceSetMask);
+                                            droppedFaceSetMask, droppedFaceOrd);
         }
         // task 1902: mesh_planes.rewriteFaces assigns `faces` AND carries
         // every kFacePlanes entry (faceMarks/faceMaterial/facePart/
@@ -3787,6 +3821,7 @@ struct Mesh {
         uint[]   removedFacePart;
         uint[]   removedFaceSub;
         ulong[]  removedFaceSetMask;   // task 1060 review SHOULD-FIX 4 — rides facePart's carry
+        int[]    removedFaceOrd;       // task 1902 Stage H — rides facePart's carry too
         // PolyVertex remap, mechanism (b): a masked corner is dropped from its
         // face's corner LIST, so new corner `j` of a surviving face came from a
         // specific OLD corner `k` (its position in the old face). Build
@@ -3830,6 +3865,7 @@ struct Mesh {
                 removedFacePart  ~= faceAttrOr(facePart, fi);
                 removedFaceSub   ~= (isFaceSubpatch(fi) ? 1u : 0u);
                 removedFaceSetMask ~= faceAttrOr(faceSetMask, fi);
+                removedFaceOrd   ~= faceAttrOr(faceSelectionOrder, fi);
             }
         }
         if (recDis) {
@@ -3848,7 +3884,7 @@ struct Mesh {
             recordPolyVertexPayload(removedFaceIdx);
             editRecorder_.recordRemoveFaces(removedFaceIdx, removedFaceLists,
                                             removedFaceMat, removedFacePart, removedFaceSub,
-                                            removedFaceSetMask);
+                                            removedFaceSetMask, removedFaceOrd);
         }
         rewriteFaces(this, newFaces, FaceSource(oldOfNew));
         setFaceMarksFrom(faceMarks, ~Marks.Select);
@@ -4797,6 +4833,7 @@ struct Mesh {
         uint[]   droppedFacePart;
         uint[]   droppedFaceSub;
         ulong[]  droppedFaceSetMask;   // task 1060 review SHOULD-FIX 4 — rides facePart's carry
+        int[]    droppedFaceOrd;       // task 1902 Stage H — rides facePart's carry too
         uint[][] keptFaces;
         uint[]   oldOfNew;   // newToOld correspondence, final [kept ++ merged]
                               // order — task 1902, mesh_planes.rewriteFaces
@@ -4834,6 +4871,7 @@ struct Mesh {
                     droppedFacePart  ~= faceAttrOr(facePart, fi);
                     droppedFaceSub   ~= (isFaceSubpatch(cast(uint)fi) ? 1u : 0u);
                     droppedFaceSetMask ~= faceAttrOr(faceSetMask, fi);
+                    droppedFaceOrd   ~= faceAttrOr(faceSelectionOrder, fi);
                 }
                 continue;
             }
@@ -4870,7 +4908,7 @@ struct Mesh {
             recordPolyVertexPayload(droppedFaceIdx);
             editRecorder_.recordRemoveFaces(droppedFaceIdx, droppedFaceLists,
                                             droppedFaceMat, droppedFacePart, droppedFaceSub,
-                                            droppedFaceSetMask);
+                                            droppedFaceSetMask, droppedFaceOrd);
             uint[][] mergedLists;
             mergedLists.length = newPolyList.length;
             foreach (i; 0 .. newPolyList.length) mergedLists[i] = newPolyList[i].dup;
