@@ -715,6 +715,7 @@ public:
         moveRec.pinKnown          = false;
         // In-session falloff re-grade state — no live gesture, no anchor.
         lastAppliedGestureMutationVersion = ulong.max;
+        armedUndoEpoch                    = ulong.max;   // task 1906 census
         refireAnchor.length               = 0;
         refirePreValid                    = false;
         // (task 0202) Idle tool should not pin the fold-source scratch buffer
@@ -756,6 +757,7 @@ public:
         // Tool drop: no live gesture, no re-grade anchor carries to the next
         // activation (resetTransientState also clears these on (re)activate).
         lastAppliedGestureMutationVersion = ulong.max;
+        armedUndoEpoch                    = ulong.max;   // task 1906 census
         refireAnchor.length               = 0;
         refirePreValid                    = false;
         // (task 0202) Release the fold-source scratch buffer on tool drop too,
@@ -964,7 +966,7 @@ public:
             } else if (history !is null
                     && history.runOpen()
                     && currentRunBank == DragBank.Move           // OBJ-2 single-winner
-                    && mesh.mutationVersion == lastAppliedGestureMutationVersion) {
+                    && regradeStampCurrent()) {
                 // ARM 2 — committed gizmo gesture: re-grade + record.
                 // Staleness gate (OBJ-1) checked at the SITE before the recompute
                 // mutates the mesh; the helper re-checks as defense-in-depth.
@@ -2125,6 +2127,7 @@ public:
     // the just-closed run.
     private void invalidateRunRefireAnchor() {
         lastAppliedGestureMutationVersion = ulong.max;
+        armedUndoEpoch                    = ulong.max;   // task 1906 census
         refireAnchor.length               = 0;
         refirePreValid                    = false;
     }
@@ -4104,14 +4107,14 @@ public:
         return history !is null
             && history.runOpen()
             && currentRunBank == DragBank.Rotate
-            && mesh.mutationVersion == lastAppliedGestureMutationVersion;
+            && regradeStampCurrent();
     }
 
     public bool refireScaleEligible() const {
         return history !is null
             && history.runOpen()
             && currentRunBank == DragBank.Scale
-            && mesh.mutationVersion == lastAppliedGestureMutationVersion;
+            && regradeStampCurrent();
     }
 
     // Record forwarders: the sub-tool dup'd the pre-recompute (post-gesture)
@@ -5249,6 +5252,28 @@ private:
     //   selection/mutation guard).
     ulong lastAppliedGestureMutationVersion = ulong.max;
 
+    // armedUndoEpoch — TASK 1906 §2.3, THE CENSUS'S SECOND TERM. Not a guard:
+    // nothing branches on it, and the shipped staleness decision is still the
+    // `mutationVersion` compare above, byte for byte.
+    //
+    // Task 1906 moves every POSITION-dependent cache off the version counters
+    // and onto the change bus. This stamp is the recorded remainder — it is a
+    // GESTURE-IDENTITY guard ("has a foreign edit landed since my gesture
+    // committed?"), not a cache freshness key, and the bus has no class for
+    // "someone other than me edited". The guard's own doc block names the
+    // event it is detecting: an in-session Ctrl+Z that pops a gesture. That
+    // event has a name of its own — `CommandHistory.undoEpoch()`, bumped
+    // exactly once per successful `undo()` and by nothing else — and this
+    // field is that name, stamped at the same instant.
+    //
+    // The equivalence is MEASURED before it is relied on: see
+    // `regradeStampCurrent()` and `change_bus.regradeCensusChecks` /
+    // `regradeCensusDisagreements`, read over `/api/changes`. Armed and
+    // disarmed ONLY beside `lastAppliedGestureMutationVersion`, at all five of
+    // its write sites; a term armed at a different moment would make the
+    // census measure its own bookkeeping instead of the claim.
+    ulong armedUndoEpoch = ulong.max;
+
     // Arm (or, for a BRUSH-RESET tool, DISARM) the in-session falloff re-grade
     // staleness stamp at a gesture's mouse-up commit. Called from all three bank
     // commit sites in place of a bare `= mesh.mutationVersion`.
@@ -5262,8 +5287,65 @@ private:
     // tweak is inert for a brush tool. Plain move / rotate / scale (no
     // brushReset) arm normally and keep the in-session re-grade unchanged.
     private void armRegradeStamp() {
-        lastAppliedGestureMutationVersion =
-            hasFlag(ToolFlag.BrushReset) ? ulong.max : mesh.mutationVersion;
+        const bool disarm = hasFlag(ToolFlag.BrushReset);
+        lastAppliedGestureMutationVersion = disarm ? ulong.max : mesh.mutationVersion;
+        // Task 1906 §2.3 — the census's OTHER term, armed in the SAME
+        // statement pair so the two can never be armed at different moments.
+        // `ulong.max` is the disarmed sentinel on BOTH: `undoEpoch()` counts
+        // from 0 and cannot reach it, exactly as `mutationVersion` cannot, so
+        // a disarmed stamp reads false on both terms and the two AGREE while
+        // disarmed rather than disagreeing vacuously.
+        armedUndoEpoch = (disarm || history is null)
+                       ? ulong.max : history.undoEpoch();
+    }
+
+    // regradeStampCurrent — THE re-grade staleness predicate, and the ONLY
+    // place the four read sites evaluate it (task 1906 §2.3).
+    //
+    // The RETURNED VALUE is exactly the shipped term,
+    // `mesh.mutationVersion == lastAppliedGestureMutationVersion`, unchanged:
+    // this refactor moves no decision. What it adds is the CENSUS — the
+    // measurement of whether that term could be replaced by the undo-epoch
+    // term the guard's own doc block describes. See `armedUndoEpoch` for the
+    // claim and `change_bus.regradeCensusChecks` for why the verdict is a
+    // counter and never an `assert`.
+    //
+    // The census is skipped when `history is null` — three of the four sites
+    // short-circuit on that before ever reaching the version term, so counting
+    // there would census a comparison the product does not make. It is `const`
+    // because two of the four sites are (`refireRotateEligible` /
+    // `refireScaleEligible`); the counters are module-level `__gshared`, not
+    // fields, so incrementing them from a `const` method is well-formed.
+    //
+    // THE ARMED ROW IS THE ONLY ROW THAT CAN DISAGREE (review B1). While the
+    // stamp is DISARMED both terms hold the same `ulong.max` sentinel, both
+    // compares answer false, and the row is scored as an agreement it could
+    // not have avoided. `regradeCensusArmedChecks` counts only the rows where
+    // the stamp is armed, and that — not `regradeCensusChecks` — is the
+    // denominator the test's floor reads. Keyed on the SHIPPED term's arm
+    // state (`lastAppliedGestureMutationVersion != ulong.max`), so deleting
+    // `armedUndoEpoch`'s arm reddens the verdict instead of emptying the
+    // denominator.
+    //
+    // MEASURED: on this tree the two counts are EQUAL — 117 of 117, 120 of
+    // 120 (the absolute count is an idle-frame count and varies; the ratio is
+    // 1). The only live read site is ARM-2, which short-circuits on
+    // `history.runOpen()`, and an open run implies a gesture that armed the
+    // stamp. The armed counter is a guarantee, not a filter. See
+    // `change_bus.regradeCensusArmedChecks`.
+    private bool regradeStampCurrent() const {
+        const bool armed = (lastAppliedGestureMutationVersion != ulong.max);
+        const bool byVersion =
+            (mesh.mutationVersion == lastAppliedGestureMutationVersion);
+        if (history !is null) {
+            import change_bus : regradeCensusChecks, regradeCensusArmedChecks,
+                                regradeCensusDisagreements;
+            const bool byEpoch = (history.undoEpoch() == armedUndoEpoch);
+            ++regradeCensusChecks;
+            if (armed) ++regradeCensusArmedChecks;
+            if (byVersion != byEpoch) ++regradeCensusDisagreements;
+        }
+        return byVersion;
     }
 
     // refireAnchor — once-per-RE-FIRE-WINDOW POST-GESTURE full-mesh snapshot.
@@ -5389,7 +5471,7 @@ private:
         // re-thread the signature.
         // Step 0 — staleness gate (defense-in-depth; the site already gated, but
         // the helper must refuse too). On a miss the run's anchor is invalid.
-        if (mesh.mutationVersion != lastAppliedGestureMutationVersion) {
+        if (!regradeStampCurrent()) {
             refireAnchor.length = 0;
             refirePreValid      = false;
             return;
@@ -5568,6 +5650,12 @@ private:
         // calls apply()). Kept future-proof should the apply path ever bump.
         lastMutationVersion               = mesh.mutationVersion;
         lastAppliedGestureMutationVersion = mesh.mutationVersion;
+        // Task 1906 §2.3 — the census's second term re-stamped in lockstep.
+        // `history` is non-null here (Step 1 returned otherwise), so this is
+        // the same instant on both terms. Without it the next read would see
+        // a re-stamped version against a stale epoch and the census would
+        // report a disagreement of its own making.
+        armedUndoEpoch                    = history.undoEpoch();
     }
 
     // Phase 3 — wrapper-owned drag state.

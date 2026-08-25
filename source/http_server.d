@@ -2466,7 +2466,9 @@ class HttpServer {
             response.statusCode = 403;
             response.body = `{"error":"changes is only available in --test mode"}`;
         } else {
-            import change_bus : changeBus;
+            import change_bus : changeBus, regradeCensusChecks,
+                                regradeCensusArmedChecks,
+                                regradeCensusDisagreements;
             import seltype    : selTypeToken;
             import std.format : format;
             const snap = changeBus;
@@ -2488,6 +2490,9 @@ class HttpServer {
                 `"batchLeaks":%d,` ~
                 `"deliveryCount":%d,` ~
                 `"lastDeliveryFlags":%d,"lastDeliverySelDomains":%d,` ~
+                `"regradeCensusChecks":%d,` ~
+                `"regradeCensusArmedChecks":%d,` ~
+                `"regradeCensusDisagreements":%d,` ~
                 `"currentTypeChanged":%d,"lastCurrentType":"%s"}`,
                 snap.flushCount, snap.lastFlushFlags,
                 snap.lastSelDomains, snap.lastLayerKinds,
@@ -2526,6 +2531,24 @@ class HttpServer {
                 // to key.
                 snap.deliveryCount,
                 snap.lastDeliveryFlags, snap.lastDeliverySelDomains,
+                // Task 1906 stage 1 — the re-grade DECOUPLING CENSUS (§2.3).
+                // Module-level `__gshared` in `change_bus`, NOT fields of the
+                // bus, so they are deliberately read LIVE here rather than
+                // from `snap`: nothing asserts they agree with any field in
+                // the snapshot, and a census counter that lagged a whole
+                // response would be reporting the wrong step's verdict.
+                // `regradeCensusDisagreements` is the finding — a non-zero
+                // means the guard's `mutationVersion` term is NOT equivalent
+                // to `CommandHistory.undoEpoch()` and open question #21 keeps
+                // its recorded remainder; `regradeCensusArmedChecks` beside it
+                // is what says the census ran WHERE IT COULD HAVE DISAGREED (a
+                // zero there makes the other zero meaningless, and the plain
+                // `regradeCensusChecks` does NOT say it — most rows are
+                // disarmed ones, both terms at the `ulong.max` sentinel,
+                // scored as agreements they could not have avoided).
+                regradeCensusChecks,
+                regradeCensusArmedChecks,
+                regradeCensusDisagreements,
                 snap.currentTypeChanged,
                 selTypeToken(snap.lastCurrentType));
         }

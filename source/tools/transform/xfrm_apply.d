@@ -292,6 +292,23 @@ mixin template XfrmApplyImpl() {
             }
         }
 
+        // Task 1906 stage 1, NIT7 — WRITE-AFTER-PUBLISH, NAMED SO STAGE 3
+        // DOES NOT REDISCOVER IT. The pass above runs AFTER `applyFold` (or
+        // the legacy chain) has already published this apply's class, and on
+        // the UNROUTED branch it writes `mesh.vertices[vid]` and notes
+        // nothing at all — only the routed branch adds a `noteChange(Maps)`.
+        // So a listener is told "Position" while the positions it names are
+        // still one CONS projection away from final.
+        //
+        // Harmless, for two independent reasons, and BOTH must survive any
+        // later change: the class is already right (a second publish here
+        // would carry the same word `applyFold` just delivered), and a
+        // listener may not read the mesh at all — the contract is dirty-bit
+        // only (§1.5), so nothing can have observed the intermediate
+        // geometry. The routed `noteChange(Maps)` above rides the once-per-
+        // frame drain, which stage 3 deletes; it is a no-op against the
+        // `Maps` `applyFold` published on the same routed apply, which is why
+        // that deletion does not turn this into a lost class either.
         return true;
     }
 
@@ -522,12 +539,16 @@ mixin template XfrmApplyImpl() {
         }
         // Change-notification (Stage 1): the dormant legacy per-pass /
         // pow-scale chain also writes positions in place WITHOUT a version
-        // bump (mid-drag stability). Mirror applyFold's note so this path
-        // publishes Position too — ONE note for the whole T/R/S chain (never
-        // per pass, never per vertex). compoundPasses is 1.0 everywhere in
-        // the current tree, so this branch is dormant; the note keeps it
+        // bump (mid-drag stability). Mirror applyFold's publish so this path
+        // publishes Position too — ONE publish for the whole T/R/S chain
+        // (never per pass, never per vertex). compoundPasses is 1.0 everywhere
+        // in the current tree, so this branch is dormant; the publish keeps it
         // correct if the pow path is ever re-enabled.
-        mesh.noteChange(MeshEditScope.Position);
+        //
+        // Task 1906 stage 1 — `publishChange`, not `noteChange`: DELIVER the
+        // Position class synchronously, still WITHOUT touching a version
+        // counter. See applyFold's tail for the whole rationale.
+        mesh.publishChange(MeshEditScope.Position);
     }
 
     // MS-4.3/4.4 — canonical-matrix FOLD. Composes the whole T->R->S chain into
@@ -919,15 +940,35 @@ mixin template XfrmApplyImpl() {
         // Change-notification (doc/change_notification_bus_plan, Stage 1): the
         // drag apply moved positions in place WITHOUT bumping mutationVersion
         // (mid-drag version stability is intentional — symmetry/falloff/snap
-        // caches keyed on mutationVersion must stay put). noteChange accumulates
-        // the Position class WITHOUT touching the counters, so subscribers see
-        // Position on exactly the frames geometry moved. ONE note per apply (both
-        // the global fold and the per-cluster clusterM path run through the single
-        // applyXformMatrix above) — never per vertex.
+        // caches keyed on mutationVersion must stay put). ONE publish per apply
+        // (both the global fold and the per-cluster clusterM path run through
+        // the single applyXformMatrix above) — never per vertex.
         // Task 1069: under routing NOTHING positional moved — the class is
         // Maps, not Position. Publishing Position there would tell every
         // position-keyed consumer that geometry changed when it did not.
-        mesh.noteChange(routed ? MeshEditScope.Maps : MeshEditScope.Position);
+        //
+        // TASK 1906 STAGE 1 — `publishChange`, NOT `noteChange`, AND STILL NO
+        // VERSION BUMP. The two halves are independent and both are load-
+        // bearing:
+        //
+        //   * DELIVER. `noteChange` only ORs the class into the pending words
+        //     and waits for the frame flush; every position-dependent listener
+        //     therefore learned about the drag a frame late at best, and the
+        //     version-polling consumers never learned at all (the counters do
+        //     not move here). `publishChange` hands the class to the listeners
+        //     at the edit boundary — that is the whole of the 0401 class, made
+        //     unrepresentable rather than patched consumer by consumer.
+        //   * STAY VERSION-SILENT. A `mutationVersion` bump here would move
+        //     `XfrmTransformTool.lastAppliedGestureMutationVersion` away from
+        //     its stamp and CANCEL the in-session falloff re-grade (§2.2/§2.3:
+        //     version counters own STRUCTURE, the bus's Position class owns
+        //     POSITION). `tests/test_refire_after_sync_publish.d` is that
+        //     half's regression lock.
+        //
+        // Granularity: this site runs ONCE per gesture step (one applyFold per
+        // apply), so a 12-step drag delivers 12 times — the claim
+        // `tests/test_bus_delivery_granularity.d` measures.
+        mesh.publishChange(routed ? MeshEditScope.Maps : MeshEditScope.Position);
     }
 
     // MS-3.2 — one rotation pass of the canonical-matrix apply (called from

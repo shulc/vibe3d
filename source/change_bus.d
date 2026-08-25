@@ -538,6 +538,86 @@ void noteCurrentType(SelType t) {
 }
 
 // ===========================================================================
+// TASK 1906 STAGE 1 — the re-grade DECOUPLING CENSUS (plan §2.3).
+// ===========================================================================
+//
+// `XfrmTransformTool.lastAppliedGestureMutationVersion` is the one surviving
+// consumer of `mutationVersion` that this task deliberately does NOT move onto
+// the bus: it is not a cache freshness key, it is a gesture-identity guard
+// asking "has a FOREIGN edit landed since my gesture committed?", and the bus
+// has no class for "someone other than me edited". It is the RECORDED
+// REMAINDER, and these two counters are the measurement that says whether the
+// remainder could one day be paid off.
+//
+// The claim under measurement, evaluated at all four of the guard's read sites
+// (`tools/transform/xfrm_transform.d :: regradeStampCurrent`):
+//
+//     (mesh.mutationVersion == lastAppliedGestureMutationVersion)
+//       == (history.undoEpoch() == armedUndoEpoch)
+//
+// A COUNTER, not an `assert`, and the reason is the verdict channel rather
+// than the claim (plan §2.3, Revision 2):
+//
+//   1. the census lives in the EDITOR binary, because it is measured by
+//      driving `./vibe3d` over HTTP with the falloff / refire suite. An
+//      `AssertError` there kills the main thread while the process lives on,
+//      and every later HTTP request then costs the full 120 s command-bridge
+//      timeout — the suite HANGS instead of reporting (dub.json's `check`
+//      buildType comment states this verbatim);
+//   2. a counter gives a NUMBER — how many times the two disagreed out of how
+//      many evaluations — which is what "the disagreement is the finding"
+//      needs. An abort gives only "at least once".
+//
+// WHY THEY LIVE IN `change_bus` AND NOT IN THE TOOL. They must be readable
+// from `/api/changes`, which is answered on the HTTP thread and reads this
+// module's `__gshared` state directly. Declaring them here is what keeps
+// `http_server` free of a dependency on `tools.transform.*` for two integers;
+// both sides already import this module. They are module-level, NOT fields of
+// `ChangeBus`, so `route_apiChanges`'s whole-struct snapshot copy is unchanged
+// and nothing here pretends to be bus traffic.
+//
+// LIFETIME: process-global and monotone, like every other counter on that
+// endpoint. Tests read them as DELTAS across a step.
+//
+// WHY THERE ARE THREE COUNTERS AND NOT TWO (review B1). `regradeCensusChecks`
+// counts EVERY evaluation, and a DISARMED evaluation cannot disagree: both
+// terms hold the same `ulong.max` sentinel, both compares answer false, and
+// the row is scored as an agreement it had no way to avoid. A floor written
+// as `checks > 0` is therefore satisfiable by rows that could never have
+// produced the finding.
+//
+// `regradeCensusArmedChecks` is the honest denominator: only the rows where
+// the stamp is ARMED (`lastAppliedGestureMutationVersion != ulong.max`), i.e.
+// where the two terms are free to differ. The test's floor reads THIS counter.
+//
+// AND THE MEASUREMENT REFUTED THE HYPOTHESIS THAT PROMPTED IT, which is worth
+// more than the guard it added. The review predicted the census was mostly
+// disarmed rows (~76 of 122). It is not: on the block-(2) scenario of
+// `tests/test_refire_after_sync_publish.d` EVERY evaluation is armed — 117 of
+// 117, 120 of 120 (the absolute count is an idle-frame count and varies run to
+// run; the RATIO is 1). The reason is structural: the only
+// live read site is the ARM-2 branch, which short-circuits on
+// `history.runOpen()`, and a run is open only after a gesture that ARMED the
+// stamp on its way through `armRegradeStamp`. So the counter is currently a
+// guarantee rather than a filter — it costs one compare and it keeps the floor
+// honest if that mix ever changes. The census's real weakness was never
+// disarmed rows; it is that every row is armed-and-nothing-happened, which is
+// what block (3) of that file exists to address.
+//
+// It is keyed on the SHIPPED term's arm state, deliberately, and not on
+// `armedUndoEpoch != ulong.max`: the mutation that deletes `armedUndoEpoch`'s
+// arm (plan §5 row `1b`) leaves the epoch term at the sentinel while the
+// version term is armed. Keyed the other way that mutation would silently
+// empty the denominator instead of reddening the verdict.
+//
+// DELETION CONDITION, so this does not become permanent furniture: when open
+// question #21 is decided — either the guard is re-keyed on `undoEpoch` or the
+// remainder is accepted for good — this trio goes with the decision.
+__gshared ulong regradeCensusChecks;        // times the equivalence was evaluated
+__gshared ulong regradeCensusArmedChecks;   // … of those, with the stamp ARMED
+__gshared ulong regradeCensusDisagreements; // times the two terms disagreed
+
+// ===========================================================================
 // In-module unittests. Each is fully self-contained: it constructs its own
 // local ChangeBus rather than touching the __gshared global, so tests do not
 // leak counter/subscriber state into each other (lesson from the masked

@@ -693,11 +693,39 @@ protected:
         // Change-notification (Stage 1): every standalone deformer tool
         // (Move/Rotate/Scale, bend/push) writes mesh.vertices in place mid-drag
         // WITHOUT a version bump, then funnels through this ONE per-apply upload
-        // chokepoint. noteChange accumulates the Position class without touching
-        // the counters (preserving mid-drag version stability) — once per apply,
-        // never per vertex. (The unified XfrmTransformTool path also notes in
-        // applyFold; a second OR within the same frame is idempotent.)
-        mesh.noteChange(MeshEditScope.Position);
+        // chokepoint — once per apply, never per vertex.
+        //
+        // Task 1906 stage 1 — `publishChange`: the Position class is DELIVERED
+        // here, synchronously, and the version counters are still untouched
+        // (mid-drag version stability is what keeps the in-session falloff
+        // re-grade armed — see xfrm_apply.d :: applyFold's tail for the full
+        // argument).
+        //
+        // HOW OFTEN THIS SITE RUNS, MEASURED rather than assumed (review S3; a
+        // prior version of this comment said a wrapper-driven gesture step
+        // "delivers twice", and that is NOT what a drag does). This function
+        // is reached from exactly one shape of call site — the three banks'
+        // `draw` / `drawAxesOnly` / `drawCompact`, each `if (needsGpuUpdate)`.
+        // The common single-bank gizmo drag NEVER sets that flag: it stays on
+        // the GPU-matrix fast path (`gpuMatrix = …`) and re-uploads nothing,
+        // so a drag step publishes ONCE, in `applyFold`. Measured: a 12-step
+        // drag moves `deliveryCount` by 12, not 24.
+        //
+        // The branches that DO set `needsGpuUpdate` are the ones that drop out
+        // of that fast path — a cross-bank Move or a dirty run buffer for
+        // Rotate/Scale, the value/panel-driven translate replay, and the
+        // ARM-1 / ARM-2 falloff re-grade. On those a single step can publish
+        // here as well as in `applyFold`; both deliveries carry the same class
+        // and every listener is idempotent (dirty-bit-only), so that is a
+        // parity wart and never a correctness one. It is also why
+        // `tests/test_bus_delivery_granularity.d` bounds the count from BOTH
+        // sides (`>= steps && <= 2 * steps`) rather than pinning `== steps`.
+        //
+        // Placed BEFORE the upload deliberately: a listener may not read the
+        // mesh or touch GL (§1.5), so nothing here depends on the VBO being
+        // current, and keeping the publish adjacent to the mutation it
+        // describes is what makes the "once per apply" claim readable.
+        mesh.publishChange(MeshEditScope.Position);
         if (vertexProcessCount < cast(int)(mesh.vertices.length * 0.8))
             gpu.uploadSelectedVertices(*mesh, toProcess);
         else
