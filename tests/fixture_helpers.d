@@ -627,7 +627,7 @@ void runStep(JSONValue step, string name, string phase, size_t i) {
         // Slice tool (mesh.sliceTool, task 0266 S0) — a plane/line cut whose
         // plane passes through the Start→End line PERPENDICULAR to the work
         // plane (headless work-plane normal = default world XZ ⇒ +Y). Topology
-        // op (adds crossing verts / chord-splits faces via Mesh.cutByPlane).
+        // op (adds crossing verts / chord-splits faces via mesh_ops.cut.cutByPlane).
         //   { "slice": { "start": [x,y,z], "end": [x,y,z] } }
         // Optional `"fast": true/false` sets the S1 preview gate before the
         // commit. The committed geometry is fast-independent (the headless

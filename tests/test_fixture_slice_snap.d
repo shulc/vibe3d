@@ -8,7 +8,7 @@
 // verts OFF the axis plane, so a passing nearest-match proves the snap fired.
 // The plane law is math.planeForSlice; the angle quantization is the pure
 // math.snapLineEndpointToAngle helper (unit-tested in math.d). Analytic
-// self-golden (Mesh.cutByPlane is connectivity-correct by construction).
+// self-golden (mesh_ops.cut.cutByPlane is connectivity-correct by construction).
 //
 // snap OFF (the factory default) reproduces the raw drawn line — covered by
 // tests/fixtures/slice.json (tests/test_fixture_slice.d) and the whole S0-S8

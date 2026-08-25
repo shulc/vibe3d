@@ -187,7 +187,25 @@ private size_t countOccurrences(string haystack, string needle) {
 // scanner off the plan's table should use these instead.
 // ---------------------------------------------------------------------------
 private enum string kPosWritePredicate =
-      r"vertices\s*\[[^\]]*\]\s*(\.[xyz]\s*)?([-+*/]?)=[^=]"          // indexed, whole or per-component, any op-assign
+    // The index expression admits ONE level of nesting (`[^\[\]]` outside,
+    // `\[[^\[\]]*\]` inside). WIDENED AT STAGE E3, and the widening is the
+    // same class as Stage D3's dotted-receiver one: written `\[[^\]]*\]` the
+    // predicate stops at the FIRST `]`, so `vertices[pr[0]] = …` never matched
+    // — and that is exactly the spelling `mesh_ops/cut.d`'s gap block used for
+    // the two seam-pair writes it owned. cut.d therefore read 0 under a
+    // predicate structurally blind to the only two raw writes it had. Measured
+    // on the E3 tree, the widening makes SEVEN further sites visible that the
+    // narrow spelling missed — `mesh_ops/loop_slice.d` ×4 (Stage F1's to
+    // classify) and `commands/mesh/{magnet,vertex_center,vertex_set}.d` ×3
+    // (already L0 commands in plan §5.7's table) — so the counts below are the
+    // WIDENED ones: mesh_ops 12 (was 8), commands 52 (was 49), tools 49
+    // (unchanged); the two deltas are 4 + 3 = 7, which is the enumeration
+    // above and nothing else. (An earlier draft of this comment said NINE: it
+    // was counting cut.d's own two nested writes as well — real under the
+    // widened predicate in the PRE-E3 tree, and RETIRED by this stage into the
+    // single `ed.setVertexPositions` call, so they are not among the sites a
+    // later scanner will find.)
+      r"vertices\s*\[(?:[^\[\]]|\[[^\[\]]*\])*\]\s*(\.[xyz]\s*)?([-+*/]?)=[^=]"  // indexed (one nesting level), whole or per-component, any op-assign
     ~ r"|(^|[^a-zA-Z_.0-9])(\w+\s*\.\s*)?vertices\s*(~|[-+*/])?=[^=]" // whole-array assign / append, bare or `x.`-qualified
     ~ r"|vertices\s*\[[^\]]*\.\.[^\]]*\]\s*(\[\s*\])?\s*=[^=]"         // slice assign, incl. `[] =`
     ~ r"|foreach\s*\(\s*(size_t\s+\w+\s*,\s*)?ref\s+\w+\s*;\s*[a-zA-Z_.]*vertices"; // `foreach (ref v; vertices)`
@@ -227,6 +245,12 @@ unittest // the §5.7 position-write predicate discriminates
         // the narrow spelling did not see.
         "    ed.vertices ~= bridgeTwistedVertex(m, a, b, k, t, w);\n",
         "    mesh.vertices = prev;\n",
+        // The two Stage E3 added: a NESTED index expression. Both are the exact
+        // lines `mesh_ops/cut.d`'s `splitAlongCutLoop` carried before the
+        // conversion, and both were INVISIBLE to the pre-E3 spelling — which is
+        // why cut.d's `== 0` row would have been green over two live raw writes.
+        "    vertices[pr[0]] = vertices[pr[0]] + dir * loAmt;\n",
+        "    ed.vertices[pr[1]].y -= hiAmt;\n",
     ];
     foreach (sample; kMustMatch)
         assert(!matchAll(sample, posRe).empty,
@@ -246,6 +270,10 @@ unittest // the §5.7 position-write predicate discriminates
         // identifier that merely ENDS in `vertices`, and a by-value foreach.
         "    auto subvertices = 3;\n",
         "    foreach (v; m.vertices) sum = sum + v;\n",
+        // …and the two the E3 widening must NOT have dragged in with it: a
+        // nested-index READ used as an argument, and a nested-index `==`.
+        "    ring[k] = ed.addVertex(ed.vertices[pr[0]], ed.vertices[pr[1]]);\n",
+        "    if (m.vertices[idx[k]] == p) return;\n",
     ];
     foreach (sample; kMustNotMatch)
         assert(matchAll(sample, posRe).empty,
@@ -466,6 +494,7 @@ unittest // every beginEditBatch caller carries a scope(failure) abort
 // M-D3-MIXIN: the same for `mixin MeshBridgeOps;` (task 1903 Stage D3).
 // M-E1-MIXIN: the same for `mixin MeshCleanupOps;` (task 1903 Stage E1).
 // M-E2-MIXIN: the same for `mixin MeshRevolveOps;` (task 1903 Stage E2).
+// M-E3-MIXIN: the same for `mixin MeshCutOps;` (task 1903 Stage E3).
 // ---------------------------------------------------------------------------
 
 unittest // the mixin count is falling, and the converted families stay converted
@@ -491,8 +520,9 @@ unittest // the mixin count is falling, and the converted families stay converte
     // 13 at the branch point; one family leaves per track-1 stage; 0 at Stage I.
     enum size_t kAtStart = 13;
     // C: MeshSelectLoopOps; D1: MeshConnectedMaskOps; D2: MeshDecimateOps;
-    // D3: MeshBridgeOps; E1: MeshCleanupOps; E2: MeshRevolveOps.
-    enum size_t kExpected = 7;
+    // D3: MeshBridgeOps; E1: MeshCleanupOps; E2: MeshRevolveOps;
+    // E3: MeshCutOps.
+    enum size_t kExpected = 6;
     assert(live.length == kExpected,
         format("source/mesh.d instantiates %d `mixin Mesh*Ops` templates; this "
              ~ "gate expects %d. Track 1 started at %d and every conversion "
@@ -508,7 +538,8 @@ unittest // the mixin count is falling, and the converted families stay converte
                                             "MeshDecimateOps",          // Stage D2
                                             "MeshBridgeOps",            // Stage D3
                                             "MeshCleanupOps",           // Stage E1
-                                            "MeshRevolveOps"];          // Stage E2
+                                            "MeshRevolveOps",           // Stage E2
+                                            "MeshCutOps"];              // Stage E3
     foreach (name; kConverted)
         assert(!live.canFind(name),
             format("`mixin %s;` is back in struct Mesh. That family is free "
@@ -1091,6 +1122,167 @@ unittest // the mixin count is falling, and the converted families stay converte
                  ~ "the boundary is a counted census and not a type "
                  ~ "(task 1903 §5.7, M-V1).", rawWrites, firstHit));
     }
+
+    // Stage E3 — the plane-cut family, and the FIRST family to bring a raw
+    // position write across the seam with it. Three things are pinned here that
+    // no earlier stage needed: a mutating receiver on EIGHT entries (the family
+    // is a wrapper fan over one core), a nested type that moved to module scope
+    // WITHOUT an in-struct alias, and a `setVertexPositions` call that replaced
+    // two writes §5.7's own predicate could not see until this stage widened it.
+    immutable ctPath = buildPath(repoRoot, "source", "mesh_ops", "cut.d");
+    assert(exists(ctPath), "cannot find source/mesh_ops/cut.d at " ~ ctPath);
+    immutable ct = stripCommentsAndStrings(readText(ctPath));
+    assert(countOccurrences(ct, "mixin template MeshCutOps") == 0,
+        "source/mesh_ops/cut.d still declares `mixin template MeshCutOps` — "
+      ~ "Stage E3 converted this family to free functions; a surviving template "
+      ~ "is either dead or a second implementation (task 1903 Stage E3).");
+
+    // THE MUTATING RECEIVERS. All eight take at least one further parameter, so
+    // the delimiter is `,`. Without a delimiter the needle is a PREFIX and
+    // `ed` -> `edb` stays green (measured at D2, MINOR-1). Note also that
+    // `cutByPlane` is a PREFIX of four of the others, so the `(` in each needle
+    // is what keeps these rows independent of one another.
+    static immutable string[] kBatchKernelsE3 = [
+        "cutByPlane", "cutByPlaneRestricted", "cutByPlaneClipped",
+        "cutByPlaneEx", "cutByPlaneSplitGap", "deleteComponentsInSlab",
+        "planeCutCore", "splitAlongCutLoop",
+    ];
+    foreach (name; kBatchKernelsE3)
+        assert(countOccurrences(ct, name ~ "(ref MeshEditBatch ed,") == 1,
+            format("source/mesh_ops/cut.d no longer declares `%s` over "
+                 ~ "`ref MeshEditBatch ed`. That receiver is the enforcement, "
+                 ~ "not the style: it is what makes a batchless call a COMPILE "
+                 ~ "error, so one plane cut stamps, derives and delivers once at "
+                 ~ "close() instead of once per inserted crossing vertex and "
+                 ~ "once per face-array rebuild — and on THIS family it is also "
+                 ~ "the only thing the recorded `setVertexPositions` write in "
+                 ~ "splitAlongCutLoop has to record INTO (task 1903 §4.1, "
+                 ~ "§5.2 E3).", name));
+
+    // …and the two wrong spellings, absent, for all eight.
+    foreach (name; kBatchKernelsE3) {
+        assert(countOccurrences(ct, name ~ "(ref Mesh ") == 0,
+            format("`%s` has a `ref Mesh` receiver again — that compiles, and "
+                 ~ "it drops the batch: the kernel's internal commits go back to "
+                 ~ "stamping one at a time, and `setVertexPositions` is not even "
+                 ~ "reachable from a bare mesh, so the gap block would have to "
+                 ~ "go back to the raw `vertices[pr[0]] = …` write. Plan §4.4a "
+                 ~ "REJECTED exactly this overload, by name, because nothing in "
+                 ~ "the two lanes can see it — the geometry is identical and the "
+                 ~ "receiver pin is satisfied by the `ref MeshEditBatch` "
+                 ~ "overload that still exists. This row is the one thing that "
+                 ~ "can (task 1903 Stage E3).", name));
+        assert(countOccurrences(ct, name ~ "(ref const(Mesh)") == 0,
+            format("`%s` cannot have a `ref const(Mesh)` receiver — it inserts "
+                 ~ "crossing vertices, rewrites windings and deletes faces. Such "
+                 ~ "an overload could only exist by casting const away "
+                 ~ "(task 1903 Stage E3).", name));
+    }
+
+    // THE READ-ONLY RECEIVERS — two. `isConcaveFace` WAS a `const` member;
+    // `extractCutLoops` was NOT, and nothing in a mixin body forces the keyword,
+    // so its const receiver is a widening of what the code already did, now
+    // ENFORCED at the seam. Both are called from a batch context as
+    // `f(ed.mesh, …)` (the spelling E1 settled for `computeCollapsedFace_`),
+    // which is why they are the two entries that must NOT drift to the batch.
+    foreach (name; ["isConcaveFace", "extractCutLoops"]) {
+        assert(countOccurrences(ct, name ~ "(ref const(Mesh) m,") == 1,
+            format("source/mesh_ops/cut.d no longer declares `%s` over "
+                 ~ "`ref const(Mesh) m`. `isConcaveFace` only walks one winding "
+                 ~ "to look for a reflex corner and `extractCutLoops` only walks "
+                 ~ "`edges` against a cut mask; the const receiver is what "
+                 ~ "states that, and it is now ENFORCED at the seam rather than "
+                 ~ "by a keyword the mixin could have dropped at any time "
+                 ~ "(task 1903 Stage E3, plan §4.1).", name));
+        assert(countOccurrences(ct, name ~ "(ref MeshEditBatch") == 0,
+            format("`%s` took a `ref MeshEditBatch` receiver — that compiles, "
+                 ~ "and it means a call that changes nothing now opens an edit "
+                 ~ "batch and publishes a change. If a later stage wants that, "
+                 ~ "it is a decision to argue for here (task 1903 Stage E3).",
+                   name));
+    }
+
+    // THE RESULT TYPE MOVED TO MODULE SCOPE (§2.7 as rewritten at the E2 review;
+    // the route D3's `maxBridgeSpans` and E2's `RevolveParams` took).
+    // `Mesh.PlaneCutLoops` no longer resolves; the 11 call sites that spelled it
+    // that way — 3 in tools/slice/slice_tool.d, 7 in
+    // tests/unit/mesh_ops/cut_test.d, 1 in
+    // tests/unit/tools/slice/slice_tool_test.d — moved in the same commit. The
+    // `static assert(!__traits(hasMember, Mesh, "PlaneCutLoops"))` at the foot
+    // of cut.d is what refuses an `alias` putting it back on the struct, and it
+    // has to: measured at E2, an in-struct alias makes `Mesh.X` resolve AND
+    // makes `hasMember` answer `true`, so the alias and the tripwire cannot both
+    // stand.
+    assert(countOccurrences(ct, "\nstruct PlaneCutLoops {") == 1,
+        "source/mesh_ops/cut.d no longer declares `struct PlaneCutLoops` at "
+      ~ "MODULE scope (column 0). The mixin used to inject it into `Mesh`, and "
+      ~ "`tools/slice/slice_tool.d` plus two test modules spelled it "
+      ~ "`Mesh.PlaneCutLoops`; those call sites moved with this commit "
+      ~ "(task 1903 Stage E3, plan §2.7).");
+
+    // The family's declared scope lives ONCE, beside the kernels — D2's reason
+    // for `kReduceEditScope`. This family has SEVEN production call sites
+    // passing it (two commands, five in tools/slice/slice_tool.d) plus the two
+    // module unittests below and the test helpers, so it has as many chances to
+    // drift as revolve did. The BEHAVIOURAL half — that the value is right,
+    // written out from the enum independently — is in
+    // tests/unit/mesh_ops/cut_test.d's recording block; this row only pins that
+    // there is one of it.
+    assert(countOccurrences(ct, "enum uint kCutEditScope =") == 1,
+        "source/mesh_ops/cut.d no longer declares `kCutEditScope` at module "
+      ~ "scope — seven production call sites pass it, and a per-call-site "
+      ~ "literal is the drift this constant exists to prevent "
+      ~ "(task 1903 Stage E3).");
+
+    // A KERNEL NEVER OPENS A BATCH (§4.1, §2.3 rule 2) — the absence pin, and
+    // this file cannot use revolve.d's `== 0` spelling because cut.d keeps TWO
+    // module unittests that legitimately open one. So the pin is two-sided: the
+    // TOTAL must be 2, and BOTH must be the unittest spelling. A kernel that
+    // opened its own would take the total to 3; one that replaced a unittest's
+    // would keep the total and drop the shaped count.
+    assert(countOccurrences(ct, "MeshEditBatch.unrecorded(") == 2,
+        format("source/mesh_ops/cut.d opens %d `MeshEditBatch`(es); expected "
+             ~ "exactly 2, both in the module unittests at the foot of the file. "
+             ~ "A KERNEL never opens a batch — the command or the tool does "
+             ~ "(plan §4.1, §2.3 rule 2). If a new intra-kernel batch is "
+             ~ "genuinely needed, §4.4a says what it costs: a TRANSITIONAL "
+             ~ "label, a named removing stage, and a per-command "
+             ~ "nestedBatchOpens DELTA assert in that command's own suite test "
+             ~ "(task 1903 Stage E3).",
+               countOccurrences(ct, "MeshEditBatch.unrecorded(")));
+    assert(countOccurrences(ct,
+            "auto ed = MeshEditBatch.unrecorded(m, kCutEditScope);") == 2,
+        "the two `MeshEditBatch.unrecorded` opens in source/mesh_ops/cut.d are "
+      ~ "no longer the two module unittests' — they are the only opens this "
+      ~ "file is allowed, and the row above only counts them. One of them now "
+      ~ "has a different subject or a different scope, which means a KERNEL is "
+      ~ "opening it (task 1903 Stage E3).");
+
+    // §5.7 over this file — and unlike decimate / bridge / cleanup / revolve,
+    // this 0 is a RETIREMENT, not a statement that the family never had one.
+    // `splitAlongCutLoop`'s gap block moved both members of every seam pair with
+    // `vertices[pr[0]] = …`, and the predicate could not see a NESTED index
+    // expression until this stage widened it (see kPosWritePredicate's own
+    // comment and its two new positive controls). Both writes are one
+    // `ed.setVertexPositions` now.
+    assert(countOccurrences(ct, "ed.setVertexPositions(") == 1,
+        "source/mesh_ops/cut.d no longer calls `setVertexPositions` — the Gap "
+      ~ "option's seam separation is the raw `vertices[pr[0]] = …` write again, "
+      ~ "and a raw write inside a recording batch produces NO op-log entry: a "
+      ~ "delta undo would restore the topology and leave both halves of every "
+      ~ "split edge at their pushed-apart coordinates (task 1903 §2.5, §5.7).");
+    {
+        string firstHit;
+        immutable size_t rawWrites = countRawPositionWrites(ct, firstHit);
+        assert(rawWrites == 0,
+            format("source/mesh_ops/cut.d: %d raw position write(s) under "
+                 ~ "§5.7's predicate, expected 0 — this entry was retired at "
+                 ~ "Stage E3. First hit: `%s`. `alias mesh this` means "
+                 ~ "`ed.vertices[i] = p` COMPILES inside a recording batch and "
+                 ~ "records nothing, which is why the boundary is a counted "
+                 ~ "census and not a type (task 1903 §5.7, M-V1).",
+                   rawWrites, firstHit));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1145,9 +1337,18 @@ unittest // every §2.6 widening this stage made still has the caller it names
     immutable brPath = buildPath(repoRoot, "source", "mesh_ops", "bridge.d");
     assert(exists(brPath), "cannot find source/mesh_ops/bridge.d at " ~ brPath);
     immutable br = stripCommentsAndStrings(readText(brPath));
+    immutable ctPath = buildPath(repoRoot, "source", "mesh_ops", "cut.d");
+    assert(exists(ctPath), "cannot find source/mesh_ops/cut.d at " ~ ctPath);
+    immutable ct = stripCommentsAndStrings(readText(ctPath));
+
+    // The file each row's `callSite` is looked for in. D3's three rows are all
+    // bridge.d's; E3 added three that are cut.d's, so the row carries its own
+    // ops file rather than the block assuming one (task 1903 Stage E3).
+    immutable string[string] opsSrc = ["source/mesh_ops/bridge.d": br,
+                                       "source/mesh_ops/cut.d":    ct];
 
     // name, the `private` declaration that must be GONE from mesh.d, the
-    // declaration that must be THERE, the call in bridge.d that justifies it,
+    // declaration that must be THERE, the call in the ops file that justifies it,
     // and — the MAJOR-2 half — the receiver-agnostic needle plus the COMPLETE
     // set of files under `source/` that may contain it (mesh.d excluded: it is
     // the declarer, and its own internal calls are not what §2.6 asks about).
@@ -1155,7 +1356,8 @@ unittest // every §2.6 widening this stage made still has the caller it names
         string   name;        // for the message
         string   privateDecl; // must not appear in mesh.d
         string   publicDecl;  // must appear exactly once in mesh.d
-        string   callSite;    // must appear at least once in bridge.d
+        string   opsFile;     // which mesh_ops file `callSite` is looked for in
+        string   callSite;    // must appear at least once in that ops file
         string   scanNeedle;  // receiver-AGNOSTIC; what the source/** walk counts
         string[] callerFiles; // every non-mesh.d file that contains scanNeedle
         string   why;
@@ -1164,6 +1366,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         Widening("mesh.smoothstep01",
                  "private float smoothstep01(",
                  "float smoothstep01(float t)",
+                 "source/mesh_ops/bridge.d",
                  "smoothstep01(t)",
                  "smoothstep01(",
                  ["source/mesh_ops/bridge.d"],
@@ -1174,6 +1377,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         Widening("Mesh.orientFaceConsistent",
                  "private void orientFaceConsistent(",
                  "void orientFaceConsistent(uint[] idx",
+                 "source/mesh_ops/bridge.d",
                  "ed.orientFaceConsistent(",
                  "orientFaceConsistent(",
                  ["source/mesh_ops/bridge.d"],
@@ -1183,12 +1387,52 @@ unittest // every §2.6 widening this stage made still has the caller it names
         Widening("Mesh.registerNewFaceEdges",
                  "private void registerNewFaceEdges(",
                  "void registerNewFaceEdges(ref int[2][ulong] liveEdgeFaces",
+                 "source/mesh_ops/bridge.d",
                  "ed.registerNewFaceEdges(",
                  "registerNewFaceEdges(",
                  ["source/mesh_ops/bridge.d"],
                  "the incremental edgeFaces update that lets a LATER face in the "
                ~ "same strip/fan see its already-placed siblings; bridge.d is its "
                ~ "only caller."),
+        // --- Stage E3's three, all reached by `mesh_ops/cut.d` -------------
+        Widening("Mesh.edgeIndexOfVerts",
+                 "private uint edgeIndexOfVerts(",
+                 "uint edgeIndexOfVerts(uint a, uint b)",
+                 "source/mesh_ops/cut.d",
+                 "ed.edgeIndexOfVerts(",
+                 "edgeIndexOfVerts(",
+                 ["source/mesh_ops/cut.d"],
+                 "the raw edge lookup by endpoint pair. It is NOT the same thing "
+               ~ "as the public `edgeIndexOf` it already backed: that one is the "
+               ~ "guarded accessor an outside module should reach for, and it "
+               ~ "exists precisely so callers do not depend on the map lookup. "
+               ~ "`planeCutCore` needs the raw form at three sites — the "
+               ~ "restrict-set edge marking, the concave-guard scan (there is "
+               ~ "exactly ONE: `isConcaveFace` has a single call site) and the "
+               ~ "clipped chord-crossing lookup — all of them after a "
+               ~ "buildLoops()."),
+        Widening("Mesh.insertEdgePoint",
+                 "private uint insertEdgePoint(",
+                 "uint insertEdgePoint(uint ei, float t, ref bool[] isCutVert",
+                 "source/mesh_ops/cut.d",
+                 "ed.insertEdgePoint(",
+                 "insertEdgePoint(",
+                 ["source/mesh_ops/cut.d"],
+                 "cutByPlane Pass-1: it splices one shared crossing vertex into "
+               ~ "every face winding incident on a straddled edge, which is what "
+               ~ "makes the cut T-junction-free. cut.d is its only caller "
+               ~ "outside mesh.d."),
+        Widening("Mesh.rebuildFacesWithChordSplits",
+                 "private size_t rebuildFacesWithChordSplits(",
+                 "size_t rebuildFacesWithChordSplits(",
+                 "source/mesh_ops/cut.d",
+                 "ed.rebuildFacesWithChordSplits(",
+                 "rebuildFacesWithChordSplits(",
+                 ["source/mesh_ops/cut.d"],
+                 "cutByPlane Pass-2 + finalize: it emits the two sub-faces per "
+               ~ "chord-split face, carrying faceMaterial / the whole faceMarks "
+               ~ "word / faceSelectionOrder onto both halves. cut.d is its only "
+               ~ "caller outside mesh.d."),
     ];
 
     foreach (w; kWidenings) {
@@ -1204,13 +1448,21 @@ unittest // every §2.6 widening this stage made still has the caller it names
                  ~ "say why; if the name is gone, bridge.d's call is gone too "
                  ~ "and the widening should be reverted with it (task 1903 §2.6).",
                    w.name, w.publicDecl, countOccurrences(md, w.publicDecl)));
-        assert(countOccurrences(br, w.callSite) >= 1,
-            format("source/mesh_ops/bridge.d no longer contains `%s`, so the "
+        // Look the ops file up BEFORE indexing: a row naming a file this block
+        // did not read would otherwise die on a RangeError with no row name in
+        // it, and the reader would be debugging the harness instead of the row.
+        assert(w.opsFile in opsSrc,
+            format("row `%s` names ops file `%s`, which this block does not "
+                 ~ "read — add it to `opsSrc` above (it reads bridge.d and "
+                 ~ "cut.d today) or fix the row (task 1903 §2.6).",
+                   w.name, w.opsFile));
+        assert(countOccurrences(opsSrc[w.opsFile], w.callSite) >= 1,
+            format("%s no longer contains `%s`, so the "
                  ~ "widening of `%s` in source/mesh.d now holds a `private` door "
                  ~ "open for NOBODY. That is exactly the state the Stage A review "
                  ~ "reverted ten widenings for (plan §2.6, review S3): narrow it "
                  ~ "back to `private` in the same change that removed the call, "
-                 ~ "and delete this row.", w.callSite, w.name));
+                 ~ "and delete this row.", w.opsFile, w.callSite, w.name));
     }
 
     // --- The other side: WHO ELSE calls it (review MAJOR-2) ----------------
@@ -1276,5 +1528,47 @@ unittest // every §2.6 widening this stage made still has the caller it names
                  ~ "review S3).\n"
                  ~ "  Why this widening exists: it is %s",
                    w.name, want, got, w.scanNeedle, filesScanned, w.why));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Task 1903 Stage E3 (review round 2, MINOR 3/4): two text pins the behavioural
+// lanes cannot carry.
+//
+// (a) `slice_tool.d` has TWO `sliceSplitGap` guards — the interactive preview's
+//     and `applyHeadless`'s — that its own comment says must stay in lockstep,
+//     and no suite test reaches the preview one (a mutation there was INERT).
+//     Each guard is pinned to its exact spelling; a drift in either reddens.
+// (b) `axis_slice.d`'s two ladder blocks open ONE batch before the `foreach`
+//     over the cuts. A batch opened INSIDE the loop is byte-identical on every
+//     /api/changes counter (measured — delivery coalesces per frame), so the
+//     only pins are `cut_test.d`'s mutationVersion ladder cell (unit-level,
+//     never calls axis_slice.d) and this text order.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.algorithm : countUntil;
+    immutable st = stripCommentsAndStrings(readText(buildPath(repoRoot, "source/tools/slice/slice_tool.d")));
+    assert(countOccurrences(st, "if (gap != 0.0f && restrictFaces.length == 0)") == 1,
+        "slice_tool.d: the interactive split+gap guard changed its spelling — the "
+      ~ "two guards must stay in lockstep and this pin is the only thing that "
+      ~ "notices the preview one moving (no suite test reaches it)");
+    assert(countOccurrences(st, "if (gap_ != 0.0f && restrict.length == 0)") == 1,
+        "slice_tool.d: the applyHeadless split+gap guard changed its spelling — "
+      ~ "keep it in lockstep with the interactive guard above");
+
+    immutable ax = stripCommentsAndStrings(readText(buildPath(repoRoot, "source/commands/mesh/axis_slice.d")));
+    size_t pos = 0;
+    foreach (which; ["MeshAxisSlice ladder", "MeshJulienne ladder"]) {
+        auto rest = ax[pos .. $];
+        immutable open = rest.countUntil("MeshEditBatch.unrecorded(");
+        assert(open >= 0, which ~ ": no MeshEditBatch.unrecorded( found");
+        immutable loop = rest.countUntil("foreach (k; 0 ..");
+        assert(loop >= 0, which ~ ": no ladder foreach found");
+        assert(open < loop, which ~ ": the batch must be opened BEFORE the ladder "
+            ~ "foreach — one batch for the whole ladder. A batch per cut reads "
+            ~ "identically on every /api/changes counter, so this order and "
+            ~ "cut_test.d's mutationVersion cell are its only pins (task 1903 E3 "
+            ~ "review round 2)");
+        pos += loop + 1;
     }
 }

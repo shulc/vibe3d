@@ -7,6 +7,29 @@ import mesh;
 import math;
 import std.math : abs;
 import mesh_ops.cut;
+import mesh_edit_delta : MeshEditDelta, MeshEditScope, MeshOpEntry;
+
+// Task 1903 Stage E3: every entry point of this family is a free function over
+// `ref MeshEditBatch` now, so a test cannot call one on a bare `Mesh` — that is
+// a COMPILE error, and it is the enforcement, not an inconvenience. One helper
+// for all five kernels, so there is ONE place that says why the batch is
+// `unrecorded`: nothing in these blocks reads an op-log, and track 1 is the
+// conversion axis only. The production callers open theirs the same way
+// (`commands/mesh/axis_slice.d`, `commands/mesh/screen_slice.d` and the three
+// sites in `tools/slice/slice_tool.d` — see mesh_ops/cut.d's header). The
+// RECORDING block at the bottom of this file is the one deliberate exception,
+// and it is the only block that looks at what the delta says.
+//
+// `auto ref` is load-bearing: `cutByPlaneEx` takes `out PlaneCutLoops result`
+// and `cutByPlaneSplitGap` takes `out bool separated`, so the argument must
+// reach the kernel as an lvalue for the `out` to land back on the caller's
+// variable.
+private size_t cutOnce(alias kernel, Args...)(ref Mesh m, auto ref Args args) {
+    auto ed = MeshEditBatch.unrecorded(m, kCutEditScope);
+    const n = kernel(ed, args);
+    ed.close();
+    return n;
+}
 
 unittest { // cutByPlane: single quad split at x=0.5 — T-junction (index-share) + attr carry-over
     Mesh m;
@@ -23,7 +46,7 @@ unittest { // cutByPlane: single quad split at x=0.5 — T-junction (index-share
     m.setSubpatch(0, true);
 
     // Cut at x=0.5 (normal along X).
-    size_t nSplit = m.cutByPlane(Vec3(0.5f, 0, 0), Vec3(1, 0, 0));
+    size_t nSplit = cutOnce!cutByPlane(m, Vec3(0.5f, 0, 0), Vec3(1, 0, 0));
 
     assert(nSplit == 1, "single quad should produce 1 split");
     assert(m.faces.length == 2, "2 sub-faces after cut");
@@ -63,7 +86,7 @@ unittest { // cutByPlane: adjacent-hit guard — plane at y=0.5 on cube (on-vert
     m.resetSelection();
 
     // Plane at y=0.5 snaps top-row verts on-plane; side faces have adjacent hits → no splits.
-    size_t nSplit = m.cutByPlane(Vec3(0, 0.5f, 0), Vec3(0, 1, 0));
+    size_t nSplit = cutOnce!cutByPlane(m, Vec3(0, 0.5f, 0), Vec3(0, 1, 0));
 
     assert(nSplit == 0, "plane at top-vertex row must produce 0 splits (adjacent-hit guard)");
     assert(m.faces.length == 6, "face count must stay 6 (cube)");
@@ -79,7 +102,7 @@ unittest { // cutByPlane: cube mid-plane cut — correct face/vert counts and 0 
     m.resetSelection();
 
     // Cut at y=0 through the cube middle; 4 side faces straddle, 2 caps don't.
-    size_t nSplit = m.cutByPlane(Vec3(0, 0, 0), Vec3(0, 1, 0));
+    size_t nSplit = cutOnce!cutByPlane(m, Vec3(0, 0, 0), Vec3(0, 1, 0));
 
     assert(nSplit == 4, "4 side faces split by mid-plane cut");
     assert(m.faces.length == 10, "6 faces → 4 split (×2) + 2 unchanged = 10");
@@ -114,7 +137,7 @@ unittest { // cutByPlaneRestricted (task 0279): cut confined to the selected fac
         if (allFront || allBack) restrict ~= cast(uint)fi;
     }
     assert(restrict.length == 2, "cube has exactly two Z-facing faces");
-    size_t nSplit = m.cutByPlaneRestricted(Vec3(0, 0, 0), Vec3(1, 0, 0), restrict);
+    size_t nSplit = cutOnce!cutByPlaneRestricted(m, Vec3(0, 0, 0), Vec3(1, 0, 0), restrict);
     assert(nSplit == 2, "only the 2 selected faces split");
     assert(m.faces.length == 8, "6 → 8 (each selected face → 2; neighbours stay whole)");
     assert(m.vertices.length == 12, "4 crossing verts at the selected faces' spanning edges");
@@ -137,7 +160,7 @@ unittest { // cutByPlaneRestricted: 1 selected face → only it splits (10v/7f)
         if (allFront) restrict ~= cast(uint)fi;
     }
     assert(restrict.length == 1, "exactly one front (z=-0.5) face");
-    size_t nSplit = m.cutByPlaneRestricted(Vec3(0, 0, 0), Vec3(1, 0, 0), restrict);
+    size_t nSplit = cutOnce!cutByPlaneRestricted(m, Vec3(0, 0, 0), Vec3(1, 0, 0), restrict);
     assert(nSplit == 1, "only the front face splits");
     assert(m.faces.length == 7, "6 → 7");
     assert(m.vertices.length == 10, "only 2 crossing verts on the front face's spanning edges");
@@ -151,8 +174,8 @@ unittest { // cutByPlaneRestricted: 1 selected face → only it splits (10v/7f)
 unittest { // cutByPlaneRestricted: empty/null set == whole cut, byte-for-byte
     auto a = makeCube(); a.buildLoops(); a.resetSelection();
     auto b = makeCube(); b.buildLoops(); b.resetSelection();
-    size_t na = a.cutByPlaneRestricted(Vec3(0, 0, 0), Vec3(1, 0, 0), null);
-    size_t nb = b.cutByPlane(Vec3(0, 0, 0), Vec3(1, 0, 0));
+    size_t na = cutOnce!cutByPlaneRestricted(a, Vec3(0, 0, 0), Vec3(1, 0, 0), null);
+    size_t nb = cutOnce!cutByPlane(b, Vec3(0, 0, 0), Vec3(1, 0, 0));
     assert(na == nb, "empty restrict set cuts identically to the whole cut");
     assert(a.faces.length == b.faces.length && a.faces.length == 10);
     assert(a.vertices.length == b.vertices.length && a.vertices.length == 12);
@@ -166,8 +189,8 @@ unittest { // cutByPlaneClipped: a full-span segment agrees with cutByPlane (inf
     m.buildLoops();
     m.resetSelection();
     // Plane x=0 (normal X); segment along Z spanning the cube.
-    size_t nSplit = m.cutByPlaneClipped(Vec3(0, 0, 0), Vec3(1, 0, 0),
-                                        Vec3(0, 0, -1), Vec3(0, 0, 1));
+    size_t nSplit = cutOnce!cutByPlaneClipped(m, Vec3(0, 0, 0), Vec3(1, 0, 0),
+                                                 Vec3(0, 0, -1), Vec3(0, 0, 1));
     assert(nSplit == 4, "full-span clip == infinite: 4 side faces split");
     assert(m.faces.length == 10, "full-span clip: 6 → 10 faces");
     assert(m.vertices.length == 12, "full-span clip: 8 + 4 crossing verts");
@@ -197,15 +220,15 @@ unittest { // cutByPlaneClipped: a short segment cuts ONLY the spanned faces
 
     // infinite plane (cutByPlane) cuts ALL 4 quads: +6 crossing verts, 4 → 8 faces.
     Mesh inf = twoStrips();
-    size_t nInf = inf.cutByPlane(Vec3(0, 0, 0), Vec3(0, 0, 1));
+    size_t nInf = cutOnce!cutByPlane(inf, Vec3(0, 0, 0), Vec3(0, 0, 1));
     assert(nInf == 4, "infinite: all 4 quads split");
     assert(inf.vertices.length == 18 && inf.faces.length == 8,
            "infinite: 12+6 verts / 4→8 faces");
 
     // clipped to the left strip: only the 2 left quads split (+3 verts, 4 → 6).
     Mesh clip = twoStrips();
-    size_t nClip = clip.cutByPlaneClipped(Vec3(0, 0, 0), Vec3(0, 0, 1),
-                                          Vec3(-4, 0, 0), Vec3(0, 0, 0));
+    size_t nClip = cutOnce!cutByPlaneClipped(clip, Vec3(0, 0, 0), Vec3(0, 0, 1),
+                                                   Vec3(-4, 0, 0), Vec3(0, 0, 0));
     assert(nClip == 2, "clipped: only the 2 in-band (left) quads split");
     assert(clip.vertices.length == 15, "clipped: 12 + 3 left crossing verts");
     assert(clip.faces.length == 6, "clipped: 2 split (×2) + 2 whole = 6");
@@ -232,8 +255,8 @@ unittest { // cutByPlaneClipped: segment terminating INSIDE a face — interior
     m.resetSelection();
     assert(m.vertices.length == 8 && m.faces.length == 6);
 
-    size_t nSplit = m.cutByPlaneClipped(Vec3(0, 0, 0), Vec3(0, 1, 0),
-                                        Vec3(-0.9f, 0, 0), Vec3(0, 0, 0));
+    size_t nSplit = cutOnce!cutByPlaneClipped(m, Vec3(0, 0, 0), Vec3(0, 1, 0),
+                                                 Vec3(-0.9f, 0, 0), Vec3(0, 0, 0));
     assert(nSplit >= 1, "the in-band left face must still split cleanly");
 
     int findVert(float x, float y, float z) {
@@ -318,10 +341,10 @@ unittest { // cutByPlaneEx: Slice `split` (S7) — the plane-cut loop reuses the
     Mesh off = makeCube();
     off.buildLoops();
     off.resetSelection();
-    Mesh.PlaneCutLoops offR;
-    size_t nOff = off.cutByPlaneEx(Vec3(0, 0, 0), Vec3(1, 0, 0),
-                                   /*clipped*/false, Vec3(0, 0, 0), Vec3(0, 0, 0),
-                                   /*split*/false, /*caps*/false, offR);
+    PlaneCutLoops offR;
+    size_t nOff = cutOnce!cutByPlaneEx(off, Vec3(0, 0, 0), Vec3(1, 0, 0),
+                                            /*clipped*/false, Vec3(0, 0, 0), Vec3(0, 0, 0),
+                                            /*split*/false, /*caps*/false, offR);
     assert(nOff == 4, "split off: 4 side faces split by the mid-plane cut");
     immutable offV = off.vertices.length, offE = off.edges.length, offF = off.faces.length;
     assert(offV == 12 && offF == 10, "split off: 12v/10f connected cut");
@@ -336,10 +359,10 @@ unittest { // cutByPlaneEx: Slice `split` (S7) — the plane-cut loop reuses the
     Mesh on = makeCube();
     on.buildLoops();
     on.resetSelection();
-    Mesh.PlaneCutLoops onR;
-    size_t nOn = on.cutByPlaneEx(Vec3(0, 0, 0), Vec3(1, 0, 0),
-                                 /*clipped*/false, Vec3(0, 0, 0), Vec3(0, 0, 0),
-                                 /*split*/true, /*caps*/false, onR);
+    PlaneCutLoops onR;
+    size_t nOn = cutOnce!cutByPlaneEx(on, Vec3(0, 0, 0), Vec3(1, 0, 0),
+                                          /*clipped*/false, Vec3(0, 0, 0), Vec3(0, 0, 0),
+                                          /*split*/true, /*caps*/false, onR);
     assert(nOn == 4, "split on: same 4 side faces split");
     assert(on.vertices.length == offV + 4, "split on: 4 crossing verts duplicated");
     assert(on.edges.length    == offE + 4, "split on: 4 loop edges doubled into boundaries");
@@ -368,10 +391,10 @@ unittest { // cutByPlaneEx: Slice `split` (S7) — the plane-cut loop reuses the
     Mesh cap = makeCube();
     cap.buildLoops();
     cap.resetSelection();
-    Mesh.PlaneCutLoops capR;
-    size_t nCap = cap.cutByPlaneEx(Vec3(0, 0, 0), Vec3(1, 0, 0),
-                                   /*clipped*/false, Vec3(0, 0, 0), Vec3(0, 0, 0),
-                                   /*split*/true, /*caps*/true, capR);
+    PlaneCutLoops capR;
+    size_t nCap = cutOnce!cutByPlaneEx(cap, Vec3(0, 0, 0), Vec3(1, 0, 0),
+                                            /*clipped*/false, Vec3(0, 0, 0), Vec3(0, 0, 0),
+                                            /*split*/true, /*caps*/true, capR);
     assert(nCap == 4, "split+caps: same 4 side faces split");
     assert(cap.vertices.length == on.vertices.length, "caps add no verts");
     assert(cap.edges.length    == on.edges.length,    "caps add no edges (reuse boundary edges)");
@@ -393,9 +416,9 @@ unittest { // cutByPlaneEx: Slice `gap` + `gapSide` (S9, task 0275) — the two
 
     // center (0): symmetric — lo at x=+G/2, hi at x=−G/2, separation = G.
     Mesh c = makeCube(); c.buildLoops(); c.resetSelection();
-    Mesh.PlaneCutLoops cR;
-    c.cutByPlaneEx(P, N, false, P, P, /*split*/true, /*caps*/true, cR,
-                   1e-5f, null, /*gap*/G, /*gapSide*/0);
+    PlaneCutLoops cR;
+    cutOnce!cutByPlaneEx(c, P, N, false, P, P, /*split*/true, /*caps*/true, cR,
+                            1e-5f, null, /*gap*/G, /*gapSide*/0);
     assert(cR.seamPairs.length == 4);
     foreach (pr; cR.seamPairs) {
         Vec3 lo = c.vertices[pr[0]], hi = c.vertices[pr[1]];
@@ -408,8 +431,8 @@ unittest { // cutByPlaneEx: Slice `gap` + `gapSide` (S9, task 0275) — the two
 
     // positive (1): +n shell (lo) takes the full gap along +n; hi stays on plane.
     Mesh pMesh = makeCube(); pMesh.buildLoops(); pMesh.resetSelection();
-    Mesh.PlaneCutLoops pR;
-    pMesh.cutByPlaneEx(P, N, false, P, P, true, true, pR, 1e-5f, null, G, 1);
+    PlaneCutLoops pR;
+    cutOnce!cutByPlaneEx(pMesh, P, N, false, P, P, true, true, pR, 1e-5f, null, G, 1);
     foreach (pr; pR.seamPairs) {
         assert(abs(pMesh.vertices[pr[0]].x - G)    < 1e-6f, "positive: lo at +gap");
         assert(abs(pMesh.vertices[pr[1]].x - 0.0f) < 1e-6f, "positive: hi stays on plane");
@@ -417,8 +440,8 @@ unittest { // cutByPlaneEx: Slice `gap` + `gapSide` (S9, task 0275) — the two
 
     // negative (2): −n shell (hi) takes the full gap along −n; lo stays on plane.
     Mesh nMesh = makeCube(); nMesh.buildLoops(); nMesh.resetSelection();
-    Mesh.PlaneCutLoops nR;
-    nMesh.cutByPlaneEx(P, N, false, P, P, true, true, nR, 1e-5f, null, G, 2);
+    PlaneCutLoops nR;
+    cutOnce!cutByPlaneEx(nMesh, P, N, false, P, P, true, true, nR, 1e-5f, null, G, 2);
     foreach (pr; nR.seamPairs) {
         assert(abs(nMesh.vertices[pr[0]].x - 0.0f) < 1e-6f, "negative: lo stays on plane");
         assert(abs(nMesh.vertices[pr[1]].x - (-G)) < 1e-6f, "negative: hi at −gap");
@@ -464,11 +487,11 @@ unittest { // cutByPlaneEx: Slice `gap` on a SHEARED cube — split edges stay
     // Original crossed edges (top/bottom face edges the vertical plane cuts).
     static immutable uint[2][4] crossed = [[0,3],[1,2],[5,6],[4,7]];
 
-    Mesh.PlaneCutLoops R;
+    PlaneCutLoops R;
     // infinite (clipped=false) so the whole cross-section is cut (owner's 16v result).
-    size_t nS = m.cutByPlaneEx(P, N, /*clipped*/false, P, P,
-                               /*split*/true, /*caps*/true, R, 1e-5f, null,
-                               /*gap*/G, /*gapSide*/0);
+    size_t nS = cutOnce!cutByPlaneEx(m, P, N, /*clipped*/false, P, P,
+                                        /*split*/true, /*caps*/true, R, 1e-5f, null,
+                                        /*gap*/G, /*gapSide*/0);
     assert(nS > 0, "sheared cube: the oblique plane must cut faces");
     assert(R.seamPairs.length == 4, "sheared cube: 4 crossing verts duplicated");
 
@@ -508,7 +531,7 @@ unittest { // cutByPlane: selected parent → BOTH split halves stay selected
     m.resetSelection();
     m.selectFace(0);
 
-    size_t nSplit = m.cutByPlane(Vec3(0.5f, 0, 0), Vec3(1, 0, 0));
+    size_t nSplit = cutOnce!cutByPlane(m, Vec3(0.5f, 0, 0), Vec3(1, 0, 0));
 
     assert(nSplit == 1, "single quad should produce 1 split");
     assert(m.faces.length == 2, "2 sub-faces after cut");
@@ -526,7 +549,7 @@ unittest { // cutByPlane: unselected parent → BOTH split halves stay unselecte
     m.resetSelection();
     // Deliberately no selectFace() call.
 
-    size_t nSplit = m.cutByPlane(Vec3(0.5f, 0, 0), Vec3(1, 0, 0));
+    size_t nSplit = cutOnce!cutByPlane(m, Vec3(0.5f, 0, 0), Vec3(1, 0, 0));
 
     assert(nSplit == 1, "single quad should produce 1 split");
     assert(m.faces.length == 2, "2 sub-faces after cut");
@@ -552,7 +575,7 @@ unittest { // cutByPlaneRestricted: only the selected+masked parents' halves sta
     }
     assert(restrict.length == 2, "cube has exactly two Z-facing faces");
 
-    size_t nSplit = m.cutByPlaneRestricted(Vec3(0, 0, 0), Vec3(1, 0, 0), restrict);
+    size_t nSplit = cutOnce!cutByPlaneRestricted(m, Vec3(0, 0, 0), Vec3(1, 0, 0), restrict);
 
     assert(nSplit == 2, "only the 2 selected faces split");
     assert(m.faces.length == 8, "6 → 8 (each selected face → 2; neighbours stay whole)");
@@ -578,10 +601,438 @@ unittest { // cutByPlane: nothing selected before ⇒ nothing selected after (no
     m.buildLoops();
     m.resetSelection();
 
-    size_t nSplit = m.cutByPlane(Vec3(0, 0, 0), Vec3(0, 1, 0));
+    size_t nSplit = cutOnce!cutByPlane(m, Vec3(0, 0, 0), Vec3(0, 1, 0));
 
     assert(nSplit == 4, "4 side faces split by mid-plane cut");
     assert(m.faces.length == 10, "6 faces → 4 split (×2) + 2 unchanged = 10");
     assert(m.countSelectedFaces() == 0,
            "nothing selected before the cut ⇒ nothing selected after");
+}
+
+// ===========================================================================
+// THE DEFERRAL CELL (task 1903 Stage E3, added in the E3 review round).
+//
+// WHAT THE SUITE CANNOT SEE, AND WHY THIS IS HERE. `tests/test_axis_slice.d`
+// asserts that a 4-cut ladder makes ZERO unbatched geometry commits. That cell
+// is a SCALE check — the zero has to survive the ladder growing — and it does
+// NOT separate "one batch spanning the ladder" from "one batch opened per
+// cut". MEASURED in the E3 review: moving the batch INSIDE
+// `foreach (k; 0 .. count_)` in `commands/mesh/axis_slice.d` leaves every
+// counter at `/api/changes` byte-identical, because
+// `unbatchedGeometryCommits` ticks only OUTSIDE any batch (a per-cut batch
+// reads 0 exactly like a per-ladder one) and change-bus delivery coalesces per
+// frame either way. The observable that DOES separate them is
+// `mutationVersion`, and that is not on the wire at all — so the discriminating
+// cell has to live in the unit lane, here.
+//
+// The block is a DIFFERENTIAL and not a single number for the second reason
+// too: deferring N commits into one is only legal if nothing in these kernels
+// reads back a version, a derived plane or a rebuilt loop table BETWEEN cuts.
+// The full-state compare below is what says so, and the E3 review measured the
+// same equality over 24 cells (8 stands x 3 axes) outside the gate.
+//
+// The one mechanism that COULD have made deferral observable — a per-element
+// derive (Hide, Select) that a later cut then reads back — is closed by
+// construction rather than by this test: `source/mesh_ops/cut.d` reads no
+// derived Hide or Select bit at all (grep for `isFaceHidden` / `isFaceSelected`
+// and their vertex/edge twins across the file: ZERO hits), so a derive deferred
+// to `close()` has nothing in this family to feed back into.
+// ===========================================================================
+
+/// Every plane the plane cut can touch, one line each, for a bit-exact compare.
+///
+/// Coordinates go out as `%a` — the exact hex form. `%g` would round two
+/// genuinely different floats onto one string, and it prints `-0.0` and `0.0`
+/// alike; this family has zero-amplitude arithmetic in its Gap arm
+/// (`v + dir*0` flips `-0.0`), which is exactly the difference a lossy compare
+/// hides. The half-edge tables are included deliberately: they are DERIVED, so
+/// they are where a deferred `buildLoops()` would show up if deferral changed
+/// anything.
+private string[] cutStateLines(ref Mesh m) {
+    import std.format    : format;
+    import std.algorithm : sort;
+    string[] a;
+    a ~= format("counts V=%d F=%d E=%d", m.vertices.length, m.faces.length, m.edges.length);
+    foreach (i, v; m.vertices) a ~= format("V[%d]=%a,%a,%a", i, v.x, v.y, v.z);
+    foreach (fi; 0 .. m.faces.length) a ~= format("F[%d]=%(%d,%)", fi, m.faces[fi]);
+    foreach (ei; 0 .. m.edges.length) a ~= format("E[%d]=%d,%d", ei, m.edges[ei][0], m.edges[ei][1]);
+    a ~= format("loops=%d faceLoop=%d vertLoop=%d loopEdge=%d",
+                m.loops.length, m.faceLoop.length, m.vertLoop.length, m.loopEdge.length);
+    foreach (i, L; m.loops)    a ~= format("L[%d]=v%d,f%d,n%d,p%d,t%d", i, L.vert, L.face, L.next, L.prev, L.twin);
+    foreach (i, w; m.faceLoop) a ~= format("fL[%d]=%d", i, w);
+    foreach (i, w; m.vertLoop) a ~= format("vL[%d]=%d", i, w);
+    foreach (i, w; m.loopEdge) a ~= format("lE[%d]=%d", i, w);
+    foreach (i, w; m.vertexMarks) a ~= format("vM[%d]=%d", i, w);
+    foreach (i, w; m.edgeMarks)   a ~= format("eM[%d]=%d", i, w);
+    foreach (i, w; m.faceMarks)   a ~= format("fM[%d]=%d", i, w);
+    foreach (i, w; m.vertexSelectionOrder) a ~= format("vSO[%d]=%d", i, w);
+    foreach (i, w; m.edgeSelectionOrder)   a ~= format("eSO[%d]=%d", i, w);
+    foreach (i, w; m.faceSelectionOrder)   a ~= format("fSO[%d]=%d", i, w);
+    a ~= format("selOrdCounters=%d,%d,%d", m.vertexSelectionOrderCounter,
+                m.edgeSelectionOrderCounter, m.faceSelectionOrderCounter);
+    foreach (i, w; m.faceMaterial)  a ~= format("fMat[%d]=%d", i, w);
+    foreach (i, w; m.facePart)      a ~= format("fPart[%d]=%d", i, w);
+    foreach (i, w; m.faceSetMask)   a ~= format("fSet[%d]=%d", i, w);
+    foreach (i, w; m.vertexSetMask) a ~= format("vSet[%d]=%d", i, w);
+    ulong[] eks;                                   // the edge set mask is an AA
+    foreach (k, v; m.edgeSetMask) eks ~= k;
+    eks.sort();
+    foreach (k; eks) a ~= format("eSet[%d]=%d", k, m.edgeSetMask[k]);
+    return a;
+}
+
+unittest { // ONE batch over a ladder DEFERS what a batch-per-cut stamps, and lands on the same mesh
+    import std.format : format;
+
+    // `recCutStand` (declared below, with the RECORDING block it was written
+    // for): a grid with every mark plane non-empty. Load-bearing here too —
+    // the state compare's Marks half is zero-against-zero on a clean stand.
+    immutable float[4] offs = [-0.37f, -0.11f, 0.13f, 0.41f];
+    immutable Vec3 n = Vec3(1, 0, 0);
+
+    // (a) A BATCH PER CUT — what `commands/mesh/axis_slice.d` would do with its
+    // `MeshEditBatch` moved inside the ladder loop. This arm IS the mutation
+    // the suite cell cannot see; keeping it in the test is what makes the
+    // comparison below a differential rather than a pinned constant.
+    Mesh perCut = recCutStand();
+    immutable ulong basePerCut = perCut.mutationVersion;
+    string retPerCut;
+    foreach (k; 0 .. 4) {
+        auto ed = MeshEditBatch.unrecorded(perCut, kCutEditScope);
+        retPerCut ~= format("%d;", ed.cutByPlane(n * offs[k], n));
+        ed.close();
+    }
+    immutable ulong dPerCut = perCut.mutationVersion - basePerCut;
+
+    // (b) ONE batch spanning the whole ladder — what it does today.
+    Mesh ladder = recCutStand();
+    immutable ulong baseLadder = ladder.mutationVersion;
+    string retLadder;
+    {
+        auto ed = MeshEditBatch.unrecorded(ladder, kCutEditScope);
+        foreach (k; 0 .. 4) retLadder ~= format("%d;", ed.cutByPlane(n * offs[k], n));
+        ed.close();
+    }
+    immutable ulong dLadder = ladder.mutationVersion - baseLadder;
+
+    // ANTI-VACUITY, and it is not decoration: `cutByPlane` returns 0 the moment
+    // a plane misses, two refusals produce two identical untouched meshes, and
+    // every assertion below would then hold for free.
+    assert(retPerCut == "3;3;3;3;" && retLadder == "3;3;3;3;",
+        format("the ladder split %s (per-cut) / %s (one batch), expected "
+             ~ "3;3;3;3; each — the four planes at x = -0.37/-0.11/0.13/0.41 "
+             ~ "each cross one column of the [-1,1] grid. On a refusal both "
+             ~ "meshes stay untouched and every assertion below is vacuous.",
+               retPerCut, retLadder));
+    assert(ladder.vertices.length == 32 && ladder.faces.length == 21,
+        format("the ladder left V=%d F=%d, expected V=32 F=21 (16 + 4x4 verts, "
+             ~ "9 + 4x3 faces)", ladder.vertices.length, ladder.faces.length));
+
+    // THE DISCRIMINATOR. Both arms make the same commits; the batch decides how
+    // many of them reach `mutationVersion`. Measured on this stand: ONE batch
+    // stamps +1, four batches stamp +4. Asserted as a RELATION, not as the pair
+    // — the numbers are what a coalescing rule chose, the relation is the law
+    // ("a batch that spans the ladder stamps fewer times than one per cut"),
+    // and it is the relation that reddens when the batch moves inside the loop:
+    // both arms then read +4 and `<` fails.
+    assert(dLadder < dPerCut,
+        format("the ladder-wide batch bumped mutationVersion by %d and the "
+             ~ "batch-per-cut ladder by %d, expected strictly fewer (measured "
+             ~ "at Stage E3: +1 against +4). Equal deltas mean the batch is no "
+             ~ "longer deferring — either a caller opens one per cut, or "
+             ~ "`MeshEditBatch` stopped coalescing its commits into `close()`. "
+             ~ "This is the ONLY cell in the tree that separates those two "
+             ~ "worlds: every counter at /api/changes reads identically under "
+             ~ "both (task 1903 Stage E3, plan section 3.2 L2).",
+               dLadder, dPerCut));
+    assert(dLadder > 0,
+        format("the ladder-wide batch bumped mutationVersion by %d — a cut that "
+             ~ "stamps NOTHING is a missing publisher, not a better batch "
+             ~ "(changeBus.missedPublishers is the suite-side twin)", dLadder));
+
+    // DEFERRAL EQUIVALENCE. Deferring the commits must not change one bit of
+    // the result: same coordinates, same windings, same edge order, same marks,
+    // same derived half-edge tables.
+    auto sPerCut = cutStateLines(perCut), sLadder = cutStateLines(ladder);
+    size_t nDiff; string firstDiff;
+    foreach (i; 0 .. (sPerCut.length < sLadder.length ? sPerCut.length : sLadder.length))
+        if (sPerCut[i] != sLadder[i]) {
+            if (nDiff == 0)
+                firstDiff = format("line %d: per-cut `%s` vs one-batch `%s`",
+                                   i, sPerCut[i], sLadder[i]);
+            ++nDiff;
+        }
+    assert(sPerCut.length == sLadder.length && nDiff == 0,
+        format("batching the ladder CHANGED the mesh: %d of %d/%d state lines "
+             ~ "differ. %s. Deferring N commits into one is only legal because "
+             ~ "nothing in these kernels reads back a version or a derived "
+             ~ "plane between cuts; a difference here means something does "
+             ~ "(task 1903 Stage E3).",
+               nDiff, sPerCut.length, sLadder.length,
+               firstDiff.length ? firstDiff : "lengths differ"));
+    assert(sLadder.length > 600,
+        format("the state compare walked only %d lines — on this stand it is "
+             ~ "634, and a comparison of two empty dumps is two zeros "
+             ~ "(the equality above would hold for free)", sLadder.length));
+}
+
+// ===========================================================================
+// THE RECORDING BLOCK (task 1903 Stage E3).
+//
+// Every block above opens an UNRECORDED batch, which is what track 1 is about:
+// the conversion axis, not the undo axis. This one opens the RECORDING
+// constructor, because it is the only thing in the tree that looks at what this
+// family's op-log actually SAYS — and on this family that turns out to be the
+// stage's sharpest finding, invisible to every behavioural test there is.
+// ===========================================================================
+
+private size_t countKind(ref MeshEditDelta d, MeshOpEntry.Kind k) {
+    size_t n;
+    foreach (ref e; d.log) if (e.kind == k) ++n;
+    return n;
+}
+
+/// The scope this family declares, written out from the enum INDEPENDENTLY of
+/// `kCutEditScope`.
+///
+/// `d.scope_` IS `kCutEditScope` fed through `MeshEditTracker.declare`, so
+/// `d.scope_ == kCutEditScope` is the measurement judging itself: set the
+/// constant to 0 and that equality stays true. Measured at Stage D2 on the
+/// reduce family, where exactly that draft stayed green under
+/// `enum uint kReduceEditScope = 0;`. So the expectation here is written from
+/// what the kernels DO — they splice crossing vertices in (Points), rewrite the
+/// whole face array and delete the band component (Polygons), carry the mark
+/// words onto both halves and resize every plane (Marks), and the Gap option
+/// MOVES existing seam vertices (Position) — and the equality against the
+/// constant is asserted separately, AFTER it, where it can only see a broken
+/// `declare`/`close` path.
+private enum uint kExpectedCutScope = MeshEditScope.Position
+                                    | MeshEditScope.Points
+                                    | MeshEditScope.Polygons
+                                    | MeshEditScope.Marks;
+
+private void assertDeclaredScope(string what, ref MeshEditDelta d) {
+    import std.format : format;
+    assert(cast(uint)d.scope_ == kExpectedCutScope,
+        format("%s: a recording plane cut declared scope 0x%x, expected 0x%x "
+             ~ "(Position|Points|Polygons|Marks). Missing: 0x%x. Unexpected: "
+             ~ "0x%x. `MeshEditDelta.finalize` reads scope_ back on a revert to "
+             ~ "decide what to bump and rebuild, so a wrong constant is a wrong "
+             ~ "invalidation, not a cosmetic mismatch (task 1903 Stage E3)",
+               what, cast(uint)d.scope_, kExpectedCutScope,
+               kExpectedCutScope & ~cast(uint)d.scope_,
+               cast(uint)d.scope_ & ~kExpectedCutScope));
+    assert(cast(uint)d.scope_ == kCutEditScope,
+        format("%s: the delta's scope_ (0x%x) is not the kCutEditScope the "
+             ~ "batch was opened with (0x%x) — the declared scope is not "
+             ~ "reaching MeshEditDelta.scope_ at all",
+               what, cast(uint)d.scope_, kCutEditScope));
+}
+
+/// A stand with every plane the cut touches non-empty and non-uniform, and it
+/// SELECTS — which is load-bearing, not decoration. The delta declares
+/// `MeshEditScope.Marks`; on a stand where every mark plane is empty or zero,
+/// "the marks were carried" and "there were no marks" are the same measurement
+/// (Stage E2 review, BLOCKER B1, on exactly this shape). A GRID, not a cube:
+/// the cut must leave faces it never touches, so a carried plane on a SURVIVING
+/// face is something the assertions below can actually be wrong about.
+private Mesh recCutStand() {
+    Mesh m = makeGridPlane(3);
+    m.resetSelection();
+    foreach (fi; 0 .. m.faces.length) m.faceMaterial[fi] = cast(uint)(fi % 2);
+    m.setSubpatch(1, true);
+    m.buildLoops();
+    // `syncSelection` SIZES the mark planes — they are lazily grown and stay
+    // `[]` until something asks for them, so without it `selectFace` has
+    // nothing to write into.
+    m.syncSelection();
+    m.selectFace(4);
+    m.selectVertex(1);
+    m.faceSelectionOrder[2] = 11;
+    return m;
+}
+
+unittest { // the plane-cut op-log NAMES NO FACE CHANGE, and its revert FAULTS
+    import std.format : format;
+    import std.conv   : to;
+
+    Mesh m = recCutStand();
+    // STAND CANARY. Asserts the stand, not the code under test, so it can only
+    // fire when `recCutStand` is edited: with nothing selected and every mark
+    // word zero, the "declared Marks, recorded none" law below would be zero
+    // compared with zero.
+    assert(m.isFaceSelected(4) && m.isVertexSelected(1) && m.isFaceSubpatch(1)
+           && m.faceSelectionOrder[2] == 11,
+        "recCutStand selected/tagged nothing — the Marks half of the law below "
+      ~ "would be vacuous (task 1903 Stage E3, and Stage E2 review BLOCKER B1 "
+      ~ "for the shape)");
+    immutable size_t preV = m.vertices.length, preF = m.faces.length;
+
+    MeshEditDelta d;
+    size_t n;
+    {
+        auto ed = MeshEditBatch(m, kCutEditScope);   // RECORDING
+        n = ed.cutByPlane(Vec3(0.13f, 0, 0), Vec3(1, 0, 0));
+        d = ed.close();
+    }
+
+    // Anti-vacuity: this kernel returns 0 the moment the plane misses, and a
+    // 0-return satisfies every assertion below for free.
+    assert(n == 3 && m.vertices.length == preV + 4 && m.faces.length == preF + 3,
+        format("the stand split %d face(s) (V %d -> %d, F %d -> %d), expected 3 "
+             ~ "(V +4, F +3) — every assertion below would be vacuous on a "
+             ~ "refusal", n, preV, m.vertices.length, preF, m.faces.length));
+
+    assertDeclaredScope("cutByPlane", d);
+
+    // THE FINDING, MEASURED — and it is why this block exists.
+    //
+    // Three faces became six, nine face slots became twelve, and the op-log is
+    // ONE entry:
+    //
+    //     entries=1 kinds=[AddVerts]
+    //
+    // `Mesh.rebuildFacesWithChordSplits` (mesh.d) builds a whole new face array
+    // and installs it with `faces._store = newFacesArr;` — a DIRECT store that
+    // reaches no mutation hook at all. So the delta names the four crossing
+    // vertices it spliced in and says NOTHING about the faces.
+    //
+    // THIS IS A HARDER GAP THAN THE ONE E2 FOUND, and the difference decides
+    // which stage can fix it. `mesh_ops/revolve.d`'s `extrudePathStep_` at
+    // least hands its new face array to `mesh_planes.rewriteFaces`, whose
+    // `Kind.FaceReindex` publisher merely sits DISARMED
+    // (`MeshEditTracker.wantsFaceReindex == false`) — so Stage K's per-rewrite
+    // arming reaches it. `rebuildFacesWithChordSplits` never calls the
+    // primitive, so arming the primitive changes nothing here: **L4 must route
+    // the chord rebuild through `mesh_planes.rewriteFaces` first, or
+    // `mesh.cut` / `mesh.axisSlice` / `mesh.screenSlice` must refuse to write a
+    // delta at all.**
+    immutable size_t addV = countKind(d, MeshOpEntry.Kind.AddVerts);
+    assert(d.log.length == 1 && addV == 1,
+        format("STAGE K/L4 FLIPS THIS. The op-log carries %d entr(ies) "
+             ~ "[%s] of which %d are AddVerts; at Stage E3 it carries exactly "
+             ~ "ONE, an AddVerts, for an op that also turned %d face slots into "
+             ~ "%d. If a face entry has appeared, say which mechanism put it "
+             ~ "there: routing rebuildFacesWithChordSplits through "
+             ~ "mesh_planes.rewriteFaces (the fix L4 needs) is the intended "
+             ~ "one, and this block should then become a full pre/post state "
+             ~ "comparison across a real `revert()`. If nothing routed it and "
+             ~ "the entry appeared anyway, something is recording faces without "
+             ~ "the corner carry and this family's undo is now dropping "
+             ~ "per-corner UV provenance (task 1903 §5.3, plan §12 J/K/L4).",
+               d.log.length, d.log.length ? d.log[0].kind.to!string : "",
+               addV, preF, m.faces.length));
+
+    // NO POSITION WRITE on the plain cut — the behavioural twin of the §5.7
+    // census row, from the other side. `cutByPlane` moves no existing vertex;
+    // only the Gap option does, and the block below is where that shows up.
+    assert(countKind(d, MeshOpEntry.Kind.SetPos) == 0,
+        format("cutByPlane recorded %d Kind.SetPos entr(ies), expected 0 — a "
+             ~ "plain plane cut now moves an EXISTING vertex, which no caller "
+             ~ "asked for (task 1903 §5.7)",
+               countKind(d, MeshOpEntry.Kind.SetPos)));
+
+    // …and NOTHING about the marks either, though the delta DECLARES them.
+    // Pinned as an equality on the incomplete state, so a Marks publisher added
+    // anywhere on this path reddens the line — which is the whole point of
+    // pinning a gap rather than asserting its absence loosely.
+    assert(countKind(d, MeshOpEntry.Kind.SelectionDelta) == 0,
+        format("STAGE L4 FLIPS THIS. The op-log carries %d SelectionDelta "
+             ~ "entr(ies); at Stage E3 it carries none, even though the delta "
+             ~ "declares MeshEditScope.Marks and the chord rebuild rewrites "
+             ~ "every mark plane onto the emitted slots (task 1903 Stage E3).",
+               countKind(d, MeshOpEntry.Kind.SelectionDelta)));
+
+    // `revert()` IS NOT CALLED, AND THAT IS MEASURED, NOT CAUTION. Run on this
+    // exact delta it un-adds the four crossing vertices while twelve rebuilt
+    // faces still reference them, and throws out of `finalize`:
+    //
+    //     core.exception.ArrayIndexError@source/mesh.d(...):
+    //     index [16] is out of bounds for array of length 16
+    //             (mesh_edit_delta.finalize -> Mesh.buildLoops)
+    //
+    // and — the part that matters for the design — it leaves the mesh HALF
+    // REVERTED: measured after catching, V=16 (back to pre-cut) with F=12 (the
+    // post-cut count), i.e. twelve face windings pointing at vertices 16..19
+    // that no longer exist. `MeshEditDelta` has no pre-image of the face array,
+    // so nothing downstream can detect the mismatch at revert time and nothing
+    // can undo a partial revert.
+    //
+    // Unreachable in production today — every caller of this family opens an
+    // UNRECORDED batch (`commands/mesh/axis_slice.d`,
+    // `commands/mesh/screen_slice.d`, the five sites in
+    // `tools/slice/slice_tool.d`) and undoes through a whole-mesh MeshSnapshot.
+    // It is exactly the trap **L4** walks into if it turns this family's undo
+    // into a delta before the face side is recorded, and §5.5's L8 note states
+    // the same requirement for `mesh.strokeExtrude`: the refusal, if that is
+    // the branch taken, must be PRE-FLIGHT and ATOMIC, because a
+    // `revert() == false` bolted on at the end is both too late and, per §6.5,
+    // a behaviour change of its own (a Model entry answering `false` TRUNCATES
+    // the undo stack).
+}
+
+unittest { // the Gap option's seam separation IS recorded — Kind.SetPos, once
+    import std.format : format;
+
+    // The behavioural twin of cut.d's §5.7 census row, and the POSITIVE half of
+    // it: the census says "no raw write is left in the file", this says "the
+    // write that replaced them reaches the op-log". Neither alone is enough —
+    // the census is satisfied by deleting the write, this is satisfied by a
+    // write that records but moves the wrong vertices, and the byte-identity
+    // differential is what covers that third case.
+    Mesh m = recCutStand();
+    immutable size_t preV = m.vertices.length;
+
+    MeshEditDelta d;
+    size_t n;
+    PlaneCutLoops r;
+    {
+        auto ed = MeshEditBatch(m, kCutEditScope);   // RECORDING
+        n = ed.cutByPlaneEx(Vec3(0.13f, 0, 0), Vec3(1, 0, 0), /*clipped*/false,
+                            Vec3(0, 0, 0), Vec3(0, 0, 0),
+                            /*split*/true, /*caps*/true, r,
+                            1e-5f, null, /*gap*/0.3f, /*gapSide*/0);
+        d = ed.close();
+    }
+
+    // Anti-vacuity, twice over: the cut must have happened AND it must have
+    // duplicated a seam, because `setVertexPositions` is only reached from
+    // inside `if (seamPairs.length)`.
+    assert(n == 3 && r.seamPairs.length == 4,
+        format("the stand split %d face(s) and produced %d seam pair(s), "
+             ~ "expected 3 and 4 — with no seam pair the Gap block never runs "
+             ~ "and the SetPos assertion below is vacuous",
+               n, r.seamPairs.length));
+    assert(m.vertices.length == preV + 8,
+        format("V %d -> %d, expected +8 (4 crossing verts + 4 duplicates)",
+               preV, m.vertices.length));
+
+    assertDeclaredScope("cutByPlaneEx split+gap", d);
+
+    // ONE entry for the whole seam, not one per vertex: `setVertexPositions` is
+    // the bulk form precisely so a kernel that moves N vertices declares once.
+    immutable size_t setPos = countKind(d, MeshOpEntry.Kind.SetPos);
+    assert(setPos == 1,
+        format("the Gap option recorded %d Kind.SetPos entr(ies), expected "
+             ~ "exactly 1. Until Stage E3 this separation was two raw "
+             ~ "`vertices[pr[0]] = …` writes, which record NOTHING inside a "
+             ~ "recording batch — and §5.7's predicate could not even see them, "
+             ~ "because it refused to match a nested index expression. If this "
+             ~ "is 0 the raw write is back; if it is 8 the bulk form was "
+             ~ "replaced by a per-vertex `setVertexPos` loop, which is a "
+             ~ "different (and noisier) declaration (task 1903 §2.5, §5.7).",
+               setPos));
+
+    // The face side is missing here too, for the same reason as the block
+    // above — same mechanism, same removing stage.
+    assert(countKind(d, MeshOpEntry.Kind.AddVerts) == 1 && d.log.length == 2,
+        format("STAGE K/L4 FLIPS THIS. The split+gap op-log carries %d "
+             ~ "entr(ies); at Stage E3 it carries exactly two — AddVerts (the "
+             ~ "crossing verts and their duplicates, coalesced) and SetPos (the "
+             ~ "seam separation) — and NOTHING about the faces, because "
+             ~ "rebuildFacesWithChordSplits stores the new face array directly. "
+             ~ "See the cutByPlane block above for what L4 has to do about it.",
+               d.log.length));
+    // `revert()` is not called here either — see the block above for the
+    // measured fault and the half-reverted state it leaves.
 }

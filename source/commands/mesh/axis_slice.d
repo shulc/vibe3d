@@ -79,11 +79,29 @@ class MeshAxisSlice : Command, Operator {
         // Capture snapshot BEFORE any cuts so we can restore if nothing splits.
         snap = MeshSnapshot.capture(*mesh);
 
+        // ONE batch for the whole ladder of cuts (task 1903 Stage E3). The
+        // loop body is nothing but kernel calls, so the batch spans exactly
+        // what the boundary owns and no more — the narrowing rule §4.4a
+        // applied to its own transitional block. Inside it every
+        // `commitChange` the kernel makes DEFERS, so N cuts stamp, derive and
+        // deliver ONCE at `close()` instead of once per inserted vertex and
+        // once per rebuilt face array.
+        //
+        // No `scope(failure)`: this handle has a destructor, and
+        // `MeshEditBatch.~this` pops the frame during unwinding without
+        // asserting and ticks `changeBus.batchLeaks`, which the suite asserts
+        // stays 0 (plan §2.2c). UNRECORDED because this command's undo is
+        // still the whole-mesh `snap` below; Stage L4 is what turns it into a
+        // delta and flips this to the recording constructor.
         size_t totalSplit = 0;
-        foreach (k; 0 .. count_) {
-            float pos = minV + span * cast(float)(k + 1) / cast(float)(count_ + 1);
-            Vec3 planePoint = planeNormal * pos;
-            totalSplit += mesh.cutByPlane(planePoint, planeNormal);
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kCutEditScope);
+            foreach (k; 0 .. count_) {
+                float pos = minV + span * cast(float)(k + 1) / cast(float)(count_ + 1);
+                Vec3 planePoint = planeNormal * pos;
+                totalSplit += ed.cutByPlane(planePoint, planeNormal);
+            }
+            ed.close();
         }
 
         if (totalSplit == 0) {
@@ -186,9 +204,16 @@ class MeshJulienne : Command, Operator {
 
         Vec3 n = axisNormal(axis);
         size_t total = 0;
-        foreach (k; 0 .. count) {
-            float pos = minV + span * cast(float)(k + 1) / cast(float)(count + 1);
-            total += mesh.cutByPlane(n * pos, n);
+        {
+            // One batch for the ladder — see the twin block in
+            // `AxisSlice.evaluate` above for why it is UNRECORDED and why it
+            // spans the loop rather than each call (task 1903 Stage E3).
+            auto ed = MeshEditBatch.unrecorded(*mesh, kCutEditScope);
+            foreach (k; 0 .. count) {
+                float pos = minV + span * cast(float)(k + 1) / cast(float)(count + 1);
+                total += ed.cutByPlane(n * pos, n);
+            }
+            ed.close();
         }
         return total;
     }

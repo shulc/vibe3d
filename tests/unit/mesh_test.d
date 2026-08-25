@@ -10,7 +10,6 @@ import math;
 import editmode : EditMode;
 import mesh_edit_delta : MeshEditTracker, MeshEditScope;
 import change_bus : SelDomain;
-import mesh_ops.cut : MeshCutOps;
 // (`import mesh_ops.bridge : MeshBridgeOps;` was here until task 1903 Stage D3
 // turned that family into free functions — the template name no longer exists.
 // Nothing in this file ever NAMED any of the templates imported around it; they
@@ -3940,7 +3939,14 @@ unittest { // cutByPlane: facePart must carry over to both split halves
     m.facePart.length = 1;
     m.facePart[0] = 5u;
 
-    size_t nSplit = m.cutByPlane(Vec3(0.5f, 0, 0), Vec3(1, 0, 0));
+    // Task 1903 Stage E3: `cutByPlane` is a free function over
+    // `ref MeshEditBatch`, so the call opens the batch the boundary owns.
+    size_t nSplit;
+    {
+        auto ed = MeshEditBatch.unrecorded(m, kCutEditScope);
+        nSplit = ed.cutByPlane(Vec3(0.5f, 0, 0), Vec3(1, 0, 0));
+        ed.close();
+    }
     assert(nSplit == 1, "facePart/cutByPlane: expected 1 split");
     assert(m.faces.length == 2, "facePart/cutByPlane: expected 2 faces");
     assert(m.facePart.length >= 2, "facePart must cover both sub-faces");

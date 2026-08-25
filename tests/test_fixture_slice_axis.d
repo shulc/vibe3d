@@ -8,7 +8,7 @@
 // along Z => the X=0 cut; custom (0,0,2) => normalize(Z) => the X=0 cut (proves the
 // custom vector is normalized). The Y-line lies in EVERY resulting plane (the
 // owner-bug invariant). infinite=true forces the clean 12v/10f full-mesh mid-cut.
-// The plane law is math.planeForSlice; analytic self-golden (Mesh.cutByPlane is
+// The plane law is math.planeForSlice; analytic self-golden (mesh_ops.cut.cutByPlane is
 // connectivity-correct by construction).
 //
 // The DEFAULT (no axis override) path is covered by tests/fixtures/slice.json

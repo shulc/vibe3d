@@ -96,7 +96,7 @@ SliceAxis classifyPlaneAxis(Vec3 dir, out Vec3 vector, float tol = 0.999f) {
 // ---------------------------------------------------------------------------
 // SliceGapSide (task 0275, S9) — the reference "Offset Side": where the Gap
 // band sits relative to the cut plane. The integer VALUES are the wire contract
-// the kernel (Mesh.cutByPlaneEx → splitAlongCutLoop) reads directly, so keep
+// the kernel (mesh_ops.cut.cutByPlaneEx → splitAlongCutLoop) reads directly, so keep
 // them 0/1/2 in lockstep with the switch there.
 //   Center   — symmetric: both shells recede ±gap/2 from the plane.
 //   Positive — the +n-side shell takes the full gap along +n; the other stays.
@@ -114,7 +114,7 @@ static immutable IntEnumEntry[3] sliceGapSideTable = [
 // sliceSplitGap (task 0291) — the ONE shared helper for Split + Caps + Gap,
 // called identically from BOTH split-gap call sites (`sliceFromBaseline` below
 // and `SliceTool.applyHeadless`) so they cannot drift. Routes through
-// `Mesh.cutByPlaneSplitGap` — TWO REAL parallel plane cuts at
+// `mesh_ops.cut.cutByPlaneSplitGap` — TWO REAL parallel plane cuts at
 // `center ± offset·n` with the slab between them deleted, so every seam sits
 // on a real edge∩plane intersection and each remaining shell's cap is always
 // planar + simple. This replaces the single-cut + fixed along-edge slide
@@ -133,15 +133,33 @@ size_t sliceSplitGap(ref Mesh mesh, Vec3 p, Vec3 n, bool clipped, Vec3 s, Vec3 e
                      bool caps, float gap, int gapSide, const uint[] restrict) {
     MeshSnapshot snap = MeshSnapshot.capture(mesh);
     bool separated;
-    size_t nc = mesh.cutByPlaneSplitGap(p, n, clipped, s, e, caps, gap, gapSide,
-                                        separated, restrict);
+    // TWO batches, not one, and the reason is the rollback between them (task
+    // 1903 Stage E3). `snap.restore` replaces the whole `Mesh` value and stamps
+    // through `commitRestored`, which by design never consults the batch frame
+    // — so it must not run inside an open one. Each batch therefore spans
+    // exactly its own kernel call, which is also E2's settled shape for a
+    // caller. UNRECORDED: this path's undo is the caller's whole-mesh snapshot
+    // until Stage L4 (commands) / Stage M (the tool's session-edit pair).
+    size_t nc;
+    {
+        auto ed = MeshEditBatch.unrecorded(mesh, kCutEditScope);
+        nc = ed.cutByPlaneSplitGap(p, n, clipped, s, e, caps, gap, gapSide,
+                                   separated, restrict);
+        ed.close();
+    }
     if (separated) return nc;
     // PARTIAL cut: the two planes did not disconnect the mesh ⇒ no band to
     // remove ⇒ NO gap would open. Roll back and reproduce today's behaviour.
     snap.restore(mesh);
-    Mesh.PlaneCutLoops loops;
-    return mesh.cutByPlaneEx(p, n, clipped, s, e, /*split*/true, caps, loops,
-                             1e-5f, restrict, gap, gapSide);
+    PlaneCutLoops loops;
+    size_t nLegacy;
+    {
+        auto ed = MeshEditBatch.unrecorded(mesh, kCutEditScope);
+        nLegacy = ed.cutByPlaneEx(p, n, clipped, s, e, /*split*/true, caps, loops,
+                                  1e-5f, restrict, gap, gapSide);
+        ed.close();
+    }
+    return nLegacy;
 }
 
 // ---------------------------------------------------------------------------
@@ -172,18 +190,18 @@ size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
     if (!planeForSlice(start, end, wpNormal, axisMode, vector, p, n))
         return 0;
     // `infinite` (task 0270): ON extends the line indefinitely, so the plane
-    // slices the WHOLE mesh (Mesh.cutByPlane — the S0 behavior). OFF (the
+    // slices the WHOLE mesh (mesh_ops.cut.cutByPlane — the S0 behavior). OFF (the
     // reference factory default) CLIPS the cut to the drawn Start→End span, so
-    // only faces under the drawn line are cut (Mesh.cutByPlaneClipped). On a
+    // only faces under the drawn line are cut (mesh_ops.cut.cutByPlaneClipped). On a
     // mesh whose cross-section fits within the line the two agree.
     //
     // `split` (task S7): OFF is the connected single cut above — byte-for-byte
     // the S0/S4 path (the non-split kernel is called directly). ON routes the
-    // SAME plane cut through Mesh.cutByPlaneEx, which duplicates the cut loop
+    // SAME plane cut through mesh_ops.cut.cutByPlaneEx, which duplicates the cut loop
     // into two coincident boundary loops (the Loop Slice lo/hi seam model),
     // splitting the surface into two disconnected sections along the cut.
     // `caps` (task S8): with `split` on, seal each split section's boundary loop
-    // with one cap polygon (Mesh.cutByPlaneEx forwards it to splitAlongCutLoop →
+    // with one cap polygon (mesh_ops.cut.cutByPlaneEx forwards it to splitAlongCutLoop →
     // capShellCycles, the SAME cap geometry as Loop Slice Cap Sections). A no-op
     // when `split` is off (the non-split kernels never duplicate a loop).
     // `restrictFaces` (task 0279): when non-empty, the cut is confined to those
@@ -195,12 +213,15 @@ size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
         // A single connected plane cut through point `pp`, honoring infinite vs
         // clipped + restrictFaces (the S0/S4 path). Nested so the Gap-without-
         // split path can fire it twice for the two parallel cuts.
-        size_t cutAt(Vec3 pp) {
+        // Takes the batch rather than opening one (task 1903 Stage E3): the
+        // Gap-without-split path fires it TWICE, and both cuts belong to one
+        // edit — one stamp, one derive, one delivery at the caller's `close()`.
+        size_t cutAt(ref MeshEditBatch ed, Vec3 pp) {
             if (infinite)
                 return restrictFaces.length > 0
-                     ? mesh.cutByPlaneRestricted(pp, n, restrictFaces)
-                     : mesh.cutByPlane(pp, n);
-            return mesh.cutByPlaneClipped(pp, n, start, end, 1e-5f, restrictFaces);
+                     ? ed.cutByPlaneRestricted(pp, n, restrictFaces)
+                     : ed.cutByPlane(pp, n);
+            return ed.cutByPlaneClipped(pp, n, start, end, 1e-5f, restrictFaces);
         }
         // Gap WITHOUT Split (task 0288). The reference Slice's `gap` works even
         // with Split OFF: it opens the single cut into TWO PARALLEL cuts `gap`
@@ -223,14 +244,25 @@ size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
                 case cast(int)SliceGapSide.Negative: loAmt = 0.0f;       hiAmt = gap;        break;
                 default:                              loAmt = gap * 0.5f; hiAmt = gap * 0.5f; break;
             }
-            size_t nCut = cutAt(p + n * loAmt);
-            nCut       += cutAt(p - n * hiAmt);
+            size_t nCut;
+            {
+                auto ed = MeshEditBatch.unrecorded(mesh, kCutEditScope);
+                nCut  = cutAt(ed, p + n * loAmt);
+                nCut += cutAt(ed, p - n * hiAmt);
+                ed.close();
+            }
             return nCut;
         }
-        return cutAt(p);
+        size_t nOne;
+        {
+            auto ed = MeshEditBatch.unrecorded(mesh, kCutEditScope);
+            nOne = cutAt(ed, p);
+            ed.close();
+        }
+        return nOne;
     }
     // `gap`/`gapSide` (S9): with split on, separate the two boundary loops along
-    // the cut-plane normal `n` by `gap`, offset per `gapSide` (Mesh.cutByPlaneEx
+    // the cut-plane normal `n` by `gap`, offset per `gapSide` (mesh_ops.cut.cutByPlaneEx
     // → splitAlongCutLoop). gap=0 leaves the pairs coincident (byte-for-byte S7/S8).
     //
     // Task 0291: an UNRESTRICTED gap route through `sliceSplitGap` — TWO real
@@ -242,10 +274,16 @@ size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
     if (gap != 0.0f && restrictFaces.length == 0)
         return sliceSplitGap(mesh, p, n, /*clipped*/!infinite, start, end,
                              caps, gap, gapSide, restrictFaces);
-    Mesh.PlaneCutLoops loops;
-    return mesh.cutByPlaneEx(p, n, /*clipped*/!infinite, start, end,
-                             /*split*/true, caps, loops, 1e-5f, restrictFaces,
-                             gap, gapSide);
+    PlaneCutLoops loops;
+    size_t nSplitCut;
+    {
+        auto ed = MeshEditBatch.unrecorded(mesh, kCutEditScope);
+        nSplitCut = ed.cutByPlaneEx(p, n, /*clipped*/!infinite, start, end,
+                                    /*split*/true, caps, loops, 1e-5f, restrictFaces,
+                                    gap, gapSide);
+        ed.close();
+    }
+    return nSplitCut;
 }
 
 // The face set the cut is restricted to = the current POLYGON selection. Empty
@@ -509,7 +547,7 @@ void sliceRingPlaneBasis(Vec3 axis, out Vec3 right, out Vec3 up) {
 // plane that the one-shot `mesh.screenSlice` command builds
 // (source/commands/mesh/screen_slice.d, untouched): a horizontal drag in a
 // front view makes a clean axis-aligned cut regardless of camera pitch. The
-// cut itself reuses the existing `Mesh.cutByPlane` kernel (index-shared
+// cut itself reuses the existing `mesh_ops.cut.cutByPlane` kernel (index-shared
 // crossing verts, chord-split faces, all-quad on a cube — 8v/6f → 12v/10f for
 // a mid-plane cut); this tool does not reimplement it.
 //
@@ -541,14 +579,14 @@ void sliceRingPlaneBasis(Vec3 axis, out Vec3 right, out Vec3 up) {
 //
 // S4 (task 0270) adds `infinite` (bool): OFF (the reference factory default)
 // CLIPS the cut to the drawn Start→End span — only faces under the line get
-// cut (Mesh.cutByPlaneClipped); ON extends the line indefinitely so the plane
-// slices the whole mesh (Mesh.cutByPlane, the S0 behavior). It threads through
+// cut (mesh_ops.cut.cutByPlaneClipped); ON extends the line indefinitely so the plane
+// slices the whole mesh (mesh_ops.cut.cutByPlane, the S0 behavior). It threads through
 // the preview + commit (sliceFromBaseline) and applyHeadless.
 //
 // S7 (task 0273) adds `split` (bool, default off): OFF is the S0 connected cut;
 // ON duplicates the plane-cut loop into two coincident boundary loops so the
 // surface splits into two disconnected sections along the cut, reusing the Loop
-// Slice lo/hi seam-pair split machinery (Mesh.cutByPlaneEx → splitAlongCutLoop).
+// Slice lo/hi seam-pair split machinery (mesh_ops.cut.cutByPlaneEx → splitAlongCutLoop).
 // It threads through the preview + commit (sliceFromBaseline) and applyHeadless.
 // The seam-pair data it produces is what Cap Sections (S8) / Gap (S9) build on.
 //
@@ -674,7 +712,7 @@ private:
     // connected cut (byte-for-byte). ON duplicates the plane-cut loop into two
     // coincident boundary loops — the surface splits into two disconnected
     // sections along the cut, reusing the Loop Slice lo/hi seam-pair machinery
-    // (Mesh.cutByPlaneEx → splitAlongCutLoop). Threads through the preview +
+    // (mesh_ops.cut.cutByPlaneEx → splitAlongCutLoop). Threads through the preview +
     // commit (sliceFromBaseline) and applyHeadless. Sticky (not reset on
     // activate), like the other tool options. The seam-pair data it produces is
     // the foundation the later Cap Sections (S8) / Gap (S9) options act on.
@@ -1210,21 +1248,25 @@ public:
                 nSplit = sliceSplitGap(*mesh, p, n, /*clipped*/!infinite_, sStart, sEnd,
                                        caps_, gap_, cast(int)gapSide_, restrict);
             } else {
-                Mesh.PlaneCutLoops loops;
-                nSplit = mesh.cutByPlaneEx(p, n, /*clipped*/!infinite_, sStart, sEnd,
-                                           /*split*/true, caps_, loops, 1e-5f, restrict,
-                                           gap_, cast(int)gapSide_);
+                PlaneCutLoops loops;
+                auto ed = MeshEditBatch.unrecorded(*mesh, kCutEditScope);
+                nSplit = ed.cutByPlaneEx(p, n, /*clipped*/!infinite_, sStart, sEnd,
+                                         /*split*/true, caps_, loops, 1e-5f, restrict,
+                                         gap_, cast(int)gapSide_);
+                ed.close();
             }
         } else {
             // A single connected plane cut through `pp` (infinite/clipped +
             // restrict). Nested so the Gap-without-split path fires it twice.
             // MUST stay in lockstep with sliceFromBaseline's non-split branch.
-            size_t cutAt(Vec3 pp) {
+            // Takes the batch, does not open one — the twin of
+            // `sliceFromBaseline`'s `cutAt` (task 1903 Stage E3).
+            size_t cutAt(ref MeshEditBatch ed, Vec3 pp) {
                 if (restrict.length > 0)
-                    return infinite_ ? mesh.cutByPlaneRestricted(pp, n, restrict)
-                                     : mesh.cutByPlaneClipped(pp, n, sStart, sEnd, 1e-5f, restrict);
-                return infinite_ ? mesh.cutByPlane(pp, n)
-                                 : mesh.cutByPlaneClipped(pp, n, sStart, sEnd);
+                    return infinite_ ? ed.cutByPlaneRestricted(pp, n, restrict)
+                                     : ed.cutByPlaneClipped(pp, n, sStart, sEnd, 1e-5f, restrict);
+                return infinite_ ? ed.cutByPlane(pp, n)
+                                 : ed.cutByPlaneClipped(pp, n, sStart, sEnd);
             }
             // Gap WITHOUT Split (task 0288): two parallel cuts `gap` apart open a
             // CONNECTED channel — the captured reference geometry (see
@@ -1237,9 +1279,13 @@ public:
                     case cast(int)SliceGapSide.Negative: loAmt = 0.0f;        hiAmt = gap_;        break;
                     default:                              loAmt = gap_ * 0.5f; hiAmt = gap_ * 0.5f; break;
                 }
-                nSplit = cutAt(p + n * loAmt) + cutAt(p - n * hiAmt);
+                auto ed = MeshEditBatch.unrecorded(*mesh, kCutEditScope);
+                nSplit = cutAt(ed, p + n * loAmt) + cutAt(ed, p - n * hiAmt);
+                ed.close();
             } else {
-                nSplit = cutAt(p);
+                auto ed = MeshEditBatch.unrecorded(*mesh, kCutEditScope);
+                nSplit = cutAt(ed, p);
+                ed.close();
             }
         }
         if (nSplit == 0) return false;

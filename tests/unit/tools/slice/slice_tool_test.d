@@ -151,10 +151,18 @@ unittest { // sliceSplitGap: a PARTIAL cut — one of the two offset planes neve
     size_t nHelper = sliceSplitGap(viaHelper, P, N, /*clipped*/true, segStart, segEnd,
                                    /*caps*/true, G, /*gapSide*/0, null);
 
-    Mesh.PlaneCutLoops loops;
-    size_t nLegacy = viaLegacy.cutByPlaneEx(P, N, /*clipped*/true, segStart, segEnd,
-                                            /*split*/true, /*caps*/true, loops,
-                                            1e-5f, null, G, 0);
+    // The kernel is a free function over `ref MeshEditBatch` (task 1903 Stage
+    // E3), so the legacy arm opens its own UNRECORDED batch — exactly what
+    // `sliceSplitGap` does internally for the arm this compares against.
+    PlaneCutLoops loops;
+    size_t nLegacy;
+    {
+        auto ed = MeshEditBatch.unrecorded(viaLegacy, kCutEditScope);
+        nLegacy = ed.cutByPlaneEx(P, N, /*clipped*/true, segStart, segEnd,
+                                  /*split*/true, /*caps*/true, loops,
+                                  1e-5f, null, G, 0);
+        ed.close();
+    }
 
     assert(nHelper > 0, "the clipped segment must still cut some faces");
     assert(nHelper == nLegacy,
@@ -181,8 +189,12 @@ unittest { // sliceSplitGap: a PARTIAL cut — one of the two offset planes neve
         probe.buildLoops();
         probe.resetSelection();
         bool separated;
-        probe.cutByPlaneSplitGap(P, N, /*clipped*/true, segStart, segEnd,
-                                 /*caps*/true, G, /*gapSide*/0, separated, null);
+        {
+            auto ed = MeshEditBatch.unrecorded(probe, kCutEditScope);
+            ed.cutByPlaneSplitGap(P, N, /*clipped*/true, segStart, segEnd,
+                                  /*caps*/true, G, /*gapSide*/0, separated, null);
+            ed.close();
+        }
         assert(!separated,
                "partial cut: the two offset cuts must NOT report separated==true "
                ~ "(one plane's crossings project entirely out of the clip band)");

@@ -4,7 +4,7 @@
 // vert is DUPLICATED into two coincident verts, so the single connected cut
 // loop becomes TWO distinct boundary edge-loops and the two sides of the cut
 // are topologically disconnected along it — reusing the Loop Slice lo/hi
-// seam-pair split machinery (Mesh.cutByPlaneEx -> splitAlongCutLoop) fed the
+// seam-pair split machinery (mesh_ops.cut.cutByPlaneEx -> splitAlongCutLoop) fed the
 // plane-cut loop instead of an edge-ring loop. Analytic self-golden on a cube,
 // line along Z through the origin (plane normal ||X, X=0, == S0 slice.json
 // midX): OFF 12 verts / 20 edges / 10 faces (one closed shell); ON 16 verts /

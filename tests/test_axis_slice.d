@@ -256,3 +256,120 @@ unittest { // julienne Y×X 2×2: verify face count growth
     auto m2 = model();
     assert(faceCount(m2) == 6, "undo restores cube");
 }
+
+// ---------------------------------------------------------------------------
+// The edit-seam observables of mesh.axisSlice and mesh.julienne (task 1903
+// Stage E3). These are invisible to every other test in this file: the geometry
+// a plane cut produces is byte-identical whether or not the kernel runs inside
+// a batch. What separates those worlds is the change-bus counters at
+// /api/changes.
+// ---------------------------------------------------------------------------
+JSONValue getChanges() {
+    return parseJSON(cast(string)get(BASE ~ "/api/changes"));
+}
+
+unittest { // both slice commands run every cut of the ladder inside ONE batch
+    loadCube();
+
+    // POSITIVE CONTROL, and it is not decoration. Every assertion below is
+    // "this counter did not move", and a dead counter — the g_isDocumentMesh
+    // predicate uninstalled, the endpoint reading a stale copy — satisfies
+    // that for free. So make the SAME counter move first, with a command that
+    // is deliberately still batchless: mesh.triple commits its geometry
+    // unbatched, exactly as mesh.axisSlice did before Stage E3.
+    auto c0 = getChanges();
+    runCommand("mesh.triple");
+    auto c1 = getChanges();
+    const long ctrl = c1["unbatchedGeometryCommits"].integer
+                    - c0["unbatchedGeometryCommits"].integer;
+    assert(ctrl > 0,
+        "positive control: an UNBATCHED command must tick "
+      ~ "unbatchedGeometryCommits, and mesh.triple ticked " ~ ctrl.to!string
+      ~ ". A dead counter passes every assertion below for free "
+      ~ "(task 1903 §3.2 L2, M-DM).");
+
+    // (1) ONE cut. Measured pre-E3 delta is in the message, in ONE place —
+    // a comment carrying a second copy is the copy that drifts (E1 review).
+    loadCube();
+    auto b1 = getChanges();
+    runCommandWith(`{"id":"mesh.axisSlice","params":{"axis":1,"count":1}}`);
+    auto a1 = getChanges();
+    const long unbatched1 = a1["unbatchedGeometryCommits"].integer
+                          - b1["unbatchedGeometryCommits"].integer;
+    assert(unbatched1 == 0,
+        "mesh.axisSlice (1 cut) made " ~ unbatched1.to!string ~ " UNBATCHED "
+      ~ "geometry commit(s). The kernel's receiver is `ref MeshEditBatch`, so "
+      ~ "its commits must defer into the frame and stamp once at close(); a "
+      ~ "non-zero delta means the batch does not cover the kernel "
+      ~ "(task 1903 Stage E3, plan §3.2 L2). Pre-E3 this was +6.");
+    assert(faceCount(model()) == 10,
+        "the 1-cut slice left " ~ faceCount(model()).to!string ~ " faces, "
+      ~ "expected 10 — a refused command moves no counter at all and makes "
+      ~ "the assertion above vacuous");
+
+    // (2) FOUR cuts — a SCALE check: the zero has to hold as the ladder grows,
+    // not just on the single-cut path. Pre-E3 this read +24, four times the
+    // 1-cut figure, so what it reddens under is "the ladder is not batched at
+    // all", at four times the amplitude of cell (1).
+    //
+    // It does NOT separate "one batch per cut" from "one batch for the whole
+    // ladder", and the earlier text here claimed it did. MEASURED in the E3
+    // review: with the batch moved INSIDE `foreach (k; 0 .. count_)` in
+    // `commands/mesh/axis_slice.d` every counter on this endpoint is
+    // byte-identical — `unbatchedGeometryCommits` ticks only OUTSIDE any batch,
+    // so a per-cut batch reads 0 exactly like a per-ladder one, and change-bus
+    // delivery coalesces per frame either way. The observable that DOES
+    // separate them is `mutationVersion`, which is not on the wire; the cell
+    // that discriminates is therefore in the unit lane, in
+    // `tests/unit/mesh_ops/cut_test.d` ("ONE batch over a ladder DEFERS what a
+    // batch-per-cut stamps"), where the ladder-wide batch bumps it by 1 against
+    // the per-cut ladder's 4.
+    loadCube();
+    auto b2 = getChanges();
+    runCommandWith(`{"id":"mesh.axisSlice","params":{"axis":0,"count":4}}`);
+    auto a2 = getChanges();
+    const long unbatched2 = a2["unbatchedGeometryCommits"].integer
+                          - b2["unbatchedGeometryCommits"].integer;
+    assert(unbatched2 == 0,
+        "mesh.axisSlice (4 cuts) made " ~ unbatched2.to!string ~ " UNBATCHED "
+      ~ "geometry commit(s) (task 1903 Stage E3). Pre-E3 this was +24 — four "
+      ~ "times the 1-cut figure, so this cell reddens at four times cell (1)'s "
+      ~ "amplitude when the ladder runs unbatched. It says NOTHING about "
+      ~ "WHERE the batch is opened: a batch per cut reads 0 here too "
+      ~ "(measured). That separation lives in tests/unit/mesh_ops/cut_test.d, "
+      ~ "on mutationVersion.");
+
+    // (3) julienne — two ladders on two axes, still one batch each.
+    loadCube();
+    auto b3 = getChanges();
+    runCommandWith(`{"id":"mesh.julienne","params":`
+                 ~ `{"axisA":0,"countA":1,"axisB":2,"countB":1}}`);
+    auto a3 = getChanges();
+    const long unbatched3 = a3["unbatchedGeometryCommits"].integer
+                          - b3["unbatchedGeometryCommits"].integer;
+    assert(unbatched3 == 0,
+        "mesh.julienne made " ~ unbatched3.to!string ~ " UNBATCHED geometry "
+      ~ "commit(s) (task 1903 Stage E3). Pre-E3 this was +14.");
+
+    // (4) The batches closed cleanly, nobody stamped without publishing, and
+    // no kernel opened one of its own. This family has NO intra-Mesh caller —
+    // `source/mesh.d` and the remaining `mesh_ops/*.d` mention its names only
+    // in comments — so unlike D3's bridge it owes no transitional-batch debt,
+    // and this delta is what says so.
+    const long nested = a3["nestedBatchOpens"].integer
+                      - c0["nestedBatchOpens"].integer;
+    assert(nested == 0,
+        "the plane-cut family moved changeBus.nestedBatchOpens by "
+      ~ nested.to!string ~ ", expected 0. Its batches are opened at the "
+      ~ "command boundaries and nowhere else; a nested open means a kernel "
+      ~ "started opening one, which §2.3 rule 2 forbids (task 1903 Stage E3).");
+    const long leaks = a3["batchLeaks"].integer - c0["batchLeaks"].integer;
+    assert(leaks == 0,
+        "a MeshEditBatch leaked (destroyed while still open) during the slice "
+      ~ "commands: delta " ~ leaks.to!string);
+    const long missed = a3["missedPublishers"].integer
+                      - c0["missedPublishers"].integer;
+    assert(missed == 0,
+        "a mutationVersion bump reached the frame with no pending change "
+      ~ "during the slice commands: delta " ~ missed.to!string);
+}

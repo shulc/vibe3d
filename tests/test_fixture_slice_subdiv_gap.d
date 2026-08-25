@@ -9,7 +9,7 @@
 // own crossed edge overshoots past the edge's far endpoint, scattering the
 // seam off the cut plane and producing a self-intersecting cap. This is RED
 // on pre-fix HEAD (the cap self-intersects) and GREEN once Slice routes
-// split+caps+gap through TWO REAL parallel plane cuts (Mesh.cutByPlaneSplitGap)
+// split+caps+gap through TWO REAL parallel plane cuts (mesh_ops.cut.cutByPlaneSplitGap)
 // + a band delete: every seam then sits on a REAL edge-plane intersection, so
 // each remaining shell's cap is always planar and simple.
 //

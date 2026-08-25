@@ -917,7 +917,7 @@ private void registerEditTools(EditorApp app) {
 
     // Slice (plane/line) — interactive Start→End line cut with a plane
     // PERPENDICULAR to the work plane (mesh.sliceTool, task 0266 S0). Reuses
-    // Mesh.cutByPlane; one MeshSnapshot undo entry per committed slice
+    // mesh_ops.cut.cutByPlane; one MeshSnapshot undo entry per committed slice
     // (reuses the generic bevelEditFactory snapshot command, labelled "Slice").
     // Distinct from the camera-plane one-shot mesh.screenSlice command.
     reg.toolFactories["mesh.sliceTool"] = () {

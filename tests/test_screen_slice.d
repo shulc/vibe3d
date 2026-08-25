@@ -229,3 +229,64 @@ unittest { // screenSlice short-line no-op: mesh unchanged, no undo entry pushed
         "single undo after no-op must restore 8 verts, got " ~
         vertCount(mc).to!string);
 }
+
+// ---------------------------------------------------------------------------
+// The edit-seam observable of mesh.screenSlice (task 1903 Stage E3) — see the
+// twin block in tests/test_axis_slice.d for why a geometry test cannot see it.
+// ---------------------------------------------------------------------------
+JSONValue getChanges() {
+    return parseJSON(cast(string)get(BASE ~ "/api/changes"));
+}
+
+unittest { // mesh.screenSlice runs its cut inside ONE edit batch
+    loadCube();
+
+    // POSITIVE CONTROL first: a still-batchless command must MOVE the counter,
+    // or the zero below is the zero of a dead counter (task 1903 §3.2 L2,
+    // M-DM).
+    auto c0 = getChanges();
+    postCmd("/api/command", `{"id":"mesh.triple"}`);
+    auto c1 = getChanges();
+    const long ctrl = c1["unbatchedGeometryCommits"].integer
+                    - c0["unbatchedGeometryCommits"].integer;
+    assert(ctrl > 0,
+        "positive control: mesh.triple ticked " ~ ctrl.to!string
+      ~ " unbatched geometry commit(s); a dead counter passes the assertion "
+      ~ "below for free");
+
+    loadCube();
+    // The line is derived from the REAL viewport, exactly as the geometry cell
+    // at the top of this file does — a hard-coded pixel pair is a different
+    // camera on a different host and the command simply refuses.
+    auto cam = setCamera(0, 0, 5);
+    float vpX = cam["vpX"].type == JSONType.integer
+        ? cast(float)cam["vpX"].integer : cast(float)cam["vpX"].floating;
+    float vpY = cam["vpY"].type == JSONType.integer
+        ? cast(float)cam["vpY"].integer : cast(float)cam["vpY"].floating;
+    float vpW = cam["width"].type == JSONType.integer
+        ? cast(float)cam["width"].integer : cast(float)cam["width"].floating;
+    float vpH = cam["height"].type == JSONType.integer
+        ? cast(float)cam["height"].integer : cast(float)cam["height"].floating;
+    immutable float cx = vpX + vpW * 0.5f;
+    auto b = getChanges();
+    auto r = runScreenSliceRaw(cx, vpY + vpH * 0.1f, cx, vpY + vpH * 0.9f);
+    assert(r["status"].str == "ok" || r["status"].str == "success",
+        "screenSlice failed: " ~ r.toString);
+    auto a = getChanges();
+    const long unbatched = a["unbatchedGeometryCommits"].integer
+                         - b["unbatchedGeometryCommits"].integer;
+    assert(unbatched == 0,
+        "mesh.screenSlice made " ~ unbatched.to!string ~ " UNBATCHED geometry "
+      ~ "commit(s). The kernel's receiver is `ref MeshEditBatch`, so its "
+      ~ "commits must defer into the frame and stamp once at close() "
+      ~ "(task 1903 Stage E3, plan §3.2 L2). Pre-E3 this was +6.");
+    assert(faceCount(model()) == 10,
+        "the camera-plane slice left " ~ faceCount(model()).to!string
+      ~ " faces, expected 10 — a refused command moves no counter at all and "
+      ~ "makes the assertion above vacuous");
+    const long nested = a["nestedBatchOpens"].integer
+                      - c0["nestedBatchOpens"].integer;
+    assert(nested == 0,
+        "mesh.screenSlice moved changeBus.nestedBatchOpens by "
+      ~ nested.to!string ~ ", expected 0 (task 1903 Stage E3).");
+}

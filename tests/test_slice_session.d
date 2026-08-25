@@ -194,7 +194,7 @@ void sliceOnceMidPlane() {
 // S2 — post-tool selection: Slice does NOT auto-select the new geometry (unlike
 // Loop Slice's `selectNew`). With NOTHING pre-selected, the committed cut leaves
 // the selection EMPTY — the incoming (empty) selection is preserved verbatim.
-// The cut kernel (Mesh.cutByPlane → rebuildFacesWithChordSplits) INHERITS each
+// The cut kernel (mesh_ops.cut.cutByPlane → rebuildFacesWithChordSplits) INHERITS each
 // parent face's selection bit onto both of its split halves (nothing selected
 // in ⇒ nothing selected out — the case this test locks); edge selection is
 // still cleared, and new crossing verts are added UNSELECTED. Reference

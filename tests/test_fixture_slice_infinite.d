@@ -9,7 +9,7 @@
 //   OFF (the reference factory default) — the cut is CLIPPED to the drawn
 //       Start->End span: only the spanned (left) strip is cut, 12v/4f ->
 //       15v/6f; the right strip is untouched.
-// The cut law is Mesh.cutByPlane (infinite) / Mesh.cutByPlaneClipped (clipped);
+// The cut law is mesh_ops.cut.cutByPlane (infinite) / mesh_ops.cut.cutByPlaneClipped (clipped);
 // analytic self-golden — no external reference engine at test time (both are
 // connectivity-correct by construction). The clip boundary rule is a
 // documented vibe3d divergence: the reference default is authoritatively OFF

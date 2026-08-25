@@ -4,7 +4,7 @@
 // vertex lands at the midpoint of a pre-op edge). The plane law is
 // math.planeFromLineAndWorkplane (line perpendicular to the work plane), NOT
 // the camera-eye plane mesh.screenSlice uses. Analytic self-golden — no
-// external reference engine at test time (Mesh.cutByPlane is connectivity-
+// external reference engine at test time (mesh_ops.cut.cutByPlane is connectivity-
 // correct by construction).
 //
 // The committed geometry is unchanged by the task-0278 lifecycle revision

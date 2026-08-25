@@ -11,11 +11,16 @@ import math;
 // into struct Mesh (source/mesh.d) via `mixin MeshLoopSliceOps;`. Also carries
 // `capShellCycles` (the shared Cap Sections boundary-loop geometry), relocated
 // here from its own separate spot in mesh.d since Loop Slice is its primary
-// owner — cut.d's `splitAlongCutLoop` (mesh_ops/cut.d) still calls it bare,
-// unqualified, from a DIFFERENT mixin template; this is safe (empirically
-// confirmed: a member introduced by one mixin template is visible, with no
-// qualification, to another mixin template mixed into the same struct — both
-// ultimately resolve through struct Mesh's own member scope).
+// owner. Its OTHER caller is `splitAlongCutLoop` in mesh_ops/cut.d, and since
+// task 1903 Stage E3 that file is module-level free functions, not a mixin —
+// so the call there is spelled `Mesh.capShellCycles(ed.faces, set)`, with the
+// `Mesh.` qualifier, because a `static` member of the struct is no longer in
+// scope for a plain module function. (Before E3 it was bare and unqualified,
+// resolving through struct Mesh's own member scope from a sibling mixin
+// template.) STAGE F1 CONVERTS THIS FILE; when it does, `capShellCycles`
+// becomes a module-level free function here and cut.d's call site drops the
+// `Mesh.` in that same commit — grep cut.d for `capShellCycles` rather than
+// trusting this sentence.
 //
 // Split out of mesh.d as part of the mesh.d decomposition campaign (0407
 // §B.V2, task 0417 — continuation of the task-0412 plane-cut pilot and the
@@ -1505,8 +1510,10 @@ mixin template MeshLoopSliceOps() {
     // by two sub-faces of a multi-position split) are skipped. Adds no verts /
     // no edges — every returned polygon reuses existing boundary verts. Pure
     // read of `faceList`; both the Loop Slice caps path (insertEdgeLoopsMulti,
-    // fed its local `newFaces`) and the Slice split-caps path (splitAlongCutLoop,
-    // fed `faces`) call it, so the two produce byte-identical cap topology.
+    // fed its local `newFaces`) and the Slice split-caps path (splitAlongCutLoop
+    // in mesh_ops/cut.d, fed `ed.faces` and calling this as
+    // `Mesh.capShellCycles` since task 1903 Stage E3) call it, so the two
+    // produce byte-identical cap topology.
     // -----------------------------------------------------------------------
     static uint[][] capShellCycles(const(uint[])[] faceList, const bool[uint] set) {
         import std.algorithm : sort, reverse;

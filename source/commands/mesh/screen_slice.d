@@ -71,7 +71,18 @@ class MeshScreenSlice : Command, Operator {
 
         // Capture snapshot and cut.
         snap = MeshSnapshot.capture(*mesh);
-        auto nSplit = mesh.cutByPlane(p, n);
+        // The batch spans the kernel call and nothing else (task 1903 Stage
+        // E3): inside it every `commitChange` the cut makes DEFERS, so one
+        // screen slice stamps, derives and delivers once at `close()` instead
+        // of once per inserted crossing vertex and once per face rebuild.
+        // UNRECORDED because this command's undo is still the whole-mesh
+        // `snap` above; Stage L4 flips it to the recording constructor.
+        size_t nSplit;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kCutEditScope);
+            nSplit = ed.cutByPlane(p, n);
+            ed.close();
+        }
 
         if (nSplit == 0) {
             snap.restore(*mesh);

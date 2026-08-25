@@ -7,7 +7,15 @@ import math;
 import editmode : EditMode;
 import mesh_edit_delta : MeshEditTracker, MeshEditScope, MeshEditDelta;
 import change_bus : SelDomain, changeBus;
-import mesh_ops.cut : MeshCutOps;
+// task 1903 Stage E3: the plane-cut family is module-level free functions —
+// the six entry points plus `planeCutCore` / `splitAlongCutLoop` over
+// `ref MeshEditBatch`, `isConcaveFace` / `extractCutLoops` over
+// `ref const(Mesh)` — plus the module-scope result type `PlaneCutLoops` and
+// the family's declared scope `kCutEditScope`, not a mixin. PUBLIC so every
+// `import mesh;` re-exports them and `ed.cutByPlane(p, n)` resolves through
+// UFCS (`doc/mesh_edit_seam_plan.md` §4.2). This keeps mesh.d the door for the
+// ops namespace; narrowing that is audit 0678 M9's job, not this task's.
+public import mesh_ops.cut;
 // task 1903 Stage D3: the Bridge family is module-level free functions — the
 // five entry points and `bridgeFanRows` over `ref MeshEditBatch`,
 // `facesBoundedByLoop` and the three pairing helpers over `ref const(Mesh)` —
@@ -15269,9 +15277,16 @@ struct Mesh {
 
     // Plane-cut kernel family (cutByPlane / cutByPlaneRestricted / planeCutCore /
     // cutByPlaneClipped / PlaneCutLoops / cutByPlaneEx / deleteComponentsInSlab /
-    // cutByPlaneSplitGap / extractCutLoops / splitAlongCutLoop) — see
-    // source/mesh_ops/cut.d (task 0412, 0407 §B.V2 pilot).
-    mixin MeshCutOps;
+    // cutByPlaneSplitGap / extractCutLoops / splitAlongCutLoop) — NO LONGER a
+    // mixin. Task 1903 Stage E3 converted it to module-level free functions
+    // over `ref MeshEditBatch` / `ref const(Mesh)` in source/mesh_ops/cut.d,
+    // and `struct PlaneCutLoops` went to module scope with it. The
+    // `public import mesh_ops.cut;` at the top of this file is what keeps every
+    // `import mesh;` resolving them; this family's mixin, reinstated HERE,
+    // would silently SHADOW them (a member beats a same-name UFCS free
+    // function), so cut.d carries its own `static assert(!__traits(hasMember,
+    // Mesh, n))` for every family name AND for `PlaneCutLoops`
+    // (`doc/mesh_edit_seam_plan.md` Revision 2 caveat 1, §2.7).
 
     // The four bevel families. Until task 0717 the word "bevel" named one
     // module plus a thousand lines in the middle of THIS file, which is the
@@ -15330,7 +15345,14 @@ struct Mesh {
     // Non-manifold edges (3+ incident faces) are out of scope for v1; the splice
     // scans all face windings and inserts into every face that contains the pair.
     // -----------------------------------------------------------------------
-    private uint insertEdgePoint(uint ei, float t, ref bool[] isCutVert, float eps = 1e-5f) {
+    //
+    // PUBLIC since task 1903 Stage E3 (plan §2.6). `mesh_ops/cut.d` stopped
+    // being a mixin body instantiated in this module's scope, so `planeCutCore`
+    // can no longer reach a `private` name here. The widening states the
+    // contract this helper already had; `tests/unit/commit_seam_census_test.d`
+    // carries the row that names cut.d as its caller and reddens both if the
+    // call goes away and if a SECOND file starts using the open door.
+    uint insertEdgePoint(uint ei, float t, ref bool[] isCutVert, float eps = 1e-5f) {
         uint a = edges[ei][0], b = edges[ei][1];
 
         if (t <= eps) {
@@ -15450,7 +15472,12 @@ struct Mesh {
     //
     // Returns the number of faces split; 0 = no-op (caller owns snapshot/undo).
     // -----------------------------------------------------------------------
-    private size_t rebuildFacesWithChordSplits(
+    //
+    // PUBLIC since task 1903 Stage E3 (plan §2.6) — same reason as
+    // `insertEdgePoint` above: `mesh_ops/cut.d`'s `planeCutCore` calls it and is
+    // no longer a mixin body in this module's scope. Census row in
+    // tests/unit/commit_seam_census_test.d names its caller.
+    size_t rebuildFacesWithChordSplits(
         const bool[] splitFaceMask, const bool[] isCutVert)
     {
         size_t origFaceCount = faces.length;
@@ -15594,7 +15621,22 @@ struct Mesh {
     // Returns the index in edges[] for the undirected edge {a, b}, or ~0u if
     // no such edge exists (requires buildLoops() to have been called).
     // -----------------------------------------------------------------------
-    private uint edgeIndexOfVerts(uint a, uint b) {
+    //
+    // PUBLIC since task 1903 Stage E3 (plan §2.6): `mesh_ops/cut.d` calls it at
+    // three sites — the restrict-set edge marking, the concave-guard scan, and
+    // the clipped chord-crossing lookup — and stopped being a mixin body in
+    // this module's scope. (There is exactly ONE concave-guard scan:
+    // `isConcaveFace` has a single call site. An earlier draft of this comment
+    // said "the two concave-guard scans" and miscounted the third site.)
+    //
+    // NOT the same thing as `edgeIndexOf` below, which is the GUARDED public
+    // accessor this one already backed: `edgeIndexOf` is what an outside module
+    // should reach for, and it exists precisely so callers do not depend on the
+    // raw map lookup. `edgeIndexOfVerts` returns `~0u` for an absent edge and
+    // assumes `buildLoops()` has run — a caller that has not built loops gets
+    // `~0u` for EVERY pair, which reads as "no such edge" rather than as
+    // "index not built". cut.d's three sites all run after a build.
+    uint edgeIndexOfVerts(uint a, uint b) {
         auto p = edgeKey(a, b) in edgeIndexMap;
         return p ? *p : ~0u;
     }
