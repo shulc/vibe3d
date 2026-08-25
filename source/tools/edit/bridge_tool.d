@@ -12,6 +12,7 @@ import params : Param;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
+import mesh_edit_delta : MeshEditScope;
 import shader : Shader, LitShader, drawLitPreview;
 import std.json : JSONValue;
 
@@ -114,9 +115,15 @@ BridgeSelectionResolved resolveBridgeSelection(ref Mesh m, EditMode editMode) {
 /// Face indices in `m` whose vertex ring is a cyclic rotation (either
 /// winding direction) of `loop` — the Edge-mode Remove Polygons lookup
 /// (see resolveBridgeSelection's doc comment). Thin wrapper over the shared
-/// `Mesh.facesBoundedByLoop` (mesh_ops/bridge.d) — the single source of
+/// `facesBoundedByLoop` (mesh_ops/bridge.d) — the single source of
 /// truth reused by `commands.mesh.bridge`'s Edge-mode cap removal (task
 /// 0467), so tool and one-shot command delete the identical faces.
+///
+/// The body is UNCHANGED by task 1903 Stage D3, and that is the point of the
+/// second receiver cell: `facesBoundedByLoop` became a free function over
+/// `ref const(Mesh)`, which `const ref Mesh m` binds to and UFCS finds through
+/// mesh.d's `public import`, so `m.facesBoundedByLoop(loop)` still compiles
+/// verbatim. A batch receiver could not have been called from here at all.
 uint[] facesMatchingLoop(const ref Mesh m, const(uint)[] loop) {
     return m.facesBoundedByLoop(loop);
 }
@@ -137,14 +144,44 @@ struct BridgeApplyResult {
 /// `openRows` (task 0395) selects the kernel: closed loops / polygon rings
 /// use the pre-existing `bridgeLoopsSpans`; two OPEN edge rows use
 /// `bridgeOpenRows` (proximity pairing, fan on unequal length, no wrap).
+///
+/// TASK 1903 Stage D3 — THIS is the tool-side boundary that opens the batch.
+/// The two bridge kernels take `ref MeshEditBatch` now, so a bare `Mesh`
+/// receiver is a compile error (plan §4.1); opening it here rather than in each
+/// of `applyBridgeOp`'s four callers is what keeps the interactive path, the
+/// headless path and the two unittest paths on one spelling.
+///
+/// UNRECORDED, and on the preview path that is a HARD requirement rather than a
+/// track-1 economy (plan §9). `rebuildBridgePreview` calls this once per
+/// parameter change, i.e. once per drag frame: a RECORDING batch would build
+/// and throw away a full op-log at 60 Hz, and `changeBus.opLogEntriesRecorded`
+/// would tick for an edit the user has not committed. An unrecorded frame keeps
+/// every tracker hook on its existing `if (editRecorder_ is null) return;`
+/// first line — one predictable branch, exactly today's batchless cost — while
+/// still collapsing the kernel's internal commits into ONE stamp, ONE hidden
+/// derive and ONE delivery per frame. `close()` returns `MeshEditDelta.init`
+/// and there is nothing to read. The commit path is the same shape: `BridgeTool`
+/// undoes through the generic `MeshSessionEdit` snapshot pair, so nothing here
+/// reads an op-log yet either.
+///
+/// The batch is scoped to the KERNEL CALL alone, not to the whole function: the
+/// Remove-Polygons `deleteFacesByMask` and the `buildLoops` below are unchanged
+/// by this stage and folding them in would be a second edit hiding inside a
+/// move.
 BridgeApplyResult applyBridgeOp(ref Mesh m, const(uint)[] loopA, const(uint)[] loopB,
                                 const(uint)[] capFaces, in BridgeParams p,
                                 bool openRows = false) {
     BridgeApplyResult r;
     uint spans = (p.segments < 1) ? 1u : cast(uint)p.segments;
-    r.added = openRows
-        ? m.bridgeOpenRows(loopA, loopB, p.flip, spans, p.twist)
-        : m.bridgeLoopsSpans(loopA, loopB, p.flip, spans, p.twist);
+    {
+        // No `scope(failure)`: `MeshEditBatch.~this` pops the frame during
+        // unwinding without asserting and ticks `changeBus.batchLeaks` (§2.2c).
+        auto ed = MeshEditBatch.unrecorded(m, kBridgeEditScope);
+        r.added = openRows
+            ? ed.bridgeOpenRows(loopA, loopB, p.flip, spans, p.twist)
+            : ed.bridgeLoopsSpans(loopA, loopB, p.flip, spans, p.twist);
+        ed.close();
+    }
     if (r.added == 0) return r;
 
     if (p.remove && capFaces.length > 0) {

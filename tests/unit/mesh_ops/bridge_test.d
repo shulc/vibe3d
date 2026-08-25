@@ -6,6 +6,23 @@ module tests.unit.mesh_ops.bridge_test;
 import mesh;
 import math;
 import mesh_ops.bridge;
+import mesh_edit_delta : MeshEditScope, MeshEditDelta, MeshOpEntry;
+
+// TASK 1903 Stage D3 — the five bridge entry points are free functions over
+// `ref MeshEditBatch` now, so a test cannot call one on a bare `Mesh` any more:
+// that is the point of the receiver, and it is why every call site in this file
+// goes through the helper below. One helper for all five kernels, so there is
+// ONE place that says why the batch is `unrecorded` — nothing here reads an
+// op-log, and track 1 is the conversion axis only (the two production callers,
+// `commands/mesh/bridge.d` and `tools/edit/bridge_tool.d`, open theirs the same
+// way; see mesh_ops/bridge.d's header). The `RECORDING` block at the bottom of
+// this file is the one deliberate exception.
+private size_t bridgeOnce(alias kernel, Args...)(ref Mesh m, auto ref Args args) {
+    auto ed = MeshEditBatch.unrecorded(m, kBridgeEditScope);
+    const n = kernel(ed, args);
+    ed.close();
+    return n;
+}
 
 // ---------------------------------------------------------------------------
 // Unit tests -- co-located with the family they exercise (moved verbatim
@@ -23,7 +40,7 @@ unittest { // bridgeLoops: two parallel square rings → 4 quads, no new verts
     assert(m.vertices.length == 8);
     assert(m.faces.length == 0);
 
-    size_t added = m.bridgeLoops([0u,1u,2u,3u], [4u,5u,6u,7u]);
+    size_t added = bridgeOnce!bridgeLoops(m, [0u,1u,2u,3u], [4u,5u,6u,7u]);
     assert(added == 4, "expected 4 quads");
     assert(m.faces.length == 4, "face count");
     assert(m.vertices.length == 8, "no new verts");
@@ -41,12 +58,12 @@ unittest { // bridgeLoops: mismatch rejection + too-short rejection
     foreach (i; 0 .. 8) m.addVertex(Vec3(cast(float)i, 0, 0));
 
     // Unequal lengths → 0 faces added.
-    size_t r1 = m.bridgeLoops([0u,1u,2u,3u], [4u,5u,6u]);
+    size_t r1 = bridgeOnce!bridgeLoops(m, [0u,1u,2u,3u], [4u,5u,6u]);
     assert(r1 == 0, "unequal length must be rejected");
     assert(m.faces.length == 0, "no faces added on mismatch");
 
     // Length 2 → too short → 0.
-    size_t r2 = m.bridgeLoops([0u,1u], [4u,5u]);
+    size_t r2 = bridgeOnce!bridgeLoops(m, [0u,1u], [4u,5u]);
     assert(r2 == 0, "length<3 must be rejected");
 }
 
@@ -57,7 +74,7 @@ unittest { // bridgeLoopsSpans: spans=1 degenerates EXACTLY to bridgeLoops
     m.addVertex(Vec3(0,0,1)); m.addVertex(Vec3(1,0,1));
     m.addVertex(Vec3(1,1,1)); m.addVertex(Vec3(0,1,1));
 
-    size_t added = m.bridgeLoopsSpans([0u,1u,2u,3u], [4u,5u,6u,7u], false, 1, 0.0f);
+    size_t added = bridgeOnce!bridgeLoopsSpans(m, [0u,1u,2u,3u], [4u,5u,6u,7u], false, 1, 0.0f);
     assert(added == 4, "spans=1: expected 4 quads");
     assert(m.faces.length == 4, "spans=1: face count");
     assert(m.vertices.length == 8, "spans=1: no new verts");
@@ -79,7 +96,7 @@ unittest { // bridgeLoopsSpans: segments law (twist=0) — closed-form, exact
     m.addVertex(Vec3(0,0,1)); m.addVertex(Vec3(1,0,1));
     m.addVertex(Vec3(1,1,1)); m.addVertex(Vec3(0,1,1));
 
-    size_t added = m.bridgeLoopsSpans([0u,1u,2u,3u], [4u,5u,6u,7u], false, 3, 0.0f);
+    size_t added = bridgeOnce!bridgeLoopsSpans(m, [0u,1u,2u,3u], [4u,5u,6u,7u], false, 3, 0.0f);
     assert(added == 12, format("spans=3: expected 12 quads (3 spans * 4), got %d", added));
     assert(m.faces.length == 12, "spans=3: face count");
     assert(m.vertices.length == 16, "spans=3: 8 orig + 8 new (2 rings * 4)");
@@ -118,7 +135,7 @@ unittest { // bridgeLoopsSpans: twist law, |twist|=1 — VERIFIED EXACT regime
     m.addVertex(Vec3(0,0,1)); m.addVertex(Vec3(1,0,1));
     m.addVertex(Vec3(1,1,1)); m.addVertex(Vec3(0,1,1));
 
-    size_t added = m.bridgeLoopsSpans([0u,1u,2u,3u], [4u,5u,6u,7u], false, 3, 1.0f);
+    size_t added = bridgeOnce!bridgeLoopsSpans(m, [0u,1u,2u,3u], [4u,5u,6u,7u], false, 3, 1.0f);
     assert(added == 12, "twist=1: expected 12 quads");
     assert(m.vertices.length == 16, "twist=1: 8 orig + 8 new");
 
@@ -148,12 +165,12 @@ unittest { // bridgeLoopsSpans: DoS defense — huge spans clamps to maxBridgeSp
     m.addVertex(Vec3(0,0,1)); m.addVertex(Vec3(1,0,1));
     m.addVertex(Vec3(1,1,1)); m.addVertex(Vec3(0,1,1));
 
-    size_t added = m.bridgeLoopsSpans([0u,1u,2u,3u], [4u,5u,6u,7u], false,
+    size_t added = bridgeOnce!bridgeLoopsSpans(m, [0u,1u,2u,3u], [4u,5u,6u,7u], false,
                                       100_000_000u, 0.0f);
-    assert(added == Mesh.maxBridgeSpans * 4,
+    assert(added == maxBridgeSpans * 4,
         format("huge spans must clamp to maxBridgeSpans, got %d (expected %d)",
-               added, Mesh.maxBridgeSpans * 4));
-    assert(m.faces.length == Mesh.maxBridgeSpans * 4, "clamped face count");
+               added, maxBridgeSpans * 4));
+    assert(m.faces.length == maxBridgeSpans * 4, "clamped face count");
 }
 
 unittest { // bridgeOpenRows: equal-length spans=1 strip, spans=2 midpoint
@@ -168,7 +185,7 @@ unittest { // bridgeOpenRows: equal-length spans=1 strip, spans=2 midpoint
         m.addVertex(Vec3(0,1,0)); m.addVertex(Vec3(1,1,0)); m.addVertex(Vec3(2,1,0));
         size_t vertsBefore = m.vertices.length;
 
-        size_t added = m.bridgeOpenRows([0u,1u,2u], [3u,4u,5u], false, 1u, 0.0f);
+        size_t added = bridgeOnce!bridgeOpenRows(m, [0u,1u,2u], [3u,4u,5u], false, 1u, 0.0f);
         assert(added == 2, "spans=1: expected 2 quads (N-1), got " ~ added.to!string);
         assert(m.faces.length == 2, "spans=1: expected 2 faces total");
         assert(m.vertices.length == vertsBefore, "spans=1: no new verts on existing-vert strip");
@@ -181,7 +198,7 @@ unittest { // bridgeOpenRows: equal-length spans=1 strip, spans=2 midpoint
         m.addVertex(Vec3(0,1,0)); m.addVertex(Vec3(1,1,0)); m.addVertex(Vec3(2,1,0));
         size_t vertsBefore = m.vertices.length;
 
-        size_t added = m.bridgeOpenRows([0u,1u,2u], [3u,4u,5u], false, 2u, 0.0f);
+        size_t added = bridgeOnce!bridgeOpenRows(m, [0u,1u,2u], [3u,4u,5u], false, 2u, 0.0f);
         assert(added == 4, "spans=2: expected 4 quads (2 spans * (N-1)), got " ~ added.to!string);
         assert(m.vertices.length == vertsBefore + 3,
             "spans=2: expected exactly 3 new interior-ring verts, got "
@@ -205,7 +222,7 @@ unittest { // bridgeOpenRows: equal-length spans=1 strip, spans=2 midpoint
         m.addVertex(Vec3(2,1,0)); m.addVertex(Vec3(1,1,0)); m.addVertex(Vec3(0,1,0));
         size_t vertsBefore = m.vertices.length;
 
-        size_t added = m.bridgeOpenRows([0u,1u,2u], [3u,4u,5u], false, 2u, 0.0f);
+        size_t added = bridgeOnce!bridgeOpenRows(m, [0u,1u,2u], [3u,4u,5u], false, 2u, 0.0f);
         assert(added == 4, "proximity case: expected 4 quads, got " ~ added.to!string);
         assert(m.vertices.length == vertsBefore + 3, "proximity case: expected 3 new interior verts");
 
@@ -225,7 +242,7 @@ unittest { // bridgeOpenRows: equal-length spans=1 strip, spans=2 midpoint
     {
         Mesh m;
         m.addVertex(Vec3(0,0,0)); m.addVertex(Vec3(1,0,0));
-        assert(m.bridgeOpenRows([0u], [1u], false, 1u, 0.0f) == 0,
+        assert(bridgeOnce!bridgeOpenRows(m, [0u], [1u], false, 1u, 0.0f) == 0,
             "single-vertex chain must be rejected");
     }
 }
@@ -260,7 +277,7 @@ unittest { // bridgeOpenRows: unequal-length fan/triangulate — captured 3:1
     {
         Mesh m = makeFanMesh();
         size_t vertsBefore = m.vertices.length;
-        size_t added = m.bridgeOpenRows([0u,1u,2u,3u], [4u,5u], false, 1u, 0.0f);
+        size_t added = bridgeOnce!bridgeOpenRows(m, [0u,1u,2u,3u], [4u,5u], false, 1u, 0.0f);
         assertCapturedFan(m, vertsBefore, added);
     }
 
@@ -270,7 +287,7 @@ unittest { // bridgeOpenRows: unequal-length fan/triangulate — captured 3:1
     {
         Mesh m = makeFanMesh();
         size_t vertsBefore = m.vertices.length;
-        size_t added = m.bridgeOpenRows([4u,5u], [0u,1u,2u,3u], false, 1u, 0.0f);
+        size_t added = bridgeOnce!bridgeOpenRows(m, [4u,5u], [0u,1u,2u,3u], false, 1u, 0.0f);
         assertCapturedFan(m, vertsBefore, added);
     }
 }
@@ -293,7 +310,7 @@ unittest { // bridgeOpenRows: unequal-length fan — DDA formula (task 0395
     m.addVertex(Vec3(0,1,0)); m.addVertex(Vec3(2.5,1,0)); m.addVertex(Vec3(5,1,0));
 
     size_t vertsBefore = m.vertices.length;
-    size_t added = m.bridgeOpenRows([0u,1u,2u,3u,4u,5u], [6u,7u,8u], false, 1u, 0.0f);
+    size_t added = bridgeOnce!bridgeOpenRows(m, [0u,1u,2u,3u,4u,5u], [6u,7u,8u], false, 1u, 0.0f);
 
     assert(added == 5, "5:2 fan: expected 5 faces (N), got " ~ added.to!string);
     assert(m.faces.length == 5, "5:2 fan: expected exactly 5 faces total");
@@ -336,7 +353,7 @@ unittest { // bridgeStripPaired / bridgeOpenRows: INTRA-STRIP mixed-pinning
     m.buildLoops();
 
     size_t facesBefore = m.faces.length;   // 1 (F0 only)
-    size_t added = m.bridgeOpenRows([0u,1u,4u], [5u,6u,7u], false, 1u, 0.0f);
+    size_t added = bridgeOnce!bridgeOpenRows(m, [0u,1u,4u], [5u,6u,7u], false, 1u, 0.0f);
     assert(added == 2, "mixed-pinning strip: expected 2 bridge quads, got " ~ added.to!string);
     assert(m.faces.length == facesBefore + 2, "mixed-pinning strip: expected 3 faces total");
 
@@ -378,7 +395,7 @@ unittest { // bridgeLoopsPaired: exact-correspondence quad emission
     m.addVertex(Vec3(0,0,1)); m.addVertex(Vec3(1,0,1));
     m.addVertex(Vec3(1,1,1)); m.addVertex(Vec3(0,1,1));
 
-    size_t n = m.bridgeLoopsPaired([0u,1u,2u,3u], [4u,5u,6u,7u]);
+    size_t n = bridgeOnce!bridgeLoopsPaired(m, [0u,1u,2u,3u], [4u,5u,6u,7u]);
     assert(n == 4, "bridgeLoopsPaired: expected 4 quads");
     assert(m.faces.length == 4, "bridgeLoopsPaired: face count");
     foreach (f; m.faces) assert(f.length == 4, "bridgeLoopsPaired: all quads");
@@ -389,7 +406,7 @@ unittest { // bridgeLoopsPaired: exact-correspondence quad emission
     m2.addVertex(Vec3(1,1,0)); m2.addVertex(Vec3(0,1,0));
     m2.addVertex(Vec3(0,0,1)); m2.addVertex(Vec3(1,0,1));
     m2.addVertex(Vec3(1,1,1)); m2.addVertex(Vec3(0,1,1));
-    size_t n2 = m2.bridgeLoops([0u,1u,2u,3u], [4u,5u,6u,7u]);
+    size_t n2 = bridgeOnce!bridgeLoops(m2, [0u,1u,2u,3u], [4u,5u,6u,7u]);
     assert(n2 == 4, "bridgeLoops via bridgeLoopsPaired: expected 4 quads");
     assert(m2.faces.length == 4, "bridgeLoops: face count unchanged after refactor");
 }
@@ -445,7 +462,7 @@ unittest { // bridgeLoopsPaired (closed loop): unrelated face's UV survives byte
     foreach (p; [Vec3(0,0,1), Vec3(1,0,1), Vec3(1,1,1), Vec3(0,1,1),
                  Vec3(0,0,2), Vec3(1,0,2), Vec3(1,1,2), Vec3(0,1,2)])
         m.addVertex(p);
-    size_t added = m.bridgeLoops([4u,5u,6u,7u], [8u,9u,10u,11u]);
+    size_t added = bridgeOnce!bridgeLoops(m, [4u,5u,6u,7u], [8u,9u,10u,11u]);
     assert(added == 4, "expected 4 bridge quads");
     m.buildLoops();
 
@@ -467,7 +484,7 @@ unittest { // bridgeStripPaired / bridgeOpenRows: same guarantee on the open-row
     foreach (p; [Vec3(2,0,0), Vec3(3,0,0), Vec3(4,0,0),
                  Vec3(2,1,0), Vec3(3,1,0), Vec3(4,1,0)])
         m.addVertex(p);
-    size_t added = m.bridgeOpenRows([4u,5u,6u], [7u,8u,9u], false, 1u, 0.0f);
+    size_t added = bridgeOnce!bridgeOpenRows(m, [4u,5u,6u], [7u,8u,9u], false, 1u, 0.0f);
     assert(added == 2, "expected 2 bridge quads on the open-row path");
     m.buildLoops();
 
@@ -488,7 +505,7 @@ unittest { // bridgeFanRows (unequal-length open rows): same guarantee
     foreach (p; [Vec3(2,0,0), Vec3(3,0,0), Vec3(4,0,0), Vec3(5,0,0),
                  Vec3(2,1,0), Vec3(5,1,0)])
         m.addVertex(p);
-    size_t added = m.bridgeOpenRows([4u,5u,6u,7u], [8u,9u], false, 1u, 0.0f);
+    size_t added = bridgeOnce!bridgeOpenRows(m, [4u,5u,6u,7u], [8u,9u], false, 1u, 0.0f);
     assert(added == 3, "expected 3 faces (2 tri + 1 quad) on the fan path");
     m.buildLoops();
 
@@ -498,4 +515,189 @@ unittest { // bridgeFanRows (unequal-length open rows): same guarantee
            "bridgeFanRows must not touch a face outside the two chains it fans");
     foreach (v; after[8 .. $])
         assert(v == 0.0f, "a fanned face's own corners are the honest zero");
+}
+
+
+// ===========================================================================
+// THE RECORDING BATCH — the only lane in the tree that can see what this
+// family DECLARES and what it RECORDS (task 1903 Stage D3; the obligation is
+// Stage D2 review memo item 9, "every mutating family owes its ops test one
+// recording block").
+//
+// Every production caller opens an UNRECORDED batch (§5.1: track 1 is the
+// conversion axis, undo still goes through a whole-mesh `MeshSnapshot` at
+// `commands/mesh/bridge.d` and through `MeshSessionEdit` at `BridgeTool`), so
+// `kBridgeEditScope` reaches nothing but `MeshEditTracker.declare`, and
+// `pushEditFrame` only calls that when a recorder exists. A constant no test
+// can read is a constant that can drift to anything — measured at D2, where
+// setting the reduce family's scope to 0 left 275 modules and its suite test
+// green.
+//
+// Mutations:
+//   * `enum uint kBridgeEditScope = 0;` (mesh_ops/bridge.d) → assertion (a)
+//   * drop the `ed.addVertex(...)` interior-ring write for a raw
+//     `ed.vertices ~= …`                                     → assertion (b)
+//   * make any kernel move an EXISTING vertex                → assertion (c)
+//   * break the `AddFaces` recording in `Mesh.addFace`       → assertion (b)
+// ===========================================================================
+
+private string dumpMeshState(ref Mesh m) {
+    import std.conv : to;
+    import std.format : format;
+    string s = format("V=%d F=%d", m.vertices.length, m.faces.length);
+    // `%a` — the HEX float form, so this compares BITS. `%g` would let a
+    // `-0.0`/`+0.0` pair read as equal, which is the exact cell Stage D2 had to
+    // build a special stand for.
+    foreach (i, v; m.vertices) s ~= format(" v%d(%a,%a,%a)", i, v.x, v.y, v.z);
+    foreach (i, f; m.faces)    s ~= format(" f%d%s", i, f.to!string);
+    s ~= " marks" ~ m.faceMarks.to!string;
+    return s;
+}
+
+/// Two coaxial unit squares, each an actual FACE, and the far cap carries the
+/// Subpatch bit. The bit is not decoration: `bridgeLoopsPaired` inherits
+/// Subpatch from the pre-existing adjacent faces of its bridged edges, so a
+/// stand of eight loose vertices (which every block above uses) would leave the
+/// whole Marks channel of the revert untested.
+private Mesh twoCappedRings() {
+    Mesh m;
+    foreach (z; [0.0f, 1.0f])
+        foreach (p; [[0.0f, 0.0f], [1.0f, 0.0f], [1.0f, 1.0f], [0.0f, 1.0f]])
+            m.addVertex(Vec3(p[0], p[1], z));
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.addFace([4u, 5u, 6u, 7u]);
+    m.resizeSubpatch();
+    m.setFaceSubpatch(1, true);
+    m.buildLoops();
+    return m;
+}
+
+unittest // a recording bridge declares kBridgeEditScope, logs AddVerts/AddFaces
+{        // and reverts COMPLETELY — measured, not assumed
+    import std.format : format;
+
+    foreach (spans; [1u, 3u]) {
+        Mesh m = twoCappedRings();
+        immutable string preState = dumpMeshState(m);
+        immutable size_t preV = m.vertices.length;
+        immutable size_t preF = m.faces.length;
+
+        MeshEditDelta d;
+        size_t n;
+        {
+            auto ed = MeshEditBatch(m, kBridgeEditScope);   // RECORDING
+            n = ed.bridgeLoopsSpans([0u, 1u, 2u, 3u], [4u, 5u, 6u, 7u],
+                                    false, spans, 0.0f);
+            d = ed.close();
+        }
+
+        // Anti-vacuity: a rejected bridge would satisfy (a) and (d) trivially
+        // and could not exhibit (b) at all.
+        assert(n == 4 * spans,
+            format("spans=%d: the stand bridged %d faces, expected %d — every "
+                 ~ "assertion below would be vacuous on it", spans, n, 4 * spans));
+        assert(m.faces.length == preF + 4 * spans,
+            format("spans=%d: face count went %d -> %d", spans, preF, m.faces.length));
+
+        // (a) THE DECLARED SCOPE, spelled out from the enum and NOT compared
+        //     against `kBridgeEditScope` itself.
+        //
+        //     `d.scope_` IS `kBridgeEditScope` fed through
+        //     `MeshEditTracker.declare`, so `d.scope_ == kBridgeEditScope` is
+        //     the measurement judging itself: set the constant to 0 and that
+        //     equality is still true (measured at Stage D2 on the reduce
+        //     family, where exactly that draft stayed green). The expectation
+        //     below is written from what the kernels DO: they append faces
+        //     (Polygons), append interior-ring vertices on a multi-span path
+        //     (Points) and stamp the inherited Subpatch bit (Marks).
+        //     `MeshEditDelta.finalize` reads `scope_` back on a revert to
+        //     decide what to bump and rebuild, so a wrong constant is a wrong
+        //     invalidation, not a cosmetic mismatch.
+        immutable uint kExpectedScope = MeshEditScope.Points | MeshEditScope.Polygons
+                                      | MeshEditScope.Marks;
+        assert(cast(uint)d.scope_ == kExpectedScope,
+            format("spans=%d: a recording bridge declared scope 0x%x, expected "
+                 ~ "0x%x (Points|Polygons|Marks). Missing: 0x%x. Unexpected: "
+                 ~ "0x%x. (task 1903 Stage D3)",
+                   spans, cast(uint)d.scope_, kExpectedScope,
+                   kExpectedScope & ~cast(uint)d.scope_,
+                   cast(uint)d.scope_ & ~kExpectedScope));
+
+        //     …and THEN the link: the constant is what the callers pass and
+        //     what reaches the delta. This one cannot see a wrong constant (see
+        //     above); it sees a broken `declare`/`close` path.
+        assert(cast(uint)d.scope_ == kBridgeEditScope,
+            format("spans=%d: the delta's scope_ (0x%x) is not the "
+                 ~ "kBridgeEditScope the batch was opened with (0x%x) — the "
+                 ~ "declared scope is not reaching MeshEditDelta.scope_ at all",
+                   spans, cast(uint)d.scope_, kBridgeEditScope));
+
+        // (b) THE OP-LOG SHAPE. `addFace` coalesces a run of appends into ONE
+        //     `AddFaces` range entry, and `addVertex` likewise — so the counts
+        //     below are 1, not `4*spans` and `spans-1`, and a kernel that
+        //     appended through a bare `faces ~= …` / `vertices ~= …` instead of
+        //     the hooked mutators would drop to 0.
+        size_t addFaces, addVerts, setPos;
+        foreach (ref e; d.log) {
+            if (e.kind == MeshOpEntry.Kind.AddFaces) ++addFaces;
+            if (e.kind == MeshOpEntry.Kind.AddVerts) ++addVerts;
+            if (e.kind == MeshOpEntry.Kind.SetPos)   ++setPos;
+        }
+        assert(addFaces == 1,
+            format("spans=%d: the op-log carries %d Kind.AddFaces entries, "
+                 ~ "expected exactly 1 — every bridge quad must go through "
+                 ~ "Mesh.addFace, which is the hooked appender; a bare "
+                 ~ "`faces ~= …` compiles inside a recording batch "
+                 ~ "(`alias mesh this`) and records nothing",
+                   spans, addFaces));
+        immutable size_t kExpectedAddVerts = (spans > 1) ? 1 : 0;
+        assert(addVerts == kExpectedAddVerts,
+            format("spans=%d: the op-log carries %d Kind.AddVerts entries, "
+                 ~ "expected %d — a multi-span bridge creates spans-1 interior "
+                 ~ "rings through Mesh.addVertex and a single-span one creates "
+                 ~ "no vertex at all", spans, addVerts, kExpectedAddVerts));
+
+        // (c) NO POSITION WRITE, EVER. This is the behavioural half of the
+        //     claim `kBridgeEditScope`'s doc comment makes ("NOT Position") and
+        //     of this family's §5.7 count being 0 rather than a retired
+        //     allow-entry: no bridge kernel moves an EXISTING vertex, every
+        //     coordinate it produces belongs to a vertex it created in the same
+        //     call and travels in the AddVerts entry. If a later edit makes a
+        //     kernel move one, this reddens and `kBridgeEditScope` needs
+        //     `MeshEditScope.Position` added in the same change.
+        assert(setPos == 0,
+            format("spans=%d: the op-log carries %d Kind.SetPos entries, "
+                 ~ "expected 0 — a bridge kernel now moves an EXISTING vertex. "
+                 ~ "That is a real behaviour change: add MeshEditScope.Position "
+                 ~ "to kBridgeEditScope and rewrite its doc comment, or take "
+                 ~ "the write back out (task 1903 §5.7)", spans, setPos));
+
+        // (d) THE REVERT IS COMPLETE — MEASURED FOR THIS FAMILY, and the
+        //     measurement is why this is an equality and not a
+        //     KNOWN-INCOMPLETE. Stage D2's decimate family reverts its vertex
+        //     side and only HALF its faces, because its face drops leave
+        //     through `mesh_planes.rewriteFaces` with `FaceReindex` disarmed.
+        //     Bridge never reindexes: it only ever APPENDS, so `AddFaces` /
+        //     `AddVerts` reverse cleanly and the whole state — windings,
+        //     coordinate BITS and the faceMarks Subpatch word — comes back.
+        //     Measured on this stand at both span counts before this assertion
+        //     was written (memo item 10: open the batch, call revert(), compare
+        //     BOTH lengths, do not assert the constructor flip is a one-liner).
+        //
+        //     What this does NOT say: that `mesh.bridge`'s undo is a
+        //     constructor flip. That command deletes the cap faces AFTER the
+        //     batch closes, and that deletion is a separate op with its own
+        //     face-side question.
+        const bool reverted = d.revert(m);
+        assert(reverted,
+            format("spans=%d: revert() refused the delta outright", spans));
+        assert(m.vertices.length == preV && m.faces.length == preF,
+            format("spans=%d: revert restored V=%d F=%d, expected V=%d F=%d — "
+                 ~ "an append-only delta must come back whole",
+                   spans, m.vertices.length, m.faces.length, preV, preF));
+        immutable string postState = dumpMeshState(m);
+        assert(postState == preState,
+            format("spans=%d: revert restored the counts but not the state.\n"
+                 ~ "  pre : %s\n  post: %s", spans, preState, postState));
+    }
 }

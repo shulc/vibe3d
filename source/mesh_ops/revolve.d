@@ -1,6 +1,12 @@
 module mesh_ops.revolve;
 
 import mesh;
+// The transitional batch at the ring-bridging loop below needs two names
+// (task 1903 Stage D3), and they arrive by DIFFERENT routes: `MeshEditBatch`
+// is declared in mesh.d itself, so plain `import mesh;` above brings it;
+// `kBridgeEditScope` is declared in mesh_ops/bridge.d and reaches us only
+// through the `public import mesh_ops.bridge;` in mesh.d (review MINOR-1 —
+// the earlier wording credited the public import with both).
 import math;
 
 // ---------------------------------------------------------------------------
@@ -261,19 +267,59 @@ mixin template MeshRevolveOps() {
         }
 
         // Bridge consecutive rings into quad faces.
+        //
+        // TASK 1903 Stage D3 — A TRANSITIONAL BATCH, AND IT IS A DEBT, exactly
+        // as at `Mesh.thickenSurface`'s rim (source/mesh.d, stage L2): the
+        // Bridge family is free functions over `ref MeshEditBatch` now, and
+        // this body is still a `mixin` inside `struct Mesh`, so there is no
+        // caller-held batch to take. It opens here — which §2.3 rule 2 forbids
+        // in the finished design — scoped to the CLOSED-profile arm alone.
+        //
+        // WHY ONLY THAT ARM (review MAJOR-3). The `else` arm below bridges an
+        // open strip with a plain `addFace` loop and calls no Bridge kernel at
+        // all, so the conversion never forced a batch on it. Spanning both arms
+        // — which the first draft of this block did — changed `mesh.sweep`'s
+        // publish shape on a path this stage does not touch. MEASURED over
+        // `/api/changes`, `unbatchedGeometryCommits` per open-profile
+        // `mesh.sweep` (arc of 4 segments, count=6, 360°): HEAD **+49**, the
+        // both-arms draft **+25**, this narrowing **+49** again. The closed
+        // arm is unaffected either way (+46 → +22). The open arm therefore
+        // keeps today's per-face commits until L10 schedules `sweep` for real.
+        // Geometry is byte-identical across all three trees — lossless `.v3d`
+        // saves after open/closed × 360°/90° sweeps compare equal.
+        //
+        // UNRECORDED: `mesh.sweep` / RadialSweepTool undo through a whole-mesh
+        // `MeshSnapshot`, and the tool re-runs this kernel per drag frame, so a
+        // recording batch would build a per-frame op-log nothing reads (§9).
+        //
+        // WHAT REMOVES IT: Stage E2, which converts this family; the block
+        // disappears when `revolveProfileEx` itself takes a `ref MeshEditBatch`
+        // from its own callers. `changeBus.nestedBatchOpens` is the tripwire
+        // for the interim, and the assert that reads it is the per-command
+        // DELTA in `tests/test_mesh_sweep.d` ("mesh.sweep opened a nested
+        // batch") — NOT the single process-cumulative `== 0` in
+        // `tests/test_undo_tracker_delete.d`, which a `mesh.sweep` caller
+        // opening a batch of its own would never reach (review MAJOR-1).
         size_t facesAdded = 0;
         immutable int lastBridge = sweepClosed ? params.count - 1 : params.count - 2;
-        foreach (i; 0 .. lastBridge + 1) {
-            int           nextIdx = sweepClosed ? (i + 1) % params.count : i + 1;
-            const(uint)[] ringA   = rings[i];
-            const(uint)[] ringB   = rings[nextIdx];
-
-            if (profileClosed) {
+        if (profileClosed) {
+            auto ringEd = MeshEditBatch.unrecorded(this, kBridgeEditScope);
+            foreach (i; 0 .. lastBridge + 1) {
+                int nextIdx = sweepClosed ? (i + 1) % params.count : i + 1;
                 // bridgeLoopsPaired: M quads with closed wrap [A[i],A[i+1],B[i+1],B[i]].
-                facesAdded += bridgeLoopsPaired(ringA, ringB);
-            } else {
-                // Open strip: M-1 quads, no wrap; same winding as bridgeLoopsPaired.
-                const size_t M = profile.length;
+                facesAdded += bridgeLoopsPaired(ringEd, rings[i], rings[nextIdx]);
+            }
+            // No `scope(failure)`: `MeshEditBatch.~this` pops the frame during
+            // unwinding without asserting and ticks `changeBus.batchLeaks` (§2.2c).
+            ringEd.close();
+        } else {
+            // Open strip: M-1 quads, no wrap; same winding as bridgeLoopsPaired.
+            // NO BATCH here, deliberately — see "WHY ONLY THAT ARM" above.
+            const size_t M = profile.length;
+            foreach (i; 0 .. lastBridge + 1) {
+                int           nextIdx = sweepClosed ? (i + 1) % params.count : i + 1;
+                const(uint)[] ringA   = rings[i];
+                const(uint)[] ringB   = rings[nextIdx];
                 foreach (j; 0 .. M - 1) {
                     addFace([ringA[j], ringA[j + 1], ringB[j + 1], ringB[j]]);
                     ++facesAdded;

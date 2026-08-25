@@ -8,7 +8,15 @@ import editmode : EditMode;
 import mesh_edit_delta : MeshEditTracker, MeshEditScope, MeshEditDelta;
 import change_bus : SelDomain, changeBus;
 import mesh_ops.cut : MeshCutOps;
-import mesh_ops.bridge : MeshBridgeOps;
+// task 1903 Stage D3: the Bridge family is module-level free functions — the
+// five entry points and `bridgeFanRows` over `ref MeshEditBatch`,
+// `facesBoundedByLoop` and the three pairing helpers over `ref const(Mesh)` —
+// plus the module-scope `maxBridgeSpans`, not a mixin. PUBLIC so every
+// `import mesh;` re-exports them and `ed.bridgeLoops(a, b)` /
+// `mesh.facesBoundedByLoop(loop)` resolve through UFCS
+// (`doc/mesh_edit_seam_plan.md` §4.2). This keeps mesh.d the door for the ops
+// namespace; narrowing that is audit 0678 M9's job, not this task's.
+public import mesh_ops.bridge;
 import mesh_ops.loop_slice : MeshLoopSliceOps, bandWalk, BandCell;
 import mesh_ops.revolve : MeshRevolveOps;
 import mesh_ops.cleanup : MeshCleanupOps;
@@ -666,9 +674,24 @@ struct MeshTopoKey {
 }
 
 /// Hermite ease-in/ease-out, `3t²-2t³` — the Bridge Twist per-ring blend
-/// curve (task 0357, see `Mesh.bridgeTwistedVertex`). `t` is assumed in
-/// [0,1]; not clamped since every call site already guarantees that range.
-private float smoothstep01(float t) pure nothrow @nogc @safe {
+/// curve (task 0357, see `bridgeTwistedVertex` in source/mesh_ops/bridge.d).
+/// `t` is assumed in [0,1]; not clamped since every call site already
+/// guarantees that range.
+///
+/// NOT `private`, since task 1903 Stage D3, and it is the §2.6 widening that
+/// stage owed: this is a module-level free function of `mesh`, not a `Mesh`
+/// member, so it used to be reachable from `mesh_ops/bridge.d` ONLY because a
+/// `mixin template` body is instantiated in its host's scope. With the Bridge
+/// family converted to free functions of its own module, that scope is gone
+/// and `private` here is a compile error there — the plan called this one out
+/// by name as "the one that will not compile after conversion".
+///
+/// ITS ONLY CALLER IS `mesh_ops/bridge.d`'s `bridgeTwistedVertex`. If that
+/// call goes away, narrow this back to `private` in the same change: a door
+/// held open for nobody is exactly what the Stage A review reverted ten of
+/// (plan §2.6, review S3). `tests/unit/commit_seam_census_test.d` asserts both
+/// halves — the `private` spelling absent here, the call present there.
+float smoothstep01(float t) pure nothrow @nogc @safe {
     return t * t * (3.0f - 2.0f * t);
 }
 
@@ -14227,7 +14250,13 @@ struct Mesh {
     /// unconnected topology (task 0395 rr-capture: the neighbor-orientation
     /// rule only has a signal to act on when at least one boundary edge
     /// already borders existing geometry).
-    private void orientFaceConsistent(uint[] idx, const int[2][ulong] edgeFaces) const {
+    /// NOT `private`, since task 1903 Stage D3 (plan §2.6). Its only caller
+    /// outside this file is `mesh_ops/bridge.d` (`bridgeStripPaired` and
+    /// `bridgeFanRows`), which reached it as a mixin body and cannot any more;
+    /// `makePolygonFromVerts` above is the in-file caller. Narrow it back the
+    /// day bridge.d stops calling it — the census row in
+    /// tests/unit/commit_seam_census_test.d asserts both halves.
+    void orientFaceConsistent(uint[] idx, const int[2][ulong] edgeFaces) const {
         int sameDirVotes = 0, oppositeDirVotes = 0;
         foreach (i; 0 .. idx.length) {
             uint u = idx[i], v = idx[(i + 1) % idx.length];
@@ -14265,8 +14294,11 @@ struct Mesh {
     /// half-edge corruption `orientFaceConsistent` exists to prevent.
     /// `idx` must be the face's FINAL (post-orient) vertex order — call
     /// this only after `addFace(idx)`, so `faces[newFi]` already matches.
-    private void registerNewFaceEdges(ref int[2][ulong] liveEdgeFaces, uint newFi,
-                                      const(uint)[] idx) const {
+    /// NOT `private`, since task 1903 Stage D3 (plan §2.6) — same widening,
+    /// same reason and same single external caller as `orientFaceConsistent`
+    /// above: `mesh_ops/bridge.d`'s `bridgeStripPaired` / `bridgeFanRows`.
+    void registerNewFaceEdges(ref int[2][ulong] liveEdgeFaces, uint newFi,
+                              const(uint)[] idx) const {
         foreach (i; 0 .. idx.length) {
             ulong key = edgeKey(idx[i], idx[(i + 1) % idx.length]);
             auto p = key in liveEdgeFaces;
@@ -14561,9 +14593,19 @@ struct Mesh {
     }
 
     // Bridge kernel family (bridgeLoopsPaired / bridgeLoops / bridgeLoopsSpans /
-    // bridgeStripPaired / bridgeOpenRows) — see source/mesh_ops/bridge.d
-    // (task 0417, 0407 §B.V2, continuation of the task-0412 pilot).
-    mixin MeshBridgeOps;
+    // bridgeStripPaired / bridgeOpenRows, plus facesBoundedByLoop and the
+    // pairing helpers) is NO LONGER a mixin: task 1903 Stage D3 made it
+    // module-level free functions in source/mesh_ops/bridge.d — the five
+    // mutating entry points over `ref MeshEditBatch`, the read-only lookup and
+    // the three pairing helpers over `ref const(Mesh)` — re-exported by the
+    // `public import` at the top of this file. `maxBridgeSpans` went with them
+    // to module scope (plan §2.7, §11), so `Mesh.maxBridgeSpans` no longer
+    // resolves. Do not reinstate the `MeshBridgeOps` mixin here — a member
+    // BEATS a same-name UFCS free function, so the mixin would silently take
+    // every call back, the batch receiver would go with it, and the conversion
+    // would mean nothing (`doc/mesh_edit_seam_plan.md` Revision 2 caveat 1;
+    // tests/unit/commit_seam_census_test.d reddens by name if it returns, and
+    // bridge.d's own `static assert` reddens at build).
 
     /// Oriented open-boundary loops over faces 0..faceLimit.
     /// Each loop is an ordered uint[] of vertex indices along the directed
@@ -14680,25 +14722,59 @@ struct Mesh {
             avgN = avgN + faceNormal(cast(uint)fi);
         avgN = safeNormalize(avgN);
 
+        // TASK 1903 Stage D3 — A TRANSITIONAL BATCH, AND IT IS A DEBT.
+        // `bridgeLoopsPaired` is a free function over `ref MeshEditBatch` now,
+        // so this loop cannot call it on a bare mesh; and `thickenSurface` is a
+        // `Mesh` member, so §4.1's "the command or tool opens the batch" has
+        // nowhere to land — `mesh.thicken` still hands the kernel a bare
+        // `Mesh*`. The batch therefore opens HERE, which §2.3 rule 2 forbids in
+        // the finished design ("a kernel never opens a batch"). It is scoped to
+        // the rim loop alone and nothing else in this function moves.
+        //
+        // UNRECORDED, for the reason every track-1 site is: `mesh.thicken`
+        // undoes through a whole-mesh `MeshSnapshot`, so a recording batch
+        // would build an op-log nothing reads and `close()` would drop.
+        //
+        // WHAT REMOVES IT: **stage L2**, the row that owns `thicken` on track 2
+        // (`doc/mesh_edit_seam_plan.md` §5.1, "create + index-stable topo-misc"
+        // — `thickenSurface` is not a `mesh_ops` family, so no track-1 stage
+        // schedules it). Until then `changeBus.nestedBatchOpens` is the
+        // tripwire, and the assert that reads it is the per-command DELTA in
+        // `tests/test_thicken.d` ("mesh.thicken opened a nested batch") — NOT
+        // the single process-cumulative `== 0` in
+        // `tests/test_undo_tracker_delete.d`, which a `thickenSurface` caller
+        // opening a batch of its own would never reach: that test does not run
+        // `mesh.thicken`, and at `-j 8` it is a different process (review
+        // MAJOR-1, measured — a caller batch at commands/mesh/thicken.d moved
+        // `nestedBatchOpens` 0 → 1 over HTTP and left both tests PASS).
         size_t rimTotal = 0;
-        foreach (ref loop; loops) {
-            // Compute loop orientation via Newell's method.
-            Vec3 ln = Vec3(0, 0, 0);
-            const size_t LN = loop.length;
-            foreach (k; 0 .. LN) {
-                Vec3 a = vertices[loop[k]];
-                Vec3 b = vertices[loop[(k + 1) % LN]];
-                ln.x += (a.y - b.y) * (a.z + b.z);
-                ln.y += (a.z - b.z) * (a.x + b.x);
-                ln.z += (a.x - b.x) * (a.y + b.y);
-            }
-            if (ln.x * avgN.x + ln.y * avgN.y + ln.z * avgN.z > 0.0f)
-                reverse(loop);
+        {
+            auto rimEd = MeshEditBatch.unrecorded(this, kBridgeEditScope);
+            foreach (ref loop; loops) {
+                // Compute loop orientation via Newell's method.
+                Vec3 ln = Vec3(0, 0, 0);
+                const size_t LN = loop.length;
+                foreach (k; 0 .. LN) {
+                    Vec3 a = vertices[loop[k]];
+                    Vec3 b = vertices[loop[(k + 1) % LN]];
+                    ln.x += (a.y - b.y) * (a.z + b.z);
+                    ln.y += (a.z - b.z) * (a.x + b.x);
+                    ln.z += (a.x - b.x) * (a.y + b.y);
+                }
+                if (ln.x * avgN.x + ln.y * avgN.y + ln.z * avgN.z > 0.0f)
+                    reverse(loop);
 
-            uint[] pairedB = new uint[](LN);
-            foreach (i; 0 .. LN)
-                pairedB[i] = off[loop[i]];
-            rimTotal += bridgeLoopsPaired(loop, pairedB);
+                uint[] pairedB = new uint[](LN);
+                foreach (i; 0 .. LN)
+                    pairedB[i] = off[loop[i]];
+                rimTotal += bridgeLoopsPaired(rimEd, loop, pairedB);
+            }
+            // No `scope(failure)`: `MeshEditBatch.~this` pops the frame during
+            // unwinding without asserting and ticks `changeBus.batchLeaks`,
+            // which the suite asserts stays 0 (§2.2c). The four legacy
+            // `beginEditBatch`/`endEditBatch` sites need the guard because that
+            // pair has no destructor; this handle does.
+            rimEd.close();
         }
 
         // Step 6 — finalize.

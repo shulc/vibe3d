@@ -306,3 +306,70 @@ unittest {
         "undo: expected " ~ facesBefore.to!string ~ " faces, got "
         ~ faceCount().to!string);
 }
+
+// ---------------------------------------------------------------------------
+// test 7: the transitional batch inside `revolveProfileEx` is not NESTED
+// (task 1903 Stage D3, review MAJOR-1).
+//
+// `revolveProfileEx` opens a `MeshEditBatch` of its OWN around the ring-bridging
+// loop — but only on the CLOSED-profile arm, which is the only one that calls a
+// Bridge kernel (`bridgeLoopsPaired`); see "WHY ONLY THAT ARM" in
+// source/mesh_ops/revolve.d. That open is a documented debt, and it is only
+// safe while it is the outermost batch: the moment a caller of
+// `revolveProfileEx` opens one first, `changeBus.nestedBatchOpens` ticks, the
+// inner `close()` stops stamping, and the block has to go.
+//
+// THE PROFILE MATTERS. This case uses the CLOSED quad profile deliberately —
+// on an open (arc) profile no batch is opened at all after the D3 narrowing, so
+// the same delta could not move whatever a caller did, and the check would be
+// unfailable.
+//
+// WHY A DELTA HERE AND NOT THE `== 0` IN test_undo_tracker_delete.d: that one
+// is a single end-of-test read of a process-cumulative counter, in a test that
+// never runs `mesh.sweep` — and at `-j 8` it is a different process (review
+// MAJOR-1, measured on the thicken twin).
+//
+// THE MUTATION THAT REDDENS IT: wrap the `revolveProfileEx` call in the
+// `mesh.sweep` command (source/commands/mesh/sweep.d) in an
+// `auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Geometry);` …
+// `ed.close();` pair. Delta becomes 1 and this block reddens by name.
+// ---------------------------------------------------------------------------
+
+long busCounter(string key) {
+    auto j = parseJSON(cast(string)get(BASE ~ "/api/changes"));
+    return j[key].integer;
+}
+
+unittest { // mesh.sweep, closed profile: the kernel's ring batch is outermost
+    immutable int sides = 4;
+    immutable int count = 8;
+
+    buildClosedQuadProfile();
+    setSelection("polygons", [0]);
+
+    immutable long nestedBefore = busCounter("nestedBatchOpens");
+    cmd(`{"id":"mesh.sweep","count":` ~ count.to!string ~
+        `,"axis":"Y","angle":6.2831853}`);
+    immutable long nestedAfter = busCounter("nestedBatchOpens");
+
+    assert(nestedAfter - nestedBefore == 0,
+        "mesh.sweep (closed profile) moved changeBus.nestedBatchOpens by "
+      ~ (nestedAfter - nestedBefore).to!string ~ ", expected 0. "
+      ~ "`revolveProfileEx` opens a TRANSITIONAL batch around its closed-profile "
+      ~ "ring loop (source/mesh_ops/revolve.d, \"TASK 1903 Stage D3 — A "
+      ~ "TRANSITIONAL BATCH\"), which is only safe while it is the outermost "
+      ~ "one. A caller has now opened a batch first, so that block must be "
+      ~ "removed in the SAME change: `revolveProfileEx` takes a "
+      ~ "`ref MeshEditBatch` from its callers and the transitional open goes "
+      ~ "away. That removal is Stage E2 of doc/mesh_edit_seam_plan.md (the "
+      ~ "revolve/sweep family conversion).");
+
+    // Non-vacuity floor: the closed-profile sweep really ran, so the ring batch
+    // really opened — a delta measured across a refused command proves nothing.
+    auto m = model();
+    assert(m["faces"].array.length == sides * count,
+        "sweep nested-batch probe: expected " ~ (sides * count).to!string
+      ~ " faces, got " ~ m["faces"].array.length.to!string
+      ~ " — the command did not run, so the delta above was measured across "
+      ~ "nothing");
+}

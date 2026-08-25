@@ -136,6 +136,124 @@ private size_t countOccurrences(string haystack, string needle) {
 // block reddens with the count and the roster.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// §5.7's position-write predicate, ONCE — and its controls in their OWN
+// unittest block below.
+//
+// It lived inline inside the mixin-census block until Stage D3 needed a second
+// per-file count (bridge.d's, expected 0). A copy-pasted predicate is two
+// predicates the day one of them is widened, and §5.7's own history is exactly
+// that: Revision 2's narrower regex missed 15 writes in `source/commands`, all
+// of them the per-component `vertices[i].x += d` shape. One string, one set of
+// controls, N callers.
+//
+// The controls sit in a SEPARATE `unittest` deliberately: druntime stops a
+// module at its first failed assert, so a control folded into the counting
+// block would be invisible whenever anything above it in that block is red —
+// and a predicate whose controls never ran is a predicate nobody measured
+// (task 1903 Stage D1 review memo, "count-assert and roster-asserts in one
+// unittest — only the first is visible").
+//
+// From the plan's Revision 3 text, one alternative per line, with ONE
+// widening measured at Stage D3 and described below. (`[^\]]` for the plan's
+// `[^]]`: same class, and it does not depend on the engine's reading of a
+// leading `]`.)
+//
+// STAGE D3's WIDENING, and why it is not a liberty taken with the plan's text.
+// Alternative 2 was written `(^|[^a-zA-Z_.])vertices…`, i.e. it refused to fire
+// on a DOTTED receiver — so `ed.vertices ~= v;` and `m.vertices = pos;` were
+// both invisible to it. That was not a cosmetic gap for this stage: the Bridge
+// family APPENDS vertices and never index-assigns one, so `ed.vertices ~= v`
+// is precisely the raw write bridge.d could plausibly regress to, and the row
+// that scans bridge.d would have been green over it. It was measured, not
+// argued: the drill that replaced `ed.addVertex(…)` with `ed.vertices ~= …`
+// left this census GREEN under the narrow spelling.
+//
+// The widening lets alternative 2 accept one `word.` qualifier. What it costs
+// and what it buys, both measured on this tree at Stage D3 (comment-stripped):
+//
+//   source/mesh_ops/   3 -> 8   (+4 `m.vertices = [` unittest fixtures in
+//                                extrude.d, +1 in loop_slice.d; decimate.d and
+//                                bridge.d stay at 0, which is what the two live
+//                                rows below assert)
+//   source/commands/  39 -> 49  (+9 fixture writes, and ONE production write
+//                                the plan's own §5.7 table therefore missed:
+//                                `source/commands/mesh/smooth.d`'s
+//                                `mesh.vertices = prev;` — an L0 file, so the
+//                                stage that builds the full scanner inherits it)
+//
+// So §5.7's measured table reads 4/39/47 for the three zones and the honest
+// numbers are 8/49 for the two this census scans. Anyone budgeting the full
+// scanner off the plan's table should use these instead.
+// ---------------------------------------------------------------------------
+private enum string kPosWritePredicate =
+      r"vertices\s*\[[^\]]*\]\s*(\.[xyz]\s*)?([-+*/]?)=[^=]"          // indexed, whole or per-component, any op-assign
+    ~ r"|(^|[^a-zA-Z_.0-9])(\w+\s*\.\s*)?vertices\s*(~|[-+*/])?=[^=]" // whole-array assign / append, bare or `x.`-qualified
+    ~ r"|vertices\s*\[[^\]]*\.\.[^\]]*\]\s*(\[\s*\])?\s*=[^=]"         // slice assign, incl. `[] =`
+    ~ r"|foreach\s*\(\s*(size_t\s+\w+\s*,\s*)?ref\s+\w+\s*;\s*[a-zA-Z_.]*vertices"; // `foreach (ref v; vertices)`
+
+/// Raw coordinate writes in `src` (already comment-stripped) under §5.7's
+/// predicate; `firstHit` is the first matching text, for the failure message.
+private size_t countRawPositionWrites(string src, out string firstHit) {
+    import std.regex : regex, matchAll;
+    auto posRe = regex(kPosWritePredicate);
+    size_t n;
+    foreach (mm; matchAll(src, posRe)) {
+        if (n == 0) firstHit = mm.hit.idup;
+        ++n;
+    }
+    return n;
+}
+
+unittest // the §5.7 position-write predicate discriminates
+{
+    import std.regex : regex, matchAll;
+    auto posRe = regex(kPosWritePredicate);
+
+    // POSITIVE CONTROL, and it goes FIRST. A count of 0 over a predicate that
+    // matches nothing is the "gate reports clean over an empty input" shape;
+    // these five samples are the four shapes §5.7 enumerates plus the exact
+    // line M-V1 puts back into decimate.d.
+    static immutable string[] kMustMatch = [
+        "    vertices[i] = p;\n",
+        "    ed.vertices[i] = pos[find(cast(int)i)];\n",
+        "    m.vertices[j].x += d;\n",
+        "    vertices[a .. b] = src;\n",
+        "    foreach (ref v; vertices) v.y = 0;\n",
+        // The two Stage D3 added (see the widening note on the predicate): a
+        // DOTTED receiver. The first is the exact line the M-D3-RAW drill puts
+        // into bridge.d in place of `ed.addVertex(…)`; the second is
+        // `commands/mesh/smooth.d:292`, a production whole-array position write
+        // the narrow spelling did not see.
+        "    ed.vertices ~= bridgeTwistedVertex(m, a, b, k, t, w);\n",
+        "    mesh.vertices = prev;\n",
+    ];
+    foreach (sample; kMustMatch)
+        assert(!matchAll(sample, posRe).empty,
+            format("the §5.7 position-write predicate does not match `%s` — it "
+                 ~ "has been narrowed, and every count it reports is worthless "
+                 ~ "until it matches this again", sample[0 .. $ - 1]));
+
+    // NEGATIVE CONTROL: a predicate that matches every mention of `vertices`
+    // would also report 0-is-impossible and pass its gates by being permanently
+    // red, which is a different way of not measuring.
+    static immutable string[] kMustNotMatch = [
+        "    const n = ed.vertices.length;\n",
+        "    if (vertices[i] == p) return;\n",
+        "    Vec3[] pos = ed.vertices.dup;\n",
+        "    ring[k] = ed.addVertex(vec3Lerp(ed.vertices[a[k]], ed.vertices[b[k]], t));\n",
+        // …and the two the D3 widening must NOT have dragged in with it: an
+        // identifier that merely ENDS in `vertices`, and a by-value foreach.
+        "    auto subvertices = 3;\n",
+        "    foreach (v; m.vertices) sum = sum + v;\n",
+    ];
+    foreach (sample; kMustNotMatch)
+        assert(matchAll(sample, posRe).empty,
+            format("the §5.7 position-write predicate matches `%s`, which is a "
+                 ~ "READ — a predicate that fires on reads cannot distinguish a "
+                 ~ "migrated file from an unmigrated one", sample[0 .. $ - 1]));
+}
+
 unittest // commitStamps has exactly one definition and three named callers
 {
     immutable path = buildPath(repoRoot, "source", "mesh.d");
@@ -345,6 +463,7 @@ unittest // every beginEditBatch caller carries a scope(failure) abort
 // the free functions) → this block reddens naming MeshSelectLoopOps.
 // M-D1-MIXIN: the same for `mixin MeshConnectedMaskOps;` (task 1903 Stage D1).
 // M-D2-MIXIN: the same for `mixin MeshDecimateOps;` (task 1903 Stage D2).
+// M-D3-MIXIN: the same for `mixin MeshBridgeOps;` (task 1903 Stage D3).
 // ---------------------------------------------------------------------------
 
 unittest // the mixin count is falling, and the converted families stay converted
@@ -369,7 +488,9 @@ unittest // the mixin count is falling, and the converted families stay converte
 
     // 13 at the branch point; one family leaves per track-1 stage; 0 at Stage I.
     enum size_t kAtStart = 13;
-    enum size_t kExpected = 10;          // C: MeshSelectLoopOps; D1: MeshConnectedMaskOps; D2: MeshDecimateOps
+    // C: MeshSelectLoopOps; D1: MeshConnectedMaskOps; D2: MeshDecimateOps;
+    // D3: MeshBridgeOps.
+    enum size_t kExpected = 9;
     assert(live.length == kExpected,
         format("source/mesh.d instantiates %d `mixin Mesh*Ops` templates; this "
              ~ "gate expects %d. Track 1 started at %d and every conversion "
@@ -382,7 +503,8 @@ unittest // the mixin count is falling, and the converted families stay converte
     // its free functions without silently taking every call site with it.
     static immutable string[] kConverted = ["MeshSelectLoopOps",        // Stage C
                                             "MeshConnectedMaskOps",     // Stage D1
-                                            "MeshDecimateOps"];         // Stage D2
+                                            "MeshDecimateOps",          // Stage D2
+                                            "MeshBridgeOps"];           // Stage D3
     foreach (name; kConverted)
         assert(!live.canFind(name),
             format("`mixin %s;` is back in struct Mesh. That family is free "
@@ -522,57 +644,8 @@ unittest // the mixin count is falling, and the converted families stay converte
     // §5.7 entry was retired at Stage D2, which is what makes 0 the right
     // number here and not an `AllowEntry`.
     {
-        import std.regex : regex, matchAll;
-
-        // Verbatim from the plan's Revision 3 text, one alternative per line.
-        // (`[^\]]` for the plan's `[^]]`: same class, and it does not depend on
-        // the engine's reading of a leading `]`.)
-        enum string kPosWrite =
-              r"vertices\s*\[[^\]]*\]\s*(\.[xyz]\s*)?([-+*/]?)=[^=]"          // indexed, whole or per-component, any op-assign
-            ~ r"|(^|[^a-zA-Z_.])vertices\s*(~|[-+*/])?=[^=]"                   // whole-array assign / append
-            ~ r"|vertices\s*\[[^\]]*\.\.[^\]]*\]\s*(\[\s*\])?\s*=[^=]"         // slice assign, incl. `[] =`
-            ~ r"|foreach\s*\(\s*(size_t\s+\w+\s*,\s*)?ref\s+\w+\s*;\s*[a-zA-Z_.]*vertices"; // `foreach (ref v; vertices)`
-        auto posRe = regex(kPosWrite);
-
-        // POSITIVE CONTROL, and it goes FIRST. A count of 0 over a predicate
-        // that matches nothing is the "gate reports clean over an empty input"
-        // shape; these five samples are the four shapes §5.7 enumerates plus
-        // the exact line M-V1 puts back into this file.
-        static immutable string[] kMustMatch = [
-            "    vertices[i] = p;\n",
-            "    ed.vertices[i] = pos[find(cast(int)i)];\n",
-            "    m.vertices[j].x += d;\n",
-            "    vertices[a .. b] = src;\n",
-            "    foreach (ref v; vertices) v.y = 0;\n",
-        ];
-        foreach (sample; kMustMatch)
-            assert(!matchAll(sample, posRe).empty,
-                format("the §5.7 position-write predicate does not match `%s` "
-                     ~ "— it has been narrowed, and every count it reports is "
-                     ~ "worthless until it matches this again",
-                       sample[0 .. $ - 1]));
-
-        // NEGATIVE CONTROL: a predicate that matches every mention of
-        // `vertices` would also report 0-is-impossible and pass this gate by
-        // being permanently red, which is a different way of not measuring.
-        static immutable string[] kMustNotMatch = [
-            "    const n = ed.vertices.length;\n",
-            "    if (vertices[i] == p) return;\n",
-            "    Vec3[] pos = ed.vertices.dup;\n",
-        ];
-        foreach (sample; kMustNotMatch)
-            assert(matchAll(sample, posRe).empty,
-                format("the §5.7 position-write predicate matches `%s`, which "
-                     ~ "is a READ — a predicate that fires on reads cannot "
-                     ~ "distinguish a migrated file from an unmigrated one",
-                       sample[0 .. $ - 1]));
-
-        size_t rawWrites;
         string firstHit;
-        foreach (mm; matchAll(dc, posRe)) {
-            if (rawWrites == 0) firstHit = mm.hit.idup;
-            ++rawWrites;
-        }
+        immutable size_t rawWrites = countRawPositionWrites(dc, firstHit);
         assert(rawWrites == 0,
             format("source/mesh_ops/decimate.d: %d raw position write(s) under "
                  ~ "§5.7's predicate, expected 0 — this entry was retired at "
@@ -581,5 +654,314 @@ unittest // the mixin count is falling, and the converted families stay converte
                  ~ "records nothing, which is why the boundary is a counted "
                  ~ "census and not a type (task 1903 §5.7, M-V1).",
                    rawWrites, firstHit));
+    }
+
+    // Stage D3 — the Bridge family, and the first family with BOTH receivers in
+    // one file. `bridgeLoopsPaired`/`bridgeLoops`/`bridgeLoopsSpans`/
+    // `bridgeStripPaired`/`bridgeOpenRows` mutate and take the batch;
+    // `facesBoundedByLoop` and the three pairing helpers read and take
+    // `ref const(Mesh)`. Both halves are pinned, because the interesting
+    // regression is a mutating kernel drifting to the const receiver (it cannot
+    // compile) or a read-only one drifting to the batch (it can, and it would
+    // publish a change for a lookup that changes nothing).
+    immutable brPath = buildPath(repoRoot, "source", "mesh_ops", "bridge.d");
+    assert(exists(brPath), "cannot find source/mesh_ops/bridge.d at " ~ brPath);
+    immutable br = stripCommentsAndStrings(readText(brPath));
+    assert(countOccurrences(br, "mixin template MeshBridgeOps") == 0,
+        "source/mesh_ops/bridge.d still declares `mixin template MeshBridgeOps` "
+      ~ "— Stage D3 converted this family to free functions; a surviving "
+      ~ "template is either dead or a second implementation (task 1903 Stage D3).");
+
+    // WHAT THIS ROSTER DOES **NOT** COVER, and it is a convention, not an
+    // oversight (Stage D3 review, forward note F-3): a converted helper with NO
+    // RECEIVER AT ALL — `ceilDivHalfDown` here, and its class in later stages —
+    // cannot have a receiver row, because there is no `(ref X y,` to pin. Those
+    // names are held by the `static assert(!__traits(hasMember, Mesh, n))`
+    // tripwire at the foot of `source/mesh_ops/bridge.d`, which lists EVERY
+    // family name including the receiver-less ones and fires at `dub build`
+    // time. So: absent from this roster is not unguarded — it means "guarded
+    // over there". A later stage must add its receiver-less helpers to that
+    // `static foreach` list, not invent a receiver for them here.
+    //
+    // THE MUTATING RECEIVERS, each pinned WITH its parameter name AND the
+    // delimiter after it. `ed` is not decoration: plan §4.3 step 3 requires one
+    // stable name across the family because a kernel's nested functions capture
+    // the enclosing parameter the way they used to capture `this` — this file
+    // has three (`edgeAdjSubpatch`, one per face-emitting kernel) plus `base`
+    // in `bridgeTwistedVertex`. Without the trailing `,` the needle is a PREFIX
+    // and `ed` -> `edb` stays green (measured at D2, MINOR-1).
+    static immutable string[] kBatchKernels = [
+        "bridgeLoopsPaired", "bridgeLoops", "bridgeLoopsSpans",
+        "bridgeStripPaired", "bridgeOpenRows", "bridgeFanRows",
+    ];
+    foreach (name; kBatchKernels)
+        assert(countOccurrences(br, name ~ "(ref MeshEditBatch ed,") == 1,
+            format("source/mesh_ops/bridge.d no longer declares `%s` over "
+                 ~ "`ref MeshEditBatch ed`. That receiver is the enforcement, "
+                 ~ "not the style: it is what makes a batchless call a COMPILE "
+                 ~ "error, so one bridge stamps, derives and delivers once at "
+                 ~ "close() instead of once per addFace/addVertex — and it is "
+                 ~ "what the two intra-Mesh callers (Mesh.thickenSurface, "
+                 ~ "mesh_ops/revolve.d) had to open a transitional batch for "
+                 ~ "(task 1903 §4.1, §5.2 D3).", name));
+
+    // …and the two wrong spellings, absent. A `ref Mesh` receiver would compile
+    // and would silently take the batch away — the exact regression the rows
+    // above exist to stop, and one no behavioural test in the tree can see
+    // while this family's undo is still a whole-mesh snapshot.
+    foreach (name; kBatchKernels) {
+        assert(countOccurrences(br, name ~ "(ref Mesh ") == 0,
+            format("`%s` has a `ref Mesh` receiver again — that compiles, and "
+                 ~ "it drops the batch: the kernel's internal commits go back "
+                 ~ "to stamping one per appended face. If this is deliberate it "
+                 ~ "is an argument to make here, not a mechanical follow-on "
+                 ~ "(task 1903 Stage D3).", name));
+        assert(countOccurrences(br, name ~ "(ref const(Mesh)") == 0,
+            format("`%s` cannot have a `ref const(Mesh)` receiver — it appends "
+                 ~ "faces and stamps subpatch words. Such an overload could "
+                 ~ "only exist by casting const away (task 1903 Stage D3).",
+                   name));
+    }
+
+    // THE READ-ONLY RECEIVERS, same discipline. `facesBoundedByLoop` is the one
+    // that matters outside this file: `tools/edit/bridge_tool.d`'s
+    // `facesMatchingLoop` holds a `const ref Mesh` and could not call a batch
+    // receiver at all, so the const cell is what keeps that call site compiling
+    // verbatim.
+    static immutable string[] kConstHelpers = [
+        "facesBoundedByLoop", "pairBridgeLoop", "bridgeTwistedVertex",
+        "orientOpenChainB",
+    ];
+    foreach (name; kConstHelpers) {
+        assert(countOccurrences(br, name ~ "(ref const(Mesh) m,") == 1,
+            format("source/mesh_ops/bridge.d no longer declares `%s` over "
+                 ~ "`ref const(Mesh) m`. These four only READ positions to "
+                 ~ "decide a pairing or a lookup; the const receiver is what "
+                 ~ "states that, and for `facesBoundedByLoop` it is also what "
+                 ~ "keeps `m.facesBoundedByLoop(loop)` compiling from a "
+                 ~ "`const ref Mesh` in bridge_tool.d (task 1903 Stage D3, "
+                 ~ "plan §4.1).", name));
+        assert(countOccurrences(br, name ~ "(ref MeshEditBatch") == 0,
+            format("`%s` took a `ref MeshEditBatch` receiver — that compiles, "
+                 ~ "and it means a call that changes nothing now opens an edit "
+                 ~ "batch and publishes a change. If a later stage wants that, "
+                 ~ "it is a decision to argue for here (task 1903 Stage D3).",
+                   name));
+    }
+
+    // The span cap left `struct Mesh` with the family (plan §2.7, §11: "keep it
+    // an `enum` in the ops module after conversion"). Three test sites spelled
+    // it `Mesh.maxBridgeSpans` and moved in the same commit.
+    assert(countOccurrences(br, "enum size_t maxBridgeSpans = 512;") == 1,
+        "source/mesh_ops/bridge.d no longer declares `maxBridgeSpans` at module "
+      ~ "scope — it is the KERNEL layer of this family's two-layer DoS clamp "
+      ~ "(the Param's `.min`/`.max` are UI hints and do not clamp the headless "
+      ~ "path), and the mixin used to inject it into `Mesh` (task 1903 Stage D3, "
+      ~ "plan §2.7 / §11).");
+
+    // §5.7 over this file, under the SAME predicate decimate is measured with.
+    // Expected 0, and 0 here is not a retirement but a statement about the
+    // family: no bridge kernel moves an EXISTING vertex — every coordinate it
+    // produces belongs to a vertex it created in the same call, which is why
+    // `kBridgeEditScope` carries no `Position` bit. The behavioural twin of
+    // this row is the `Kind.SetPos == 0` assertion in
+    // tests/unit/mesh_ops/bridge_test.d's recording block.
+    {
+        string firstHit;
+        immutable size_t rawWrites = countRawPositionWrites(br, firstHit);
+        assert(rawWrites == 0,
+            format("source/mesh_ops/bridge.d: %d raw position write(s) under "
+                 ~ "§5.7's predicate, expected 0 — this family had none before "
+                 ~ "the conversion and must gain none through it. First hit: "
+                 ~ "`%s`. `alias mesh this` means `ed.vertices[i] = p` COMPILES "
+                 ~ "inside a recording batch and records nothing, which is why "
+                 ~ "the boundary is a counted census and not a type "
+                 ~ "(task 1903 §5.7, M-V1).", rawWrites, firstHit));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// THE §2.6 WIDENINGS, AND THE HALF THAT KEEPS THEM HONEST (task 1903 Stage D3).
+//
+// A mixin body is instantiated in its HOST's scope, so `mesh_ops/*.d` reached
+// `private` names of `mesh.d` for free. Converting a family to free functions
+// takes that away, and §2.6 lists eleven names that must be widened — but NOT
+// in one go: Stage A shipped ten of them and the review REVERTED all ten,
+// because at that point nothing outside `mesh.d` named any of them. Ten
+// `private` doors stood open with no caller to justify one and nothing that
+// could redden if a wrong caller appeared. The rule that replaced it: each
+// widening lands in the stage that converts ITS caller, with a census row
+// NAMING that caller.
+//
+// So every row below is a PAIR. The `private` spelling is gone from mesh.d,
+// AND the file that needed it still calls it. Drop the call and the row
+// reddens telling you to narrow the name back — which is the half a plain
+// "is it public?" check cannot do.
+//
+// Its own `unittest`, not folded into the mixin census above: druntime stops a
+// module at its first failed assert, and these rows must stay visible when the
+// receiver pins are red (Stage D1 review memo).
+//
+// AND THE CENSUS IS TWO-SIDED, not one (Stage D3 review, MAJOR-2). The rows
+// above answer "is the name still public, and does bridge.d still call it?" —
+// which is blind in the direction §2.6 actually asks about: a widened name is
+// public to the WHOLE tree, and a stage that inherits one must say who else
+// uses it. Measured: adding `orientFaceConsistent(idx, ef);` to a new method in
+// `source/mesh_ops/cleanup.d` left this block green. So each row also declares
+// `callerFiles`, and the block walks `source/**` (comment-stripped) for a
+// RECEIVER-AGNOSTIC needle and asserts the SET of caller files EQUALS the row.
+// That reddens in both directions — a caller the row does not name, and a file
+// the row names that no longer calls.
+//
+// M-D3-WIDEN-A: put `private` back on `mesh.smoothstep01` → `dub build` fails
+//   first (bridge.d cannot see it), which is the point — the census row is the
+//   REVERT tripwire for a tree that still compiles because someone also
+//   duplicated the helper.
+// M-D3-WIDEN-B: delete bridge.d's `orientFaceConsistent` calls → this block
+//   reddens naming the widening as now caller-less.
+// M-W2 (under-declared): add a second caller of `orientFaceConsistent` in
+//   `source/mesh_ops/cleanup.d` → the set assert reddens naming that file.
+// M-W3 (over-declared): add a file to a row's `callerFiles` that contains no
+//   call → the same assert reddens from the other side.
+// ---------------------------------------------------------------------------
+unittest // every §2.6 widening this stage made still has the caller it names
+{
+    immutable meshPath = buildPath(repoRoot, "source", "mesh.d");
+    assert(exists(meshPath), "cannot find source/mesh.d at " ~ meshPath);
+    immutable md = stripCommentsAndStrings(readText(meshPath));
+    immutable brPath = buildPath(repoRoot, "source", "mesh_ops", "bridge.d");
+    assert(exists(brPath), "cannot find source/mesh_ops/bridge.d at " ~ brPath);
+    immutable br = stripCommentsAndStrings(readText(brPath));
+
+    // name, the `private` declaration that must be GONE from mesh.d, the
+    // declaration that must be THERE, the call in bridge.d that justifies it,
+    // and — the MAJOR-2 half — the receiver-agnostic needle plus the COMPLETE
+    // set of files under `source/` that may contain it (mesh.d excluded: it is
+    // the declarer, and its own internal calls are not what §2.6 asks about).
+    static struct Widening {
+        string   name;        // for the message
+        string   privateDecl; // must not appear in mesh.d
+        string   publicDecl;  // must appear exactly once in mesh.d
+        string   callSite;    // must appear at least once in bridge.d
+        string   scanNeedle;  // receiver-AGNOSTIC; what the source/** walk counts
+        string[] callerFiles; // every non-mesh.d file that contains scanNeedle
+        string   why;
+    }
+    static immutable Widening[] kWidenings = [
+        Widening("mesh.smoothstep01",
+                 "private float smoothstep01(",
+                 "float smoothstep01(float t)",
+                 "smoothstep01(t)",
+                 "smoothstep01(",
+                 ["source/mesh_ops/bridge.d"],
+                 "a module-level free function of `mesh`, NOT a Mesh member — plan "
+               ~ "§2.6 called it out by name as \"the one that will not compile "
+               ~ "after conversion\". `bridgeTwistedVertex` is its only caller "
+               ~ "anywhere in the tree."),
+        Widening("Mesh.orientFaceConsistent",
+                 "private void orientFaceConsistent(",
+                 "void orientFaceConsistent(uint[] idx",
+                 "ed.orientFaceConsistent(",
+                 "orientFaceConsistent(",
+                 ["source/mesh_ops/bridge.d"],
+                 "the task-0394 winding-consistency vote, shared by "
+               ~ "`makePolygonFromVerts` (in mesh.d) and bridge.d's "
+               ~ "`bridgeStripPaired` / `bridgeFanRows` (task 0395)."),
+        Widening("Mesh.registerNewFaceEdges",
+                 "private void registerNewFaceEdges(",
+                 "void registerNewFaceEdges(ref int[2][ulong] liveEdgeFaces",
+                 "ed.registerNewFaceEdges(",
+                 "registerNewFaceEdges(",
+                 ["source/mesh_ops/bridge.d"],
+                 "the incremental edgeFaces update that lets a LATER face in the "
+               ~ "same strip/fan see its already-placed siblings; bridge.d is its "
+               ~ "only caller."),
+    ];
+
+    foreach (w; kWidenings) {
+        assert(countOccurrences(md, w.privateDecl) == 0,
+            format("`%s` is `private` again in source/mesh.d. It is %s Task 1903 "
+                 ~ "Stage D3 widened it because source/mesh_ops/bridge.d stopped "
+                 ~ "being a mixin body instantiated in mesh.d's scope and can no "
+                 ~ "longer see a private name there (plan §2.6, §4.3).",
+                   w.name, w.why));
+        assert(countOccurrences(md, w.publicDecl) == 1,
+            format("source/mesh.d no longer declares `%s` as `%s` — count %d, "
+                 ~ "expected 1. If the signature changed, update this row and "
+                 ~ "say why; if the name is gone, bridge.d's call is gone too "
+                 ~ "and the widening should be reverted with it (task 1903 §2.6).",
+                   w.name, w.publicDecl, countOccurrences(md, w.publicDecl)));
+        assert(countOccurrences(br, w.callSite) >= 1,
+            format("source/mesh_ops/bridge.d no longer contains `%s`, so the "
+                 ~ "widening of `%s` in source/mesh.d now holds a `private` door "
+                 ~ "open for NOBODY. That is exactly the state the Stage A review "
+                 ~ "reverted ten widenings for (plan §2.6, review S3): narrow it "
+                 ~ "back to `private` in the same change that removed the call, "
+                 ~ "and delete this row.", w.callSite, w.name));
+    }
+
+    // --- The other side: WHO ELSE calls it (review MAJOR-2) ----------------
+    // One walk over `source/**`, comment- and string-stripped, collecting for
+    // each row the set of files that contain its receiver-agnostic needle.
+    // `source/mesh.d` is skipped: it declares the name, and its own calls are
+    // not the question §2.6 asks.
+    string[][string] callersOf;
+    size_t filesScanned = 0;
+    {
+        import std.file : dirEntries, SpanMode;
+        import std.path : relativePath;
+        import std.string : replace;
+
+        immutable srcRoot = buildPath(repoRoot, "source");
+        foreach (e; dirEntries(srcRoot, "*.d", SpanMode.depth)) {
+            immutable rel = relativePath(e.name, repoRoot).replace("\\", "/");
+            if (rel == "source/mesh.d") continue;
+            ++filesScanned;
+            immutable src = stripCommentsAndStrings(readText(e.name));
+            foreach (w; kWidenings)
+                if (countOccurrences(src, w.scanNeedle) >= 1)
+                    callersOf[w.name] ~= rel;
+        }
+    }
+
+    // Non-vacuity floor for the WALK itself. If the root were wrong or the glob
+    // matched nothing, every set would come back empty and the rows would still
+    // redden — but with a message about a missing caller instead of a missing
+    // walk, which is the wrong thing to go read.
+    assert(filesScanned >= 100,
+        format("the §2.6 caller walk visited only %d .d file(s) under "
+             ~ "source/ (excluding mesh.d) — the tree has well over 100. The "
+             ~ "walk is mis-rooted or the glob is wrong; the caller-set "
+             ~ "assertions below would be measuring nothing.", filesScanned));
+
+    static string joinSorted(const(string)[] xs) {
+        import std.algorithm : sort;
+        import std.array     : join;
+        string[] tmp;
+        foreach (x; xs) tmp ~= x;
+        tmp.sort();
+        return tmp.length == 0 ? "(none)" : tmp.join(", ");
+    }
+
+    foreach (w; kWidenings) {
+        immutable string got  = joinSorted(callersOf.get(w.name, []));
+        immutable string want = joinSorted(w.callerFiles);
+        assert(got == want,
+            format("`%s` was widened out of `private` by task 1903, and plan "
+                 ~ "§2.6 requires the stage that inherits a public name to say "
+                 ~ "WHO USES IT. The row declares its callers as [%s]; the tree "
+                 ~ "actually has [%s] (needle `%s`, %d file(s) under source/ "
+                 ~ "scanned, source/mesh.d excluded as the declarer).\n"
+                 ~ "  * A file in the tree but NOT in the row: a second stage is "
+                 ~ "now leaning on this widening. Add it to `callerFiles` with a "
+                 ~ "note saying which stage owns it — a public door with an "
+                 ~ "unlisted user is how `Mesh.faceAttrOr` ended up with callers "
+                 ~ "in three files across three stages and no record of it.\n"
+                 ~ "  * A file in the row but NOT in the tree: that caller is "
+                 ~ "gone. If the row is now empty, narrow the name back to "
+                 ~ "`private` in the same change and delete the row (plan §2.6, "
+                 ~ "review S3).\n"
+                 ~ "  Why this widening exists: it is %s",
+                   w.name, want, got, w.scanNeedle, filesScanned, w.why));
     }
 }

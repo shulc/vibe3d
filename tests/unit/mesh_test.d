@@ -11,7 +11,11 @@ import editmode : EditMode;
 import mesh_edit_delta : MeshEditTracker, MeshEditScope;
 import change_bus : SelDomain;
 import mesh_ops.cut : MeshCutOps;
-import mesh_ops.bridge : MeshBridgeOps;
+// (`import mesh_ops.bridge : MeshBridgeOps;` was here until task 1903 Stage D3
+// turned that family into free functions — the template name no longer exists.
+// Nothing in this file ever NAMED any of the templates imported around it; they
+// came across with the 0706 move of mesh.d's unittest blocks and each track-1
+// stage sheds its own line.)
 import mesh_ops.loop_slice : MeshLoopSliceOps;
 import mesh_ops.revolve : MeshRevolveOps;
 import mesh_ops.cleanup : MeshCleanupOps;
