@@ -1760,18 +1760,11 @@ void main(string[] args) {
     // gpu_select.d:31 uses. Default ON; VIBE3D_FACE_PICK=gpu falls back to
     // the GPU face re-render (oracle for A/B equivalence testing).
     BvhPick bvhPick = new BvhPick();
-    // Item-level ray picker (task 0647) — "which ITEM is under the cursor",
-    // over EVERY visible geometry layer including the primary. Held next to
-    // `bvhPick` and separate from it: `bvhPick` is the primary layer's tree and
-    // is keyed on that one mesh, so pointing it at a second layer would thrash
-    // the cache it exists to be.
-    ItemRayPicker itemPicker = new ItemRayPicker();
-    bool useBvhFacePick;
-    {
-        import std.process : environment;
-        // Read once at startup; runtime changes need a relaunch.
-        useBvhFacePick = environment.get("VIBE3D_FACE_PICK", "bvh") != "gpu";
-    }
+    // Task 0781 step 1c -- the item-level ray picker (task 0647) and the face
+    // engine switch moved into the input/frame cluster with their only
+    // readers, `pickItemUnderCursor` and `pickFaces`. Both are constructed
+    // next to `ifs.app` further down (see the wiring block there for why that
+    // point and not this one).
 
     // Tracks what is currently uploaded to the GPU so the main loop can
     // re-upload when the preview toggles on/off or when the cage changes
@@ -4714,8 +4707,19 @@ void main(string[] args) {
     // R3 rule the `fbW`/`fbH` wiring below already carries). `EditorApp`
     // itself is unchanged: same three pointer fields, same three
     // properties, new target. `ifs` is a `final class`, so this address is
-    // stable for the whole run -- and it must be assigned BEFORE
-    // `wireHttpProviders`, which captures `app` by value; it already is.
+    // stable for the whole run.
+    //
+    // Placement is the ordinary one -- with the rest of the pointer wiring,
+    // above `wireHttpProviders` -- and NOT a hard ordering requirement, which
+    // is what an earlier revision of this comment claimed. It said
+    // `wireHttpProviders` "captures `app` by value"; it does not, it takes
+    // `ref EditorApp app` (http_providers.d), and a D closure over a `ref`
+    // parameter reaches the CALLER's variable, so a provider closure sees a
+    // field assigned after the call too (standalone probe, task 0781 step 1c;
+    // the sync-back below is the same fact from the other direction -- the
+    // moved block ASSIGNS main()'s `app` through that `ref`). The wiring that
+    // genuinely must come first is `registerTools(app)`'s, a few blocks above,
+    // which copies `app` BY VALUE.
     app.hoveredVertexPtr       = &ifs.hoveredVertex;
     app.hoveredEdgePtr         = &ifs.hoveredEdge;
     app.hoveredFacePtr         = &ifs.hoveredFace;
@@ -4875,6 +4879,20 @@ void main(string[] args) {
     // body's three writes now go through the `g_viewportWindowHovered`
     // forwarder straight into `ifs.viewportWindowHovered`.
     ifs.app = app;
+    // Task 0781 step 1c -- the pick family's own two references, wired in the
+    // SAME block rather than later. Their readers (`pickItemUnderCursor`,
+    // `pickFaces`) only run inside the frame loop, so lateness would not
+    // crash; it would be QUIET, which is worse -- `wireHttpProviders` below
+    // and every panel path already hold `app`, and a null `itemPicker` would
+    // surface as "item hover stopped working" rather than as a startup
+    // failure. The VIBE3D_FACE_PICK read is verbatim from the declaration
+    // site it came from (main() locals, deleted above): read once at startup,
+    // runtime changes need a relaunch.
+    ifs.itemPicker = new ItemRayPicker();
+    {
+        import std.process : environment;
+        ifs.useBvhFacePick = environment.get("VIBE3D_FACE_PICK", "bvh") != "gpu";
+    }
 
     // Task 1670 — wire the arm-time pose hook declared next to
     // `setActiveTool`. HERE, and not at `buildToolVts`'s own declaration a
@@ -6102,236 +6120,35 @@ void main(string[] args) {
         lastMouseY = mot.y;
     }
 
-    // pickVertices / pickEdges share one body — they differ only in the
-    // SelectMode/EditMode pair, the symmetricSelect* function, the pick
-    // radius (4 px for verts, 6 px for edges) and the hovered* slot written.
-    void pickHover(SelectMode sm, EditMode em, alias symSel, int radius)(
-            ref Viewport vp, bool doingCameraDrag) {
-        static if (em == EditMode.Vertices)
-            alias hovered = hoveredVertex;
-        else
-            alias hovered = hoveredEdge;
-        ensureDisplayCurrent(); // mid-batch pull-guard: VBO reader below
-        // Task 1730 — the SAME freeze, for the same reason, over a different
-        // window: this picker reads the ID buffer and maps it back through
-        // `gpu.vertOriginGpu` / `edgeOriginGpu`, and while a rebuild is in
-        // flight those map into the cage the preview was built against, not
-        // the one that exists. Returning without re-picking holds the last
-        // answer, exactly as the drag freeze below does.
-        if (previewIndexSpaceStale()) return;
-        // Freeze hover during an active tool drag (element-move haul): return
-        // WITHOUT re-picking so the element picked at drag-start stays
-        // highlighted instead of every element the moving cursor passes over.
-        if (activeTool !is null && activeTool.isDragging()) return;
-        hovered = -1;
-        if (!viewportInputAllowed() || doingCameraDrag) return;
-        // No active tool → ASK THE ORDERING, with the item-inclusive candidate
-        // set (task 0655). This line used to read `if (editMode != em) return;`
-        // and that was the defect in one line: `editMode` is a cache of the
-        // SAME query asked without `Item`, so it answers a geometry type even
-        // while items are the current selection type — and this hover picker
-        // then ran, lighting a vertex the user cannot select. With an active
-        // tool, defer to `wantsHoverForType` so tools like XfrmTransformTool
-        // (with falloff.element wired) can opt in to multi-type hover
-        // regardless of the current type (Stage 14.9).
-        if (activeTool is null) {
-            if (viewportPickType(selTypeOrder) != geometrySelType(em)) return;
-        } else {
-            if (!activeTool.wantsHoverForType(em)) return;
-        }
-
-        int mx, my;
-        queryMouse(mx, my);
-
-        // Offscreen ID buffer: GPU rasterises every cage element as an
-        // ID-tagged primitive, depth-tested against the face surface so
-        // elements inside / behind opaque geometry drop out. Subpatch mode
-        // maps VBO indices back to cage indices inside GpuSelectBuffer.pick
-        // (the picker handles its own cache + VBO→cage translation).
-        // Task 0617: `mesh`/`vp` here are the PRIMARY layer's — pair with
-        // primaryModelSpace() so a transformed primary is picked where it's
-        // drawn, not at its identity pose.
-        // Selection visibility (`select_visibility.d`), resolved for the cell
-        // whose ID buffer this is: under a style that draws no faces the
-        // picker stops running its face depth pre-pass, so a vertex or edge
-        // behind the surface keeps its id and can be picked. One code path for
-        // hover, click and paint (`doSelectPickAt` calls this same function),
-        // so all three follow the style together.
-        //
-        // NO FACING TERM HERE, ever: `pickVisibility().facingTerm` is resolved
-        // and deliberately not read on this path — it is MEASURED to have
-        // none (`CLAUDE.md` §Measured laws).
-        int hit = gpuSelect.pick(sm, mx, my, radius, mesh, gpu, vp,
-                                 primaryModelSpace(),
-                                 vpm.pickVisibility().occlusionTerm);
-        if (hit < 0) return;
-
-        hovered = hit;
-        if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-            symSel(&mesh(), vp, editMode, hovered, /*deselect=*/false);
-        else if (dragMode == DragMode.SelectRemove)
-            symSel(&mesh(), vp, editMode, hovered, /*deselect=*/true);
+    // Task 0781 step 1c -- THE PICK FAMILY MOVED. `pickHover` (and its
+    // `pickVertices`/`pickEdges` instantiations), `pickFaces`,
+    // `pickItemUnderCursor` and `pickItems` are now methods of the input/
+    // frame shared-state cluster (source/input_frame_state.d), for the same
+    // producer/consumer reason as every member before them: the frame body
+    // calls them directly, the three picker delegates below call them too.
+    // What stays here is five same-name forwarders at the original position,
+    // so every call site -- the delegates just below and the frame body's
+    // four calls -- is textually unchanged. `pickHover` itself needs none:
+    // nothing outside the family ever named it.
+    //
+    // `itemPicker` and `useBvhFacePick` travelled with them (their only
+    // readers were `pickItemUnderCursor` and `pickFaces`); both are wired
+    // next to `ifs.app` further down, where the VIBE3D_FACE_PICK read now
+    // lives.
+    void pickVertices(ref Viewport vp, bool doingCameraDrag) {
+        ifs.pickVertices(vp, doingCameraDrag);
     }
-    alias pickVertices = pickHover!(SelectMode.Vertex, EditMode.Vertices,
-                                    symmetricSelectVertex, 4);
-    alias pickEdges    = pickHover!(SelectMode.Edge,   EditMode.Edges,
-                                    symmetricSelectEdge,   6);
-
+    void pickEdges(ref Viewport vp, bool doingCameraDrag) {
+        ifs.pickEdges(vp, doingCameraDrag);
+    }
     void pickFaces(ref Viewport vp, bool doingCameraDrag) {
-        // Mid-batch pull-guard — covers BOTH engines: the GPU path reads the
-        // ID-FBO rendered from the VBO, and the BVH path is keyed on
-        // gpu.uploadVersion, so the guard's upload is what triggers its
-        // rebuild against the post-mutation mesh.
-        ensureDisplayCurrent();
-        // Task 1730 — freeze while the drawn surface and the cage disagree.
-        // Under option C (task 1540) this picker answers from the ID buffer
-        // whenever a preview is `active`, so it is a `*OriginGpu` reader like
-        // the two above. It is frozen even on the BVH branch, which reads no
-        // GPU buffer at all: that branch would answer against the CAGE while
-        // the LIMIT surface is what is on screen, i.e. pick geometry the user
-        // cannot see. A held answer beats a confidently wrong one.
-        if (previewIndexSpaceStale()) return;
-        if (activeTool !is null && activeTool.isDragging()) return;  // freeze hover mid-drag
-        hoveredFace = -1;
-        if (!viewportInputAllowed() || doingCameraDrag) return;
-        // The face twin of the gate in `pickHover` — same query, same reason
-        // (task 0655).
-        if (activeTool is null) {
-            if (viewportPickType(selTypeOrder) != SelType.Polygon) return;
-        } else {
-            if (!activeTool.wantsHoverForType(EditMode.Polygons)) return;
-        }
-
-        int mx, my;
-        queryMouse(mx, my);
-
-        // BVH ray-cast (default) or GPU face re-render (VIBE3D_FACE_PICK=gpu).
-        // BVH: O(log n) per pick, view-independent, no GL readback. Keyed on
-        // (gpu.uploadVersion, source-mesh-address) — identical to gpu_select.d:31.
-        // Task 0617: both engines pick against the PRIMARY layer here —
-        // primaryModelSpace() for both, so the BVH/GPU A/B stays apples-to-apples.
-        //
-        // TASK 1540 — WHILE A SUBPATCH PREVIEW IS LIVE, THE ENGINE IS THE GPU
-        // ONE, AND THAT IS A PERF DECISION MADE ON A MEASUREMENT.
-        //
-        // The BVH is keyed on (gpu.uploadVersion, source-mesh address), and
-        // under a live preview the source is the LIMIT surface — four times
-        // the cage at level 1. Installing a fresh preview moves both key
-        // terms, so the very next hover pick pays a full construction over
-        // that surface. Measured, grid n=316 (99 856 cage quads -> 798 848
-        // limit triangles), `frames --n 316 tab-cold`:
-        //
-        //     worst frame  BVH engine 1719.6 ms   GPU engine 125.0 ms
-        //     `cache` phase   1588.9 ms              0.072 ms
-        //
-        // and the 1588.9 ms IS one `dbvh_build` — it and the phase agree to
-        // four microseconds. So on the frame a preview lands, the structure
-        // that exists to make picking cheap is what makes the window freeze.
-        //
-        // WHY THE GATE IS `active` AND NOT `active || buildPending`. While a
-        // build is in flight the VBOs still hold the CAGE, so the cage tree is
-        // both correct and the thing being drawn — and it is a quarter the
-        // size. Gating on `buildPending` too would ALSO make the engine a
-        // function of whether a worker thread had finished, i.e. of wall
-        // clock, and selection under scripted input would stop being
-        // reproducible. `active` is document state; this branch is
-        // deterministic.
-        //
-        // WHAT MAKES THIS SAFE is that the two engines are held equivalent by
-        // a test, not by intent: `tests/test_bvh_pick_equivalence.d` sweeps
-        // (fixture, camera, pixel) and includes a subpatch-preview fixture.
-        // Both engines answer in CAGE face indices — the GPU one translates
-        // through `gpu.faceOriginGpu` after readback (gpu_select.d), the BVH
-        // one folds the same map into `_triToFace` at build time
-        // (bvh_pick.d). The documented exemption is exactly-coincident /
-        // coplanar faces, where GPU draw order and nanort's arbitrary `t`
-        // may disagree.
-        //
-        // WHAT IT COSTS: ~143 us per pick against ~0.8 us, and a full ID
-        // re-render whenever the camera moves (the GPU slot key carries view
-        // and proj). Both are bounded — this branch is only taken while a
-        // preview is live, and `pickFaces` returns above during a camera
-        // drag, so the re-render is one per camera settle rather than one per
-        // frame. `/api/pick?engine=bvh` is UNCHANGED and still reaches the
-        // BVH directly, so the oracle that proves the equivalence above does
-        // not route through this decision.
-        int hit;
-        if (useBvhFacePick && !subpatchPreview.active) {
-            hit = bvhPick.pickFace(mx, my, vp, mesh(), gpu, primaryModelSpace());
-        } else {
-            // The term is inert for `SelectMode.Face` by construction (the
-            // face pass IS the surface, so no pre-pass ever ran for it) — it
-            // is passed rather than hardcoded so this call site does not
-            // become the one place that pins a policy of its own if the face
-            // path ever grows a through-mode.
-            hit = gpuSelect.pick(SelectMode.Face, mx, my, /*r=*/0,
-                                  mesh, gpu, vp, primaryModelSpace(),
-                                  vpm.pickVisibility().occlusionTerm);
-        }
-        if (hit < 0) return;
-
-        hoveredFace = hit;
-        if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-            symmetricSelectFace(&mesh(), vp, editMode,
-                                hoveredFace, /*deselect=*/false);
-        else if (dragMode == DragMode.SelectRemove)
-            symmetricSelectFace(&mesh(), vp, editMode,
-                                hoveredFace, /*deselect=*/true);
+        ifs.pickFaces(vp, doingCameraDrag);
     }
-
-    // Which ITEM is under the cursor (task 0647). Runs only while the current
-    // selection type is Item — that is the whole gate, and it is the same gate
-    // the highlight pass reads.
-    //
-    // WHY IT IS NOT `pickHover` WITH A FOURTH MODE. The three element pickers
-    // share a body because they differ only in a SelectMode/EditMode pair and a
-    // radius; this one differs in every part that matters. It ranges over the
-    // layer array rather than the primary's elements, it uses a CPU ray rather
-    // than the GPU ID buffer (the ID buffer is rendered from the primary's VBO
-    // alone, so it cannot see another layer at all), and its answer is a
-    // document index rather than an element index.
-    //
-    // THE CLEAR COMES BEFORE EVERY EARLY RETURN BUT ONE, so that "the cursor
-    // moved off the item" and "the cursor moved onto empty space" are the same,
-    // non-latching state — measured: returning to a parking pixel restored a
-    // zero-difference frame every time, so nothing here may hold the previous
-    // answer.
-    //
-    // The one exception is a live DRAG, which freezes the hover exactly as the
-    // element pickers freeze theirs: the item the gesture started on is the one
-    // it must keep for its whole duration. That freeze is itself conditional on
-    // Item still being the current type — a type flip during a drag must not
-    // leave a stale item index visible to `/api/layers`.
-    //
-    // Declared ABOVE `pickItems` because a nested function is not visible
-    // before its definition: `pickItems` calls it.
-    //
-    // The item ray, with the ACTIVE cell's projection identity attached
-    // (task 0643). An image plane is drawn only in the cell whose preset it
-    // names, so "which item is under this pixel" is not answerable without the
-    // cell — and the hover path and the click path must ask it the same way,
-    // which is why this is one function rather than two call sites that each
-    // remember to pass the pair. `vp` is the active cell's snapshot at both,
-    // so `activeCamera()` is the camera it was taken from.
     ItemHit pickItemUnderCursor(int mx, int my, ref Viewport vp) {
-        import view : ProjKind;
-        return itemPicker.pickItemAt(document, mx, my, vp,
-                                     vpm.activeCamera().viewPreset,
-                                     vpm.activeCamera().projKind == ProjKind.Ortho);
+        return ifs.pickItemUnderCursor(mx, my, vp);
     }
-
     void pickItems(ref Viewport vp, bool doingCameraDrag) {
-        import hover_state : g_hoveredItem;
-        immutable bool isItem = currentSelType(selTypeOrder) == SelType.Item;
-        if (isItem && activeTool !is null && activeTool.isDragging()) return;
-        g_hoveredItem = -1;
-        if (!isItem) return;
-        if (!viewportInputAllowed() || doingCameraDrag) return;
-
-        int mx, my;
-        queryMouse(mx, my);
-        immutable ItemHit h = pickItemUnderCursor(mx, my, vp);
-        if (h.hit) g_hoveredItem = h.layerIndex;
+        ifs.pickItems(vp, doingCameraDrag);
     }
 
     // Bind the picker delegate forward-declared at handleMouseMotion's
