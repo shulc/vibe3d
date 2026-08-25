@@ -170,9 +170,11 @@ shared static this() {
     //   every cluster member), not a selection fallback — and it goes through
     //   weldVerticesByMask, so the §3.3 backstop covers it anyway. Was 5 until
     //   task 0706; the other four were unittest fixtures and left with them.
-    ALLOWED_COUNT["source/app.d"] = 2;
+    ALLOWED_COUNT["source/input_router.d"] = 2;
     // ^ `cageAllInside` is an AND-accumulator seeded true and cleared per
     //   preview child, not an operand set. Its hide handling landed in S4.
+    //   Lived in app.d's lasso close until task 0781 moved the mouse-up
+    //   handler into InputRouter; the code is unchanged, only its home.
     ALLOWED_COUNT["source/mesh.d"] = 1;
     // ^ :10141 `vertFanOrdered_[] = true` — a per-vertex fan-ordered FLAG,
     //   reset to all-true before the loops pass clears it per non-manifold
