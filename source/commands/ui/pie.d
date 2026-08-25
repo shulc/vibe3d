@@ -52,7 +52,7 @@ final class UiPieCommand : Command {
     /// Positional arg: a menu id from config/pies.yaml, or "close".
     void setMenu(string arg) { menu_ = arg.strip; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         import pie_menus : findPieMenu;
 
         baseRefusal_ = "";

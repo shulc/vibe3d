@@ -131,33 +131,44 @@ DragSetup armHandle() {
 // (1) /api/reset delivers ONCE — for the layer's mesh, not once per face of
 //     the cube being built beside it.
 //
-//     Measured: delta 1, `lastDeliveryFlags` 14 = Points|Polygons|Marks.
-//     Unfiltered it is 7: `makeCube()` commits once per `addFace`, six times,
-//     on a stack-local `Mesh`, and the document mesh then delivers once more.
+//     Measured: delta 1, `lastDeliveryFlags` 63 = `MeshChangeAll`.
+//     Unfiltered the DELTA is 7: `makeCube()` commits once per `addFace`, six
+//     times, on a stack-local `Mesh`, and the document mesh then delivers once
+//     more.
 //
-//     WHAT 14 IS, AND WHAT IT IS NOT. It is `mesh.resetSelection()`'s OWN
-//     `commitChange(Geometry | Marks)` — the single delivering publisher on
-//     this path — and nothing else. An earlier revision of this comment claimed
-//     the word ALSO witnessed "`deliverPending` rejects WITHOUT clearing
-//     `undelivered*_`, so the scratch mesh's flags ride `*mesh = makeCube()`
-//     into the layer". That claim was tested and is FALSE HERE: the reviewer
-//     rewrote the rejection arm to zero `undeliveredChanges_` /
-//     `undeliveredSelDomains_` and this assert stayed GREEN, because
-//     `makeCube()`'s scratch commits are `Geometry` (Points|Polygons = 6),
-//     a strict SUBSET of what `resetSelection` re-commits one line later.
-//     Every primitive `/api/reset` can build is the same shape — `addFace` and
-//     `setSubpatch` publish nothing outside `Geometry | Marks` — so no reset
-//     arm can separate the two rules, and there is no witness for the carry
-//     rule on this path at all.
+//     WHAT 63 IS, AND WHY IT WAS 14 BEFORE STAGE 0b. `SceneReset` is an
+//     override-`applyImpl` command — not an `Operator` — so before the
+//     `final Command.apply()` wrapper it ran inside NO delivery batch, and its
+//     one delivery fired mid-command, at `mesh.resetSelection()`'s own
+//     `commitChange(Geometry | Marks)` = 14. The `mesh.noteChange(MeshChangeAll)`
+//     the command makes three statements later — its way of saying "every class
+//     on this mesh is new, the counters were reset by `*mesh = …`" — was
+//     ORPHANED by that: `noteChange` never delivers, so those bits rode
+//     whatever unrelated publisher committed next.
 //
-//     So the assert below is kept for what it DOES discriminate — that the one
-//     delivery names the geometry classes rather than, say, `Position` alone,
-//     which is what a delivery from the wrong publisher would look like — and
-//     the carry rule is witnessed where it can actually fail: block (i) of
-//     `tests/unit/change_bus_test.d`, which commits a class NO document-mesh
-//     publisher re-commits (`Maps`) on a REJECTED scratch mesh, assigns the
-//     scratch over the document mesh, and reads that class back out of the next
-//     document delivery.
+//     Under the wrapper the whole command is one delivery batch, so the single
+//     delivery at its close carries the UNION — `resetSelection`'s classes plus
+//     the `MeshChangeAll` note that names them all. That is the coalescing law,
+//     and it is also the reason this assert is EXACT rather than a mask: it is
+//     the suite-level red for mutation `0-ANCHOR`. Delete
+//     `beginDeliveryBatchGlobal()` from the wrapper (or make `apply()`
+//     non-`final` again) and this word drops back to 14 on a REAL command —
+//     the unit-level red is `tests/unit/command_apply_anchor_test.d`, over a
+//     test double that can do what no shipped command does today and
+//     loop-commit.
+//
+//     WHAT IT DOES NOT WITNESS. Not the "`deliverPending` rejects WITHOUT
+//     clearing `undelivered*_`" rule — an earlier revision of this comment
+//     claimed it and was measured wrong: the reviewer rewrote the rejection arm
+//     to zero `undeliveredChanges_` / `undeliveredSelDomains_` and the assert
+//     stayed GREEN, because `makeCube()`'s scratch commits are `Geometry`
+//     (Points|Polygons = 6), a strict SUBSET of what this path re-commits one
+//     line later. Every primitive `/api/reset` can build is the same shape, so
+//     no reset arm can separate the two rules. The carry rule is witnessed
+//     where it can actually fail: block (i) of `tests/unit/change_bus_test.d`,
+//     which commits a class NO document-mesh publisher re-commits (`Maps`) on a
+//     REJECTED scratch mesh, assigns the scratch over the document mesh, and
+//     reads that class back out of the next document delivery.
 // --------------------------------------------------------------------------
 unittest {
     // Two resets, and the SECOND is the measurement. The first normalises the
@@ -180,18 +191,18 @@ unittest {
              ~ "come from makeCube()'s per-addFace commits on a stack-local "
              ~ "Mesh no Layer owns", delta));
 
-    // Points|Polygons|Marks = 14 — exactly `resetSelection()`'s own
-    // `commitChange(Geometry | Marks)`. Not asserted as a bare `!= 0`:
-    // `Position` alone (1) would also be non-zero and would mean the one
-    // delivery came from some other publisher with the geometry classes
-    // dropped. It does NOT witness the rejection-keeps-`undelivered*_` rule —
-    // see the block comment above, and block (i) of
-    // `tests/unit/change_bus_test.d` for the witness that does.
+    // 63 = `change_bus.MeshChangeAll` — the UNION of everything `scene.reset`
+    // published inside its one delivery batch. Asserted EXACTLY, not as a mask:
+    // 14 is the pre-stage-0b value (the mid-command delivery, with the
+    // command's own `noteChange(MeshChangeAll)` orphaned), so an equality here
+    // reddens if the wrapper stops batching. See the block comment above.
     const long flags = getJson("/api/changes")["lastDeliveryFlags"].integer;
-    assert(flags == 14,
-        format("the one delivery must be resetSelection's own "
-             ~ "commitChange(Geometry | Marks) = Points|Polygons|Marks = 14; "
-             ~ "got %d", flags));
+    assert(flags == 63,
+        format("the one delivery must carry the UNION of the whole command — "
+             ~ "MeshChangeAll = 63. A 14 means the delivery fired mid-command "
+             ~ "at resetSelection's commitChange and the trailing "
+             ~ "noteChange(MeshChangeAll) was orphaned, i.e. Command.apply's "
+             ~ "final wrapper opened no delivery batch; got %d", flags));
 }
 
 // --------------------------------------------------------------------------

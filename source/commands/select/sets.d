@@ -174,7 +174,7 @@ class SelectSetStore : Command {
         return [ Param.string_("name", "Name", &name_, "") ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         baseRefusal_ = "";
         SetDomain dom;
         auto domErr = domainOf(currentType(), dom);
@@ -218,7 +218,7 @@ class SelectSetEdit : Command {
         ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         baseRefusal_ = "";
         SetDomain dom;
         auto domErr = domainOf(currentType(), dom);
@@ -276,7 +276,7 @@ class SelectSetApply : Command {
         ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         baseRefusal_ = "";
         if (name_.length == 0) {
             baseRefusal_ = "select.set.apply: name must not be empty";
@@ -347,7 +347,7 @@ class SelectSetRename : Command {
         ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         baseRefusal_ = "";
         if (from_.length == 0) {
             baseRefusal_ = "select.set.rename: 'from' must not be empty";
@@ -399,7 +399,7 @@ class SelectSetDelete : Command {
         return [ Param.string_("name", "Name", &name_, "") ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         baseRefusal_ = "";
         if (name_.length == 0) {
             baseRefusal_ = "select.set.delete: name must not be empty";

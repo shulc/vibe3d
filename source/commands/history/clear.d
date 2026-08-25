@@ -23,7 +23,7 @@ class HistoryClear : Command {
     override string label() const { return "Clear History"; }
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (doClear !is null) doClear();
         return true;
     }

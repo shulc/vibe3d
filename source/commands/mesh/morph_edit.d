@@ -119,7 +119,7 @@ final class MeshMorphEdit : Command, RunMergeable {
         mesh.commitChange(MeshEditScope.Maps);
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         write(/*useAfter=*/true);
         if (onApplyHook_ !is null) onApplyHook_();
         return true;

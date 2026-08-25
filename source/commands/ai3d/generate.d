@@ -63,7 +63,7 @@ final class Ai3dGenerate : Command {
         ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (imageArg.length == 0) return false;
 
         // Explicit/scripted synchronous path: no worker thread exists here,

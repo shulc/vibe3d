@@ -41,7 +41,7 @@ class SelectConvertCommand : Command {
     void setTargetType(string t) { targetType = t; }
     SelectConvertCommand setPromoteHook(void delegate(EditMode) h) { promoteType = h; return this; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         mesh.syncSelection();
 
         EditMode srcMode = *editModePtr;

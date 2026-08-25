@@ -51,7 +51,7 @@ final class LayerXformEdit : Command, RunMergeable {
     override string label() const { return "Transform Item"; }
     override CmdFlags cmdFlags() const { return CmdFlags.Model; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         foreach (ref t; targets_) t.target.xform = t.after;
         if (targets_.length > 0) noteLayerChange(LayerChange.PropertyChanged);
         return true;

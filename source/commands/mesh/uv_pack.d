@@ -70,7 +70,7 @@ class UvFit : Command {
         ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         auto map   = validateUvMap(mesh, name());
         auto loops = collectAffectedUvLoops(*mesh);
         if (loops.length == 0) return false;
@@ -112,7 +112,7 @@ class UvPack : Command {
         ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         auto map   = validateUvMap(mesh, name());
         auto loops = collectAffectedUvLoops(*mesh);
         if (loops.length == 0) return false;

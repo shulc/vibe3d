@@ -44,7 +44,7 @@ class UvRelax : Command {
         ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         // Validate map — same three guards as uv.flip (uv_transform.d:68-76).
         auto map = mesh.meshMap(kUvMapName);
         if (map is null)

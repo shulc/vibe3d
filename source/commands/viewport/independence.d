@@ -40,7 +40,7 @@ final class ViewportIndependence : ViewportCommand {
     /// argument) -> true.
     void setValue(bool val) { val_ = val; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         final switch (axis_) {
             case ViewportIndepAxis.Center: vpm.views[vpm.activeId].indCenter = val_; break;
             case ViewportIndepAxis.Scale:  vpm.views[vpm.activeId].indScale  = val_; break;

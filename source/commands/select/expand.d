@@ -18,7 +18,7 @@ class SelectionExpand : Command {
         return true;
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         // Perf (task 0388): iterate the geometry length and test membership via
         // the non-allocating `isXSelected(i)` scalar accessor. `mesh.selectedX`
         // is a @property that rebuilds a whole `bool[]` per access, so both the

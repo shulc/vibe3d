@@ -68,7 +68,7 @@ class UiStatisticsCommand : Command {
         }
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (!g_testMode)
             throw new Exception(
                 "ui.statistics: only available in --test mode");
@@ -116,7 +116,7 @@ class UiStatisticsExpandCommand : Command {
         }
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         import seltype : SelType;
         if (!g_testMode) {
             baseRefusal_ = "ui.statistics.expand: only available in --test mode";

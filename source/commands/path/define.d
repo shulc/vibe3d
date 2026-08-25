@@ -51,7 +51,7 @@ public:
 
     void setClosed(bool c) { closed_ = c; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         import std.conv : to;
         if (g_pipeCtx is null)
             throw new Exception("path.define: pipeline not initialised");

@@ -44,7 +44,7 @@ class UiViewportPropsCommand : Command {
         }
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (!g_testMode)
             throw new Exception("ui.viewportProps: only available in --test mode");
         g_viewportPropsShown = show_;

@@ -17,7 +17,7 @@ class SelectionContract : Command {
 
     override string name() const { return "select.contract"; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         // Perf (task 0388): iterate the geometry length and test membership via
         // the non-allocating `isXSelected(i)` scalar accessor (bounds-checked,
         // returns false out of range). `mesh.selectedX` is a @property that

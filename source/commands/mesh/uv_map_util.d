@@ -61,7 +61,7 @@ class UvDelete : Command {
         return [ Param.string_("name", "Name", &name_, kUvMapName) ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         requireUvMap(mesh, name_);   // throws if absent or not a UV map
         snap = MeshSnapshot.capture(*mesh);
         if (!mesh.removeMeshMap(name_)) {
@@ -102,7 +102,7 @@ class UvRename : Command {
         ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (from_.length == 0 || to_.length == 0)
             throw new Exception(
                 "uv.rename: from/to must not be empty");
@@ -157,7 +157,7 @@ class UvCopy : Command {
         ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (from_.length == 0 || to_.length == 0)
             throw new Exception(
                 "uv.copy: from/to must not be empty");
@@ -211,7 +211,7 @@ class UvClear : Command {
         return [ Param.string_("name", "Name", &name_, kUvMapName) ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         auto m = requireUvMap(mesh, name_);   // throws if absent or not UV
         snap = MeshSnapshot.capture(*mesh);
         m.data[] = 0.0f;

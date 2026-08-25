@@ -57,7 +57,7 @@ class FalloffPresetCommand : Command {
     // Pipe configuration is UI state, not a mesh edit — not undoable.
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (g_pipeCtx is null)
             throw new Exception(name() ~ ": pipeline not initialised");
 
@@ -128,7 +128,7 @@ class FalloffAutoSizeCommand : Command {
     /// Set by the app.d positional-arg bridge (falloff.autosize <axis>).
     void setAxis(string a) { axis_ = a; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         auto fo = requireFalloffStage(name());
         if (axis_.length == 0)
             throw new Exception("falloff.autosize: no axis specified (x/y/z)");
@@ -152,7 +152,7 @@ class FalloffReverseCommand : Command {
     override string label() const { return "Reverse"; }
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         auto fo = requireFalloffStage(name());
         fo.setAttr("reverse", "1");
         kickLiveEval(toolHost);
@@ -232,7 +232,7 @@ class FalloffAddCommand : Command {
     /// Set by the app.d positional-arg bridge (falloff.add <type>).
     void setTypeName(string t) { typeName_ = t; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (g_pipeCtx is null)
             throw new Exception("falloff.add: pipeline not initialised");
         if (typeName_.length == 0)
@@ -292,7 +292,7 @@ class FalloffRemoveCommand : Command {
     /// Set by the app.d positional-arg bridge (falloff.remove <id>).
     void setTargetId(string id) { targetId_ = id; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (g_pipeCtx is null)
             throw new Exception("falloff.remove: pipeline not initialised");
         if (targetId_.length == 0)
@@ -330,7 +330,7 @@ class FalloffClearCommand : Command {
     override string label() const { return "Clear Stacked Falloffs"; }
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (g_pipeCtx is null)
             throw new Exception("falloff.clear: pipeline not initialised");
         removeStackedFalloffs();

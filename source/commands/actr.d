@@ -41,7 +41,7 @@ class ActrPresetCommand : Command {
     // Pipe configuration is UI state, not a mesh edit — not undoable.
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (g_pipeCtx is null)
             throw new Exception(name() ~ ": pipeline not initialised");
 

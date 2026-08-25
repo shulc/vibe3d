@@ -77,7 +77,7 @@ public:
     // rest: they dispatch this command id through a `kind: script` line.
     override bool needsEditTarget() const { return true; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (refusedForNoEditTarget()) return false;
         if (toolInstance is null) toolInstance = factory();
         snap = MeshSnapshot.capture(*mesh);

@@ -60,7 +60,7 @@ class SelectTypeFromCommand : Command {
     /// so registration can chain it onto the constructor expression.
     typeof(this) setItemHook(void delegate() dg) { itemHook = dg; return this; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         // The item arm short-circuits ABOVE the EditMode mapping — see the
         // class doc comment. It never touches `editModePtr`.
         if (targetType == "item") {

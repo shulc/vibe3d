@@ -165,7 +165,7 @@ final class ImagePlaneAdd : Command {
     /// that wants to name the new row). Null until a successful apply.
     Layer created() { return created_; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         refusal_ = "";
 
         // Same total-redo guard as `ImageLoad.apply`: not reachable through
@@ -345,7 +345,7 @@ final class ImagePlaneSetImage : Command {
         ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         refusal_ = "";
 
         // Applying twice without a revert in between would overwrite

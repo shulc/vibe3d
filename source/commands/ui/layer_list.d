@@ -61,7 +61,7 @@ class UiLayerListCommand : Command {
         }
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (!g_testMode)
             throw new Exception(
                 "ui.layerList: only available in --test mode");

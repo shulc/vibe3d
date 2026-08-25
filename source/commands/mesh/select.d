@@ -57,7 +57,7 @@ class MeshSelect : Command {
         else                      *editModePtr = m;
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         mesh.syncSelection();
         snap         = SelectionSnapshot.capture(*mesh);
         prevEditMode = *editModePtr;

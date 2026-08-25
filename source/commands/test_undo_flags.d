@@ -32,7 +32,7 @@ class UndoSuppressNoop : Command {
     override CmdFlags cmdFlags() const {
         return CmdFlags.Model | CmdFlags.UndoSuppress;
     }
-    override bool apply() { return true; }
+    protected override bool applyImpl() { return true; }
 }
 
 /// SideEffect-flavored command that opts IN to undo via UndoForce → entry lands.
@@ -45,7 +45,7 @@ class UndoForceNoop : Command {
     override CmdFlags cmdFlags() const {
         return CmdFlags.SideEffect | CmdFlags.UndoForce;
     }
-    override bool apply() { return true; }
+    protected override bool applyImpl() { return true; }
     // Undoable, so revert() must succeed to keep undo()/redo() well-behaved;
     // the no-op apply means there is nothing to restore.
     override bool revert() { return true; }

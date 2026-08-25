@@ -64,7 +64,7 @@ final class Ai3dImportResult : Command {
         nameArg = name;
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         failCode_ = null;
         failMessage_ = null;
         if (doc is null || doc.layers.length == 0) {

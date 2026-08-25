@@ -21,7 +21,7 @@ final class ViewportLayoutPreset : ViewportCommand {
 
     void setPreset(string preset) { preset_ = preset; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         import viewport : LayoutPreset;
         import prefs    : g_prefs;
 

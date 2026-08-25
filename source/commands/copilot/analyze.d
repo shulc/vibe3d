@@ -33,7 +33,7 @@ class CopilotAnalyzeCommand : Command {
 
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (panel is null)
             throw new Exception("copilot.analyze: panel not wired");
         panel.setFindings(analyzeMesh(*mesh));

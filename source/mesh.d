@@ -755,6 +755,45 @@ private void flushDeliveryPending() {
     foreach (m; pending) if (m !is null) m.deliverPending();
 }
 
+// ---- The delivery batch, as it actually is: MESH-FREE ---------------------
+// TASK 1906 review S1. `g_deliveryDepth` is module state and neither of these
+// two functions reads a `Mesh` — the whole reason it is module state is spelled
+// out at its declaration (a `*mesh = subdivide(...)` kernel would reset an
+// in-struct counter mid-batch). So opening a batch does not need a mesh, and a
+// caller that HAS no mesh is not thereby excused from opening one.
+//
+// That is not hypothetical: `Command.apply`'s protected `mesh` is null for a
+// shipped command (`tools/create/box.d :: BoxLiveEditCommand` passes
+// `super(null, …)`), and a command that holds no mesh of its own can still
+// drive commits on one it reaches through a tool, a Document layer or an inner
+// command. An earlier cut of the wrapper guarded both calls with
+// `if (mesh !is null)` and would have left exactly that shape outside the
+// batch — pinned by `tests/unit/command_apply_anchor_test.d`'s null-`mesh`
+// block.
+//
+// The `Mesh` methods below are FORWARDERS, kept because a call site that
+// already has a mesh reads better beside its `beginHideDeriveBatch` twin. They
+// are the same function; the receiver is decoration.
+
+/// Open a delivery batch — see `Mesh.beginDeliveryBatch` for what a batch is.
+void beginDeliveryBatchGlobal() {
+    ++g_deliveryDepth;
+}
+
+/// Close a delivery batch; at depth 0, deliver every mesh the batch deferred.
+/// Clamped rather than asserted, exactly like `endHideDeriveBatch`: an
+/// imbalance must not be a process death in one build kind and a silent,
+/// sticky "never deliver again" in the other.
+void endDeliveryBatchGlobal() {
+    if (g_deliveryDepth <= 0) {
+        g_deliveryDepth = 0;
+        flushDeliveryPending();
+        return;
+    }
+    if (--g_deliveryDepth == 0)
+        flushDeliveryPending();
+}
+
 private void noteHideDerivePending(Mesh* m) {
     if (m is null) return;
     foreach (p; g_hideDerivePendingMeshes) if (p is m) return;
@@ -1577,35 +1616,30 @@ struct Mesh {
 
     /// Open a delivery batch: every `commitChange` / `publishChange` until the
     /// matching close accumulates instead of delivering, and the close delivers
-    /// ONCE per mesh touched. In production the open is
-    /// `beginHideDeriveBatch`, whose one caller is `Command.apply` — so one
-    /// command that moves 8 vertices, or appends 400 faces, is one delivery.
-    /// (Stage 0b's template-method split moves the outermost open to
-    /// `Command.apply`'s `final apply()` wrapper; this pair then nests inside
-    /// it, harmlessly, as a second net for the 148 override-`apply()`
-    /// commands.)
+    /// ONCE per mesh touched. In production the OUTERMOST open is
+    /// `Command.apply`'s `beginDeliveryBatchGlobal()` — `final`, so every
+    /// command goes through it, whether its kernel is an `Operator.evaluate` or
+    /// an `override applyImpl()` — and one command that moves 8 vertices, or
+    /// appends 400 faces, is therefore one delivery. `beginHideDeriveBatch`
+    /// opens one too (review S3, for the
+    /// derive-flush ordering) and nests inside it harmlessly; the depth counter
+    /// composes.
     ///
     /// Shaped and named after `beginHideDeriveBatch`/`endHideDeriveBatch`: the
     /// depth lives at module scope, so `this` is not read here (a wholesale
-    /// `*mesh = …` inside the batch must not reset it). It stays a `Mesh`
-    /// method so the call site reads like its hide-derive twin, whose LIFO
-    /// ordering in `Command.apply` it depends on.
+    /// `*mesh = …` inside the batch must not reset it). These two are
+    /// FORWARDERS to `beginDeliveryBatchGlobal` / `endDeliveryBatchGlobal` and
+    /// exist only so a call site that already has a mesh reads like its
+    /// hide-derive twin; a caller with no mesh calls the module-level pair
+    /// directly and gets the identical batch (review S1).
     void beginDeliveryBatch() {
-        ++g_deliveryDepth;
+        beginDeliveryBatchGlobal();
     }
 
     /// Close a delivery batch; at depth 0, deliver every mesh the batch
-    /// deferred. Clamped rather than asserted, exactly like
-    /// `endHideDeriveBatch`: an imbalance must not be a process death in one
-    /// build kind and a silent, sticky "never deliver again" in the other.
+    /// deferred. Forwards to `endDeliveryBatchGlobal`, which owns the clamp.
     void endDeliveryBatch() {
-        if (g_deliveryDepth <= 0) {
-            g_deliveryDepth = 0;
-            flushDeliveryPending();
-            return;
-        }
-        if (--g_deliveryDepth == 0)
-            flushDeliveryPending();
+        endDeliveryBatchGlobal();
     }
 
     // Accumulate + bump the version counters, reproducing EXACTLY the existing

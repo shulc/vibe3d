@@ -19,7 +19,7 @@ class SelectLess : Command {
 
     override string name() const { return "select.less"; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         // Perf (task 0388): use the lock-step `Xmarks.length` for the loop
         // bound rather than `mesh.selectedX.length` — the latter is a @property
         // that rebuilds a whole `bool[]` snapshot just to read its length. The

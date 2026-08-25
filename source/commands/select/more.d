@@ -20,7 +20,7 @@ class SelectMore : Command {
 
     override string name() const { return "select.more"; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         snap = SelectionSnapshot.capture(*mesh);
         if      (editMode == EditMode.Polygons) return applyPolygons();
         else if (editMode == EditMode.Edges)    return applyEdges();

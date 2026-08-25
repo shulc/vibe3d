@@ -38,7 +38,7 @@ class FitSelected : Command {
     override string name() const { return "viewport.fit_selected"; }
     override CmdFlags cmdFlags() const { return CmdFlags.UI; }   // camera-only
 
-    override bool apply() {
+    protected override bool applyImpl() {
         // Frame selected (or whole mesh if nothing selected).
         //
         // Perf (task 0388): the per-element selection tests below MUST use the

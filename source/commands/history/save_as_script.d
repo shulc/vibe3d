@@ -34,7 +34,7 @@ class HistorySaveAsScript : Command {
         return [Param.string_("path", "Path", &path_, "")];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (path_.length == 0) return false;
         if (snapshotLines is null) return false;
         auto lines = snapshotLines();

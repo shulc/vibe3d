@@ -24,7 +24,7 @@ class SelectRing : Command {
 
     override string name() const { return "select.ring"; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         snap = SelectionSnapshot.capture(*mesh);
         if (editMode != EditMode.Edges && editMode != EditMode.Vertices) return true;
 

@@ -65,7 +65,7 @@ class MeshLoadRaw : Command {
         return this;
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         // ---- Validate BEFORE mutating any live state ----
         immutable uint vcount = cast(uint)newVerts.length;
         foreach (fi, ref f; newFaces) {

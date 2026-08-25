@@ -44,7 +44,7 @@ class AiToggleCommand : Command {
         return CmdFlags.SideEffect;
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (aiState is null)
             throw new Exception(name() ~ ": AI state service not initialised");
         final switch (action) {

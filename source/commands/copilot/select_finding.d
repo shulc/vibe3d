@@ -63,7 +63,7 @@ class CopilotSelectFindingCommand : Command {
 
     void setIndex(int i) { index_ = i; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         // AI-off ⇒ inert (see module doc comment) — not an error, just a
         // no-op: no selection change, no undo entry (return false skips
         // history.record/recordCoalescing, mirroring every other

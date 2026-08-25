@@ -115,7 +115,7 @@ class SelectBoundary : Command {
         return true;
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         snap          = SelectionSnapshot.capture(*mesh);
         priorEditMode = editModePtr !is null ? *editModePtr : editMode;
         mesh.syncSelection();

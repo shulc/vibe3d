@@ -65,7 +65,7 @@ class UvProject : Command {
         ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         // -----------------------------------------------------------------
         // (a) READ-ONLY face walk: build affected (fi, loop) list and
         //     simultaneously accumulate the vertex-position bbox for the

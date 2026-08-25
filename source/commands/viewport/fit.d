@@ -33,7 +33,7 @@ class Fit : Command {
     override string name() const { return "viewport.fit"; }
     override CmdFlags cmdFlags() const { return CmdFlags.UI; }   // camera-only
 
-    override bool apply() {
+    protected override bool applyImpl() {
         // TASK 1880 — every VISIBLE layer, in world space, not just the active
         // layer's local mesh. `viewport.fit` is "fit all", and with more than
         // one layer in the scene the old body framed whichever one happened to

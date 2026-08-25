@@ -90,7 +90,7 @@ version (unittest) {
         override string   name()     const { return "test.refiregate"; }
         override string   label()    const { return "RefireGate"; }
         override CmdFlags cmdFlags() const { return _flags; }
-        override bool apply()  { return true; }
+        protected override bool applyImpl()  { return true; }
         override bool revert() { return true; }
     }
 

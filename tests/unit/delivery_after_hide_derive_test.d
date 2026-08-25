@@ -45,13 +45,25 @@
 //   * an `Operator` command driven through the real `Command.apply`, not a
 //     hand-rolled begin/end pair. The ordering itself now lives in `mesh.d`,
 //     so a hand-rolled `beginHideDeriveBatch` would reach it — but driving the
-//     command additionally proves `Command.apply` still opens the batch at all,
-//     which is what makes the production path one delivery per command rather
-//     than one per appended face. That second claim needs its OWN clause —
-//     `g_deliveredInsideEvaluate` — because removing the anchor leaves the
-//     ordering clause GREEN: with no batch open, `commitChange` takes path (b),
-//     derives eagerly, and delivers after a current plane. Measured, not
-//     reasoned: the anchor mutation passed this file until that clause existed.
+//     command additionally proves a delivery batch is open ACROSS the whole
+//     command, which is what makes the production path one delivery per command
+//     rather than one per appended face. That second claim needs its OWN clause
+//     — `g_deliveredInsideEvaluate` — because with no batch open at all,
+//     `commitChange` takes path (b), derives eagerly and delivers after a
+//     current plane, leaving the ordering clause GREEN. Measured, not reasoned:
+//     the anchor mutation passed this file until that clause existed.
+//
+//     WHICH open that clause now witnesses changed at stage 0b (2026-08-25).
+//     The outermost batch is `Command.apply`'s `final` wrapper, which holds one
+//     open across EVERY command; `beginHideDeriveBatch`'s is the inner one.
+//     So this clause reddens when NO batch is open, and each open has its own
+//     dedicated red elsewhere: the wrapper's is
+//     `tests/unit/command_apply_anchor_test.d` (a non-`Operator` command that
+//     loop-commits delivers once), and the hide-derive open's is
+//     `tests/unit/command_hide_derive_test.d` — measured, by disabling
+//     `beginHideDeriveBatch()` in `Command.apply`: it reddens with
+//     *"hide-derives per ONE apply grew with the mesh ([66, 258, 1026] at
+//     [16, 64, 256] faces respectively)"*, i.e. task 1330's root cause.
 //
 // The `g_hideDeriveRuns == 1` assertion is the precondition check that the
 // rig still exercises path (a). Without it, a future change that makes the
@@ -158,10 +170,10 @@ unittest {
     // instead of one per command, which is the whole point of the anchor in
     // `Command.apply`.
     assert(!g_deliveredInsideEvaluate,
-        "the command delivered INSIDE evaluate: Command.apply opened no "
-      ~ "delivery batch, so one command that appends 400 faces is 400 "
-      ~ "deliveries. The batch is opened by beginHideDeriveBatch, whose call "
-      ~ "in Command.apply's Operator branch is the anchor");
+        "the command delivered INSIDE evaluate: no delivery batch was open, "
+      ~ "so one command that appends 400 faces is 400 deliveries. The "
+      ~ "outermost batch is Command.apply's `final` wrapper (stage 0b); "
+      ~ "beginHideDeriveBatch opens the inner one");
 
     assert(g_hideDeriveRuns == 1,
         "the rig must take path (a): exactly ONE derive, run by the batch "

@@ -36,7 +36,7 @@ class FileQuit : Command {
     void setFromWindowClose(bool v) { fromWindowClose_ = v; }
     private bool fromWindowClose_;
 
-    override bool apply() {
+    protected override bool applyImpl() {
         // --test SUPPRESSES THE COMMAND QUIT, AND ONLY THE COMMAND QUIT.
         // The harness closes the WINDOW to shut a session down, so that route
         // must still exit or every run hangs; a `file.quit` dispatched by a

@@ -87,7 +87,7 @@ class FileSave : Command {
     override string refusalReason() const { return refusal_; }
     private string refusal_;
 
-    override bool apply() {
+    protected override bool applyImpl() {
         // Describes the LATEST call — a command object is applied more than
         // once (redo, re-dispatch).
         refusal_ = null;

@@ -65,7 +65,7 @@ final class Ai3dGenerateOpen : Command {
     override string refusalReason() const { return refusal_; }
     private string refusal_;
 
-    override bool apply() {
+    protected override bool applyImpl() {
         refusal_ = null;
         // `--test` suppression now lives in the shared chooser
         // (`io/file_dialog.d` checks `g_testMode` first and never touches

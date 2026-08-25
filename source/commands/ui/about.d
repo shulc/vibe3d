@@ -57,7 +57,7 @@ class UiAboutCommand : Command {
         }
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         final switch (mode_) {
             case Mode.show:   g_aboutShown = true;            break;
             case Mode.hide:   g_aboutShown = false;           break;

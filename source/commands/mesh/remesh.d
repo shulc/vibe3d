@@ -172,7 +172,7 @@ final class RemeshStart : Command {
         ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (job.busy())
             throw new Exception("mesh.remesh.start: a remesh job is already in flight");
 
@@ -220,7 +220,7 @@ final class RemeshOpen : Command {
 
     override Param[] params() { return []; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (onOpen !is null) onOpen();
         return false;
     }

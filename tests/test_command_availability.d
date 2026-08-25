@@ -41,7 +41,7 @@
 // ---------------------------------------------------------------------------
 // The wrong implementations each row catches (observed reds in the task log)
 // ---------------------------------------------------------------------------
-//   * a mesh-writing command that overrides apply() and so never reaches the
+//   * a mesh-writing command that overrides applyImpl() and so never reaches the
 //     no-edit-target refusal (ToolHeadlessCommand — `prim.cube` reported
 //     `{"status":"ok"}` and built a cube into the read-only stand-in)
 //       -> N1, B1

@@ -107,7 +107,7 @@ class SelectByTag : Command {
     // from `refusalReason()` for scripted callers, so a refused command still
     // answers an error body there.
     // -----------------------------------------------------------------------
-    override bool apply() {
+    protected override bool applyImpl() {
         // The reason describes the LATEST call — a command object can be
         // applied more than once (redo, re-dispatch).
         baseRefusal_ = "";

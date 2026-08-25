@@ -31,7 +31,7 @@ class MacroSaveRecorded : Command {
         return [Param.string_("path", "Path", &path_, "")];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (recorder is null) return false;
         if (path_.length == 0) return false;
         if (!recorder.saveAs(path_)) return false;

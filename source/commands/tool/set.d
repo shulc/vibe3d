@@ -42,7 +42,7 @@ class ToolSetCommand : Command {
     void setTurnOff(bool v)        { turnOff_ = v; }
     void setNamedArgs(JSONValue pj) { namedArgs_ = pj; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (turnOff_) {
             toolHost.deactivate();
             return true;

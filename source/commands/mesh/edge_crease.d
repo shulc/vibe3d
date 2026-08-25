@@ -57,7 +57,7 @@ class EdgeCreaseSet : Command {
         return [ Param.float_("weight", "Weight", &weight_, 0.0f) ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         baseRefusal_ = "";
         auto sel = selectedEdgeIndices(*mesh);
         if (sel.length == 0) {
@@ -246,7 +246,7 @@ class EdgeCreaseClear : Command {
 
     override Param[] params() { return []; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         baseRefusal_ = "";
         auto sel = selectedEdgeIndices(*mesh);
         if (sel.length == 0) {

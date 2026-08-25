@@ -30,7 +30,7 @@ final class ViewportMaster : ViewportCommand {
         mid_ = mid;
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         vpm.views[vpm.activeId].masterId = mid_;
         vpm.views[vpm.activeId].dirty = true;
         return true;

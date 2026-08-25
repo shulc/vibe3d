@@ -141,7 +141,7 @@ final class LayerAdd : LayerCommandBase {
         return [ Param.string_("name", "Name", &nameArg, "") ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         prevActiveIndex = doc.activeIndex;
         auto prevLayer  = doc.active();
         auto l = new Layer;
@@ -229,7 +229,7 @@ final class LayerDuplicate : LayerCommandBase {
         return [ Param.int_("index", "Index", &indexArg, -1) ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (doc.layers.length == 0) return false;
 
         prevActiveIndex = doc.activeIndex;
@@ -445,7 +445,7 @@ final class LayerReorder : LayerCommandBase {
         // strictly cheaper, fix.
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         size_t n = doc.layers.length;
         // Bounds + no-op guards. Out-of-range or from==to is a graceful
         // failure (dispatch reports an error; nothing mutates, no undo entry).
@@ -632,7 +632,7 @@ final class LayerDelete : LayerCommandBase {
     /// to get at it.
     void setIndex(int i) { indexArg = i; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         removedIndex    = resolveIndex(indexArg);
         // Task 0654: the absent-sentinel from `resolveIndex(-1)` — refuse
         // rather than index, and never clamp a missing default into a real
@@ -815,7 +815,7 @@ final class LayerSelect : LayerCommandBase {
                  Param.enum_("kind", "Kind", &kindArg, kindChoices, "") ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (doc.layers.length == 0) return false;
         prevActiveIndex = doc.activeIndex;
         prevPrimary     = doc.active();
@@ -1017,7 +1017,7 @@ final class LayerRename : LayerCommandBase {
                  Param.string_("name", "Name", &nameArg, "") ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         target   = resolveIndex(indexArg);
         // Task 0654: the absent-sentinel from `resolveIndex(-1)` — refuse
         // rather than index, and never clamp a missing default into a real
@@ -1069,7 +1069,7 @@ final class LayerSetVisible : LayerCommandBase {
                  Param.bool_("value", "Visible", &valueArg, true) ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         target  = resolveIndex(indexArg);
         // Task 0654: the absent-sentinel from `resolveIndex(-1)` — refuse
         // rather than index, and never clamp a missing default into a real
@@ -1267,7 +1267,7 @@ final class LayerAttr : LayerCommandBase {
         return true;
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (attrName_.length == 0)
             throw new Exception("layer.attr: no attribute name specified");
         if (doc.layers.length == 0)
@@ -1504,7 +1504,7 @@ final class LayerParent : LayerCommandBase {
                  Param.int_("parent", "Parent", &parentArg, -1) ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (doc.layers.length == 0) return false;
         childIdx_   = resolveIndex(childArg);
         // Task 0654: the absent-sentinel from `resolveIndex(-1)` — refuse

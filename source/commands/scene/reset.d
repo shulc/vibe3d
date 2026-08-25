@@ -121,7 +121,7 @@ class SceneReset : Command {
         return this;
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         // TASK 0654 — a reset from an EMPTY item selection.
         //
         // This command (and `file.new`, which is the same class) is the "start

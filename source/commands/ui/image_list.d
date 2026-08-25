@@ -64,7 +64,7 @@ class UiImageListCommand : Command {
         }
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (!g_testMode)
             throw new Exception(
                 "ui.imageList: only available in --test mode");

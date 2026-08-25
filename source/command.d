@@ -49,8 +49,11 @@ enum string kNoEditTargetReason =
 // Command — base class for every user-visible action.
 //
 // Undo/redo model (see doc/undo_redo_plan.md):
-// - apply()    — runs the operation. Mutating commands MUST snapshot
-//                pre-state into instance fields here.
+// - apply()    — runs the operation. `final`: it opens the change-bus
+//                delivery batch and calls applyImpl(), so every command is
+//                inside one (task 1906 stage 0b). Callers call THIS.
+// - applyImpl()— the override point, and the only one. Mutating commands MUST
+//                snapshot pre-state into instance fields here.
 // - revert()   — restore the pre-apply state (using the snapshot).
 //                Default: no-op (returns false). Mutating commands MUST
 //                override and return true on successful revert.
@@ -136,21 +139,124 @@ class Command {
     // Internal command id (e.g. "mesh.bevel"). Used by the dispatcher.
     string name() const { return "Command"; }
 
+    // TASK 1906 stage 0b — THE UNIVERSAL DELIVERY ANCHOR, and the reason this
+    // method is `final` rather than the one commands override.
+    //
+    // Every caller still calls `apply()`; not one call site moved. What moved
+    // is the OVERRIDE point: a command's kernel is `applyImpl()` now, so this
+    // wrapper is the ONE place a delivery batch is opened and there is no way
+    // for a command to be outside it. The production call sites are
+    // `grep -rn '\.apply()' source --include=*.d` minus comment lines and
+    // `unittest` blocks; no count or file list is quoted here because the last
+    // one in this comment was wrong in both. None of them CAN bypass this
+    // wrapper: `applyImpl()` is `protected` on the base and on every override,
+    // so `apply()` is the only entry a caller outside the hierarchy has.
+    //
+    // WHY A WRAPPER AND NOT THE TOP OF A VIRTUAL `apply()`. An override
+    // REPLACES the base body, and `grep -rn 'super\.apply'` over `source/` is
+    // 0 — no override reached the base at all. So "put the pair at the
+    // unconditional top of `Command.apply`" was unreachable code for the 148
+    // commands in `source/` (plus three test doubles in `tests/`) that
+    // implement their kernel as an override rather than as an
+    // `Operator.evaluate` —
+    // `grep -rn '^\s*protected override bool applyImpl()' source tests --include=*.d`
+    // — including the four wholesale `*mesh = m` ones
+    // (`SceneReset`, `MeshLoadRaw`, `FileLoad`, `MeshRemesh`). Stage 0's
+    // anchor was the `Operator` branch below and it left exactly those
+    // commands uncovered; the gap was bounded (a listener is dirty-bit-only
+    // and idempotent, so N deliveries where 1 was wanted is a parity wart, not
+    // a corruption) but it was also invisible, resting on the INCIDENTAL fact
+    // that no override-`apply()` command loop-commits today.
+    //
+    // `final` is what makes the fix complete rather than merely intended: a
+    // missed rename is "cannot override final function" at compile time, so
+    // the build IS the completeness proof. Nothing enumerates commands
+    // anywhere, and a command written next year is anchored the day it
+    // compiles.
+    //
+    // A BARE DELIVERY PAIR, NOT THE HIDE-DERIVE PAIR — deliberate, and the two
+    // are not interchangeable even though `beginHideDeriveBatch` opens a
+    // delivery batch of its own (task 1906 review S3). The hide-derive pair
+    // also arms `g_hideDeriveDeferSafe`, which DEFERS `refreshHiddenDerived`
+    // to the batch close; hoisting it here would change WHEN the derive runs
+    // for those 148 override-`applyImpl()` commands, none of which was measured
+    // for task 1330 and none of which needs it (they commit once). Those
+    // commands keep deriving eagerly, exactly as today, and only their DELIVERY
+    // is coalesced. The hide-derive pair stays in the `Operator` branch below,
+    // where it nests strictly inside this batch — which is also what makes
+    // §1.4 (d)'s "delivery closes AFTER the derive flush" true BY
+    // CONSTRUCTION here instead of by a LIFO `scope(exit)` convention.
+    //
+    // NO MESH IS CAPTURED AND NO `mesh is null` TEST GUARDS THE PAIR (task 1906
+    // review S1). The batch is module state — `mesh.g_deliveryDepth` — and
+    // neither the open nor the close reads a receiver, which is why the
+    // module-level `beginDeliveryBatchGlobal` / `endDeliveryBatchGlobal` are
+    // what this calls; `Mesh.beginDeliveryBatch` is a forwarder to the same
+    // function. So there is nothing to capture, and skipping the batch when
+    // this command's own `mesh` is null would be a HOLE, not a saving:
+    // `tools/create/box.d :: BoxLiveEditCommand` is a shipped command
+    // constructed `super(null, …)`, and a command that holds no mesh of its own
+    // can still drive commits on one it reaches through a tool, a Document
+    // layer or an inner command. `tests/unit/command_apply_anchor_test.d`'s
+    // null-`mesh` block is the red for putting that test back.
+    //
+    // `revert()` IS NOT WRAPPED, AND THE TWO UNDO PATHS THEREFORE DIFFER IN
+    // DELIVERY GRANULARITY — say it rather than call it parity.
+    //
+    //   * `/api/undo` and `app.d :: navHistory` call `history.undo()` RAW. Each
+    //     `revert()` they drive delivers on its own commits, exactly as before
+    //     this task.
+    //   * the REGISTERED `history.undo` command does not:
+    //     `HistoryUndo.applyImpl()` calls `history.undo()` from INSIDE this
+    //     wrapper's batch, so every revert that step drives — including
+    //     `CompositeCommand.revert`'s children — coalesces into ONE delivery at
+    //     the close.
+    //
+    // Benign today: listeners are dirty-bit-only and idempotent, and an OR over
+    // a whole undo step is what they would compute anyway. But a subject-keyed
+    // consumer in stage 2 must know which path it is on, and one consequence is
+    // worth naming now — inside that batch, `deliverPending`'s "a layer
+    // unlinked between a deferring commit and the batch close" drop window
+    // spans a WHOLE undo step instead of one commit. Not live:
+    // `commands/layer/commands.d` contains no `commitChange` at all, so no
+    // layer lifecycle command defers anything into that window. Giving
+    // `revert()` a batch of its own remains a separate change with its own
+    // witness.
+    final bool apply() {
+        beginDeliveryBatchGlobal();
+        scope(exit) endDeliveryBatchGlobal();
+        return applyImpl();
+    }
+
     // Run the operation. Two paths post-Phase-6:
     //
     //   * Operator commands (mesh-mutating ones from Phases 2/5) put
     //     their kernel in `evaluate(ref VectorStack vts)`. The default
-    //     apply() here builds a minimal vts from the command's mesh +
+    //     applyImpl() here builds a minimal vts from the command's mesh +
     //     editMode + selection state and dispatches via the Operator
     //     interface, preserving the bool-return contract for callers
     //     (history.fire, app.d /api/command).
     //
     //   * Non-Operator commands (file load/save, history meta-commands,
-    //     selection ops) override apply() with their kernel as before.
+    //     selection ops) override applyImpl() with their kernel as before.
     //
     // Mutating commands snapshot pre-state into instance fields so
     // revert() can restore.
-    bool apply() {
+    //
+    // THE OVERRIDE POINT, and the only one: `apply()` above is `final`. A
+    // command overrides THIS.
+    //
+    // EVERY OVERRIDE SPELLS `protected` TOO, and that is not decoration (task
+    // 1906 review NIT1). D lets an override WIDEN protection, and an
+    // unqualified `override bool applyImpl()` inside a class whose default is
+    // public IS a widening: on that concrete type the kernel becomes callable
+    // from anywhere, and a caller who reached for it would skip the delivery
+    // batch that `apply()` is `final` in order to guarantee. Keeping every
+    // override at `protected` is what makes "there is no way for a command to
+    // be outside the batch" true of the CONCRETE types and not only of the
+    // base. `grep -rn 'applyImpl(' source tests --include=*.d` outside this
+    // file is comments only.
+    protected bool applyImpl() {
         import operator        : Operator, VectorStack;
         import toolpipe.packets : SubjectPacket;
         if (auto op = cast(Operator)this) {
@@ -208,24 +314,33 @@ class Command {
             // `scope(exit) endDeliveryBatch` pair immediately above this one and
             // relied on `scope(exit)` being LIFO to order the two closes — a
             // contract a reader could break by tidying two adjacent blocks, and
-            // one that six `beginHideDeriveBatch` call sites in `mesh.d` did not
-            // honour at all.
+            // one that the seven `beginHideDeriveBatch` call sites in `mesh.d`
+            // did not honour at all.
             //
-            // ANCHOR AND ITS KNOWN GAP (plan §1.4 (c), anchor (ii), owner's
-            // default). This is the `Operator` branch, so the commands that
-            // `override bool apply()` instead of implementing `evaluate` never
-            // reach it and are OUTSIDE any delivery batch. That gap is BOUNDED,
-            // not silent: a listener is dirty-bit-only and idempotent, so N
-            // deliveries where 1 was wanted is a parity and perf wart, never a
-            // corruption — and today no override-`apply()` command commits more
-            // than once per apply, which is INCIDENTAL, not structural.
+            // THIS IS NO LONGER THE ANCHOR (stage 0b, 2026-08-25). It used to
+            // be — and as the `Operator` branch it left the 148 commands that
+            // implement their kernel as an override outside any delivery batch.
+            // The template-method split closed that gap: `final apply()` above
+            // opens the OUTERMOST delivery batch for EVERY command, and this
+            // pair now nests strictly inside it.
             //
-            // THE GAP HAS A CLOSING DATE. The owner chose the template-method
-            // split (`final bool apply()` wrapping `protected bool applyImpl()`,
-            // completeness proven by "cannot override final function") on
-            // 2026-08-25, to land as stage 0b. That wrapper opens the OUTERMOST
-            // delivery batch; the pair below then nests inside it and keeps
-            // doing its own job, which is the hide-derive ordering.
+            // DO NOT DELETE THE PAIR — and the reason is TASK 1330, not anybody
+            // else's dependency on this call. The `beginHideDeriveBatch` sites
+            // in `mesh.d` open their own batch; nothing outside this branch
+            // relies on this one. What it does is arm the hide-derive DEFERRAL
+            // (`g_hideDeriveDeferSafe`), so an Operator that appends N faces
+            // runs ONE whole-mesh `refreshHiddenDerived` instead of N — the
+            // measured root cause recorded above. Removing this call reddens
+            // `tests/unit/command_hide_derive_test.d`, in those words:
+            // "mesh.spikey: hide-derives per ONE apply grew with the mesh
+            // ([66, 258, 1026] at [16, 64, 256] faces respectively). That is
+            // task 1330's root cause verbatim — a full-mesh derived-plane
+            // refresh per appended element instead of per command."
+            //
+            // Its close is also what brings the derived hide planes up to date
+            // before the OUTER batch delivers; the delivery batch it opens of
+            // its own (review S3) is now the inner one and is harmless — the
+            // depth counter composes.
             Mesh* hideBatchMesh = mesh;
             if (hideBatchMesh !is null) {
                 hideBatchMesh.beginHideDeriveBatch();
@@ -302,10 +417,10 @@ class Command {
     // owes the reason a reset at the top of apply(): the value must describe
     // the LATEST call, since a command object can be applied more than once
     // (redo, re-dispatch).
-    // Task 0654: the BASE apply() has a refusal of its own now (no edit
+    // Task 0654: the BASE applyImpl() has a refusal of its own now (no edit
     // target), so the default is no longer the empty string but whatever the
-    // base recorded on the latest call. Commands that override apply() never
-    // reach the base branch, so this stays "" for them unless they also
+    // base recorded on the latest call. Commands that override applyImpl()
+    // never reach the base branch, so this stays "" for them unless they also
     // override this method; commands that override BOTH keep their own reason,
     // which is correct — they did not go through the base refusal either.
     protected string baseRefusal_;
@@ -321,15 +436,15 @@ class Command {
     // working one.
     //
     // The default answer is derived from the command's own TYPE — an
-    // `Operator` command reaches its kernel through the base `apply()` above
-    // and is refused there, so `needsEditTarget` is exactly "am I an
+    // `Operator` command reaches its kernel through the base `applyImpl()`
+    // above and is refused there, so `needsEditTarget` is exactly "am I an
     // Operator". Nothing enumerates command NAMES anywhere: a new mesh
     // operator is covered the day it is written, and a list that could drift
     // from behaviour is never created (which is the whole reason this is a
     // method on `Command` and not a `requires:` key in `config/buttons.yaml`).
     //
-    // Override it when a command writes the mesh through an `apply()` of its
-    // own and therefore never reaches the base branch — `ToolHeadlessCommand`
+    // Override it when a command writes the mesh through an `applyImpl()` of
+    // its own and therefore never reaches the base branch — `ToolHeadlessCommand`
     // is the one such case in the build (it runs a Tool's `applyHeadless()`
     // against `*mesh`), and it pairs the override with the
     // `refusedForNoEditTarget()` guard below. An override that ADDS the
@@ -565,7 +680,7 @@ class Command {
     // Mechanism: the app wires one live provider onto every registered
     // command factory (registration.d), so this is the same authority the
     // toolpipe's SubjectPacket carries. Operator commands can equivalently
-    // read `subj.selType` off the packet they already hold — `apply()` above
+    // read `subj.selType` off the packet they already hold — `applyImpl()` above
     // stamps it from here.
     //
     // HAZARD, for whoever makes a WRAPPED command type-aware: the provider is
@@ -651,7 +766,7 @@ private:
 }
 
 // ---------------------------------------------------------------------------
-// Task 0619 — the packet `Command.apply()` builds carries a REAL camera.
+// Task 0619 — the packet `Command.applyImpl()` builds carries a REAL camera.
 //
 // `SubjectPacket.viewport` is the only camera an `Operator`'s `evaluate` can
 // see, and four operator commands (`mesh.jitter`, `mesh.quantize`,
@@ -661,7 +776,7 @@ private:
 // one depending on who fired it.
 //
 // VERIFIED BY MUTATION, twice:
-//   * replacing `Command.apply`'s
+//   * replacing `Command.applyImpl`'s
 //     `Viewport vp = (view !is null) ? effectiveViewport() : Viewport.init;`
 //     ternary with an unconditional `Viewport vp = Viewport.init;` — i.e.
 //     the code as it behaved before this fix — gives "Command.apply() must
@@ -678,7 +793,7 @@ version (unittest) {
     import toolpipe.packets : SubjectPacket;
 
     /// A terminal Operator that mutates nothing and reports the packet the
-    /// base `apply()` handed it.
+    /// base `applyImpl()` handed it.
     private class SubjectEchoOp : Command, Operator {
         SubjectPacket seen;
         bool          sawSubject;

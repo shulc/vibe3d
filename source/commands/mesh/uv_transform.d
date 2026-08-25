@@ -64,7 +64,7 @@ class UvFlip : Command {
         ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         auto map = mesh.meshMap(kUvMapName);
         if (map is null)
             throw new Exception(
@@ -125,7 +125,7 @@ class UvMirror : Command {
         ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         auto map = mesh.meshMap(kUvMapName);
         if (map is null)
             throw new Exception(
@@ -182,7 +182,7 @@ class UvRotate : Command {
         ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         auto map = mesh.meshMap(kUvMapName);
         if (map is null)
             throw new Exception(

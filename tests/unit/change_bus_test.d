@@ -387,7 +387,7 @@ unittest {
 // Mutations these are the red for (plan §5, stage 0 rows):
 //   * `Mesh.deliverPending()` → early `return` before `changeBus.deliverMesh`
 //     ⇒ block (a) reddens.
-//   * delete `++g_deliveryDepth` in `Mesh.beginDeliveryBatch`
+//   * delete `++g_deliveryDepth` in `mesh.beginDeliveryBatchGlobal`
 //     ⇒ block (b) reddens on its FIRST assert (8 deliveries, not 0).
 //   * a listener that publishes ⇒ blocks (d1)/(d2) redden.
 // ===========================================================================

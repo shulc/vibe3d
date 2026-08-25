@@ -46,7 +46,7 @@ class ToolPanelEditCommand : Command {
 
     void setDelta(Vec3 d) { delta_ = d; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (!g_testMode)
             throw new Exception(
                 "tool.panelEdit: only available in --test mode");

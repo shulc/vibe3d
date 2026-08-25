@@ -31,7 +31,7 @@ class SelectElementCommand : Command {
     void setAction(string a)     { action = a; }
     void setIndices(int[] i)     { indices = i; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         mesh.syncSelection();
         switch (targetType) {
             case "vertex":

@@ -75,7 +75,7 @@ class UvUnwrap : Command {
         ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         // -----------------------------------------------------------------
         // (a) Read-only walk: collect affected loops + bbox.
         // -----------------------------------------------------------------

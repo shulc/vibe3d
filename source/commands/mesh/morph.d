@@ -120,7 +120,7 @@ class MorphCreate : Command {
 
     // DIALOG-REACHABLE (config/buttons.yaml "New Morph Map…"), so every
     // rejection is a refusal and none is a throw — see the module header.
-    override bool apply() {
+    protected override bool applyImpl() {
         baseRefusal_ = "";
         if (name_.length == 0) {
             baseRefusal_ = "a morph map needs a name";
@@ -186,7 +186,7 @@ class MorphRemove : Command {
         return [ Param.string_("name", "Name", &name_, "") ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (name_.length == 0)
             throw new Exception("mesh.morph.remove: name must not be empty");
         if (morphMapOrNull(mesh, name_) is null)
@@ -228,7 +228,7 @@ class MorphRename : Command {
         ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (from_.length == 0 || to_.length == 0)
             throw new Exception("mesh.morph.rename: from/to must not be empty");
         auto m = morphMapOrNull(mesh, from_);
@@ -289,7 +289,7 @@ class MorphSelect : Command {
         return [ Param.string_("name", "Name", &name_, "") ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         baseRefusal_ = "";
         prevName_ = morphTargetName();
         prevKind_ = morphTargetKind();
@@ -363,7 +363,7 @@ class MorphSet : Command {
         ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (name_.length == 0)
             throw new Exception("mesh.morph.set: name must not be empty");
         if (morphMapOrNull(mesh, name_) is null)
@@ -410,7 +410,7 @@ class MorphClear : Command {
         return [ Param.string_("name", "Map", &name_, "") ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         baseRefusal_ = "";
         if (name_.length == 0)
             throw new Exception("mesh.morph.clear: name must not be empty");
@@ -467,7 +467,7 @@ class MorphApplyCmd : Command {
 
     // DIALOG-REACHABLE (config/buttons.yaml "Apply Morph…"), so every
     // rejection is a refusal and none is a throw — see the module header.
-    override bool apply() {
+    protected override bool applyImpl() {
         baseRefusal_ = "";
         if (name_.length == 0) {
             baseRefusal_ = "name a morph map to apply";

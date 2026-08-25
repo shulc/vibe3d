@@ -65,7 +65,7 @@ class ToolPipeAttrCommand : Command {
         return queryResult_.toString();
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (g_pipeCtx is null)
             throw new Exception("tool.pipe.attr: pipeline not initialised");
         if (stageId_.length == 0)

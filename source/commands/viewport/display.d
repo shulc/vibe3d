@@ -73,7 +73,7 @@ final class ViewportDisplayStyle : ViewportCommand {
         cell_ = cell;
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         Viewport3D tv = vpm.views[cell_];
         tv.display.active.style = style_;
         // Task 0594: this cell's style is now a CHOICE, not an inheritance.
@@ -114,7 +114,7 @@ final class ViewportWireOverlay : ViewportCommand {
         cell_ = cell;
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         Viewport3D tv = vpm.views[cell_];
         tv.display.active.wire = mode_;
         commitCellDisplay(cell_);
@@ -154,7 +154,7 @@ final class ViewportWireAlpha : ViewportCommand {
         cell_  = cell;
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         Viewport3D tv = vpm.views[cell_];
         tv.display.active.wireAlpha = alpha_;
         commitCellDisplay(cell_);

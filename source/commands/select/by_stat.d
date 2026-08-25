@@ -318,7 +318,7 @@ final class SelectByStatVertex : ByStatBase {
         }
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         auto t   = parseTest();
         auto cmp = parseCompare();
         auto md  = parseMode();
@@ -425,7 +425,7 @@ final class SelectByStatEdge : ByStatBase {
         }
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         auto t   = parseTest();
         auto cmp = parseCompare();
         auto md  = parseMode();
@@ -509,7 +509,7 @@ final class SelectByStatPolygon : ByStatBase {
         }
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         auto t   = parseTest();
         auto cmp = parseCompare();
         auto md  = parseMode();

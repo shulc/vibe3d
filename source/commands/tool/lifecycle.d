@@ -38,7 +38,7 @@ class ToolDeactivationCommand : Command {
     override CmdFlags cmdFlags() const { return CmdFlags.ToolLifecycle; }
 
     // apply() = redo = re-drop the tool (geometry no-op).
-    override bool apply() {
+    protected override bool applyImpl() {
         if (onApply !is null) onApply();
         return true;
     }

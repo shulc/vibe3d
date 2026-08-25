@@ -27,7 +27,7 @@ class SelectDropCommand : Command {
 
     void setTargetType(string t) { targetType = t; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         mesh.syncSelection();
         switch (targetType) {
             case "vertex":  mesh.clearVertexSelection(); break;

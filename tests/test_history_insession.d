@@ -60,7 +60,7 @@ private final class ForeignCmd : Command {
     override string name()  const { return "test.foreign"; }
     override string label() const { return "Foreign"; }
     override CmdFlags cmdFlags() const { return CmdFlags.Model; }
-    override bool apply()  { return true; }
+    protected override bool applyImpl()  { return true; }
     override bool revert() { return true; }
 }
 

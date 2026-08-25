@@ -40,7 +40,7 @@ class SelectConnect : Command {
 
     override string name() const { return "select.connect"; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         snap = SelectionSnapshot.capture(*mesh);
         // Connected selection — flood-fill from current selection / hovered element.
         // `selectedX` is now a materialized read view; bfsSelect mutates the

@@ -30,7 +30,7 @@ class SelectBetween : Command {
 
     override string name() const { return "select.between"; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         snap = SelectionSnapshot.capture(*mesh);
         if      (editMode == EditMode.Polygons) return applyPolygons();
         else if (editMode == EditMode.Edges)    return applyEdges();

@@ -256,7 +256,7 @@ final class ImageLoad : ImageCommandBase {
     /// that wants to select the new row). Null until a successful apply.
     Layer created() { return created_; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         // REDO re-appends the SAME object rather than building a fresh one.
         // This is not an optimisation. A consumer's link names the target
         // `Layer` OBJECT (Ph3: not its index, not its name, not its path), so
@@ -407,7 +407,7 @@ final class ImageReplace : ImageCommandBase {
                  Param.string_("path", "Path", &pathArg, "") ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         refusal_ = "";
         auto target = resolveImage(indexArg);
         if (target is null) return false;
@@ -507,7 +507,7 @@ final class ImageReload : ImageCommandBase {
         return [ Param.int_("index", "Index", &indexArg, -1) ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         refusal_ = "";
         auto target = resolveImage(indexArg);
         if (target is null) return false;   // a bad index IS a failure
@@ -569,7 +569,7 @@ final class ImageRemove : ImageCommandBase {
     /// panel is reading the referrers of an item that is still there.
     const(Layer)[] referrers() const { return referrers_; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         // Cleared FIRST, and re-published only on the success path below
         // (Ph5 review, S4). Both halves are load-bearing: the clear is what
         // keeps a re-dispatched command object from reporting the PREVIOUS

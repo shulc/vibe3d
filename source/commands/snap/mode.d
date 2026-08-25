@@ -31,7 +31,7 @@ class SnapModeCommand : Command {
 
     void setModeName(string n) { modeName_ = n; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (g_pipeCtx is null)
             throw new Exception("snap.mode: pipeline not initialised");
         auto sn = cast(SnapStage)

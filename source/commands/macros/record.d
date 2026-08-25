@@ -37,7 +37,7 @@ class MacroRecord : Command {
         return [Param.int_("state", "State", &state_, 1)];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (recorder is null) return false;
         if (state_ != 0) recorder.start();
         else             recorder.stop();

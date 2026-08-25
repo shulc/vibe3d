@@ -1544,7 +1544,7 @@ public:
         return CmdFlags.SideEffect | CmdFlags.Quiet | CmdFlags.UndoForce;
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (tool_ is null) return false;
         tool_.restoreLiveEdit(after_, afterState_);
         tool_.noteLiveHistoryApply();

@@ -47,7 +47,7 @@ class ToolDoApplyCommand : Command {
         return appliedToolId.length > 0 ? "Apply " ~ appliedToolId : "Apply Tool";
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         auto t = toolHost.getActiveTool();
         if (t is null) return false;
 

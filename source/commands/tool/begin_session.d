@@ -39,7 +39,7 @@ class ToolBeginSessionCommand : Command {
 
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (!g_testMode)
             throw new Exception(
                 "tool.beginSession: only available in --test mode");

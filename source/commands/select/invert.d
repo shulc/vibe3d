@@ -17,7 +17,7 @@ class SelectInvert : Command {
 
     override string name() const { return "select.invert"; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         // Perf (task 0388): iterate the geometry length and test membership via
         // the non-allocating `isXSelected(i)` scalar accessor. Indexing the
         // `mesh.selectedX` @property inside the loop rebuilt a whole `bool[]`

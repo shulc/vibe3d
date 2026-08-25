@@ -31,7 +31,7 @@ class SelectFillHoles : Command {
 
     override string name() const { return "select.fill.holes"; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         snap = SelectionSnapshot.capture(*mesh);
         mesh.syncSelection();
         auto filled = mesh.fillSelectionHoles(mesh.selectedFaces);
@@ -124,7 +124,7 @@ class SelectFillInsideLoop : Command {
     // directly.
     SelectFillInsideLoop setPromoteHook(void delegate(EditMode) h) { promoteType = h; return this; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         snap = SelectionSnapshot.capture(*mesh);
         priorEditMode = editModePtr !is null ? *editModePtr : editMode;
         mesh.syncSelection();

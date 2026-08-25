@@ -145,7 +145,7 @@ final class SelfTestFaultCommand : Command {
         ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         switch (kind_) {
 
         // ------------------------------------------------------------------

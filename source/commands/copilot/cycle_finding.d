@@ -64,7 +64,7 @@ class CopilotCycleFindingCommand : Command {
 
     void setDir(int d) { dir_ = d; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (aiState is null || !aiState.enabled) return false;
         if (panel is null) return false;
 

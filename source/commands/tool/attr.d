@@ -75,7 +75,7 @@ class ToolAttrCommand : Command {
         return queryResult_.toString();
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (toolId_.length == 0)
             throw new Exception("tool.attr: no tool id specified");
         if (attrName_.length == 0)

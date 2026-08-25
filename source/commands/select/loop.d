@@ -17,7 +17,7 @@ class SelectLoop : Command {
 
     override string name() const { return "select.loop"; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         // Settled-mesh precondition (debug-only, stripped from release
         // builds): this command only READS the loops family / edgeIndexMap
         // (walkEdgeLoop/walkFaceLoop/walkVertexLoop, mesh.edgeIndex) and

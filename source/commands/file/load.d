@@ -111,7 +111,7 @@ class FileLoad : Command {
     /// That is why the reason is set only where the reader actually refused.
     override string refusalReason() const { return refusal_; }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         // The value must describe the LATEST call: a command object is applied
         // more than once (redo, re-dispatch), and a reason kept from a prior
         // failure would be reported against a call that succeeded.

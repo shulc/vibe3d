@@ -217,7 +217,7 @@ final class CompositeCommand : Command {
     // Re-apply children forward. Used by redo(). Stops and reports failure on
     // the first child that fails to apply (partial state — same best-effort
     // contract as the single-command redo path).
-    override bool apply() {
+    protected override bool applyImpl() {
         foreach (c; children_) {
             if (!c.apply()) return false;
         }
@@ -1591,7 +1591,7 @@ version (unittest) {
         override string   name()  const { return "test.epoch"; }
         override string   label() const { return "EpochTest"; }
         override CmdFlags cmdFlags() const { return CmdFlags.Model; }
-        override bool apply()  { return true; }
+        protected override bool applyImpl()  { return true; }
         override bool revert() { return true; }
     }
 
@@ -1614,7 +1614,7 @@ version (unittest) {
         override string   name()     const { return "test.tracked"; }
         override string   label()    const { return "Tracked"; }
         override CmdFlags cmdFlags() const { return _flags; }
-        override bool apply()  { ++applyCalls;  return true; }
+        protected override bool applyImpl()  { ++applyCalls;  return true; }
         override bool revert() { ++revertCalls; return true; }
     }
 
@@ -1707,7 +1707,7 @@ version (unittest) {
         override string   name()  const { return "test.runMergeable"; }
         override string   label() const { return "RunMergeableTest"; }
         override CmdFlags cmdFlags() const { return CmdFlags.Model; }
-        override bool apply()  { return true; }
+        protected override bool applyImpl()  { return true; }
         override bool revert() { return true; }
 
         Command mergeRunTail(Command[] later) {
@@ -1730,7 +1730,7 @@ version (unittest) {
         override string   name()  const { return "test.plain"; }
         override string   label() const { return "PlainTest"; }
         override CmdFlags cmdFlags() const { return CmdFlags.Model; }
-        override bool apply()  { return true; }
+        protected override bool applyImpl()  { return true; }
         override bool revert() { return true; }
     }
 }
@@ -2037,7 +2037,7 @@ version(unittest) {
             }
             override string name() const { return "stub.model"; }
             override CmdFlags cmdFlags() const { return CmdFlags.Model; }
-            override bool apply()  { applied = true;  return true; }
+            protected override bool applyImpl()  { applied = true;  return true; }
             override bool revert() { reverted = true; return true; }
         }
         static class StubUi : Command {
@@ -2051,7 +2051,7 @@ version(unittest) {
             }
             override string name() const { return "stub.ui"; }
             override CmdFlags cmdFlags() const { return CmdFlags.UiState; }
-            override bool apply()  { return true; }
+            protected override bool applyImpl()  { return true; }
             override bool revert() { return true; }
         }
         static class StubLifecycle : Command {
@@ -2067,7 +2067,7 @@ version(unittest) {
             }
             override string name() const { return "tool.deactivate"; }
             override CmdFlags cmdFlags() const { return CmdFlags.ToolLifecycle; }
-            override bool apply()  { applied = true;  return true; }
+            protected override bool applyImpl()  { applied = true;  return true; }
             override bool revert() { reverted = true; return true; }
         }
 

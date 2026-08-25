@@ -78,7 +78,7 @@ final class ViewportGridSteps : ViewportCommand {
         mask_ = cast(int)mval;
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         import viewgrid : g_viewGrid;
         import prefs    : g_prefs;
 

@@ -47,7 +47,7 @@ class WeightmapCreate : Command {
         return [ Param.string_("name", "Name", &name_, "") ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (name_.length == 0)
             throw new Exception("mesh.weightmap.create: name must not be empty");
         snap = MeshSnapshot.capture(*mesh);
@@ -83,7 +83,7 @@ class WeightmapRemove : Command {
         return [ Param.string_("name", "Name", &name_, "") ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (name_.length == 0)
             throw new Exception("mesh.weightmap.remove: name must not be empty");
         if (mesh.meshMap(name_) is null)
@@ -124,7 +124,7 @@ class WeightmapRename : Command {
         ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (from_.length == 0 || to_.length == 0)
             throw new Exception("mesh.weightmap.rename: from/to must not be empty");
         auto m = mesh.meshMap(from_);
@@ -168,7 +168,7 @@ class WeightmapSet : Command {
         ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         if (name_.length == 0)
             throw new Exception("mesh.weightmap.set: name must not be empty");
         if (vert_ < 0)
@@ -227,7 +227,7 @@ class WeightmapSelect : Command {
         return [ Param.string_("name", "Map", &name_, "") ];
     }
 
-    override bool apply() {
+    protected override bool applyImpl() {
         import weightmap_view : setCurrentWeightMap;
         setCurrentWeightMap(name_);
         return true;
