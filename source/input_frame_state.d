@@ -199,10 +199,32 @@ final class InputFrameState {
     // second object from `app.bvhPick`, which is the PRIMARY layer's tree and
     // is keyed on that one mesh. `useBvhFacePick` is `pickFaces`'s engine
     // switch, read once from VIBE3D_FACE_PICK at startup (a runtime change
-    // needs a relaunch) and wired next to `app` below, not defaulted here, so
-    // the environment read stays a single site in main().
+    // needs a relaunch); the environment READ stays a single site in main(),
+    // but the DEFAULT lives here -- see the constructor below.
     ItemRayPicker itemPicker;
-    bool          useBvhFacePick;
+    bool          useBvhFacePick = true;
+
+    // Task 0781 step 2, from step 1c's review: both of the fields above are
+    // BORN correct instead of being correct only after main() gets to its
+    // wiring block. Before this constructor the null window on `itemPicker`
+    // ran from `new InputFrameState()` (app.d, top of main()) all the way to
+    // `ifs.itemPicker = new ItemRayPicker()` in the LATE wiring block -- ~3,570
+    // lines of main(), where step 1c's own move had widened it from the ~100
+    // lines the deleted main() local had. Nothing dereferences it in that
+    // window today (the pick family only runs inside the frame loop), which is
+    // exactly why a regression there would be quiet rather than a startup
+    // crash, so the window is closed rather than documented.
+    //
+    // A field initialiser cannot do this (`new` is not a compile-time
+    // expression for a field), hence a constructor. `useBvhFacePick = true`
+    // is its EFFECTIVE default -- main() reads `VIBE3D_FACE_PICK` with "bvh"
+    // as the fallback and only "gpu" turns it off -- and it is declared as the
+    // field's initialiser so that a unit test constructing this class directly
+    // gets the BVH engine the app ships, not the GPU one a plain `bool`'s
+    // `false` would have handed it.
+    this() {
+        itemPicker = new ItemRayPicker();
+    }
 
     // buildToolVts's own publish slot. Kept out of buildToolVts's own
     // stack frame for the same reason main() kept it out before the move
