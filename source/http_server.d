@@ -2447,7 +2447,24 @@ class HttpServer {
         // endpoint and it must stay that way. It is `Answered.httpThread`, and
         // `mesh_dirty.g_displayEpochs` / `g_geomEpochs` / `g_topoEpochs` are
         // main-thread-only, unsynchronised, and mutated from inside a live mesh
-        // edit — reading one from here would be a data race, not a diagnostic.
+        // edit — reading one from here would be a data race, not a diagnostic:
+        // each is a SCANNED ARRAY (`kSlots` address/epoch pairs), and a read
+        // racing a mid-scan write from the main thread could see a torn slot.
+        //
+        // TASK 1932 (stage 4) EXTENDS THIS ROUTE WITH FOUR PLAIN SCALARS FROM
+        // THE SAME MODULE, and that is NOT an exception to the paragraph
+        // above — it is the SAME contract the bus counters already have.
+        // `meshDirtySlotCeiling()` / `meshBirthSlotCeiling()` are compile-time
+        // constants wrapped in a function (never written after process start,
+        // so there is nothing to race); `meshBirthsRecorded()` and
+        // `g_bgGpuUploads` are flat, monotone `ulong` counters, bumped from the
+        // main thread and read here exactly like `changeBus.deliveryCount` —
+        // scalar, monotone, read as a DELTA across a step, same as every
+        // other counter on this route. What stays off this route is the
+        // SCANNED tables themselves (`g_displayEpochs` etc.) — a consumer
+        // needs an epoch compare, and reading a torn one here would be worse
+        // than not answering.
+        //
         // The plain integers below are safe for the same reason /api/perf's are:
         // scalar, monotone, read as DELTAS across a step. Stage 0 extended the
         // field list; the SHAPE (one whole-struct snapshot, then serialise) is
@@ -2483,6 +2500,11 @@ class HttpServer {
                                 regradeCensusDisagreements;
             import seltype    : selTypeToken;
             import std.format : format;
+            // TASK 1932 (stage 4) — the slot-ceiling instruments; see the
+            // route's own comment above for why these four are safe to read
+            // here when the SCANNED tables beside them are not.
+            import mesh_dirty : meshDirtySlotCeiling, meshBirthSlotCeiling,
+                                meshBirthsRecorded, g_bgGpuUploads;
             const snap = changeBus;
             response.statusCode = 200;
             response.body = format(
@@ -2505,7 +2527,11 @@ class HttpServer {
                 `"regradeCensusChecks":%d,` ~
                 `"regradeCensusArmedChecks":%d,` ~
                 `"regradeCensusDisagreements":%d,` ~
-                `"currentTypeChanged":%d,"lastCurrentType":"%s"}`,
+                `"currentTypeChanged":%d,"lastCurrentType":"%s",` ~
+                // Task 1932 stage 4 — R3-2: all four fields the suite-tier
+                // stand reads, so the endpoint and the reader agree.
+                `"meshDirtySlotCeiling":%d,"meshBirthSlotCeiling":%d,` ~
+                `"meshBirthsRecorded":%d,"bgGpuUploads":%d}`,
                 snap.flushCount,
                 snap.lastSelDomains, snap.lastLayerKinds,
                 snap.totalPosition, snap.totalPoints,
@@ -2564,7 +2590,9 @@ class HttpServer {
                 regradeCensusArmedChecks,
                 regradeCensusDisagreements,
                 snap.currentTypeChanged,
-                selTypeToken(snap.lastCurrentType));
+                selTypeToken(snap.lastCurrentType),
+                meshDirtySlotCeiling(), meshBirthSlotCeiling(),
+                meshBirthsRecorded(), g_bgGpuUploads);
         }
     }
 

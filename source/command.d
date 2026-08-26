@@ -200,28 +200,49 @@ class Command {
     // layer or an inner command. `tests/unit/command_apply_anchor_test.d`'s
     // null-`mesh` block is the red for putting that test back.
     //
-    // `revert()` IS NOT WRAPPED, AND THE TWO UNDO PATHS THEREFORE DIFFER IN
-    // DELIVERY GRANULARITY — say it rather than call it parity.
+    // `revert()` is NOT wrapped by a `final`-style forwarder of its own — it
+    // stays a plain virtual, same as `applyImpl()`. TASK 1932 (stage 1)
+    // re-measured the "two undo paths differ in delivery granularity" claim
+    // this comment used to make here and found it FALSE: every PRODUCTION
+    // entry point that drives a `revert()` already holds a global delivery
+    // batch of its own — `Command.apply` (this method, at its
+    // `beginDeliveryBatchGlobal` below),
+    // `CommandHistory.undo()` (`command_history.d:1091`), `.redo()`
+    // (`:1208`) and `.fire()` (`:1507`) each open
+    // `beginDeliveryBatchGlobal()` before running any `revert()` they own,
+    // including `CompositeCommand.revert`'s child loop
+    // (`command_history.d:232`), which nests inside the caller's batch
+    // rather than opening its own. Nested opens coalesce by depth, so the
+    // outcome is the SAME batch no matter how deep the revert call chain
+    // runs.
     //
-    //   * `/api/undo` and `app.d :: navHistory` call `history.undo()` RAW. Each
-    //     `revert()` they drive delivers on its own commits, exactly as before
-    //     this task.
-    //   * the REGISTERED `history.undo` command does not:
-    //     `HistoryUndo.applyImpl()` calls `history.undo()` from INSIDE this
-    //     wrapper's batch, so every revert that step drives — including
-    //     `CompositeCommand.revert`'s children — coalesces into ONE delivery at
-    //     the close.
+    // So there is no asymmetry between "wrapped registered `history.undo`
+    // command" and "raw `/api/undo` / `navHistory` call" — all THREE
+    // production callers of `history.undo()` (`/api/undo` via
+    // `http_providers.d:3179`, `app.d`'s `navHistory` via
+    // `edit_session.d:430`, and `BoxTool.cancelUncommittedEdit`'s undo
+    // ladder via `tools/create/box.d:306`) land inside the same batch
+    // `undo()` opens, exactly like the registered `HistoryUndo.applyImpl()`
+    // calling `history.undo()` from inside `Command.apply`'s own batch.
+    // Every undo/redo/re-fire step delivers exactly once. Counter-evidence
+    // the batches put in place: before `undo()` held this batch, a
+    // 3 000-edge `mesh.remove` delivered 3 003 times on UNDO — one per
+    // `selectEdge` the tracker's delta replay drives — and before `fire()`
+    // held it, a re-fire's revert delivered 3 005 times the same way;
+    // both are 1 today (`tests/test_bus_delivery_granularity.d` blocks
+    // (7)/(8)). `redo()` never calls `revert()` in production (it replays
+    // forward through `cmd.apply()`), so its pre-fix count was already 1 —
+    // it holds the batch for uniformity with the other two, not because it
+    // showed the per-element shape.
     //
-    // Benign today: listeners are dirty-bit-only and idempotent, and an OR over
-    // a whole undo step is what they would compute anyway. But a subject-keyed
-    // consumer in stage 2 must know which path it is on, and one consequence is
-    // worth naming now — inside that batch, `deliverPending`'s "a layer
-    // unlinked between a deferring commit and the batch close" drop window
-    // spans a WHOLE undo step instead of one commit. Not live:
+    // Benign today either way: listeners are dirty-bit-only and idempotent,
+    // and an OR over a whole undo step is what they would compute anyway.
+    // One consequence is worth naming — inside any of these batches,
+    // `deliverPending`'s "a layer unlinked between a deferring commit and
+    // the batch close" drop window spans a WHOLE undo/redo/re-fire step
+    // everywhere, not on some asymmetric subset of paths. Not live:
     // `commands/layer/commands.d` contains no `commitChange` at all, so no
-    // layer lifecycle command defers anything into that window. Giving
-    // `revert()` a batch of its own remains a separate change with its own
-    // witness.
+    // layer lifecycle command defers anything into that window.
     // TASK 1906 STAGE 3 — THE CLOSE ALSO OFFERS THIS COMMAND'S OWN MESH, and
     // that is what lets the per-frame drain go.
     //
@@ -234,6 +255,33 @@ class Command {
     // live app, one command per `/api/reset`: `select.invert` and
     // `select.byStat.{vertex,edge,polygon}` each moved `deliveryCount` by 0
     // while moving `flushCount` by 1 and `totalMarks` by 1.
+    //
+    // TASK 1932 (stage 3): this anchor and the per-writer `deliverPending`
+    // calls on the six scalar setters / three bulk `clear*` / `applySelectedFrom_`
+    // (`mesh.d`) are REDUNDANT on `select.invert`-shaped commands but not on
+    // each other — measured with four isolated single-line removals, each
+    // read against a full `dub test --config=tests` pass (282 modules).
+    // Removing THIS anchor alone reddens exactly one cell,
+    // `tests/unit/command_apply_anchor_test.d`'s `NoteOnlyProbe` (delta 0
+    // instead of 1) — nothing else moves, because every other command's tail
+    // is a real publisher already registered in the batch. Removing a
+    // writer's own `deliverPending()` reddens `tests/unit/change_bus_test.d`'s
+    // matching clause every time, and once (the six scalar setters) it ALSO
+    // reddens a second, unrelated cell, `tests/unit/subpatch_osd_test.d`'s
+    // RIG premise — a caller at delivery depth 0 outside any batch, the same
+    // shape `source/symmetry_pick.d`'s own doc comment names as "the Topology
+    // Pen's undo path". A caller INSIDE a batch is unaffected by a writer's
+    // own `deliverPending()` regardless — `symmetry_pick.d`'s
+    // `symmetricSelectVertex` is itself a THIRD delivery boundary
+    // (`mesh.beginDeliveryBatch()` / `deliverAccumulated()` at every return),
+    // wrapping every click and paint-stroke pick, so a paint stroke's
+    // delivery count is untouched by the scalar setters' own calls — measured
+    // directly (`tests/test_bus_delivery_granularity.d` block (6) stays green
+    // under the same mutation that reddens the two unit cells above). If the
+    // anchor and the writers are ever collapsed to one mechanism, delete THIS
+    // anchor, not the writers — the writers are what a caller outside every
+    // batch depends on, and this anchor covers only what already reaches a
+    // batch close another way.
     //
     // The offer is made HERE rather than in seventeen selection commands for
     // the same reason `apply()` is `final`: a command written next year is

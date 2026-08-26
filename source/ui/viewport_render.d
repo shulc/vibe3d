@@ -21,7 +21,7 @@ module ui.viewport_render;
 
 import math;                 // Vec3, Viewport, ModelSpace, identityMatrix, matMul4
 import mesh;                 // Mesh
-import mesh_dirty            : g_displayEpochs;  // task 1906 stage 2a (row 17)
+import mesh_dirty            : g_displayEpochs, g_bgGpuUploads;  // task 1906 stage 2a (row 17); task 1932 stage 4
 import weightmap_view       : currentWeightMapName;  // task 1090
 import editmode;             // EditMode
 import seltype;              // SelType, viewportPickType
@@ -439,6 +439,7 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                 const ulong  be = g_displayEpochs.epochFor(ba);
                 if (!bg.uploaded.matches(ba, be)) {
                     bg.gpu.upload(*bm);
+                    ++g_bgGpuUploads;  // task 1932 stage 4 — /api/changes instrument
                     bg.uploaded.stamp(ba, be);
                 }
             }

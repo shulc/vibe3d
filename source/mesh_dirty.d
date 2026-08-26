@@ -156,6 +156,21 @@ struct MeshDirtyEpochs {
 
     /// Test seam: how many qualifying deliveries this watcher has seen.
     ulong anyEpoch() const nothrow @nogc { return any_; }
+
+    /// Test-only reset: every slot, the round-robin cursor and both counters
+    /// go back to their construction-time state. `classes_` is deliberately
+    /// UNTOUCHED — it is this watcher's identity (which mask it is), not test
+    /// state, and a reset that cleared it would turn `g_geomEpochs` into a
+    /// wildcard watcher until the next process restart re-ran the module's
+    /// `static` initialisers (it would not — `__gshared` globals are
+    /// initialised once, not per test binary).
+    void reset() nothrow @nogc {
+        addr_[]  = 0;
+        epoch_[] = 0;
+        any_     = 0;
+        evicted_ = 0;
+        next_    = 0;
+    }
 }
 
 /// The (address, epoch) pair a consumer stores — `MeshCacheKey`'s shape with
@@ -320,6 +335,16 @@ private struct MeshBirthTable {
     private size_t[kSlots] addr_;
     private ulong[kSlots]  birth_;
     private int            next_;
+    // TASK 1932 (stage 4) — a flat, NON-saturating count of every `observe()`
+    // call this table has served, hit/miss/evict alike. This is a DENOMINATOR
+    // for a caller sizing a sweep (how many births has the process already
+    // spent, before mine), not a price: the card's "don't measure the number
+    // of `observe()` calls" ban is about the COST of eviction (a rebuild
+    // rate), which this counter does not claim to be. It must not saturate at
+    // `kSlots`, unlike the table itself — the slot-fill level past the
+    // ceiling is `max(0, totalObserved_ - kSlots)`, and a counter that
+    // stopped at `kSlots` could not compute that.
+    private ulong totalObserved_;
 
     /// Returns true when the address may now be occupied by a DIFFERENT birth
     /// than the one it last held. "Held none" WITH A FREE SLOT is the ordinary
@@ -328,6 +353,7 @@ private struct MeshBirthTable {
     /// full table cannot tell first use from a record it has already evicted;
     /// see the eviction arm below.
     bool observe(size_t a, ulong birth) nothrow @nogc {
+        ++totalObserved_;
         foreach (i; 0 .. kSlots) {
             if (addr_[i] == a) {
                 const bool changed = birth_[i] != birth;
@@ -370,6 +396,17 @@ private struct MeshBirthTable {
         foreach (i; 0 .. kSlots) if (addr_[i] == a) return birth_[i];
         return 0;
     }
+
+    /// Test seam: the flat, non-saturating count — see the field's own note.
+    ulong totalObserved() const nothrow @nogc { return totalObserved_; }
+
+    /// Test-only reset, paired with `MeshDirtyEpochs.reset()` below.
+    void reset() nothrow @nogc {
+        addr_[]  = 0;
+        birth_[] = 0;
+        next_    = 0;
+        totalObserved_ = 0;
+    }
 }
 
 private __gshared MeshBirthTable g_births;
@@ -387,6 +424,92 @@ void noteMeshBirth(size_t meshAddr, ulong birthId) nothrow @nogc {
 ulong notedBirthAt(size_t meshAddr) nothrow @nogc {
     return g_births.birthAt(meshAddr);
 }
+
+// ---------------------------------------------------------------------------
+// TASK 1932 (stage 4) — THE SLOT-CEILING CLIFF IS A CHAIN OF TWO TABLES, NOT
+// ONE. `MeshDirtyEpochs.kSlots` (`D`, above) and `MeshBirthTable.kSlots`
+// (`B`, this module) are two INDEPENDENT `private enum`s that happen to share
+// the literal 32 today — nothing enforces that they stay equal, and this
+// task's own review caught a stand that assumed they always would (a mode-A
+// cliff written as `2*D` instead of `B + D`, invisible while `B == D`). Both
+// accessors below exist so a caller — in particular a suite-tier stand that
+// cannot see either `private enum` (it links no `source/` module at all,
+// see `tests/test_bus_delivery_granularity.d`'s own header) — reads the REAL
+// ceilings rather than hard-coding 32 a second time.
+// ---------------------------------------------------------------------------
+
+/// `D` — the ceiling that owns the CLIFF (mode B: `D + 1`; mode A, chained
+/// through the birth table: `B + D + 1`). See the module header's eviction
+/// paragraph.
+int meshDirtySlotCeiling() nothrow @nogc { return MeshDirtyEpochs.kSlots; }
+
+/// `B` — the birth table's own ceiling, read ONLY so mode-A's formula
+/// (`B + D + 1`) does not have to assume it equals `D`. A caller does not
+/// otherwise need this number: `B` is not itself a delivery ceiling, it is
+/// the first link in the chain that produces one.
+int meshBirthSlotCeiling() nothrow @nogc { return MeshBirthTable.kSlots; }
+
+/// The birth table's flat, non-saturating observe() count — see
+/// `MeshBirthTable.totalObserved_`'s own note for why it must not saturate.
+ulong meshBirthsRecorded() nothrow @nogc { return g_births.totalObserved(); }
+
+/// Test-only: every table this module owns goes back to its construction-time
+/// state, so a unit-tier sweep over N can start from a known baseline in one
+/// process instead of needing a fresh one per N (`source/mesh_dirty.d`'s own
+/// header, the "COST OF THE FAIL-SAFE ARM" paragraph, already names this seam
+/// as the remedy for a count that drifts with how many layers earlier test
+/// modules built). `g_births` and EVERY `__gshared` watcher this module
+/// declares reset — the body sweeps `allWatchers()` rather than naming them,
+/// because a hand-written list is a seam a NEW watcher joins silently: task
+/// 2000 adds a fourth (`g_settledGeomEpochs`) in a parallel lane, and a
+/// three-way merge of a hand-list is textually clean while leaving the reset
+/// incomplete and this comment false. The census cell in
+/// `tests/unit/mesh_dirty_cliff_series_test.d` refuses a declared watcher that
+/// `allWatchers()` does not carry.
+/// nothing else in the process is touched — the app-level `/api/reset` this
+/// pairs with resets DOCUMENT state, not this module's, and the two are
+/// deliberately orthogonal (see `http_server.d`'s reset caveat).
+/// Every `__gshared MeshDirtyEpochs` this module declares, in ONE place, so
+/// anything that must act on all of them (the test reset seam; a future
+/// census) cannot fall behind a newly added watcher.
+MeshDirtyEpochs*[] allWatchers() nothrow @nogc {
+    static MeshDirtyEpochs*[3] tbl;
+    tbl = [&g_displayEpochs, &g_geomEpochs, &g_topoEpochs];
+    return tbl[];
+}
+
+void resetMeshDirtyStateForTest() nothrow @nogc {
+    g_births.reset();
+    foreach (w; allWatchers()) w.reset();
+}
+
+// TASK 1932 (stage 4) — THE INSTRUMENT: one plain counter, bumped at the ONE
+// background-layer GPU re-upload site (`source/ui/viewport_render.d`, where
+// `bg.gpu.upload(*bm)` runs), so a suite-tier stand can read a DELTA the same
+// way it already reads `changeBus`'s own counters — "scalar, monotone, read
+// as deltas across a step" (`http_server.d`'s route_apiChanges comment).
+//
+// STANDS ON `g_displayEpochs`, NOT `g_geomEpochs` — say so here, once, so a
+// reader of the suite stand does not have to infer it from the call site.
+// The card that asked for this asked for the rate against `g_geomEpochs` (the
+// GEOMETRY consumer); the one site that actually re-uploads a background
+// mesh keys its cache on `g_displayEpochs.epochFor(...)` (`viewport_render.d`,
+// a few lines above the bump). The two watchers share the SAME cliff — the
+// birth path that produces it calls `noteMeshChange(addr, uint.max)`, and
+// `uint.max` passes every watcher's class mask (`note()`, above) — so a
+// measurement on this counter is valid for "where the cliff is", but it is
+// NOT a measurement of the geometry consumer specifically (BVH rebuilds,
+// snap grids); that remains unmeasured — a deliberate non-goal, not an
+// oversight (see the card's "what this lane does not do").
+//
+// Deliberately NOT reset by `resetMeshDirtyStateForTest()` above: it is an
+// INSTRUMENT counter in the same family as the bus's own (`deliveryCount`,
+// `flushCount`, …), which persist across `/api/reset` by the same convention
+// — "the runner resets app state, not the bus, between test binaries"
+// (`http_server.d`). Resetting it here would give it a different reset
+// contract than every counter beside it on `/api/changes`, for no reason a
+// caller could rely on.
+__gshared ulong g_bgGpuUploads;
 
 // ---------------------------------------------------------------------------
 // THE ABA CELL (task 1906 stage 3). Address reuse is FORCED, not hoped for.
