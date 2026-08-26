@@ -69,6 +69,34 @@ version (unittest):
 import std.stdio : writefln;
 import std.math : PI, cos, sin, fabs;
 
+// ---------------------------------------------------------------------------
+// TASK 1903 Stage G — ONE UNRECORDED BATCH, ONE PLACE THAT SAYS WHY.
+//
+// `bevelEdgesByMask` is a module-level free function over `ref MeshEditBatch`
+// now (`mesh_ops/edge_bevel.d`), so the eleven census call sites below cannot
+// call it on a bare `Mesh` any more. They all go through this one helper —
+// F1's `sliceOnce` / F2's `bevelOnce` shape — so the reason the batch is
+// UNRECORDED is written once instead of eleven times: nothing in this census
+// reads an op-log (it reads the returned count and the mesh planes), so a
+// RECORDING batch would build a delta for no reader and `close()` would drop
+// it.
+//
+// THIS FILE IS THE ONE `dub build` CANNOT SEE. Everything below
+// `version (unittest):` compiles only under `dub test --config=tests` and the
+// suite binary, so a signature change here is invisible to a plain build —
+// which is exactly why Stage G's gate is BOTH lanes and not just the build.
+//
+// The census counts this open two-sided: `MeshEditBatch.unrecorded(` == 1 with
+// this exact spelling AND `MeshEditBatch(` == 0, so a site that started
+// opening its own batch is caught either by the count or by the shape.
+private size_t bevelEdgesOnce(ref Mesh m, const bool[] mask, float width,
+                              int roundLevel = 0, bool widthMode = false) {
+    auto ed = MeshEditBatch.unrecorded(m, kEdgeBevelEditScope);
+    immutable size_t n = ed.bevelEdgesByMask(mask, width, roundLevel, widthMode);
+    ed.close();
+    return n;
+}
+
 // ===========================================================================
 // Test-only mesh primitives (sphere / cylinder / torus) — NOT present in
 // source/mesh.d's factory set (makeCube / makeOctahedron / makeGridPlane /
@@ -217,7 +245,7 @@ private Mesh makePostBevelCubeForCensus() {
         foreach (ei; m.edgesAroundVertex(6)) vEdges ~= ei;
         auto mask = new bool[](m.edges.length);
         foreach (ei; vEdges) mask[ei] = true;
-        immutable size_t n = m.bevelEdgesByMask(mask, 0.2f, 1);
+        immutable size_t n = bevelEdgesOnce(m, mask, 0.2f, 1);
         assert(n > 0, "post-bevel fixture: corner-hub bevel #1 must succeed");
     }
     {
@@ -229,7 +257,7 @@ private Mesh makePostBevelCubeForCensus() {
         foreach (ei; m.edgesAroundVertex(0)) vEdges ~= ei;
         auto mask = new bool[](m.edges.length);
         foreach (ei; vEdges) mask[ei] = true;
-        immutable size_t n = m.bevelEdgesByMask(mask, 0.2f, 0);
+        immutable size_t n = bevelEdgesOnce(m, mask, 0.2f, 0);
         assert(n > 0, "post-bevel fixture: corner-hub bevel #2 must succeed");
     }
     return m;
@@ -401,7 +429,7 @@ struct Census {
 
 private void runTrial(const ref Mesh template_, const bool[] mask, ref Census census, float width) {
     auto clone = cloneMeshForTrial(template_);
-    immutable size_t processed = clone.bevelEdgesByMask(mask, width);
+    immutable size_t processed = bevelEdgesOnce(clone, mask, width);
     if (processed > 0) {
         census.record(Reason.Processed);
         return;
@@ -831,7 +859,7 @@ private SoundnessCounters soundnessCensusMesh(string label, const ref Mesh m, fl
     SoundnessCounters sc;
     foreach (mask; generateTrialMasks(m)) {
         auto clone = cloneMeshForTrial(m);
-        immutable size_t processed = clone.bevelEdgesByMask(mask, width);
+        immutable size_t processed = bevelEdgesOnce(clone, mask, width);
         if (processed == 0) continue; // acceptance-only lane; declines are the lane above's job
         checkSoundness(m, clone, sc);
     }
@@ -959,8 +987,8 @@ private RoundLevelCensus censusRoundLevelSingleEdge(string label, const ref Mesh
         mask[i] = true;
         auto clone0 = cloneMeshForTrial(m);
         auto clone1 = cloneMeshForTrial(m);
-        immutable size_t p0 = clone0.bevelEdgesByMask(mask, width, 0);
-        immutable size_t p1 = clone1.bevelEdgesByMask(mask, width, 1);
+        immutable size_t p0 = bevelEdgesOnce(clone0, mask, width, 0);
+        immutable size_t p1 = bevelEdgesOnce(clone1, mask, width, 1);
         ++c.total;
         if ((p0 > 0) != (p1 > 0)) { ++c.acceptDeclineMismatch; continue; }
         if (p0 == 0 && p1 == 0)   { ++c.identical; continue; } // both declined: RL moot either way
@@ -1077,8 +1105,8 @@ private RoundLevelCensus censusRoundLevelFullHub(string label, const ref Mesh m,
         foreach (ei; 0 .. nE) if (m.edges[ei][0] == V || m.edges[ei][1] == V) mask[ei] = true;
         auto clone0 = cloneMeshForTrial(m);
         auto clone1 = cloneMeshForTrial(m);
-        immutable size_t p0 = clone0.bevelEdgesByMask(mask, width, 0);
-        immutable size_t p1 = clone1.bevelEdgesByMask(mask, width, 1);
+        immutable size_t p0 = bevelEdgesOnce(clone0, mask, width, 0);
+        immutable size_t p1 = bevelEdgesOnce(clone1, mask, width, 1);
         ++c.total;
         if ((p0 > 0) != (p1 > 0)) { ++c.acceptDeclineMismatch; continue; }
         if (p0 == 0 && p1 == 0)   { ++c.identical; continue; }
@@ -1209,8 +1237,8 @@ private NoBulgeCensus noBulgeCensusSingleEdge(string label, const ref Mesh m, fl
         mask[i] = true;
         auto clone0 = cloneMeshForTrial(m);
         auto clone1 = cloneMeshForTrial(m);
-        immutable size_t p0 = clone0.bevelEdgesByMask(mask, width, 0);
-        immutable size_t p1 = clone1.bevelEdgesByMask(mask, width, 1);
+        immutable size_t p0 = bevelEdgesOnce(clone0, mask, width, 0);
+        immutable size_t p1 = bevelEdgesOnce(clone1, mask, width, 1);
         ++c.total;
         if ((p0 > 0) != (p1 > 0)) { ++c.acceptDeclineMismatch; continue; }
         if (p0 == 0 && p1 == 0)   { ++c.noBulge; continue; } // both declined: vacuously flat
@@ -1508,7 +1536,7 @@ private bool[] cornerHubPlusFreeEndMask(const ref Mesh m) {
 private void runMixedTrial(const ref Mesh template_, const bool[] mask, ref Census census,
                             ref SoundnessCounters sc, float width, int roundLevel = 0) {
     auto clone = cloneMeshForTrial(template_);
-    immutable size_t processed = clone.bevelEdgesByMask(mask, width, roundLevel);
+    immutable size_t processed = bevelEdgesOnce(clone, mask, width, roundLevel);
     if (processed > 0) {
         census.record(Reason.Processed);
         checkSoundness(template_, clone, sc);

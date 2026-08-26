@@ -281,3 +281,112 @@ unittest {
 
     cmd("tool.set edge.bevel off");
 }
+
+// ---------------------------------------------------------------------------
+// THE TOOL DOOR INTO THE FIN-BUNDLE PATH — task 1903 Stage E4's review
+// MINOR-5, closed at Stage G.
+//
+// WHY THE OTHER FIN CELL DOES NOT COVER THIS. `tests/test_bevel_fin_bundle.d`
+// drives `mesh.bevel`, the COMMAND. `bevelEdgesByMask` has a second production
+// door — this tool's `applyHeadless` and its per-frame preview — and every
+// existing edge-bevel tool test in this file drives a CUBE, which cannot
+// exhibit a fin bundle at all (an isolated bundle needs a spine edge shared by
+// three or more faces whose two endpoints touch nothing but those fins). So the
+// tool's route into the two `mesh_ops/bevel_fin.d` kernels had NO cell of any
+// kind: E4's review named the gap, and it was to be closed either by Stage M
+// (when the tool grew a batch) or by whichever stage reached the branch first.
+// Stage G reached it first — it is the stage that gave this tool its batch —
+// so the cell lands here.
+//
+// The mesh comes in through `/api/load-mesh` (памятка 22: a branch unreachable
+// from the standard fixture must bring its own stand).
+unittest {
+    // Three fins on one spine edge, spine along Z, fins at 120°.
+    string verts = `[[0,0,1],[0,0,-1]`;
+    foreach (k; 0 .. 3) {
+        immutable double a = 2.0 * 3.14159265358979 * k / 3.0;
+        import std.math : cos, sin;
+        verts ~= `,[` ~ cos(a).to!string ~ `,` ~ sin(a).to!string ~ `,1]`;
+        verts ~= `,[` ~ cos(a).to!string ~ `,` ~ sin(a).to!string ~ `,-1]`;
+    }
+    verts ~= `]`;
+    string faces = `[[0,2,3,1],[0,4,5,1],[0,6,7,1]]`;
+    auto lr = parseJSON(cast(string)post(BASE ~ "/api/load-mesh",
+        `{"vertices":` ~ verts ~ `,"faces":` ~ faces ~ `}`));
+    assert(lr["status"].str == "ok", "/api/load-mesh (fin bundle) failed: " ~ lr.toString);
+
+    auto m0 = model();
+    assert(m0["vertexCount"].integer == 8 && m0["faces"].array.length == 3,
+        "the loaded fin bundle is not V=8 F=3 — the assertions below would be "
+      ~ "measuring some other mesh");
+
+    int spine = edgeIndex(m0, 0, 1);
+    assert(spine >= 0, "the loaded fin bundle has no (0,1) spine edge");
+    auto sr = parseJSON(cast(string)post(BASE ~ "/api/select",
+        `{"mode":"edges","indices":[` ~ spine.to!string ~ `]}`));
+    assert(sr["status"].str == "ok", "spine edge selection failed");
+
+    auto before = getJson("/api/changes");
+
+    cmd("tool.set edge.bevel on");
+    settle();
+    interactiveCmd("tool.attr edge.bevel width 0.4");
+    settle();
+
+    // THE PREVIEW half — the per-frame door, which the `tool.attr` scrub drives
+    // through the same `rebuildPreview` a drag does.
+    auto prev = model();
+    assert(prev["vertexCount"].integer == 12 && prev["faces"].array.length == 5,
+        format("the interactive scrub previewed V=%d F=%d on a three-fin "
+             ~ "bundle, expected V=12 F=5 (six rails in, the two spine verts "
+             ~ "out, two fan caps added). `bevelEdgesByMask` refuses a >=3-face "
+             ~ "edge outright unless the isolated-bundle precondition holds, "
+             ~ "and it refuses byte-identically — so on a refusal every "
+             ~ "assertion below is vacuous and this cell would not be touching "
+             ~ "the fin path at all (task 1903 Stage G, E4 review MINOR-5).",
+               prev["vertexCount"].integer, prev["faces"].array.length));
+
+    // THE COMMIT half.
+    cmd("tool.doApply");
+    settle();
+    auto post = model();
+    assert(post["vertexCount"].integer == 12 && post["faces"].array.length == 5,
+        format("doApply over a standing fin-bundle preview left V=%d F=%d, "
+             ~ "expected V=12 F=5 — either the idempotency guard "
+             ~ "(`before.restore` on a standing preview) failed on this path, "
+             ~ "or the commit door refused where the preview door did not "
+             ~ "(task 1903 Stage G).",
+               post["vertexCount"].integer, post["faces"].array.length));
+
+    auto after = getJson("/api/changes");
+
+    // THE SEAM ROWS, which are why this cell belongs to Stage G rather than to
+    // Stage M. Both doors — preview and commit — open a batch of their own
+    // since Stage G, and this is the ONLY cell in the tree that drives either
+    // of them into `mesh_ops/bevel_fin.d`.
+    immutable long nested = after["nestedBatchOpens"].integer
+                          - before["nestedBatchOpens"].integer;
+    assert(nested == 0,
+        "the Edge Bevel tool opened " ~ nested.to!string ~ " NESTED batch(es) "
+      ~ "on the fin-bundle path. Until Stage G, `bevelEdgesByMask` held a "
+      ~ "TRANSITIONAL `unrecorded` batch at each of its two fin-bundle early "
+      ~ "returns (plan §4.4a) and this tool was the door that had NO cell "
+      ~ "watching it — E4's review named exactly that gap. Stage G removed the "
+      ~ "debt and gave both tool doors their own batch, and this row is what "
+      ~ "says the tool's open is the outermost one "
+      ~ "(task 1903 Stage G, E4 review MINOR-5).");
+
+    immutable long opLog = after["opLogEntriesRecorded"].integer
+                         - before["opLogEntriesRecorded"].integer;
+    assert(opLog == 0,
+        "the Edge Bevel tool recorded " ~ opLog.to!string ~ " op-log entr(ies) "
+      ~ "across the fin-bundle preview and commit. Plan §9 requires the "
+      ~ "interactive preview path to stay UNRECORDED, and the commit still "
+      ~ "undoes through a whole-mesh MeshSnapshot (task 1903 Stage G).");
+
+    assert(after["batchLeaks"].integer - before["batchLeaks"].integer == 0,
+        "a MeshEditBatch leaked its frame on the tool's fin-bundle path "
+      ~ "(task 1903 §2.2c).");
+
+    cmd("tool.set edge.bevel off");
+}

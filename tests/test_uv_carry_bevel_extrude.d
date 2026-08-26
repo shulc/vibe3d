@@ -41,13 +41,27 @@ import std.math : fabs, sqrt;
 import std.conv : to;
 
 import mesh : Mesh, MeshMap, MapDomain, kUvMapName, UvWallLaw,
-              MeshEditBatch, kPolyBevelEditScope, bevelFacesByMask;
+              MeshEditBatch, kPolyBevelEditScope, bevelFacesByMask,
+              kEdgeBevelEditScope, bevelEdgesByMask;
 // Task 1903 Stage F2: the polygon-bevel entries are free functions over
 // `ref MeshEditBatch` in `source/mesh_ops/poly_bevel.d`, so this test opens the
 // batch itself. UNRECORDED — the fixture compares MAP payloads, not an op-log.
 private auto polyBevelOnce(alias kernel, Args...)(ref Mesh m, auto ref Args args) {
     auto ed = MeshEditBatch.unrecorded(m, kPolyBevelEditScope);
     auto n = kernel(ed, args);
+    ed.close();
+    return n;
+}
+
+// Task 1903 Stage G: the same for the EDGE bevel entry, which is a free
+// function over `ref MeshEditBatch` in `source/mesh_ops/edge_bevel.d` now.
+// Its own constant, not `kPolyBevelEditScope`: the two happen to have the same
+// VALUE today, and passing one family's scope to another family's kernel is
+// exactly the drift each `k*EditScope` exists to prevent.
+private size_t edgeBevelOnce(ref Mesh m, const bool[] mask, float width,
+                             int roundLevel = 0, bool widthMode = false) {
+    auto ed = MeshEditBatch.unrecorded(m, kEdgeBevelEditScope);
+    immutable size_t n = ed.bevelEdgesByMask(mask, width, roundLevel, widthMode);
     ed.close();
     return n;
 }
@@ -153,7 +167,7 @@ private size_t runOp(ref Mesh m, const JSONValue op, bool wallOverride = false,
                      UvWallLaw forced = UvWallLaw.Copy) {
     const string kind = op["kind"].str;
     if (kind == "edge_bevel")
-        return m.bevelEdgesByMask(edgeMask(m, op["edges"]), jnum(op["offset"]), 0, false);
+        return edgeBevelOnce(m, edgeMask(m, op["edges"]), jnum(op["offset"]), 0, false);
     if (kind == "face_bevel")
         return polyBevelOnce!bevelFacesByMask(m, faceMask(m, op["faces"]), jnum(op["inset"]),
                                   jnum(op["shift"]), false, 0, false);
@@ -612,7 +626,7 @@ unittest {
         auto emask = new bool[](m.edges.length);
         emask[0] = true;
         size_t n;
-        if (which == 0)      n = m.bevelEdgesByMask(emask, 0.2f, 0, false);
+        if (which == 0)      n = edgeBevelOnce(m, emask, 0.2f, 0, false);
         else if (which == 1) n = polyBevelOnce!bevelFacesByMask(m, fmask, 0.2f, 0.1f, false, 0, false);
         else                 n = m.extrudeFacesByMask(fmask, 0.5f, false);
         assert(n > 0, "cube op should apply");

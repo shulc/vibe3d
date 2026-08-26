@@ -10,10 +10,11 @@ module tests.unit.mesh_ops.bevel_fin_test;
 // blocks are untouched by this stage. This file holds the two things they
 // cannot say, both of which the conversion introduced or exposed:
 //
-//   1. THE BATCH IS DOING SOMETHING. `bevelEdgesByMask` hands a fin bundle to a
-//      free function over `ref MeshEditBatch`, and the batch that call needs is
-//      the TRANSITIONAL one edge_bevel.d holds (plan §4.4a) until Stage G. Its
-//      whole point is that one bevel stamps ONCE. Nothing on the wire can see
+//   1. THE BATCH IS DOING SOMETHING. `bevelEdgesByMask` is itself a free
+//      function over `ref MeshEditBatch` since Stage G, and it hands a fin
+//      bundle straight on to these kernels inside the batch its CALLER opened
+//      (until G that batch was the transitional one edge_bevel.d held, plan
+//      §4.4a). Its whole point is that one bevel stamps ONCE. Nothing on the wire can see
 //      that: `/api/changes` counts UNBATCHED commits, and this path has a batch
 //      either way — measured, the counter reads +0 with the batch and +0 with
 //      the batch moved (E3 memo 11, the same trap the axis-slice ladder had).
@@ -39,6 +40,23 @@ import math;
 import mesh_edit_delta;
 import mesh_ops.bevel_fin;
 import mesh_selsets : selSetEditPolygon, selSetEditVertex, selSetEditEdge, SetEditMode;
+
+// TASK 1903 Stage G: `bevelEdgesByMask` — the two doors into these kernels —
+// is a module-level free function over `ref MeshEditBatch` now, so the two
+// batch blocks below open the batch THEMSELVES. That is the whole change Stage
+// G makes to this file's meaning: the deferral that used to come from
+// edge_bevel.d's TRANSITIONAL batch (plan §4.4a, which named Stage G as its
+// removing stage) now comes from the caller's batch, which is what §4.1 says a
+// caller owes. The measured ladders in `kUnbatched` are unchanged, because
+// what they measure — how many stamps one fin bevel makes with NO batch
+// anywhere — never depended on which frame held it.
+private size_t bevelEdgesOnce(ref Mesh m, const bool[] mask, float width,
+                              int roundLevel = 0, bool widthMode = false) {
+    auto ed = MeshEditBatch.unrecorded(m, kEdgeBevelEditScope);
+    immutable size_t n = ed.bevelEdgesByMask(mask, width, roundLevel, widthMode);
+    ed.close();
+    return n;
+}
 
 // ---------------------------------------------------------------------------
 /// A fin bundle with every mark plane non-empty AND non-uniform, and it
@@ -129,7 +147,7 @@ unittest { // ONE stamp, however many fins — the transitional batch's only
         mask[es] = true;
 
         immutable ulong base = m.mutationVersion;
-        immutable size_t r = m.bevelEdgesByMask(mask, 0.4f);
+        immutable size_t r = bevelEdgesOnce(m, mask, 0.4f);
         immutable ulong d = m.mutationVersion - base;
 
         // ANTI-VACUITY. `bevelEdgesByMask` returns 0 on every refusal, and a
@@ -147,12 +165,13 @@ unittest { // ONE stamp, however many fins — the transitional batch's only
                    expectV, n + 2));
         assert(d == 1,
             format("N=%d: one fin-bundle bevel bumped mutationVersion by %d, "
-                 ~ "expected exactly 1. The TRANSITIONAL `MeshEditBatch` in "
-                 ~ "mesh_ops/edge_bevel.d (plan §4.4a, removed by Stage G) is "
+                 ~ "expected exactly 1. The CALLER's `MeshEditBatch` — this "
+                 ~ "block's own `bevelEdgesOnce`, since Stage G removed "
+                 ~ "edge_bevel.d's two transitional opens (plan §4.4a) — is "
                  ~ "what defers every internal commit to one close(). Without "
                  ~ "it this reads %d on this stand — and it GROWS with N (12 / "
                  ~ "14 / 16 for N = 3 / 4 / 5), which is the half a single-N "
-                 ~ "cell cannot see (task 1903 Stage E4).",
+                 ~ "cell cannot see (task 1903 Stage E4, re-anchored at G).",
                    n, d, kUnbatched[i]));
     }
 }
@@ -165,7 +184,7 @@ unittest { // the same, through the MULTI-EDGE door
     mask[es] = true; mask[ea] = true;
 
     immutable ulong base = m.mutationVersion;
-    immutable size_t r = m.bevelEdgesByMask(mask, 0.4f);
+    immutable size_t r = bevelEdgesOnce(m, mask, 0.4f);
     immutable ulong d = m.mutationVersion - base;
 
     assert(r == 2,
@@ -174,7 +193,8 @@ unittest { // the same, through the MULTI-EDGE door
              ~ "vacuous.", r));
     assert(d == 1,
         format("the multi-edge fin bevel bumped mutationVersion by %d, expected "
-             ~ "1 — the second of edge_bevel.d's two transitional batches. "
+             ~ "1 — the caller's batch, which since Stage G is the ONLY one on "
+             ~ "the stack (edge_bevel.d's second transitional open is gone). "
              ~ "Measured without the deferral: 14 (task 1903 Stage E4).", d));
 }
 

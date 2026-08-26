@@ -563,9 +563,9 @@ unittest // the mixin count is falling, and the converted families stay converte
     // E3: MeshCutOps; E4: MeshBevelFinOps AND MeshBevelVertexOps (the one
     // stage that converts two families, plan §12's E4 row — so this number
     // falls by TWO there and by one everywhere else); F1: MeshLoopSliceOps;
-    // F2: MeshPolyBevelOps. The two left are `MeshEdgeBevelOps` (Stage G) and
+    // F2: MeshPolyBevelOps; G: MeshEdgeBevelOps. The ONE left is
     // `MeshExtrudeOps` (Stage H).
-    enum size_t kExpected = 2;
+    enum size_t kExpected = 1;
     assert(live.length == kExpected,
         format("source/mesh.d instantiates %d `mixin Mesh*Ops` templates; this "
              ~ "gate expects %d. Track 1 started at %d and every conversion "
@@ -586,7 +586,8 @@ unittest // the mixin count is falling, and the converted families stay converte
                                             "MeshBevelFinOps",          // Stage E4
                                             "MeshBevelVertexOps",       // Stage E4
                                             "MeshLoopSliceOps",         // Stage F1
-                                            "MeshPolyBevelOps"];        // Stage F2
+                                            "MeshPolyBevelOps",        // Stage F2
+                                            "MeshEdgeBevelOps"];       // Stage G
     foreach (name; kConverted)
         assert(!live.canFind(name),
             format("`mixin %s;` is back in struct Mesh. That family is free "
@@ -1460,17 +1461,30 @@ unittest // Stage E4 — the two bevel families, one commit
       ~ "(task 1903 Stage E4, plan §2.7).");
 
     // Each family's declared scope lives ONCE, beside its kernels — D2's reason
-    // for `kReduceEditScope`. `kBevelFinEditScope` has TWO production call sites
-    // (both inside edge_bevel.d's transitional block) and `kBevelVertexEditScope`
-    // has THREE (the command plus the tool's two), so both have room to drift.
+    // for `kReduceEditScope`. `kBevelVertexEditScope` has THREE production call
+    // sites (the command plus the tool's two), so it has room to drift.
+    //
+    // `kBevelFinEditScope` HAS NONE ANY MORE, and that is a measured consequence
+    // of Stage G rather than rot: its two production callers were exactly
+    // edge_bevel.d's transitional batches, and G removed them. The fin kernels
+    // now run inside the batch `bevelEdgesByMask`'s CALLER opened, which passes
+    // `kEdgeBevelEditScope`. The constant survives as the fin family's own
+    // declared class — the value its `commitChange` should agree with, asserted
+    // by `tests/unit/mesh_ops/bevel_fin_test.d`'s recording block — and Stage
+    // L7 is what gives it a production caller again, when those kernels get a
+    // RECORDING batch of their own. Deleting it now would delete the only
+    // written-down statement of what class they declare.
     // The BEHAVIOURAL half — that the value is right, written out from the enum
     // independently — is in each family's recording block; this row only pins
     // that there is one of it.
     assert(countOccurrences(bf, "enum uint kBevelFinEditScope =") == 1,
         "source/mesh_ops/bevel_fin.d no longer declares `kBevelFinEditScope` at "
-      ~ "module scope — edge_bevel.d's two transitional batches pass it, and a "
-      ~ "per-call-site literal is the drift this constant exists to prevent "
-      ~ "(task 1903 Stage E4).");
+      ~ "module scope. It has had NO production caller since Stage G removed "
+      ~ "edge_bevel.d's two transitional batches — the fin kernels run inside "
+      ~ "the edge bevel caller's batch now — but it is still the one written "
+      ~ "statement of the class those kernels declare, which bevel_fin_test.d's "
+      ~ "recording block asserts and which Stage L7 will pass again "
+      ~ "(task 1903 Stage E4, re-anchored at Stage G).");
     assert(countOccurrences(bv, "enum uint kBevelVertexEditScope =") == 1,
         "source/mesh_ops/bevel_vertex.d no longer declares "
       ~ "`kBevelVertexEditScope` at module scope — the vertex-bevel command and "
@@ -1493,48 +1507,28 @@ unittest // Stage E4 — the two bevel families, one commit
                  ~ "nestedBatchOpens DELTA assert in that command's own suite "
                  ~ "test (task 1903 Stage E4).", row[0]));
 
-    // THE TRANSITIONAL DEBT ITSELF (§4.4a) — it lives at the caller, it is
-    // scoped to the two converted calls ALONE, and it is UNRECORDED. The
-    // narrowing is the part Stage D3's review MAJOR-3 made mandatory: a batch
-    // spanning the enclosing block would change the publish shape of the
-    // MANIFOLD bevel path, which this stage does not touch. Two opens, both
-    // with the same subject and the same declared scope; a third would be a
-    // kernel-side batch that escaped the rows above.
-    immutable ebPath = buildPath(repoRoot, "source", "mesh_ops", "edge_bevel.d");
-    assert(exists(ebPath), "cannot find source/mesh_ops/edge_bevel.d at " ~ ebPath);
-    immutable eb = stripCommentsAndStrings(readText(ebPath));
-    assert(countOccurrences(eb,
-            "MeshEditBatch.unrecorded(this, kBevelFinEditScope);") == 2,
-        format("source/mesh_ops/edge_bevel.d holds %d transitional "
-             ~ "`MeshEditBatch.unrecorded(this, kBevelFinEditScope);` open(s); "
-             ~ "expected exactly 2, one per fin-bundle early return. Fewer means "
-             ~ "a converted kernel is being called with no batch to defer into "
-             ~ "(and, since edge_bevel.d is still a mixin body, that is a "
-             ~ "COMPILE error, so 0 here means the call itself went away); more "
-             ~ "means the debt grew without a row saying so. Stage G removes "
-             ~ "both (task 1903 §4.4a, Stage E4).",
-               countOccurrences(eb, "MeshEditBatch.unrecorded(this, kBevelFinEditScope);")));
-    assert(countOccurrences(eb, "MeshEditBatch(") == 0,
-        "source/mesh_ops/edge_bevel.d opens a RECORDING `MeshEditBatch`. The "
-      ~ "two transitional opens must stay `unrecorded`: `mesh.bevel` undoes "
-      ~ "through a whole-mesh MeshSnapshot, so a recording batch would build an "
-      ~ "op-log nothing reads and `close()` would drop "
-      ~ "(task 1903 §4.4a, Stage E4).");
-    {
-        // …and the DEBT NAMES ITS REMOVING STAGE, in the source, in prose. This
-        // one assert reads the RAW file rather than the stripped one — the
-        // claim IS about the comment, and §4.4a requires the numbered stage to
-        // be named there so the next reader does not have to reconstruct it
-        // from the plan.
-        immutable ebRaw = readText(ebPath);
-        assert(countOccurrences(ebRaw, "TASK 1903 Stage E4 — A TRANSITIONAL BATCH") == 1
-            && countOccurrences(ebRaw, "WHAT REMOVES IT: **stage G**") == 1,
-            "source/mesh_ops/edge_bevel.d's transitional-batch comment lost "
-          ~ "either its TRANSITIONAL label or the name of the stage that "
-          ~ "removes it. §4.4a requires both: a debt whose removing stage is "
-          ~ "not written down beside it becomes a pattern (task 1903 Stage E4).");
-    }
-
+    // THE TRANSITIONAL DEBT IS GONE — Stage G REMOVED IT, and the three rows
+    // that pinned it went with it in the same commit.
+    //
+    // E4 converted these two kernels while `mesh_ops/edge_bevel.d` was still a
+    // mixin body, so `bevelEdgesByMask`'s two fin-bundle early returns had to
+    // open an `unrecorded` `MeshEditBatch` each (§4.4a's debt shape). Three
+    // rows lived here: the `MeshEditBatch.unrecorded(this, kBevelFinEditScope);`
+    // == 2 count, the `MeshEditBatch(` == 0 companion, and a RAW-text row
+    // requiring the comment to name "stage G" as the removing stage. Stage G is
+    // that stage; keeping any of the three would have been a row asserting the
+    // debt is still there.
+    //
+    // WHAT REPLACES THEM, and it is not nothing: edge_bevel.d's own Stage-G
+    // block below carries `MeshEditBatch.unrecorded(` == 0 AND
+    // `MeshEditBatch(` == 0 over that file — the kernel opens NO batch of any
+    // kind now, which is the §4.1 rule the debt was an exception to. Note what
+    // could NOT hold this: `tests/test_bevel_fin_bundle.d`'s per-command
+    // `nestedBatchOpens` delta read 0 BEFORE (the transitional open was the
+    // outermost batch) and reads 0 AFTER (there is no second open at all), so
+    // it is blind to the removal by construction. It is still the right row for
+    // what it does watch — that no LATER caller nests one.
+    //
     // §5.7 over both files. Neither has ever carried a raw position write —
     // both build every new coordinate through `ed.addVertex(...)` — so unlike
     // cut.d's these two zeroes are statements, not retirements. THE ZERO IS
@@ -2199,6 +2193,391 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
 }
 
 // ---------------------------------------------------------------------------
+// STAGE G — the MANIFOLD EDGE BEVEL family (`mesh_ops/edge_bevel.d`).
+//
+// One kernel, `bevelEdgesByMask`, and it is the file with the deepest nesting
+// in the whole conversion (depth 7). What is DIFFERENT about this stage, and
+// therefore what these rows exist to hold:
+//
+//   * THREE DATA FIELDS the template used to INJECT into `struct Mesh`
+//     (`bevelPinnedOrphans_`, `bevelCapCoincidentPos_`, `bevelCapOrphanPos_`),
+//     read by a THIRD module. A free function cannot inject a field, so their
+//     DECLARATION moved into `struct Mesh` itself and every spelling at every
+//     site is unchanged. That is a DECISION (plan §2.7's rule for this family)
+//     and — по памятке 32 — the build cannot hold it: `private` in D restricts
+//     NAME LOOKUP only, so a green build would be green whatever the readers
+//     did. The rows below name the declaration site AND both reader files,
+//     BOTH WAYS. The alternative (return them in a result struct) was declined
+//     because it rewrites three call sites in two modules this conversion
+//     otherwise does not touch — a second edit hiding inside a move.
+//   * THE THIRD MODULE `dub build` CANNOT SEE. `source/mesh_bevel_census.d`
+//     calls this kernel at ELEVEN sites, ALL below a module-level
+//     `version (unittest):`. A signature change there is invisible to a plain
+//     build; only `dub test --config=tests` and the suite binary go red. The
+//     eleven now go through ONE `bevelEdgesOnce` helper, pinned two-sided.
+//   * TWO `rewriteFaces` SITES IN ONE FUNCTION, under ONE shared
+//     `beginCornerRewrite` handle — 1902 §2.6's shared-`rwB` constraint, which
+//     plan §5.3's K-audit row records as "two sites, one function, TWO scopes".
+//     The counts are pinned here so a third site, or a second handle, cannot
+//     arrive unremarked.
+//   * NO INDEXED `ed.faces[fi] = …` INSTALL AT ALL, which is what separates
+//     this family from `bevel_fin.d` (E4) and `poly_bevel.d` (F2): both of
+//     those bypass the primitive and are rows of §5.3's OTHER audit. This one
+//     calls the primitive and is a DISARMED publisher — measured, not read:
+//     arming `MeshEditTracker.wantsFaceReindex` turns its op-log from
+//     `[AddVerts RemoveVerts Reindex]` into
+//     `[AddVerts FaceReindex FaceReindex RemoveVerts Reindex]`, TWO entries,
+//     ONE PER REWRITE. So Stage K reaches this half and cannot reach the
+//     fin-bundle half, in one file (памятка 21, one stage carrying two
+//     diagnoses — here it is one FILE carrying two).
+//   * THE §5.7 ROW IS A `== 0` STATEMENT, not a retirement: this family has
+//     never moved an EXISTING vertex — every new coordinate is an
+//     `ed.addVertex` argument, which is also why `kEdgeBevelEditScope` carries
+//     no `Position` bit. The zero is earned by M-V1/G, a raw write through a
+//     NESTED index, not by the count.
+// ---------------------------------------------------------------------------
+unittest // Stage G — the manifold edge bevel family
+{
+    immutable ebPath = buildPath(repoRoot, "source", "mesh_ops", "edge_bevel.d");
+    assert(exists(ebPath), "cannot find source/mesh_ops/edge_bevel.d at " ~ ebPath);
+    immutable eb = stripCommentsAndStrings(readText(ebPath));
+    assert(countOccurrences(eb, "mixin template MeshEdgeBevelOps") == 0,
+        "source/mesh_ops/edge_bevel.d still declares `mixin template "
+      ~ "MeshEdgeBevelOps` — Stage G converted this family to a free function "
+      ~ "over `ref MeshEditBatch`; a surviving template is either dead or a "
+      ~ "second implementation (task 1903 Stage G).");
+
+    // THE ONE MUTATING RECEIVER. The trailing comma is load-bearing (D2 review,
+    // MINOR-1): without it the needle is a PREFIX of the declaration, so
+    // renaming the receiver `ed` -> `edb` would leave this pin green while the
+    // name the pin exists to hold had changed.
+    assert(countOccurrences(eb, "bevelEdgesByMask(ref MeshEditBatch ed,") == 1,
+        "source/mesh_ops/edge_bevel.d no longer declares `bevelEdgesByMask` "
+      ~ "over `ref MeshEditBatch ed,`. That receiver is the enforcement, not "
+      ~ "the style: it is what makes a batchless call a COMPILE error, so one "
+      ~ "edge bevel STAMPS AND DERIVES once at close() instead of once per "
+      ~ "appended rail vertex, once per appended chamfer strip, once per "
+      ~ "rebuildEdges and once at the tail. MEASURED on the tagged cube stand: "
+      ~ "the batched `mutationVersion` delta is 1 for every selection size and "
+      ~ "every round level, where the unbatched ladder is 8 / 10 / 13 / 28 for "
+      ~ "1 edge L0 / 1 edge L1 / 3 edges / all 12 "
+      ~ "(task 1903 §4.1, §5.2 G).");
+    assert(countOccurrences(eb, "bevelEdgesByMask(ref Mesh ") == 0,
+        "`bevelEdgesByMask` has a `ref Mesh` receiver again — that compiles, "
+      ~ "and it drops the batch: the kernel's internal commits go back to "
+      ~ "stamping one at a time. Plan §4.4a REJECTED exactly this overload, by "
+      ~ "name, because nothing in the two lanes can see it — the geometry is "
+      ~ "identical and the receiver pin is satisfied by the `ref MeshEditBatch` "
+      ~ "overload that still exists. This row is the one thing that can "
+      ~ "(task 1903 Stage G).");
+    // THE TRIPWIRE ITSELF IS NOW PINNED, and this row exists because deleting
+    // the whole `static assert(!__traits(hasMember, ...))` block at the foot of
+    // `edge_bevel.d` was measured GREEN on both lanes (Stage G review) — it is
+    // the SOLE catcher for a hand-written member or an in-struct alias of the
+    // family names, and nothing was watching the catcher. Pre-existing across
+    // all eight converted families; G is where it stops.
+    assert(countOccurrences(eb, "static assert(!__traits(hasMember, Mesh, n)") == 1,
+        "source/mesh_ops/edge_bevel.d no longer carries its "
+      ~ "`static assert(!__traits(hasMember, Mesh, n), ...)` tripwire exactly "
+      ~ "once. That block is the ONLY thing that fails the build when someone "
+      ~ "hand-writes `Mesh.bevelEdgesByMask` or an in-struct alias of it — a "
+      ~ "member BEATS a same-name UFCS free function silently, so without the "
+      ~ "tripwire the family quietly stops being converted and every other row "
+      ~ "here stays green. Deleting the tripwire was measured green on both "
+      ~ "lanes before this row existed (task 1903 Stage G review).");
+    assert(countOccurrences(eb, "bevelEdgesByMask(ref const(Mesh)") == 0,
+        "`bevelEdgesByMask` cannot have a `ref const(Mesh)` receiver — it "
+      ~ "appends vertices and faces, rewrites `faces` twice and compacts. Such "
+      ~ "an overload could only exist by casting const away "
+      ~ "(task 1903 Stage G).");
+
+    // A KERNEL NEVER OPENS A BATCH (§4.1, §2.3 rule 2) — and on THIS file that
+    // row is also the proof that Stage G removed E4's transitional debt. Both
+    // spellings, because `MeshEditBatch(` alone does not catch
+    // `MeshEditBatch.unrecorded(` and vice versa.
+    assert(countOccurrences(eb, "MeshEditBatch(") == 0
+        && countOccurrences(eb, "MeshEditBatch.unrecorded(") == 0,
+        "source/mesh_ops/edge_bevel.d opens a `MeshEditBatch`. A KERNEL never "
+      ~ "opens one — the command, the tool, or (transitionally, §4.4a) a "
+      ~ "still-mixin caller does. Until Stage G this file held exactly TWO such "
+      ~ "opens, at the fin-bundle early returns, because it was itself a mixin "
+      ~ "body with no caller-held batch to hand on; Stage G converted it and "
+      ~ "both went away. This row is what says so — the per-command "
+      ~ "`nestedBatchOpens` delta in tests/test_bevel_fin_bundle.d CANNOT: it "
+      ~ "read 0 with the transitional opens (they were the OUTERMOST batch) and "
+      ~ "reads 0 without them (task 1903 Stage G, §4.4a).");
+
+    // …and the two fin-bundle hand-offs are PLAIN CALLS, in tail position.
+    assert(countOccurrences(eb, "return ed.bevelIsolatedFinBundleSpine(") == 1
+        && countOccurrences(eb, "return ed.bevelFinBundleSpineMultiEdge(") == 1,
+        "source/mesh_ops/edge_bevel.d no longer hands a fin bundle straight to "
+      ~ "`bevel_fin.d`'s two kernels inside the CALLER's batch. Stage E4 had to "
+      ~ "wrap each in an `unrecorded` batch of its own because this body was a "
+      ~ "mixin; Stage G's whole change to these two arms is that the wrapper is "
+      ~ "gone and the call is direct. A re-wrapped call would also trip the "
+      ~ "`MeshEditBatch` row above, which is why both exist "
+      ~ "(task 1903 Stage G, §4.4a).");
+
+    // THE FAMILY'S DECLARED SCOPE, ONE HOME — D2's reason for
+    // `kReduceEditScope`. THREE production call sites pass it (the command's
+    // edge arm, the tool's commit, the tool's per-frame preview) plus three
+    // test helpers, so it has room to drift.
+    assert(countOccurrences(eb, "enum uint kEdgeBevelEditScope =") == 1,
+        "source/mesh_ops/edge_bevel.d no longer declares `kEdgeBevelEditScope` "
+      ~ "at module scope — three production call sites and three test helpers "
+      ~ "pass it, and a per-call-site literal is the drift this constant exists "
+      ~ "to prevent (task 1903 Stage G).");
+
+    // …AND THE KERNEL'S OWN `commitChange` FLAGS ARE BOUND TO IT. Stage F2's
+    // review (MINOR-2) found this hole on poly_bevel.d: `kEdgeBevelEditScope`
+    // is what a RECORDING batch DECLARES, and the literal below is what the
+    // kernel STAMPS — two different spellings of the same intent, able to
+    // drift independently with nothing watching. Stage H's `extrude.d`
+    // inherits the same hole and needs its own row.
+    assert(countOccurrences(eb,
+            "ed.commitChange(MeshEditScope.Geometry | MeshEditScope.Marks)") == 1,
+        "source/mesh_ops/edge_bevel.d: the kernel's own "
+      ~ "`ed.commitChange(MeshEditScope.Geometry | MeshEditScope.Marks)` tail "
+      ~ "call no longer appears exactly once with this exact spelling — "
+      ~ "`kEdgeBevelEditScope` above is what a RECORDING batch declares, not "
+      ~ "what the kernel stamps at `commitChange`, and those two can drift "
+      ~ "independently. H's `extrude.d` inherits this same hole and needs its "
+      ~ "own row (task 1903 Stage G, Stage F2 review MINOR-2).");
+
+    // THE TWO REWRITES UNDER ONE HANDLE (1902 §2.6's shared-`rwB` constraint,
+    // plan §5.3's K-audit row). BOTH numbers matter and in opposite directions:
+    // a THIRD rewrite is a face change nobody audited, and a SECOND
+    // `beginCornerRewrite` would split the shared handle the corner-provenance
+    // capture depends on.
+    assert(countOccurrences(eb, "rewriteFaces(ed,") == 2,
+        format("source/mesh_ops/edge_bevel.d calls `rewriteFaces(ed, …)` %d "
+             ~ "time(s); Stage G measured exactly 2 — the rebuild pass and the "
+             ~ "new-vertex merge pass, in ONE function, under ONE "
+             ~ "`beginCornerRewrite` handle. That pairing is 1902 §2.6's "
+             ~ "shared-`rwB` constraint and plan §5.3's K-audit row for this "
+             ~ "family (\"two sites, one function, TWO scopes\"): Stage K owes "
+             ~ "this family TWO per-rewrite arming scopes, not one, and a third "
+             ~ "site would silently need a third (task 1903 Stage G).",
+               countOccurrences(eb, "rewriteFaces(ed,")));
+    assert(countOccurrences(eb, "ed.beginCornerRewrite()") == 1,
+        "source/mesh_ops/edge_bevel.d no longer opens exactly ONE "
+      ~ "`beginCornerRewrite` handle for its two `rewriteFaces` calls. The "
+      ~ "shared handle is the constraint 1902 §2.6 states: this kernel declares "
+      ~ "corner provenance ONCE, after the SECOND rewrite (task 1903 Stage G).");
+
+    // …and NO indexed install, which is what puts this family on the ARMABLE
+    // side of §5.3's split. `bevel_fin.d` and `poly_bevel.d` install windings
+    // with `ed.faces[fi] = …` and reach no hook at all; this one goes through
+    // the primitive every time.
+    {
+        import std.regex : ctRegex, matchAll;
+        size_t installs = 0;
+        foreach (_; matchAll(eb, ctRegex!(`ed\.faces\s*\[[^\]]*\]\s*=[^=]`))) ++installs;
+        assert(installs == 0,
+            format("source/mesh_ops/edge_bevel.d makes %d indexed "
+                 ~ "`ed.faces[…] = …` install(s); Stage G measured ZERO. Every "
+                 ~ "winding this family writes goes through "
+                 ~ "`mesh_planes.rewriteFaces`, and that is exactly why its "
+                 ~ "publisher is DISARMED rather than ABSENT — arming "
+                 ~ "`wantsFaceReindex` changes its op-log, where it leaves "
+                 ~ "bevel_fin.d's and poly_bevel.d's byte-identical. An indexed "
+                 ~ "install here would move this family into §5.3's OTHER "
+                 ~ "audit, out of Stage K's reach, with no other row noticing "
+                 ~ "(task 1903 Stage G, plan §5.3).", installs));
+    }
+
+    // THE THREE `Mesh.`-QUALIFIED STATICS. `faceAttrOr` and
+    // `combineFaceMarksWords` were widened at F1 and `rebuildFaceWithVertexSubs`
+    // at E4; all three are `static`, so UFCS through the batch handle cannot
+    // reach them and this file must SPELL the qualifier. The §2.6 rows'
+    // needles are receiver-agnostic and did not change — verified by the walk
+    // in the widenings block below, not assumed.
+    assert(countOccurrences(eb, "Mesh.faceAttrOr(") == 2
+        && countOccurrences(eb, "Mesh.combineFaceMarksWords(") == 1
+        && countOccurrences(eb, "Mesh.rebuildFaceWithVertexSubs(") == 1,
+        format("source/mesh_ops/edge_bevel.d spells `Mesh.faceAttrOr(` %d "
+             ~ "time(s), `Mesh.combineFaceMarksWords(` %d and "
+             ~ "`Mesh.rebuildFaceWithVertexSubs(` %d; Stage G measured 2 / 1 / "
+             ~ "1. All three are `static` MEMBERS of `Mesh`, so a bare call "
+             ~ "cannot resolve from a free function and the qualifier is not "
+             ~ "decoration — it is the one qualified member spelling this "
+             ~ "family keeps (task 1903 Stage G, §2.6).",
+               countOccurrences(eb, "Mesh.faceAttrOr("),
+               countOccurrences(eb, "Mesh.combineFaceMarksWords("),
+               countOccurrences(eb, "Mesh.rebuildFaceWithVertexSubs(")));
+
+    // …and the two nested TYPES the mixin body used to reach unqualified.
+    assert(countOccurrences(eb, "Mesh.VertSub") == 6
+        && countOccurrences(eb, "Mesh.Marks.Select") == 2,
+        format("source/mesh_ops/edge_bevel.d spells `Mesh.VertSub` %d time(s) "
+             ~ "and `Mesh.Marks.Select` %d; Stage G measured 6 and 2. Both are "
+             ~ "NESTED TYPES of `Mesh` that a mixin body saw unqualified "
+             ~ "(plan §4.3 step 4). A bare spelling does not compile from a "
+             ~ "free function, so a drop here is a compile error — but a GROWTH "
+             ~ "is a new use nobody counted (task 1903 Stage G).",
+               countOccurrences(eb, "Mesh.VertSub"),
+               countOccurrences(eb, "Mesh.Marks.Select")));
+
+    // THE SCOPED IMPORT THE TEMPLATE BODY CARRIED. `import mesh_ops.bevel_curves;`
+    // sat INSIDE the template because a mixin body resolves free names at its
+    // INSTANTIATION site, so a module-level import here did not reach it
+    // (measured, task 0717). With the template gone it is an ordinary
+    // module-level import — and it must stay in THIS file rather than migrate
+    // to mesh.d, which is what the column-0 needle says.
+    assert(countOccurrences(eb, "\nimport mesh_ops.bevel_curves;") == 1,
+        "source/mesh_ops/edge_bevel.d no longer imports `mesh_ops.bevel_curves` "
+      ~ "at MODULE scope (column 0). It was a SCOPED import inside the mixin "
+      ~ "template body — the shape a mixin forces — and Stage G's conversion is "
+      ~ "what made an ordinary import possible. Moving it to mesh.d instead "
+      ~ "would put this file's dependency somewhere it is not used "
+      ~ "(task 1903 Stage G, plan §4.3 step 2).");
+
+    // §5.7 — a `== 0` STATEMENT, not a retirement (E4's pair and F2 are the
+    // other two of this shape). Earned by M-V1/G: a raw write through a NESTED
+    // index (`ed.vertices[vEdges[0]].x += 0.0f;`), the spelling the predicate
+    // was blind to before Stage E3 widened it.
+    {
+    string ebFirstHit;
+    immutable size_t ebRaw = countRawPositionWrites(eb, ebFirstHit);
+    assert(ebRaw == 0,
+        format("source/mesh_ops/edge_bevel.d: %d raw position write(s) under "
+             ~ "§5.7's predicate, expected 0. First hit: `%s`. This family has "
+             ~ "never moved an EXISTING vertex — every rail, miter, hub and cap "
+             ~ "coordinate is an `ed.addVertex` argument — which is the same "
+             ~ "property that keeps the `Position` bit OUT of "
+             ~ "`kEdgeBevelEditScope`. A raw write here would move a vertex "
+             ~ "with nothing recorded and nothing stamped "
+             ~ "(task 1903 Stage G, plan §5.7).",
+               ebRaw, ebFirstHit));
+    }
+
+    // ---- THE THREE PARITY FIELDS, BOTH WAYS --------------------------------
+    //
+    // They are MEMBERS OF `Mesh` and that is Stage G's recorded decision, not
+    // an oversight (plan §2.7's rule for this family). Their VISIBILITY is
+    // unchanged: a mixin-injected member with no access specifier is PUBLIC, so
+    // these three have always been public members and this stage neither widens
+    // nor narrows anything. What holds the decision is THIS ROW, not the build
+    // (памятка 32: `private` in D restricts NAME LOOKUP only, so a green build
+    // would be green whatever the readers did) — and the tripwire at the foot
+    // of edge_bevel.d deliberately does NOT list them, because for these three
+    // `__traits(hasMember, Mesh, …)` answers `true` and always will.
+    immutable meshPath = buildPath(repoRoot, "source", "mesh.d");
+    immutable meshSrc  = stripCommentsAndStrings(readText(meshPath));
+    static immutable string[3] kParityDecls = ["uint[] bevelPinnedOrphans_;",
+                                               "Vec3[] bevelCapCoincidentPos_;",
+                                               "Vec3[] bevelCapOrphanPos_;"];
+    foreach (decl; kParityDecls)
+        assert(countOccurrences(meshSrc, decl) == 1,
+            format("source/mesh.d no longer declares `%s` exactly once. "
+                 ~ "`mixin MeshEdgeBevelOps;` used to INJECT this field into "
+                 ~ "`struct Mesh`; a free function cannot inject a field, so "
+                 ~ "Stage G moved the DECLARATION into the struct that already "
+                 ~ "owned it and changed no spelling at any site. Returning it "
+                 ~ "in a result struct instead was DECLINED: that rewrites "
+                 ~ "three call sites in two modules this conversion does not "
+                 ~ "otherwise touch, which plan §2.7 calls a second edit hiding "
+                 ~ "inside a move (task 1903 Stage G, §2.7).", decl));
+    assert(countOccurrences(eb, "bevelPinnedOrphans_") >= 1
+        && countOccurrences(eb, "bevelCapCoincidentPos_") >= 1
+        && countOccurrences(eb, "bevelCapOrphanPos_") >= 1,
+        "source/mesh_ops/edge_bevel.d no longer WRITES the three parity fields "
+      ~ "it owns. They are `Mesh` state kept for ONE reader — the free-end cap "
+      ~ "census — and a declaration with no writer is three public fields open "
+      ~ "for nobody (task 1903 Stage G).");
+    // …and BOTH readers, named. A row that only pins the declaration is
+    // satisfied by a field nobody reads.
+    {
+        static immutable string[] kReaders =
+            ["source/mesh_bevel_census.d", "tests/unit/mesh_ops/edge_bevel_test.d"];
+        foreach (rel; kReaders) {
+            immutable rp = buildPath(repoRoot, rel);
+            assert(exists(rp), "cannot find " ~ rel ~ " at " ~ rp);
+            immutable txt = stripCommentsAndStrings(readText(rp));
+            assert(countOccurrences(txt, "bevelCapCoincidentPos_") >= 1
+                && countOccurrences(txt, "bevelCapOrphanPos_") >= 1,
+                rel ~ " no longer reads `bevelCapCoincidentPos_` / "
+              ~ "`bevelCapOrphanPos_`. These three fields exist ONLY so a "
+              ~ "reader outside `mesh_ops/edge_bevel.d` can exempt the "
+              ~ "valence-4 free-end cap's intended coincident pair and orphan "
+              ~ "slide from a soundness census. With no reader left, the right "
+              ~ "change is to DELETE them, not to keep three public `Mesh` "
+              ~ "fields alive for a caller that went away "
+              ~ "(task 1903 Stage G, §2.7).");
+        }
+    }
+
+    // ---- THE THIRD MODULE `dub build` CANNOT SEE ---------------------------
+    //
+    // `source/mesh_bevel_census.d` is a `source/` module whose entire body sits
+    // below a module-level `version (unittest):`. It calls this kernel at
+    // ELEVEN sites; when Stage G changed the signature, `dub build` stayed
+    // green and only `dub test --config=tests` / the suite binary went red.
+    // That is why this stage's gate is BOTH lanes.
+    immutable mbcPath = buildPath(repoRoot, "source", "mesh_bevel_census.d");
+    assert(exists(mbcPath), "cannot find source/mesh_bevel_census.d at " ~ mbcPath);
+    immutable mbc = stripCommentsAndStrings(readText(mbcPath));
+    assert(countOccurrences(mbc, "\nversion (unittest):") == 1,
+        "source/mesh_bevel_census.d no longer gates its whole body behind a "
+      ~ "module-level `version (unittest):`. That gate is why a signature "
+      ~ "change in `mesh_ops/edge_bevel.d` is INVISIBLE to `dub build` here, "
+      ~ "and why Stage G's gate is both lanes (task 1903 Stage G).");
+    assert(countOccurrences(mbc, "bevelEdgesOnce(") == 12,
+        format("source/mesh_bevel_census.d makes %d `bevelEdgesOnce(` "
+             ~ "reference(s); Stage G measured 12 — the helper's own "
+             ~ "declaration plus the ELEVEN census call sites it replaced. A "
+             ~ "LOWER count is a site that went back to calling the kernel "
+             ~ "directly (which no longer compiles on a bare `Mesh`, so it "
+             ~ "would have to have opened its own batch); a HIGHER one is a new "
+             ~ "site nobody counted (task 1903 Stage G).",
+               countOccurrences(mbc, "bevelEdgesOnce(")));
+    // The two-sided helper pin, F1's `sliceOnce` shape: ONE unrecorded open
+    // with this exact spelling, and ZERO recording ones. A site that started
+    // opening its own batch is caught either by the count or by the shape.
+    assert(countOccurrences(mbc, "MeshEditBatch.unrecorded(m, kEdgeBevelEditScope)") == 1
+        && countOccurrences(mbc, "MeshEditBatch(") == 0,
+        format("source/mesh_bevel_census.d opens %d unrecorded "
+             ~ "`MeshEditBatch`(es) with the helper's exact spelling and %d "
+             ~ "RECORDING one(s); expected exactly 1 and 0. The eleven census "
+             ~ "sites go through ONE helper so there is ONE place that says why "
+             ~ "the batch is unrecorded — nothing in this census reads an "
+             ~ "op-log, so a recording batch would build a delta for no reader "
+             ~ "and `close()` would drop it (task 1903 Stage G).",
+               countOccurrences(mbc, "MeshEditBatch.unrecorded(m, kEdgeBevelEditScope)"),
+               countOccurrences(mbc, "MeshEditBatch(")));
+
+    // ---- THE ABSENCE PIN ---------------------------------------------------
+    //
+    // `Mesh.bevelEdgesByMask(` must appear NOWHERE under `source/`. The mirror
+    // of E3's `Mesh.capShellCycles` row and F2's `Mesh.boundaryContourInset`
+    // one — except that here the qualifier never existed to begin with, so this
+    // row is NEW rather than flipped (памятка 25: a brief's "there is a row to
+    // flip" is a hypothesis; grepped, there was none). The non-vacuity floor is
+    // what stops a broken walk from reading as a clean tree.
+    {
+        import std.file : dirEntries, SpanMode;
+        size_t scanned = 0;
+        string[] offenders;
+        foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+            ++scanned;
+            immutable t = stripCommentsAndStrings(readText(de.name));
+            if (countOccurrences(t, "Mesh.bevelEdgesByMask(") > 0)
+                offenders ~= de.name;
+        }
+        assert(scanned >= 100,
+            format("the source/** walk found only %d .d files — a walk that "
+                 ~ "stopped looking reports a clean tree for free", scanned));
+        assert(offenders.length == 0,
+            format("`Mesh.bevelEdgesByMask(` is spelled in %s. Stage G moved "
+                 ~ "this kernel OUT of `struct Mesh`, so that qualifier can "
+                 ~ "only resolve again if the family came back as a member — "
+                 ~ "which is what edge_bevel.d's `static assert` tripwire "
+                 ~ "refuses, and which this row catches from the call-site side "
+                 ~ "(task 1903 Stage G, §2.7).", offenders));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // THE §2.6 WIDENINGS, AND THE HALF THAT KEEPS THEM HONEST (task 1903 Stage D3).
 //
 // A mixin body is instantiated in its HOST's scope, so `mesh_ops/*.d` reached
@@ -2404,7 +2783,9 @@ unittest // every §2.6 widening this stage made still has the caller it names
                ~ "bevel_vertex.d must spell it `Mesh.rebuildFaceWithVertexSubs` "
                ~ "— the one qualified member spelling this stage keeps, and it "
                ~ "is legal precisely because the name is a member of `Mesh` and "
-               ~ "not of the converted family."),
+               ~ "not of the converted family. `mesh_ops/edge_bevel.d` (Stage G) "
+               ~ "spells it the same way since its own conversion; "
+               ~ "`mesh_ops/extrude.d` is still a mixin until Stage H."),
         // --- Stage F1's two, both `static`, both first needed HERE ---------
         // Neither was widened by an earlier stage: `cut.d` (E3) and the two
         // bevel files (E4) name neither, so F1 is the first converted caller
@@ -2436,11 +2817,14 @@ unittest // every §2.6 widening this stage made still has the caller it names
                ~ "`faceSetMask` directly, because those arrays are allowed to "
                ~ "run SHORT of `faces` between a topology edit and its "
                ~ "finalize. It is the largest of §2.6's eleven: "
-               ~ "`mesh_ops/extrude.d` (Stage H) names it at ten sites and "
-               ~ "`mesh_ops/edge_bevel.d` (Stage G) at two, and both are still "
-               ~ "mixins — the needle is TEXT, so they appear in the walk, and "
-               ~ "§2.6's rule (\"the stage that inherits a public name says who "
-               ~ "else uses it\") is exactly what that is for."),
+               ~ "`mesh_ops/extrude.d` (Stage H) names it at ten sites and is "
+               ~ "STILL A MIXIN — the needle is TEXT, so it appears in the walk, "
+               ~ "and §2.6's rule (\"the stage that inherits a public name says "
+               ~ "who else uses it\") is exactly what that is for. "
+               ~ "`mesh_ops/edge_bevel.d` names it at two sites and CONVERTED at "
+               ~ "Stage G, which changed their spelling to `Mesh.faceAttrOr(` "
+               ~ "and this row not at all — the needle is receiver-agnostic, "
+               ~ "verified by the walk rather than assumed."),
         Widening("Mesh.combineFaceMarksWords",
                  "private static uint combineFaceMarksWords(",
                  "static uint combineFaceMarksWords(uint a, uint b)",
@@ -2452,8 +2836,11 @@ unittest // every §2.6 widening this stage made still has the caller it names
                  "the per-bit fold of two faces' mark words, used where ONE new "
                ~ "face has SEVERAL source faces and no single one to inherit "
                ~ "from: Loop Slice's Cap Sections arm folds every ring face's "
-               ~ "word into the cap's. `mesh_ops/edge_bevel.d` (Stage G) is "
-               ~ "the other caller and is still a mixin."),
+               ~ "word into the cap's. `mesh_ops/edge_bevel.d` is the other "
+               ~ "caller — it folds the two host faces' words into each chamfer "
+               ~ "strip's — and it CONVERTED at Stage G, which changed its "
+               ~ "spelling to `Mesh.combineFaceMarksWords(` and left this row "
+               ~ "alone (the needle is receiver-agnostic)."),
         // --- Stage F2's one, and it is NOT a `Mesh` member ------------------
         // The same CLASS as `mesh.smoothstep01` (Stage D3): a module-level
         // free function of `mesh` that a converted family names, whose privacy

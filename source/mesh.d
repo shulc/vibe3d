@@ -66,7 +66,19 @@ public import mesh_ops.revolve;
 // for the ops namespace; narrowing that is audit 0678 M9's job, not this
 // task's.
 public import mesh_ops.cleanup;
-import mesh_ops.edge_bevel : MeshEdgeBevelOps;
+// task 1903 Stage G: the manifold edge bevel is ONE module-level free function
+// — `bevelEdgesByMask` over `ref MeshEditBatch` — plus the family's declared
+// scope `kEdgeBevelEditScope`, not a mixin. PUBLIC so every `import mesh;`
+// re-exports them and `ed.bevelEdgesByMask(mask, w, l, wm)` resolves through
+// UFCS (`doc/mesh_edit_seam_plan.md` §4.2). This keeps mesh.d the door for the
+// ops namespace; narrowing that is audit 0678 M9's job, not this task's.
+// WHAT THE WIDENING ADDS, read rather than assumed (памятка 33): the line it
+// replaces named ONE symbol, the template itself, and mesh.d's own body
+// mentions no other name of that module — so unlike F1's `bandWalk`/`BandCell`
+// case there is nothing here that the mixin body was resolving in mesh.d's
+// scope and that a blanket re-export would newly publish. The module's whole
+// public surface is `bevelEdgesByMask` + `kEdgeBevelEditScope`.
+public import mesh_ops.edge_bevel;
 // task 1903 Stage E4: the non-manifold fin-bundle family is module-level free
 // functions — `bevelIsolatedFinBundleSpine` and `bevelFinBundleSpineMultiEdge`
 // over `ref MeshEditBatch` — plus the family's declared scope
@@ -15451,7 +15463,45 @@ struct Mesh {
     // (the curve math they share — boundary Béziers, the fillet-rail law, the
     // two junction Gregory-ring evaluators — is plain functions in
     // source/mesh_ops/bevel_curves.d, not a mixin)
-    mixin MeshEdgeBevelOps;
+    // `mixin MeshEdgeBevelOps;` is GONE — task 1903 Stage G converted the
+    // manifold edge bevel to ONE module-level free function over
+    // `ref MeshEditBatch` in source/mesh_ops/edge_bevel.d. The three parity
+    // fields that template used to INJECT are declared below in this struct
+    // instead (search `bevelPinnedOrphans_`); a `static assert` tripwire at
+    // the foot of edge_bevel.d refuses a member — or an in-struct alias — of
+    // `bevelEdgesByMask` coming back, and the `public import` at the top of
+    // this file is what keeps `import mesh;` clients resolving it.
+
+    // --- edge.bevel valence-4 planar free-end cap parity ----------------------
+    // TASK 1903 Stage G MOVED THESE THREE DECLARATIONS HERE, AND MOVED NOTHING
+    // ELSE. They were injected into this struct by `mixin MeshEdgeBevelOps;`
+    // (source/mesh_ops/edge_bevel.d); a free function cannot inject a field, so
+    // the declaration lands in the struct that already owned it. Every spelling
+    // at every site is unchanged — the three resets and the three appends in
+    // `mesh_ops/edge_bevel.d`, the three reads in `source/mesh_bevel_census.d`,
+    // the two in `tests/unit/mesh_ops/edge_bevel_test.d`. They are PUBLIC
+    // because a mixin-injected member with no access specifier always was, so
+    // this is a move and not a widening; plan §2.7 keeps cross-module output
+    // state on `Mesh` rather than folding it into a result struct, which would
+    // be a second edit hiding inside a move. What holds the decision is the
+    // census row naming this declaration site and both reader files — NOT the
+    // build: `private` in D restricts name lookup only, so a green build here
+    // would be green whatever those readers did (plan §2.7, F1 review).
+    //
+    // WHAT THEY MEAN. At a valence-4 / planar / K==1 free-end whose single
+    // selected edge terminates on a valence-4 full-hub junction, the reference
+    // cap keeps TWO coincident referenced verts at the free-end position (one
+    // anchors the reduced side faces, one the chamfer strips) PLUS one ORPHAN
+    // slide along the edge opposite the selected one (derived from measured
+    // reference dumps only). These are the intended artefacts of that exact
+    // cap and are recorded per-bevel so (a) the intended orphan survives the
+    // tail compaction (pinned), and (b) the soundness census can exempt
+    // exactly these coincident/orphan verts while still flagging any others.
+    // All three are reset at the top of every `bevelEdgesByMask` call and
+    // consumed only within that call (+ read by the census immediately after).
+    uint[] bevelPinnedOrphans_;      // vertex indices to keep through compaction
+    Vec3[] bevelCapCoincidentPos_;   // free-end positions holding the coincident pair
+    Vec3[] bevelCapOrphanPos_;       // opposite-edge-slide positions (intended orphan)
     // `mixin MeshPolyBevelOps;` is GONE — task 1903 Stage F2 converted the
     // polygon bevel family to module-level free functions over
     // `ref MeshEditBatch` (the three entries) and `ref const(Mesh)` (the two

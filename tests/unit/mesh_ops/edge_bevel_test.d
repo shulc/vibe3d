@@ -1,5 +1,7 @@
-// Module unittests for the edge/vertex bevel kernel family
-// (`mesh_ops.edge_bevel`, mixed into `struct Mesh` as `MeshEdgeBevelOps`).
+// Module unittests for the manifold edge bevel kernel
+// (`mesh_ops.edge_bevel.bevelEdgesByMask` — a module-level free function over
+// `ref MeshEditBatch` since task 1903 Stage G; it was `mixin MeshEdgeBevelOps`,
+// mixed into `struct Mesh`, until then).
 //
 // Moved VERBATIM out of source/mesh_ops/edge_bevel.d (then bevel.d) by 0706, when the `tests`
 // dub configuration gave module unittests somewhere to live other than
@@ -36,6 +38,23 @@ version (unittest) {
     import mesh_edit_delta : MeshEditTracker, MeshEditScope;
 }
 
+// TASK 1903 Stage G: `bevelEdgesByMask` is a module-level free function over
+// `ref MeshEditBatch` now (`mesh_ops/edge_bevel.d`), so a block cannot call it
+// on a bare `Mesh`. Every mutating site in this file goes through this ONE
+// helper — F1's `sliceOnce` / F2's `bevelOnce` shape — so there is a single
+// place that says why the batch is UNRECORDED: nothing in these blocks reads
+// an op-log, so a RECORDING batch would build a delta for no reader and
+// `close()` would drop it. The call sites are otherwise byte-identical to the
+// member calls they replace, argument for argument.
+version (unittest)
+private size_t bevelEdgesOnce(ref Mesh m, const bool[] mask, float width,
+                              int roundLevel = 0, bool widthMode = false) {
+    auto ed = MeshEditBatch.unrecorded(m, kEdgeBevelEditScope);
+    immutable size_t n = ed.bevelEdgesByMask(mask, width, roundLevel, widthMode);
+    ed.close();
+    return n;
+}
+
 unittest { // bevelEdgesByMask: cube edge (6,7) between +Y and +Z faces, width=0.1
     import std.math : abs, sqrt;
     // Cube verts: 6=(0.5,0.5,0.5), 7=(-0.5,0.5,0.5).
@@ -55,11 +74,11 @@ unittest { // bevelEdgesByMask: cube edge (6,7) between +Y and +Z faces, width=0
     bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
 
     // width=0 must be no-op
-    assert(m.bevelEdgesByMask(mask, 0.0f) == 0, "width=0 must be no-op");
+    assert(bevelEdgesOnce(m, mask, 0.0f) == 0, "width=0 must be no-op");
     assert(m.vertices.length == 8);
     assert(m.faces.length    == 6);
 
-    assert(m.bevelEdgesByMask(mask, 0.1f) == 1, "should process 1 edge");
+    assert(bevelEdgesOnce(m, mask, 0.1f) == 1, "should process 1 edge");
     assert(m.vertices.length == 10, "expected 10 verts");
     assert(m.faces.length    == 7,  "expected 7 faces");
 
@@ -137,7 +156,7 @@ unittest { // S4/S5 code review (task 0613 §4.2): the chamfer strip's
     }
     assert(ei >= 0, "edge (6,7) not found in cube");
     bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
-    assert(m.bevelEdgesByMask(mask, 0.1f) == 1, "should process 1 edge");
+    assert(bevelEdgesOnce(m, mask, 0.1f) == 1, "should process 1 edge");
 
     immutable int chamferFi = findChamferByCentroid(m);
     assert(chamferFi >= 0, "chamfer face not found by centroid");
@@ -163,7 +182,7 @@ unittest { // S4/S5 companion — BOTH sources hidden: the chamfer strip must
     }
     assert(ei >= 0, "edge (6,7) not found in cube");
     bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
-    assert(m.bevelEdgesByMask(mask, 0.1f) == 1, "should process 1 edge");
+    assert(bevelEdgesOnce(m, mask, 0.1f) == 1, "should process 1 edge");
 
     immutable int chamferFi = findChamferByCentroid(m);
     assert(chamferFi >= 0, "chamfer face not found by centroid");
@@ -205,7 +224,7 @@ unittest {
     // WIDTH mode: every chamfer corner slides w/sin(45°) = w·√2 from its source.
     {
         auto m = makeCube();
-        assert(m.bevelEdgesByMask(edgeMask(m, 6, 7), w, 0, /*widthMode=*/true) == 1);
+        assert(bevelEdgesOnce(m, edgeMask(m, 6, 7), w, 0, /*widthMode=*/true) == 1);
         assert(m.vertices.length == 10 && m.faces.length == 7,
                "width mode keeps the same topology (no clamp): 10v/7f");
         immutable float expected = w * sqrt(2.0f);   // w / sin(45°)
@@ -227,7 +246,7 @@ unittest {
     // and the chamfer centroid stays (0, 0.45, 0.45) — the pre-change result.
     {
         auto m = makeCube();
-        assert(m.bevelEdgesByMask(edgeMask(m, 6, 7), w, 0, /*widthMode=*/false) == 1);
+        assert(bevelEdgesOnce(m, edgeMask(m, 6, 7), w, 0, /*widthMode=*/false) == 1);
         Vec3 cen = Vec3(0, 0, 0);
         int n = 0;
         foreach (fi; 0 .. m.faces.length) {
@@ -252,9 +271,9 @@ unittest {
     // rounding/rebuild stay consistent, not just the raw corner positions.
     {
         auto mW = makeCube();
-        mW.bevelEdgesByMask(edgeMask(mW, 6, 7), w, 0, /*widthMode=*/true);
+        bevelEdgesOnce(mW, edgeMask(mW, 6, 7), w, 0, /*widthMode=*/true);
         auto mI = makeCube();
-        mI.bevelEdgesByMask(edgeMask(mI, 6, 7), w * sqrt(2.0f), 0, /*widthMode=*/false);
+        bevelEdgesOnce(mI, edgeMask(mI, 6, 7), w * sqrt(2.0f), 0, /*widthMode=*/false);
         assert(mW.vertices.length == mI.vertices.length);
         foreach (i; 0 .. mW.vertices.length)
             assert((mW.vertices[i] - mI.vertices[i]).length < 1e-5f,
@@ -287,10 +306,10 @@ unittest {
         immutable float factor = 2.0f / sqrt(3.0f);   // 1/sin(60°)
 
         auto mW = makeTent();
-        assert(mW.bevelEdgesByMask(edgeMask(mW, 0, 1), w, 0, /*widthMode=*/true) == 1,
+        assert(bevelEdgesOnce(mW, edgeMask(mW, 0, 1), w, 0, /*widthMode=*/true) == 1,
                "tent edge must bevel in width mode");
         auto mI = makeTent();
-        assert(mI.bevelEdgesByMask(edgeMask(mI, 0, 1), w * factor, 0,
+        assert(bevelEdgesOnce(mI, edgeMask(mI, 0, 1), w * factor, 0,
                                    /*widthMode=*/false) == 1);
         // width(w) on the 120° crease == inset at w/sin(60°): the code's
         // per-edge dihedral factor equals 2/√3.
@@ -345,14 +364,14 @@ unittest { // Case A: vertex/face counts stay flat across the clamp
     immutable float[4] widths = [0.3f, 0.9f, 1.0f, 1.4f];
     foreach (w; widths) {
         auto m0 = makeCube();
-        assert(m0.bevelEdgesByMask(edgeMask(m0, 6, 7), w) == 1,
+        assert(bevelEdgesOnce(m0, edgeMask(m0, 6, 7), w) == 1,
             "case A L0 w=" ~ w.to!string ~ ": must process the edge");
         assert(m0.vertices.length == 10 && m0.faces.length == 7,
             "case A L0 w=" ~ w.to!string ~ ": expected 10v/7f, got " ~
             m0.vertices.length.to!string ~ "v/" ~ m0.faces.length.to!string ~ "f");
 
         auto m1 = makeCube();
-        assert(m1.bevelEdgesByMask(edgeMask(m1, 6, 7), w, 1) == 1,
+        assert(bevelEdgesOnce(m1, edgeMask(m1, 6, 7), w, 1) == 1,
             "case A L1 w=" ~ w.to!string ~ ": must process the edge");
         assert(m1.vertices.length == 12 && m1.faces.length == 8,
             "case A L1 w=" ~ w.to!string ~ ": expected 12v/8f, got " ~
@@ -371,8 +390,8 @@ unittest { // Case A: saturation — w=1.0 and w=1.4 land every slide corner
         mask[ei] = true;
         return mask;
     }
-    auto mA = makeCube(); mA.bevelEdgesByMask(edgeMask(mA, 6, 7), 1.0f);
-    auto mB = makeCube(); mB.bevelEdgesByMask(edgeMask(mB, 6, 7), 1.4f);
+    auto mA = makeCube(); bevelEdgesOnce(mA, edgeMask(mA, 6, 7), 1.0f);
+    auto mB = makeCube(); bevelEdgesOnce(mB, edgeMask(mB, 6, 7), 1.4f);
     assert(mA.vertices.length == mB.vertices.length, "case A: w=1.0/1.4 vertex count must match");
     foreach (i; 0 .. mA.vertices.length)
         assert((mA.vertices[i] - mB.vertices[i]).length < 1e-6f,
@@ -401,12 +420,12 @@ unittest { // Case A: no weld against the original mesh — at w >= 1.0, each
     }
 
     auto mLow = makeCube();
-    mLow.bevelEdgesByMask(edgeMask(mLow, 6, 7), 0.9f);
+    bevelEdgesOnce(mLow, edgeMask(mLow, 6, 7), 0.9f);
     assert(mLow.vertices.length == 10, "case A w=0.9: expected 10v (no clamp yet)");
     assert(coincidentPairs(mLow) == 0, "case A w=0.9: no coincidence expected below threshold");
 
     auto mAt = makeCube();
-    mAt.bevelEdgesByMask(edgeMask(mAt, 6, 7), 1.0f);
+    bevelEdgesOnce(mAt, edgeMask(mAt, 6, 7), 1.0f);
     assert(mAt.vertices.length == 10,
         "case A w=1.0: expected 10 vertex RECORDS (no weld), got " ~ mAt.vertices.length.to!string);
     assert(coincidentPairs(mAt) == 4,
@@ -455,7 +474,7 @@ unittest { // Case B (task 0436, clamp_findings.md main pass): a 3-edge chain
     // Counts stay flat across 0.3/0.9/1.0; collapse only at 1.4.
     foreach (w; [0.3f, 0.9f, 1.0f]) {
         auto m = buildFrustum();
-        assert(m.bevelEdgesByMask(chainMask(m), w) == 3, "case B w=" ~ w.to!string);
+        assert(bevelEdgesOnce(m, chainMask(m), w) == 3, "case B w=" ~ w.to!string);
         assert(m.vertices.length == 12 && m.faces.length == 9,
             "case B w=" ~ w.to!string ~ ": expected 12v/9f, got " ~
             m.vertices.length.to!string ~ "v/" ~ m.faces.length.to!string ~ "f");
@@ -467,7 +486,7 @@ unittest { // Case B (task 0436, clamp_findings.md main pass): a 3-edge chain
     // and would miss every one of these bit-exact positions.
     {
         auto m = buildFrustum();
-        assert(m.bevelEdgesByMask(chainMask(m), 0.9f) == 3);
+        assert(bevelEdgesOnce(m, chainMask(m), 0.9f) == 3);
         assert(findVertNear(m, Vec3(-0.5f, 0.4f, -0.5f)) >= 0, "case B w=0.9: v0->v3 unclamped");
         assert(findVertNear(m, Vec3(-0.2514449f, -0.2514449f, 0.3285172f)) >= 0, "case B w=0.9: v0->v4 unclamped");
         assert(findVertNear(m, Vec3(0.5f, 0.4f, -0.5f)) >= 0, "case B w=0.9: v1->v2 unclamped");
@@ -489,7 +508,7 @@ unittest { // Case B (task 0436, clamp_findings.md main pass): a 3-edge chain
     // (never pooled) or 1 (welded into the original).
     {
         auto m = buildFrustum();
-        assert(m.bevelEdgesByMask(chainMask(m), 1.4f) == 3);
+        assert(bevelEdgesOnce(m, chainMask(m), 1.4f) == 3);
         assert(m.vertices.length == 10 && m.faces.length == 9,
             "case B w=1.4: expected 10v/9f, got " ~
             m.vertices.length.to!string ~ "v/" ~ m.faces.length.to!string ~ "f");
@@ -549,7 +568,7 @@ unittest { // Case C (task 0436, clamp_findings.md follow-up pass): two
     // bonus points: the collapse is a single-width phenomenon, not sticky).
     foreach (w; [0.4f, 0.6f]) {
         auto m = makeCube();
-        assert(m.bevelEdgesByMask(twoTopEdgeMask(m), w) == 2, "case C w=" ~ w.to!string);
+        assert(bevelEdgesOnce(m, twoTopEdgeMask(m), w) == 2, "case C w=" ~ w.to!string);
         assert(m.vertices.length == 12 && m.faces.length == 8,
             "case C w=" ~ w.to!string ~ ": expected 12v/8f, got " ~
             m.vertices.length.to!string ~ "v/" ~ m.faces.length.to!string ~ "f");
@@ -557,7 +576,7 @@ unittest { // Case C (task 0436, clamp_findings.md follow-up pass): two
 
     // Test: at w=0.5 the two top-face slide-corner pairs coincide and merge.
     auto m = makeCube();
-    assert(m.bevelEdgesByMask(twoTopEdgeMask(m), 0.5f) == 2);
+    assert(bevelEdgesOnce(m, twoTopEdgeMask(m), 0.5f) == 2);
     assert(m.vertices.length == 10 && m.faces.length == 7,
         "case C w=0.5: expected 10v/7f (top-face quad vanishes entirely), got " ~
         m.vertices.length.to!string ~ "v/" ~ m.faces.length.to!string ~ "f");
@@ -632,7 +651,7 @@ unittest {
         m.facePart[i]     = cast(uint)(20 + i);
     }
 
-    assert(m.bevelEdgesByMask(twoTopEdgeMaskC(m), 0.5f) == 2);
+    assert(bevelEdgesOnce(m, twoTopEdgeMaskC(m), 0.5f) == 2);
     assert(m.vertices.length == 10 && m.faces.length == 7,
         "twin setup: expected 10v/7f (top-face quad vanishes entirely), got " ~
         m.vertices.length.to!string ~ "v/" ~ m.faces.length.to!string ~ "f");
@@ -714,7 +733,7 @@ unittest { // Case D (task 0436, clamp_findings.md follow-up pass):
     // Control: a width well under BOTH cubes' clamp thresholds — no
     // coincidence anywhere, plain per-cube Case A topology twice over.
     auto mCtrl = buildTwoCubes(scale2, offset2);
-    assert(mCtrl.bevelEdgesByMask(maskFor(mCtrl), 0.3f) == 2, "case D control: must process both edges");
+    assert(bevelEdgesOnce(mCtrl, maskFor(mCtrl), 0.3f) == 2, "case D control: must process both edges");
     assert(mCtrl.vertices.length == 20 && mCtrl.faces.length == 14,
         "case D w=0.3 control: expected 20v/14f (2x Case A's 10v/7f), got " ~
         mCtrl.vertices.length.to!string ~ "v/" ~ mCtrl.faces.length.to!string ~ "f");
@@ -731,7 +750,7 @@ unittest { // Case D (task 0436, clamp_findings.md follow-up pass):
     // "both new" alone says nothing here (Case A's own new-vs-original
     // pairs are all over both cubes already); "same rebuilt face" is what
     // rules out a cross-component merge.
-    assert(m.bevelEdgesByMask(mask, 1.4f) == 2, "case D test: must process both edges");
+    assert(bevelEdgesOnce(m, mask, 1.4f) == 2, "case D test: must process both edges");
     assert(m.vertices.length == 20 && m.faces.length == 14,
         "case D w=1.4: expected 20v/14f (no merge at all), got " ~
         m.vertices.length.to!string ~ "v/" ~ m.faces.length.to!string ~ "f");
@@ -1135,7 +1154,7 @@ unittest { // bevelEdgesByMask: LOOP cap manifold-cleanliness backstop
         assert(ei >= 0, "loop perimeter edge not found");
         mask[ei] = true;
     }
-    size_t n = m.bevelEdgesByMask(mask, 0.1f);
+    size_t n = bevelEdgesOnce(m, mask, 0.1f);
     assert(n == 4, "should process all 4 loop edges");
     assert(m.vertices.length == 12, "expected 12 verts");
     assert(m.faces.length    == 10, "expected 10 faces");
@@ -1158,7 +1177,7 @@ unittest { // bevelEdgesByMask: 3-WAY JUNCTION cap manifold-cleanliness
         assert(ei >= 0, "junction edge not found");
         mask[ei] = true;
     }
-    size_t n = m.bevelEdgesByMask(mask, 0.1f);
+    size_t n = bevelEdgesOnce(m, mask, 0.1f);
     assert(n == 3, "should process all 3 junction edges");
     assert(m.vertices.length == 13, "expected 13 verts (3 hubs + 6 bare-end + 4 untouched)");
     assert(m.faces.length    == 10, "expected 10 faces");
@@ -1182,7 +1201,7 @@ unittest { // bevelEdgesByMask: roundLevel DoS clamp — an absurd roundLevel
     }
     assert(ei >= 0);
     bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
-    size_t n = m.bevelEdgesByMask(mask, 0.1f, 1_000_000);
+    size_t n = bevelEdgesOnce(m, mask, 0.1f, 1_000_000);
     assert(n == 1, "should still process (roundLevel clamped, not rejected)");
     // MAX_ROUND_LEVEL=10 → 2·10=20 quad rings for this one edge — bounded,
     // not the ~2000000 the unclamped 2·request would imply.
@@ -1230,7 +1249,7 @@ unittest { // bevelEdgesByMask: selected interior edge with ONE endpoint on an
     assert(ei >= 0, "edge (1,4) not found");
     bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
 
-    size_t n = m.bevelEdgesByMask(mask, 0.1f);
+    size_t n = bevelEdgesOnce(m, mask, 0.1f);
     assert(n == 1, "the free-end cap must let this edge bevel, not skip it");
     assert(m.vertices.length == 12 && m.faces.length == 6,
         "boundary-adjacent asymmetric span golden must be 12v/6f");
@@ -1287,7 +1306,7 @@ unittest { // bevelEdgesByMask: roundLevel=1 end-to-end arc geometry — the
     }
     assert(ei >= 0);
     bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
-    assert(m.bevelEdgesByMask(mask, 0.1f, 1) == 1);
+    assert(bevelEdgesOnce(m, mask, 0.1f, 1) == 1);
     // +1 new interior arc vertex per endpoint (t=1 of 2); the single flat
     // chamfer quad splits into 2 quad rings (+1 face).
     assert(m.vertices.length == 12, "expected 10+2=12 verts at roundLevel=1");
@@ -1340,7 +1359,7 @@ unittest { // bevelEdgesByMask: K=2 miter round profile GOLDEN — a 2-edge
         assert(ei >= 0);
         mask[ei] = true;
     }
-    assert(m.bevelEdgesByMask(mask, 0.1f, 1) == 2);
+    assert(bevelEdgesOnce(m, mask, 0.1f, 1) == 2);
     // Same topology as the reference: 8 corners survive minus vertex 6, plus
     // 6 flat miter/slide corners + 3 rounded interior points = 14v/10f.
     assert(m.vertices.length == 14 && m.faces.length == 10,
@@ -1386,7 +1405,7 @@ unittest { // bevelEdgesByMask: NON-90° dihedral round arc is a TRUE circular
     }
     assert(ei >= 0, "prism vertical edge missing");
     bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
-    assert(m.bevelEdgesByMask(mask, 0.1f, 1) == 1, "prism edge bevel must apply");
+    assert(bevelEdgesOnce(m, mask, 0.1f, 1) == 1, "prism edge bevel must apply");
     // At the z=-0.5 end (source V=(0,0,-0.5)) the L0 chamfer corners slide along
     // the two 60°-apart triangle edges: E_A=(0.1,0,-0.5), E_B=(0.05,0.0866,-0.5).
     // The true fillet (r=0.1·tan30°=0.057735, centre from the two-tangent-line
@@ -1422,7 +1441,7 @@ unittest { // bevelEdgesByMask: K=2 loop rails are shared at L1 and L2.
             assert(ei >= 0);
             mask[ei] = true;
         }
-        assert(m.bevelEdgesByMask(mask, 0.1f, level) == 4);
+        assert(bevelEdgesOnce(m, mask, 0.1f, level) == 4);
         immutable int n = 1 << level;
         // L0 has 12 vertices/10 faces.  All four rounded strips gain n-1
         // quads, and the four shared rails own their interiors exactly once.
@@ -1466,7 +1485,7 @@ unittest { // bevelEdgesByMask: K=3 junction round cap, matches the reference at
             assert(ei >= 0);
             mask[ei] = true;
         }
-        assert(m.bevelEdgesByMask(mask, 0.1f, level) == 3);
+        assert(bevelEdgesOnce(m, mask, 0.1f, level) == 3);
         // The central Gregory hub is level-independent; present at every level.
         immutable Vec3 wantHub = Vec3(0.460948f, 0.460948f, 0.460948f);
         bool foundHub = false;
@@ -1731,7 +1750,7 @@ unittest { // bevelEdgesByMask: DEGENERATE ("parallel-edge") K3 hub — the one
             assert(ei >= 0);
             mask[ei] = true;
         }
-        assert(m.bevelEdgesByMask(mask, 0.1f, level) == 3);
+        assert(bevelEdgesOnce(m, mask, 0.1f, level) == 3);
 
         // (1) The mitre the LAW places, and the coincidence it implies. This
         // is the measured half — level 0, inset. `offsetMeet` put the two
@@ -1842,7 +1861,7 @@ unittest { // bevelEdgesByMask: mixed adjacent K2 at a valence-4 octahedron
 
     auto m = makeValence4Octahedron();
     auto mask = selectPairs(m, [[0u, 1u], [0u, 2u]]);
-    assert(m.bevelEdgesByMask(mask, 0.1f, 1) == 2,
+    assert(bevelEdgesOnce(m, mask, 0.1f, 1) == 2,
         "mixed adjacent K2 must now bevel both edges");
     // task 0449: the two far-endpoint free-end caps are now a second
     // support-consumer for their own bordering rails, so Round Level 1
@@ -1896,7 +1915,7 @@ unittest { // bevelEdgesByMask: non-adjacent K2 at valence four (task 0439).
     }
     auto m = makeValence4Octahedron();
     auto mask = selectPairs(m);
-    assert(m.bevelEdgesByMask(mask, 0.1f, 1) == 2,
+    assert(bevelEdgesOnce(m, mask, 0.1f, 1) == 2,
         "non-adjacent K2 must now bevel both edges");
     // task 0449: same second-consumer registration as the adjacent sibling
     // above — was 11v/12f flat before this task.
@@ -1980,7 +1999,7 @@ unittest { // bevelEdgesByMask: a two-face HINGE must not take the process down.
             auto vertsBefore = m.vertices.dup;
             auto facesBefore = m.faces._store.dup;
             // Completing at all is the regression check — this used to assert.
-            assert(m.bevelEdgesByMask(mask, 0.15f, cast(int)level) == 0,
+            assert(bevelEdgesOnce(m, mask, 0.15f, cast(int)level) == 0,
                 "a malformed fan must decline, not assert");
             assert(m.vertices == vertsBefore && m.faces._store == facesBefore,
                 "the decline must leave the mesh byte-identical");
@@ -1995,7 +2014,7 @@ unittest { // bevelEdgesByMask: a two-face HINGE must not take the process down.
     foreach (level; 0 .. 2) {
         auto m = hinge();
         auto mask = edgeMaskFor(m, 2u, 3u);
-        assert(m.bevelEdgesByMask(mask, 0.15f, cast(int)level) == 1,
+        assert(bevelEdgesOnce(m, mask, 0.15f, cast(int)level) == 1,
             "a clean rim edge off the malformed spine must bevel, not decline");
         assert(m.vertices.length == 7 && m.faces.length == 2,
             "hinge rim-edge bevel golden must be 7v/2f");
@@ -2039,7 +2058,7 @@ unittest { // bevelEdgesByMask on a CLOSED inverted cube: task 0447. Closedness
             }
         auto vertsBefore = m.vertices.dup;
         auto facesBefore = m.faces._store.dup;
-        assert(m.bevelEdgesByMask(mask, 0.15f, cast(int)level) == 0,
+        assert(bevelEdgesOnce(m, mask, 0.15f, cast(int)level) == 0,
             "inverted-cube unordered selection must decline");
         assert(m.vertices == vertsBefore && m.faces._store == facesBefore,
             "the decline must leave the inverted cube byte-identical");
@@ -2062,7 +2081,7 @@ unittest { // bevelEdgesByMask: K=3 junction Round Level 0 — the flat N-gon
         assert(ei >= 0);
         mask[ei] = true;
     }
-    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 3);
+    assert(bevelEdgesOnce(m, mask, 0.1f, 0) == 3);
     assert(m.vertices.length == 13 && m.faces.length == 10,
         "K3 L0 must be the reference 13v/10f flat cap");
     immutable Vec3[] wantVerts = [
@@ -2122,7 +2141,7 @@ unittest {
         assert(ei >= 0);
         mask[ei] = true;
     }
-    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 3);
+    assert(bevelEdgesOnce(m, mask, 0.1f, 0) == 3);
     assert(m.faces.length == 10, "K3 L0 hub-cap witness: expected the "
         ~ "reference 10 faces, got " ~ m.faces.length.to!string);
 
@@ -2217,7 +2236,7 @@ unittest { // bevelEdgesByMask: a K3 junction whose far endpoints are valence-4
         // The assertion this guards against fired inside the kernel, so simply
         // completing is the regression check; the counts pin the composed
         // (hub + 3 independent Decision-C free-end caps) result at each level.
-        immutable size_t n = m.bevelEdgesByMask(mask, 0.05f, cast(int)level);
+        immutable size_t n = bevelEdgesOnce(m, mask, 0.05f, cast(int)level);
         assert(n == 3, "all three junction edges must bevel at every Round Level");
         assert(m.vertices.length == wantV[level] && m.faces.length == wantF[level],
             "K3 hub and its three valence-4 free ends must round independently "
@@ -2260,7 +2279,7 @@ unittest { // bevelEdgesByMask: open-boundary "chain3" (task 0443 freeze) —
             assert(ei >= 0, "open-boundary chain3: selected edge not found");
             mask[ei] = true;
         }
-        assert(m.bevelEdgesByMask(mask, 0.15f, level) == edges.length);
+        assert(bevelEdgesOnce(m, mask, 0.15f, level) == edges.length);
 
 
         if (level == 0) {
@@ -2370,7 +2389,7 @@ unittest { // bevelEdgesByMask: open-boundary "oneend" (task 0443 freeze) —
             assert(ei >= 0, "open-boundary oneend: selected edge not found");
             mask[ei] = true;
         }
-        assert(m.bevelEdgesByMask(mask, 0.15f, level) == edges.length);
+        assert(bevelEdgesOnce(m, mask, 0.15f, level) == edges.length);
 
 
         if (level == 0) {
@@ -2468,7 +2487,7 @@ unittest { // bevelEdgesByMask: open-boundary "interior" (task 0443 freeze) —
             assert(ei >= 0, "open-boundary interior: selected edge not found");
             mask[ei] = true;
         }
-        assert(m.bevelEdgesByMask(mask, 0.15f, level) == edges.length);
+        assert(bevelEdgesOnce(m, mask, 0.15f, level) == edges.length);
 
 
         if (level == 0) {
@@ -2567,7 +2586,7 @@ unittest { // bevelEdgesByMask: open-boundary "rimedge" (task 0443 freeze) —
             assert(ei >= 0, "open-boundary rimedge: selected edge not found");
             mask[ei] = true;
         }
-        assert(m.bevelEdgesByMask(mask, 0.15f, level) == edges.length);
+        assert(bevelEdgesOnce(m, mask, 0.15f, level) == edges.length);
 
 
         if (level == 0) {
@@ -2660,7 +2679,7 @@ unittest { // bevelEdgesByMask: open-boundary "bothends" (task 0443 freeze) —
             assert(ei >= 0, "open-boundary bothends: selected edge not found");
             mask[ei] = true;
         }
-        assert(m.bevelEdgesByMask(mask, 0.15f, level) == edges.length);
+        assert(bevelEdgesOnce(m, mask, 0.15f, level) == edges.length);
 
 
         if (level == 0) {
@@ -2748,7 +2767,7 @@ unittest { // bevelEdgesByMask: N-way junction "K4 junction (symmetric)" (task 0
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     size_t nSel = 0;
     foreach (ei; m.edgesAroundVertex(0)) { mask[ei] = true; ++nSel; }
-    assert(m.bevelEdgesByMask(mask, 0.15f, 0) == nSel);
+    assert(bevelEdgesOnce(m, mask, 0.15f, 0) == nSel);
 
         // 12v/9f
         immutable Vec3[] wantVerts = [
@@ -2798,7 +2817,7 @@ unittest { // bevelEdgesByMask: N-way junction "K5 junction (symmetric)" (task 0
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     size_t nSel = 0;
     foreach (ei; m.edgesAroundVertex(0)) { mask[ei] = true; ++nSel; }
-    assert(m.bevelEdgesByMask(mask, 0.15f, 0) == nSel);
+    assert(bevelEdgesOnce(m, mask, 0.15f, 0) == nSel);
 
         // 15v/11f
         immutable Vec3[] wantVerts = [
@@ -2841,7 +2860,7 @@ unittest { // bevelEdgesByMask: "K4 junction (symmetric)" L1
     m.syncSelection();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
-    m.bevelEdgesByMask(mask, 0.15f, 1);
+    bevelEdgesOnce(m, mask, 0.15f, 1);
         immutable Vec3[] wantVerts = [
             Vec3(-0.122474484f, 0.122474484f, 0.244948968f), Vec3(-0.122474484f, -0.122474484f, 0.244948968f), Vec3(0.122474484f, -0.122474484f, 0.244948968f),
             Vec3(0.122474484f, 0.122474484f, 0.244948968f), Vec3(1.30814755f, 0.106066018f, 1.41421354f), Vec3(1.30814755f, -0.106066018f, 1.41421354f),
@@ -2882,7 +2901,7 @@ unittest { // bevelEdgesByMask: "K4 junction (symmetric)" L2
     m.syncSelection();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
-    m.bevelEdgesByMask(mask, 0.15f, 2);
+    bevelEdgesOnce(m, mask, 0.15f, 2);
         immutable Vec3[] wantVerts = [
             Vec3(-0.122474484f, 0.122474484f, 0.244948968f), Vec3(-0.122474484f, -0.122474484f, 0.244948968f), Vec3(0.122474484f, -0.122474484f, 0.244948968f),
             Vec3(0.122474484f, 0.122474484f, 0.244948968f), Vec3(1.30814755f, 0.106066018f, 1.41421354f), Vec3(1.30814755f, -0.106066018f, 1.41421354f),
@@ -2937,7 +2956,7 @@ unittest { // bevelEdgesByMask: "K4 junction (symmetric)" L3
     m.syncSelection();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
-    m.bevelEdgesByMask(mask, 0.15f, 3);
+    bevelEdgesOnce(m, mask, 0.15f, 3);
         immutable Vec3[] wantVerts = [
             Vec3(-0.122474484f, 0.122474484f, 0.244948968f), Vec3(-0.122474484f, -0.122474484f, 0.244948968f), Vec3(0.122474484f, -0.122474484f, 0.244948968f),
             Vec3(0.122474484f, 0.122474484f, 0.244948968f), Vec3(1.30814755f, 0.106066018f, 1.41421354f), Vec3(1.30814755f, -0.106066018f, 1.41421354f),
@@ -3013,7 +3032,7 @@ unittest { // bevelEdgesByMask: "K4 junction (asymmetric)" L1
     m.syncSelection();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
-    m.bevelEdgesByMask(mask, 0.15f, 1);
+    bevelEdgesOnce(m, mask, 0.15f, 1);
         immutable Vec3[] wantVerts = [
             Vec3(-0.112768523f, 0.177031413f, 0.204165533f), Vec3(-0.123843782f, -0.0404020101f, 0.222460389f), Vec3(0.137606427f, -0.0946779326f, 0.261711925f),
             Vec3(0.154816538f, 0.131210014f, 0.219448209f), Vec3(1.51600754f, 0.122758187f, 1.31938279f), Vec3(1.48506093f, -0.0862043649f, 1.3431021f),
@@ -3054,7 +3073,7 @@ unittest { // bevelEdgesByMask: "K4 junction (asymmetric)" L2
     m.syncSelection();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
-    m.bevelEdgesByMask(mask, 0.15f, 2);
+    bevelEdgesOnce(m, mask, 0.15f, 2);
         immutable Vec3[] wantVerts = [
             Vec3(-0.112768523f, 0.177031413f, 0.204165533f), Vec3(-0.123843782f, -0.0404020101f, 0.222460389f), Vec3(0.137606427f, -0.0946779326f, 0.261711925f),
             Vec3(0.154816538f, 0.131210014f, 0.219448209f), Vec3(1.51600754f, 0.122758187f, 1.31938279f), Vec3(1.48506093f, -0.0862043649f, 1.3431021f),
@@ -3109,7 +3128,7 @@ unittest { // bevelEdgesByMask: "K4 junction (asymmetric)" L3
     m.syncSelection();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
-    m.bevelEdgesByMask(mask, 0.15f, 3);
+    bevelEdgesOnce(m, mask, 0.15f, 3);
         immutable Vec3[] wantVerts = [
             Vec3(-0.112768523f, 0.177031413f, 0.204165533f), Vec3(-0.123843782f, -0.0404020101f, 0.222460389f), Vec3(0.137606427f, -0.0946779326f, 0.261711925f),
             Vec3(0.154816538f, 0.131210014f, 0.219448209f), Vec3(1.51600754f, 0.122758187f, 1.31938279f), Vec3(1.48506093f, -0.0862043649f, 1.3431021f),
@@ -3186,7 +3205,7 @@ unittest { // bevelEdgesByMask: "K5 junction (symmetric)" L1
     m.syncSelection();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
-    m.bevelEdgesByMask(mask, 0.15f, 1);
+    bevelEdgesOnce(m, mask, 0.15f, 1);
         immutable Vec3[] wantVerts = [
             Vec3(-0.0701444149f, 0.215882301f, 0.28057763f), Vec3(-0.226992086f, 0f, 0.28057763f), Vec3(-0.0701444149f, -0.215882301f, 0.28057763f),
             Vec3(0.18364045f, -0.133422598f, 0.28057763f), Vec3(0.18364045f, 0.133422598f, 0.28057763f), Vec3(1.32604575f, 0.121352553f, 1.41421354f),
@@ -3235,7 +3254,7 @@ unittest { // bevelEdgesByMask: "K5 junction (symmetric)" L2
     m.syncSelection();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
-    m.bevelEdgesByMask(mask, 0.15f, 2);
+    bevelEdgesOnce(m, mask, 0.15f, 2);
         immutable Vec3[] wantVerts = [
             Vec3(-0.0701444149f, 0.215882301f, 0.28057763f), Vec3(-0.226992086f, 0f, 0.28057763f),
             Vec3(-0.0701444149f, -0.215882301f, 0.28057763f), Vec3(0.18364045f, -0.133422598f, 0.28057763f),
@@ -3307,7 +3326,7 @@ unittest { // bevelEdgesByMask: "K5 junction (symmetric)" L3
     m.syncSelection();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
-    m.bevelEdgesByMask(mask, 0.15f, 3);
+    bevelEdgesOnce(m, mask, 0.15f, 3);
         immutable Vec3[] wantVerts = [
             Vec3(-0.0701444149f, 0.215882301f, 0.28057763f), Vec3(-0.226992086f, 0f, 0.28057763f),
             Vec3(-0.0701444149f, -0.215882301f, 0.28057763f), Vec3(0.18364045f, -0.133422598f, 0.28057763f),
@@ -3420,7 +3439,7 @@ unittest { // bevelEdgesByMask: "K5 junction (ASYMMETRIC)" L1 (task 0453)
     m.syncSelection();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
-    m.bevelEdgesByMask(mask, 0.15f, 1);
+    bevelEdgesOnce(m, mask, 0.15f, 1);
         immutable Vec3[] wantVerts = [
             Vec3(-0.0852779001f, 0.21604526f, 0.227394179f), Vec3(-0.170565262f, -0.0169928204f, 0.2136603f),
             Vec3(-0.00400275411f, -0.28355059f, 0.25553444f), Vec3(0.207560346f, -0.146821991f, 0.208215892f),
@@ -3475,7 +3494,7 @@ unittest { // bevelEdgesByMask: "K5 junction (ASYMMETRIC)" L2 (task 0453)
     m.syncSelection();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
-    m.bevelEdgesByMask(mask, 0.15f, 2);
+    bevelEdgesOnce(m, mask, 0.15f, 2);
         immutable Vec3[] wantVerts = [
             Vec3(-0.0852779001f, 0.21604526f, 0.227394179f), Vec3(-0.170565262f, -0.0169928204f, 0.2136603f),
             Vec3(-0.00400275411f, -0.28355059f, 0.25553444f), Vec3(0.207560346f, -0.146821991f, 0.208215892f),
@@ -3547,7 +3566,7 @@ unittest { // bevelEdgesByMask: "K5 junction (ASYMMETRIC)" L3 (task 0453)
     m.syncSelection();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
-    m.bevelEdgesByMask(mask, 0.15f, 3);
+    bevelEdgesOnce(m, mask, 0.15f, 3);
         immutable Vec3[] wantVerts = [
             Vec3(-0.0852779001f, 0.21604526f, 0.227394179f), Vec3(-0.170565262f, -0.0169928204f, 0.2136603f),
             Vec3(-0.00400275411f, -0.28355059f, 0.25553444f), Vec3(0.207560346f, -0.146821991f, 0.208215892f),
@@ -3726,7 +3745,7 @@ unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.05 L1
     m.syncSelection();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (ei; m.edgesAroundVertex(23)) mask[ei] = true;
-    m.bevelEdgesByMask(mask, 0.05f, 1);
+    bevelEdgesOnce(m, mask, 0.05f, 1);
     assert(m.faces.length == 38, "mixed K4fe w0.05 L1 (task 0456 owner): face count == reference");
     assert(m.vertices.length == 46, "mixed K4fe w0.05 L1 (task 0456 owner): vertex count matches reference (46)");
         immutable Vec3[] dumpVerts = [
@@ -3786,7 +3805,7 @@ unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.05 L2
     m.syncSelection();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (ei; m.edgesAroundVertex(23)) mask[ei] = true;
-    m.bevelEdgesByMask(mask, 0.05f, 2);
+    bevelEdgesOnce(m, mask, 0.05f, 2);
     assert(m.faces.length == 58, "mixed K4fe w0.05 L2 (task 0456 owner): face count == reference");
     assert(m.vertices.length == 70, "mixed K4fe w0.05 L2 (task 0456 owner): vertex count matches reference (70)");
         immutable Vec3[] dumpVerts = [
@@ -3854,7 +3873,7 @@ unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.05 L3
     m.syncSelection();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (ei; m.edgesAroundVertex(23)) mask[ei] = true;
-    m.bevelEdgesByMask(mask, 0.05f, 3);
+    bevelEdgesOnce(m, mask, 0.05f, 3);
     assert(m.faces.length == 86, "mixed K4fe w0.05 L3 (task 0456 owner): face count == reference");
     assert(m.vertices.length == 102, "mixed K4fe w0.05 L3 (task 0456 owner): vertex count matches reference (102)");
         immutable Vec3[] dumpVerts = [
@@ -3932,7 +3951,7 @@ unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.10 L1
     m.syncSelection();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (ei; m.edgesAroundVertex(23)) mask[ei] = true;
-    m.bevelEdgesByMask(mask, 0.10f, 1);
+    bevelEdgesOnce(m, mask, 0.10f, 1);
     assert(m.faces.length == 38, "mixed K4fe w0.10 L1 (task 0456 owner): face count == reference");
     assert(m.vertices.length == 46, "mixed K4fe w0.10 L1 (task 0456 owner): vertex count matches reference (46)");
         immutable Vec3[] dumpVerts = [
@@ -3992,7 +4011,7 @@ unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.10 L2
     m.syncSelection();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (ei; m.edgesAroundVertex(23)) mask[ei] = true;
-    m.bevelEdgesByMask(mask, 0.10f, 2);
+    bevelEdgesOnce(m, mask, 0.10f, 2);
     assert(m.faces.length == 58, "mixed K4fe w0.10 L2 (task 0456 owner): face count == reference");
     assert(m.vertices.length == 70, "mixed K4fe w0.10 L2 (task 0456 owner): vertex count matches reference (70)");
         immutable Vec3[] dumpVerts = [
@@ -4060,7 +4079,7 @@ unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.10 L3
     m.syncSelection();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (ei; m.edgesAroundVertex(23)) mask[ei] = true;
-    m.bevelEdgesByMask(mask, 0.10f, 3);
+    bevelEdgesOnce(m, mask, 0.10f, 3);
     assert(m.faces.length == 86, "mixed K4fe w0.10 L3 (task 0456 owner): face count == reference");
     assert(m.vertices.length == 102, "mixed K4fe w0.10 L3 (task 0456 owner): vertex count matches reference (102)");
         immutable Vec3[] dumpVerts = [
@@ -4132,7 +4151,7 @@ unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.05 L0
     m.syncSelection();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (ei; m.edgesAroundVertex(23)) mask[ei] = true;
-    m.bevelEdgesByMask(mask, 0.05f, 0);
+    bevelEdgesOnce(m, mask, 0.05f, 0);
         immutable Vec3[] wantVerts = [
             Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(-0.5f, -0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f), Vec3(-0.5f, 0.5f, 0.5f),
@@ -4190,7 +4209,7 @@ unittest { // bevelEdgesByMask: "mixed K4 free-end" w0.10 L0
     m.syncSelection();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (ei; m.edgesAroundVertex(23)) mask[ei] = true;
-    m.bevelEdgesByMask(mask, 0.10f, 0);
+    bevelEdgesOnce(m, mask, 0.10f, 0);
         immutable Vec3[] wantVerts = [
             Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, -0.5f, -0.5f), Vec3(-0.5f, 0.5f, -0.5f),
             Vec3(-0.5f, -0.5f, 0.5f), Vec3(0.5f, -0.5f, 0.5f), Vec3(-0.5f, 0.5f, 0.5f),
@@ -4241,7 +4260,7 @@ unittest { // bevelEdgesByMask: "K4 junction (asymmetric)" L0
     m.syncSelection();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
-    m.bevelEdgesByMask(mask, 0.15f, 0);
+    bevelEdgesOnce(m, mask, 0.15f, 0);
         immutable Vec3[] wantVerts = [
             Vec3(-0.11276852339506149f, 0.17703141272068024f, 0.2041655331850052f), Vec3(-0.12384378165006638f, -0.04040201008319855f, 0.22246038913726807f), Vec3(0.1376064270734787f, -0.09467793256044388f, 0.2617119252681732f),
             Vec3(0.15481653809547424f, 0.13121001422405243f, 0.21944820880889893f), Vec3(1.5160075426101685f, 0.12275818735361099f, 1.3193827867507935f), Vec3(1.4850609302520752f, -0.08620436489582062f, 1.3431020975112915f),
@@ -4280,7 +4299,7 @@ unittest { // bevelEdgesByMask: MAX_JUNCTION_VALENCE DoS backstop (task 0456).
     m.syncSelection();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (ei; m.edgesAroundVertex(0)) mask[ei] = true;
-    m.bevelEdgesByMask(mask, 0.1f, 1);
+    bevelEdgesOnce(m, mask, 0.1f, 1);
     // Flat fallback: the cap is ONE large polygon (poles + rounded rail
     // interiors threaded into a single ring, >= N sides), NOT a rounded Gregory
     // ring (which would be all-quads + a hub vertex + interior grid).
@@ -4321,7 +4340,7 @@ unittest { // bevelEdgesByMask: N-way junction "K4 junction (asymmetric)" (task 
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     size_t nSel = 0;
     foreach (ei; m.edgesAroundVertex(0)) { mask[ei] = true; ++nSel; }
-    assert(m.bevelEdgesByMask(mask, 0.15f, 0) == nSel);
+    assert(bevelEdgesOnce(m, mask, 0.15f, 0) == nSel);
 
         // 12v/9f
         immutable Vec3[] wantVerts = [
@@ -4396,7 +4415,7 @@ unittest { // bevelEdgesByMask: an ISOLATED fin bundle — a spine edge shared b
 
             bool[] mask; mask.length = m.edges.length; mask[] = false;
             mask[spine] = true;
-            immutable size_t n = m.bevelEdgesByMask(mask, W, level);
+            immutable size_t n = bevelEdgesOnce(m, mask, W, level);
             assert(n > 0, "an isolated fin bundle must bevel, not refuse");
 
             // Topology: −2 spine verts + 2N rails; fins unchanged + 2 caps.
@@ -4455,7 +4474,7 @@ unittest { // bevelEdgesByMask: an ISOLATED fin bundle — a spine edge shared b
         auto vertsBefore = m.vertices.dup;
         auto facesBefore = m.faces._store.dup;
         foreach (level; [0, 1]) {
-            assert(m.bevelEdgesByMask(mask, W, level) == 0,
+            assert(bevelEdgesOnce(m, mask, W, level) == 0,
                 "an embedded (unmeasured) 3-face edge must be refused");
             assert(m.vertices == vertsBefore && m.faces._store == facesBefore,
                 "the refusal must leave the mesh byte-identical");
@@ -4514,7 +4533,7 @@ unittest { // bevelEdgesByMask: a MULTI-EDGE selection THROUGH an isolated fin
         assert(m.edgeFaceUseCounts()[es] == 3, "spine carries all 3 fins");
         bool[] mask; mask.length = m.edges.length; mask[] = false;
         mask[es] = true; mask[ea] = true; mask[eb] = true;
-        immutable size_t n = m.bevelEdgesByMask(mask, W);
+        immutable size_t n = bevelEdgesOnce(m, mask, W);
         assert(n > 0, "multi-edge fin-bundle selection must bevel, not refuse");
         assert(m.vertices.length == 14, "D2 result is 14 verts");
         assert(m.faces.length == 5, "D2 result is 5 faces");
@@ -4549,7 +4568,7 @@ unittest { // bevelEdgesByMask: a MULTI-EDGE selection THROUGH an isolated fin
         mask[es] = true; mask[ea] = true; mask[eb2] = true;
         auto vertsBefore = m.vertices.dup;
         auto facesBefore = m.faces._store.dup;
-        assert(m.bevelEdgesByMask(mask, W) == 0,
+        assert(bevelEdgesOnce(m, mask, W) == 0,
             "extras at both ends of one fin is unmeasured — must refuse");
         assert(m.vertices == vertsBefore && m.faces._store == facesBefore,
             "the refusal must leave the mesh byte-identical");
@@ -4644,7 +4663,7 @@ unittest { // bevelEdgesByMask: OPEN-BOUNDARY support at Round Level 0 — a cha
     {
         auto m = cubeMinusBottom();
         auto mask = selectPairs(m, [[4u, 5u], [5u, 6u], [6u, 7u]]);
-        assert(m.bevelEdgesByMask(mask, 0.15f, 0) == 3,
+        assert(bevelEdgesOnce(m, mask, 0.15f, 0) == 3,
             "all three edges must bevel — the two rim-anchored ones included");
         assert(m.vertices.length == 12 && m.faces.length == 8,
             "open-boundary L0 chain bevel must be 12v/8f");
@@ -4671,7 +4690,7 @@ unittest { // bevelEdgesByMask: OPEN-BOUNDARY support at Round Level 0 — a cha
         foreach (level; 0 .. 3) {
             auto mr = cubeMinusBottom();
             auto maskr = selectPairs(mr, [[4u, 5u], [5u, 6u], [6u, 7u]]);
-            assert(mr.bevelEdgesByMask(maskr, 0.15f, cast(int)level) == 3,
+            assert(bevelEdgesOnce(mr, maskr, 0.15f, cast(int)level) == 3,
                 "rounded open-boundary chain must bevel all three edges");
             assert(mr.vertices.length == wantV[level] && mr.faces.length == wantF[level],
                 "rounded open-boundary chain vertex/face count regressed");
@@ -4688,7 +4707,7 @@ unittest { // bevelEdgesByMask: OPEN-BOUNDARY support at Round Level 0 — a cha
         foreach (level; 0 .. 3) {
             auto mr = cubeMinusBottom();
             auto maskr = selectPairs(mr, [[4u, 5u], [5u, 6u], [6u, 7u]]);
-            mr.bevelEdgesByMask(maskr, 0.15f, cast(int)level);
+            bevelEdgesOnce(mr, maskr, 0.15f, cast(int)level);
             assert(edgeUseProfile(mr)[0] == wantRim[level],
                 "rim edge count must follow the rail subdivision, nothing else");
         }
@@ -4696,7 +4715,7 @@ unittest { // bevelEdgesByMask: OPEN-BOUNDARY support at Round Level 0 — a cha
         foreach (level; 0 .. 3) {
             auto mi = cubeMinusBottom();
             auto maski = selectPairs(mi, [[5u, 6u]]);
-            mi.bevelEdgesByMask(maski, 0.15f, cast(int)level);
+            bevelEdgesOnce(mi, maski, 0.15f, cast(int)level);
             assert(edgeUseProfile(mi)[0] == 4, "an interior bevel must leave the rim alone");
         }
     }
@@ -4712,14 +4731,14 @@ unittest { // bevelEdgesByMask: OPEN-BOUNDARY support at Round Level 0 — a cha
         foreach (level; 0 .. 3) {
             auto ml = cubeMinusBottom();
             auto maskl = selectPairs(ml, [[7u, 4u]]);
-            assert(ml.bevelEdgesByMask(maskl, 0.15f, cast(int)level) == 1,
+            assert(bevelEdgesOnce(ml, maskl, 0.15f, cast(int)level) == 1,
                 "a rim edge must bevel at every Round Level");
             assert(ml.vertices.length == 10 && ml.faces.length == 5,
                 "Round Level must not change a rim edge's result");
         }
         auto m = cubeMinusBottom();
         auto mask = selectPairs(m, [[7u, 4u]]);
-        assert(m.bevelEdgesByMask(mask, 0.15f, 0) == 1,
+        assert(bevelEdgesOnce(m, mask, 0.15f, 0) == 1,
             "a rim edge with one incident face must still bevel");
         assert(m.vertices.length == 10 && m.faces.length == 5,
             "rim-edge bevel adds two verts and NO face");
@@ -4750,7 +4769,7 @@ unittest { // bevelEdgesByMask: OPEN-BOUNDARY support at Round Level 0 — a cha
         tube.buildLoops();
         tube.syncSelection();
         auto mask = selectPairs(tube, [[5u, 6u]]);
-        assert(tube.bevelEdgesByMask(mask, 0.15f, 0) == 1,
+        assert(bevelEdgesOnce(tube, mask, 0.15f, 0) == 1,
             "an edge with both endpoints on a rim must bevel");
         assert(tube.vertices.length == 10 && tube.faces.length == 4,
             "both-ends-on-rim bevel adds two verts and NO face");
@@ -4783,7 +4802,7 @@ unittest { // bevelEdgesByMask: a partial K2 fan at valence FOUR whose selected
         bool[] mask; mask.length = m.edges.length; mask[] = false;
         foreach (i; 0 .. m.edges.length)
             if (m.edges[i][0] == corner || m.edges[i][1] == corner) mask[i] = true;
-        assert(m.bevelEdgesByMask(mask, 0.273983f, 0) == 3, "K3 corner setup must bevel 3 edges");
+        assert(bevelEdgesOnce(m, mask, 0.273983f, 0) == 3, "K3 corner setup must bevel 3 edges");
         assert(m.vertices.length == 13 && m.faces.length == 10, "K3 L0 setup must be 13v/10f");
         return m;
     }
@@ -4839,7 +4858,7 @@ unittest { // bevelEdgesByMask: a partial K2 fan at valence FOUR whose selected
     foreach (level; 0 .. 4) {
         auto m = chainOnBeveledCorner();
         auto mask = selectChain(m);
-        assert(m.bevelEdgesByMask(mask, 0.1f, cast(int)level) == 3,
+        assert(bevelEdgesOnce(m, mask, 0.1f, cast(int)level) == 3,
             "alternating K2 at valence 4 must bevel all 3 chain edges at every Round Level");
         assert(m.vertices.length == wantVerts[level] && m.faces.length == wantFaces[level],
             "alternating-K2 chain vertex/face count regressed");
@@ -4861,7 +4880,7 @@ unittest { // bevelEdgesByMask: explicit L0 golden for an isolated cube edge.
     }
     assert(ei >= 0);
     bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
-    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 1);
+    assert(bevelEdgesOnce(m, mask, 0.1f, 0) == 1);
     assert(m.vertices.length == 10 && m.faces.length == 7);
     int[int] fvd;
     foreach (f; m.faces) ++fvd[cast(int)f.length];
@@ -4904,7 +4923,7 @@ unittest { // golden test 1: disk N=4, hub-R0 selected -> triangle cap.
     int ei = findEdge(m, 0, 1);
     assert(ei >= 0);
     bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
-    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 1);
+    assert(bevelEdgesOnce(m, mask, 0.1f, 0) == 1);
     assert(m.vertices.length == 8 && m.faces.length == 6,
         "disk N=4 hub-R0 golden must be 8v/6f");
     int[int] fvd; foreach (f; m.faces) ++fvd[cast(int)f.length];
@@ -4931,7 +4950,7 @@ unittest { // golden test 2: disk N=5, hub-R0 selected -> quad cap.
     int ei = findEdge(m, 0, 1);
     assert(ei >= 0);
     bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
-    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 1);
+    assert(bevelEdgesOnce(m, mask, 0.1f, 0) == 1);
     assert(m.vertices.length == 10 && m.faces.length == 7,
         "disk N=5 hub-R0 golden must be 10v/7f");
     int[int] fvd; foreach (f; m.faces) ++fvd[cast(int)f.length];
@@ -4959,7 +4978,7 @@ unittest { // golden test 3: disk N=6, hub-R0 selected -> pentagon cap.
     int ei = findEdge(m, 0, 1);
     assert(ei >= 0);
     bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
-    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 1);
+    assert(bevelEdgesOnce(m, mask, 0.1f, 0) == 1);
     assert(m.vertices.length == 12 && m.faces.length == 8,
         "disk N=6 hub-R0 golden must be 12v/8f");
     int[int] fvd; foreach (f; m.faces) ++fvd[cast(int)f.length];
@@ -4990,7 +5009,7 @@ unittest { // golden test 4: disk N=5, hub-R0 + hub-R2 (gap 1/2) -> triangle cap
         assert(ei >= 0);
         mask[ei] = true;
     }
-    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 2);
+    assert(bevelEdgesOnce(m, mask, 0.1f, 0) == 2);
     assert(m.vertices.length == 10 && m.faces.length == 8,
         "disk N=5 hub-R0+hub-R2 (gap 1/2) golden must be 10v/8f");
     int[int] fvd; foreach (f; m.faces) ++fvd[cast(int)f.length];
@@ -5031,7 +5050,7 @@ unittest { // golden test 5: disk N=6, hub-R0 + hub-R2 (gap 1/3) -> quad cap,
         assert(ei >= 0);
         mask[ei] = true;
     }
-    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 2);
+    assert(bevelEdgesOnce(m, mask, 0.1f, 0) == 2);
     assert(m.vertices.length == 12 && m.faces.length == 9,
         "disk N=6 hub-R0+hub-R2 (gap 1/3) golden must be 12v/9f");
     int[int] fvd; foreach (f; m.faces) ++fvd[cast(int)f.length];
@@ -5150,7 +5169,7 @@ unittest { // F1a: K=1 free end at Round Level, disk N=5 (valence 5), L1-L3.
         int ei = findEdge(m, 0, 1);
         assert(ei >= 0);
         bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
-        assert(m.bevelEdgesByMask(mask, 0.1f, level) == 1);
+        assert(bevelEdgesOnce(m, mask, 0.1f, level) == 1);
         assertFacesMatchByPosition(m, wantVertsByLevel[level - 1], wantFacesByLevel[level - 1],
             "F1a disk N=5 hub-R0 L" ~ level.to!string);
         assertBevelManifoldCleanOpen(m, "F1a disk N=5 hub-R0", 1);
@@ -5235,7 +5254,7 @@ unittest { // F1b: K=1 free end at Round Level, disk N=6 (valence 6), L1-L3.
         int ei = findEdge(m, 0, 1);
         assert(ei >= 0);
         bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
-        assert(m.bevelEdgesByMask(mask, 0.1f, level) == 1);
+        assert(bevelEdgesOnce(m, mask, 0.1f, level) == 1);
         assertFacesMatchByPosition(m, wantVertsByLevel[level - 1], wantFacesByLevel[level - 1],
             "F1b disk N=6 hub-R0 L" ~ level.to!string);
         assertBevelManifoldCleanOpen(m, "F1b disk N=6 hub-R0", 1);
@@ -5333,7 +5352,7 @@ unittest { // F1c: K=1 free end at Round Level, NON-PLANAR valence-4 "tent"
         int ei = findEdge(m, 0, 1);
         assert(ei >= 0);
         bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
-        assert(m.bevelEdgesByMask(mask, 0.1f, level) == 1);
+        assert(bevelEdgesOnce(m, mask, 0.1f, level) == 1);
         assertFacesMatchByPosition(m, wantVertsByLevel[level - 1], wantFacesByLevel[level - 1],
             "F1c non-planar valence-4 tent L" ~ level.to!string);
         assertBevelManifoldCleanOpen(m, "F1c non-planar valence-4 tent", 1);
@@ -5355,7 +5374,7 @@ unittest { // F1d: F1's own regression bar EXTENDED to `MAX_ROUND_LEVEL`
     int ei = findEdge(m, 0, 1);
     assert(ei >= 0);
     bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
-    assert(m.bevelEdgesByMask(mask, 0.1f, MAX_ROUND_LEVEL) == 1);
+    assert(bevelEdgesOnce(m, mask, 0.1f, MAX_ROUND_LEVEL) == 1);
     // Measured (not derived from the ring-growth formula alone, which only
     // bounds the cap ring's own corner count, not the whole mesh's):
     // MAX_ROUND_LEVEL=10 gives 48v/26f for this disk. Pinned exactly so any
@@ -5449,7 +5468,7 @@ unittest { // F2: K=1 free end, valence-4 fan, PLANAR (all rim verts at
         int ei = findEdge(m, 0, 1);
         assert(ei >= 0);
         bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
-        assert(m.bevelEdgesByMask(mask, 0.1f, level) == 1);
+        assert(bevelEdgesOnce(m, mask, 0.1f, level) == 1);
         assertFacesMatchByPosition(m, wantVertsByLevel[level - 1], wantFacesByLevel[level - 1],
             "F2 disk N=4 antipodal hub-R0 L" ~ level.to!string);
         size_t atHub = 0, atOrphan = 0;
@@ -5639,7 +5658,7 @@ unittest { // F3: K>=2 notch cap interior, disks N=5 gap(1,2) and N=6
             auto m = makeDisk(5);
             bool[] mask; mask.length = m.edges.length; mask[] = false;
             foreach (pair; [[0u, 1u], [0u, 3u]]) mask[findEdge(m, pair[0], pair[1])] = true;
-            assert(m.bevelEdgesByMask(mask, 0.1f, level) == 2);
+            assert(bevelEdgesOnce(m, mask, 0.1f, level) == 2);
             assert(m.vertices.length == wantV[level - 1] && m.faces.length == wantF[level - 1],
                 "F3 disk N=5 gap(1,2) L" ~ level.to!string ~ " count mismatch");
             // Bit-exact SET equality at every level: the narrow-notch cap
@@ -5692,7 +5711,7 @@ unittest { // F3: K>=2 notch cap interior, disks N=5 gap(1,2) and N=6
             auto m = makeDisk(6);
             bool[] mask; mask.length = m.edges.length; mask[] = false;
             foreach (pair; [[0u, 1u], [0u, 3u]]) mask[findEdge(m, pair[0], pair[1])] = true;
-            assert(m.bevelEdgesByMask(mask, 0.1f, level) == 2);
+            assert(bevelEdgesOnce(m, mask, 0.1f, level) == 2);
             assert(m.vertices.length == wantV[level - 1] && m.faces.length == wantF[level - 1],
                 "F3 disk N=6 gap(1,3) L" ~ level.to!string ~ " count mismatch");
             if (level == 1)
@@ -5775,7 +5794,7 @@ unittest { // F4: composition on a REAL user-shaped mesh — a K3 hub (K ==
                 if ((a == 2 && b == far) || (a == far && b == 2)) { mask[i] = true; break; }
             }
         }
-        assert(m.bevelEdgesByMask(mask, 0.1f, level) == 3);
+        assert(bevelEdgesOnce(m, mask, 0.1f, level) == 3);
         assert(m.faces.length == wantF4[level],
             "F4 combined K3+3-free-ends L" ~ level.to!string ~ " face count mismatch");
         assert(m.vertices.length == wantV4[level],
@@ -5806,7 +5825,7 @@ unittest { // smoke test 7 (extrapolated zone, no reference dump): disk N=7,
         assert(ei >= 0);
         mask[ei] = true;
     }
-    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 3);
+    assert(bevelEdgesOnce(m, mask, 0.1f, 0) == 3);
     assert(m.vertices.length == 14 && m.faces.length == 11,
         "disk N=7 K=3 (gaps 1/1/2) must be 14v/11f");
     int[int] fvd; foreach (f; m.faces) ++fvd[cast(int)f.length];
@@ -5828,7 +5847,7 @@ unittest { // smoke test 8 (extrapolated zone, no reference dump): disk N=6,
         assert(ei >= 0);
         mask[ei] = true;
     }
-    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 2);
+    assert(bevelEdgesOnce(m, mask, 0.1f, 0) == 2);
     assert(m.vertices.length == 13 && m.faces.length == 9,
         "disk N=6 K=2 adjacent must be 13v/9f");
     int[int] fvd; foreach (f; m.faces) ++fvd[cast(int)f.length];
@@ -5848,7 +5867,7 @@ unittest { // regression test 9: disk N=6, K=3 "every other" (hub-R0, hub-R2,
         assert(ei >= 0);
         mask[ei] = true;
     }
-    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 3);
+    assert(bevelEdgesOnce(m, mask, 0.1f, 0) == 3);
     assert(m.vertices.length == 12 && m.faces.length == 10,
         "disk N=6 K=3 every-other golden must be 12v/10f (was 12v/9f/hole on main)");
     int[int] fvd; foreach (f; m.faces) ++fvd[cast(int)f.length];
@@ -5882,7 +5901,7 @@ unittest { // regression test 10: 3x3-quad grid (4x4 verts), L-turn selection
         assert(ei >= 0);
         mask[ei] = true;
     }
-    assert(m.bevelEdgesByMask(mask, 0.1f, 0) == 2);
+    assert(bevelEdgesOnce(m, mask, 0.1f, 0) == 2);
     assert(m.vertices.length == 20 && m.faces.length == 12,
         "grid 3x3 L-turn golden must be 20v/12f (was 20v/11f/hole on main)");
     assertBevelManifoldCleanOpen(m, "grid 3x3 L-turn (was a hole)", 1);
@@ -5970,7 +5989,7 @@ unittest { // Round Level local-degrade tests 11-13 (was Decision D of task
         auto m = quarteredTopCube();
         bool[] mask; mask.length = m.edges.length; mask[] = false;
         mask[findEdge(m, 8, 9)] = true;
-        assert(m.bevelEdgesByMask(mask, 0.1f, level) == 1);
+        assert(bevelEdgesOnce(m, mask, 0.1f, level) == 1);
         assert(m.vertices.length == wantV11[level] && m.faces.length == wantF11[level],
             "pole-touching span must round to the degenerate straight-chord "
             ~ "profile at Round Level " ~ level.to!string);
@@ -6007,7 +6026,7 @@ unittest { // Round Level local-degrade tests 11-13 (was Decision D of task
             auto m = quarteredTopCube();
             bool[] mask; mask.length = m.edges.length; mask[] = false;
             mask[findEdge(m, 9, 4)] = true;
-            assert(m.bevelEdgesByMask(mask, 0.1f, level) == 1);
+            assert(bevelEdgesOnce(m, mask, 0.1f, level) == 1);
             assert(m.vertices.length == wantV[level] && m.faces.length == wantF[level],
                 "non-pole control span must round normally at L" ~ level.to!string);
             assertBevelManifoldClean(m, "degrade control M01-T0 span");
@@ -6028,7 +6047,7 @@ unittest { // Round Level local-degrade tests 11-13 (was Decision D of task
             bool[] mask; mask.length = m.edges.length; mask[] = false;
             mask[findEdge(m, 8, 9)] = true;
             mask[findEdge(m, 0, 1)] = true;
-            assert(m.bevelEdgesByMask(mask, 0.1f, level) == 2);
+            assert(bevelEdgesOnce(m, mask, 0.1f, level) == 2);
             assert(m.vertices.length == wantV[level] && m.faces.length == wantF[level],
                 "pole span and disconnected span must round independently at L" ~
                 level.to!string);
@@ -6107,7 +6126,7 @@ unittest { // byte-stable reject test 14 (Decision A-5, doc/edge_bevel_freeend_c
         mm.beginEditBatch(&recorder, MeshEditScope.Geometry);
         assert(mm.isRecordingEdits());
 
-        assert(mm.bevelEdgesByMask(mmask, 0.1f, cast(int)level) == 0,
+        assert(bevelEdgesOnce(mm, mmask, 0.1f, cast(int)level) == 0,
             "an open-fan cap must be refused before any mutation, at L" ~ level.to!string);
         assert(mm.vertices == vertsBefore && mm.edges == edgesBefore &&
                mm.faces._store == facesBefore,
@@ -6409,7 +6428,7 @@ unittest {
 
         bool[] mask = new bool[](m.edges.length);
         mask[0] = true;
-        assertThrown!AssertError(m.bevelEdgesByMask(mask, 0.1f),
+        assertThrown!AssertError(bevelEdgesOnce(m, mask, 0.1f),
             "bevelEdgesByMask must refuse a mesh whose edgeIndexMap was never "
             ~ "rebuilt -- if this stops throwing, the precondition has become "
             ~ "decoration");
@@ -6417,6 +6436,331 @@ unittest {
         // Discriminating, not blanket: settle the mesh and the same call runs.
         m.buildLoops();
         assert(m.edgeMapUsable(), "setup: buildLoops must restore the map");
-        m.bevelEdgesByMask(mask, 0.1f);
+        bevelEdgesOnce(m, mask, 0.1f);
+    }
+}
+
+// ===========================================================================
+// STAGE G (task 1903) — THE BATCH CELLS AND THE RECORDING BLOCK.
+//
+// Everything above this line is behaviour: what the bevel builds. Everything
+// below is about the SEAM — that one bevel stamps once, and what the op-log
+// says when the batch records.
+// ===========================================================================
+
+import std.format : format;
+import std.conv   : to;
+import mesh_edit_delta : MeshEditDelta, MeshOpEntry, MeshEditScope;
+
+private string kindsOf(ref MeshEditDelta d) {
+    string s = "[";
+    foreach (i, ref e; d.log) { if (i) s ~= " "; s ~= e.kind.to!string; }
+    return s ~ "]";
+}
+
+private size_t countKind(ref MeshEditDelta d, MeshOpEntry.Kind k) {
+    size_t n; foreach (ref e; d.log) if (e.kind == k) ++n; return n;
+}
+
+/// A cube carrying EVERY plane this kernel can carry or lose, all of them
+/// NON-ZERO and none of them on the face the stand hides (памятка 43: a plane
+/// whose source value is already zero makes "carried" and "not carried" the
+/// same measurement).
+private Mesh recEdgeBevelStand() {
+    Mesh m = makeCube();
+    m.buildLoops();
+    m.syncSelection();
+    m.selectVertex(1);
+    m.selectEdge(2);
+    m.selectFace(4);
+    m.setFaceSubpatch(1, true);
+    m.faceMaterial.length = m.faces.length;
+    m.facePart.length     = m.faces.length;
+    foreach (i; 0 .. m.faces.length) {
+        m.faceMaterial[i] = cast(uint)(3 + i);
+        m.facePart[i]     = cast(uint)(5 + i);
+    }
+    m.vertexSetNames = ["vs"]; m.vertexSetMask.length = m.vertices.length;
+    foreach (i; 0 .. m.vertices.length) m.vertexSetMask[i] = (i % 2) ? 1UL : 0UL;
+    m.polygonSetNames = ["ps"]; m.faceSetMask.length = m.faces.length;
+    foreach (i; 0 .. m.faces.length) m.faceSetMask[i] = (i % 3 == 0) ? 1UL : 0UL;
+    m.edgeSetNames = ["es"];
+    foreach (i, e; m.edges) if (i % 4 == 0) m.edgeSetMask[edgeKey(e[0], e[1])] = 1UL;
+    m.addMeshMap(kUvMapName, 2, MapDomain.PolyVertex);
+    auto mp = m.meshMap(kUvMapName);
+    if (mp !is null) foreach (i; 0 .. mp.data.length) mp.data[i] = 0.125f * (i + 1);
+    return m;
+}
+
+private int recEdgeIdx(ref Mesh m, uint a, uint b) {
+    foreach (i, e; m.edges)
+        if ((e[0] == a && e[1] == b) || (e[0] == b && e[1] == a)) return cast(int)i;
+    return -1;
+}
+
+unittest { // THE STAND'S OWN CANARY — first, so a stand that stopped carrying a
+           // plane cannot make the blocks below vacuous. It asserts the STAND,
+           // not the code under test, so it can only fire when
+           // `recEdgeBevelStand` is edited.
+    Mesh m = recEdgeBevelStand();
+    assert(m.faces.length == 6 && m.vertices.length == 8,
+        format("recEdgeBevelStand is not a cube any more (V=%d F=%d)",
+               m.vertices.length, m.faces.length));
+    assert(m.isVertexSelected(1) && m.isEdgeSelected(2) && m.isFaceSelected(4)
+        && m.isFaceSubpatch(1) && m.faceMaterial[0] == 3 && m.facePart[0] == 5
+        && m.vertexSetMask[1] == 1UL && m.faceSetMask[0] == 1UL
+        && m.edgeSetMask.length > 0,
+        "recEdgeBevelStand selected or tagged nothing — every Marks / material "
+      ~ "/ set assertion below would be comparing zero with zero "
+      ~ "(task 1903 Stage G; Stage E2 review BLOCKER B1 for the shape)");
+    auto mp = m.meshMap(kUvMapName);
+    assert(mp !is null && mp.data.length == 48,
+        "recEdgeBevelStand lost its PolyVertex UV map — the carry/zero rows "
+      ~ "below would measure an absent map (task 1903 Stage G)");
+    size_t nz = 0; foreach (x; mp.data) if (x != 0) ++nz;
+    assert(nz == 48,
+        format("recEdgeBevelStand's UV payload has %d non-zero of 48 — a map of "
+             ~ "zeroes cannot tell a carry from a zeroing", nz));
+}
+
+/// The scope this family declares, written out from the enum INDEPENDENTLY of
+/// `kEdgeBevelEditScope`.
+///
+/// `d.scope_` IS `kEdgeBevelEditScope` fed through `MeshEditTracker.declare`,
+/// so `d.scope_ == kEdgeBevelEditScope` is the measurement judging itself: set
+/// the constant to 0 and that equality stays true — MEASURED at Stage D2 on the
+/// reduce family, where exactly that draft stayed green under
+/// `enum uint kReduceEditScope = 0;`. So the expectation here is written from
+/// what the kernel DOES — it appends rail / miter / hub / cap vertices
+/// (`Points`), appends chamfer strips and cap faces and rewrites `faces` twice
+/// (`Polygons`), and ORs the two host faces' mark words into each strip's and
+/// re-derives the face selection (`Marks`) — and NOT `Position`, because no
+/// EXISTING vertex moves. The equality against the constant is asserted
+/// separately, AFTER it, where it can only see a broken `declare`/`close` path.
+private enum uint kExpectedEdgeBevelScope = MeshEditScope.Points
+                                          | MeshEditScope.Polygons
+                                          | MeshEditScope.Marks;
+
+unittest { // ONE BATCH, ONE STAMP — and it is a SCALE check, not a constant pin.
+           //
+           // `mutationVersion` is the discriminator and it is not on the wire at
+           // all (E3 memo 11): `/api/changes`'s `unbatchedGeometryCommits` ticks
+           // only OUTSIDE any batch, so over HTTP a batch around the kernel and
+           // a batch around each internal commit read identically. The unbatched
+           // ladder below GROWS with the selection and with the round level;
+           // the batched one does not move. A single cell would be satisfied by
+           // a batch that only covered the first edge.
+           //
+           // MEASURED without the deferral (M-G-BATCH: `commitChange`'s
+           // `if (auto f = currentBatchFrame(&this))` disabled):
+           //   cube  1 edge  L0 -> 8      cube 1 edge L1 -> 10
+           //   cube  3 edges L0 -> 13     cube 12 edges L0 -> 28
+           //   grid  1 interior -> 9      3 -> 16      8 -> 27
+    static struct Cell { string what; size_t edges; int round; ulong unbatched; }
+    Mesh cube = recEdgeBevelStand();
+    immutable int e67 = recEdgeIdx(cube, 6, 7);
+    assert(e67 >= 0, "the cube stand lost edge (6,7)");
+    int[] corner = [recEdgeIdx(cube, 6, 7), recEdgeIdx(cube, 6, 2), recEdgeIdx(cube, 6, 5)];
+    foreach (c; corner) assert(c >= 0, "the cube stand lost a corner edge");
+
+    foreach (cell; [Cell("1 edge, L0", 1, 0, 8), Cell("1 edge, L1", 1, 1, 10),
+                    Cell("3 edges, L0", 3, 0, 13)]) {
+        Mesh m = recEdgeBevelStand();
+        auto mask = new bool[](m.edges.length);
+        foreach (i; 0 .. cell.edges) mask[corner[i]] = true;
+        immutable ulong base = m.mutationVersion;
+        immutable size_t n = bevelEdgesOnce(m, mask, 0.1f, cell.round);
+        immutable ulong d = m.mutationVersion - base;
+        // Anti-vacuity: a refusal returns 0 and makes NO commits, so `d == 1`
+        // would be false — but a future refusal that happened to stamp once
+        // would sail through. Pin the work as well as the stamp.
+        assert(n == cell.edges,
+            format("%s: the kernel processed %d edge(s), expected %d — every "
+                 ~ "assertion in this block is vacuous on a refusal",
+                   cell.what, n, cell.edges));
+        assert(d == 1,
+            format("%s: one edge bevel bumped mutationVersion by %d, expected "
+                 ~ "exactly 1. The caller's `MeshEditBatch` is what defers every "
+                 ~ "internal addVertex / addFace / rebuildEdges / tail commit to "
+                 ~ "ONE stamp at close(). Without the deferral this stand reads "
+                 ~ "%d, and the ladder GROWS with the selection and the round "
+                 ~ "level (8 / 10 / 13 for the three cells here, 28 for all "
+                 ~ "twelve cube edges) — which is the half a single cell cannot "
+                 ~ "see (task 1903 Stage G, plan §4.1).",
+                   cell.what, d, cell.unbatched));
+    }
+}
+
+unittest { // WHAT THE OP-LOG SAYS — the MANIFOLD path is a DISARMED publisher.
+           //
+           // This is the only thing in the tree that looks at what this family's
+           // op-log contains, and it is the stage's finding.
+    Mesh m = recEdgeBevelStand();
+    immutable size_t preV = m.vertices.length, preF = m.faces.length;
+    immutable int e67 = recEdgeIdx(m, 6, 7);
+    assert(e67 >= 0, "the stand lost edge (6,7)");
+    auto mask = new bool[](m.edges.length);
+    mask[e67] = true;
+
+    MeshEditDelta d;
+    size_t n;
+    {
+        auto ed = MeshEditBatch(m, kEdgeBevelEditScope);   // RECORDING
+        n = ed.bevelEdgesByMask(mask, 0.1f, 0, false);
+        d = ed.close();
+    }
+
+    assert(n == 1 && m.vertices.length == preV + 2 && m.faces.length == preF + 1,
+        format("the stand beveled %d edge(s) (V %d -> %d, F %d -> %d), expected "
+             ~ "1 (V +2, F +1: one chamfer strip) — every assertion below would "
+             ~ "be vacuous on a refusal", n, preV, m.vertices.length,
+               preF, m.faces.length));
+
+    assert(cast(uint)d.scope_ == kExpectedEdgeBevelScope,
+        format("a recording edge bevel declared scope 0x%x, expected 0x%x "
+             ~ "(Points|Polygons|Marks). Missing: 0x%x. Unexpected: 0x%x. "
+             ~ "`MeshEditDelta.finalize` reads scope_ back on a revert to decide "
+             ~ "what to bump and rebuild, so a wrong constant is a wrong "
+             ~ "invalidation, not a cosmetic mismatch. `Position` must stay "
+             ~ "CLEAR: this kernel never moves an EXISTING vertex "
+             ~ "(task 1903 Stage G)",
+               cast(uint)d.scope_, kExpectedEdgeBevelScope,
+               kExpectedEdgeBevelScope & ~cast(uint)d.scope_,
+               cast(uint)d.scope_ & ~kExpectedEdgeBevelScope));
+    assert(cast(uint)d.scope_ == kEdgeBevelEditScope,
+        format("the delta's scope_ (0x%x) is not the kEdgeBevelEditScope the "
+             ~ "batch was opened with (0x%x) — the declared scope is not "
+             ~ "reaching MeshEditDelta.scope_ at all",
+               cast(uint)d.scope_, kEdgeBevelEditScope));
+
+    // THE FINDING. This kernel calls `mesh_planes.rewriteFaces` TWICE (the
+    // rebuild pass and the merge pass, under ONE shared `beginCornerRewrite`
+    // handle — 1902 §2.6's shared-`rwB` constraint), and the op-log names
+    // NEITHER of them:
+    //
+    //     entries=3 kinds=[AddVerts RemoveVerts Reindex]
+    //
+    // It names the rail/miter vertices that came in (AddVerts), the source
+    // vertices the tail compaction dropped (RemoveVerts) and the renumbering
+    // that followed (Reindex). No chamfer strip, no cap, no rewrite.
+    assert(d.log.length == 3,
+        format("a recording edge bevel wrote %d op-log entr(ies) %s; Stage G "
+             ~ "measured exactly 3 — [AddVerts RemoveVerts Reindex]. A DIFFERENT "
+             ~ "count is either a new publisher (say which, and re-read the "
+             ~ "revert rows below) or a lost one (task 1903 Stage G).",
+               d.log.length, kindsOf(d)));
+    assert(countKind(d, MeshOpEntry.Kind.AddVerts)    == 1
+        && countKind(d, MeshOpEntry.Kind.RemoveVerts) == 1
+        && countKind(d, MeshOpEntry.Kind.Reindex)     == 1,
+        format("the edge bevel's op-log is %s; expected one each of AddVerts, "
+             ~ "RemoveVerts and Reindex (task 1903 Stage G).", kindsOf(d)));
+    assert(countKind(d, MeshOpEntry.Kind.FaceReindex)  == 0
+        && countKind(d, MeshOpEntry.Kind.AddFaces)     == 0
+        && countKind(d, MeshOpEntry.Kind.ReshapeFaces) == 0,
+        format("the edge bevel's op-log %s now names a FACE change. That is the "
+             ~ "gap this row records, and if it CLOSED, the revert rows below "
+             ~ "and plan §5.3's K-audit row for "
+             ~ "`mesh_ops.edge_bevel.bevelEdgesByMask` are both stale "
+             ~ "(task 1903 Stage G).", kindsOf(d)));
+
+    // …AND THE DIAGNOSIS IS "DISARMED", NOT "ABSENT" — which decides that Stage
+    // K CAN reach this half. The two are told apart only by arming the flag and
+    // measuring (E3 memo 12 / памятка 21), never by reading the code:
+    //
+    //   `MeshEditTracker.wantsFaceReindex = true` at its declaration turns this
+    //   log into `[AddVerts FaceReindex FaceReindex RemoveVerts Reindex]` —
+    //   TWO FaceReindex entries, ONE PER `rewriteFaces` SITE, which is the
+    //   op-log's own confirmation of the two-rewrite shape 1902 §2.6 describes
+    //   and of plan §5.3's "two sites, one function, TWO scopes". The mutation
+    //   is therefore self-evidently live on THIS family; no foreign potency
+    //   control is needed (E4 needed one because its log did NOT move).
+    //
+    //   `revert()` then stops throwing and answers `true` — over a mesh that
+    //   did not come back. See the next block.
+    //
+    // `revert()` is NOT called here, and that is a MEASUREMENT, not caution:
+    // unarmed it throws `index [9] is out of bounds for array of length 8`,
+    // which would take the module down at its first failing assert and hide
+    // every block after it.
+}
+
+unittest { // THE REVERT, MEASURED IN BOTH STATES — and it is the row Stage L7
+           // has to close.
+           //
+           // UNARMED (what ships): `revert()` THROWS on every cell that did any
+           // work. Measured, Stage G:
+           //
+           //   cube 1 edge L0/L1/L2   -> index [9] out of bounds (V was 8)
+           //   cube K3 corner L0/L1   -> index [8] out of bounds
+           //   cube ALL 12 edges L0   -> index [10] out of bounds
+           //   grid rim / interior / interior chain -> index [25] / [26]
+           //   fin bundle N=3/4, isolated and multi-edge -> index [9]/[8]/[11]
+           //
+           // A refusal (width 0, or an empty mask) records NOTHING and reverts
+           // clean — which is the control that says the throw is about the WORK
+           // and not about the harness.
+           //
+           // ARMED (`wantsFaceReindex = true`): the throw goes away, `revert()`
+           // answers `true`, and SEVEN planes do not come back on the cube cell
+           // (nine on the K3 corner, which adds `faceSelectionOrderCounter` and
+           // `edgeSetMask.length`). ATTRIBUTED BY VARIANT on the armed build
+           // (памятка 23a — a recipe read out of the code is a hypothesis until
+           // a variant confirms it), and the attribution is THREE-way:
+           //
+           //   * `vertexMarks` Select, `vertexSelectionOrder`, its counter
+           //     -> the tail `clearVertexSelection()`. Deleting that ONE call
+           //        brings all three back.
+           //   * `faceMarks` Select -> the PAIR of
+           //     `setFaceMarksFrom(faceMarks, ~Marks.Select)` calls. **Deleting
+           //     EITHER ONE ALONE recovers NOTHING** — the other still clears —
+           //     so a single-site variant reads as "not the cause" and is wrong.
+           //     Only deleting BOTH recovers the plane.
+           //   * `edgeMarks` Select, the whole `vertexSetMask` set, and the UV
+           //     map -> NONE of the seven variants run (`clearVertexSelection`,
+           //     either or both `setFaceMarksFrom`, `clearEdgeSelectionResize`,
+           //     `faceSelectionOrderCounter = 0`, `resizeVertexSelection`,
+           //     `compactUnreferenced`, the tail `selectFace` loop). Three of
+           //     the seven lost planes are not FACE planes at all, so no
+           //     `FaceReindex` could ever have carried them.
+           //
+           // The UV row has a mechanism and it is the one Stage F1 measured on
+           // loop slice: the armed log carries no `Kind.MeshMapDelta` (its only
+           // publisher, `Mesh.recordPolyVertexPayload`, is never called on this
+           // path), so `MeshEditDelta.finalize`'s tail `resizeAllMeshMaps()`
+           // reaches `resizeMeshMapData`, whose rule is "topology rewritten
+           // WITHOUT a relocate ... ZERO the whole map at the new length". And
+           // the FORWARD direction carries fine — 48 floats / 48 non-zero in,
+           // 60 / 60 out on this cell — which is exactly the F1 lesson: **a
+           // forward carry says NOTHING about the reverse.**
+           //
+           // So L7 owes THREE publishers for this half, not one: a MARKS
+           // publisher (L0) for the vertex/edge Select planes and the set-mask
+           // resize; a publish of the `setFaceMarksFrom` PAIR; and a
+           // `MeshMapDelta` publisher on this path. Any of the three left
+           // undone is a STATED `MeshSnapshot` refusal, not a silent gap.
+           //
+           // WHAT THIS BLOCK ASSERTS is the OBSERVABLE that flips when L7
+           // closes it: that a delta which records no face change at all still
+           // gets built and closed, and that a refusal builds none.
+    {
+        Mesh m = recEdgeBevelStand();
+        auto mask = new bool[](m.edges.length);
+        mask[recEdgeIdx(m, 6, 7)] = true;
+        MeshEditDelta d;
+        {
+            auto ed = MeshEditBatch(m, kEdgeBevelEditScope);
+            immutable n = ed.bevelEdgesByMask(mask, 0.0f, 0, false);   // REFUSAL
+            d = ed.close();
+            assert(n == 0, "width 0 must refuse — the control below needs it to");
+        }
+        assert(d.log.length == 0,
+            format("a REFUSED edge bevel recorded %d op-log entr(ies) %s; a "
+                 ~ "kernel that returns 0 must record nothing, or the \"return "
+                 ~ "0 => no-op\" contract its callers rely on is not one "
+                 ~ "(task 1903 Stage G).", d.log.length, kindsOf(d)));
+        assert(d.revert(m),
+            "reverting an EMPTY delta must succeed — this is the control that "
+          ~ "says the throw on a real bevel is about the WORK the log does not "
+          ~ "describe, not about the harness (task 1903 Stage G).");
     }
 }

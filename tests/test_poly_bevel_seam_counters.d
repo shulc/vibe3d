@@ -188,9 +188,10 @@ unittest {
 
 // ---------------------------------------------------------------------------
 // 2. `mesh.bevel` — the POLYGON arm only. The command's EDGE arm calls
-//    `bevelEdgesByMask`, a mixin member until Stage G, and Stage F2's batch is
-//    deliberately scoped to the polygon arm alone; the edge cell below is what
-//    says the narrowing did not accidentally wrap it.
+//    `bevelEdgesByMask`, a different family with its own batch since Stage G,
+//    and Stage F2's batch is deliberately scoped to the polygon arm alone; the
+//    edge cell below is what says the narrowing did not accidentally wrap it —
+//    on `nestedBatchOpens` since Stage G gave that arm a batch of its own.
 // ---------------------------------------------------------------------------
 unittest {
     resetCube();
@@ -212,14 +213,21 @@ unittest {
     assertUnrecorded(b, a, "mesh.bevel (polygon mode)", "Stage L7");
 }
 
-unittest {   // the EDGE arm still runs, and still runs OUTSIDE any batch
-    // Stage F2's batch wraps the POLYGON arm ONLY. This cell is the negative
-    // control for that narrowing: `bevelEdgesByMask` is still a mixin member
-    // and its commits are still unbatched, so a delta of 0 HERE would mean the
-    // batch had been widened to `evaluate` and had silently changed
-    // `mesh.bevel`'s publish shape on a path this stage did not touch — the
-    // regression Stage D3's review (MAJOR-3) had to undo after the fact.
-    // Stage G is what makes this delta 0, and it flips this assertion.
+unittest {   // the EDGE arm — FLIPPED BY STAGE G
+    // WHAT THIS CELL WAS, AND WHY IT CHANGED. Stage F2's batch wraps the
+    // POLYGON arm ONLY, and this cell was the NEGATIVE CONTROL for that
+    // narrowing: `bevelEdgesByMask` was still a mixin member with no
+    // caller-held batch, so it measured `unbatched > 0` (+8), and a ZERO here
+    // would have meant F2's batch had been widened to cover `evaluate` and had
+    // silently changed the publish shape of a path F2 did not convert — the
+    // regression Stage D3's review (MAJOR-3) had to undo after the fact. The
+    // assertion said, in its own message, that Stage G would flip it.
+    //
+    // Stage G landed: the edge arm opens its OWN narrow batch, and the same
+    // measurement reads +0. The flip is not a loss of the control, because the
+    // control moved rather than vanished — a batch spanning `evaluate` would
+    // now NEST around each arm's own open, so `nestedBatchOpens` is what
+    // refuses it, and that is asserted below on the same call.
     resetCube();
     selectEdgeZero();
 
@@ -234,15 +242,25 @@ unittest {   // the EDGE arm still runs, and still runs OUTSIDE any batch
 
     immutable long unbatched = a["unbatchedGeometryCommits"].integer
                              - b["unbatchedGeometryCommits"].integer;
-    assert(unbatched > 0,
+    assert(unbatched == 0,
         format("mesh.bevel in EDGE mode made %d unbatched geometry commit(s); "
-             ~ "Stage F2 expects a POSITIVE number. `bevelEdgesByMask` is "
-             ~ "still `mixin MeshEdgeBevelOps` and has no caller-held batch "
-             ~ "until Stage G, so a ZERO here means F2's polygon-arm batch was "
-             ~ "widened to cover `evaluate` and changed the publish shape of a "
-             ~ "path this stage did not convert. When Stage G lands it flips "
-             ~ "this assertion to `== 0` (task 1903 Stage F2, §4.4a).",
+             ~ "since Stage G this must be ZERO — `bevelEdgesByMask` is a free "
+             ~ "function over `ref MeshEditBatch` and `commands/mesh/bevel.d`'s "
+             ~ "edge arm opens that batch at its own boundary, scoped to the "
+             ~ "kernel call alone exactly as the polygon arm is. Measured "
+             ~ "BEFORE Stage G on this same cell: +8. A positive number here "
+             ~ "means the edge arm lost its batch "
+             ~ "(task 1903 Stage F2 -> Stage G, §4.4a).",
                unbatched));
+    immutable long nested = a["nestedBatchOpens"].integer
+                          - b["nestedBatchOpens"].integer;
+    assert(nested == 0,
+        format("mesh.bevel in EDGE mode opened %d NESTED batch(es). This is "
+             ~ "what INHERITED the narrowing control from the `unbatched > 0` "
+             ~ "assertion Stage G flipped: with both arms holding their own "
+             ~ "narrow batch, a batch spanning `evaluate` no longer shows up as "
+             ~ "unbatched commits — it shows up as a nested open "
+             ~ "(task 1903 Stage G, plan §2.3 rule 2).", nested));
 }
 
 // ---------------------------------------------------------------------------

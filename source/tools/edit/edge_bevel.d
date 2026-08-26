@@ -202,7 +202,18 @@ public:
         if (mesh.edges.length == 0) return false;
         if (width_ == 0.0f) return true;
         auto mask = currentMask();
-        size_t n = mesh.bevelEdgesByMask(mask, width_, roundLevel_, widthMode_);
+        // Task 1903 Stage G — the COMMIT door's batch, opened at the tool
+        // boundary (§4.1) and scoped to the kernel call alone. UNRECORDED:
+        // this tool undoes through the whole-mesh `before`/`post` snapshot
+        // pair `commitEdit` records, so a recording batch would build an
+        // op-log nothing reads and `close()` would drop. Stage M owns the
+        // flip.
+        size_t n;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kEdgeBevelEditScope);
+            n = ed.bevelEdgesByMask(mask, width_, roundLevel_, widthMode_);
+            ed.close();
+        }
         if (n == 0) return false;
         gpu.upload(*mesh);
         return true;
@@ -372,8 +383,29 @@ private:
                                                        widthMode_ ? 1 : 0),
             (ref Mesh target) {
                 if (width_ == 0.0f) return cast(size_t)0;
-                return target.bevelEdgesByMask(target.operandEdgeMask(),
-                                               width_, roundLevel_, widthMode_);
+                // Task 1903 Stage G — the PER-FRAME PREVIEW's batch, opened
+                // INSIDE this kernel lambda rather than by changing
+                // `preview_.run`'s delegate signature (plan §9.1 as corrected
+                // at Stage F2, памятка 41). `target` IS the private cage on
+                // the placement path and IS the live mesh on the key-changed
+                // full-rebuild path, so the batch lands on whichever mesh the
+                // kernel actually got — both of §9.1's consequences, with no
+                // edit to a seam that still serves `mesh_ops/extrude.d`
+                // (Stage H).
+                //
+                // UNRECORDED, and that is §9's whole point: a preview frame
+                // must record NOTHING. `changeBus.opLogEntriesRecorded` is
+                // the row that says so across every frame;
+                // `unbatchedGeometryCommits` is `g_isDocumentMesh`-FILTERED
+                // (§3.2 L2), so on a `PreviewRebuild` tool it witnesses the
+                // full-rebuild frames only — a weaker statement, and the
+                // suite cell says which it is making (памятка 40).
+                auto ed = MeshEditBatch.unrecorded(target, kEdgeBevelEditScope);
+                immutable size_t nPrev =
+                    ed.bevelEdgesByMask(target.operandEdgeMask(),
+                                        width_, roundLevel_, widthMode_);
+                ed.close();
+                return nPrev;
             });
         built = (n != 0);
         refreshCaches();

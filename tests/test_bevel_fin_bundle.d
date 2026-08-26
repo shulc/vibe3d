@@ -3,12 +3,23 @@
 //
 // WHY THIS FILE EXISTS AND WHY IT LOADS ITS OWN MESH. Stage E4 converted
 // `source/mesh_ops/bevel_fin.d` to free functions over `ref MeshEditBatch`, and
-// its only caller — `bevelEdgesByMask` in `mesh_ops/edge_bevel.d` — is still a
+// its only caller — `bevelEdgesByMask` in `mesh_ops/edge_bevel.d` — was still a
 // MIXIN body, i.e. it IS the mesh, so plan §4.1's "the command or the tool
-// opens the batch" has nowhere to land. §4.4a's transitional shape applies: a
+// opens the batch" had nowhere to land. §4.4a's transitional shape applied: a
 // narrow `unrecorded` batch at the two call sites, labelled, naming Stage G as
 // the stage that removes it, and carrying a per-command `nestedBatchOpens`
 // DELTA assert in that command's own suite test. This is that test.
+//
+// STAGE G REMOVED THE DEBT (2026-08-26) and this file survived it unchanged in
+// every number. `bevelEdgesByMask` is a free function over `ref MeshEditBatch`
+// now, so the batch these kernels run in is the one `mesh.bevel` opens at its
+// own boundary, and the two transitional opens are gone. Every assertion below
+// still holds and still means something — but read the nested-batch rows for
+// what they are: they read 0 with the debt (it was the OUTERMOST open) and 0
+// without it (there is no second open at all), so they never could have
+// witnessed the removal. The row that does is the
+// `MeshEditBatch.unrecorded(` == 0 count over `source/mesh_ops/edge_bevel.d` in
+// `tests/unit/commit_seam_census_test.d`.
 //
 // THE DELTA IS THE LOAD-BEARING WORD. The single process-cumulative `== 0` in
 // `tests/test_undo_tracker_delete.d` is NOT this tripwire: it never runs
@@ -148,19 +159,23 @@ unittest { // the fin-bundle path runs inside ONE batch, and it is the OUTERMOST
       ~ "count check above could be satisfied by some other edit "
       ~ "(task 1903 Stage E4).");
 
-    // THE §4.4a TRIPWIRE. edge_bevel.d's transitional batch is only safe while
-    // it is the OUTERMOST one; a nested open means some caller above it already
-    // holds a batch and the debt has stopped being a debt and started being a
-    // bug.
+    // THE §4.4a TRIPWIRE — AND WHAT IT MEANS SINCE STAGE G. Until G,
+    // edge_bevel.d held a TRANSITIONAL `unrecorded` batch here, safe only while
+    // it was the OUTERMOST one. Stage G converted `bevelEdgesByMask` itself, so
+    // that open is gone and the batch this path runs in is `mesh.bevel`'s own.
+    // The delta is still 0 and this row is still the one that refuses a caller
+    // above it holding a second batch — but note that it read 0 BEFORE the
+    // removal too, so it is NOT the row that witnesses the removal. That is the
+    // `MeshEditBatch.unrecorded(` == 0 row over edge_bevel.d in
+    // tests/unit/commit_seam_census_test.d.
     immutable long nested = a["nestedBatchOpens"].integer - b["nestedBatchOpens"].integer;
     assert(nested == 0,
         "mesh.bevel opened " ~ nested.to!string ~ " NESTED batch(es) on the "
-      ~ "fin-bundle path. The `unrecorded` MeshEditBatch in "
-      ~ "source/mesh_ops/edge_bevel.d is a TRANSITIONAL debt (plan §4.4a) that "
-      ~ "Stage G removes, and its entire safety argument is that it is the "
-      ~ "OUTERMOST open. A non-zero delta means a caller above it now holds a "
-      ~ "batch too — collapse the debt into that caller instead of nesting "
-      ~ "(task 1903 Stage E4).");
+      ~ "fin-bundle path. Since Stage G the only batch on this path is the "
+      ~ "COMMAND's — `bevelEdgesByMask` takes it as its receiver and hands it "
+      ~ "straight to bevel_fin.d's kernels — so a non-zero delta means a caller "
+      ~ "above `mesh.bevel` now holds one too. Collapse the two rather than "
+      ~ "nesting (task 1903 Stage E4, re-anchored at Stage G, plan §4.4a).");
 
     immutable long unbatched = a["unbatchedGeometryCommits"].integer
                              - b["unbatchedGeometryCommits"].integer;
@@ -169,8 +184,10 @@ unittest { // the fin-bundle path runs inside ONE batch, and it is the OUTERMOST
       ~ "commit(s) on the fin-bundle path. The kernels' receiver is "
       ~ "`ref MeshEditBatch`, so their commits must defer into the frame and "
       ~ "stamp once at close(). Measured with the deferral disabled: +12 on "
-      ~ "this three-fin stand, and it grows with N "
-      ~ "(task 1903 Stage E4, plan §3.2 L2).");
+      ~ "this three-fin stand, and it grows with N. Re-measured at Stage G "
+      ~ "after the transitional batch was removed: the same +12, because the "
+      ~ "count is of the KERNEL's commits and does not depend on which frame "
+      ~ "holds them (task 1903 Stage E4, plan §3.2 L2).");
 
     // The batch is UNRECORDED and it must stay that way: `mesh.bevel` undoes
     // through a whole-mesh MeshSnapshot, so an op-log here is one nobody reads.
@@ -178,9 +195,9 @@ unittest { // the fin-bundle path runs inside ONE batch, and it is the OUTERMOST
                          - b["opLogEntriesRecorded"].integer;
     assert(opLog == 0,
         "mesh.bevel recorded " ~ opLog.to!string ~ " op-log entr(ies) on the "
-      ~ "fin-bundle path. The transitional batch is `unrecorded` deliberately "
+      ~ "fin-bundle path. The command's batch is `unrecorded` deliberately "
       ~ "(plan §9): this command's undo is still a whole-mesh snapshot, so a "
-      ~ "recorded delta is built and dropped (task 1903 Stage E4).");
+      ~ "recorded delta is built and dropped (task 1903 Stage E4, Stage G).");
     assert(a["batchLeaks"].integer - b["batchLeaks"].integer == 0,
         "a MeshEditBatch leaked its frame during mesh.bevel — the handle's "
       ~ "destructor popped instead of close() (plan §2.2c)");
@@ -220,17 +237,18 @@ unittest { // the MULTI-EDGE door — the second transitional batch, same law
       ~ "(task 1903 Stage E4).");
 
     assert(a["nestedBatchOpens"].integer - b["nestedBatchOpens"].integer == 0,
-        "mesh.bevel opened a NESTED batch on the MULTI-EDGE fin path. This is "
-      ~ "the SECOND of edge_bevel.d's two transitional opens (plan §4.4a); the "
-      ~ "cell above only covers the first, and a debt that is not the outermost "
-      ~ "open is a bug (task 1903 Stage E4).");
+        "mesh.bevel opened a NESTED batch on the MULTI-EDGE fin path. This "
+      ~ "arm was the SECOND of edge_bevel.d's two transitional opens until "
+      ~ "Stage G removed both (plan §4.4a); the cell above only covers the "
+      ~ "first arm, and the two arms are different code "
+      ~ "(task 1903 Stage E4, Stage G).");
     assert(a["unbatchedGeometryCommits"].integer
          - b["unbatchedGeometryCommits"].integer == 0,
         "mesh.bevel made UNBATCHED geometry commits on the MULTI-EDGE fin path "
       ~ "(task 1903 Stage E4).");
     assert(a["opLogEntriesRecorded"].integer - b["opLogEntriesRecorded"].integer == 0,
         "mesh.bevel recorded op-log entries on the MULTI-EDGE fin path — the "
-      ~ "transitional batch must stay `unrecorded` (task 1903 Stage E4).");
+      ~ "command's batch must stay `unrecorded` (task 1903 Stage E4, Stage G).");
 }
 
 unittest { // undo still restores the bundle — the snapshot path is untouched
@@ -246,8 +264,8 @@ unittest { // undo still restores the bundle — the snapshot path is untouched
     auto m = model();
     assert(vertCount(m) == 8 && faceCount(m) == 3,
         "undo left V=" ~ vertCount(m).to!string ~ " F=" ~ faceCount(m).to!string
-      ~ ", expected the loaded bundle's V=8 F=3. The transitional batch is "
+      ~ ", expected the loaded bundle's V=8 F=3. The command's batch is "
       ~ "UNRECORDED and this command still undoes through a whole-mesh "
       ~ "MeshSnapshot; if that stopped working, the batch is committing "
-      ~ "something it should not (task 1903 Stage E4).");
+      ~ "something it should not (task 1903 Stage E4, Stage G).");
 }

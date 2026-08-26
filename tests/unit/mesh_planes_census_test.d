@@ -585,8 +585,16 @@ private immutable AllowEntry[] kAllow = [
     // per this file's own header comment. `poly_bevel.d` was never in this
     // list: measured (plan §6 Stage E), it has no `faces = …` rewrite site
     // at all (append-only) — the card's family list overstated it.
+    // TASK 1903 Stage G RE-SPELLED THIS ENTRY'S TEXT, and nothing else about
+    // it. `bevelEdgesByMask` became a free function over `ref MeshEditBatch`,
+    // so the two rollback lines read `ed.vertices.length = …` where they read
+    // `vertices.length = …` from inside the mixin body. The exemption's REASON
+    // is unchanged — it restores a saved COUNT, not a renumbering — and so is
+    // the count. (This entry is why a conversion stage must re-read the
+    // censuses in OTHER files that quote its text: `dub build` is green over a
+    // stale allowlist and only `dub test --config=tests` says otherwise.)
     AllowEntry("source/mesh_ops/edge_bevel.d",
-        "vertices.length = savedVertCount; // undo any addVertex from the per-vertex pass",
+        "ed.vertices.length = savedVertCount; // undo any addVertex from the per-vertex pass",
         "bevelEdgesByMask early-return rollback (both call sites) — restores "
       ~ "a saved count, not a renumbering", 2),
     AllowEntry("source/mesh_ops/loop_slice.d", "m.vertices = [",

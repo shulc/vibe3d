@@ -98,12 +98,13 @@ class MeshBevel : Command, Operator {
             auto mask = mesh.operandFaceMask();
             // Task 1903 Stage F2 — the batch opens at the command boundary
             // (§4.1) and is scoped to the POLYGON ARM ALONE. Not to
-            // `evaluate`, and deliberately not around the `else` arm: that one
-            // calls `bevelEdgesByMask`, still a mixin member until Stage G,
-            // and spanning it would change `mesh.bevel`'s publish shape on a
-            // path this conversion did not touch — the narrowing Stage D3's
-            // review (MAJOR-3) had to make after the fact. UNRECORDED (undo is
-            // still the whole-mesh `snap` above); Stage L7 owns the flip.
+            // `evaluate`, and deliberately not around the `else` arm: each
+            // arm calls a different family's kernel and each opens its own.
+            // (Until Stage G the `else` arm had NO batch — `bevelEdgesByMask`
+            // was still a mixin member — and the narrowing was what kept F2
+            // from changing that path's publish shape; G gave it its own,
+            // narrow, batch rather than widening this one.) UNRECORDED (undo
+            // is still the whole-mesh `snap` above); Stage L7 owns the flip.
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, kPolyBevelEditScope);
                 n = ed.bevelFacesByMask(mask, inset_, shift_, group_, segments_, square_);
@@ -111,7 +112,20 @@ class MeshBevel : Command, Operator {
             }
         } else if (editMode == EditMode.Edges) {
             auto mask = mesh.operandEdgeMask();
-            n = mesh.bevelEdgesByMask(mask, width_, roundLevel_, widthMode_);
+            // Task 1903 Stage G — the EDGE arm's batch, opened at the command
+            // boundary (§4.1) and scoped to the kernel call ALONE, exactly as
+            // the polygon arm above is. Until this stage the arm had none, and
+            // the suite's `mesh.bevel` EDGE cell asserted
+            // `unbatchedGeometryCommits > 0` as the NEGATIVE CONTROL that F2's
+            // polygon batch had not spread across `evaluate`; that cell is
+            // flipped to `== 0` in this commit, which is the only way it can
+            // witness this open. UNRECORDED (undo is still the whole-mesh
+            // `snap` above); Stage L7 owns the flip to a recording batch.
+            {
+                auto ed = MeshEditBatch.unrecorded(*mesh, kEdgeBevelEditScope);
+                n = ed.bevelEdgesByMask(mask, width_, roundLevel_, widthMode_);
+                ed.close();
+            }
             // Task 1180: the kernel leaves the new band's FACES selected —
             // that IS the product, and it is how the band is named without a
             // second pass. The reference selects the band ONE DIMENSION DOWN:

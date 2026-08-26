@@ -51,6 +51,18 @@ private bool sliceOnce(alias kernel, Args...)(ref Mesh m, auto ref Args args) {
     return ok;
 }
 
+// TASK 1903 Stage G: `bevelEdgesByMask` is a module-level free function over
+// `ref MeshEditBatch` now (`mesh_ops/edge_bevel.d`), so the two edge-bevel
+// blocks below open the batch themselves. UNRECORDED — they read subpatch
+// bits, not an op-log.
+private size_t bevelEdgesOnce(ref Mesh m, const bool[] mask, float width,
+                              int roundLevel = 0, bool widthMode = false) {
+    auto ed = MeshEditBatch.unrecorded(m, kEdgeBevelEditScope);
+    immutable size_t n = ed.bevelEdgesByMask(mask, width, roundLevel, widthMode);
+    ed.close();
+    return n;
+}
+
 unittest {
     import std.math : abs;
     import std.conv : to;
@@ -1348,7 +1360,7 @@ unittest {
         int ei = findEdge(m, 6, 7);
         assert(ei >= 0, "edge (6,7) must exist");
         bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
-        assert(m.bevelEdgesByMask(mask, 0.1f) == 1, "should process 1 edge");
+        assert(bevelEdgesOnce(m, mask, 0.1f) == 1, "should process 1 edge");
         uint chamferFi = firstSelectedFace(m);
         assert(chamferFi != uint.max, "chamfer face must be selected after bevel");
         assert(!m.isFaceSubpatch(chamferFi),
@@ -1367,7 +1379,7 @@ unittest {
         int ei = findEdge(m, 6, 7);
         assert(ei >= 0, "edge (6,7) must exist");
         bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
-        assert(m.bevelEdgesByMask(mask, 0.1f) == 1, "should process 1 edge");
+        assert(bevelEdgesOnce(m, mask, 0.1f) == 1, "should process 1 edge");
         uint chamferFi = firstSelectedFace(m);
         assert(chamferFi != uint.max, "chamfer face must be selected after bevel");
         assert(m.isFaceSubpatch(chamferFi),
