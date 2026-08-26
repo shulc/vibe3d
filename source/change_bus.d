@@ -362,6 +362,90 @@ struct ChangeBus {
     /// would never see it.
     bool delivering() const nothrow @nogc { return delivering_; }
 
+    // -----------------------------------------------------------------------
+    // CONFINED DELIVERY — "this change is inside a live gesture's own moving
+    // set" (task 2000).
+    // -----------------------------------------------------------------------
+    //
+    // WHAT IT IS. An interactive gizmo apply publishes `Position` on every
+    // drag step (task 1906 stage 1, a measured law). The vertices it moved are
+    // the tool's moving set, and the tool hands that SAME set to every
+    // consumer that could be embarrassed by it — `snapCursor`'s `excludeVerts`
+    // is `movingVertexIndices`, the union of the processed verts and their
+    // symmetry partners. A cache that already refuses to answer about that set
+    // is not made wrong by the change; it is only made to rebuild.
+    //
+    // WHY IT IS A DELIVERY ATTRIBUTE AND NOT A CLASS. The CLASS is right: the
+    // positions really did change, and every listener that reacts to
+    // `Position` must keep reacting (the GPU upload, the pixel probe, the
+    // `test_bus_epoch_position_class` cell). What differs is not WHAT changed
+    // but WHOSE it is, and that is a property of the publisher, so it rides
+    // beside the word instead of inside it. Adding a class bit would have made
+    // every existing listener's mask a lie.
+    //
+    // WHY A DEPTH AND NOT A BOOL. Delivery is synchronous and re-entrant-safe:
+    // a publisher opens the marker, calls `deliverPending`, and closes it in a
+    // `scope(exit)`. A counter makes nesting (a confined publish inside a
+    // confined publish) harmless; a bool would have the inner close clear the
+    // outer one's claim.
+    //
+    // THE SAFE DIRECTION. A delivery DEFERRED by an open batch is delivered at
+    // the batch close, where this marker is no longer set — so it reads as
+    // UNCONFINED and every consumer rebuilds. Over-invalidation is the safe
+    // direction and that is deliberate: a command batch around a transform
+    // apply is not a gesture step.
+    //
+    // THAT PATH IS CORRECT BY CONSTRUCTION AND UNREACHABLE TODAY, and the
+    // difference matters to whoever reads this next. All three confined
+    // publishers run from an interactive apply, which is never inside a
+    // `Command.apply`, so every one of them delivers at `g_deliveryDepth == 0`
+    // and nothing is ever deferred. The paragraph above is therefore a
+    // statement about what WOULD happen if a command ever wrapped a live
+    // gizmo apply — it is not a live safety property with a witness, and no
+    // test drives it. If such a caller ever appears, this is the sentence to
+    // turn into a test.
+    //
+    // MAIN THREAD ONLY, like the rest of the bus.
+    private int confinedDepth_;
+
+    /// Unbalanced `endConfinedDelivery` calls — a close at depth 0. Always-on
+    /// and read over `/api/changes`, for the reason spelled out at the close
+    /// itself: the clamp keeps a leak from being fatal, and this keeps it from
+    /// being SILENT. A test asserts it stays 0, like `missedPublishers`.
+    ulong confinedCloseImbalance;
+
+    /// Open a confined-delivery window. Pair with `endConfinedDelivery` in a
+    /// `scope(exit)`; `Mesh.publishConfinedChange` is the only production
+    /// caller and exists so this pairing is written once.
+    void beginConfinedDelivery() nothrow @nogc { ++confinedDepth_; }
+
+    /// Close one. CLAMPED, NOT ASSERTED — the same call `endDeliveryBatchGlobal`
+    /// and `endHideDeriveBatch` make, and for the same stated reason: the unit
+    /// lane builds with `-debug` and the suite lane without it, so a `debug
+    /// assert` here would be a process death in one lane and invisible in the
+    /// other, and no single test could see both.
+    ///
+    /// WHAT MAKES THE CLAMP WORTH MORE HERE THAN AT EITHER SIBLING. An
+    /// unbalanced delivery batch costs a de-optimisation; a depth leaked
+    /// POSITIVE here is a FREEZE. `mesh_dirty.g_settledGeomEpochs` would stop
+    /// advancing for the life of the process, and the snap candidate grid and
+    /// the symmetry pair table would go on serving their pre-freeze answers
+    /// for ever — which is the exact failure task 1906 stage 2c existed to
+    /// prevent, and it is INVISIBLE to every value assertion in the tree
+    /// (a cache that answers from a frozen key still answers plausibly).
+    /// So an imbalance is clamped AND counted, never merely swallowed.
+    void endConfinedDelivery() nothrow @nogc {
+        if (confinedDepth_ <= 0) {
+            confinedDepth_ = 0;
+            ++confinedCloseImbalance;
+            return;
+        }
+        --confinedDepth_;
+    }
+
+    /// Read half, for `mesh_dirty.noteMeshChange`'s settled-geometry watcher.
+    bool deliveryIsConfined() const nothrow @nogc { return confinedDepth_ > 0; }
+
     // --- Flush ------------------------------------------------------------
     // Deliver accumulated mesh flags + selection domains + layer kinds + an
     // optional current-type flip to subscribers. If all four are empty there is

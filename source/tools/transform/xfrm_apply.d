@@ -548,7 +548,12 @@ mixin template XfrmApplyImpl() {
         // Task 1906 stage 1 — `publishChange`, not `noteChange`: DELIVER the
         // Position class synchronously, still WITHOUT touching a version
         // counter. See applyFold's tail for the whole rationale.
-        mesh.publishChange(MeshEditScope.Position);
+        //
+        // Task 2000 — CONFINED. The vertices this chain moved are the tool's
+        // moving set, which the same tool passes to `snapCursor` as
+        // `excludeVerts`; see `Mesh.publishConfinedChange` for the claim and
+        // for the two caches that act on it. Delivery is otherwise identical.
+        mesh.publishConfinedChange(MeshEditScope.Position);
     }
 
     // MS-4.3/4.4 — canonical-matrix FOLD. Composes the whole T->R->S chain into
@@ -968,7 +973,13 @@ mixin template XfrmApplyImpl() {
         // Granularity: this site runs ONCE per gesture step (one applyFold per
         // apply), so a 12-step drag delivers 12 times — the claim
         // `tests/test_bus_delivery_granularity.d` measures.
-        mesh.publishChange(routed ? MeshEditScope.Maps : MeshEditScope.Position);
+        //
+        // Task 2000 — CONFINED, and this is the site the whole marker exists
+        // for: it is the one a plain gizmo drag reaches on every step. The
+        // vertices it moved are `movingVertexIndices`, the same set the drag
+        // hands `snapCursor` as `excludeVerts`. See
+        // `Mesh.publishConfinedChange`.
+        mesh.publishConfinedChange(routed ? MeshEditScope.Maps : MeshEditScope.Position);
     }
 
     // MS-3.2 — one rotation pass of the canonical-matrix apply (called from

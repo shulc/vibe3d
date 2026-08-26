@@ -331,6 +331,35 @@ enum Cat {
     snapVisPairsTested,
     snapVisGridBail,
     snapVisPixelOutside,
+    // --- epoch-keyed derived-cache REBUILD RATES (task 2000) -------------
+    //
+    // Two rebuilds that are O(V) each and whose only failure mode is a RATE.
+    // Both caches stay CORRECT however often they are rebuilt, so no value
+    // assertion anywhere can see the regression they exist to catch: between
+    // 2026-08-25 18:45 and 19:54 the candidate grid went from one build per
+    // drag to one per drag STEP, and the five `#snapQuery` perf cases went
+    // +715..+1204 % with per-case allocation at exactly x20 = the step count.
+    //
+    //   snapGridBuild     — one per `snap.buildCandidateGrid`, i.e. per
+    //                       (slot, kind) grid actually rebuilt. `snapQuery`
+    //                       above times the whole walk and cannot separate
+    //                       "the query was slow" from "the query rebuilt the
+    //                       buckets"; this is the term that does.
+    //   symPairingRebuild — one per `SymmetryStage.evaluate` that re-ran
+    //                       `rebuildPairing` / `rebuildPairingTopological`.
+    //                       `pipeSymmetry` times the stage, which is ~0 on a
+    //                       cache hit and ~51 ms on a miss, so the timer's
+    //                       MEDIAN hides the miss entirely — only a count
+    //                       says how many misses there were.
+    //
+    // Counters, not timers, and for the same reason `bvhRebuildTris` is one:
+    // the question is HOW OFTEN, and both sites already sit inside a timer.
+    // The always-on `__gshared` twins of these two
+    // (`snap.g_snapGridBuilds`, `toolpipe.stages.symmetry.g_symPairingRebuilds`,
+    // read over `/api/cache/rebuilds`) are what the SUITE lane asserts on —
+    // this probe is compiled out of every build but `perf`.
+    snapGridBuild,
+    symPairingRebuild,
 }
 
 /// First counter category. Categories with ordinal < this are timers.

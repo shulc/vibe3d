@@ -326,6 +326,10 @@ private Site[] scanSource(string label, string src) {
 
 /// Blank the body of every `unittest` block in an already-code-only view.
 ///
+/// `package`, like `blankNonCode` above and for the same reason: the other
+/// censuses in this package need the same two views and a second copy of a
+/// stripper is a second thing to get wrong.
+///
 /// `version (unittest)` is NOT such a block and must survive: it holds
 /// PRODUCTION seams (mock hooks, test-visible accessors) that a poll can hide
 /// in, and there are ~195 of them under `source/`. The two differ by one
@@ -334,7 +338,7 @@ private Site[] scanSource(string label, string src) {
 /// the whole test below, and it is a cell (`versionUnittestIsProductionCode`)
 /// rather than a comment because the first version of this scanner got it
 /// wrong while the header claimed otherwise.
-private string blankUnittestBodies(string code) {
+package string blankUnittestBodies(string code) {
     auto buf = code.dup;
     void blankBlock(size_t from) {
         size_t j = from;

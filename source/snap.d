@@ -12,7 +12,7 @@ import math : Vec3, Viewport, ModelSpace, projectionSpace, projectToWindowFull,
               perpendicularFrame, rayTriangleIntersect,
               closestPointOnTriangle2D, triangulatePolygonEarClip;
 import mesh : Mesh;
-import mesh_dirty : MeshDirtyKey, g_geomEpochs;
+import mesh_dirty : MeshDirtyKey, g_geomEpochs, g_settledGeomEpochs;
 import toolpipe.packets : SnapPacket, SnapType, SnapMode;
 import toolpipe.guide   : SnapGuide, kGuidePrioritySeed;
 import perf_probe : g_perf, Cat;
@@ -97,7 +97,7 @@ bool snapPacketsEqual(const ref SnapPacket a, const ref SnapPacket b)
 // thread only — the drag path directly, `/api/snap` and `/api/constrain` via
 // the main-thread bridge since task 0587 (see the THREAD SAFETY note on
 // snapCursor below). That main-thread-only fact is also what makes the
-// unsynchronised `g_geomEpochs.epochFor` read in queryCandidateGrid safe
+// unsynchronised `g_settledGeomEpochs.epochFor` read in queryCandidateGrid safe
 // against the hub's `note()` writes; g_vgridMutex guards the grids and this
 // list against re-entrancy, not against a second thread.
 private __gshared const(Mesh)*[] g_snapSources;
@@ -1556,8 +1556,39 @@ private bool closestOnPolygonSurface(const(uint)[] face,
 // block in `snapCursor`.
 //
 // CACHE KEY (per kind): (vp.view, vp.proj, viewport rect) + the mesh's
-// (address, CHANGE-BUS GEOMETRY EPOCH) + element count + cellPx. The camera
-// terms are stable during a drag; the epoch is not, and that is the point.
+// (address, SETTLED CHANGE-BUS GEOMETRY EPOCH) + THE QUERY'S EXCLUSION SET
+// + element count + cellPx. The camera terms are stable during a drag; so,
+// deliberately, are the other two.
+//
+// TASK 2000 — THE EPOCH TERM IS `mesh_dirty.g_settledGeomEpochs`, NOT
+// `g_geomEpochs`, AND THE EXCLUSION SET IS A KEY TERM. Stage 2c put the plain
+// geometry epoch in this key; two months later the interactive transform began
+// delivering `Position` on every drag step (task 1906 stage 1, a measured
+// law), and the pair of them rebuilt this grid TWENTY times per twenty-step
+// drag. Measured 2026-08-25: five `#snapQuery` perf cases +715..+1204 %, with
+// per-case allocation up by exactly x20 = the step count.
+//
+// The rebuild bought NOTHING, and the paragraph that says why is the exclusion
+// one below: during a gesture the set that moved and the set the query drops
+// are the SAME set. So the two terms above split that statement in half and
+// each half is checked:
+//
+//   * `g_settledGeomEpochs` withholds its advance for a delivery the publisher
+//     marked CONFINED to a live gesture's moving set — the three interactive
+//     transform applies, and nothing else (`Mesh.publishConfinedChange`). Any
+//     other geometry change — a command, an undo, a load, the gesture's own
+//     commit — advances it and rebuilds this grid, exactly as before.
+//   * THE EXCLUSION SET is what makes the first term's licence conditional
+//     rather than blind. A grid held across a drag is stale about the moving
+//     set and correct about everything else, so it may only answer a query
+//     that drops the moving set. A query with a DIFFERENT exclusion — the
+//     empty one `/api/snap` and the click-relocate path use, or the next
+//     gesture's — does not match and rebuilds.
+//
+// Both are pinned by RATES, not values, because a grid rebuilt too often
+// returns the identical winner: `snap.g_snapGridBuilds` over
+// `/api/cache/rebuilds`, in `tests/test_snap_grid_drag_rate.d`. The VALUE half
+// stays where it was, `tests/test_bus_snap_grid_after_drag.d`.
 //
 // TASK 1906 STAGE 2c — THE MESH TERM WAS `mesh.mutationVersion`, PLUS A
 // MANUAL `invalidateSnapGrids()` FROM THE FRAME FLUSH, AND THE PAIR OF THEM
@@ -1630,6 +1661,27 @@ private bool closestOnPolygonSurface(const(uint)[] face,
 // domain is unbounded, because a vertex just in front of the eye plane
 // projects arbitrarily far off screen.
 
+/// How many times `buildCandidateGrid` has actually REBUILT a (slot, kind)
+/// grid — the O(elements) projection pass plus its two array allocations, not
+/// the cache-gate check in front of it (task 2000).
+///
+/// It exists so the KEY can be pinned in the direction that costs. Every
+/// candidate this grid offers is re-tested by the caller's exact walk, so a
+/// grid rebuilt too often is still CORRECT and every value assertion in the
+/// snap suite stays green over it: the only observable is a rate. Measured on
+/// 2026-08-25, one `mutationVersion`-to-bus-epoch key change plus one
+/// per-drag-step `Position` delivery turned one build per drag into one per
+/// STEP, and five perf cases went +715..+1204 % with per-case allocation at
+/// exactly x20 = the step count. Monotone, never reset; `__gshared` and
+/// always-on rather than `debug`, because the unit lane and the suite lane
+/// build with different flags. Read over `/api/cache/rebuilds`; the
+/// `perf`-build twin is `perf_probe.Cat.snapGridBuild`.
+///
+/// The twins of `toolpipe.stages.actcenter.g_acenClusterRebuilds` and
+/// `toolpipe.stages.falloff.g_falloffSelWeightRebuilds`, and there for the
+/// same reason those two exist.
+__gshared ulong g_snapGridBuilds;
+
 // There is no EdgeCentre / PolyCentre kind, and its absence is the model
 // rather than an omission: a centre is never enumerated, so it never needs a
 // broad phase. The two grids that used to index midpoints and centroids were
@@ -1667,6 +1719,10 @@ private struct CandidateGrid {
     // A default `MeshDirtyKey` carries `epoch == ulong.max`, which is never a
     // real epoch, so a fresh slot always rebuilds on first use.
     MeshDirtyKey meshKey;
+    // The EXCLUSION generation this grid was built under (task 2000). See
+    // `noteSlotExclusion` and the CACHE KEY paragraph in the section header.
+    // 0 is "never built", which no live generation ever is.
+    ulong excludeGen = 0;
     float[16] view;
     float[16] proj;
     int    vpW, vpH, vpX, vpY;
@@ -1704,6 +1760,66 @@ private __gshared Mutex      g_vgridMutex;
 shared static this() {
     g_vgridMutex = new Mutex();
     g_gridSets.length = 1;   // slot 0 (active) always present
+}
+
+// THE EXCLUSION SET AS A CACHE-KEY TERM (task 2000).
+//
+// A grid may be HELD across a live gesture's own position deliveries (see the
+// CACHE KEY paragraph), which leaves it stale about the moving set and correct
+// about everything else. That licence is only good for a query that DROPS the
+// moving set — so the set itself has to be in the key.
+//
+// It is stored as a per-slot snapshot plus a monotone generation, and the
+// grids store the generation. Per SLOT and not per (slot, kind) because one
+// `snapCursor` call queries several kinds with the SAME exclusion, and — more
+// importantly — because the slots genuinely differ: slot 0 is the active layer
+// and passes the drag's `movingVertexIndices`, while every background slot
+// passes `null` (`walkSource(*src, i+1, null)`). A single global snapshot
+// would flip between the two on every query and rebuild every background grid
+// each time.
+//
+// THE COMPARE IS EXACT, NOT A HASH, AND IT IS A SEQUENCE COMPARE.
+//
+// COST. One O(exclusion) pass per call, and the call sits in
+// `queryCandidateGrid` beside two passes of the same length over the same
+// array — `excludeMembership` sets the bits, its `scope (exit)` clears them.
+// All three run once per `queryCandidateGrid`, i.e. once per (slot, kind), so
+// the rate is the same for all of them and this term adds 50 % to a cost the
+// query was already paying. (Stated at this length because the round-1 review
+// read the membership pair as a once-per-SOURCE cost and this term as a
+// once-per-KIND one; they are eight lines apart in one function body.) The
+// COPY, unlike the compare, happens only when the set actually CHANGES — once
+// per gesture, not per step — and reuses its buffer.
+//
+// SEQUENCE, NOT SET. `se.verts == ex` is D's element-wise array compare, so
+// two orderings of the same indices read as two different generations. That is
+// the safe direction — a spurious rebuild, never a missed one — and it costs
+// nothing in practice because the producer is deterministic:
+// `movingVertexIndices` is built the same way on every step of a gesture. An
+// exact compare also keeps "same set" a fact rather than a probability, which
+// a hash could not.
+private struct SlotExclusion {
+    uint[]  verts;
+    ulong   gen = 0;    // 0 = nothing observed for this slot yet
+}
+private __gshared SlotExclusion[] g_slotExcl;
+private __gshared ulong           g_excludeGenNext = 1;
+
+// Observe this query's exclusion set for `slot` and return its generation.
+// Caller holds g_vgridMutex.
+private ulong noteSlotExclusion(int slot, const(uint)[] ex) {
+    // The slot is a source index (`walkSource(*src, i + 1, …)`, and 0 for the
+    // active layer), never negative. Said as an assert because the line below
+    // compares it against a `size_t` length: a negative `slot` would promote
+    // to a huge unsigned value, take the grow branch and try to allocate it.
+    assert(slot >= 0, "snap: negative source slot");
+    if (slot >= g_slotExcl.length) g_slotExcl.length = slot + 1;
+    auto se = &g_slotExcl[slot];
+    if (se.gen != 0 && se.verts == ex) return se.gen;
+    se.verts.length = ex.length;
+    if (ex.length) se.verts[] = ex[];
+    se.gen = g_excludeGenNext++;
+    return se.gen;
 }
 
 // Return the grid for (slot, kind), growing the slot table as needed. Caller
@@ -1831,19 +1947,25 @@ private enum long MAX_GRID_INTS = 1 << 25;
 // query time). EXTENT kinds insert each element into every cell its
 // projected bbox overlaps; POINT kinds insert into a single cell.
 //
-// `epoch` is the caller's `g_geomEpochs` reading for this mesh, passed in
+// `epoch` is the caller's `g_settledGeomEpochs` reading for this mesh, passed in
 // rather than re-read: the two must be the SAME sample, or a change landing
 // between the miss and the stamp is recorded as already serviced.
 private void buildCandidateGrid(Kind k, int slot, const ref Mesh mesh,
                                 const ref Viewport vp, float cellPx,
-                                size_t meshAddr, ulong epoch) {
+                                size_t meshAddr, ulong epoch, ulong excludeGen) {
     // Both halves of the key are the caller's ONE sample (queryCandidateGrid
     // took address and epoch together, before reading any geometry); the
     // assert is what makes "sampled once" a fact rather than a sentence.
     assert(meshAddr == cast(size_t)&mesh,
            "buildCandidateGrid: the stamped address must be the mesh being built");
+    // The rate instrument (task 2000). Bumped HERE, at the one site that does
+    // the work, rather than at the gate in `queryCandidateGrid` — a gate that
+    // decides NOT to rebuild must not move it.
+    ++g_snapGridBuilds;
+    g_perf.count(Cat.snapGridBuild, 1);
     auto g = gridFor(slot, k);
     g.meshKey.stamp(meshAddr, epoch);
+    g.excludeGen  = excludeGen;
     g.view[]      = vp.view[];
     g.proj[]      = vp.proj[];
     g.vpW = vp.width;  g.vpH = vp.height;
@@ -2085,16 +2207,26 @@ private int[] queryCandidateGrid(Kind k, int slot, const ref Mesh mesh,
     // The mesh half of the key, sampled ONCE (task 1906 stage 2c). Both terms
     // go into the compare and, on a miss, into the stamp — see
     // `buildCandidateGrid`.
-    const size_t meshAddr  = cast(size_t)&mesh;
-    const ulong  meshEpoch = g_geomEpochs.epochFor(meshAddr);
+    //
+    // TASK 2000 — the watcher is `g_settledGeomEpochs`, which withholds a
+    // delivery the publisher confined to a live gesture's moving set. The
+    // exclusion generation beside it is what makes that licence conditional:
+    // together they say "this grid is stale about the set THIS query drops,
+    // and about nothing else". See the CACHE KEY paragraph in the section
+    // header for the whole argument, and `noteSlotExclusion` for the term.
+    const size_t meshAddr   = cast(size_t)&mesh;
+    const ulong  meshEpoch  = g_settledGeomEpochs.epochFor(meshAddr);
+    const ulong  excludeGen = noteSlotExclusion(slot, excludeVerts);
 
     // (Re)build if stale.
     if (!g.valid
      || !g.meshKey.matches(meshAddr, meshEpoch)
+     || g.excludeGen  != excludeGen
      || g.elemCount   != n
      || g.cellPx      != outerRangePx
      || !sameViewport(*g, vp)) {
-        buildCandidateGrid(k, slot, mesh, vp, outerRangePx, meshAddr, meshEpoch);
+        buildCandidateGrid(k, slot, mesh, vp, outerRangePx, meshAddr, meshEpoch,
+                           excludeGen);
         g = gridFor(slot, k);   // table may have reallocated on grow
     }
 
@@ -2290,7 +2422,7 @@ unittest {
     assert(candsFresh.canFind(0),
         "task 1906 stage 2c: a delivered Position class must force the grid to "
         ~ "rebuild against the moved vertex. A miss here means the "
-        ~ "(address, g_geomEpochs) term is gone from queryCandidateGrid's "
+        ~ "(address, g_settledGeomEpochs) term is gone from queryCandidateGrid's "
         ~ "staleness check and every snap target that moved in an earlier "
         ~ "gesture is silently unreachable");
 
@@ -2376,9 +2508,11 @@ unittest {
     assert(a.mutationVersion == b.mutationVersion,
         "setup: the two meshes must collide on mutationVersion — that "
         ~ "collision IS the hazard, and with one layer it was invisible");
-    assert(g_geomEpochs.epochFor(cast(size_t)ap)
-        == g_geomEpochs.epochFor(cast(size_t)bp),
-        "setup: the two meshes must collide on the CHANGE-BUS EPOCH too. "
+    assert(g_settledGeomEpochs.epochFor(cast(size_t)ap)
+        == g_settledGeomEpochs.epochFor(cast(size_t)bp),
+        "setup: the two meshes must collide on the CHANGE-BUS EPOCH too — the "
+        ~ "SETTLED one, which is the watcher `queryCandidateGrid` reads since "
+        ~ "task 2000, not the one this line named before. "
         ~ "Neither has ever published, so both must read the epoch table's "
         ~ "never-changed value — if they differ, the epoch term separates them "
         ~ "and this block would prove nothing about the address term");

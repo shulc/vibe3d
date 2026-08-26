@@ -2266,12 +2266,19 @@ struct Mesh {
     /// Accumulate + DELIVER, without touching the version counters — the
     /// version-silent delivering publisher (task 1906 §1.2).
     ///
-    /// The third of three publisher entry points, and the row that distinguishes
+    /// The third of FOUR publisher entry points, and the row that distinguishes
     /// them:
     ///
-    ///   noteChange     accumulates, no version bump, NO delivery
-    ///   publishChange  accumulates, no version bump, delivers at depth 0
-    ///   commitChange   accumulates, bumps versions,  delivers at depth 0
+    ///   noteChange             accumulates, no version bump, NO delivery
+    ///   publishChange          accumulates, no version bump, delivers at depth 0
+    ///   commitChange           accumulates, bumps versions,  delivers at depth 0
+    ///   publishConfinedChange  publishChange + "the vertices I moved are my
+    ///                          live gesture's own moving set" (task 2000).
+    ///                          Same class word, same listeners, same count,
+    ///                          same version silence; the ONE difference is
+    ///                          that `mesh_dirty.g_settledGeomEpochs` withholds
+    ///                          its advance. Defined directly below, with the
+    ///                          caller contract that makes the claim true.
     ///
     /// It exists for the interactive transform path, whose mid-gesture applies
     /// must stay version-silent (a `mutationVersion` bump there cancels an
@@ -2300,6 +2307,53 @@ struct Mesh {
     /// transform path say so at their sites); it is wrong as a command's tail.
     void publishChange(uint flags) {
         noteChange(flags);
+        deliverPending();
+    }
+
+    /// `publishChange`, plus the publisher's claim that every vertex it moved
+    /// is inside the LIVE GESTURE'S OWN MOVING SET — the fourth publisher
+    /// entry point (task 2000), and the fourth row of the table above.
+    ///
+    /// WHO MAY CALL IT: the three interactive-transform apply sites, and
+    /// nothing else. What makes the claim TRUE at those three is that the same
+    /// tool hands the same set to its consumers as an exclusion —
+    /// `MoveTool.applySnapToDelta` passes `movingVertexIndices` (the processed
+    /// verts UNION their symmetry partners) to `snapCursor` as `excludeVerts`.
+    /// A caller that cannot name the consumer-side exclusion its claim rests on
+    /// wants `publishChange`.
+    ///
+    /// THAT CALLER SET IS AN INVARIANT AND IT IS ENFORCED, not merely asked
+    /// for: `tests/unit/confined_publisher_census_test.d` scans `source/**`
+    /// for calls to this method and refuses any that is not one of the three
+    /// recorded sites. A fourth caller — or a new tool mixing in
+    /// `XfrmApplyImpl` — would otherwise hold a mid-gesture stale bucket grid
+    /// with nothing in any suite moving, because the failure of a key that is
+    /// too NARROW is a wrong answer nobody asserts and the failure of one that
+    /// is too WIDE is merely slow. Add a caller and you edit that census, with
+    /// the exclusion set it leans on named in the row.
+    ///
+    /// WHAT IT CHANGES AND WHAT IT DOES NOT. The delivery is identical — same
+    /// class word, same listeners, same count, same version silence. The ONLY
+    /// difference is that `mesh_dirty`'s `g_settledGeomEpochs` withholds its
+    /// advance, so the two caches that key on that watcher survive the gesture.
+    /// Every other listener — the GPU upload, the display epochs, the surface
+    /// BVH, the subpatch preview — is untouched, and must be: a drag step that
+    /// stopped moving pixels would be a far worse bug than a rebuilt bucket
+    /// grid.
+    ///
+    /// THE MARKER CLOSES BEFORE THIS RETURNS, including on a throw. A delivery
+    /// deferred by an open batch would land at the batch close with the marker
+    /// already down, so it would read as unconfined and everything would
+    /// rebuild — the safe direction, and the honest one, since a command batch
+    /// around a transform apply is not a gesture step. Said in the conditional
+    /// deliberately: no `Command.apply` wraps a live gizmo apply today, so all
+    /// three callers run at `g_deliveryDepth == 0` and nothing is ever actually
+    /// deferred here. This is a property of the construction, not a live one
+    /// with a witness.
+    void publishConfinedChange(uint flags) {
+        noteChange(flags);
+        changeBus.beginConfinedDelivery();
+        scope (exit) changeBus.endConfinedDelivery();
         deliverPending();
     }
 

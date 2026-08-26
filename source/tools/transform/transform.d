@@ -501,6 +501,68 @@ protected:
             history.recordInSession(cmd, history.currentRunId);
         else
             history.record(cmd);
+        // TASK 2000 — THE GESTURE IS OVER: RE-ARM THE SETTLED-GEOMETRY
+        // WATCHER.
+        //
+        // Every drag step published its `Position` as CONFINED
+        // (`Mesh.publishConfinedChange`), so `mesh_dirty.g_settledGeomEpochs`
+        // deliberately did not move and the two caches keyed on it — the snap
+        // candidate grid and the symmetry pair table — held one build for the
+        // whole gesture. That is sound only WHILE the gesture is live and its
+        // moving set is still being excluded. Once the edit is recorded there
+        // is no gesture and no exclusion, so the displacement has to become
+        // visible to those caches: one UNCONFINED publish, here.
+        //
+        // WHY HERE. This is the single chokepoint every transform
+        // `commitEdit` override routes through (base, Rotate, Scale and the
+        // wrapper's item branch all end in `recordCommit`), and it is reached
+        // only when a real edit was built — a no-op gesture returns before it,
+        // which is right: nothing moved, nothing to settle. The cancel path
+        // never comes here and does not need to; it ends in
+        // `commitChange(Position)`, which is unconfined already.
+        //
+        // WHY `publishChange` AND NOT `commitChange`. A version bump here
+        // would move `XfrmTransformTool.lastAppliedGestureMutationVersion`
+        // away from its stamp and cancel the in-session falloff re-grade —
+        // the interactive transform is version-silent at the commit too, and
+        // that is a measured law (CLAUDE.md, "the two domains"). This adds a
+        // DELIVERY, not a version.
+        //
+        // COST: one extra delivery per committed gesture. A 12-step drag
+        // therefore delivers 13, which `tests/test_bus_delivery_granularity.d`
+        // bounds at `>= steps && <= 2 * steps`. Measured on a 20-step drag:
+        // 21 `Position` deliveries (round-1 review fold).
+        //
+        // IT FIRES FOR GESTURES THAT MOVED NO VERTEX, AND THAT IS THE NAMED
+        // EXCEPTION TO THE RULE AT `xfrm_apply.d`'s applyFold tail. That rule
+        // — "publishing Position under routing would tell every position-keyed
+        // consumer that geometry changed when it did not" — governs a PER-STEP
+        // site whose class is decided per apply, where a wrong word is repeated
+        // on every step of every routed drag. This site is per committed
+        // GESTURE and it is deliberately coarse: it publishes `Position`
+        // whether the gesture was a component drag, an ITEM drag (which moves
+        // the layer transform and never touches `mesh.vertices`), or a
+        // `LinearAlignTool` / `RadialAlignTool` re-fire that already committed
+        // its own change. Three reasons that is the right trade here and not a
+        // slip:
+        //
+        //   * WHAT IT MUST NOT DO is under-invalidate. The whole gesture ran
+        //     confined; if this publish is skipped for a gesture that DID move
+        //     vertices, the two caches keyed on `g_settledGeomEpochs` keep a
+        //     pre-gesture table and answer with where a vertex used to be.
+        //     Deciding "did this gesture move a vertex" from the recorded
+        //     command means a snapshot compare at every commit — a real cost,
+        //     paid to avoid one delivery.
+        //   * AN ITEM GESTURE IS NOT A LIE. The primary's vertices did move in
+        //     WORLD space; only `mesh.vertices` stayed put. A position-keyed
+        //     consumer that works in world space is right to hear about it —
+        //     the snap grid already rebuilds through its viewport term on such
+        //     a drag (round-1 review, MINOR-5).
+        //   * THE RATE IS ONE PER GESTURE. Over-invalidation costs one grid
+        //     build here, not one per step, and it happens on an edit boundary
+        //     the user has already stopped moving the mouse for.
+        if (mesh !is null)
+            mesh.publishChange(MeshEditScope.Position);
     }
 
     // Default commit: build cmd, record on history. Subclasses override to
@@ -736,7 +798,10 @@ protected:
         // mesh or touch GL (§1.5), so nothing here depends on the VBO being
         // current, and keeping the publish adjacent to the mutation it
         // describes is what makes the "once per apply" claim readable.
-        mesh.publishChange(MeshEditScope.Position);
+        // Task 2000 — CONFINED: `toProcess` below IS the moving set, and it is
+        // the set this tool hands `snapCursor` as `excludeVerts`. See
+        // `Mesh.publishConfinedChange`.
+        mesh.publishConfinedChange(MeshEditScope.Position);
         if (vertexProcessCount < cast(int)(mesh.vertices.length * 0.8))
             gpu.uploadSelectedVertices(*mesh, toProcess);
         else

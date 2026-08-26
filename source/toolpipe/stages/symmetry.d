@@ -4,7 +4,7 @@ import std.format : format;
 
 import math    : Vec3, dot;
 import mesh    : Mesh;
-import mesh_dirty : MeshDirtyKey, g_geomEpochs;
+import mesh_dirty : MeshDirtyKey, g_settledGeomEpochs;
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordSymm;
 // pipeline imports moved to packet-only — Phase 6 cleanup
@@ -12,7 +12,25 @@ import toolpipe.packets  : SymmetryPacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import popup_state       : setStatePath;
 import symmetry          : rebuildPairing, rebuildPairingTopological;
+import perf_probe        : g_perf, Cat;
 import params            : Param, IntEnumEntry;
+
+/// How many times `evaluate()` has actually re-run `rebuildPairing` /
+/// `rebuildPairingTopological` — the O(V log V) geometric mirror search plus
+/// its three arrays, not the cache-gate check in front of it (task 2000).
+///
+/// The twin of `snap.g_snapGridBuilds`, and there for the same reason: the
+/// pair table this rebuilds is CORRECT however often it is rebuilt, so the
+/// only observable of a wrong key is a rate. Measured on 2026-08-25, keying
+/// this cache on a watcher that carries a live gizmo drag's `Position`
+/// deliveries turned one rebuild per gesture into one per drag STEP:
+/// `move/symmetry=X` `pipeSymmetry` read 1 021.7 ms per 20-step drag against
+/// a 0.6 ms kernel, and the stage's own timer MEDIAN stayed 0 because 20 of
+/// its ~45 calls were hits. Monotone, never reset; `__gshared` and always-on
+/// rather than `debug`, because the unit lane and the suite lane build with
+/// different flags. Read over `/api/cache/rebuilds`; the `perf`-build twin is
+/// `perf_probe.Cat.symPairingRebuild`.
+__gshared ulong g_symPairingRebuilds;
 
 // ---------------------------------------------------------------------------
 // SymmetryStage — phase 7.6 of doc/phase7_plan.md / doc/phase7_6_symm_plan.md.
@@ -81,11 +99,39 @@ class SymmetryStage : Stage, Operator {
             // TASK 1906 STAGE 2c — the mesh half of the key is
             // (address, change-bus GEOMETRY epoch), sampled ONCE so the
             // compare and the stamp below cannot straddle a change.
+            //
+            // TASK 2000 — THE WATCHER IS THE SETTLED ONE. `g_geomEpochs`
+            // advances on every step of a gizmo drag (task 1906 stage 1
+            // delivers `Position` per step, a measured law), which rebuilt
+            // this table twenty times per twenty-step drag: measured
+            // 1 021.7 ms of `pipeSymmetry` against a 0.6 ms kernel, ~2 MB per
+            // step, and the stage timer's MEDIAN did not move because most of
+            // its calls were still hits.
+            //
+            // A drag under an ENABLED symmetry stage is exactly the case where
+            // that work is provably wasted: the apply mirrors every processed
+            // vertex to its partner, so the mesh stays symmetric and the pair
+            // table at step 20 is the one computed at step 1. What must still
+            // drop it is any change the mirror did NOT make symmetric — a
+            // command, an undo, a load — and every one of those publishes
+            // UNCONFINED and advances this watcher. So does the gesture's own
+            // commit (`TransformTool.recordCommit`), which is what keeps a
+            // table from outliving the gesture that justified holding it.
+            //
+            // Unlike the snap grid, this stage has no query-time exclusion to
+            // lean on, so the commit re-arm is not an optimisation here — it
+            // is the whole of the correctness argument's second half.
+            // Pinned by RATE (`g_symPairingRebuilds`, `/api/cache/rebuilds`),
+            // because every VALUE this table produces is identical either way:
+            // `tests/test_symmetry_pairing_drag_rate.d`.
             const size_t meshAddr  = cast(size_t)mesh_;
-            const ulong  meshEpoch = g_geomEpochs.epochFor(meshAddr);
+            const ulong  meshEpoch = g_settledGeomEpochs.epochFor(meshAddr);
             bool meshChanged = !cachedMeshKey_.matches(meshAddr, meshEpoch);
             bool topologyChanged = cachedTopology_ != topology;
             if (!cachedReady_ || planeChanged || meshChanged || topologyChanged) {
+                // The rate instrument (task 2000) — see `g_symPairingRebuilds`.
+                ++g_symPairingRebuilds;
+                g_perf.count(Cat.symPairingRebuild, 1);
                 if (topology)
                     rebuildPairingTopological(*mesh_, pkt,
                                              cachedPairOf_, cachedOnPlane_, cachedVertSign_);

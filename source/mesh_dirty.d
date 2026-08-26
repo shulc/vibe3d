@@ -92,6 +92,7 @@ module mesh_dirty;
 
 import mesh_edit_delta : MeshEditScope;
 import display_sync    : DisplayRefreshMask;
+import change_bus      : changeBus;
 
 /// A watcher over ONE change-class group. Instances are module-level globals
 /// below; a consumer never makes its own.
@@ -212,6 +213,51 @@ __gshared MeshDirtyEpochs g_displayEpochs =
 __gshared MeshDirtyEpochs g_geomEpochs =
     MeshDirtyEpochs.forClasses(GeomEpochMask);
 
+/// The SAME geometry classes, MINUS what a live gesture confines to its own
+/// moving set (task 2000). `g_geomEpochs` advances on every drag STEP;
+/// this one advances only on a change some cache cannot cover by refusing to
+/// answer about the moving set.
+///
+/// WHY IT IS A SEPARATE WATCHER AND NOT A NARROWER MASK. The distinction is
+/// not a class — the positions really did change, and the display, the GPU
+/// upload and the surface BVH must all follow a drag step. It is a property of
+/// the PUBLISHER: `Mesh.publishConfinedChange` says "the vertices I moved are
+/// the ones the tool is already handing to its consumers as an exclusion set".
+/// See `ChangeBus.deliveryIsConfined` for why that rides beside the word.
+///
+/// WHO MAY KEY ON IT, AND THE OBLIGATION THAT COMES WITH IT. Only a consumer
+/// that can state, at its own reader, why a confined change cannot reach its
+/// answer:
+///
+///   * `snap.queryCandidateGrid` — an element is dropped at query time iff ANY
+///     of its incident verts is in `excludeVerts`, so "moves with the drag"
+///     and "excluded" are the same predicate (snap.d, 'EXCLUDE IS QUERY-TIME,
+///     NOT KEY'). It carries a SECOND term for the case that argument does not
+///     cover: the exclusion set itself, so a query that excludes something
+///     ELSE cannot be served from those buckets.
+///   * `SymmetryStage.evaluate` — a drag under an ENABLED symmetry stage
+///     applies the mirror, so the mesh stays symmetric and the pair table at
+///     step 20 is the table computed at step 1.
+///
+/// A consumer that cannot make such a statement keys on `g_geomEpochs`, and
+/// that is the default. The failure mode of getting this wrong is INVISIBLE
+/// to every value assertion — a cache keyed too narrowly is stale, one keyed
+/// too widely is merely slow, and both return the same numbers on the fixture
+/// that would notice. Both directions are therefore pinned by rates:
+/// `snap.g_snapGridBuilds` and
+/// `toolpipe.stages.symmetry.g_symPairingRebuilds`, over
+/// `/api/cache/rebuilds`.
+///
+/// THE RE-ARM. Confined changes must not accumulate forever, or a table built
+/// before a gesture outlives the geometry it describes. `TransformTool
+/// .recordCommit` — the one chokepoint every transform `commitEdit` override
+/// routes through — publishes an UNCONFINED `Position` when a gesture's edit
+/// is recorded, so this watcher advances exactly once per committed gesture.
+/// A cancelled gesture already does it (`cancelOpenSessionGeometry` ends in
+/// `commitChange(Position)`).
+__gshared MeshDirtyEpochs g_settledGeomEpochs =
+    MeshDirtyEpochs.forClasses(GeomEpochMask);
+
 // TASK 1906 STAGE 2d — THERE IS NO ANY-CLASS WATCHER, AND THE REASONING THAT
 // BRIEFLY ADDED ONE IS RECORDED HERE BECAUSE IT IS PLAUSIBLE AND WRONG.
 //
@@ -291,6 +337,17 @@ void noteMeshChange(size_t subjectAddr, uint flags) nothrow @nogc {
     g_displayEpochs.note(subjectAddr, flags);
     g_geomEpochs.note(subjectAddr, flags);
     g_topoEpochs.note(subjectAddr, flags);
+    // The fourth watcher is the same classes with the live-gesture deliveries
+    // withheld (task 2000). Read the publisher's claim HERE, at the one fan-in,
+    // rather than giving `MeshDirtyEpochs` a second dimension: the marker is a
+    // property of the delivery in flight, not of the table.
+    //
+    // A unit test that drives this listener BY HAND (there are several below,
+    // and in snap.d / actcenter.d / falloff.d) has no live gesture, so it
+    // advances both geometry watchers together — which is what those tests
+    // mean.
+    if (!changeBus.deliveryIsConfined())
+        g_settledGeomEpochs.note(subjectAddr, flags);
 }
 
 // ---------------------------------------------------------------------------
@@ -473,8 +530,8 @@ ulong meshBirthsRecorded() nothrow @nogc { return g_births.totalObserved(); }
 /// anything that must act on all of them (the test reset seam; a future
 /// census) cannot fall behind a newly added watcher.
 MeshDirtyEpochs*[] allWatchers() nothrow @nogc {
-    static MeshDirtyEpochs*[3] tbl;
-    tbl = [&g_displayEpochs, &g_geomEpochs, &g_topoEpochs];
+    static MeshDirtyEpochs*[4] tbl;
+    tbl = [&g_displayEpochs, &g_geomEpochs, &g_topoEpochs, &g_settledGeomEpochs];
     return tbl[];
 }
 
@@ -796,4 +853,71 @@ unittest {
     assert(k.matches(0x1000, 7));
     assert(!k.matches(0x2000, 7), "a different mesh at the same epoch must miss");
     assert(!k.matches(0x1000, 8));
+}
+
+// ---------------------------------------------------------------------------
+// TASK 2000 — THE SETTLED WATCHER'S WHOLE SEMANTICS, IN ONE DISCRIMINATING
+// PAIR.
+//
+// Both halves are required and neither is redundant:
+//
+//   * an UNCONFINED change must advance BOTH geometry watchers. Without this
+//     half, a `g_settledGeomEpochs` that never advanced at all would satisfy
+//     the second half perfectly — and every cache keyed on it would be frozen
+//     for the life of the process.
+//   * a CONFINED change must advance `g_geomEpochs` and NOT
+//     `g_settledGeomEpochs`. The first clause is what says the narrowing is
+//     the SETTLED watcher's alone: the display, the GPU upload and the surface
+//     BVH still follow a drag step, and a marker that quietly suppressed the
+//     wide watcher too would stop the viewport updating.
+//
+// Drives the listener body by hand, like the blocks above: a unit test has no
+// `Document`, so nothing here would deliver on its own.
+// ---------------------------------------------------------------------------
+unittest {
+    // An address no other block in this module names, so the two reads below
+    // cannot be moved by a neighbour's `note`.
+    enum size_t A = 0x2000_0000;
+
+    const ulong g0 = g_geomEpochs.epochFor(A);
+    const ulong s0 = g_settledGeomEpochs.epochFor(A);
+    noteMeshChange(A, MeshEditScope.Position);
+    assert(g_geomEpochs.epochFor(A) != g0,
+        "an ordinary Position change must advance the geometry watcher");
+    assert(g_settledGeomEpochs.epochFor(A) != s0,
+        "an UNCONFINED Position change must advance the SETTLED watcher too — "
+      ~ "a watcher that never advances is not a narrower key, it is a frozen "
+      ~ "one, and every cache keyed on it would serve a pre-session answer "
+      ~ "for the life of the process");
+
+    const ulong g1 = g_geomEpochs.epochFor(A);
+    const ulong s1 = g_settledGeomEpochs.epochFor(A);
+    changeBus.beginConfinedDelivery();
+    noteMeshChange(A, MeshEditScope.Position);
+    changeBus.endConfinedDelivery();
+    assert(g_geomEpochs.epochFor(A) != g1,
+        "a CONFINED change is still a real geometry change: `g_geomEpochs` "
+      ~ "carries the display, the GPU cage upload and the surface BVH, and "
+      ~ "every one of them must follow a gizmo drag step. If this line ever "
+      ~ "goes red the marker has leaked into the wide watcher and the "
+      ~ "viewport has stopped updating mid-drag");
+    assert(g_settledGeomEpochs.epochFor(A) == s1,
+        "a CONFINED change must NOT advance the SETTLED watcher — that "
+      ~ "withholding is the whole of task 2000: it is what lets the snap "
+      ~ "candidate grid and the symmetry pair table survive a gesture whose "
+      ~ "every step publishes Position");
+
+    // And the marker is a DEPTH, not a flag: closing an inner window must not
+    // release an outer one.
+    const ulong s2 = g_settledGeomEpochs.epochFor(A);
+    changeBus.beginConfinedDelivery();
+    {
+        changeBus.beginConfinedDelivery();
+        changeBus.endConfinedDelivery();
+        noteMeshChange(A, MeshEditScope.Position);
+    }
+    changeBus.endConfinedDelivery();
+    assert(g_settledGeomEpochs.epochFor(A) == s2,
+        "the confined marker must nest: a closed INNER window left the outer "
+      ~ "one's claim standing, and a bool would have dropped it here");
 }

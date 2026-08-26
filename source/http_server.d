@@ -2442,6 +2442,46 @@ class HttpServer {
         }
     }
 
+    private void route_apiCacheRebuilds(HttpRequest request, HttpResponse response) {
+        // THE REBUILD RATES OF THE EPOCH-KEYED DERIVED CACHES (task 2000).
+        //
+        // Four caches in this tree are keyed on a `mesh_dirty` watcher and
+        // rebuilt lazily at their reader. Every one of them stays CORRECT
+        // however often it is rebuilt — a wrong key changes no value anywhere,
+        // it only turns a once-per-gesture O(V) walk into a once-per-drag-STEP
+        // one. No value assertion in any suite can see that; only a rate can,
+        // and this endpoint is where the suite lane reads it.
+        //
+        // The counters are `__gshared`, monotone and NEVER RESET: a test reads
+        // them as a DELTA across a step, exactly as `/api/changes`'s bus
+        // counters are read (the runner resets app state between test
+        // binaries, not these). `Answered.httpThread` and unsynchronised for
+        // the same reason `/api/perf`'s integers are: plain scalars written on
+        // the main thread, read as a diagnostic.
+        //
+        // NOT `/api/perf`: that probe is compiled out of every build but
+        // `perf`, so the suite lane would read `{}` from it. The `perf`-build
+        // twins of the first two rows are `perf_probe.Cat.snapGridBuild` and
+        // `Cat.symPairingRebuild`, which is what the perf harness reads.
+        response.headers["Content-Type"] = "application/json";
+        if (!testMode) {
+            response.statusCode = 403;
+            response.body = `{"error":"cache/rebuilds is only available in --test mode"}`;
+            return;
+        }
+        import snap                      : g_snapGridBuilds;
+        import toolpipe.stages.symmetry  : g_symPairingRebuilds;
+        import toolpipe.stages.actcenter : g_acenClusterRebuilds;
+        import toolpipe.stages.falloff   : g_falloffSelWeightRebuilds;
+        import std.format : format;
+        response.statusCode = 200;
+        response.body = format(
+            `{"snapGridBuilds":%d,"symmetryPairingRebuilds":%d,` ~
+            `"acenClusterRebuilds":%d,"falloffSelWeightRebuilds":%d}`,
+            g_snapGridBuilds, g_symPairingRebuilds,
+            g_acenClusterRebuilds, g_falloffSelWeightRebuilds);
+    }
+
     private void route_apiChanges(HttpRequest request, HttpResponse response) {
         // recorded remainder (1906 §3.5 row 27, §1.8): the BUS COUNTERS own this
         // endpoint and it must stay that way. It is `Answered.httpThread`, and
@@ -2518,7 +2558,7 @@ class HttpServer {
                 `"totalLayerReordered":%d,"totalLayerRenamed":%d,` ~
                 `"totalLayerVisible":%d,` ~
                 `"totalLayerActive":%d,` ~
-                `"missedPublishers":%d,` ~
+                `"missedPublishers":%d,"confinedCloseImbalance":%d,` ~
                 `"nestedBatchOpens":%d,"unbatchedGeometryCommits":%d,` ~
                 `"batchUpgradeRefusals":%d,"opLogEntriesRecorded":%d,` ~
                 `"batchLeaks":%d,` ~
@@ -2544,7 +2584,7 @@ class HttpServer {
                 snap.totalLayerReordered, snap.totalLayerRenamed,
                 snap.totalLayerVisible,
                 snap.totalLayerActive,
-                snap.missedPublishers,
+                snap.missedPublishers, snap.confinedCloseImbalance,
                 // Task 1903 §5.8 — the mesh-edit seam counters. Serialised
                 // from the SAME `snap` copy as everything else on this route,
                 // which is why they live on the bus and not module-level in
@@ -3996,6 +4036,7 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/frames/reset",         "POST", Match.exact,  Answered.httpThread, "route_apiFramesReset"),
     RouteSpec("/api/frames",               "GET",  Match.exact,  Answered.httpThread, "route_apiFrames"),
     RouteSpec("/api/changes",              "GET",  Match.exact,  Answered.httpThread, "route_apiChanges"),
+    RouteSpec("/api/cache/rebuilds",       "GET",  Match.exact,  Answered.httpThread, "route_apiCacheRebuilds"),
     // Match.prefix: the provenance rides the query string (plan §6.3 rule 2),
     // and Match.exact compares the whole path. No other route is a prefix of
     // this one and none sits below it.
