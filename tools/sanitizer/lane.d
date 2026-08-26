@@ -37,8 +37,12 @@
  *   preflight-tsan          the checks that are specific to the tsan workflow
  *                           (symbolize=0 nowhere, the expected-signature and
  *                           canary files parse, the window arithmetic closes)
- *   window-guard <event>    refuse to run outside the lane's own window, with
- *                           the window COMPUTED from two constants
+ *   window-guard <event>    refuse a `schedule` start past the HARD ceiling
+ *                           (would risk the sanitizer lane finishing inside
+ *                           perf's window); pass loudly, not refuse, for a
+ *                           late-but-safe start between the ideal window's
+ *                           close and that ceiling — both COMPUTED, never
+ *                           stored as literals
  *   tsan-selfcheck          GATE: the synthetic race must be reported exactly
  *                           once, and the suppression canary must both silence
  *                           it and print its Matched block
@@ -668,15 +672,56 @@ enum int kNextLaneStartUtcMin  = 19 * 60;        // sanitizer.yaml cron '0 19 * 
 enum int kNextLaneEndUtcMin    = 19 * 60 + 270;  // + timeout-minutes: 270 = 23:30
 enum int kPerfStartUtcMin      =  0 * 60 + 30;   // perf.yaml cron '30 0 * * *'
 enum int kPerfEndUtcMin        =  4 * 60 + 30;   // + timeout-minutes: 240
+enum int kSanitizerDurationMin = kNextLaneEndUtcMin - kNextLaneStartUtcMin;  // 270
 
 int tsanLatestStartUtcMin() { return kNextLaneStartUtcMin - kTsanTimeoutMin; }
+
+// A SECOND, LATER ceiling — the actual hazard, not the proxy for it (found
+// 2026-08-26). `tsanLatestStartUtcMin` protects the sanitizer lane's own
+// NOMINAL cron time (19:00): a run that releases the runner after that could
+// delay a sanitizer job that was already waiting for it. But nothing this
+// lane does is threatened by a LATE sanitizer start on its own — the thing
+// that actually must not happen is the sanitizer lane's worst-case FINISH
+// landing inside the perf lane's window. `kNextLaneEndUtcMin` (23:30) already
+// carries 60 spare minutes against `kPerfStartUtcMin` (00:30) that
+// `tsanLatestStartUtcMin` never spends, because it is computed against the
+// sanitizer lane's start, not its finish.
+//
+// This run measured the gap between the two ceilings directly: the
+// `nightly-tsan` cron (`0 17 * * *`) is fired by GitHub's OWN scheduler, not
+// by this repository, and its delivery has now been measured late on two
+// separate nights — 27 minutes on 2026-08-19 (refused THEN, but by the
+// ceiling as it stood under the pre-2026-08-19 `kTsanTimeoutMin=100`; see
+// the "WHY 30 AND NOT 100" comment above, a separate and already-fixed
+// problem) and 122 minutes on 2026-08-26 (`run 33002973869`, created at
+// 19:02:02Z per `gh run view`, cron target 17:00 — refused by TODAY's single
+// ceiling of 18:30, `kTsanTimeoutMin=30`). The second is a false alarm: even
+// starting this lane at 19:02 and running its full `kTsanTimeoutMin`, the
+// sanitizer lane cannot be pushed past a finish of 19:32 + 270 = 00:02,
+// which is still 28 minutes before perf opens. The window is split in two
+// so that distinction has somewhere to live: PASS quietly inside the ideal
+// window, PASS LOUDLY on drift tolerance between the two ceilings, FAIL only
+// past the hard one.
+//
+// What this canNOT see: whether the SANITIZER lane's own cron also drifted
+// tonight (its schedule is exactly as exposed to GitHub's load-time delay as
+// this one's). This guard only bounds what THIS lane adds to the queue; nothing
+// computed here, or anywhere else in this file, controls GitHub's delivery
+// time for a different workflow's cron.
+int tsanHardLatestStartUtcMin() {
+    return kPerfStartUtcMin + 24 * 60 - kSanitizerDurationMin - kTsanTimeoutMin;
+}
 
 string hhmm(int m) { return format("%02d:%02d", m / 60, m % 60); }
 
 /// Current UTC minute-of-day, with a NAMED test hook. The hook exists because
-/// the window guard's own mutation (run it at 18:35 and require a failure)
-/// cannot otherwise be executed at all outside a twenty-minute slot once a
-/// day, and an unexecutable mutation is not a mutation.
+/// the window guard's own mutation (run it at 19:35 and require a failure —
+/// [18:30, 19:30) is the drift-tolerance zone and must PASS, not fail; see
+/// `tsanHardLatestStartUtcMin`) cannot otherwise be executed at all outside a
+/// narrow slot once a day, and an unexecutable mutation is not a mutation.
+/// `cmdPreflightTsan`'s `(2b)` block below runs the same verdict function
+/// against fixed inputs instead of the wall clock, so it is not limited to
+/// that slot.
 int nowUtcMin() {
     auto ovr = environment.get("VIBE3D_TSAN_NOW_UTC", "");
     if (ovr.length) {
@@ -690,11 +735,75 @@ int nowUtcMin() {
     return n.hour * 60 + n.minute;
 }
 
+// Verdict for a SCHEDULE-triggered guard check. Three outcomes, not two,
+// because the incident that motivated this split (2026-08-26, see
+// `tsanHardLatestStartUtcMin`) showed the old binary pass/fail collapsed two
+// different situations into one message: a start that is genuinely unsafe
+// (past the hard ceiling — would risk the sanitizer lane finishing inside
+// perf's window) and a start that is merely later than ideal but still safe
+// by the actual arithmetic (GitHub's own cron delivery drifted, not a real
+// collision risk). Both used to say "outside the window" and both used to
+// fail the job.
+enum ScheduleVerdict { pass, passLate, fail }
+
+struct ScheduleCheck {
+    ScheduleVerdict verdict;
+    string message;  // ok text for pass/passLate, or the fail reason
+    string note;      // set ONLY for passLate — the loud drift-tolerance NOTE
+}
+
+/// Pure: no clock read, no I/O, no process exit — so it can be driven with
+/// synthetic `now` values by a self-check that runs any time of day, not
+/// just inside whatever slot happens to be live right now. `cmdWindowGuard`
+/// below is the one caller that feeds it `nowUtcMin()`.
+ScheduleCheck checkScheduleWindow(int now, int openMin, int idealLatest,
+                                   int hardLatest, int timeoutMin,
+                                   int nextLaneStart, int nextLaneEnd,
+                                   int perfStart, int perfEnd) {
+    if (now < openMin || now >= hardLatest)
+        return ScheduleCheck(ScheduleVerdict.fail, format(
+            "scheduled start at %s UTC is outside the lane's HARD ceiling "
+          ~ "[%s, %s) — a run starting here could still be going at %s, "
+          ~ "genuinely risking the sanitizer lane's worst-case finish "
+          ~ "landing inside the perf lane's window [%s, %s), even if the "
+          ~ "sanitizer lane starts the INSTANT this one releases the "
+          ~ "runner. The ceiling is COMPUTED from kTsanTimeoutMin=%d, the "
+          ~ "sanitizer lane's own %d-minute budget, and the perf lane's "
+          ~ "start %s; raise the tsan timeout or the sanitizer budget and "
+          ~ "it narrows by itself.",
+            hhmm(now), hhmm(openMin), hhmm(hardLatest), hhmm(now + timeoutMin),
+            hhmm(perfStart), hhmm(perfEnd), timeoutMin,
+            nextLaneEnd - nextLaneStart, hhmm(perfStart)));
+
+    if (now < idealLatest)
+        return ScheduleCheck(ScheduleVerdict.pass, format(
+            "scheduled start %s UTC is inside the IDEAL window [%s, %s); "
+          ~ "worst end %s, next lane starts on time %s",
+            hhmm(now), hhmm(openMin), hhmm(idealLatest),
+            hhmm(now + timeoutMin), hhmm(nextLaneStart)));
+
+    return ScheduleCheck(ScheduleVerdict.passLate, format(
+        "scheduled start %s UTC accepted on DRIFT TOLERANCE — inside the "
+      ~ "hard ceiling [%s, %s); worst end %s",
+        hhmm(now), hhmm(openMin), hhmm(hardLatest), hhmm(now + timeoutMin)),
+        format(
+        "scheduled start %s UTC is %d minute(s) past the IDEAL window's "
+      ~ "close %s. Tolerated, not ideal: still inside the HARD ceiling %s, "
+      ~ "computed from the sanitizer lane's own %d-minute budget against "
+      ~ "the perf lane's start %s — even a full-length run from here "
+      ~ "cannot push the sanitizer lane's worst-case finish past perf's "
+      ~ "start. This guard cannot see whether the sanitizer lane's OWN "
+      ~ "cron drifted too; it only bounds THIS lane's contribution.",
+        hhmm(now), now - idealLatest, hhmm(idealLatest), hhmm(hardLatest),
+        nextLaneEnd - nextLaneStart, hhmm(perfStart)));
+}
+
 void cmdWindowGuard(string[] args) {
     const ev    = args.length > 0 ? args[0] : "schedule";
     const force = args.length > 1 && args[1] == "force";
     const now   = nowUtcMin();
     const latest = tsanLatestStartUtcMin();
+    const hardLatest = tsanHardLatestStartUtcMin();
 
     if (latest <= kTsanWindowOpenUtcMin)
         fail(format("the window has closed on itself: kTsanTimeoutMin=%d puts "
@@ -702,22 +811,29 @@ void cmdWindowGuard(string[] args) {
                   ~ "window open %s. Either shorten the run or move the "
                   ~ "window open earlier.",
                     kTsanTimeoutMin, hhmm(latest), hhmm(kTsanWindowOpenUtcMin)));
+    if (hardLatest <= latest)
+        fail(format("the drift-tolerance zone is empty or inverted: ideal "
+                  ~ "latest start %s, hard ceiling %s. "
+                  ~ "tsanHardLatestStartUtcMin must stay strictly after "
+                  ~ "tsanLatestStartUtcMin, or a late schedule event has "
+                  ~ "nowhere safe to land.", hhmm(latest), hhmm(hardLatest)));
 
     if (ev == "schedule") {
-        if (now < kTsanWindowOpenUtcMin || now >= latest)
-            fail(format("scheduled start at %s UTC is outside [%s, %s) — a run "
-                      ~ "starting here could still be going at %s, inside the "
-                      ~ "sanitizer lane's window [%s, %s). The interval is "
-                      ~ "COMPUTED from kTsanTimeoutMin=%d and the next lane's "
-                      ~ "start %s; raise the timeout and it narrows by itself.",
-                        hhmm(now), hhmm(kTsanWindowOpenUtcMin), hhmm(latest),
-                        hhmm(now + kTsanTimeoutMin),
-                        hhmm(kNextLaneStartUtcMin), hhmm(kNextLaneEndUtcMin),
-                        kTsanTimeoutMin, hhmm(kNextLaneStartUtcMin)));
-        ok(format("scheduled start %s UTC is inside [%s, %s); worst end %s, "
-                ~ "next lane starts %s",
-                  hhmm(now), hhmm(kTsanWindowOpenUtcMin), hhmm(latest),
-                  hhmm(now + kTsanTimeoutMin), hhmm(kNextLaneStartUtcMin)));
+        auto chk = checkScheduleWindow(now, kTsanWindowOpenUtcMin, latest,
+            hardLatest, kTsanTimeoutMin, kNextLaneStartUtcMin,
+            kNextLaneEndUtcMin, kPerfStartUtcMin, kPerfEndUtcMin);
+        final switch (chk.verdict) {
+            case ScheduleVerdict.fail:
+                fail(chk.message);
+                break;
+            case ScheduleVerdict.pass:
+                ok(chk.message);
+                break;
+            case ScheduleVerdict.passLate:
+                writeln("lane.d: NOTE: ", chk.note);
+                ok(chk.message);
+                break;
+        }
         return;
     }
 
@@ -1467,6 +1583,51 @@ void cmdPreflightTsan() {
               hhmm(cronMin), kTsanTimeoutMin, hhmm(worstTsanEnd),
               hhmm(kNextLaneStartUtcMin), hhmm(nextStart),
               hhmm(nextEnd % (24 * 60))));
+
+    // (2b) The schedule-window verdict table (`checkScheduleWindow`),
+    // exercised against FIXED inputs rather than the wall clock. The
+    // mutation this catches — the drift-tolerance zone collapsing (SKIP
+    // becomes FAIL) or disappearing (the hard ceiling collapsing onto the
+    // ideal one, so FAIL becomes PASS everywhere) — is otherwise observable
+    // for only a ~90-minute slot once a day (see `nowUtcMin`'s doc comment).
+    // One point pins the actual measured incident this split was written
+    // for: `nightly-tsan` run 33002973869 was created 19:02:02Z against a
+    // 17:00 cron (122 minutes late) and must NOT fail here. (The prior
+    // 27-minutes-late incident on 2026-08-19 is not a counter-example: it
+    // was refused under the OLD kTsanTimeoutMin=100, and under today's 30 it
+    // lands at 17:27 — inside the IDEAL window either way, not a drift-zone
+    // case at all.)
+    {
+        const hardLatest = tsanHardLatestStartUtcMin();
+        alias V = ScheduleVerdict;
+        static struct Case { int now; V want; string label; }
+        const idealLatest = tsanLatestStartUtcMin();
+        auto cases = [
+            Case(kTsanWindowOpenUtcMin - 1, V.fail,
+                 "one minute before the window opens"),
+            Case(kTsanWindowOpenUtcMin, V.pass, "the window's open edge"),
+            Case(idealLatest - 1, V.pass, "one minute inside the ideal window"),
+            Case(idealLatest, V.passLate, "the ideal window's close edge"),
+            Case(19 * 60 + 2, V.passLate,
+                 "the measured 2026-08-26 incident (run 33002973869, "
+               ~ "created 19:02:02Z)"),
+            Case(hardLatest - 1, V.passLate,
+                 "one minute inside the hard ceiling"),
+            Case(hardLatest, V.fail, "the hard ceiling itself"),
+        ];
+        foreach (c; cases) {
+            auto got = checkScheduleWindow(c.now, kTsanWindowOpenUtcMin,
+                idealLatest, hardLatest, kTsanTimeoutMin, kNextLaneStartUtcMin,
+                kNextLaneEndUtcMin, kPerfStartUtcMin, kPerfEndUtcMin);
+            if (got.verdict != c.want)
+                fail(format("schedule-window selfcheck: at %s (%s) expected "
+                          ~ "%s, got %s — %s", hhmm(c.now), c.label, c.want,
+                            got.verdict, got.message));
+        }
+        ok(format("schedule-window selfcheck: %d cases agree (ideal close "
+                ~ "%s, hard ceiling %s)", cases.length, hhmm(idealLatest),
+                  hhmm(hardLatest)));
+    }
 
     // (3) The verdict function and the canary must parse, and the canary must
     // actually carry a rule — an empty canary makes the selfcheck's B arm
