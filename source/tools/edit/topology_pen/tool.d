@@ -26,7 +26,15 @@ import mesh                : Mesh, GpuMesh, MeshCacheKey, MeshEditBatch,
                              // THIS scope, so `loopSliceRingEdges` is here for
                              // it as well as for this file.
                              insertEdgeLoops, collectEdgeRing,
-                             loopSliceRingEdges, kLoopSliceEditScope;
+                             loopSliceRingEdges, kLoopSliceEditScope,
+                             // task 1903 Stage H — the extrude/extend family
+                             // is free functions now, same reason as the Loop
+                             // Slice pair above: a SELECTIVE `import mesh : …`
+                             // does not pick up a `public import`'s names for
+                             // free (памятка 34), so both the kernel this
+                             // file's duplicate-edges gesture calls and its
+                             // declared scope must be listed explicitly.
+                             extendEdgesByMask, kExtrudeEditScope;
 import math               : Vec3, Viewport, projectToWindowFull, closestOnSegment2D,
                              screenPointToRay, closestPointOnSegmentToRay, dot,
                              pointInPolygon2D, rayPlaneIntersect,
@@ -6515,8 +6523,14 @@ public:
 
         MeshSnapshot before = MeshSnapshot.capture(*m);
         size_t oldV = m.vertices.length;
-        size_t n = m.extendEdgesByMask(mask, 0.0f, 0.0f,
-                                       Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 1);
+        // task 1903 Stage H: extendEdgesByMask takes `ref MeshEditBatch` now.
+        // This gesture undoes via the MeshSnapshot above (recordSnapshotUndo
+        // below), not the op-log, so the batch is unrecorded. A production
+        // caller this row of §5.2's table never named — task 1903 памятка 26.
+        auto ed = MeshEditBatch.unrecorded(*m, kExtrudeEditScope);
+        size_t n = ed.extendEdgesByMask(mask, 0.0f, 0.0f,
+                                        Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 1);
+        ed.close();
         if (n == 0) return;   // nothing extendable (all-wire/empty mask) -- no mutation occurred
 
         import std.range     : iota;

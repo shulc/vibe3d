@@ -38,7 +38,12 @@ import change_bus : SelDomain;
 // THE LINE `dub build` COULD NOT SEE: `tests/unit/` is in the `tests`
 // configuration only, so a stale selective import here is green on the build
 // and red only on `dub test --config=tests`.)
-import mesh_ops.extrude : MeshExtrudeOps;
+// (`import mesh_ops.extrude : MeshExtrudeOps;` was here until task 1903 Stage
+// H turned that family into five free functions over `ref MeshEditBatch` —
+// the template name no longer exists. Nothing in this file ever NAMED any of
+// the templates imported around it; they came across with the 0706 move of
+// mesh.d's unittest blocks and each track-1 stage sheds its own line. This is
+// the LAST such line: Stage H is the last family in the conversion track.)
 // (`import mesh_ops.connected_mask : MeshConnectedMaskOps;` was here until task
 // 1903 Stage D1 turned that family into free functions — the template name no
 // longer exists. Nothing in this file ever NAMED any of the templates imported

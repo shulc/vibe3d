@@ -71,12 +71,17 @@ class MeshEdgeExtend : Command, Operator {
 
         snap = MeshSnapshot.capture(*mesh);
         auto mask = mesh.operandEdgeMask();
-        size_t n = mesh.extendEdgesByMask(
+        // task 1903 Stage H: extendEdgesByMask takes `ref MeshEditBatch` now.
+        // This command undoes via the MeshSnapshot above, not the op-log, so
+        // the batch is unrecorded.
+        auto ed = MeshEditBatch.unrecorded(*mesh, kExtrudeEditScope);
+        size_t n = ed.extendEdgesByMask(
             mask, inset_, shift_,
             Vec3(offsetX_, offsetY_, offsetZ_),
             Vec3(rotateX_, rotateY_, rotateZ_),
             Vec3(scaleX_,  scaleY_,  scaleZ_),
             segments_);
+        ed.close();
         if (n == 0) {
             snap = MeshSnapshot.init;
             return false;

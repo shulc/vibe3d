@@ -21,6 +21,16 @@ private auto polyBevelOnce(alias kernel, Args...)(ref Mesh m, auto ref Args args
     ed.close();
     return n;
 }
+
+// Task 1903 Stage H: same shape as `polyBevelOnce` above, for this file's one
+// direct call into `mesh_ops.extrude` (the Subpatch-carry fixture shares this
+// file with poly_bevel's own tests rather than living in extrude_test.d).
+private auto extrudeOnce(alias kernel, Args...)(ref Mesh m, auto ref Args args) {
+    auto ed = MeshEditBatch.unrecorded(m, kExtrudeEditScope);
+    auto n = kernel(ed, args);
+    ed.close();
+    return n;
+}
 import mesh_edit_delta : MeshEditDelta, MeshEditScope, MeshOpEntry;
 
 // Task 1903 Stage F1: every MUTATING entry point of this family is a free
@@ -1439,7 +1449,7 @@ unittest {
     m.resetSelection();
     m.setFaceSubpatch(0, true);
     bool[] mask; mask.length = m.faces.length; mask[] = false; mask[0] = true;
-    size_t n = m.extrudeFacesByMask(mask, 0.5f);
+    size_t n = extrudeOnce!extrudeFacesByMask(m, mask, 0.5f);
     assert(n > 0, "extrudeFacesByMask must succeed");
     assert(m.faces.length == 10, "expected 10 faces after single-face extrude");
 

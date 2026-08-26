@@ -16,8 +16,7 @@ import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
     PreviewRebuildCounts;
-import mesh_edit_delta : MeshEditTracker, MeshEditDelta, MeshEditScope,
-    undoTrackerEnabled;
+import mesh_edit_delta : MeshEditDelta, MeshEditScope, undoTrackerEnabled;
 import tools.transform.xfrm_transform : XfrmTransformTool;
 import pipe_gizmo_host : PipeGizmoHost;
 import tools.transform.move : MoveTool;
@@ -509,9 +508,14 @@ public:
         Vec3 pivot = dragPivotOverride_.active
                    ? dragPivotOverride_.value : Vec3(0, 0, 0);
         dragPivotOverride_.active = false;   // one-shot: never leak into a later apply
-        size_t n = mesh.extendEdgesByMask(mask, inset_, shift_,
-                                          offsetVec(), rotateVec(), scaleVec(),
-                                          segments_, pivot);
+        // task 1903 Stage H: extendEdgesByMask takes `ref MeshEditBatch` now.
+        // `ToolDoApplyCommand` wraps this whole call with a MeshSnapshot, so
+        // this batch is unrecorded.
+        auto ed = MeshEditBatch.unrecorded(*mesh, kExtrudeEditScope);
+        size_t n = ed.extendEdgesByMask(mask, inset_, shift_,
+                                        offsetVec(), rotateVec(), scaleVec(),
+                                        segments_, pivot);
+        ed.close();
         if (n == 0) return false;
         gpu.upload(*mesh);
         return true;
@@ -784,13 +788,25 @@ private:
         // 1 rather than refusing. So no position parameter of this tool can
         // make geometry appear or disappear — unlike both bevels, whose zero
         // crossing IS a topology change and is keyed as one.
+        // task 1903 Stage H: the batch opens INSIDE the kernel lambda, not in
+        // `preview_rebuild.d`'s own delegate signature (plan §9.1's decision,
+        // taken at F2 and repeated at G — H is the last family on this shared
+        // seam and inherits it unchanged): `target` is `cage_` on the
+        // placement path and the live mesh on the key-changed path, so
+        // opening `unrecorded` on `target` lands on whichever mesh the kernel
+        // actually got, with no edit to preview_rebuild.d.
         size_t n = preview_.run(*mesh, before,
             (ref Mesh cage) => PreviewTopologyKey.make(cage.operandEdgeMask(),
                                                        false, segments_),
-            (ref Mesh target) => target.extendEdgesByMask(
-                                     target.operandEdgeMask(), inset_, shift_,
-                                     offsetVec(), rotateVec(), scaleVec(),
-                                     segments_, livePivot()));
+            (ref Mesh target) {
+                auto ed = MeshEditBatch.unrecorded(target, kExtrudeEditScope);
+                immutable r = ed.extendEdgesByMask(
+                                 target.operandEdgeMask(), inset_, shift_,
+                                 offsetVec(), rotateVec(), scaleVec(),
+                                 segments_, livePivot());
+                ed.close();
+                return r;
+            });
         built = (n != 0);
         refreshCaches();
     }
@@ -812,21 +828,17 @@ private:
             // used so the committed geometry matches what the user saw.
             before.restore(*mesh);
 
-            auto rec = MeshEditTracker();
-            mesh.beginEditBatch(&rec, MeshEditScope.Geometry | MeshEditScope.Marks);
-            // TASK 1903 S1 — the unwind path for the handle-less spelling.
-            // The kernel below holds `enforce`/`throw new` sites; without this
-            // an escaping `Exception` would leave the frame on
-            // `g_editBatchStack` forever and every later `commitChange` on
-            // this mesh would defer silently. `abortEditBatch` pops WITHOUT
-            // stamping and no-ops once the frame is gone, which matters
-            // because `scope(failure)` stays armed past the close.
-            scope(failure) mesh.abortEditBatch();
+            // task 1903 Stage H: the RECORDING `MeshEditBatch` struct replaces
+            // the legacy `beginEditBatch(&rec, …)` / `endEditBatch()` /
+            // `abortEditBatch()` trio — see edge_extrude.d's twin comment.
+            // This file drops out of the legacy-spelling roster in
+            // `commit_seam_census_test.d` (2 left: `delete.d`, `remove.d`).
+            auto ed = MeshEditBatch(*mesh, MeshEditScope.Geometry | MeshEditScope.Marks);
             auto mask = currentMask();
-            mesh.extendEdgesByMask(mask, inset_, shift_,
-                                   offsetVec(), rotateVec(), scaleVec(),
-                                   segments_, livePivot());
-            auto delta = mesh.endEditBatch();
+            ed.extendEdgesByMask(mask, inset_, shift_,
+                                 offsetVec(), rotateVec(), scaleVec(),
+                                 segments_, livePivot());
+            auto delta = ed.close();
 
             preview_.reset();      // the live mesh was rebuilt outside the seam
             refreshCaches();

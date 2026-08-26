@@ -434,21 +434,39 @@ unittest // every beginEditBatch caller carries a scope(failure) abort
                    e.name));
     }
 
-    // The roster itself. A fifth legacy caller is a real decision (the handle
+    // The roster itself. A THIRD legacy caller is a real decision (the handle
     // is the migration target and pops from its own destructor), so it should
     // have to be argued for here rather than appear.
+    //
+    // TASK 1903 STAGE H DROPPED TWO OF THE ORIGINAL FOUR. `tools/edit/
+    // edge_extend.d` and `tools/edit/edge_extrude.d`'s `commitEdit()` paths
+    // called `mesh.extrudeEdgesByMask(...)` / `mesh.extendEdgesByMask(...)`
+    // BETWEEN `beginEditBatch`/`endEditBatch` with no `MeshEditBatch` handle —
+    // once those kernels took `ref MeshEditBatch ed` there is no bare `Mesh`
+    // spelling left to call through, so the conversion forced both sites onto
+    // the struct constructor (`auto ed = MeshEditBatch(*mesh, declared); …
+    // ed.close();`). `pushEditFrame`/`closeEditFrame` are the SAME primitives
+    // both spellings drive (mesh.d's own comment on the legacy pair says so),
+    // so this is a spelling change with no behaviour change — and it deletes
+    // the `scope(failure) mesh.abortEditBatch();` workaround this very block
+    // exists to police, because `MeshEditBatch.~this()` runs the identical
+    // pop-without-stamping unconditionally now (plan §2.2c). This is exactly
+    // the escape the block below's own message names: "if that family
+    // migrated to MeshEditBatch, drop it from this roster and say so."
     sort(callers);
-    assert(callers.length == 4,
+    assert(callers.length == 2,
         format("source/ holds %d callers of the older Mesh.beginEditBatch "
-             ~ "spelling; expected exactly 4 (commands/mesh/delete.d, "
-             ~ "commands/mesh/remove.d, tools/edit/edge_extend.d, "
-             ~ "tools/edit/edge_extrude.d). New edits open a MeshEditBatch: %s",
+             ~ "spelling; expected exactly 2 (commands/mesh/delete.d, "
+             ~ "commands/mesh/remove.d) — task 1903 Stage H migrated the "
+             ~ "other two (tools/edit/edge_extend.d, edge_extrude.d) onto the "
+             ~ "MeshEditBatch struct, forced by extrudeEdgesByMask/"
+             ~ "extendEdgesByMask taking `ref MeshEditBatch` now. New edits "
+             ~ "open a MeshEditBatch: %s",
                callers.length, callers));
 
-    // …and they are those four, not any four: a swap would keep the count.
+    // …and they are those two, not any two: a swap would keep the count.
     static immutable string[] kExpected = [
         "commands/mesh/delete.d", "commands/mesh/remove.d",
-        "tools/edit/edge_extend.d", "tools/edit/edge_extrude.d",
     ];
     foreach (want; kExpected) {
         bool seen = false;
@@ -556,16 +574,17 @@ unittest // the mixin count is falling, and the converted families stay converte
     foreach (mo; matchAll(src, re))
         live ~= mo[1].idup;
 
-    // 13 at the branch point; one family leaves per track-1 stage; 0 at Stage I.
+    // 13 at the branch point; one family leaves per track-1 stage; 0 since
+    // Stage H — task 1903's LAST family, Stage I's gate in the same commit.
     enum size_t kAtStart = 13;
     // C: MeshSelectLoopOps; D1: MeshConnectedMaskOps; D2: MeshDecimateOps;
     // D3: MeshBridgeOps; E1: MeshCleanupOps; E2: MeshRevolveOps;
     // E3: MeshCutOps; E4: MeshBevelFinOps AND MeshBevelVertexOps (the one
     // stage that converts two families, plan §12's E4 row — so this number
     // falls by TWO there and by one everywhere else); F1: MeshLoopSliceOps;
-    // F2: MeshPolyBevelOps; G: MeshEdgeBevelOps. The ONE left is
-    // `MeshExtrudeOps` (Stage H).
-    enum size_t kExpected = 1;
+    // F2: MeshPolyBevelOps; G: MeshEdgeBevelOps; H: MeshExtrudeOps — the
+    // last one, and the floor this comment predicted reaches 0 here.
+    enum size_t kExpected = 0;
     assert(live.length == kExpected,
         format("source/mesh.d instantiates %d `mixin Mesh*Ops` templates; this "
              ~ "gate expects %d. Track 1 started at %d and every conversion "
@@ -587,7 +606,8 @@ unittest // the mixin count is falling, and the converted families stay converte
                                             "MeshBevelVertexOps",       // Stage E4
                                             "MeshLoopSliceOps",         // Stage F1
                                             "MeshPolyBevelOps",        // Stage F2
-                                            "MeshEdgeBevelOps"];       // Stage G
+                                            "MeshEdgeBevelOps",        // Stage G
+                                            "MeshExtrudeOps"];         // Stage H
     foreach (name; kConverted)
         assert(!live.canFind(name),
             format("`mixin %s;` is back in struct Mesh. That family is free "
@@ -2574,6 +2594,352 @@ unittest // Stage G — the manifold edge bevel family
                  ~ "which is what edge_bevel.d's `static assert` tripwire "
                  ~ "refuses, and which this row catches from the call-site side "
                  ~ "(task 1903 Stage G, §2.7).", offenders));
+    }
+}
+
+unittest // Stage H — the extrude/extend family (five kernels, the only tracker traffic)
+{
+    immutable exPath = buildPath(repoRoot, "source", "mesh_ops", "extrude.d");
+    assert(exists(exPath), "cannot find source/mesh_ops/extrude.d at " ~ exPath);
+    immutable ex = stripCommentsAndStrings(readText(exPath));
+    assert(countOccurrences(ex, "mixin template MeshExtrudeOps") == 0,
+        "source/mesh_ops/extrude.d still declares `mixin template "
+      ~ "MeshExtrudeOps` — Stage H converted this family to five free "
+      ~ "functions over `ref MeshEditBatch`; a surviving template is either "
+      ~ "dead or a second implementation (task 1903 Stage H).");
+
+    // THE FIVE MUTATING RECEIVERS. The trailing comma is load-bearing (D2
+    // review, MINOR-1): without it the needle is a PREFIX of the
+    // declaration, so renaming a receiver `ed` -> `edb` would leave this pin
+    // green while the name the pin exists to hold had changed.
+    static immutable string[] kReceivers = [
+        "extrudeEdgesByMask(ref MeshEditBatch ed,",
+        "extrudeVerticesByMask(ref MeshEditBatch ed,",
+        "extendEdgesByMask(ref MeshEditBatch ed,",
+        "extrudeFacesByMask(ref MeshEditBatch ed,",
+        "smoothShiftFacesByMask(ref MeshEditBatch ed,",
+    ];
+    foreach (r; kReceivers)
+        assert(countOccurrences(ex, r) == 1,
+            format("source/mesh_ops/extrude.d no longer declares `%s` "
+                 ~ "exactly once. That receiver is the enforcement, not the "
+                 ~ "style: it is what makes a batchless call a COMPILE error "
+                 ~ "(task 1903 §4.1, §5.2 H).", r));
+    static immutable string[] kBareReceivers = [
+        "extrudeEdgesByMask(ref Mesh ", "extrudeVerticesByMask(ref Mesh ",
+        "extendEdgesByMask(ref Mesh ", "extrudeFacesByMask(ref Mesh ",
+        "smoothShiftFacesByMask(ref Mesh ",
+    ];
+    foreach (r; kBareReceivers)
+        assert(countOccurrences(ex, r) == 0,
+            format("source/mesh_ops/extrude.d declares `%s` — a `ref Mesh` "
+                 ~ "overload compiles and silently drops the batch, exactly "
+                 ~ "the REJECTED overload plan §4.4a names by name: nothing "
+                 ~ "in either lane can see it, because the geometry is "
+                 ~ "identical and the `ref MeshEditBatch` overload still "
+                 ~ "satisfies the receiver pin above (task 1903 Stage H, "
+                 ~ "§4.4a).", r));
+
+    // THE TRIPWIRE, for all FIVE names at once — MINOR-1 from the Stage G
+    // review found this block absent from every earlier family's OWN census
+    // coverage; Stage H's row closes it for this family from the start.
+    assert(countOccurrences(ex, "static assert(!__traits(hasMember, Mesh, n)") == 1,
+        "source/mesh_ops/extrude.d no longer carries its `static "
+      ~ "assert(!__traits(hasMember, Mesh, n), ...)` tripwire exactly once. "
+      ~ "That block is the ONLY thing that fails the build when someone "
+      ~ "hand-writes `Mesh.extrudeEdgesByMask` (or any of the other four) or "
+      ~ "an in-struct alias of one — a member BEATS a same-name UFCS free "
+      ~ "function silently, so without the tripwire the family quietly "
+      ~ "stops being converted and every other row here stays green (task "
+      ~ "1903 Stage H, Stage G review MINOR-1).");
+    static immutable string[] kFamily = [
+        "extrudeEdgesByMask", "extrudeVerticesByMask", "extendEdgesByMask",
+        "extrudeFacesByMask", "smoothShiftFacesByMask",
+    ];
+    // RAW text, not comment-and-STRING-stripped: the tripwire names each
+    // kernel inside a quoted string literal, and `stripCommentsAndStrings`
+    // removes string CONTENT along with comments (its own header says so),
+    // so the stripped `ex` can never contain a quoted name to find.
+    immutable exRaw = readText(exPath);
+    foreach (n; kFamily)
+        assert(countOccurrences(exRaw, "\"" ~ n ~ "\"") >= 1,
+            format("source/mesh_ops/extrude.d's tripwire no longer names "
+                 ~ "`%s` in its `static foreach` list — a member of that ONE "
+                 ~ "name could come back with nothing refusing it (task 1903 "
+                 ~ "Stage H).", n));
+
+    // THE FAMILY'S DECLARED SCOPE, ONE HOME.
+    assert(countOccurrences(ex, "enum uint kExtrudeEditScope =") == 1,
+        "source/mesh_ops/extrude.d no longer declares `kExtrudeEditScope` at "
+      ~ "module scope — every command and tool in the family, plus this "
+      ~ "file's own `extendOnce` test helper, passes it (task 1903 Stage H).");
+
+    // THE TWO `commitChange` SPELLINGS THE KERNELS ACTUALLY STAMP (Stage F2
+    // review MINOR-2's hole: `kExtrudeEditScope` is what a RECORDING batch
+    // DECLARES, not what each kernel's own tail stamps, and the two can
+    // drift independently). Two kernels (`extrudeEdgesByMask`,
+    // `extendEdgesByMask`) commit Geometry alone; three
+    // (`extrudeVerticesByMask`, `extrudeFacesByMask`,
+    // `smoothShiftFacesByMask`) commit Geometry|Marks.
+    assert(countOccurrences(ex, "ed.commitChange(MeshEditScope.Geometry)") == 2,
+        format("source/mesh_ops/extrude.d spells `ed.commitChange"
+             ~ "(MeshEditScope.Geometry)` %d time(s); Stage H measured "
+             ~ "exactly 2 (extrudeEdgesByMask, extendEdgesByMask) (task 1903 "
+             ~ "Stage H, Stage F2 review MINOR-2).",
+               countOccurrences(ex, "ed.commitChange(MeshEditScope.Geometry)")));
+    assert(countOccurrences(ex,
+            "ed.commitChange(MeshEditScope.Geometry | MeshEditScope.Marks)") == 3,
+        format("source/mesh_ops/extrude.d spells `ed.commitChange"
+             ~ "(MeshEditScope.Geometry | MeshEditScope.Marks)` %d time(s); "
+             ~ "Stage H measured exactly 3 (extrudeVerticesByMask, "
+             ~ "extrudeFacesByMask, smoothShiftFacesByMask) (task 1903 Stage "
+             ~ "H, Stage F2 review MINOR-2).",
+               countOccurrences(ex,
+                   "ed.commitChange(MeshEditScope.Geometry | MeshEditScope.Marks)")));
+
+    // THE IMPORT THE INSTANTIATION SCOPE USED TO SUPPLY (памятка 33's rule,
+    // measured for THIS family): two `sqrt` call sites inside
+    // `extrudeFacesByMask` / `smoothShiftFacesByMask` resolved through
+    // mesh.d's own module-level `import std.math : sqrt, isIdentical;` while
+    // this body was a mixin instantiated in mesh.d's scope; the module-level
+    // import below is what makes them resolve now.
+    assert(countOccurrences(ex, "\nimport std.math : sqrt;") == 1,
+        "source/mesh_ops/extrude.d no longer imports `std.math : sqrt` at "
+      ~ "MODULE scope (column 0) — the two `sqrt(...)` call sites in "
+      ~ "extrudeFacesByMask/smoothShiftFacesByMask resolved through mesh.d's "
+      ~ "own import while this body was a mixin instantiated there (task "
+      ~ "1903 Stage H, plan §4.3 step 2, памятка 33).");
+
+    // THE TWO STATICS THIS FAMILY REACHES (§2.6) — `faceAttrOr` at ten sites
+    // (the largest single-file count of the eleven §2.6 widenings) and
+    // `rebuildFaceWithVertexSubs` at one. Both `static`, so UFCS through the
+    // batch handle cannot reach them.
+    assert(countOccurrences(ex, "Mesh.faceAttrOr(") == 10,
+        format("source/mesh_ops/extrude.d spells `Mesh.faceAttrOr(` %d "
+             ~ "time(s); Stage H measured 10 — the largest single-file count "
+             ~ "of the eleven §2.6 widenings (task 1903 Stage H, §2.6).",
+               countOccurrences(ex, "Mesh.faceAttrOr(")));
+    assert(countOccurrences(ex, "Mesh.rebuildFaceWithVertexSubs(") == 1,
+        format("source/mesh_ops/extrude.d spells "
+             ~ "`Mesh.rebuildFaceWithVertexSubs(` %d time(s); Stage H "
+             ~ "measured 1 (task 1903 Stage H, §2.6).",
+               countOccurrences(ex, "Mesh.rebuildFaceWithVertexSubs(")));
+    // …and the ONE instance method §2.6 also widened for this family
+    // (`finalizeTopologyEdit`, at E4): not `static`, so it is an ORDINARY
+    // `ed.`-prefixed call, not a qualified one — its spelling changed, not
+    // its file, exactly as the widenings block below already predicted.
+    assert(countOccurrences(ex, "ed.finalizeTopologyEdit(") == 3,
+        format("source/mesh_ops/extrude.d spells `ed.finalizeTopologyEdit(` "
+             ~ "%d time(s); Stage H measured 3 (task 1903 Stage H, §2.6).",
+               countOccurrences(ex, "ed.finalizeTopologyEdit(")));
+
+    // THE TRACKER TRAFFIC — the only file in the family that has any, and
+    // the reason this stage's gate is an op-log identity measurement, not
+    // only a geometry differential. `editRecorder_` itself must be GONE from
+    // the code (every spelling now routes through the batch handle); the
+    // nine `.record*` calls are `ed.rec().recordXxx(...)` and the two
+    // `!is null` guards are `ed.recording()`.
+    assert(countOccurrences(ex, "editRecorder_") == 0,
+        "source/mesh_ops/extrude.d still spells `editRecorder_` — task 1903 "
+      ~ "Stage H routes every tracker access through `MeshEditBatch.rec()` / "
+      ~ "`.recording()` instead (plan §2.6's row for `Mesh.editRecorder_`: "
+      ~ "\"NOT published\"), and a surviving bare `editRecorder_` cannot "
+      ~ "compile from a free function — its presence here means this file "
+      ~ "did not actually convert (task 1903 Stage H).");
+    assert(countOccurrences(ex, "ed.recording()") == 2,
+        format("source/mesh_ops/extrude.d spells `ed.recording()` %d "
+             ~ "time(s); Stage H measured exactly 2 — the two "
+             ~ "`editRecorder_ !is null` guards in extrudeEdgesByMask and "
+             ~ "extendEdgesByMask (task 1903 Stage H).",
+               countOccurrences(ex, "ed.recording()")));
+    assert(countOccurrences(ex, "ed.rec().record") == 9,
+        format("source/mesh_ops/extrude.d spells `ed.rec().record` %d "
+             ~ "time(s); Stage H measured exactly 9 — the nine "
+             ~ "`editRecorder_.record*` calls (task 1903 Stage H, the op-log "
+             ~ "identity measurement in this stage's card).",
+               countOccurrences(ex, "ed.rec().record")));
+
+    // THE `&rw` SITE (`extrudeFacesByMask`) — K's row for this family says
+    // "yes, after Stage J", meaning this stage does NOT arm `wantsFaceReindex`
+    // here; it only keeps the shape so a later stage's arming has a stable
+    // target. `rw` is `extrudeFacesByMask`'s OWN `beginCornerRewrite()`
+    // handle — a local, not a member — so it needs no qualifier.
+    assert(countOccurrences(ex, "rewriteFaces(ed, newFaces, FaceSource(oldOfNew), &rw,") == 1,
+        "source/mesh_ops/extrude.d no longer passes `&rw` to its "
+      ~ "`rewriteFaces` call in extrudeFacesByMask — this is the `&rw` site "
+      ~ "plan §5.3's K-audit names (\"yes, after Stage J\"); the shape must "
+      ~ "survive this conversion unarmed, ready for Stage K/J (task 1903 "
+      ~ "Stage H, plan §5.3).");
+    assert(countOccurrences(ex, "rewriteFaces(ed,") == 4,
+        format("source/mesh_ops/extrude.d calls `rewriteFaces(ed, …)` %d "
+             ~ "time(s); Stage H measured exactly 4 (extrudeVerticesByMask, "
+             ~ "extendEdgesByMask x2, extrudeFacesByMask's &rw site) (task "
+             ~ "1903 Stage H).", countOccurrences(ex, "rewriteFaces(ed,")));
+
+    // §5.7 — task 1903 Stage H's OWN raw-write census row. This is NOT a
+    // `== 0` statement like G's or F2's: `extrude.d:2341` (the apex-shift
+    // write inside extrudeVerticesByMask) is the SECOND production raw
+    // position write the whole conversion migrates (the first was
+    // decimate.d, Stage D2) — now `ed.setVertexPos(vi, …)`, bit-exact
+    // (`vi` is visited once per call, so no repeated-index hazard for the
+    // collect-then-write shape `setVertexPositions` would need, памятка 30).
+    // Four raw writes remain: `m.vertices = […]` unittest fixtures below the
+    // kernels, `kAllow` entries for the same reason `box_geom.d`'s and
+    // `loop_slice.d`'s survivors carry — a local fixture mesh has no batch
+    // and needs none.
+    assert(countOccurrences(ex, "ed.setVertexPos(vi, ed.vertices[vi] + n * (shift + width));") == 1,
+        "source/mesh_ops/extrude.d no longer spells the migrated apex-shift "
+      ~ "write exactly this way — `extrudeVerticesByMask`'s raw "
+      ~ "`vertices[vi] = vertices[vi] + n * (shift + width);` (formerly "
+      ~ "extrude.d:2341) must be `ed.setVertexPos(vi, …)`, bit-exact (task "
+      ~ "1903 Stage H, §5.7, памятка 30).");
+    {
+        string exFirstHit;
+        immutable size_t exRawCount = countRawPositionWrites(ex, exFirstHit);
+        assert(exRawCount == 4,
+            format("source/mesh_ops/extrude.d: %d raw position write(s) "
+                 ~ "under §5.7's predicate, expected exactly 4 — Stage H "
+                 ~ "migrated the fifth (the production apex-shift write) to "
+                 ~ "`ed.setVertexPos`; the survivors are the four unittest "
+                 ~ "fixture `m.vertices = […]` builds below the kernels. "
+                 ~ "First hit: `%s` (task 1903 Stage H, plan §5.7, M-V1).",
+                   exRawCount, exFirstHit));
+        assert(countOccurrences(ex, "m.vertices = [") == 4,
+            "source/mesh_ops/extrude.d's four allowed raw position writes "
+          ~ "no longer read `m.vertices = [` exactly four times — these are "
+          ~ "the fixture-only kAllow entries, pinned by TEXT as well as by "
+          ~ "count so \"retire it by deleting the fixture\" cannot make this "
+          ~ "row green (task 1903 Stage H, §5.7).");
+    }
+
+    // THE `extendOnce` TEST HELPER, F1's `sliceOnce` shape — ONE unrecorded
+    // open with this exact spelling, and ZERO recording ones, for this
+    // file's OWN 24 direct-call unittest sites (all `extendEdgesByMask`; the
+    // other four kernels are not called from this file's module unittests).
+    assert(countOccurrences(ex, "MeshEditBatch.unrecorded(m, kExtrudeEditScope)") == 1
+        && countOccurrences(ex, "MeshEditBatch(") == 0,
+        format("source/mesh_ops/extrude.d opens %d unrecorded `MeshEditBatch`"
+             ~ "(es) with the `extendOnce` helper's exact spelling and %d "
+             ~ "RECORDING one(s); expected exactly 1 and 0. A kernel never "
+             ~ "opens a batch — the command, the tool, or (here) a test "
+             ~ "helper does (task 1903 Stage H).",
+               countOccurrences(ex, "MeshEditBatch.unrecorded(m, kExtrudeEditScope)"),
+               countOccurrences(ex, "MeshEditBatch(")));
+
+    // ---- THE ABSENCE PIN, all five names ----------------------------------
+    //
+    // `Mesh.extrudeEdgesByMask(` (and the other four) must appear NOWHERE
+    // under `source/`. Unlike G's row for `bevelEdgesByMask`, these
+    // qualifiers never existed to begin with (extrude.d's calls were bare,
+    // resolved through the mixin's instantiation scope), so this is a NEW
+    // row, not a flipped one (памятка 25).
+    {
+        import std.file : dirEntries, SpanMode;
+        size_t scanned = 0;
+        string[][string] offenders;
+        foreach (de; dirEntries(buildPath(repoRoot, "source"), "*.d", SpanMode.depth)) {
+            ++scanned;
+            immutable t = stripCommentsAndStrings(readText(de.name));
+            foreach (n; kFamily)
+                if (countOccurrences(t, "Mesh." ~ n ~ "(") > 0)
+                    offenders[n] ~= de.name;
+        }
+        assert(scanned >= 100,
+            format("the source/** walk found only %d .d files — a walk that "
+                 ~ "stopped looking reports a clean tree for free", scanned));
+        foreach (n; kFamily)
+            assert((n in offenders) is null,
+                format("`Mesh.%s(` is spelled in %s. Stage H moved this "
+                     ~ "kernel OUT of `struct Mesh`, so that qualifier can "
+                     ~ "only resolve again if the family came back as a "
+                     ~ "member — which is what extrude.d's `static assert` "
+                     ~ "tripwire refuses, and which this row catches from "
+                     ~ "the call-site side (task 1903 Stage H, §2.7).",
+                       n, offenders.get(n, [])));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// STAGE I — the gate. Folded into Stage H's own commit (extrude.d is the
+// last family, so there is no separate "convert one more family" step left
+// for a standalone Stage I to do): the 13 selective `import mesh_ops.X : …`
+// lines that named each family's mixin template are gone from `source/mesh.d`
+// — each one already left in its OWN track-1 stage, per §4.3 step 6 — and the
+// mixin count reaching 0 in the block above IS Stage I's gate (plan §4.5).
+// What this block adds is the two things that gate does not itself say: the
+// `public import` block is the WHOLE replacement surface (13 lines, one per
+// family, and NO MORE), and NO selective `import mesh_ops.` line survives
+// anywhere in `source/mesh.d` to contradict it.
+// ---------------------------------------------------------------------------
+unittest // Stage I — 13 public imports in, 13 selective imports out, for good
+{
+    immutable meshPath = buildPath(repoRoot, "source", "mesh.d");
+    immutable raw = readText(meshPath);   // NOT comment-stripped: `import` lines are code, but
+                                           // this also lets a `//`-commented-out import be counted
+                                           // by a careless future edit — checked against the
+                                           // stripped text below too, for both directions.
+    immutable stripped = stripCommentsAndStrings(raw);
+
+    // …and they are these 13, not any 13: a swap or a typo (`mesh_op.` for
+    // `mesh_ops.`) would keep a count-only assertion green.
+    static immutable string[] kPublicImports = [
+        "public import mesh_ops.cut;",
+        "public import mesh_ops.bridge;",
+        "public import mesh_ops.loop_slice;",
+        "public import mesh_ops.revolve;",
+        "public import mesh_ops.cleanup;",
+        "public import mesh_ops.edge_bevel;",
+        "public import mesh_ops.bevel_fin;",
+        "public import mesh_ops.bevel_vertex;",
+        "public import mesh_ops.extrude;",
+        "public import mesh_ops.decimate;",
+        "public import mesh_ops.connected_mask;",
+        "public import mesh_ops.select_loop;",
+        "public import mesh_ops.poly_bevel;",
+    ];
+    foreach (imp; kPublicImports)
+        assert(countOccurrences(stripped, "\n" ~ imp) == 1,
+            format("source/mesh.d no longer declares `%s` at module scope "
+                 ~ "(column 0), exactly once. Task 1903's 13 track-1 stages "
+                 ~ "each landed their own `public import mesh_ops.<family>;` "
+                 ~ "line in the stage that converted it; this row pins the "
+                 ~ "COMPLETE set the mixin-count gate's `== 0` leaves behind "
+                 ~ "(task 1903 Stage I, plan §4.2).", imp));
+
+    // The count IS the roster: a 14th public import (a family this project
+    // does not have, or a duplicate) is exactly as wrong as a missing one,
+    // and a count-only check cannot tell "13 right ones" from "13 including
+    // a wrong one and missing a right one" — the per-line loop above already
+    // refuses both; this is the floor that refuses a stray 14th.
+    import std.regex : ctRegex, matchAll;
+    size_t publicImportLines = 0;
+    foreach (mo; matchAll(stripped, ctRegex!(`\npublic import mesh_ops\.[A-Za-z_]+;`)))
+        ++publicImportLines;
+    assert(publicImportLines == 13,
+        format("source/mesh.d declares %d `public import mesh_ops.<family>;` "
+             ~ "lines at module scope; task 1903 §4.5 tracks exactly 13 "
+             ~ "families end to end and expects exactly 13 here — a 14th is "
+             ~ "as wrong as a 12th (task 1903 Stage I).", publicImportLines));
+
+    // …and NO selective `import mesh_ops.X : …;` survives anywhere in this
+    // file. Every one of the 13 was that shape once (`import mesh_ops.extrude
+    // : MeshExtrudeOps;` was the LAST, until this stage); a reinstated one —
+    // even naming a real symbol — is a narrower door than the `public
+    // import` block above claims to be the whole surface, and this is the
+    // only place that would notice.
+    {
+        import std.regex : ctRegex, matchAll;
+        string[] offenders;
+        foreach (mo; matchAll(stripped, ctRegex!(`\nimport\s+mesh_ops\.[A-Za-z_]+\s*:`)))
+            offenders ~= mo[0].idup;
+        assert(offenders.length == 0,
+            format("source/mesh.d carries %d selective `import mesh_ops.X : "
+                 ~ "…;` line(s): %s. Every track-1 family's import is a "
+                 ~ "`public import mesh_ops.<family>;` now (plan §4.2) — a "
+                 ~ "selective spelling reintroduced here is either a stale "
+                 ~ "revert of a converted family's own migration, or a new "
+                 ~ "line that should have been `public import` from the "
+                 ~ "start (task 1903 Stage I).", offenders.length, offenders));
     }
 }
 

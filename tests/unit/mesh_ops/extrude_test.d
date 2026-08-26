@@ -9,6 +9,22 @@ import std.math : sqrt;
 import std.algorithm : sort;
 import mesh_ops.extrude;
 
+// task 1903 Stage H: every kernel in this family now takes `ref MeshEditBatch`
+// — this file calls all FIVE directly on a bare `Mesh`, so every call site
+// needs a batch. ONE generic helper rather than five near-identical ones
+// (F1's `sliceOnce` / F2's `bevelOnce` shape, generalised over the KERNEL
+// itself via an `alias` template parameter, since this file is the one place
+// that exercises every kernel in the family): open an UNRECORDED batch (these
+// are geometry/topology fixtures, not op-log fixtures), call the kernel,
+// close, return its count. `Args` forwards each kernel's own parameter list
+// verbatim, so every call site below changes only its receiver spelling.
+version (unittest) private size_t kernelOnce(alias fn, Args...)(ref Mesh m, Args args) {
+    auto ed = MeshEditBatch.unrecorded(m, kExtrudeEditScope);
+    immutable n = fn(ed, args);
+    ed.close();
+    return n;
+}
+
 // Mesh-robustness batch (fuzz-found): a standalone open n-gon (single
 // face, open boundary loop) whose corners are all SHARED (>=2 selected
 // boundary edges per corner) run through an overshoot `width` at
@@ -34,7 +50,7 @@ unittest {
     m.addFace(pent);
 
     bool[] mask; mask.length = m.edges.length; mask[] = true;
-    size_t n = m.extrudeEdgesByMask(mask, 0.0f, 0.3f);
+    size_t n = kernelOnce!extrudeEdgesByMask(m, mask, 0.0f, 0.3f);
     assert(n == 5, "pentagon shared-corner extrude=0: expected 5 edges extruded, got " ~ n.to!string);
 
     // No coincident duplicate vertices.
@@ -95,7 +111,7 @@ unittest {
     Mesh mShiftInset = mkQuad();
     {
         bool[] mask; mask.length = mShiftInset.edges.length; mask[] = true;
-        mShiftInset.extrudeEdgesByMask(mask, 0.2f, 0.1f);
+        kernelOnce!extrudeEdgesByMask(mShiftInset, mask, 0.2f, 0.1f);
     }
     foreach (i; 0 .. mShiftInset.vertices.length)
         assert(abs(mShiftInset.vertices[i].y) < 1e-4f,
@@ -107,7 +123,7 @@ unittest {
     Mesh mInsetOnly = mkQuad();
     {
         bool[] mask; mask.length = mInsetOnly.edges.length; mask[] = true;
-        mInsetOnly.extrudeEdgesByMask(mask, 0.0f, 0.1f);
+        kernelOnce!extrudeEdgesByMask(mInsetOnly, mask, 0.0f, 0.1f);
     }
     assert(mShiftInset.vertices.length == mInsetOnly.vertices.length,
         "boundary-loop shift+inset vs inset-only: vertex count differs (" ~
@@ -134,7 +150,7 @@ unittest {
     Mesh mShiftOnly = mkQuad();
     {
         bool[] mask; mask.length = mShiftOnly.edges.length; mask[] = true;
-        mShiftOnly.extrudeEdgesByMask(mask, 0.2f, 0.0f);
+        kernelOnce!extrudeEdgesByMask(mShiftOnly, mask, 0.2f, 0.0f);
     }
     assert(mShiftOnly.vertices.length == 4 && mShiftOnly.faces.length == 1,
         "boundary-loop shift-only: expected the original quad (4v/1f), got " ~
@@ -198,7 +214,7 @@ unittest {
     {
         Mesh m = mkTent(0.2f);
         auto mask = edgeMask(m);
-        m.extrudeEdgesByMask(mask, -0.15f, 0.1f);
+        kernelOnce!extrudeEdgesByMask(m, mask, -0.15f, 0.1f);
         assert(hasVert(m, Vec3(0.0f, -0.15f, -1.0f), 1e-4f),
             "non-planar free-end ridge P0 not at per-corner position (0,-0.15,-1)");
         assert(hasVert(m, Vec3(0.027148f, -0.147523f, 1.0f), 1e-4f),
@@ -217,7 +233,7 @@ unittest {
     {
         Mesh m = mkTent(0.0f);
         auto mask = edgeMask(m);
-        m.extrudeEdgesByMask(mask, -0.15f, 0.1f);
+        kernelOnce!extrudeEdgesByMask(m, mask, -0.15f, 0.1f);
         // Symmetric flat tent: both ridges share the same (x,y), differing
         // only in z (the two edge endpoints). Find them and compare.
         Vec3[] ridges;
@@ -246,7 +262,7 @@ unittest {
         bool[] mask; mask.length = m.faces.length; mask[] = false; mask[0] = true;
         Vec3 origC = m.faceCentroid(0);
         Vec3 origN = m.faceNormal(0);
-        size_t n = m.extrudeFacesByMask(mask, 0.5f);
+        size_t n = kernelOnce!extrudeFacesByMask(m, mask, 0.5f);
         assert(n > 0,
             "extrudeFacesByMask: returned 0 on valid single-face selection");
         assert(m.faces.length == 10,
@@ -270,7 +286,7 @@ unittest {
     {
         auto m = makeCube();
         bool[] mask; mask.length = m.faces.length; mask[] = false; mask[0] = true;
-        size_t n = m.extrudeFacesByMask(mask, 0.0f);
+        size_t n = kernelOnce!extrudeFacesByMask(m, mask, 0.0f);
         assert(n == 0,
             "extrudeFacesByMask: distance==0 must return 0");
         assert(m.faces.length == 6,
@@ -283,7 +299,7 @@ unittest {
     {
         auto m = makeCube();
         bool[] mask; mask.length = m.faces.length; mask[] = true;
-        size_t n = m.extrudeFacesByMask(mask, 0.5f);
+        size_t n = kernelOnce!extrudeFacesByMask(m, mask, 0.5f);
         assert(n == 0,
             "extrudeFacesByMask: closed island must return 0");
         assert(m.faces.length == 6,
@@ -326,7 +342,7 @@ unittest {
         m.buildLoops();
 
         bool[] mask; mask.length = 2; mask[] = true;
-        size_t n = m.extrudeFacesByMask(mask, 0.5f, true);
+        size_t n = kernelOnce!extrudeFacesByMask(m, mask, 0.5f, true);
         assert(n > 0, "smooth tent: returned 0");
 
         // Ridge cap verts: v2=(0,1,0) and v3=(0,1,1) offset by (0,1,0)*0.5
@@ -377,7 +393,7 @@ unittest {
         mask[0] = true;
         Vec3 origC = m.faceCentroid(0);
         Vec3 origN = m.faceNormal(0);
-        size_t n = m.extrudeFacesByMask(mask, 0.5f, true);
+        size_t n = kernelOnce!extrudeFacesByMask(m, mask, 0.5f, true);
         assert(n > 0, "smooth flat single-face: returned 0");
         // Find cap face (selected after the op).
         int capFi = -1;
@@ -410,7 +426,7 @@ unittest {
     bool[] mask; mask.length = m.faces.length; mask[] = false;
     mask[1] = true;
     mask[2] = true;
-    size_t n = m.extrudeFacesByMask(mask, 1.0f);
+    size_t n = kernelOnce!extrudeFacesByMask(m, mask, 1.0f);
     assert(n == 2, "diagonal pair: expected 2 faces extruded");
 
     // Recount every undirected edge across ALL faces directly (NOT via
@@ -462,7 +478,7 @@ unittest {
     size_t facesBefore = m.faces.length;
     bool[] mask; mask.length = m.faces.length; mask[] = false;
     mask[0] = true; // select page A, which touches the book edge (0,1)
-    size_t n = m.extrudeFacesByMask(mask, 1.0f);
+    size_t n = kernelOnce!extrudeFacesByMask(m, mask, 1.0f);
     assert(n == 0, "book-edge extrude: expected reject (0), got " ~ n.to!string);
     assert(m.vertices.length == vertsBefore,
         "book-edge extrude: reject must not add verts");
@@ -474,7 +490,7 @@ unittest {
     Mesh gm = makeGridPlane(2);
     bool[] gmask; gmask.length = gm.faces.length; gmask[] = false;
     gmask[0] = true; gmask[1] = true; // adjacent quads, shared edge used by only 2 faces
-    size_t gn = gm.extrudeFacesByMask(gmask, 1.0f);
+    size_t gn = kernelOnce!extrudeFacesByMask(gm, gmask, 1.0f);
     assert(gn == 2, "disjoint pair extrude: expected 2 faces extruded, got " ~ gn.to!string);
 }
 
@@ -498,7 +514,7 @@ unittest {
         }
         assert(topFi >= 0, "smoothShiftFacesByMask test: no top face found");
         mask[topFi] = true;
-        size_t n = m.smoothShiftFacesByMask(mask, 0.0f, 1.0f, false);
+        size_t n = kernelOnce!smoothShiftFacesByMask(m, mask, 0.0f, 1.0f, false);
         assert(n == 1, "smoothShiftFacesByMask base_noop: expected 1 face cloned");
         assert(m.faces.length == 10,
             "smoothShiftFacesByMask base_noop: expected 10 faces, got " ~ m.faces.length.to!string);
@@ -518,7 +534,7 @@ unittest {
             if (allTop) { topFi = cast(int)fi; break; }
         }
         mask[topFi] = true;
-        size_t n = m.smoothShiftFacesByMask(mask, 0.3f, 0.5f, false);
+        size_t n = kernelOnce!smoothShiftFacesByMask(m, mask, 0.3f, 0.5f, false);
         assert(n == 1, "smoothShiftFacesByMask shift03_scale05: expected 1 face cloned");
         // Expect a new vertex at (-0.25, 0.65, -0.25) (corner (-0.5,0.5,-0.5)
         // shifted+scaled about the top face's centroid (0,0.5,0)).
@@ -542,7 +558,7 @@ unittest {
             if (allTop) { topFi = cast(int)fi; break; }
         }
         mask[topFi] = true;
-        size_t n = m.smoothShiftFacesByMask(mask, 0.3f, 1.0f, true);
+        size_t n = kernelOnce!smoothShiftFacesByMask(m, mask, 0.3f, 1.0f, true);
         assert(n == 1, "smoothShiftFacesByMask thicken_top_only: expected 1 face cloned");
         assert(m.faces.length == 11,
             "smoothShiftFacesByMask thicken_top_only: expected 11 faces, got " ~ m.faces.length.to!string);
@@ -568,7 +584,7 @@ unittest { // extendEdgesByMask: wire-edge / no-op — mask selecting nothing re
     auto f0 = m.faces.length;
     auto mut0 = m.mutationVersion;
     bool[] empty; empty.length = m.edges.length;   // all false
-    auto n = m.extendEdgesByMask(empty, 0.1f, 0.2f,
+    auto n = kernelOnce!extendEdgesByMask(m, empty, 0.1f, 0.2f,
                                  Vec3(0, 0, 0), Vec3(0, 0, 0), Vec3(1, 1, 1), 1);
     assert(n == 0, "no-op returns 0");
     assert(m.vertices.length == v0 && m.faces.length == f0, "no-op: mesh unchanged");
@@ -592,7 +608,7 @@ unittest {
 
     bool[] mask = new bool[](m.vertices.length);
     mask[0] = true;  // corner (-0.5,-0.5,-0.5)
-    size_t processed = m.extrudeVerticesByMask(mask, 0.0f, 0.2f);
+    size_t processed = kernelOnce!extrudeVerticesByMask(m, mask, 0.0f, 0.2f);
 
     assert(processed == 1,                "extrudeVerticesByMask: should process 1 vertex");
     assert(m.vertices.length == oldV + 6, "extrudeVerticesByMask: expected +6 verts");
@@ -629,7 +645,7 @@ unittest {
     m.buildLoops();
     bool[] mask = new bool[](m.vertices.length);
     mask[0] = true;
-    size_t processed = m.extrudeVerticesByMask(mask, 0.5f, 0.0f);
+    size_t processed = kernelOnce!extrudeVerticesByMask(m, mask, 0.5f, 0.0f);
     assert(processed == 0,          "extrudeVerticesByMask: width=0 must be no-op");
     assert(m.vertices.length == 8,  "extrudeVerticesByMask: width=0 must not add verts");
     assert(m.faces.length    == 6,  "extrudeVerticesByMask: width=0 must not add faces");
@@ -666,7 +682,7 @@ unittest {
 
         bool[] mask = new bool[](m.vertices.length);
         mask[0] = true;
-        assertThrown!AssertError(m.extrudeVerticesByMask(mask, 0.0f, 0.1f),
+        assertThrown!AssertError(kernelOnce!extrudeVerticesByMask(m, mask, 0.0f, 0.1f),
             "extrudeVerticesByMask must refuse a mesh whose edgeIndexMap was "
             ~ "never rebuilt -- if this stops throwing, the precondition has "
             ~ "become decoration");
@@ -676,7 +692,7 @@ unittest {
         // kernel outright.
         m.buildLoops();
         assert(m.edgeMapUsable(), "setup: buildLoops must restore the map");
-        m.extrudeVerticesByMask(mask, 0.0f, 0.1f);
+        kernelOnce!extrudeVerticesByMask(m, mask, 0.0f, 0.1f);
     }
 }
 
@@ -739,7 +755,7 @@ unittest {
     bool[] mask = new bool[](m.edges.length);
     mask[e04] = mask[e47] = mask[e73] = mask[e30] = true;
 
-    size_t n = m.extrudeEdgesByMask(mask, 0.0f, 10.0f);
+    size_t n = kernelOnce!extrudeEdgesByMask(m, mask, 0.0f, 10.0f);
     assert(n == 4, "trapezoid: expected 4 edges extruded, got " ~ n.to!string);
 
     // Face 2 (the mutually-converging -X side) must have collapsed and
@@ -793,7 +809,7 @@ unittest {
     bool[] mask = new bool[](m.vertices.length);
     mask[5] = true;   // interior vertex shared by faces 0, 1, 3, 4
 
-    size_t n = m.extrudeVerticesByMask(mask, 0.0f, 0.1f);
+    size_t n = kernelOnce!extrudeVerticesByMask(m, mask, 0.0f, 0.1f);
     assert(n == 1, "grid vertex-extrude: expected 1 accepted vertex, got " ~ n.to!string);
     assert(m.faces.length == 9 + 4 * 2,
         "grid vertex-extrude: expected 9 substituted + 8 rim/fan faces, got "
@@ -849,7 +865,7 @@ unittest {
     bool[] mask = new bool[](m.faces.length);
     mask[4] = true;   // the grid's centre face
 
-    size_t n = m.extrudeFacesByMask(mask, 0.3f);
+    size_t n = kernelOnce!extrudeFacesByMask(m, mask, 0.3f);
     assert(n == 1, "grid face-extrude: expected 1 face extruded, got " ~ n.to!string);
     // 8 non-selected originals + 1 cap + 4 wall quads (face 4 has 4 boundary
     // edges once removed from the otherwise-untouched grid).
@@ -919,7 +935,7 @@ unittest {
     bool[] mask = new bool[](m.faces.length);
     mask[4] = true;
 
-    size_t n = m.smoothShiftFacesByMask(mask, 0.3f, 1.0f, true /* thicken */);
+    size_t n = kernelOnce!smoothShiftFacesByMask(m, mask, 0.3f, 1.0f, true /* thicken */);
     assert(n == 1, "grid smooth-shift: expected 1 face processed, got " ~ n.to!string);
     // 8 non-selected originals + 1 cap + 1 thicken skin + 4 wall quads.
     assert(m.faces.length == 8 + 1 + 1 + 4,
@@ -960,3 +976,174 @@ unittest {
             ~ "face 4's own order stamp (77)");
 }
 
+
+// ===========================================================================
+// TASK 1903 STAGE H — RECORDING BLOCKS.
+//
+// The op-log is measured, not assumed. Two shapes below, matching the K-audit
+// rows plan §5.3 already carries for this family:
+//
+//   * TRACKER-TRAFFIC ops (extrudeEdgesByMask / extendEdgesByMask, the
+//     kernels behind `mesh.edge_extrude` / `mesh.edge_extend` — two of the
+//     FOUR commands whose delta-undo is DEFAULT-ON in production, CLAUDE.md's
+//     Undo/redo paragraph): these already carry `editRecorder_.record*` calls
+//     (now `ed.rec().recordXxx(...)`), converted BYTE-IDENTICALLY — measured
+//     against the pre-conversion body via a temporary `*Old` probe during
+//     this stage's own development (памятка 14 — the probe does not ship;
+//     see the task card for the old-vs-new kind/byteSize/payload table). The
+//     blocks below pin what the CONVERTED body produces, standing alone.
+//   * The THREE LATENT ops (extrudeVerticesByMask / extrudeFacesByMask /
+//     smoothShiftFacesByMask) have NO `editRecorder_` traffic of their own
+//     (§5.3's K table: "already records via: nothing | arm? yes" for all
+//     three) — DISARMED is what ships (no production caller opens a
+//     RECORDING batch on any of the three today), and `revert()` THROWS on
+//     every one of them. Arming `wantsFaceReindex` (Stage K/L8's job, not
+//     H's) fixes the throw but does not make the delta complete — pinned
+//     here so Stage K/L8 inherits a measured starting point, not a guess.
+// ===========================================================================
+
+private Mesh gridStand4_() { Mesh m = makeGridPlane(4); m.buildLoops(); m.resetSelection(); return m; }
+private Mesh cubeStandL_() { Mesh m = makeCube(); m.buildLoops(); m.resetSelection(); return m; }
+
+unittest { // RECORDING: extrudeEdgesByMask op-log kinds + byteSize (cube, one edge)
+    import mesh_edit_delta : MeshEditScope;
+    import std.conv : to;
+    Mesh m = cubeStandL_();
+    bool[] mask = new bool[](m.edges.length);
+    foreach (i, ref e; m.edges) {
+        auto va = m.vertices[e[0]], vb = m.vertices[e[1]];
+        if (((va - Vec3(-0.5f,0.5f,0.5f)).length < 1e-4f && (vb - Vec3(0.5f,0.5f,0.5f)).length < 1e-4f) ||
+            ((va - Vec3(0.5f,0.5f,0.5f)).length < 1e-4f && (vb - Vec3(-0.5f,0.5f,0.5f)).length < 1e-4f))
+            mask[i] = true;
+    }
+    auto ed = MeshEditBatch(m, MeshEditScope.Geometry | MeshEditScope.Marks);
+    immutable n = ed.extrudeEdgesByMask(mask, 0.2f, 0.1f);
+    auto delta = ed.close();
+    assert(n == 1, "one selected edge must extrude");
+    assert(delta.log.length == 7,
+        "extrudeEdgesByMask (cube, one interior edge): expected exactly 7 "
+      ~ "op-log entries (AddVerts, ReshapeFaces x2, AddFaces, RemoveVerts, "
+      ~ "Reindex, EdgeSelByEnds); got " ~ delta.log.length.to!string);
+    assert(delta.byteSize == 3600,
+        "extrudeEdgesByMask (cube, one interior edge): op-log byteSize "
+      ~ "changed from the measured 3600 -- got " ~ delta.byteSize.to!string);
+
+    Mesh pre = cubeStandL_();
+    immutable ok = delta.revert(m);
+    assert(ok, "extrudeEdgesByMask: revert() must succeed on a recording batch");
+    import tests.unit.mesh_ops.seam_differential : meshPlaneDiffs;
+    auto diffs = meshPlaneDiffs(pre, m);
+    assert(diffs.length == 1 && diffs[0].path == "vertexSetMask.length",
+        "extrudeEdgesByMask: revert() left a DIFFERENT residual than the "
+      ~ "measured one (vertexSetMask left grown to the post-op length) -- "
+      ~ "either the revert got MORE complete (update this pin down) or a "
+      ~ "regression grew a new lost plane. Got " ~ diffs.length.to!string
+      ~ " diff(s): " ~ diffs.to!string);
+}
+
+unittest { // RECORDING: extendEdgesByMask op-log kinds (cube, one edge)
+    import mesh_edit_delta : MeshEditScope;
+    import std.conv : to;
+    Mesh m = cubeStandL_();
+    bool[] mask = new bool[](m.edges.length);
+    foreach (i, ref e; m.edges) {
+        auto va = m.vertices[e[0]], vb = m.vertices[e[1]];
+        if (((va - Vec3(-0.5f,0.5f,0.5f)).length < 1e-4f && (vb - Vec3(0.5f,0.5f,0.5f)).length < 1e-4f) ||
+            ((va - Vec3(0.5f,0.5f,0.5f)).length < 1e-4f && (vb - Vec3(-0.5f,0.5f,0.5f)).length < 1e-4f))
+            mask[i] = true;
+    }
+    auto ed = MeshEditBatch(m, MeshEditScope.Geometry | MeshEditScope.Marks);
+    immutable n = ed.extendEdgesByMask(mask, 0.1f, 0.15f, Vec3(0,0,0), Vec3(0,0,0), Vec3(1,1,1), 1, Vec3(0,0,0));
+    auto delta = ed.close();
+    assert(n == 1, "one selected edge must extend");
+    assert(delta.log.length == 3,
+        "extendEdgesByMask (cube, one edge): expected exactly 3 op-log "
+      ~ "entries (AddVerts, AddFaces, EdgeSelByEnds); got "
+      ~ delta.log.length.to!string);
+    assert(delta.byteSize == 1368,
+        "extendEdgesByMask (cube, one edge): op-log byteSize changed from "
+      ~ "the measured 1368 -- got " ~ delta.byteSize.to!string);
+
+    Mesh pre = cubeStandL_();
+    immutable ok = delta.revert(m);
+    assert(ok, "extendEdgesByMask: revert() must succeed -- this family is "
+              ~ "pure-add (never removes/reindexes), so it is far closer to "
+              ~ "fully invertible than the other four kernels in this family");
+    import tests.unit.mesh_ops.seam_differential : meshPlaneDiffs;
+    auto diffs = meshPlaneDiffs(pre, m);
+    // MEASURED, not assumed: revert() succeeds but leaves ONE residual plane
+    // — `vertexSetMask` grown to the post-op length (8 -> 10) and not
+    // truncated back. The SAME class of gap `extrudeEdgesByMask`'s own
+    // recording block above measures (also `vertexSetMask.length`), so this
+    // is a property of the set-mask resize path shared by the family, not
+    // something `extendEdgesByMask` introduces on its own.
+    assert(diffs.length == 1 && diffs[0].path == "vertexSetMask.length",
+        "extendEdgesByMask: revert() left a DIFFERENT residual than the "
+      ~ "measured one (vertexSetMask left grown to the post-op length) -- "
+      ~ "either the revert got MORE complete (update this pin down) or a "
+      ~ "regression grew a new lost plane. Got " ~ diffs.length.to!string
+      ~ " diff(s): " ~ diffs.to!string);
+}
+
+unittest { // RECORDING: the three LATENT ops -- disarmed ships, armed is Stage K/L8's future
+    import mesh_edit_delta : MeshEditScope, MeshOpEntry;
+    import core.exception : ArrayIndexError;
+    import std.conv : to;
+
+    // extrudeVerticesByMask -- disarmed: [AddVerts, SetPos] (SetPos is task
+    // 1903 Stage H's OWN §5.7 migration of the raw apex-shift write: before
+    // this stage this kernel recorded NOTHING disarmed; now setVertexPos
+    // self-logs whenever the batch is recording, independent of
+    // wantsFaceReindex). revert() still throws -- arming is Stage K/L8's.
+    {
+        Mesh m = gridStand4_();
+        bool[] mask = new bool[](m.vertices.length);
+        mask[2 * 5 + 2] = true;   // interior vertex of a 4x4 grid (5x5 verts)
+        auto ed = MeshEditBatch(m, MeshEditScope.Geometry | MeshEditScope.Marks);
+        immutable n = ed.extrudeVerticesByMask(mask, 0.1f, 0.15f);
+        auto delta = ed.close();
+        assert(n == 1);
+        assert(delta.log.length == 2 && delta.log[0].kind == MeshOpEntry.Kind.AddVerts
+                                       && delta.log[1].kind == MeshOpEntry.Kind.SetPos,
+            "extrudeVerticesByMask disarmed: expected [AddVerts, SetPos], got "
+          ~ delta.log.length.to!string ~ " entries");
+        bool threw = false;
+        try { delta.revert(m); } catch (ArrayIndexError) { threw = true; }
+        assert(threw, "extrudeVerticesByMask disarmed: revert() must still "
+                     ~ "throw -- arming wantsFaceReindex is Stage K/L8's, not "
+                     ~ "H's; a revert that stops throwing here without that "
+                     ~ "stage landing is a silent behaviour change");
+    }
+    // extrudeFacesByMask -- disarmed: [AddVerts] alone, revert() throws.
+    {
+        Mesh m = cubeStandL_();
+        bool[] mask = new bool[](m.faces.length);
+        mask[0] = true;
+        auto ed = MeshEditBatch(m, MeshEditScope.Geometry | MeshEditScope.Marks);
+        immutable n = ed.extrudeFacesByMask(mask, 0.3f);
+        auto delta = ed.close();
+        assert(n == 1);
+        assert(delta.log.length == 1 && delta.log[0].kind == MeshOpEntry.Kind.AddVerts,
+            "extrudeFacesByMask disarmed: expected [AddVerts] alone, got "
+          ~ delta.log.length.to!string ~ " entries");
+        bool threw = false;
+        try { delta.revert(m); } catch (ArrayIndexError) { threw = true; }
+        assert(threw, "extrudeFacesByMask disarmed: revert() must still throw");
+    }
+    // smoothShiftFacesByMask -- disarmed: [AddVerts] alone, revert() throws.
+    {
+        Mesh m = gridStand4_();
+        bool[] mask = new bool[](m.faces.length);
+        mask[] = true;
+        auto ed = MeshEditBatch(m, MeshEditScope.Geometry | MeshEditScope.Marks);
+        immutable n = ed.smoothShiftFacesByMask(mask, 0.2f, 0.8f, true);
+        auto delta = ed.close();
+        assert(n == 16);
+        assert(delta.log.length == 1 && delta.log[0].kind == MeshOpEntry.Kind.AddVerts,
+            "smoothShiftFacesByMask disarmed: expected [AddVerts] alone, got "
+          ~ delta.log.length.to!string ~ " entries");
+        bool threw = false;
+        try { delta.revert(m); } catch (ArrayIndexError) { threw = true; }
+        assert(threw, "smoothShiftFacesByMask disarmed: revert() must still throw");
+    }
+}

@@ -178,16 +178,20 @@ unittest {
 
     Vec3 pivot = m.selectionBBoxCenterEdges();
     auto p = c["parameters"];
-    size_t n = m.extendEdgesByMask(selectedEdgeMask(m),
-                                   cast(float)p["inset"].floating,
-                                   cast(float)p["shift"].floating,
-                                   v3(p["offset"]),
-                                   Vec3(cast(float)p["rotateX_deg"].floating,
-                                        cast(float)p["rotateY_deg"].floating,
-                                        cast(float)p["rotateZ_deg"].floating),
-                                   v3(p["scale"]),
-                                   cast(int)p["segments"].integer,
-                                   pivot);
+    // task 1903 Stage H: extendEdgesByMask takes `ref MeshEditBatch` now;
+    // this fixture reads no op-log, so the batch is unrecorded.
+    auto ed = MeshEditBatch.unrecorded(m, kExtrudeEditScope);
+    size_t n = ed.extendEdgesByMask(selectedEdgeMask(m),
+                                    cast(float)p["inset"].floating,
+                                    cast(float)p["shift"].floating,
+                                    v3(p["offset"]),
+                                    Vec3(cast(float)p["rotateX_deg"].floating,
+                                         cast(float)p["rotateY_deg"].floating,
+                                         cast(float)p["rotateZ_deg"].floating),
+                                    v3(p["scale"]),
+                                    cast(int)p["segments"].integer,
+                                    pivot);
+    ed.close();
     assert(n == 2, "both selected edges must extend, got " ~ n.to!string);
 
     auto topo = fixture()["topology_after_one_application"];
@@ -232,16 +236,20 @@ unittest {
     assert(c["matched_candidate"].str == "world_origin");
 
     auto p = c["parameters"];
-    m.extendEdgesByMask(selectedEdgeMask(m),
-                        cast(float)p["inset"].floating,
-                        cast(float)p["shift"].floating,
-                        v3(p["offset"]),
-                        Vec3(cast(float)p["rotateX_deg"].floating,
-                             cast(float)p["rotateY_deg"].floating,
-                             cast(float)p["rotateZ_deg"].floating),
-                        v3(p["scale"]),
-                        cast(int)p["segments"].integer,
-                        Vec3(0, 0, 0));
+    // task 1903 Stage H: extendEdgesByMask takes `ref MeshEditBatch` now;
+    // this fixture reads no op-log, so the batch is unrecorded.
+    auto ed = MeshEditBatch.unrecorded(m, kExtrudeEditScope);
+    ed.extendEdgesByMask(selectedEdgeMask(m),
+                         cast(float)p["inset"].floating,
+                         cast(float)p["shift"].floating,
+                         v3(p["offset"]),
+                         Vec3(cast(float)p["rotateX_deg"].floating,
+                              cast(float)p["rotateY_deg"].floating,
+                              cast(float)p["rotateZ_deg"].floating),
+                         v3(p["scale"]),
+                         cast(int)p["segments"].integer,
+                         Vec3(0, 0, 0));
+    ed.close();
 
     auto rigVerts = fixture()["rig"]["vertices"].array;
     auto gold = c["new_ring_vertices"].array;

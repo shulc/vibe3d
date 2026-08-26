@@ -293,7 +293,11 @@ unittest { // an edge extrude does not annihilate a bystanding two-corner face
     assert(ei != ~0u, "setup: edge (6,7) must exist");
     emask[ei] = true;
 
-    m.extrudeEdgesByMask(emask, 0.2f, 0.1f);
+    // task 1903 Stage H: extrudeEdgesByMask takes `ref MeshEditBatch` now;
+    // this fixture reads no op-log, so the batch is unrecorded.
+    { auto ed = MeshEditBatch.unrecorded(m, kExtrudeEditScope);
+      ed.extrudeEdgesByMask(emask, 0.2f, 0.1f);
+      ed.close(); }
 
     size_t twoCornerAfter = 0;
     foreach (f; m.faces) if (f.length == 2) ++twoCornerAfter;

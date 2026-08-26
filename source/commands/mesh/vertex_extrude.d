@@ -48,7 +48,12 @@ class MeshVertexExtrude : Command, Operator {
 
         snap = MeshSnapshot.capture(*mesh);
         auto mask = mesh.operandVertexMask(EditMode.Vertices);
-        size_t n = mesh.extrudeVerticesByMask(mask, shift_, width_);
+        // task 1903 Stage H: extrudeVerticesByMask takes `ref MeshEditBatch`
+        // now. This command undoes via the MeshSnapshot above, not the
+        // op-log, so the batch is unrecorded.
+        auto ed = MeshEditBatch.unrecorded(*mesh, kExtrudeEditScope);
+        size_t n = ed.extrudeVerticesByMask(mask, shift_, width_);
+        ed.close();
         if (n == 0) {
             snap = MeshSnapshot.init;
             return false;

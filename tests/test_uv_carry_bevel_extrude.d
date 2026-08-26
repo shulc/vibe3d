@@ -42,7 +42,8 @@ import std.conv : to;
 
 import mesh : Mesh, MeshMap, MapDomain, kUvMapName, UvWallLaw,
               MeshEditBatch, kPolyBevelEditScope, bevelFacesByMask,
-              kEdgeBevelEditScope, bevelEdgesByMask;
+              kEdgeBevelEditScope, bevelEdgesByMask,
+              kExtrudeEditScope, extrudeFacesByMask;
 // Task 1903 Stage F2: the polygon-bevel entries are free functions over
 // `ref MeshEditBatch` in `source/mesh_ops/poly_bevel.d`, so this test opens the
 // batch itself. UNRECORDED — the fixture compares MAP payloads, not an op-log.
@@ -62,6 +63,17 @@ private size_t edgeBevelOnce(ref Mesh m, const bool[] mask, float width,
                              int roundLevel = 0, bool widthMode = false) {
     auto ed = MeshEditBatch.unrecorded(m, kEdgeBevelEditScope);
     immutable size_t n = ed.bevelEdgesByMask(mask, width, roundLevel, widthMode);
+    ed.close();
+    return n;
+}
+
+// Task 1903 Stage H: the same for Face Extrude, which is a free function
+// over `ref MeshEditBatch` in `source/mesh_ops/extrude.d` now.
+private size_t extrudeFacesOnce(ref Mesh m, const bool[] mask, float distance,
+                                bool smooth = false,
+                                UvWallLaw uvWall = UvWallLaw.SweepU) {
+    auto ed = MeshEditBatch.unrecorded(m, kExtrudeEditScope);
+    immutable size_t n = ed.extrudeFacesByMask(mask, distance, smooth, uvWall);
     ed.close();
     return n;
 }
@@ -182,7 +194,7 @@ private size_t runOp(ref Mesh m, const JSONValue op, bool wallOverride = false,
         // measured laws and produce different wall values (pinned below).
         const UvWallLaw law = wallOverride ? forced
             : (op["uv_sweep"].str == "u" ? UvWallLaw.SweepU : UvWallLaw.Copy);
-        return m.extrudeFacesByMask(faceMask(m, op["faces"]), dist, false, law);
+        return extrudeFacesOnce(m, faceMask(m, op["faces"]), dist, false, law);
     }
     assert(false, "unhandled op kind " ~ kind);
 }
@@ -628,7 +640,7 @@ unittest {
         size_t n;
         if (which == 0)      n = edgeBevelOnce(m, emask, 0.2f, 0, false);
         else if (which == 1) n = polyBevelOnce!bevelFacesByMask(m, fmask, 0.2f, 0.1f, false, 0, false);
-        else                 n = m.extrudeFacesByMask(fmask, 0.5f, false);
+        else                 n = extrudeFacesOnce(m, fmask, 0.5f, false);
         assert(n > 0, "cube op should apply");
         assert(m.meshMap(kUvMapName) is null, "no UV map should have appeared");
     }

@@ -44,7 +44,18 @@
 // mechanism, different symptom, intentionally not addressed here).
 
 import std.math : abs;
-import mesh : Mesh, makeCube;
+import mesh : Mesh, makeCube, MeshEditBatch, extrudeEdgesByMask, kExtrudeEditScope;
+
+// task 1903 Stage H: extrudeEdgesByMask takes `ref MeshEditBatch` now. This
+// file drives kernels directly on a bare `Mesh` (its own header: "no HTTP, no
+// running vibe3d instance"), so every call site needs a batch; these fixtures
+// read no op-log, so it is unrecorded.
+private size_t extrudeOnce_(ref Mesh m, in bool[] mask, float extrude, float width) {
+    auto ed = MeshEditBatch.unrecorded(m, kExtrudeEditScope);
+    immutable n = ed.extrudeEdgesByMask(mask, extrude, width);
+    ed.close();
+    return n;
+}
 
 void main() {}
 
@@ -82,7 +93,7 @@ unittest {
     mask[0] = true; // edge (0,3)
     mask[4] = true; // edge (4,5) — disjoint from edge 0, shares a neighbour
                     // face with it at one endpoint each (see header)
-    size_t n = m.extrudeEdgesByMask(mask, -5.0f, 100.0f);
+    size_t n = extrudeOnce_(m, mask, -5.0f, 100.0f);
     assert(n == 2, "both selected edges should extrude");
     assertMeshValid(m);
 }
@@ -94,7 +105,7 @@ unittest {
     auto mask = new bool[](m.edges.length);
     mask[0] = true;
     mask[4] = true;
-    size_t n = m.extrudeEdgesByMask(mask, 5.0f, 100.0f);
+    size_t n = extrudeOnce_(m, mask, 5.0f, 100.0f);
     assert(n == 2, "both selected edges should extrude");
     assertMeshValid(m);
 }
@@ -107,7 +118,7 @@ unittest {
     auto mask = new bool[](m.edges.length);
     mask[0] = true;
     mask[4] = true;
-    size_t n = m.extrudeEdgesByMask(mask, -5.0f, 0.3f);
+    size_t n = extrudeOnce_(m, mask, -5.0f, 0.3f);
     assert(n == 2, "both selected edges should extrude");
     assertMeshValid(m);
 }

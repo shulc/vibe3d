@@ -24,8 +24,18 @@
 
 import std.math : fabs;
 
-import mesh : Mesh, MeshMap, MapDomain, makeCube, kUvMapName;
+import mesh : Mesh, MeshMap, MapDomain, makeCube, kUvMapName,
+              MeshEditBatch, extrudeEdgesByMask, kExtrudeEditScope;
 import snapshot : MeshSnapshot;
+
+// task 1903 Stage H: extrudeEdgesByMask takes `ref MeshEditBatch` now; this
+// fixture reads no op-log, so the batch is unrecorded.
+private size_t extrudeOnce_(ref Mesh m, in bool[] mask, float extrude, float width) {
+    auto ed = MeshEditBatch.unrecorded(m, kExtrudeEditScope);
+    immutable n = ed.extrudeEdgesByMask(mask, extrude, width);
+    ed.close();
+    return n;
+}
 
 void main() {}
 
@@ -582,7 +592,7 @@ unittest {
 
     auto emask = new bool[](m.edges.length);
     emask[0] = true; // extrude one edge
-    m.extrudeEdgesByMask(emask, 0.2f, 0.1f);
+    extrudeOnce_(m, emask, 0.2f, 0.1f);
     auto uv = m.meshMap(kUvMapName);
     assert(uv !is null);
     assert(uv.data.length == m.loops.length * 2, "drop: length-correct after extrude");

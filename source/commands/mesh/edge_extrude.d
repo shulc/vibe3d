@@ -45,7 +45,12 @@ class MeshEdgeExtrude : Command, Operator {
 
         snap = MeshSnapshot.capture(*mesh);
         auto mask = mesh.operandEdgeMask();
-        size_t n = mesh.extrudeEdgesByMask(mask, extrude_, width_);
+        // task 1903 Stage H: extrudeEdgesByMask takes `ref MeshEditBatch` now.
+        // This command undoes via the MeshSnapshot above, not the op-log, so
+        // the batch is unrecorded.
+        auto ed = MeshEditBatch.unrecorded(*mesh, kExtrudeEditScope);
+        size_t n = ed.extrudeEdgesByMask(mask, extrude_, width_);
+        ed.close();
         if (n == 0) {
             snap = MeshSnapshot.init;
             return false;

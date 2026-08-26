@@ -179,7 +179,12 @@ public:
         if (mesh.faces.length == 0) return false;
         if (distance_ == 0.0f) return true;   // identity is a clean no-op
         auto mask = currentMask();
-        size_t n = mesh.extrudeFacesByMask(mask, distance_);
+        // task 1903 Stage H: extrudeFacesByMask takes `ref MeshEditBatch`
+        // now. `commitEdit` below undoes via a MeshSnapshot pair, not the
+        // op-log, so the batch is unrecorded.
+        auto ed = MeshEditBatch.unrecorded(*mesh, kExtrudeEditScope);
+        size_t n = ed.extrudeFacesByMask(mask, distance_);
+        ed.close();
         if (n == 0) return false;
         gpu.upload(*mesh);
         return true;
@@ -328,7 +333,10 @@ private:
             return;
         }
         auto mask = currentMask();
-        size_t n = mesh.extrudeFacesByMask(mask, distance_);
+        // task 1903 Stage H: unrecorded — the per-drag-frame preview rerun.
+        auto ed = MeshEditBatch.unrecorded(*mesh, kExtrudeEditScope);
+        size_t n = ed.extrudeFacesByMask(mask, distance_);
+        ed.close();
         built = (n != 0);
         refreshCaches();
     }

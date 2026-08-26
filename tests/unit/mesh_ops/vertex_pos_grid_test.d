@@ -304,7 +304,11 @@ unittest { // edge_extrude end to end: the ridge reselect elects the ridge AND s
 
     auto mask = new bool[m.edges.length];
     mask[] = true;
-    immutable n = m.extrudeEdgesByMask(mask, 0.2f, 0.05f);
+    // task 1903 Stage H: extrudeEdgesByMask takes `ref MeshEditBatch` now;
+    // this fixture reads no op-log, so the batch is unrecorded.
+    auto ed = MeshEditBatch.unrecorded(m, kExtrudeEditScope);
+    immutable n = ed.extrudeEdgesByMask(mask, 0.2f, 0.05f);
+    ed.close();
     assert(n > 0);
 
     int[] stamps;

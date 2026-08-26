@@ -19,8 +19,7 @@ import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
-import mesh_edit_delta : MeshEditTracker, MeshEditDelta, MeshEditScope,
-    undoTrackerEnabled;
+import mesh_edit_delta : MeshEditDelta, MeshEditScope, undoTrackerEnabled;
 
 import std.math : abs, sqrt;
 import std.json : JSONValue;
@@ -293,7 +292,13 @@ public:
         if (mesh.edges.length == 0) return false;
         if (extrude_ == 0.0f && width_ == 0.0f) return true;   // no-op success
         auto mask = currentMask();
-        size_t n = mesh.extrudeEdgesByMask(mask, extrude_, width_);
+        // task 1903 Stage H: extrudeEdgesByMask takes `ref MeshEditBatch` now.
+        // `ToolDoApplyCommand` wraps this whole call with a MeshSnapshot, so
+        // this batch is unrecorded — recording one here would build a delta
+        // no caller reads and discard it.
+        auto ed = MeshEditBatch.unrecorded(*mesh, kExtrudeEditScope);
+        size_t n = ed.extrudeEdgesByMask(mask, extrude_, width_);
+        ed.close();
         if (n == 0) return false;
         gpu.upload(*mesh);
         return true;
@@ -534,7 +539,11 @@ private:
             return;
         }
         auto mask = currentMask();
-        size_t n = mesh.extrudeEdgesByMask(mask, extrude_, width_);
+        // task 1903 Stage H: unrecorded — this is the per-drag-frame preview
+        // rerun (§9), which must stay off the op-log.
+        auto ed = MeshEditBatch.unrecorded(*mesh, kExtrudeEditScope);
+        size_t n = ed.extrudeEdgesByMask(mask, extrude_, width_);
+        ed.close();
         built = (n != 0);
         refreshCaches();
     }
@@ -559,19 +568,24 @@ private:
             // rewind, NOT part of the logged batch.
             before.restore(*mesh);
 
-            auto rec = MeshEditTracker();
-            mesh.beginEditBatch(&rec, MeshEditScope.Geometry | MeshEditScope.Marks);
-            // TASK 1903 S1 — the unwind path for the handle-less spelling.
-            // The kernel below holds `enforce`/`throw new` sites; without this
-            // an escaping `Exception` would leave the frame on
-            // `g_editBatchStack` forever and every later `commitChange` on
-            // this mesh would defer silently. `abortEditBatch` pops WITHOUT
-            // stamping and no-ops once the frame is gone, which matters
-            // because `scope(failure)` stays armed past the close.
-            scope(failure) mesh.abortEditBatch();
+            // task 1903 Stage H: the RECORDING `MeshEditBatch` struct replaces
+            // the legacy `beginEditBatch(&rec, …)` / `endEditBatch()` /
+            // `abortEditBatch()` trio — `extrudeEdgesByMask` now takes
+            // `ref MeshEditBatch ed`, so a handle is the only way to call it,
+            // and `pushEditFrame`/`closeEditFrame` are the SAME primitives
+            // both spellings drive (mesh.d's own comment on the legacy pair:
+            // "the two spellings cannot drift"). The manual
+            // `scope(failure) mesh.abortEditBatch();` this replaces is now
+            // unconditional and automatic: `MeshEditBatch.~this()` runs the
+            // identical pop-without-stamping + `changeBus.batchLeaks` tick on
+            // ANY unwind, recording or not (plan §2.2c) — this site no longer
+            // needs to spell it. This file drops out of the legacy-spelling
+            // roster in `commit_seam_census_test.d` (2 left: `delete.d`,
+            // `remove.d`).
+            auto ed = MeshEditBatch(*mesh, MeshEditScope.Geometry | MeshEditScope.Marks);
             auto mask = currentMask();
-            mesh.extrudeEdgesByMask(mask, extrude_, width_);
-            auto delta = mesh.endEditBatch();
+            ed.extrudeEdgesByMask(mask, extrude_, width_);
+            auto delta = ed.close();
 
             // After the re-run the mesh is back in the post-extrude state the user
             // was viewing; refresh the display so the GPU buffer reflects it.
