@@ -6166,7 +6166,9 @@ unittest {
 
     bool[] mask = new bool[](m.vertices.length);
     mask[0] = true;
-    size_t n = m.bevelVerticesByMask(mask, 0.2f);
+    size_t n;
+    { auto ed = MeshEditBatch.unrecorded(m, kBevelVertexEditScope);
+      n = ed.bevelVerticesByMask(mask, 0.2f); ed.close(); }
 
     assert(n == 1,
            "bevelVert: expected 1 processed, got " ~ n.to!string);
@@ -6229,7 +6231,9 @@ unittest {
     auto m = makeCube();
     bool[] mask = new bool[](m.vertices.length);
     mask[0] = true;
-    size_t n = m.bevelVerticesByMask(mask, 0.0f);
+    size_t n;
+    { auto ed = MeshEditBatch.unrecorded(m, kBevelVertexEditScope);
+      n = ed.bevelVerticesByMask(mask, 0.0f); ed.close(); }
     assert(n == 0,                "bevelVert no-op: expected 0 processed");
     assert(m.vertices.length == 8, "bevelVert no-op: vertex count unchanged");
     assert(m.faces.length    == 6, "bevelVert no-op: face count unchanged");
@@ -6256,7 +6260,9 @@ unittest {
 
     bool[] mask = new bool[](m.vertices.length);
     mask[0] = true;
-    size_t n = m.bevelVerticesByMask(mask, 0.12f);
+    size_t n;
+    { auto ed = MeshEditBatch.unrecorded(m, kBevelVertexEditScope);
+      n = ed.bevelVerticesByMask(mask, 0.12f); ed.close(); }
     assert(n == 1, "bevelVert boundary: valence-2 corner must be accepted");
     assert(m.vertices.length == 5,
            "bevelVert boundary: expected 5 verts, got " ~ m.vertices.length.to!string);
@@ -6294,7 +6300,9 @@ unittest {
 
     bool[] mask = new bool[](m.vertices.length);
     mask[1] = true;
-    size_t n = m.bevelVerticesByMask(mask, 0.12f);
+    size_t n;
+    { auto ed = MeshEditBatch.unrecorded(m, kBevelVertexEditScope);
+      n = ed.bevelVerticesByMask(mask, 0.12f); ed.close(); }
     assert(n == 1, "bevelVert open fan: valence-3 boundary corner must be accepted");
     assert(m.vertices.length == 7,
            "bevelVert open fan: expected 7 verts, got " ~ m.vertices.length.to!string);
@@ -6340,7 +6348,10 @@ unittest {
         m.buildLoops();
         bool[] mask = new bool[](m.vertices.length);
         mask[0] = true;
-        assert(m.bevelVerticesByMask(mask, bad) == 0,
+        size_t nBad;
+        { auto ed = MeshEditBatch.unrecorded(m, kBevelVertexEditScope);
+          nBad = ed.bevelVerticesByMask(mask, bad); ed.close(); }
+        assert(nBad == 0,
                "bevelVert: a non-finite amount must be refused");
         assert(m.vertices.length == 4 && m.faces.length == 1,
                "bevelVert: a non-finite amount must leave the mesh untouched");
@@ -6363,7 +6374,9 @@ unittest {
 
     bool[] mask = new bool[](m.vertices.length);
     mask[0] = true;
-    size_t n = m.bevelVerticesByMask(mask, 0.12f);
+    size_t n;
+    { auto ed = MeshEditBatch.unrecorded(m, kBevelVertexEditScope);
+      n = ed.bevelVerticesByMask(mask, 0.12f); ed.close(); }
     assert(n == 0, "bevelVert bow-tie: two fans at one point must be declined");
     assert(m.vertices.length == 7, "bevelVert bow-tie: vertex count unchanged");
     assert(m.faces.length    == 2, "bevelVert bow-tie: face count unchanged");

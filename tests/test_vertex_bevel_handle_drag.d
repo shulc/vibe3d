@@ -95,6 +95,17 @@ unittest { // dragging the inset arrow moves `inset` off zero
 
     int x1 = cast(int)(px + dx / len * 80.0);
     int y1 = cast(int)(py + dy / len * 80.0);
+
+    // Task 1903 Stage E4 — the DRAG-FRAME half of the seam, read around the
+    // playback. Every motion event re-runs the whole chamfer through
+    // `rebuildPreview`, so this is the only cell in the suite that exercises
+    // the tool's per-frame batch (`tests/test_vertex_bevel_tool.d` reaches
+    // `applyHeadless` only). NAME THE CALLER KIND before quoting a bus counter
+    // (E2 memo m6): a tool's drag frames are NOT inside the commands' global
+    // delivery batch, which is exactly why the counters below can say
+    // something here.
+    auto cBefore = parseJSON(cast(string) get(BASE ~ "/api/changes"));
+
     playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                              x0, y0, x1, y1, 16), BASE);
     Thread.sleep(dur!"msecs"(120));
@@ -104,6 +115,36 @@ unittest { // dragging the inset arrow moves `inset` off zero
         "dragging the inset arrow should have moved inset off zero — this "
         ~ "tool consumes nothing when the press misses the handle, so a zero "
         ~ "here means the drag never began. Got " ~ after.to!string);
+
+    // …and the anti-vacuity for the counters is that same assertion: a drag
+    // that never began rebuilds no preview and moves no counter, so the three
+    // zeroes below only mean something after it has passed.
+    auto cAfter = parseJSON(cast(string) get(BASE ~ "/api/changes"));
+    immutable long unbatched = cAfter["unbatchedGeometryCommits"].integer
+                             - cBefore["unbatchedGeometryCommits"].integer;
+    assert(unbatched == 0,
+        "the vertex-bevel drag made " ~ unbatched.to!string ~ " UNBATCHED "
+        ~ "geometry commit(s) across 16 preview frames. Task 1903 Stage E4 gave "
+        ~ "`rebuildPreview` an UNRECORDED MeshEditBatch per frame, so each "
+        ~ "frame's internal commits defer and stamp once at close(). Measured "
+        ~ "with the deferral disabled: +112 across this drag, i.e. seven per "
+        ~ "frame — the per-frame figure is what makes this cell different in "
+        ~ "kind from the headless one (plan §3.2 L2, §9).");
+    immutable long opLog = cAfter["opLogEntriesRecorded"].integer
+                         - cBefore["opLogEntriesRecorded"].integer;
+    assert(opLog == 0,
+        "the vertex-bevel drag recorded " ~ opLog.to!string ~ " op-log entr(ies) "
+        ~ "across its preview frames. Plan §9 is explicit that the interactive "
+        ~ "preview path must stay UNRECORDED: a recording batch opened per drag "
+        ~ "frame builds and throws away a full op-log at 60 Hz. Switching "
+        ~ "`rebuildPreview`'s constructor from `MeshEditBatch.unrecorded` to "
+        ~ "`MeshEditBatch` is the mutation this reddens under "
+        ~ "(task 1903 Stage E4).");
+    assert(cAfter["batchLeaks"].integer - cBefore["batchLeaks"].integer == 0,
+        "a MeshEditBatch leaked its frame during the vertex-bevel drag. On a "
+        ~ "per-frame batch a leak is not a one-off: the module-level frame is "
+        ~ "never popped, so every later commit on this mesh defers forever and "
+        ~ "the app silently stops publishing (plan §2.2c).");
 
     cmd("tool.set " ~ TOOL ~ " off");
 }

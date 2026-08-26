@@ -37,14 +37,14 @@ alias VertexBevelEditFactory = MeshSessionEdit delegate();
 //
 // Grounded in the captured toolcard (private spec tree — not reproduced
 // here beyond the geometry/behavior facts already baked into
-// mesh.bevelVerticesByMask):
+// mesh_ops.bevel_vertex.bevelVerticesByMask):
 //   - ONE attribute (`inset`, world units, default 0.0).
 //   - Exactly ONE drawn handle ("Inset"), ACTR-anchored — unlike Polygon
 //     Bevel's two handles, only inset is adjustable when beveling
 //     vertices.
 //   - `inset == 0` AND `inset < 0` are BOTH confirmed byte-exact no-ops
 //     (unlike the polygon-inset tool's degenerate-but-real zero-width split) —
-//     mesh.bevelVerticesByMask already guards `amount < 1e-6f` as a
+//     mesh_ops.bevel_vertex.bevelVerticesByMask already guards `amount < 1e-6f` as a
 //     no-op, so this divergence from the polygon-inset tool needed ZERO kernel
 //     changes to already be correct.
 //   - "Round Level" (extra rounding geometry) is a real, captured, but
@@ -59,7 +59,7 @@ alias VertexBevelEditFactory = MeshSessionEdit delegate();
 //     law when several mutually-edge-adjacent vertices are beveled
 //     together) is an OPEN QUESTION per the toolcard — not independently
 //     re-derivable with the capture harness used. This tool ports the
-//     single-vertex law byte-exact (see mesh.bevelVerticesByMask's own
+//     single-vertex law byte-exact (see mesh_ops.bevel_vertex.bevelVerticesByMask's own
 //     tests) and does not attempt to special-case multi-adjacent
 //     selections beyond what the existing kernel already does.
 //
@@ -199,7 +199,17 @@ public:
         if (mesh.vertices.length == 0) return false;
         if (inset_ == 0.0f) return true;
         auto mask = currentMask();
-        size_t n = mesh.bevelVerticesByMask(mask, inset_);
+        // Task 1903 Stage E4 — the batch opens at the TOOL boundary, for the
+        // same reason the command's does. UNRECORDED (plan §9): this tool
+        // commits through a whole-mesh `MeshSnapshot` pair, so a recording
+        // batch would build an op-log nothing reads. Stage M owns the tool
+        // pair-holders.
+        size_t n;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kBevelVertexEditScope);
+            n = ed.bevelVerticesByMask(mask, inset_);
+            ed.close();
+        }
         if (n == 0) return false;
         gpu.upload(*mesh);
         return true;
@@ -259,7 +269,7 @@ public:
         if (!skip) {
             float d = ax.toLocal(dot(delta, ax.dir));
             // No clamp to >=0: the captured law says BOTH inset==0 AND
-            // inset<0 are no-ops (mesh.bevelVerticesByMask already guards
+            // inset<0 are no-ops (mesh_ops.bevel_vertex.bevelVerticesByMask already guards
             // `amount < 1e-6f`), so a drag that crosses zero just yields a
             // cleared preview rather than needing to be pinned at zero.
             inset_ = dragBaseInset + d;
@@ -351,7 +361,25 @@ private:
             return;
         }
         auto mask = currentMask();
-        size_t n = mesh.bevelVerticesByMask(mask, inset_);
+        // Task 1903 Stage E4 — one UNRECORDED batch per DRAG FRAME, and
+        // unrecorded is not a convenience here: plan §9 is explicit that a
+        // recording batch opened per frame would build and throw away a full
+        // op-log at 60 Hz. This tool is one of the 16 that keep the plain
+        // `before.restore(*mesh)` preview shape rather than
+        // `tools/edit/preview_rebuild.d`, so the batch is on the LIVE mesh and
+        // the frame's deferred stamp lands at `close()` — one per frame
+        // instead of one per split vertex. That is the STAMP; DELIVERIES are
+        // a separate count, measured at the E4 review over the 16-frame drag
+        // in tests/test_vertex_bevel_handle_drag.d: 4 per frame, down from 10
+        // — `before.restore` is 1 and the chamfer inside the batch is 3 (was
+        // 9), selection-domain deliveries the batch does not defer. Nothing
+        // pins the residual 3; do not read "one per frame" as a delivery.
+        size_t n;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kBevelVertexEditScope);
+            n = ed.bevelVerticesByMask(mask, inset_);
+            ed.close();
+        }
         built = (n != 0);
         refreshCaches();
     }

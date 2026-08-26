@@ -3,7 +3,7 @@
 // mesh.vertexBevel command to a tool.set/tool.attr/tool.doApply-driven
 // interactive tool). Geometry law itself (split points, cap, no-op at
 // inset<=0) is already pinned by tests/test_vertex_bevel.d against
-// mesh.bevelVerticesByMask directly — this file only exercises the
+// mesh_ops.bevel_vertex.bevelVerticesByMask directly — this file only exercises the
 // interactive session lifecycle (activate/attr/apply/deactivate/undo),
 // same shape as tests/test_poly_inset.d's Test F/G for its sibling tool.
 
@@ -27,7 +27,7 @@ void postCommand(string body) {
 
 // Non-asserting variant for calls EXPECTED to report "did not apply" (e.g.
 // tool.doApply on a genuine no-op — inset<=0 goes through
-// mesh.bevelVerticesByMask's own `amount < 1e-6f` no-op guard, which
+// mesh_ops.bevel_vertex.bevelVerticesByMask's own `amount < 1e-6f` no-op guard, which
 // reports failure the same way every other topology tool's kernel-level
 // no-op does, matching the "postCommandRaw" convention other test files
 // use for the one-shot command's own no-op case).
@@ -121,4 +121,59 @@ unittest {
         "C: negative inset must not change vertex count");
     assert(m["faceCount"].integer == before["faceCount"].integer,
         "C: negative inset must not change face count");
+}
+
+// ---------------------------------------------------------------------------
+// Task 1903 Stage E4 — the headless-apply half of the seam. The DRAG-frame
+// half (`rebuildPreview`, one unrecorded batch per motion event) is in
+// tests/test_vertex_bevel_handle_drag.d, which is the only cell in the suite
+// that reaches it: `tool.attr` over the wire drives no live preview.
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    postSelect("vertices", [0]);
+
+    // POSITIVE CONTROL: the same counter, moved by a deliberately batchless
+    // command, so a dead counter cannot pass the assertion below for free.
+    auto c0 = parseJSON(cast(string)get("http://localhost:8080/api/changes"));
+    postCommand(`{"id":"mesh.triple"}`);
+    auto c1 = parseJSON(cast(string)get("http://localhost:8080/api/changes"));
+    assert(c1["unbatchedGeometryCommits"].integer
+         - c0["unbatchedGeometryCommits"].integer > 0,
+        "positive control: mesh.triple must tick unbatchedGeometryCommits — a "
+      ~ "dead counter passes the assertion below for free (task 1903 §3.2 L2)");
+
+    resetCube();
+    postSelect("vertices", [0]);
+    postCommand("tool.set mesh.vertexBevel on");
+    postCommand("tool.attr mesh.vertexBevel inset 0.2");
+
+    auto b = parseJSON(cast(string)get("http://localhost:8080/api/changes"));
+    postCommand("tool.doApply");
+    auto a = parseJSON(cast(string)get("http://localhost:8080/api/changes"));
+    postCommand("tool.set mesh.vertexBevel off");
+
+    auto m = getModel();
+    assert(m["vertexCount"].integer == 10 && m["faceCount"].integer == 7,
+        "the headless apply left " ~ m["vertexCount"].integer.to!string ~ "v/"
+      ~ m["faceCount"].integer.to!string ~ "f, expected 10v/7f — a refused "
+      ~ "apply moves no counter and makes the assertion below vacuous");
+
+    immutable long unbatched = a["unbatchedGeometryCommits"].integer
+                             - b["unbatchedGeometryCommits"].integer;
+    assert(unbatched == 0,
+        "tool.doApply made " ~ unbatched.to!string ~ " UNBATCHED geometry "
+      ~ "commit(s). Task 1903 Stage E4 gave `applyHeadless` its own UNRECORDED "
+      ~ "MeshEditBatch, so the chamfer's internal commits defer and stamp once "
+      ~ "at close(). Measured with the deferral disabled: +7 "
+      ~ "(plan §3.2 L2).");
+    assert(a["opLogEntriesRecorded"].integer - b["opLogEntriesRecorded"].integer == 0,
+        "tool.doApply recorded op-log entries — this tool commits through a "
+      ~ "whole-mesh MeshSnapshot pair, so the batch must stay `unrecorded` "
+      ~ "until Stage M/L7 (task 1903 Stage E4, plan §9).");
+    assert(a["batchLeaks"].integer - b["batchLeaks"].integer == 0,
+        "a MeshEditBatch leaked its frame during tool.doApply (plan §2.2c)");
+    assert(a["nestedBatchOpens"].integer - b["nestedBatchOpens"].integer == 0,
+        "tool.doApply opened a NESTED batch — this family has no transitional "
+      ~ "debt; both callers are outside the mesh (task 1903 Stage E4).");
 }

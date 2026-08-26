@@ -42,7 +42,20 @@ class MeshVertexBevel : Command, Operator {
 
         snap = MeshSnapshot.capture(*mesh);
         auto mask = mesh.operandVertexMask(EditMode.Vertices);
-        size_t n = mesh.bevelVerticesByMask(mask, amount_);
+        // Task 1903 Stage E4: `bevelVerticesByMask` is a free function over
+        // `ref MeshEditBatch` (source/mesh_ops/bevel_vertex.d), so the batch
+        // opens HERE — at the command boundary, which is where §4.1 says it
+        // belongs. One vertex chamfer now stamps, derives and delivers once at
+        // `close()` instead of once per split vertex and once per face-array
+        // rebuild. UNRECORDED because this command's undo is still the
+        // whole-mesh `snap` above; Stage L7 (`bevel/inset`) flips it to the
+        // recording constructor.
+        size_t n;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kBevelVertexEditScope);
+            n = ed.bevelVerticesByMask(mask, amount_);
+            ed.close();
+        }
         if (n == 0) {
             snap = MeshSnapshot.init;
             return false;

@@ -4,10 +4,8 @@ import mesh;
 import math;
 
 // ---------------------------------------------------------------------------
-// MeshEdgeBevelOps — edge/vertex bevel kernel family (bevelEdgesByMask,
-// bevelVerticesByMask, the non-manifold fin-bundle spine kernels
-// bevelIsolatedFinBundleSpine / bevelFinBundleSpineMultiEdge, the
-// centerNormalProject helper, and the edge.bevel valence-4 free-end cap
+// MeshEdgeBevelOps — the manifold edge bevel kernel family (bevelEdgesByMask,
+// the centerNormalProject helper, and the edge.bevel valence-4 free-end cap
 // parity fields bevelPinnedOrphans_ / bevelCapCoincidentPos_ /
 // bevelCapOrphanPos_), mixed into struct Mesh (source/mesh.d) via
 // `mixin MeshEdgeBevelOps;`. Split out of mesh.d as part of the mesh.d
@@ -15,6 +13,20 @@ import math;
 // architectural decision: mixin template over a package move or UFCS
 // free-functions). Method bodies below are verbatim cut/paste from mesh.d
 // (only the extraction boundary is new).
+//
+// THREE NAMES THIS BANNER USED TO CLAIM AND NO LONGER DOES.
+// `bevelVerticesByMask` and the two non-manifold fin-bundle spine kernels
+// (`bevelIsolatedFinBundleSpine` / `bevelFinBundleSpineMultiEdge`) moved to
+// their own files at task 0717 and stopped being members of `Mesh` altogether
+// at task 1903 Stage E4, which converted `mesh_ops/bevel_vertex.d` and
+// `mesh_ops/bevel_fin.d` to module-level free functions over
+// `ref MeshEditBatch`. The consequence for THIS file is in `bevelEdgesByMask`,
+// at the two fin-bundle early returns: each opens a TRANSITIONAL `unrecorded`
+// batch, because this body is still a mixin instantiated in `struct Mesh` and
+// therefore has no caller-held batch to hand on (plan §4.4a). **Stage G — the
+// conversion of this file — removes both.** Until then the per-command
+// `changeBus.nestedBatchOpens` delta in `tests/test_bevel_fin_bundle.d` is
+// what refuses a nested one.
 // ---------------------------------------------------------------------------
 mixin template MeshEdgeBevelOps() {
     // Scoped, NOT a module-level import of this file: a mixin template's body
@@ -275,11 +287,64 @@ mixin template MeshEdgeBevelOps() {
                     }
                 }
                 if (spineCount != 1) return 0;
-                if (selEdges.length == 1)
-                    return bevelIsolatedFinBundleSpine(spine, width);
+
+                // TASK 1903 Stage E4 — A TRANSITIONAL BATCH, AND IT IS A DEBT.
+                // The two fin-bundle kernels are free functions over
+                // `ref MeshEditBatch` now (`mesh_ops/bevel_fin.d`), so they
+                // cannot be called on a bare mesh; and `bevelEdgesByMask` is
+                // still a MIXIN body — the caller IS the mesh, so §4.1's "the
+                // command or the tool opens the batch" has nowhere to land.
+                // The batch therefore opens HERE, which §2.3 rule 2 forbids in
+                // the finished design ("a kernel never opens a batch"). Each
+                // one is scoped to the converted call ALONE — not to the
+                // enclosing `if (anyGE3)` block and not to the manifold path
+                // below, which this stage does not touch (the narrowing
+                // Stage D3's review MAJOR-3 made mandatory).
+                //
+                // UNRECORDED, for the reason every track-1 site is:
+                // `mesh.bevel` undoes through a whole-mesh `MeshSnapshot`, so
+                // a recording batch would build an op-log nothing reads and
+                // `close()` would drop.
+                //
+                // WHAT REMOVES IT: **stage G**, which converts this file
+                // (`doc/mesh_edit_seam_plan.md` §5.2 row G). When
+                // `bevelEdgesByMask` itself takes `ref MeshEditBatch ed`, both
+                // blocks collapse to `return ed.bevelIsolatedFinBundleSpine(…)`
+                // and the caller's batch is the only one.
+                //
+                // Until then `changeBus.nestedBatchOpens` is the tripwire, and
+                // the assert that reads it is the per-command DELTA in
+                // `tests/test_bevel_fin_bundle.d` — NOT the single
+                // process-cumulative `== 0` in
+                // `tests/test_undo_tracker_delete.d`, which never runs
+                // `mesh.bevel` and at `-j 8` is a different process. That test
+                // loads a three-fin bundle through `/api/load-mesh` because
+                // this branch is UNREACHABLE from a cube: a delta assert on
+                // any ordinary bevel cell would never enter these blocks and
+                // could not come out differently. That tripwire guards ONE of
+                // two doors: `EdgeBevelTool` (tools/edit/edge_bevel.d) reaches
+                // these same blocks, and every edge-bevel TOOL test drives a
+                // cube, which cannot exhibit a fin bundle. When Stage M gives
+                // that tool a batch of its own, this open nests with nothing
+                // able to see it — M adds a fin-bundle cell to
+                // `tests/test_edge_bevel_tool.d` in the same change, unless G
+                // has removed these blocks first.
+                if (selEdges.length == 1) {
+                    auto finEd = MeshEditBatch.unrecorded(this, kBevelFinEditScope);
+                    immutable size_t nFin =
+                        finEd.bevelIsolatedFinBundleSpine(spine, width);
+                    finEd.close();
+                    return nFin;
+                }
                 uint[] extras;
                 foreach (e; selEdges) if (e != spine) extras ~= e;
-                return bevelFinBundleSpineMultiEdge(spine, extras, width);
+                {
+                    auto finEd = MeshEditBatch.unrecorded(this, kBevelFinEditScope);
+                    immutable size_t nFin =
+                        finEd.bevelFinBundleSpineMultiEdge(spine, extras, width);
+                    finEd.close();
+                    return nFin;
+                }
             }
         }
 

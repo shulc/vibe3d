@@ -38,8 +38,19 @@ public import mesh_ops.revolve;
 // task's.
 public import mesh_ops.cleanup;
 import mesh_ops.edge_bevel : MeshEdgeBevelOps;
-import mesh_ops.bevel_fin : MeshBevelFinOps;
-import mesh_ops.bevel_vertex : MeshBevelVertexOps;
+// task 1903 Stage E4: the non-manifold fin-bundle family is module-level free
+// functions — `bevelIsolatedFinBundleSpine` and `bevelFinBundleSpineMultiEdge`
+// over `ref MeshEditBatch` — plus the family's declared scope
+// `kBevelFinEditScope`, not a mixin. PUBLIC so every `import mesh;` re-exports
+// them and `ed.bevelIsolatedFinBundleSpine(spine, w)` resolves through UFCS
+// (`doc/mesh_edit_seam_plan.md` §4.2). This keeps mesh.d the door for the ops
+// namespace; narrowing that is audit 0678 M9's job, not this task's.
+public import mesh_ops.bevel_fin;
+// task 1903 Stage E4: the vertex chamfer is a module-level free function —
+// `bevelVerticesByMask` over `ref MeshEditBatch` — plus the module-scope corner
+// record `VertexBevelCorner` and the declared scope `kBevelVertexEditScope`,
+// not a mixin. PUBLIC for the same reason as the line above.
+public import mesh_ops.bevel_vertex;
 import mesh_ops.extrude : MeshExtrudeOps;
 // task 1903 Stage D2: the decimation family is ONE module-level free function
 // (`reduceToTarget` over `ref MeshEditBatch`), not a mixin. PUBLIC so every
@@ -1965,7 +1976,14 @@ struct Mesh {
     /// `subs` means LAST wins (AA assignment), and an `oldV` appearing twice
     /// in the face is substituted at BOTH positions. Both were true of all
     /// three copies.
-    private static uint[] rebuildFaceWithVertexSubs(const(uint)[] face, VertSub[]* subsP) {
+    /// PUBLIC STATIC since task 1903 Stage E4 (plan §2.6), for the same reason
+    /// as `finalizeTopologyEdit` above: `mesh_ops/bevel_vertex.d` calls it as
+    /// `Mesh.rebuildFaceWithVertexSubs(...)` — a `static` member is not
+    /// reachable by UFCS through the batch handle, so the qualified spelling is
+    /// the only one. `mesh_ops/edge_bevel.d` (Stage G) and `mesh_ops/extrude.d`
+    /// (Stage H) name it too and are still mixins; the census row lists all
+    /// three files.
+    static uint[] rebuildFaceWithVertexSubs(const(uint)[] face, VertSub[]* subsP) {
         if (subsP is null) return face.dup;
         uint[][uint] repl;
         foreach (s; *subsP) repl[s.oldV] = s.newVs;
@@ -4716,7 +4734,16 @@ struct Mesh {
     /// return live indices. (Without this, the next consumer of `loops` walks
     /// stale data and either reports wrong adjacency or indexes out of
     /// bounds.)
-    private void finalizeTopologyEdit() {
+    /// PUBLIC since task 1903 Stage E4 (plan §2.6). It was `private` only
+    /// because a mixin body is instantiated in its host's scope and could
+    /// therefore reach it for free; `mesh_ops/bevel_fin.d` and
+    /// `mesh_ops/bevel_vertex.d` stopped being mixin bodies in that commit and
+    /// call it as `ed.finalizeTopologyEdit()`. `mesh_ops/extrude.d` names it at
+    /// three further sites and is STILL a mixin (Stage H), so it reaches the
+    /// name through the instantiation scope today and inherits this widening
+    /// when it converts — the census row in
+    /// tests/unit/commit_seam_census_test.d lists all three files.
+    void finalizeTopologyEdit() {
         rebuildEdges();
         buildLoops();
         compactUnreferenced();
@@ -15305,8 +15332,20 @@ struct Mesh {
     // source/mesh_ops/bevel_curves.d, not a mixin)
     mixin MeshEdgeBevelOps;
     mixin MeshPolyBevelOps;
-    mixin MeshBevelFinOps;
-    mixin MeshBevelVertexOps;
+
+    // The fin-bundle spine family (bevelIsolatedFinBundleSpine /
+    // bevelFinBundleSpineMultiEdge) and the vertex chamfer
+    // (bevelVerticesByMask, with its corner record VertexBevelCorner) are NO
+    // LONGER mixins. Task 1903 Stage E4 converted both to module-level free
+    // functions over `ref MeshEditBatch` in source/mesh_ops/bevel_fin.d and
+    // source/mesh_ops/bevel_vertex.d, and `VertexBevelCorner` went to module
+    // scope with them. The two `public import`s at the top of this file are
+    // what keep every `import mesh;` resolving them; either family's mixin,
+    // reinstated HERE, would silently SHADOW them (a member beats a same-name
+    // UFCS free function), so each file carries its own
+    // `static assert(!__traits(hasMember, Mesh, n))` over every family name
+    // AND the moved type, and tests/unit/commit_seam_census_test.d names both
+    // templates in its converted-family roster.
 
     // Extrude kernel family (extrudeEdgesByMask / extrudeVerticesByMask /
     // extendEdgesByMask / extrudeFacesByMask / smoothShiftFacesByMask) — see

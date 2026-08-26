@@ -1,0 +1,253 @@
+// test_bevel_fin_bundle.d — the seam cell for `mesh.bevel`'s NON-MANIFOLD
+// fin-bundle path (task 1903 Stage E4).
+//
+// WHY THIS FILE EXISTS AND WHY IT LOADS ITS OWN MESH. Stage E4 converted
+// `source/mesh_ops/bevel_fin.d` to free functions over `ref MeshEditBatch`, and
+// its only caller — `bevelEdgesByMask` in `mesh_ops/edge_bevel.d` — is still a
+// MIXIN body, i.e. it IS the mesh, so plan §4.1's "the command or the tool
+// opens the batch" has nowhere to land. §4.4a's transitional shape applies: a
+// narrow `unrecorded` batch at the two call sites, labelled, naming Stage G as
+// the stage that removes it, and carrying a per-command `nestedBatchOpens`
+// DELTA assert in that command's own suite test. This is that test.
+//
+// THE DELTA IS THE LOAD-BEARING WORD. The single process-cumulative `== 0` in
+// `tests/test_undo_tracker_delete.d` is NOT this tripwire: it never runs
+// `mesh.bevel`, and under `-j 8` it is a different process.
+//
+// AND THE MESH MUST BE A FIN BUNDLE, which is why /api/load-mesh is here. The
+// transitional block is only entered when a SELECTED edge is shared by three or
+// more faces AND both its endpoints touch nothing but those fins. No fixture the
+// suite already has can exhibit that — `/api/reset?type=cube` certainly cannot —
+// so a delta assert on any ordinary bevel cell would sit downstream of a branch
+// it never takes and could not come out differently.
+
+import std.net.curl;
+import std.json;
+import std.conv : to;
+import std.math : cos, sin, PI, abs;
+
+void main() {}
+
+enum BASE = "http://localhost:8080";
+
+JSONValue postJson(string path, string body_) {
+    return parseJSON(cast(string)post(BASE ~ path, body_));
+}
+JSONValue model()   { return parseJSON(cast(string)get(BASE ~ "/api/model")); }
+JSONValue changes() { return parseJSON(cast(string)get(BASE ~ "/api/changes")); }
+
+void ok(JSONValue r, string what) {
+    assert(r["status"].str == "ok" || r["status"].str == "success",
+        what ~ " failed: " ~ r.toString);
+}
+
+/// A bundle of `n` fins sharing the spine (0,0,+1)-(0,0,-1), whose two spine
+/// endpoints touch NOTHING but those fins — the ISOLATED bundle task 0438
+/// measured. Vertex 0 / 1 are the spine; fin k uses [0, 2+2k, 3+2k, 1].
+void loadFinBundle(int n) {
+    string verts = `[[0,0,1],[0,0,-1]`;
+    foreach (k; 0 .. n) {
+        immutable double a = 2.0 * PI * k / n;
+        verts ~= `,[` ~ cos(a).to!string ~ `,` ~ sin(a).to!string ~ `,1]`;
+        verts ~= `,[` ~ cos(a).to!string ~ `,` ~ sin(a).to!string ~ `,-1]`;
+    }
+    verts ~= `]`;
+    string faces = `[`;
+    foreach (k; 0 .. n) {
+        if (k) faces ~= `,`;
+        faces ~= `[0,` ~ (2 + 2 * k).to!string ~ `,` ~ (3 + 2 * k).to!string ~ `,1]`;
+    }
+    faces ~= `]`;
+    ok(postJson("/api/load-mesh", `{"vertices":` ~ verts ~ `,"faces":` ~ faces ~ `}`),
+       "/api/load-mesh (fin bundle)");
+}
+
+void loadCube() {
+    ok(postJson("/api/reset", ""), "/api/reset");
+}
+
+/// The index of the edge joining `a` and `b` in the live mesh.
+int edgeIndexOf(int a, int b) {
+    auto m = model();
+    foreach (i, e; m["edges"].array) {
+        immutable int u = cast(int)e.array[0].integer, v = cast(int)e.array[1].integer;
+        if ((u == a && v == b) || (u == b && v == a)) return cast(int)i;
+    }
+    return -1;
+}
+
+void selectEdges(int[] idx) {
+    string j = "[";
+    foreach (i, v; idx) { if (i) j ~= ","; j ~= v.to!string; }
+    j ~= "]";
+    ok(postJson("/api/select", `{"mode":"edges","indices":` ~ j ~ `}`), "/api/select edges");
+}
+
+size_t faceCount(JSONValue m) { return m["faces"].array.length; }
+long   vertCount(JSONValue m) { return m["vertexCount"].integer; }
+
+/// How many faces of arity `k` the model has — the fin law's fingerprint: a
+/// fin-bundle bevel adds exactly TWO n-gon fan caps and leaves every fin at its
+/// original arity, which an ordinary manifold bevel never produces.
+int arity(JSONValue m, size_t k) {
+    int n;
+    foreach (f; m["faces"].array) if (f.array.length == k) ++n;
+    return n;
+}
+
+// ---------------------------------------------------------------------------
+unittest { // the fin-bundle path runs inside ONE batch, and it is the OUTERMOST one
+    // POSITIVE CONTROL FIRST, and it is not decoration. Every counter assert
+    // below is "this did not move", and a dead counter — the endpoint reading a
+    // stale copy, the `g_isDocumentMesh` predicate uninstalled — satisfies that
+    // for free. So make the SAME counter move first, with a command that is
+    // deliberately still batchless.
+    loadCube();
+    ok(postJson("/api/select", `{"mode":"vertices","indices":[]}`), "/api/select");
+    auto c0 = changes();
+    ok(postJson("/api/command", `{"id":"mesh.triple"}`), "mesh.triple");
+    auto c1 = changes();
+    immutable long ctrl = c1["unbatchedGeometryCommits"].integer
+                        - c0["unbatchedGeometryCommits"].integer;
+    assert(ctrl > 0,
+        "positive control: an UNBATCHED command must tick "
+      ~ "unbatchedGeometryCommits, and mesh.triple ticked " ~ ctrl.to!string
+      ~ ". A dead counter passes every assertion below for free "
+      ~ "(task 1903 §3.2 L2).");
+
+    // ---- the single-spine door -------------------------------------------
+    loadFinBundle(3);
+    immutable int spine = edgeIndexOf(0, 1);
+    assert(spine >= 0, "the loaded fin bundle has no (0,1) spine edge");
+    selectEdges([spine]);
+
+    auto b = changes();
+    ok(postJson("/api/command", `{"id":"mesh.bevel","params":{"width":0.4}}`),
+       "mesh.bevel on a 3-fin bundle");
+    auto a = changes();
+    auto m = model();
+
+    // ANTI-VACUITY, AND IT IS THE PART THAT PROVES THE BRANCH WAS TAKEN.
+    // `bevelEdgesByMask` refuses a >=3-face edge outright unless the isolated
+    // bundle precondition holds, and a refusal makes NO commits at all — so
+    // every "delta == 0" below would hold on a mesh nothing happened to. The
+    // fin law's fingerprint is what says otherwise: the two spine vertices are
+    // consumed and replaced by 2N rails (8 -> 12 verts), and exactly TWO
+    // TRIANGLE fan caps appear beside the three still-quad fins. An ordinary
+    // manifold bevel of this selection produces neither.
+    assert(vertCount(m) == 12 && faceCount(m) == 5,
+        "the 3-fin bundle bevel left V=" ~ vertCount(m).to!string ~ " F="
+      ~ faceCount(m).to!string ~ ", expected V=12 F=5 (six rails in, the two "
+      ~ "spine verts out, two fan caps added). On a REFUSAL the mesh is "
+      ~ "byte-identical and every counter assertion below is vacuous "
+      ~ "(task 1903 Stage E4).");
+    assert(arity(m, 3) == 2 && arity(m, 4) == 3,
+        "the bevel left " ~ arity(m, 3).to!string ~ " triangle(s) and "
+      ~ arity(m, 4).to!string ~ " quad(s), expected 2 and 3 — the two N-gon fan "
+      ~ "caps plus the three fins at their original arity. Without this the "
+      ~ "count check above could be satisfied by some other edit "
+      ~ "(task 1903 Stage E4).");
+
+    // THE §4.4a TRIPWIRE. edge_bevel.d's transitional batch is only safe while
+    // it is the OUTERMOST one; a nested open means some caller above it already
+    // holds a batch and the debt has stopped being a debt and started being a
+    // bug.
+    immutable long nested = a["nestedBatchOpens"].integer - b["nestedBatchOpens"].integer;
+    assert(nested == 0,
+        "mesh.bevel opened " ~ nested.to!string ~ " NESTED batch(es) on the "
+      ~ "fin-bundle path. The `unrecorded` MeshEditBatch in "
+      ~ "source/mesh_ops/edge_bevel.d is a TRANSITIONAL debt (plan §4.4a) that "
+      ~ "Stage G removes, and its entire safety argument is that it is the "
+      ~ "OUTERMOST open. A non-zero delta means a caller above it now holds a "
+      ~ "batch too — collapse the debt into that caller instead of nesting "
+      ~ "(task 1903 Stage E4).");
+
+    immutable long unbatched = a["unbatchedGeometryCommits"].integer
+                             - b["unbatchedGeometryCommits"].integer;
+    assert(unbatched == 0,
+        "mesh.bevel made " ~ unbatched.to!string ~ " UNBATCHED geometry "
+      ~ "commit(s) on the fin-bundle path. The kernels' receiver is "
+      ~ "`ref MeshEditBatch`, so their commits must defer into the frame and "
+      ~ "stamp once at close(). Measured with the deferral disabled: +12 on "
+      ~ "this three-fin stand, and it grows with N "
+      ~ "(task 1903 Stage E4, plan §3.2 L2).");
+
+    // The batch is UNRECORDED and it must stay that way: `mesh.bevel` undoes
+    // through a whole-mesh MeshSnapshot, so an op-log here is one nobody reads.
+    immutable long opLog = a["opLogEntriesRecorded"].integer
+                         - b["opLogEntriesRecorded"].integer;
+    assert(opLog == 0,
+        "mesh.bevel recorded " ~ opLog.to!string ~ " op-log entr(ies) on the "
+      ~ "fin-bundle path. The transitional batch is `unrecorded` deliberately "
+      ~ "(plan §9): this command's undo is still a whole-mesh snapshot, so a "
+      ~ "recorded delta is built and dropped (task 1903 Stage E4).");
+    assert(a["batchLeaks"].integer - b["batchLeaks"].integer == 0,
+        "a MeshEditBatch leaked its frame during mesh.bevel — the handle's "
+      ~ "destructor popped instead of close() (plan §2.2c)");
+    assert(a["batchUpgradeRefusals"].integer - b["batchUpgradeRefusals"].integer == 0,
+        "mesh.bevel refused a batch upgrade on the fin-bundle path (plan §2.3 "
+      ~ "rule 3)");
+}
+
+unittest { // the MULTI-EDGE door — the second transitional batch, same law
+    loadFinBundle(3);
+    immutable int spine = edgeIndexOf(0, 1);
+    immutable int extra = edgeIndexOf(0, 2);     // fin 0's outer rim edge at +z
+    assert(spine >= 0 && extra >= 0,
+        "the loaded fin bundle lost its spine or its +z rim edge");
+    selectEdges([spine, extra]);
+
+    auto b = changes();
+    ok(postJson("/api/command", `{"id":"mesh.bevel","params":{"width":0.4}}`),
+       "mesh.bevel on a 3-fin bundle + one extra edge");
+    auto a = changes();
+    auto m = model();
+
+    // Anti-vacuity: the multi-edge builder REFUSES anything past the measured
+    // shape and refuses byte-identically, so the fingerprint has to say the
+    // miter path ran. It differs from the single-spine cell by the corner-cut:
+    // the extra edge's far vertex is replaced by TWO (a perpendicular inset of
+    // the fin's next edge and a slide along it) and, being used by that fin
+    // alone, is then dropped by the tail compaction — net +1 over the plain
+    // case, V=13 against 12, with the same five faces. MEASURED, not derived:
+    // an earlier draft of this cell predicted 14 by counting the two new points
+    // and forgetting the one they replace, and the suite is what corrected it.
+    assert(vertCount(m) == 13 && faceCount(m) == 5,
+        "the multi-edge fin bevel left V=" ~ vertCount(m).to!string ~ " F="
+      ~ faceCount(m).to!string ~ ", expected V=13 F=5 (the plain 12, plus the "
+      ~ "extra edge's far vertex corner-cut into two and the original dropped). "
+      ~ "On a REFUSAL every counter assertion below is vacuous "
+      ~ "(task 1903 Stage E4).");
+
+    assert(a["nestedBatchOpens"].integer - b["nestedBatchOpens"].integer == 0,
+        "mesh.bevel opened a NESTED batch on the MULTI-EDGE fin path. This is "
+      ~ "the SECOND of edge_bevel.d's two transitional opens (plan §4.4a); the "
+      ~ "cell above only covers the first, and a debt that is not the outermost "
+      ~ "open is a bug (task 1903 Stage E4).");
+    assert(a["unbatchedGeometryCommits"].integer
+         - b["unbatchedGeometryCommits"].integer == 0,
+        "mesh.bevel made UNBATCHED geometry commits on the MULTI-EDGE fin path "
+      ~ "(task 1903 Stage E4).");
+    assert(a["opLogEntriesRecorded"].integer - b["opLogEntriesRecorded"].integer == 0,
+        "mesh.bevel recorded op-log entries on the MULTI-EDGE fin path — the "
+      ~ "transitional batch must stay `unrecorded` (task 1903 Stage E4).");
+}
+
+unittest { // undo still restores the bundle — the snapshot path is untouched
+    // Stage E4 is a CONVERSION stage: the undo axis is L7's. This cell is what
+    // says so out loud, on the one path whose caller had to grow a batch.
+    loadFinBundle(3);
+    immutable int spine = edgeIndexOf(0, 1);
+    selectEdges([spine]);
+    ok(postJson("/api/command", `{"id":"mesh.bevel","params":{"width":0.4}}`),
+       "mesh.bevel");
+    assert(vertCount(model()) == 12, "the bevel did not apply; undo proves nothing");
+    ok(postJson("/api/undo", ""), "/api/undo");
+    auto m = model();
+    assert(vertCount(m) == 8 && faceCount(m) == 3,
+        "undo left V=" ~ vertCount(m).to!string ~ " F=" ~ faceCount(m).to!string
+      ~ ", expected the loaded bundle's V=8 F=3. The transitional batch is "
+      ~ "UNRECORDED and this command still undoes through a whole-mesh "
+      ~ "MeshSnapshot; if that stopped working, the batch is committing "
+      ~ "something it should not (task 1903 Stage E4).");
+}
