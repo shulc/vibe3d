@@ -1984,31 +1984,28 @@ void main(string[] args) {
     // resize / invalidate / syncSelection work happens later on the main
     // thread in the flag-driven block, never inside delivery.
     uint meshChangedFlags = 0;
-    // Change-notification bus, Stage 5 — selection subscriber state.
+    // Change-notification bus — selection subscriber state.
     //
-    // `selChangedDomains` accumulates the selection domains (Vertex / Edge /
-    // Face bits) the bus delivers THIS frame. The selection consumer below ORs
-    // the flushed domains into it; the per-frame consume site (down in the
-    // render loop, alongside the pick-cache block) reads it and zeroes it.
+    // Task 1931 (2026-08-26) removed the sibling accumulator that used to
+    // live here (`selChangedDomains`, ORing the delivered domains into a
+    // frame-local flag "for the future layer panel"): measured, it had ZERO
+    // readers anywhere in the tree (grep, task 1931 premise P2) — the
+    // per-frame consume site this comment used to promise was never written.
+    // `fboSelEpoch` below is the bus's one surviving selection-channel
+    // consumer.
     //
-    // Today the selection highlight is drawn live every frame straight from the
-    // mesh marks (gpu.drawVertices/drawEdges read the marks through a borrowed
-    // `MarkView` each frame — task 0585; before that they read the allocating
-    // `mesh.selectedVertices` & co.), and the screen-space pick caches key off
-    // GEOMETRY, not selection — so no concrete cache needs a selection-driven
-    // refresh right now. The consumer is therefore wired but minimal: it
-    // parks the domains in a frame-local flag, establishing the single
-    // selection-consumer seam the future layer panel (the plan's named future
-    // consumer) plugs into without inventing UI work now. The bus contract
-    // still holds (invalidate-only: the delegate touches nothing but the flag).
-    uint selChangedDomains = 0;
     // Phase 2 — persistent selection epoch for the FBO dirty-cache. Selection
     // is a Marks-class change that deliberately does NOT bump mesh.mutationVersion
     // (see mesh.d), and plain click-select / select-all / clear happen with NO
     // active tool and NO drag, so they escape the DirtyKey's meshMutVer + the
-    // forceActive gate. Bumping a persistent counter here (never zeroed, unlike
-    // selChangedDomains at the consume site) lets the dirty check detect any
-    // selection change and re-render. Fires only on real selection flushes.
+    // forceActive gate. Bumping this counter on every real selection-channel
+    // delivery lets the dirty check detect any selection change and re-render.
+    // Task 1931 also gave it a per-cell STAMP into `Viewport3D.lastSelEpoch`
+    // (see the N-cell render loop below, and `viewport.d`), because
+    // `fboSelEpoch` itself has no witness from the `--test` lane: the dirty-key
+    // compare it feeds is skipped outright under `testMode`
+    // (`source/app.d`, the `if (testMode) { … } else { … }` a few dozen lines
+    // below this block).
     ulong fboSelEpoch = 0;
     {
         import change_bus : changeBus;
@@ -2062,8 +2059,15 @@ void main(string[] args) {
             import mesh_dirty : noteMeshChange;
             noteMeshChange(subjectAddr, flags);
         });
-        changeBus.onSelectionChanged((uint domains) {
-            selChangedDomains |= domains;
+        // Task 1931, sel-channel census (tests/unit/sel_channel_census_test.d)
+        // — this is the ONE recorded `onSelectionChanged` registration for
+        // `source/app.d`. A second registration here, or one in another file,
+        // must red the census; add the row there too before adding the call.
+        // The parameter is deliberately UNNAMED: this subscriber is blind to
+        // which domain moved, which is the whole measured finding of task 1931
+        // (branch B) and the premise both the census header and the bus plan's
+        // resolution note rest on. Naming it would suggest a reader.
+        changeBus.onSelectionChanged((uint) {
             ++fboSelEpoch;
         });
 
@@ -6574,12 +6578,12 @@ void main(string[] args) {
         // drives the trigger. (render-dirty / IPR is converted in Stage 4.)
         meshChangedFlags = 0;
 
-        // Consume this frame's selection-change domains (Stage 5). No live
-        // consumer acts on them yet (highlight reads marks directly; pick caches
-        // key off geometry), so this just clears the frame-local accumulator so
-        // it never carries stale domains into the next frame. The seam exists
-        // for the future layer panel.
-        selChangedDomains = 0;
+        // The per-frame selection accumulator that used to live here
+        // (`selChangedDomains = 0;`) was removed at task 1931: measured, it
+        // had zero readers — the "future layer panel" this comment used to
+        // promise never arrived. `fboSelEpoch` is the surviving
+        // selection-channel consumer, and it is a MONOTONIC counter, not a
+        // per-frame flag, so there is nothing here to zero.
 
         ifs.pickVertices(vp, doingCameraDrag);
 
@@ -7757,6 +7761,9 @@ void main(string[] args) {
                 // Viewport3D.lastOverlayMode). Before the dirty-key skip: the
                 // decision is made whether or not the cell then renders.
                 _cv.lastOverlayMode = cast(int)_ovMode;
+                // Task 1931 — same reasoning, same placement, for the
+                // selection-channel epoch: see Viewport3D.lastSelEpoch.
+                _cv.lastSelEpoch = fboSelEpoch;
 
                 // Per-cell camera snapshot.  x/y is the actual screen
                 // position so tool overlay math (cachedVp screen→world) uses

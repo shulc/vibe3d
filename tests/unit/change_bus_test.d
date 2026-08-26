@@ -58,6 +58,29 @@ unittest {
     assert(bus.deliveryCount == 1, "no-op delivery does not bump the counter");
 }
 
+// Task 1931, stage 0 — the guard `if (selDomains != 0)` immediately before
+// `foreach (dg; selSubs) dg(selDomains);` in `deliverMesh` has no cell above
+// it. The block just above registers a mesh subscriber only; the block below
+// (`flush with both args zero`) drives `deliverMesh(kSubj, 0, 0)`, which never
+// reaches this guard at all — it returns at the earlier
+// `meshFlags == 0 && selDomains == 0` check. This is the first cell to
+// register BOTH subscriber kinds and prove a mesh-only delivery does not also
+// ring the selection channel.
+unittest {
+    ChangeBus bus;
+    int meshCalls = 0, selCalls = 0;
+    bus.onMeshChanged((size_t, uint) { ++meshCalls; });
+    bus.onSelectionChanged((uint) { ++selCalls; });
+
+    bus.deliverMesh(kSubj, MeshEditScope.Marks, 0);
+
+    assert(meshCalls == 1, "the mesh subscriber must still fire");
+    assert(selCalls == 0,
+        "a mesh-only delivery must not ring the selection channel — this is "
+      ~ "the `if (selDomains != 0)` guard at change_bus.d, and nothing above "
+      ~ "this block registered both subscriber kinds at once to see it fail");
+}
+
 // flush with both args zero is a complete no-op: no counter bump, no call.
 unittest {
     ChangeBus bus;

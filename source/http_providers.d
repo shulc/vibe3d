@@ -1341,7 +1341,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 // policy would be if a gesture landed here".
                 immutable svTerms = vpm.visibilityFor(k);
                 buf.put(format(
-                    `{"id":%d,"renders":%s,"overlayMode":"%s",` ~
+                    `{"id":%d,"renders":%s,"overlayMode":"%s","selEpoch":%d,` ~
                     `"ortho":%s,"userSet":%s,` ~
                     `"selectVisibility":{"policy":"%s","facing":%s,"occlusion":%s},` ~
                     `"state":{"active":%s,"backdrop":%s,"backdropStyle":"%s"},` ~
@@ -1349,6 +1349,11 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     k,
                     renders ? "true" : "false",
                     (cast(OverlayMode)cv.lastOverlayMode).to!string,
+                    // Task 1931 — Viewport3D.lastSelEpoch, the per-cell copy
+                    // of the change bus's selection-channel epoch. Same
+                    // reasoning as `overlayMode` just above: a suite test has
+                    // no other way to see `fboSelEpoch` move.
+                    cv.lastSelEpoch,
                     // Task 0594. `ortho` is what the shipped display default
                     // is a function of, and `userSet` is what outranks it —
                     // reporting both is what lets a test assert the DEFAULT

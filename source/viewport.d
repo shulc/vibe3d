@@ -424,6 +424,16 @@ final class Viewport3D {
     /// the decision is made whether or not the cell then renders.
     int lastOverlayMode = 0;   // == OverlayMode.None
 
+    /// Task 1931 — a per-cell COPY of `app.d`'s `fboSelEpoch` (the change
+    /// bus's one surviving selection-channel consumer), stamped the same way
+    /// and for the same reason as `lastOverlayMode` just above: `fboSelEpoch`
+    /// itself feeds a `DirtyKey` compare that is SKIPPED OUTRIGHT under
+    /// `testMode` (`source/app.d`'s `if (testMode) { … } else { … }`), so a
+    /// suite test has no way to observe it moving. Written for every cell the
+    /// loop CONSIDERS, before the dirty-key skip, so `--test` sees it too, and
+    /// reported by `/api/viewport/display` beside `overlayMode`.
+    ulong lastSelEpoch = 0;
+
     // Task 0559 — this cell's display state (surface style, wireframe
     // overlay, backdrop representation), for BOTH activity states.
     //
