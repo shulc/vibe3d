@@ -265,7 +265,8 @@ unittest // a recording reduce declares kReduceEditScope and records the SetPos
     //     the VERTEX side and not the FACE side: the dropped faces leave
     //     through weldVerticesByMask → Mesh.applyVertexRemapAndRebuild →
     //     mesh_planes.rewriteFaces, whose op-log publisher is gated on
-    //     `MeshEditTracker.wantsFaceReindex` (source/mesh_planes.d:450) —
+    //     `MeshEditTracker.wantsFaceReindex` (`rewriteFaces`'s own
+    //     `m.wantsFaceReindexRecording()` gate) —
     //     default false and armed by no production code. So `revert()` answers
     //     TRUE over a mesh that has lost half its faces, which is exactly the
     //     shape Stage B named as the precondition for the `&rw` site: a kernel

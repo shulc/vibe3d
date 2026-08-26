@@ -10058,8 +10058,24 @@ struct Mesh {
     // FORWARD op destroyed takes its corner values with it: on the way back,
     // `RemoveFaces⁻¹` re-inserts the face and there is nothing left in the mesh
     // to read its UV from. The only place that still holds those values is the
-    // moment just before the kernel drops them — here. This is the whole
-    // O(Δ) map channel: `Δ` corners, not the mesh's.
+    // moment just before the kernel drops them — here.
+    //
+    // COST, and it is NOT uniform across the callers (review round 1, MINOR-6
+    // — this paragraph used to read "the whole O(Δ) map channel: `Δ` corners,
+    // not the mesh's", which is true of three callers and false of the
+    // fourth). The size is O(corners of `oldFaceIdx`), so:
+    //   * `deleteFacesByMask` / `dissolveVerticesByMask` / `removeEdgesByMask`
+    //     pass the DESTROYED subset ⇒ `Δ` corners, as advertised;
+    //   * `mesh_planes.rewriteFaces` (task 1903 Stage J) passes EVERY old face
+    //     ⇒ the WHOLE pre-op map. Measured: a one-face extrude on a 9-quad
+    //     grid records all 36 corners (72 floats), of which the forward
+    //     correspondence could not have inverted only 4.
+    // It does not change the entry's ORDER of cost — `newFaceLists` (Stage H)
+    // is already O(mesh) at that same site — but it does change the delta /
+    // snapshot ratio `doc/mesh_edit_seam_plan.md` §8 reasons about, on meshes
+    // that carry a per-corner map. The narrowing that would restore `Δ` there
+    // is named in that section: record only the old faces the correspondence
+    // cannot invert (dropped + winding-changed + blend/gen targets).
     //
     // PAIRING is by ADJACENCY: the caller records this IMMEDIATELY BEFORE the
     // face entry the values belong to (`recordRemoveFaces` / `recordReshapeFaces`),
@@ -10077,8 +10093,9 @@ struct Mesh {
     // corners) when there is no PolyVertex map, when the maps are not in step
     // with `faces` — see `polyVertexMapsInStepWithFaces` — or when `oldFaceIdx`
     // is not ascending (the corner-base walk below is a single ordered sweep;
-    // all three callers filter `faces` front-to-back, so ascending is what they
-    // produce).
+    // all four callers filter `faces` front-to-back, so ascending is what they
+    // produce — the fourth being `mesh_planes.rewriteFaces` (task 1903 Stage J),
+    // which passes EVERY old face rather than a destroyed subset).
     /// Task 0831: `in FaceIdx[]`, matching the entry it is paired with — the
     /// pairing is BY ADJACENCY and the two lists must be the same indices in
     /// the same space, so they must be the same type.

@@ -207,7 +207,12 @@ struct MeshOpEntry {
                         //   indices are in the space that finalize restores, so
                         //   forward uses `edgeEndsAfter`, reverse `edgeEndsBefore`.
         MeshMapDelta,   // per-corner (PolyVertex) map values of the faces the
-                        //   NEXT entry in forward order destroys — mapDims /
+                        //   NEXT entry in forward order destroys — or, for a
+                        //   `FaceReindex`, of EVERY old face it renumbers
+                        //   (task 1903 Stage J: a face rewrite re-lays the
+                        //   whole corner space, and the reverse restores each
+                        //   old face from here rather than inverting a carry
+                        //   that blends and generates) — mapDims /
                         //   mapArity / mapVals below. Applies nothing itself
                         //   (see applyForward/applyReverse): the corner plane
                         //   cannot be written mid-replay, because `loops` is
@@ -286,8 +291,10 @@ struct MeshOpEntry {
 
     // --- MeshMapDelta payload (task 0689) ---------------------------------
     // The per-corner (PolyVertex) map values of the faces the IMMEDIATELY
-    // FOLLOWING entry destroys, captured by `Mesh.recordPolyVertexPayload` at
-    // the last moment they are still readable.
+    // FOLLOWING entry destroys (for a `FaceReindex`: of every old face it
+    // renumbers — see that Kind's doc above), captured by
+    // `Mesh.recordPolyVertexPayload` at the last moment they are still
+    // readable.
     //
     //   mapDims  — `dim` of each PolyVertex map, in registration order. The
     //              replay refuses the payload unless the mesh still presents
@@ -295,8 +302,12 @@ struct MeshOpEntry {
     //              between record and replay degrades to a zero-fill rather
     //              than shuffling one map's floats into another.
     //   mapArity — corner count of each face, POSITIONALLY parallel to the
-    //              following entry's `fIdx` (a payload carries no face indices
-    //              of its own — see recordPolyVertexPayload for why).
+    //              following entry's `fIdx` — or, for a `FaceReindex`, to
+    //              `[0, oldFaceCount)` in order (a payload carries no face
+    //              indices of its own — see recordPolyVertexPayload for why).
+    //              `CornerCarry.payloadForCount` is what checks the count each
+    //              kind expects, so the two conventions cannot be confused for
+    //              one another.
     //   mapVals  — face-major, then corner, then map: `Σ mapDims` floats per
     //              corner, `Σ mapArity` corners in total.
     ubyte[]   mapDims;
@@ -397,8 +408,13 @@ struct MeshEditDelta {
                 && i + 1 < log.length
                 && log[i + 1].kind == MeshOpEntry.Kind.Reindex)
                 continue;
-            carry.step(i, e, /*forward=*/true);
-            applyForward(m, e);
+            carry.step(m, i, e, /*forward=*/true);
+            // The stated drop inside `applyFaceReindexForward` is now the
+            // FALLBACK, not the policy: `CornerCarry` has a `Kind.FaceReindex`
+            // case as of task 1903 Stage J, and `carry.active` — read AFTER the
+            // step, which is where the case declines if it cannot vouch for
+            // itself — is what says which of the two is in charge.
+            applyForward(m, e, carry.active);
         }
         // Edge selection is endpoint-keyed and must be re-applied AFTER finalize
         // rebuilds the edge array + edgeIndexMap (edge indices are unstable
@@ -421,8 +437,8 @@ struct MeshEditDelta {
         CornerCarry carry;
         carry.begin(m, log);
         foreach_reverse (i, ref e; log) {
-            carry.step(i, e, /*forward=*/false);
-            applyReverse(m, e);
+            carry.step(m, i, e, /*forward=*/false);
+            applyReverse(m, e, carry.active);
         }
         // On revert we want the pre-op (before) edge selection, re-applied after
         // finalize rebuilds edges (doc §1.3 / §2.3 step 1's endpoint-keyed part).
@@ -530,10 +546,19 @@ private struct CornerCarry {
     // entry — adjacency alone would silently mis-pair if a recorder ever
     // interleaved something between the two.
     private int payloadFor(size_t i, in FaceIdx[] fIdx) const {
+        return payloadForCount(i, fIdx.length);
+    }
+
+    // The same pairing, keyed by the number of faces the payload must cover
+    // rather than by a `fIdx` list. `Kind.FaceReindex` has no per-face index
+    // list for its payload to be parallel to — the payload covers EVERY old
+    // face, `[0, oldFaceCount)` in order — so the count is what the adjacency
+    // check has to compare against (task 1903 Stage J).
+    private int payloadForCount(size_t i, size_t nFaces) const {
         if (i == 0) return -1;
         const p = &log[i - 1];
         if (p.kind != MeshOpEntry.Kind.MeshMapDelta) return -1;
-        if (p.mapArity.length != fIdx.length) return -1;
+        if (p.mapArity.length != nFaces) return -1;
         return cast(int)(i - 1);
     }
 
@@ -589,13 +614,152 @@ private struct CornerCarry {
         src = ns;
     }
 
+    // Resolve ONE new face's provenance from the provenance of the OLD face it
+    // came from, given the two windings.
+    //
+    // Equal windings keep the slot-for-slot run — the documented convention
+    // that per-corner values are addressed by (face, corner). Anything else
+    // matches each new corner to the old corner standing on the SAME VERTEX,
+    // which is exactly what `reshapeSrc` does for an arity change and what
+    // `Mesh.carryPolyVertexMapsByCorner` (the LIVE carry this replay has to
+    // reproduce) does for every corner; a new corner whose vertex the old face
+    // never had gets NO source ⇒ the honest zero.
+    //
+    // A source whose values live in a PAYLOAD rather than in the live map
+    // cannot be vertex-matched (`explicit` names LIVE corners, and there is no
+    // slot in `Src` for "payload corner k at slot j"), so a winding change on
+    // top of a payload declines to zero — the same answer `reshapeSrc` gives
+    // in the same situation. Unreachable in FORWARD replay, where no branch
+    // ever sets a payload; kept so the shape cannot be wrong later.
+    // `s0` by VALUE, not `in`: `Src` holds a slice (`explicit`), and D
+    // refuses a `const(Src)` -> `Src` copy for exactly that reason.
+    private static Src reslotFrom(Src s0, const(uint)[] from, const(uint)[] to) {
+        Src s = s0;
+        s.arity = cast(uint) to.length;
+        if (from == to) return s;                 // slot-for-slot, payload intact
+        uint[] ex;
+        ex.length = to.length;
+        ex[] = ~0u;
+        if (s0.payload < 0) {
+            foreach (j, v; to) {
+                foreach (k, u; from)
+                    if (u == v) { ex[j] = liveCornerOf(s0, k); break; }
+            }
+        }
+        s.explicit = ex;
+        s.liveBase = ~0u;
+        s.payload  = -1;
+        s.recBase  = 0;
+        return s;
+    }
+
+    // FaceReindex, forward (redo). The entry's `faceOldOfNew` is TOTAL over the
+    // NEW face array, so the provenance array is rebuilt new-face by new-face
+    // out of the old one — the same shape `mesh_planes.rewriteFaces` carries
+    // its five per-face planes with, applied to corner provenance.
+    private void faceReindexForward(ref Mesh m, ref const MeshOpEntry e) {
+        // `src` and the live mesh must both describe the PRE-rewrite face
+        // array this entry names, or `faceOldOfNew` would be resolved against
+        // a foreign index space. Decline rather than guess (this struct's own
+        // safety rule): the caller's stated drop then takes over.
+        if (src.length != e.oldFaceCount || m.faces.length != e.oldFaceCount) {
+            active = false;
+            return;
+        }
+        Src[] ns;
+        ns.length = e.faceOldOfNew.length;
+        foreach (nf, of; e.faceOldOfNew) {
+            const(uint)[] to = (nf < e.newFaceLists.length) ? e.newFaceLists[nf] : null;
+            // CREATE (`kNoSource`): a new face with no ancestor, so there is no
+            // corner anywhere to COPY from. ZERO — and that is MEASURED, not
+            // chosen: the live forward op resolves such a face through
+            // `Mesh.CornerRewrite.carriedPerFace`, whose `srcFaceOfNewFace`
+            // entry is `~0u`, so `carryPolyVertexMapsByCorner` finds no source
+            // face, writes `~0u` into `oldLoopOfNewLoop`, and
+            // `remapPolyVertexMaps` zeroes the corner. Replaying anything else
+            // here would make a redo disagree with the edit it redoes.
+            //
+            // SCOPE, exact (review round 1, MINOR-3): zero is the live answer
+            // ABSENT A `PolyVertexGen` ON THAT CORNER. The gen pass inside
+            // `carryPolyVertexMapsByCorner` runs AFTER the copy and is
+            // addressed by LOOP, not by face, so a gen CAN write a
+            // `kNoSource` face's corners — and then the live op's answer is
+            // the generated value, not zero. No site does that today
+            // (a face extrude's gens sit on the walls, which have a source
+            // face), and the entry records no gen list, so this branch cannot
+            // reproduce one. The day a site does, this is where the redo
+            // diverges, and it is the same recorded remainder as the blend
+            // corners named in `faceReindexReverse`'s comment below.
+            if (of == kNoSource || of >= src.length) {
+                ns[nf] = Src(~0u, cast(uint) to.length, null, -1, 0);
+                continue;
+            }
+            // DUPLICATE: several new faces may name ONE old face. `src[of]` is
+            // READ here, never consumed — a copy, not a move — so the second
+            // and tenth namer inherit the same corner values as the first.
+            // (Moving instead is the failure mode M-J mutates in: the first
+            // duplicate keeps the UV and every later one comes back zeroed.)
+            ns[nf] = reslotFrom(src[of], m.faces[of], to);
+        }
+        src = ns;
+    }
+
+    // FaceReindex, reverse (undo) — the half undo actually runs.
+    //
+    // The forward carry is MANY-TO-ONE and lossy: a corner standing on an
+    // inserted vertex was a weighted BLEND of old corners and a wall corner was
+    // GENERATED (`PolyVertexGen`), and neither the blend table nor the gen list
+    // is recorded in the entry. So the pre-op corner values cannot be recovered
+    // by inverting the correspondence, and this reverse does not try: it reads
+    // them from the payload `mesh_planes.rewriteFaces` captured immediately
+    // before the rewrite — one arity + one value block per OLD face, the same
+    // `Kind.MeshMapDelta` channel `RemoveFaces`'s reverse already uses (task
+    // 0689), paired by adjacency + count.
+    //
+    // With the payload every shape is exact: a survivor, a duplicate's source,
+    // and a DROPPED old face (which has no live representative at all and is
+    // the one shape a correspondence could never restore) all come back byte
+    // for byte, and a CREATED face simply has no old slot to occupy.
+    // Without it the carry declines, and the stated drop in
+    // `applyFaceReindexReverse` is what runs — today's behaviour, unchanged.
+    private void faceReindexReverse(ref Mesh m, size_t i, ref const MeshOpEntry e) {
+        if (src.length != e.faceOldOfNew.length
+            || m.faces.length != e.faceOldOfNew.length) {
+            active = false;
+            return;
+        }
+        const int p = payloadForCount(i, e.oldFaceCount);
+        if (p < 0) { active = false; return; }
+        Src[] ns;
+        ns.length = e.oldFaceCount;
+        // Running corner base rather than `recBaseOf` per face: that helper
+        // prefix-sums from 0 on every call, which is O(faces²) over a whole-
+        // mesh rewrite (memory `on2_traps_in_mesh`).
+        uint base = 0;
+        foreach (of; 0 .. e.oldFaceCount) {
+            const uint a = log[p].mapArity[of];
+            ns[of] = Src(~0u, a, null, p, base);
+            base += a;
+        }
+        src = ns;
+    }
+
     // Track ONE entry's effect on the face array, in the direction it is being
     // replayed. Every branch mirrors the corresponding branch of
     // applyForward / applyReverse EXACTLY — that correspondence is the whole
     // correctness argument, and `commit`'s length check is its backstop.
-    void step(size_t i, ref const MeshOpEntry e, bool forward) {
+    //
+    // `m` is the mesh as it stands BEFORE this entry is applied (both
+    // directions — `apply`/`revert` call this immediately before
+    // `applyForward`/`applyReverse`), which is what lets the FaceReindex case
+    // read the windings it is about to leave behind.
+    void step(ref Mesh m, size_t i, ref const MeshOpEntry e, bool forward) {
         if (!active) return;
         switch (e.kind) {
+            case MeshOpEntry.Kind.FaceReindex:
+                if (forward) faceReindexForward(m, e);
+                else         faceReindexReverse(m, i, e);
+                break;
             case MeshOpEntry.Kind.AddFaces:
                 if (forward) {
                     foreach (l; e.faceLists)
@@ -658,7 +822,32 @@ private struct CornerCarry {
     // charge) if the provenance array stopped matching `faces`.
     void commit(ref Mesh m) {
         if (!active) return;
-        if (src.length != m.faces.length) { active = false; return; }
+        // The backstop — and it must DECLARE the loss, not merely stop.
+        //
+        // Every OTHER decline in this struct is set inside `step`, which runs
+        // immediately BEFORE its entry's apply, so `applyFaceReindexForward` /
+        // `applyFaceReindexReverse` read `cornerCarryActive == false` and state
+        // `CornerDrop.DeltaReplayDeclined` themselves. This one cannot borrow
+        // that: `commit` is called from `finalize`, AFTER every apply has run
+        // and read `active` as `true`. Nothing downstream covers it —
+        // `finalize`'s own `if (!carried && cornersRenumbered)
+        // m.dropPolyVertexMaps();` sits AFTER `buildLoops()`, and
+        // `resizePolyVertexMaps` (inside `buildLoops`) therefore arrives with
+        // no declaration and no armed rewrite, falls through to its
+        // length-insurance tail, and hits the `debug assert(false, …)` task
+        // 0901 put there for "a kernel outside the census". That is an ABORT,
+        // not the graceful degrade this self-check is for (and under `-release`
+        // it is a silent zero-fill of a plane nobody said was lost).
+        //
+        // So declare here, which is the last moment still ahead of the rebuild:
+        // `resizePolyVertexMaps` then returns from its `Dropped` branch with a
+        // length-correct, honestly-blank map, exactly as the two `applyFaceRe-
+        // index*` fallbacks produce.
+        if (src.length != m.faces.length) {
+            active = false;
+            m.dropCornerProvenance(CornerDrop.DeltaReplayDeclined);
+            return;
+        }
 
         // One resolved restore: which new corner run, from which payload.
         static struct Restore { size_t newLoop; int payload; uint recBase; uint n; }
@@ -715,6 +904,158 @@ private struct CornerCarry {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// `CornerCarry.commit`'s self-check must DECLARE — review round 1, MAJOR-2.
+//
+// The two cells below are the only ones in the tree that reach
+// `commit`'s `src.length != m.faces.length` arm, and they live HERE rather
+// than in `tests/unit/` because both `CornerCarry` and `finalize` are
+// module-private. They also cannot be driven through a recorded log: every
+// `step` branch mirrors its `applyForward`/`applyReverse` twin exactly, and
+// `mesh_planes.rewriteFaces` asserts `oldOfNew.length == newFaces.length`
+// before a hand-edited `Kind.FaceReindex` entry could desynchronise the two.
+// The arm is a backstop against a log shape the recorder does not produce
+// today — so it is forced here, at the struct, the same way this module's two
+// `version (UndoNegControl…)` stubs force their inverses.
+//
+// `cornersRenumbered` is passed FALSE on purpose in both. It is the second,
+// unnamed guard that would otherwise refuse first: `finalize`'s own
+// `if (!carried && cornersRenumbered) m.dropPolyVertexMaps();` would blank the
+// plane after the fact and the cells would go green over a `commit` that
+// declared nothing. With it false, the ONLY thing standing between the
+// decline and the rebuild is the declaration inside `commit`.
+//
+// Two cells because the failure has two different shapes, and only one of them
+// is loud:
+//   * corner total CHANGED — `resizePolyVertexMaps` falls through to its
+//     length-insurance tail with nothing declared and nothing armed, which is
+//     the state task 0901 declared unreachable: a `debug assert(false, …)`
+//     ABORT in the unit lane (which builds `-debug`), a silent zero-fill under
+//     `-release`;
+//   * corner total UNCHANGED — the insurance tail `continue`s, so there is no
+//     abort in EITHER build type and every stale value stays put, now sitting
+//     on another face's corners. Nothing in the tree would have reddened.
+// ---------------------------------------------------------------------------
+
+unittest // commit declines with the corner TOTAL changed: a stated drop, not an abort
+{
+    import std.format : format;
+    import std.conv : to;
+
+    // Two disconnected quads; a live UV map with every corner distinct and
+    // non-zero, so "blank" is a real observation rather than the stand's own
+    // resting state.
+    Mesh m;
+    m.vertices = [Vec3(0, 0, 0),  Vec3(1, 0, 0),  Vec3(1, 1, 0),  Vec3(0, 1, 0),
+                  Vec3(10, 0, 0), Vec3(11, 0, 0), Vec3(11, 1, 0), Vec3(10, 1, 0)];
+    m.addFace([0, 1, 2, 3]);
+    m.addFace([4, 5, 6, 7]);
+    m.buildLoops();
+    m.syncSelection();
+
+    auto uv0 = m.addMeshMap(kUvMapName, 2, MapDomain.PolyVertex);
+    assert(uv0 !is null, "stand: UV map registration must succeed");
+    assert(uv0.data.length == 16,
+           "stand: 8 corners x dim 2 — if this is not 16 the cell is measuring "
+         ~ "a map that never described these faces");
+    foreach (i; 0 .. uv0.data.length) uv0.data[i] = cast(float)(i + 1);
+
+    CornerCarry carry;
+    carry.begin(m, null);
+    assert(carry.active,
+           "stand: the carry must ACTIVATE, or the decline below would be the "
+         ~ "entry decline (`begin`) rather than the self-check in `commit`");
+    assert(carry.src.length == 2, "stand: one provenance entry per face");
+
+    // The mesh moves on; the provenance array does not. Exactly the state the
+    // self-check exists to catch, and exactly what review mutation R-3
+    // produced from the other side (`ns ~= Src.init;` inside the forward case).
+    m.faces.length = 1;
+
+    finalize(m, MeshEditScope.Polygons, null, false, /*cornersRenumbered=*/false,
+             &carry);
+
+    assert(!carry.active,
+           "the self-check must deactivate the carry when the provenance array "
+         ~ "and `faces` disagree");
+    auto uv = m.meshMap(kUvMapName);
+    assert(uv !is null, "the map must still be REGISTERED — a decline is a "
+                      ~ "stated loss of VALUES, not of the channel");
+    assert(uv.data.length == 4 * uv.dim,
+           format("a declined carry must leave the map length-correct for the "
+                ~ "surviving faces (4 corners x dim %d), got %d floats",
+                  uv.dim, uv.data.length));
+    foreach (i, v; uv.data)
+        assert(v == 0.0f,
+               format("commit's decline must DECLARE the drop: float %d came "
+                    ~ "back %s. Reaching this line at all means `buildLoops` "
+                    ~ "did not abort on task 0901's census assert, which is "
+                    ~ "the point of the fix; a NON-zero value here means the "
+                    ~ "declaration was consumed by something other than "
+                    ~ "`resizePolyVertexMaps`'s Dropped branch",
+                      i, v.to!string));
+}
+
+unittest // commit declines with the corner total UNCHANGED: the arm nothing else catches
+{
+    import std.format : format;
+    import std.conv : to;
+
+    // Four disconnected triangles — 12 corners. The rewrite below turns them
+    // into THREE quads over the same 12 vertices: the face count changes, the
+    // corner total does not. So every map stays length-correct and
+    // `resizePolyVertexMaps`'s insurance tail has no reason to fire.
+    Mesh m;
+    foreach (i; 0 .. 4) {
+        const float x = i * 10.0f;
+        m.vertices ~= Vec3(x, 0, 0);
+        m.vertices ~= Vec3(x + 1, 0, 0);
+        m.vertices ~= Vec3(x, 1, 0);
+    }
+    foreach (i; 0 .. 4)
+        m.addFace([cast(uint)(i * 3), cast(uint)(i * 3 + 1), cast(uint)(i * 3 + 2)]);
+    m.buildLoops();
+    m.syncSelection();
+
+    auto uv0 = m.addMeshMap(kUvMapName, 2, MapDomain.PolyVertex);
+    assert(uv0 !is null && uv0.data.length == 24,
+           "stand: 12 corners x dim 2");
+    foreach (i; 0 .. uv0.data.length) uv0.data[i] = cast(float)(i + 1);
+
+    CornerCarry carry;
+    carry.begin(m, null);
+    assert(carry.active && carry.src.length == 4, "stand: four faces carried");
+
+    m.faces.length = 3;
+    m.faces[0] = [0u, 1u, 2u, 3u];
+    m.faces[1] = [4u, 5u, 6u, 7u];
+    m.faces[2] = [8u, 9u, 10u, 11u];
+    size_t corners = 0;
+    foreach (fi; 0 .. m.faces.length) corners += m.faces[fi].length;
+    assert(corners == 12,
+           "stand: the corner TOTAL must be unchanged, or this cell degenerates "
+         ~ "into the previous one and stops testing the silent arm");
+
+    finalize(m, MeshEditScope.Polygons, null, false, /*cornersRenumbered=*/false,
+             &carry);
+
+    assert(!carry.active, "the self-check must deactivate the carry");
+    auto uv = m.meshMap(kUvMapName);
+    assert(uv !is null, "the map must still be registered");
+    assert(uv.data.length == 12 * uv.dim,
+           format("length-correct for 12 corners, got %d floats", uv.data.length));
+    foreach (i, v; uv.data)
+        assert(v == 0.0f,
+               format("commit's decline must DECLARE the drop even when the "
+                    ~ "corner total is unchanged: float %d is still %s, a "
+                    ~ "pre-decline value now standing on another face's "
+                    ~ "corner. This is the arm no length test can see — "
+                    ~ "`resizePolyVertexMaps` keeps a length-correct map "
+                    ~ "whatever is in it, so without the declaration the "
+                    ~ "plane survives SCRAMBLED and nothing reddens",
+                      i, v.to!string));
 }
 
 // ---------------------------------------------------------------------------
@@ -800,6 +1141,31 @@ private bool renumbersCorners(in MeshOpEntry[] log) {
                 // `case` for removing the protection: the two
                 // `dropCornerProvenance` calls are the mechanism, this
                 // `return true;` is not.
+                //
+                // STILL TRUE after task 1903 Stage J, and worth saying because
+                // the opposite is the tempting reading. Stage J made both
+                // declarations CONDITIONAL on `CornerCarry` still being active,
+                // which looks like it promotes this line to load-bearing. It
+                // does not: every path on which the carry declines states
+                // `CornerDrop.DeltaReplayDeclined` at the point it declines, so
+                // `resizePolyVertexMaps` returns from its `Dropped` branch and
+                // `finalize`'s own `if (!carried && cornersRenumbered)` line is
+                // still never what saves the plane. Deleting this `case` is
+                // still inert — measured again at Stage J, not carried over on
+                // trust.
+                //
+                // CORRECTED at review round 1 (MAJOR-2): the sentence above
+                // used to read "…runs through one of those two
+                // `dropCornerProvenance` calls anyway (the decline is set
+                // inside `step`, which runs immediately BEFORE the apply)".
+                // That is true of every decline in `step`, and FALSE of the one
+                // in `CornerCarry.commit`, which fires from `finalize` after
+                // every apply has already read `active` as `true` — so no
+                // `applyFaceReindex*` fallback could have covered it, and the
+                // review measured the result as a `-debug` abort inside
+                // `buildLoops`, not a degrade. `commit` now declares the drop
+                // itself; the conclusion above survives because of that fix,
+                // not in spite of it.
                 return true;
             case MeshOpEntry.Kind.ReshapeFaces:
                 foreach (i, ref before; e.faceListsBefore) {
@@ -1103,7 +1469,12 @@ struct MeshEditTracker {
 // stubbed by the unit test's negative control.
 // ===========================================================================
 
-private void applyForward(ref Mesh m, ref const MeshOpEntry e) {
+// `cornerCarryActive` — whether `CornerCarry` is still vouching for the
+// per-corner plane at this entry. Only `Kind.FaceReindex` reads it (task 1903
+// Stage J); every other kind leaves the corner plane to the carry
+// unconditionally, exactly as before.
+private void applyForward(ref Mesh m, ref const MeshOpEntry e,
+                          bool cornerCarryActive) {
     final switch (e.kind) {
         case MeshOpEntry.Kind.AddVerts:
             foreach (p; e.pos) m.vertices ~= p;
@@ -1130,7 +1501,7 @@ private void applyForward(ref Mesh m, ref const MeshOpEntry e) {
             applyReindexForward(m, e.perm);
             break;
         case MeshOpEntry.Kind.FaceReindex:
-            applyFaceReindexForward(m, e);
+            applyFaceReindexForward(m, e, cornerCarryActive);
             break;
         case MeshOpEntry.Kind.SelectionDelta:
             patchSelection(m, e.selDomain, e.markIdx, e.markAfter);
@@ -1151,7 +1522,8 @@ private void applyForward(ref Mesh m, ref const MeshOpEntry e) {
     }
 }
 
-private void applyReverse(ref Mesh m, ref const MeshOpEntry e) {
+private void applyReverse(ref Mesh m, ref const MeshOpEntry e,
+                          bool cornerCarryActive) {
     final switch (e.kind) {
         case MeshOpEntry.Kind.AddVerts:
             // Inverse of append = truncate the tail [V0..V0+N).
@@ -1190,7 +1562,7 @@ private void applyReverse(ref Mesh m, ref const MeshOpEntry e) {
             applyReindexReverse(m, e.perm);
             break;
         case MeshOpEntry.Kind.FaceReindex:
-            applyFaceReindexReverse(m, e);
+            applyFaceReindexReverse(m, e, cornerCarryActive);
             break;
         case MeshOpEntry.Kind.SelectionDelta:
             patchSelection(m, e.selDomain, e.markIdx, e.markBefore);
@@ -1409,7 +1781,8 @@ private void applyReindexReverse(ref Mesh m, in uint[] perm) {
 // entry's own log has already been finished by then), so `rewriteFaces`'s own
 // internal `wantsFaceReindexRecording()` check reads `editRecorder_ is null`
 // and records nothing — no double-append.
-private void applyFaceReindexForward(ref Mesh m, ref const MeshOpEntry e) {
+private void applyFaceReindexForward(ref Mesh m, ref const MeshOpEntry e,
+                                    bool cornerCarryActive) {
     // Review finding B3: `e.faceOldOfNew.length == 0` used to read as
     // "nothing to redo" and return early — but it is ALSO the shape of a
     // redo whose rewrite drops every face (`newFaces.length == 0`, e.g.
@@ -1431,13 +1804,19 @@ private void applyFaceReindexForward(ref Mesh m, ref const MeshOpEntry e) {
     // `CornerDrop.DeltaReplayDeclined` exists for exactly this ("the replay
     // normally carries the plane itself … and reaches this only when the
     // carry DECLINES" — mesh_corner_maps.d's own doc comment on that value).
-    // `CornerCarry` (above) has no `Kind.FaceReindex` case yet (1903 owns
-    // generalising it, plan §7.5), so the carry always declines for this
-    // kind — an EXPLICIT drop here is what keeps `buildLoops()` from either
-    // asserting (a length mismatch it cannot explain) or, worse, silently
-    // leaving a length-correct-by-COINCIDENCE map sitting on the wrong
-    // faces' corners.
-    m.dropCornerProvenance(CornerDrop.DeltaReplayDeclined);
+    // `CornerCarry` (above) HAS a `Kind.FaceReindex` case as of task 1903
+    // Stage J, so this drop is the FALLBACK rather than the policy: it runs
+    // only when the carry has declined (no PolyVertex map at all, maps out of
+    // step with `faces` at replay entry, or the case's own index-space check
+    // fired). An EXPLICIT drop in that case is what keeps `buildLoops()` from
+    // either asserting (a length mismatch it cannot explain) or, worse,
+    // silently leaving a length-correct-by-COINCIDENCE map sitting on the
+    // wrong faces' corners. When the carry IS active it will place the values
+    // itself in `finalize` — declaring a drop here would zero them, because
+    // `resizePolyVertexMaps` consumes the declaration and returns from its
+    // FIRST branch without ever looking at what the carry wrote.
+    if (!cornerCarryActive)
+        m.dropCornerProvenance(CornerDrop.DeltaReplayDeclined);
 }
 
 // Reverse: undo. Rebuilds the pre-reindex `faces` (and its five carried
@@ -1452,7 +1831,8 @@ private void applyFaceReindexForward(ref Mesh m, ref const MeshOpEntry e) {
 // A `kNoSource` new face names no old index at all, so it contributes to
 // neither bucket and simply vanishes — correct, per plan §7.2: "they had no
 // prior existence".
-private void applyFaceReindexReverse(ref Mesh m, ref const MeshOpEntry e) {
+private void applyFaceReindexReverse(ref Mesh m, ref const MeshOpEntry e,
+                                    bool cornerCarryActive) {
     // Review finding S4: this function used to open with
     // `if (e.oldFaceCount == 0) return;` — read as "nothing to undo", but it
     // is ALSO the shape of undoing a rewrite FROM an empty mesh (a
@@ -1564,9 +1944,13 @@ private void applyFaceReindexReverse(ref Mesh m, ref const MeshOpEntry e) {
     // no `rw` parameter to have passed null in the first place), but the
     // PolyVertex corner map is exactly as undeclared-for here, and
     // `buildLoops()` (later, in `finalize()`) enforces the same precondition
-    // regardless of which code path rewrote `faces`. Runs unconditionally,
-    // including when `oldFaceCount == 0` (S4 above).
-    m.dropCornerProvenance(CornerDrop.DeltaReplayDeclined);
+    // regardless of which code path rewrote `faces`. Same FALLBACK gate as
+    // the forward direction (task 1903 Stage J): declared only when
+    // `CornerCarry` has declined, including when `oldFaceCount == 0` (S4
+    // above), where the carry's own `payloadForCount` finds no payload for
+    // zero faces and declines on its own.
+    if (!cornerCarryActive)
+        m.dropCornerProvenance(CornerDrop.DeltaReplayDeclined);
 }
 
 // ---------------------------------------------------------------------------

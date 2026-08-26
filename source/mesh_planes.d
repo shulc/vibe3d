@@ -469,6 +469,37 @@ void rewriteFaces(ref Mesh m, uint[][] newFaces, in FaceSource src,
     uint      recOldFaceCount;
     if (wantFaceReindexRecord) {
         recOldFaceCount = cast(uint) m.faces.length;
+        // Task 1903 Stage J — the per-CORNER half of the entry. The forward
+        // carry below is many-to-one and lossy (a corner on an inserted vertex
+        // is a weighted BLEND, a swept wall corner is GENERATED — neither the
+        // blend table nor the gen list is in the op-log), so the pre-rewrite
+        // corner values cannot be recovered by inverting the correspondence.
+        // They are captured instead, HERE, at the last moment they are still
+        // readable: before the `static foreach` carry below re-lays the corner
+        // space and before `m.faces` moves. One arity + one value block per OLD
+        // face, in index order — the same `Kind.MeshMapDelta` channel
+        // `recordRemoveFaces` already pairs with (task 0689), read back by
+        // `mesh_edit_delta.CornerCarry`'s FaceReindex case on REVERSE.
+        //
+        // Cheap where it does not apply and honest where it does. The whole
+        // block is already behind `wantsFaceReindexRecording()`, which no
+        // production site sets today; and the `hasPolyVertexMap()` gate below
+        // is the one that makes the no-map case (the overwhelming majority of
+        // meshes) cost NOTHING rather than merely cost little.
+        //
+        // The gate is on the OUTSIDE, not left to the callee (review round 1,
+        // MINOR-5): `recordPolyVertexPayload` does return immediately without
+        // a PolyVertex map, but the `allOld` list is built BEFORE it can — an
+        // O(faces) reserve + append that no map-less mesh should ever pay.
+        // When the map IS there the cost is O(corners) floats; see that
+        // function's own COST paragraph for why that is the whole pre-op map
+        // at this caller and only `Δ` at the other three.
+        if (m.hasPolyVertexMap()) {
+            FaceIdx[] allOld;
+            allOld.reserve(recOldFaceCount);
+            foreach (fi; m.faceIndices) allOld ~= fi;
+            m.recordPolyVertexPayload(allOld);
+        }
         // Which old index is named by at least one new face — the complement
         // is the drop set, same "named by no new face" test §7.2 describes —
         // and, for a survivor, the FIRST new index naming it: the same
