@@ -4774,8 +4774,9 @@ public:
         rotDragAxisIdx      = -1;
         scaleDragFastPath   = false;
         scaleDragActive     = false;
-        // Caches (ViewCache vertex/edge/face) re-validate next frame: while a
-        // tool is active app.d invalidates them every frame (app.d :4574).
+        // (Until task 1930 this also noted that app.d re-invalidated the
+        // screen-space pick caches every frame while a tool was active.
+        // Those caches are gone; nothing here needs re-validating.)
     }
 
     // resyncSession() re-baselines the still-live tool after a committed history

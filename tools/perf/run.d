@@ -1720,7 +1720,8 @@ struct FrameScenarioResult {
     long       subpatchPendingFrames    = -1;  // frames drawn while it ran
     // ---- Task 1540: what the `cache` PHASE is actually made of ----------
     // The phase timer (`stats.worst.cacheNs`) spans two unrelated jobs: the
-    // viewcache block (`Cat.cacheInvalidate`) and the per-frame hover pick
+    // per-frame cache-invalidate block (`Cat.cacheInvalidate` — since task
+    // 1930 it only re-syncs selection) and the per-frame hover pick
     // (`Cat.hoverPick`), the latter of which pays a full BVH construction
     // (`Cat.bvhRebuild`) on the frame after the source mesh changed. 1500
     // reported the phase at 87-94 % of the first Tab's worst frame and named
@@ -1731,7 +1732,6 @@ struct FrameScenarioResult {
     // worst frame alone. `framesReset()` and `perfReset()` are called back to
     // back in runTabCold, so both windows open at the same point.
     long       cacheInvalidateNs = -1;
-    long       viewcacheRebuildNs = -1;
     long       hoverPickNs       = -1;
     long       bvhRebuildNs      = -1;
     long       bvhRebuildCount   = -1;
@@ -2077,7 +2077,6 @@ FrameScenarioResult runTabOrbit(int n, string meshType) {
 
     auto perf = perfRead();
     res.cacheInvalidateNs  = perfTimerSumNs (perf, "cacheInvalidate");
-    res.viewcacheRebuildNs = perfTimerSumNs (perf, "viewcacheRebuild");
     res.hoverPickNs        = perfTimerSumNs (perf, "hoverPick");
     res.hoverPickCount     = perfCounterCount(perf, "hoverPick");
     res.bvhRebuildNs       = perfTimerSumNs (perf, "bvhRebuild");
@@ -2543,7 +2542,6 @@ FrameScenarioResult runTabCold(int n, string meshType) {
     try res.cageFacesAtToggle = activeLayerInfo().faceCount;
     catch (Exception) { res.cageFacesAtToggle = -1; }
     res.worstCacheNs      = res.stats.worst.cacheNs;
-    res.viewcacheRebuildNs = perfTimerSumNs(perf, "viewcacheRebuild");
     res.cacheNsWindowSum  = res.stats.sumCacheNs;
 
     immutable auto asyncAfter = fetchSubpatchAsync();
@@ -2804,12 +2802,18 @@ void printFramesTable(FrameScenarioResult[] results) {
         if (r.bvhRebuildNs >= 0) {
             immutable long other = r.cacheNsWindowSum
                                  - r.cacheInvalidateNs - r.hoverPickNs;
+            // Task 1930 fixed a REAL defect here as well as dropping the
+            // deleted `viewcacheRebuild` timer: the two labels used to be
+            // swapped against their arguments — "viewcache" was printed
+            // with `cacheInvalidateNs` (the OUTER per-frame block) and
+            // "(of which invalidate)" with the deleted timer (the INNER
+            // per-call bool clear). With the inner category gone the split
+            // is two terms and a residual, each named for what it holds.
             writefln("  %-16s CACHE PHASE SPLIT (window sums): phase=%.1fms"
-                     ~ " = viewcache %.3fms (of which invalidate %.3fms)"
+                     ~ " = cacheInvalidate %.3fms"
                      ~ " + hoverPick %.3fms + residual %.3fms",
                      r.name, msFromNs(r.cacheNsWindowSum),
-                     msFromNs(r.cacheInvalidateNs),
-                     msFromNs(r.viewcacheRebuildNs), msFromNs(r.hoverPickNs),
+                     msFromNs(r.cacheInvalidateNs), msFromNs(r.hoverPickNs),
                      msFromNs(other));
             writefln("  %-16s   hoverPick %.3fms (n=%d) = bvhRebuild %.3fms (n=%d,"
                      ~ " %d tris total) + raycast %.3fms",
@@ -3592,11 +3596,15 @@ Invariant[] checkFramesInvariants(FrameScenarioResult[] results, bool ciMode,
                                   bool atCalibrationPoint = true) {
     Invariant[] inv;
 
-    // F-I1 — GATING. orbit-dense must trigger ZERO mesh-cache rebuilds: the
-    // camera-reprojection branch (vertexCache.needsUpdate(vp)) is gated
-    // `!doingCameraDrag` and is SKIPPED ENTIRELY during an orbit, so only
-    // the two genuinely mesh-driven branches (Geometry/Position) would ever
-    // bump the counter — and neither fires on a pure camera drag.
+    // F-I1 — GATING. orbit-dense must trigger ZERO mesh-cache rebuilds.
+    // The invariant is unchanged since task 1930; its CAUSE is. There used
+    // to be a third, camera-reprojection branch (`vertexCache.needsUpdate`)
+    // which was zero here only because it was gated `!doingCameraDrag`.
+    // That branch and the caches it served are gone: the only branches left
+    // in app.d's per-frame block are the two genuinely mesh-driven ones
+    // (Geometry/Position), and a pure camera drag publishes neither. So the
+    // zero is now structural rather than gated — and a bump appearing here
+    // means an orbit started publishing a mesh change class.
     {
         auto r = findFrameScenario(results, "orbit-dense");
         if (r !is null && r.status == CaseStatus.OK) {

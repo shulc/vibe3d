@@ -40,7 +40,6 @@ import toolpipe.pipeline : g_pipeCtx;
 import gizmo;
 import view;
 import shader;
-import viewcache;
 import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot, g_fc;
 import io.assimp_runtime : initAssimp, shutdownAssimp;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
@@ -1858,9 +1857,6 @@ void main(string[] args) {
     import display_state : ViewportDisplay, DisplayState, DisplayStyle,
                            WireOverlay, BackdropStyle, DrawPlan, resolveDrawPlan;
     auto vpm = new ViewportManager(layout.vpX, layout.vpY, layout.vpW, layout.vpH);
-    vpm.views[0].vcache.resize(mesh.vertices.length);
-    vpm.views[0].fcache.resize(mesh.vertices.length, mesh.faces.length);
-    vpm.views[0].ecache.resize(mesh.edges.length);
 
     // Re-apply the persisted viewport-cell preset UNCONDITIONALLY (even when
     // it is the default Single) so per-cell state (cellCount, cameras, GPU
@@ -1933,17 +1929,14 @@ void main(string[] args) {
 
     // Nested accessors — ref-returning so member-mutation, ref-param, and
     // address-of (&x()) all bind against the ACTIVE viewport's live fields.
-    // `cameraView`/`vertexCache`/`faceCache`/`edgeCache` stay textually
-    // unchanged at call sites (D optional-parens, same pattern as `mesh`).
+    // `cameraView` stays textually unchanged at call sites (D
+    // optional-parens, same pattern as `mesh`).
     // `gpuSelect` returns the class handle (no ref needed for class types).
     // (V7: the `activeCamera`/`hoveredCamera`/`activeIsOrtho` wrappers that
     // used to live here were deleted — they duplicated `vpm.activeCamera()`/
     // `vpm.hoveredCamera()`/`vpm.originIsOrtho()` with no remaining callers
     // of their own; call the `ViewportManager` methods directly instead.)
     ref View cameraView() { return vpm.views[vpm.activeId].camera; }
-    ref VertexCache vertexCache() { return vpm.views[vpm.activeId].vcache; }
-    ref FaceBoundsCache faceCache() { return vpm.views[vpm.activeId].fcache; }
-    ref EdgeCache edgeCache() { return vpm.views[vpm.activeId].ecache; }
     // gpuSelect: class reference — callers use it as gpuSelect.pick(...) etc.
     // (optional-parens applies; 0 address-of sites so no &gpuSelect() edits needed).
     auto gpuSelect() { return vpm.views[vpm.activeId].gpuSel; }
@@ -1968,21 +1961,22 @@ void main(string[] args) {
     // `app.viewportInputAllowedDg` binding further down, which now takes
     // `&ifs.viewportInputAllowed` explicitly.
 
-    // Change-notification bus, Stage 2 — pick-cache subscriber state.
+    // Change-notification bus, Stage 2 — mesh-change subscriber state.
     //
     // `meshChangedFlags` accumulates the change classes the bus delivers
     // THIS frame. The subscriber below (registered once at startup) ORs the
-    // flushed flags into it; the per-frame pick-cache invalidation block (down
-    // in the render loop, immediately after `changeBus.flush`) reads it, acts
-    // on Position / Geometry, then zeroes it for the next frame. Because the
+    // flushed flags into it; the per-frame mesh-change block (down in the
+    // render loop, immediately after `changeBus.flush`) reads it, acts on
+    // Position / Geometry, then zeroes it for the next frame. Because the
     // flush runs in the same frame just before that block (Design rule 2), the
     // flag reflects exactly this frame's mesh mutations — replacing the old
     // "invalidate every frame a tool is active" blanket sweep with precision.
     //
     // The subscriber is invalidate-only by the bus contract: it sets a flag
-    // and touches NOTHING else (no mesh read/mutate, no cache call). All the
-    // resize / invalidate / syncSelection work happens later on the main
-    // thread in the flag-driven block, never inside delivery.
+    // and touches NOTHING else (no mesh read/mutate). The syncSelection the
+    // Geometry arm still owes happens later on the main thread in the
+    // flag-driven block, never inside delivery. (Its resize/invalidate half
+    // went with `viewcache.d` at task 1930.)
     uint meshChangedFlags = 0;
     // Change-notification bus — selection subscriber state.
     //
@@ -2119,8 +2113,8 @@ void main(string[] args) {
     // two MainThreadBridge-serviced HTTP providers — could read a VBO that
     // predates a mutation applied earlier in the SAME batch. Each such
     // reader calls this guard first: when the active mesh has un-flushed
-    // display-relevant changes, run the full display refresh (GPU upload +
-    // pick-cache resize/invalidate) NOW.
+    // display-relevant changes, run the full display refresh (the GPU
+    // upload; task 1930 removed the pick-cache half) NOW.
     //
     // TASK 1906 STAGE 2a — the dedup is now ONE (address, epoch) stamp, and
     // the two-word `displayEnsured_` / `displayEnsuredMesh_` shadow it
@@ -2155,7 +2149,7 @@ void main(string[] args) {
         Mesh* am = &mesh();
         const size_t a = cast(size_t)am;
         if (displayServiced_.matches(a, g_displayEpochs.epochFor(a))) return;
-        refreshDisplay(am, &gpu, &vertexCache(), &edgeCache(), &faceCache());
+        refreshDisplay(am, &gpu);
         // STAMP WITH THE EPOCH READ **AFTER** THE REFRESH, and this is not
         // tidiness — it is what stops a self-sustaining upload loop. Under an
         // active subpatch preview `GpuMesh.upload` does not upload: it calls
@@ -2702,13 +2696,12 @@ void main(string[] args) {
             // once, rather than pausing every frame of the run.
             preToolTickStall.arm();
         }
-        // deactivate() may have added geometry. We no longer resize / invalidate
-        // / syncSelection the pick caches here (change-notification bus, Stage 2):
-        // any geometry a tool appended on deactivate went through mesh primitives
-        // that publish a Geometry change, so the per-frame bus flush drives the
-        // resize + invalidate + syncSelection in the loop's pick-cache block on
-        // the same frame (setActiveTool runs during event dispatch, before the
-        // flush). One source of truth, no duplicated resize logic.
+        // deactivate() may have added geometry. We no longer syncSelection
+        // here (change-notification bus, Stage 2): any geometry a tool appended
+        // on deactivate went through mesh primitives that publish a Geometry
+        // change, so the per-frame bus flush drives it in the loop's
+        // mesh-change block on the same frame (setActiveTool runs during event
+        // dispatch, before the flush). One source of truth.
     }
 
     // -------------------------------------------------------------------------
@@ -3179,7 +3172,8 @@ void main(string[] args) {
     //      is the stateless half; this is the explicit barrier covering the
     //      undo-of-layer.select case where an older SAME-mesh entry resurfaces.
     //   3. Re-upload the new active mesh's GPU buffers (re-keys gpu_select via
-    //      uploadVersion) + invalidate the global pick caches.
+    //      uploadVersion). The "+ invalidate the global pick caches" half went
+    //      with `viewcache.d` at task 1930.
     //   4. Invalidate the version-keyed caches that could collide across layers
     //      (snap grids; symmetry/subpatch self-invalidate via their new
     //      mesh-address keys). Belt-and-braces beside the address keys.
@@ -3225,20 +3219,16 @@ void main(string[] args) {
         setActiveTool(null);
         // 2. explicit coalesce barrier on the history.
         history.breakCoalescing();
-        // 3. GPU re-upload + pick-cache resize/invalidate against the NEW mesh.
+        // 3. GPU re-upload against the NEW mesh.
         //    Task 0654: "the new mesh" can be NO mesh — this hook also fires on
         //    the transition INTO an empty item selection, where the primary
         //    went away rather than moved. The stand-in is empty, so uploading
-        //    it clears the GPU buffers and sizes every pick cache to zero,
-        //    which is what the frame after an emptying select must draw. It is
-        //    a READ of the stand-in, so the no-write rule is intact.
+        //    it clears the GPU buffers, which is what the frame after an
+        //    emptying select must draw. It is a READ of the stand-in, so the
+        //    no-write rule is intact.
         Mesh* active = document.activeMesh();
         if (active is null) active = &mesh();
         gpu.upload(*active);
-        vertexCache.resize(active.vertices.length); vertexCache.invalidate();
-        edgeCache.resize(active.edges.length);      edgeCache.invalidate();
-        faceCache.resize(active.vertices.length, active.faces.length);
-        faceCache.invalidate();
         // 4. blanket-invalidate the snap grids. Since task 1906 stage 2c this
         //    is the ONLY production caller of `invalidateSnapGrids()`, and it
         //    is here because a layer switch is not a mesh change: nothing was
@@ -3836,10 +3826,6 @@ void main(string[] args) {
     // (same pattern as `cameraViewDg`/`cameraView` right below).
     app.meshDg      = cast(MeshDg)&mesh;
     app.cameraViewDg = cast(ViewDg)&cameraView;
-    app.vertexCache = cast(VertexCacheDg)&vertexCache;
-    app.faceCache   = cast(FaceCacheDg)&faceCache;
-    app.edgeCache   = cast(EdgeCacheDg)&edgeCache;
-
     app.gpuPtr      = &gpu;
     app.editModePtr = &editMode;
     app.documentPtr = &document;
@@ -5985,16 +5971,16 @@ void main(string[] args) {
         // (sliders / command buttons mutate the mesh during drawSidePanel /
         // drawTabPanel / Tool Properties, all above), and any undo/redo for the
         // frame; BEFORE the first bus consumer (subpatch preview, just below),
-        // the GPU upload, picking, and the pick-cache invalidation block. Drain
+        // the GPU upload, picking, and the mesh-change block. Drain
         // the active mesh's accumulated change flags + selection domains into the
         // bus and zero them.
         //
         // Ordering (Stage 3): the flush MUST precede the subpatch-preview gate
         // below so that gate reads THIS frame's flags. The subpatch poll runs
-        // earlier in the loop body than the pick-cache block, so a single flush
+        // earlier in the loop body than the mesh-change block, so a single flush
         // placed here feeds BOTH consumers the same frame's flags via the
         // startup subscriber's `meshChangedFlags`, which is consumed (zeroed)
-        // only after the pick-cache block far below. Nothing between here and
+        // only after the mesh-change block far below. Nothing between here and
         // that block mutates the mesh (render + GPU upload are read-only / use
         // mutationVersion directly), so one flush at this point is exact.
         {
@@ -6417,32 +6403,36 @@ void main(string[] args) {
                                 ifs.dragMode == DragMode.Pan   ||
                                 ifs.dragMode == DragMode.Roll);
 
-        // Invalidate the screen-space pick caches when the MESH actually
-        // changed this frame (change-notification bus, Stage 2). The bus
-        // flush just above OR-ed this frame's change classes into
-        // `meshChangedFlags` via the startup subscriber, so we now know
-        // precisely whether geometry moved — replacing the old blanket
-        // "invalidate every frame a tool is active" sweep (which racked up one
+        // React to a MESH change that landed this frame (change-notification
+        // bus, Stage 2). The bus flush just above OR-ed this frame's change
+        // classes into `meshChangedFlags` via the startup subscriber, so we
+        // know precisely whether geometry moved — replacing the old blanket
+        // "sweep every frame a tool is active" (which racked up one
         // `Cat.cacheInvalidate` sample per rendered frame of a drag even on
         // frames where nothing moved).
         //
-        //   • Geometry (Points|Polygons) → vertex/edge/face COUNTS changed:
-        //     resize the caches to the new mesh dimensions, re-sync the
-        //     selection arrays, invalidate, refresh the vertex cache. This
-        //     subsumes the two former synchronous resize sites — the
-        //     post-tool-deactivate blob in setActiveTool and the
-        //     BoxTool.meshChanged hand-off in handleMouseButtonUp — both of
-        //     which mutate via mesh primitives that publish Geometry, so the
-        //     flush delivers the flag on the SAME frame (event dispatch runs
-        //     before this block) and the resize lands here instead.
-        //   • Position only → coords moved, counts unchanged: just invalidate
-        //     + refresh; no resize / syncSelection needed.
-        //   • Camera-only frames keep their existing `needsUpdate(vp)`
-        //     16-float compare path (camera is not mesh state).
+        // TASK 1930 SHRANK THIS TO TWO ARMS AND A COUNTER. What is left:
         //
-        // Perf (doc/perf_harness_plan.md): `cacheInvalidate` counts PER-FRAME
-        // invalidations; this is the structurally-correct place to measure
-        // them. No-op in the default build.
+        //   • Geometry (Points|Polygons) → vertex/edge/face COUNTS changed:
+        //     re-sync the selection arrays. This subsumes the two former
+        //     synchronous resize sites — the post-tool-deactivate blob in
+        //     setActiveTool and the BoxTool.meshChanged hand-off in
+        //     handleMouseButtonUp — both of which mutate via mesh primitives
+        //     that publish Geometry, so the flush delivers the flag on the
+        //     SAME frame (event dispatch runs before this block).
+        //   • Either arm bumps `bumpMeshCacheRebuild`, which after 1930 means
+        //     "a Geometry/Position delivery landed this frame" — the quantity
+        //     `tools/perf/run.d`'s F-I1 and F-I6a assert is ZERO on a pure
+        //     orbit and a lasso. It no longer names a cache, and the inner
+        //     comment below says why the invariant survived its cause.
+        //
+        // There is no camera arm any more: the camera compare moved to
+        // `gpu_select`'s per-mode slot key (`camera_stamp.d`), evaluated
+        // lazily at the pick instead of eagerly here.
+        //
+        // Perf (doc/perf_harness_plan.md): `cacheInvalidate` keeps its NAME
+        // (it is a key in saved baselines) and now times the two arms above.
+        // No-op in the default build.
         //
         // Perf (doc/frame_probe_scenarios_plan.md, task 0195): the FrameProbe
         // `cache` phase wraps this whole block AND extends through
@@ -6455,45 +6445,37 @@ void main(string[] args) {
             auto zFramesCache = g_frames.phase(Phase.cache);
         {
             import change_bus : MeshEditScope;
-            // NB: Cat.viewcacheRebuild (inside each vertex/edge/faceCache
-            // .invalidate() body) nests inside this Cat.cacheInvalidate block
-            // ON PURPOSE — two granularities (whole per-frame block vs the
-            // per-call bool-clear). Distinct JSON keys, so no within-category
-            // double-count; only a naive cross-category SUM would count the
-            // bool-clear twice. Do not "flatten" one into the other.
+            // TASK 1930 — THE THIRD BRANCH OF THIS `if` IS GONE, AND SO IS
+            // EVERY CACHE CALL IN THE OTHER TWO. `viewcache.d` held a
+            // projected payload with no readers and no writers, so all this
+            // block ever did per frame was clear `bool[]`s nobody read (~600k
+            // byte-writes a frame on a 316² grid) and stamp a view/proj pair
+            // no picker consulted. The camera compare moved to the ONE place
+            // where going stale is observable — `gpu_select`'s per-mode slot
+            // key, now a `CameraStamp` (`camera_stamp.d`), evaluated lazily at
+            // the pick rather than eagerly here.
+            //
+            // WHY F-I1 IS STILL ZERO ON `orbit-dense`, BY A NEW REASON: it
+            // used to be zero because the camera-reprojection branch was gated
+            // `!doingCameraDrag`. Now it is zero because the ONLY branches left
+            // are the two genuinely mesh-driven ones, and a pure orbit
+            // publishes neither Geometry nor Position. The invariant is
+            // unchanged; its cause is not, and `tools/perf/run.d`'s F-I1 text
+            // says so too.
+            //
+            // `Cat.cacheInvalidate` KEEPS ITS NAME — it is a key in saved perf
+            // baselines and in run.d's category list; renaming it would
+            // silently orphan every stored comparison.
             auto zCache = g_perf.scope_(Cat.cacheInvalidate);
             if (meshChangedFlags & MeshEditScope.Geometry) {
-                // Counts may have changed — match cache sizes to the mesh and
-                // re-sync selection before invalidating.
+                // Counts may have changed — re-sync selection.
                 mesh.syncSelection();
-                if (vertexCache.valid.length != mesh.vertices.length) {
-                    vertexCache.resize(mesh.vertices.length);
-                    faceCache.resize(mesh.vertices.length, mesh.faces.length);
-                }
-                if (edgeCache.valid.length != mesh.edges.length)
-                    edgeCache.resize(mesh.edges.length);
-                vertexCache.invalidate();
-                edgeCache.invalidate();
-                faceCache.invalidate();
-                vertexCache.update(vp);
-                // F-I1: mesh-driven cache rebuild (topology/counts changed).
+                // F-I1 / F-I6a: a Geometry delivery landed this frame
+                // (counts may have changed).
                 g_frames.bumpMeshCacheRebuild();
             } else if (meshChangedFlags & MeshEditScope.Position) {
-                // Coords moved, counts unchanged — invalidate without resize.
-                vertexCache.invalidate();
-                edgeCache.invalidate();
-                faceCache.invalidate();
-                vertexCache.update(vp);
-                // F-I1: mesh-driven cache rebuild (positions changed).
+                // F-I1 / F-I6a: a Position delivery landed this frame.
                 g_frames.bumpMeshCacheRebuild();
-            } else if (!doingCameraDrag && vertexCache.needsUpdate(vp)) {
-                // Camera-reprojection branch — GATED on !doingCameraDrag, so
-                // it is SKIPPED entirely during an orbit drag (this is WHY
-                // F-I1 == 0 on orbit-dense: this branch never fires while
-                // dragMode is Orbit/Zoom/Pan). Deliberately NOT counted as a
-                // mesh-cache rebuild — camera reprojection is not mesh work.
-                vertexCache.invalidate();
-                vertexCache.update(vp);
             }
 
             // TASK 1906 STAGE 2b (§3.2 row 5) — THE PROACTIVE `gpuSelect
@@ -6571,8 +6553,10 @@ void main(string[] args) {
             // re-pointed, and no epoch moves for it. Do not re-add a caller
             // here.
         }
-        // Consume this frame's mesh-change flags. Stage 2 subscriber = the
-        // screen-space pick caches; Stage 3 adds gpu_select (above) and gates
+        // Consume this frame's mesh-change flags. Stage 2's subscriber drove
+        // the screen-space pick caches until task 1930 deleted them; what is
+        // left of that arm is the Geometry syncSelection and the
+        // delivery-landed counter. Stage 3 adds gpu_select (above) and gates
         // the subpatch-preview rebuild earlier in the loop body. Both Stage 3
         // consumers keep their internal version keys as backstops; the bus only
         // drives the trigger. (render-dirty / IPR is converted in Stage 4.)
@@ -6586,21 +6570,7 @@ void main(string[] args) {
         // per-frame flag, so there is nothing here to zero.
 
         ifs.pickVertices(vp, doingCameraDrag);
-
-        // Check if edge cache needs update due to camera movement
-        if (!doingCameraDrag && edgeCache.needsUpdate(vp)) {
-            edgeCache.invalidate();
-            edgeCache.update(vp);
-        }
-
         ifs.pickEdges(vp, doingCameraDrag);
-
-        // Check if face cache needs update due to camera movement
-        if (!doingCameraDrag && faceCache.needsUpdate(vp)) {
-            faceCache.invalidate();
-            faceCache.update(vp);
-        }
-
         ifs.pickFaces(vp, doingCameraDrag);
 
         // Item hover (task 0647). Last of the four, and outside every

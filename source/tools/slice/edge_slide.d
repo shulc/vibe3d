@@ -3,7 +3,6 @@ module tools.slice.edge_slide;
 import mesh    : Mesh, GpuMesh;
 import view    : View;
 import editmode : EditMode;
-import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import tools.common.command_wrapper : CommandWrapperTool;
 import commands.mesh.edge_slide : MeshEdgeSlide;
 
@@ -29,15 +28,12 @@ final class EdgeSlideTool : CommandWrapperTool {
     private float         lastT = 0.0f;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+         GpuMesh* gpu) {
         inner_ = new MeshEdgeSlide(mesh, view, editMode);
         inner    = inner_;
         meshPtr  = mesh;
         viewRef  = view;
         this.gpu = gpu;
-        this.vc  = vc;
-        this.ec  = ec;
-        this.fc  = fc;
     }
 
     override string name() const { return "edge.slide"; }

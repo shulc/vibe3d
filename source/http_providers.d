@@ -63,7 +63,6 @@ import toolpipe.pipeline : g_pipeCtx;
 import gizmo;
 import view;
 import shader;
-import viewcache;
 import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot;
 import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;

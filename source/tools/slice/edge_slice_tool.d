@@ -19,7 +19,6 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
-import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 import eventlog : queryMouse;
 import handler : BoxHandler, ToolHandles, gizmoSize, getGizmoPixels, drawWorldSegment;
@@ -115,9 +114,6 @@ private:
     EditMode*        editMode;
     LitShader        litShader;
 
-    VertexCache*     vc;
-    EdgeCache*       ec;
-    FaceBoundsCache* fc;
 
     CommandHistory       history;
     EdgeSliceEditFactory factory;
@@ -210,15 +206,11 @@ private:
     enum Vec3  CHORD_COLOR  = schemeColor(SchemeColor.toolPathLine);
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader,
-         VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader) {
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
         this.litShader = litShader;
-        this.vc        = vc;
-        this.ec        = ec;
-        this.fc        = fc;
     }
 
     void setUndoBindings(CommandHistory h, EdgeSliceEditFactory f) {
@@ -735,8 +727,8 @@ private:
         armed_ = true;
         built_ = n > 0;
         phase_ = Phase.EdgeB;
-        // S1: bakeChainFrom just mutated the mesh — keep the GPU upload +
-        // screen-space caches in step (mirrors rebuildPreview/commitChain),
+        // S1: bakeChainFrom just mutated the mesh — keep the GPU upload in
+        // step (mirrors rebuildPreview/commitChain),
         // so this stays consistent if ever exercised with a visible window.
         refreshCaches();
     }
@@ -1079,6 +1071,6 @@ private:
     }
 
     void refreshCaches() {
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplay(mesh, gpu);
     }
 }

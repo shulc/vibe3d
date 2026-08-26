@@ -15,7 +15,6 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
-import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 import perf_probe : g_perf, Cat;
 
@@ -70,9 +69,6 @@ private:
     EditMode*        editMode;
     LitShader        litShader;
 
-    VertexCache*     vc;
-    EdgeCache*       ec;
-    FaceBoundsCache* fc;
 
     CommandHistory       history;
     VertMergeEditFactory factory;
@@ -98,15 +94,11 @@ private:
     float localPerPixel;
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader,
-         VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader) {
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
         this.litShader = litShader;
-        this.vc        = vc;
-        this.ec        = ec;
-        this.fc        = fc;
     }
 
     void setUndoBindings(CommandHistory h, VertMergeEditFactory f) {
@@ -294,6 +286,6 @@ private:
     }
 
     void refreshCaches() {
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplay(mesh, gpu);
     }
 }

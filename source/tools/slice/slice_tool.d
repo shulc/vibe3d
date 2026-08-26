@@ -16,7 +16,6 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
-import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import operator : VectorStack;
 import display_sync : refreshDisplay;
 import eventlog : queryMouse;
@@ -632,9 +631,6 @@ private:
     EditMode*        editMode;
     LitShader        litShader;
 
-    VertexCache*     vc;
-    EdgeCache*       ec;
-    FaceBoundsCache* fc;
 
     CommandHistory   history;
     SliceEditFactory factory;
@@ -944,15 +940,11 @@ private:
     enum float PLANE_ALPHA = 0.18f;
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader,
-         VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader) {
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
         this.litShader = litShader;
-        this.vc        = vc;
-        this.ec        = ec;
-        this.fc        = fc;
     }
 
     void setUndoBindings(CommandHistory h, SliceEditFactory f) {
@@ -1794,7 +1786,7 @@ private:
         // so deactivate() can tell whether anything external has since touched
         // it (mirrors LoopSliceTool.rebuildCut).
         armedKey_.stamp(*mesh);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplay(mesh, gpu);
     }
 
     // RMB cancel: revert ONLY the current gesture (restore the line to where it

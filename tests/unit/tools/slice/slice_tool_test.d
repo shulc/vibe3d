@@ -18,7 +18,6 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
-import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import operator : VectorStack;
 import display_sync : refreshDisplay;
 import eventlog : queryMouse;

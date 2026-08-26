@@ -2338,8 +2338,9 @@ class HttpServer {
 
     private void route_apiFramesCounts(HttpRequest request, HttpResponse response) {
         // Per-frame WORK COUNTS: draw submissions and submitted vertices
-        // per pass, cells considered/rendered, GPU uploads, pick-cache
-        // rebuilds, pipeline + operator evaluations, and main-thread GC
+        // per pass, cells considered/rendered, GPU uploads, mesh-change
+        // deliveries seen this frame, pipeline + operator evaluations, and
+        // main-thread GC
         // bytes. Live in EVERY build configuration, including the default
         // `modeling` one that run_test.d builds — which is the whole
         // reason it exists next to /api/perf and /api/frames, both of

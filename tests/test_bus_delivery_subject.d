@@ -12,9 +12,8 @@
 //   makeGridPlane(316)                                  → 99 856 deliveries
 //
 // app.d's hub ORs whatever it is handed into `meshChangedFlags`, whose
-// `Geometry` arm runs `syncSelection` plus a full pick-cache invalidation — so
-// an unfiltered delivery lets a private scratch mesh drive the LIVE document's
-// caches. That is the 1620 flicker class, arriving through the bus.
+// `Geometry` arm runs `syncSelection` on the LIVE document mesh — so an
+// unfiltered delivery lets a private scratch mesh drive it. That is the 1620 flicker class, arriving through the bus.
 //
 // The fix is a filter consulted at the top of `Mesh.deliverPending`:
 // `mesh.g_isDocumentMesh`, installed by app.d as `document.ownsMesh` (true iff
@@ -220,7 +219,7 @@ unittest {
 //     private `cage_` on EVERY frame, and rebuilds through scratch meshes no
 //     Layer owns. Measured on the unfiltered build: TEN deliveries per steady
 //     frame instead of one, every one of the extra nine landing in app.d's hub
-//     and its full pick-cache invalidation. The first frame is not pinned to a
+//     and its Geometry arm's syncSelection. The first frame is not pinned to a
 //     number: its count is the preview build's own commit granularity, which
 //     this task neither owns nor changes.
 // --------------------------------------------------------------------------

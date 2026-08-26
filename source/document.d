@@ -827,8 +827,8 @@ static assert(kNoEditTargetReason == imported!"command".kNoEditTargetReason,
 private __gshared Mesh g_noEditTargetMesh;
 
 /// The READ-ONLY empty stand-in the per-frame READ paths see when there is no
-/// edit target (task 0654): the viewport draw, the screen-space caches, the
-/// picking projections — everything that must produce a frame rather than an
+/// edit target (task 0654): the viewport draw, the picking projections —
+/// everything that must produce a frame rather than an
 /// exception. It has no vertices, edges or faces, so every loop over it does
 /// nothing, which is the truth of the state: with nothing selected there is no
 /// foreground geometry.

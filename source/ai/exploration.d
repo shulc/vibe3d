@@ -194,7 +194,17 @@ final class AiExplorationController {
 
         // ---- AwaitingUndo: waiting for the user to undo the random drag ----
         if (smState_ == SMState.AwaitingUndo) {
-            // Camera-move guard: compare view element-wise (viewcache.d convention).
+            // Camera-move guard: compare view element-wise.
+            //
+            // KNOWING DIVERGENCE (task 1930). This is the one hand-written
+            // matrix compare that did NOT fold into `CameraStamp`
+            // (`camera_stamp.d`), and the reason is in the two lines below
+            // and at `:203-209`: `pendingView_` is an INTENTIONALLY FROZEN
+            // anchor from stage time, not "the pose I last derived under",
+            // and this guard compares `view` ONLY — no `proj`. A stamp whose
+            // whole contract is `changed(v, p)` over both halves does not fit
+            // without an overload nobody else wants. Folding it in would
+            // change what this state machine discards.
             if (!viewsEqual(curView, pendingView_)) {
                 smState_ = SMState.Idle;
                 return Resolution.discard();

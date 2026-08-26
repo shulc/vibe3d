@@ -102,7 +102,6 @@ unittest { // totals accumulate across frames; seq counts committed frames
         fc.bumpPipeEval();
         fc.bumpStageEval();
         fc.bumpStageEval();
-        fc.bumpViewCacheRebuild();
         fc.bumpHoverPick();
         fc.endFrame();
     }
@@ -112,7 +111,7 @@ unittest { // totals accumulate across frames; seq counts committed frames
     assert(t.pass[DrawPass.faces].calls == 5);
     assert(t.uploadCalls == 5 && t.uploadVerts == 40);
     assert(t.pipeEvals == 5 && t.stageEvals == 10);
-    assert(t.viewCacheRebuilds == 5 && t.hoverPicks == 5);
+    assert(t.hoverPicks == 5);
     assert(fc.lastScene().drawVerts == 36, "lastScene is per-frame, not a total");
 }
 

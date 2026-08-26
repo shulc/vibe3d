@@ -50,7 +50,6 @@ import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relax
 import tools.edit.topology_pen.render : PenRenderOps;
 import tools.edit.topology_pen.snap_guide : PenSnapGuide;
 import tools.edit.topology_pen.json   : PenStateJsonOps;
-import viewcache            : VertexCache, EdgeCache, FaceBoundsCache;
 import bvh_pick              : BvhPick;
 import command_history      : CommandHistory;
 import commands.mesh.vertex_new : MeshVertexNew;
@@ -175,9 +174,6 @@ private:
     package Mesh* delegate() meshSrc_;
     @property Mesh* mesh() { return meshSrc_(); }
     GpuMesh*         gpu_;
-    VertexCache*     vc_;
-    EdgeCache*       ec_;
-    FaceBoundsCache* fc_;
 
     // --- P5 Remove gesture's own BVH face pick (doc/topopen_p5_remove_plan.md
     // D1) — self-contained: the tool already holds gpu_/meshSrc_ from P2, so
@@ -1097,13 +1093,9 @@ public:
     // unchanged); `setUndoBindings` supplies the placement path.
     this() {}
 
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu,
-         VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu) {
         this.meshSrc_ = meshSrc;
         this.gpu_     = gpu;
-        this.vc_      = vc;
-        this.ec_      = ec;
-        this.fc_      = fc;
     }
 
     // REV1 (opponent obj-1): 6th param `alf` appended for the Add Loop
@@ -3557,7 +3549,7 @@ public:
 
         m.syncSelection();
         if (gpu_ !is null) gpu_.upload(*m);
-        refreshDisplay(m, gpu_, vc_, ec_, fc_);
+        refreshDisplay(m, gpu_);
     }
 
     // Close an armed Move: apply the FINAL targets, then record the whole
@@ -3605,7 +3597,7 @@ public:
         // `applyMoveTargets`'s: `refreshDisplay` dereferences the GpuMesh
         // unconditionally once the active-mesh resolver is unset, which is
         // exactly the state a GL-free unit rig runs in.
-        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
     }
 
     // Record whatever the live drag has already written, WITHOUT computing
@@ -3743,9 +3735,11 @@ public:
     // face under (mx,my), via the tool's OWN `BvhPick` — positional,
     // orientation-independent (a back-facing face is still hit; Remove is
     // not a front-facing-only pick), -1 on a miss (cursor off every polygon
-    // silhouette). `FaceBoundsCache` is deliberately NOT used here (D1's
-    // rejection: its backface cull-by-normal would wrongly reject a
-    // back-facing face). Lazily constructs `removePick_` — mirrors
+    // silhouette). D1 rejected the screen-space face-bounds cache that used
+    // to live in `viewcache.d` for this (its backface cull-by-normal would
+    // wrongly reject a back-facing face); task 1930 deleted that module
+    // outright, so the BVH is now the only candidate anyway.
+    // Lazily constructs `removePick_` — mirrors
     // `findSourceVertex`'s guard shape.
     private int pickPrimaryFace(int mx, int my, const ref Viewport vp) {
         if (meshSrc_ is null || gpu_ is null) return -1;
@@ -5308,7 +5302,7 @@ public:
 
         if (gpu_ !is null) gpu_.upload(*mesh);
         mesh.syncSelection();
-        refreshDisplay(mesh, gpu_, vc_, ec_, fc_);
+        refreshDisplay(mesh, gpu_);
 
         return cast(int)(mesh.vertices.length - 1);
     }
@@ -5394,7 +5388,7 @@ public:
         // comment / plan §Risks.
 
         m.syncSelection();
-        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
     }
 
     // P8 (doc/topopen_p8_smooth_plan.md "The pluggable weight"): true when
@@ -5759,7 +5753,7 @@ public:
         // comment / plan §Undo.
 
         m.syncSelection();
-        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
     }
 
     // P12 (doc/topopen_p12_smoothloop_plan.md Phase 3): commit `passCount`
@@ -5862,7 +5856,7 @@ public:
         // comment above.
 
         m.syncSelection();
-        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
     }
 
     // P3 (doc/topopen_p3_plan.md): fire the classified build (EDGE/TRI/QUAD)
@@ -5959,7 +5953,7 @@ public:
 
         m.syncSelection();
         if (gpu_ !is null) gpu_.upload(*m);
-        refreshDisplay(m, gpu_, vc_, ec_, fc_);
+        refreshDisplay(m, gpu_);
     }
 
     // P5 (doc/topopen_p5_remove_plan.md D4/D5): commit a single-face removal
@@ -5999,7 +5993,7 @@ public:
         resyncSession();
 
         m.syncSelection();
-        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
     }
 
     // ---- Remove's other two primitives (task 0494) ------------------------
@@ -6083,7 +6077,7 @@ public:
         resyncSession();
 
         m.syncSelection();
-        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
     }
 
     /// Remove-on-a-VERTEX (task 0494, contract C-0): merge the pressed
@@ -6162,7 +6156,7 @@ public:
         resyncSession();
 
         m.syncSelection();
-        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
     }
 
     // P6 (doc/topopen_p6_addloop_plan.md Phase 4): commit the armed Add Loop
@@ -6233,7 +6227,7 @@ public:
         resyncSession();
 
         m.syncSelection();
-        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
     }
 
     // P9 (doc/topopen_p9_split_plan.md Phase 2): commit the armed Split
@@ -6279,7 +6273,7 @@ public:
         resyncSession();
 
         m.syncSelection();
-        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
     }
 
     // Commit the ring `findFillRing` resolved — FULL KERNEL REUSE, zero
@@ -6348,7 +6342,7 @@ public:
         resyncSession();
 
         m.syncSelection();
-        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
     }
 
     // The reference's own post-build cleanup contract, ported (task 0488):
@@ -6453,7 +6447,7 @@ public:
         if (welded) resyncSession();
 
         m.syncSelection();
-        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
     }
 
     // P11 (doc/topopen_p11_duploop_plan.md "The flow"): commit the armed
@@ -6544,7 +6538,7 @@ public:
         resyncSession();   // KILLER-2: topology grew -- clear every sibling arm
 
         m.syncSelection();
-        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_, vc_, ec_, fc_); }
+        if (gpu_ !is null) { gpu_.upload(*m); refreshDisplay(m, gpu_); }
     }
 
     // Stored drag-arm index/case dangle across an external history

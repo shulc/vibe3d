@@ -1,7 +1,6 @@
 module viewport;
 
 import view          : View, ProjKind, ViewPreset;
-import viewcache     : VertexCache, FaceBoundsCache, EdgeCache;
 import gpu_select    : GpuSelectBuffer;
 import math          : Viewport, Vec3, Orientation;
 import display_state : ViewportDisplay, DrawPlan, resolveDrawPlan, kBackdropDim;
@@ -15,18 +14,18 @@ import image_cache   : imagePixelCache;
 // ---------------------------------------------------------------------------
 // Phase 1 — global camera / ViewCache / picking → per-viewport data model.
 //
-// Viewport3D: owns one camera (View), the three screen-space caches, and the
-// GPU-select picker for exactly one viewport cell.
+// Viewport3D: owns one camera (View) and the GPU-select picker for exactly one
+// viewport cell. (It owned three screen-space caches until task 1930 deleted
+// them — see `source/camera_stamp.d`.)
 //
 // ViewportManager: owns the array of Viewport3D cells (ONE cell in Phase 1,
 // up to FOUR in Phase 4), routing helpers, and the GL init/shutdown lifecycle.
 //
 // app.d accesses these objects through ref-returning nested accessors:
 //   ref View cameraView()    { return vpm.views[vpm.activeId].camera; }
-//   ref VertexCache ...      { return vpm.views[vpm.activeId].vcache; }
 //   GpuSelectBuffer gpuSel() { return vpm.views[vpm.activeId].gpuSel; }
-// so all ~190 command-ctor injection sites, camera-member uses, and cache-method
-// calls are textually unchanged.  The only mandatory call-site edits are the
+// so all ~190 command-ctor injection sites and camera-member uses are
+// textually unchanged.  The only mandatory call-site edits are the
 // ~318 address-of sites (&x → &x()); see doc/viewport_phase1_plan.md §A.
 // ---------------------------------------------------------------------------
 
@@ -385,17 +384,13 @@ bool testRendersCell(int k, int activeId, int cellCount) {
 // Viewport3D
 // ---------------------------------------------------------------------------
 
-/// One viewport cell: owns a camera, the three screen-space caches, and the
-/// GPU-select picker.
+/// One viewport cell: owns a camera and the GPU-select picker.
 ///
 /// Declared `final class` (heap-stable) so raw pointers captured at command
 /// ctor time (SceneReset/MeshLoadRaw) remain valid across any views[] array
 /// reallocation.  Phase-4: views[] is pre-allocated to 4 and never reallocated.
 final class Viewport3D {
     View             camera;
-    VertexCache      vcache;
-    FaceBoundsCache  fcache;
-    EdgeCache        ecache;
     GpuSelectBuffer  gpuSel;
 
     // Phase-2 FBO + dirty-cache fields.
@@ -966,8 +961,8 @@ final class ViewportManager {
     ///
     /// Two guards:
     ///  - Pinned during an active gesture (`dragOriginId >= 0`): the
-    ///    per-cell picking caches (vertexCache/faceCache/edgeCache/gpuSelect,
-    ///    all indexed by activeId) must not switch cells mid-drag.
+    ///    per-cell picking state (`gpuSel`, indexed by activeId) must not
+    ///    switch cells mid-drag.
     ///  - No-op when the cursor is outside every cell (`hoveredId < 0`,
     ///    e.g. over a docked panel) — sticky-last, activeId stays put
     ///    rather than snapping to an arbitrary cell.

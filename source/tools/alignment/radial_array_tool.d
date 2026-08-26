@@ -17,7 +17,6 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
-import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 import tools.create.create_common : screenToConstructionPlane;
 
@@ -151,9 +150,6 @@ private:
     EditMode*        editMode;
     LitShader        litShader;
 
-    VertexCache*     vc;
-    EdgeCache*       ec;
-    FaceBoundsCache* fc;
 
     CommandHistory          history;
     RadialArrayEditFactory  factory;
@@ -186,15 +182,11 @@ private:
     enum Vec3 ANGLE_COLOR  = schemeColor(SchemeColor.toolAngle);
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader,
-         VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader) {
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
         this.litShader = litShader;
-        this.vc        = vc;
-        this.ec        = ec;
-        this.fc        = fc;
         offsetArrow = new Arrow(Vec3(0, 0, 0), Vec3(0, 1, 0), OFFSET_COLOR);
         angleCube   = new BoxHandler(Vec3(0, 0, 0), ANGLE_COLOR);
         toolHandles = new ToolHandles();
@@ -557,7 +549,7 @@ private:
     }
 
     void refreshCaches() {
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplay(mesh, gpu);
     }
 
     void cancelLiveEdit() {

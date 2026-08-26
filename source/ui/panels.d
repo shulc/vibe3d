@@ -63,7 +63,6 @@ import toolpipe.pipeline : g_pipeCtx;
 import gizmo;
 import view;
 import shader;
-import viewcache;
 import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
 // Task 0669 — "would this action refuse if pressed", and the per-frame record
 // of what the bars actually drew. See source/ui/availability.d.

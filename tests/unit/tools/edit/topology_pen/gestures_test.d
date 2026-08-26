@@ -59,7 +59,6 @@ import constraint           : resolveHoverTarget, topoPenPressPickPx,
                               kTopoPenSnapAuto, closestPointOnMeshes;
 import snap                  : backgroundSourcesFull, SnapAdmit;
 import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relaxPasses;
-import viewcache            : VertexCache, EdgeCache, FaceBoundsCache;
 import bvh_pick              : BvhPick;
 import command_history      : CommandHistory;
 import commands.mesh.vertex_new : MeshVertexNew;

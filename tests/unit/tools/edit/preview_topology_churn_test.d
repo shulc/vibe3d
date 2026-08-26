@@ -41,7 +41,6 @@ module tests.unit.tools.edit.preview_topology_churn_test;
 import mesh;
 import math : Vec3;
 import editmode : EditMode;
-import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import params : Param;
 import tool : Tool;
 import tools.edit.edge_extend : EdgeExtendTool;
@@ -59,9 +58,6 @@ private final class Rig {
     Mesh            mesh;
     GpuMesh         gpu;
     EditMode        editMode = EditMode.Edges;
-    VertexCache     vc;
-    EdgeCache       ec;
-    FaceBoundsCache fc;
     SubpatchPreview preview;
 
     this(Mesh m, EditMode em) {
@@ -222,7 +218,7 @@ unittest {
         "control setup: an unmarked cage must not produce a preview");
 
     auto tool = new EdgeExtendTool(() => &rig.mesh, &rig.gpu, &rig.editMode,
-                                   null, &rig.vc, &rig.ec, &rig.fc);
+                                   null);
     tool.activate();
 
     const size_t vertsBefore = rig.mesh.vertices.length;
@@ -256,7 +252,7 @@ unittest {
     assert(buildsAtArm > 0, "the arming frame must have built a preview");
 
     auto tool = new EdgeExtendTool(() => &rig.mesh, &rig.gpu, &rig.editMode,
-                                   null, &rig.vc, &rig.ec, &rig.fc);
+                                   null);
     tool.activate();
 
     // Sample 1 — the ridge appears. This one IS a topology change and one
@@ -332,7 +328,7 @@ unittest {
     assert(rig.preview.active, "rig must actually subdivide");
 
     auto tool = new EdgeExtendTool(() => &rig.mesh, &rig.gpu, &rig.editMode,
-                                   null, &rig.vc, &rig.ec, &rig.fc);
+                                   null);
     tool.activate();
     setFloatParam(tool, "offsetY", 0.10f);
     rig.frame();
@@ -391,7 +387,7 @@ unittest {
     assert(buildsAtArm > 0, "the arming frame must have built a preview");
 
     auto tool = new EdgeBevelTool(() => &rig.mesh, &rig.gpu, &rig.editMode,
-                                  null, &rig.vc, &rig.ec, &rig.fc);
+                                  null);
     tool.activate();
 
     const size_t vertsBare = rig.mesh.vertices.length;
@@ -453,7 +449,7 @@ unittest {
     assert(rig.preview.active, "rig must actually subdivide");
 
     auto tool = new EdgeBevelTool(() => &rig.mesh, &rig.gpu, &rig.editMode,
-                                  null, &rig.vc, &rig.ec, &rig.fc);
+                                  null);
     tool.activate();
     setFloatParam(tool, "width", 0.10f);
     rig.frame();
@@ -508,7 +504,7 @@ unittest {
     assert(rig.preview.active, "rig must actually subdivide");
 
     auto tool = new EdgeBevelTool(() => &rig.mesh, &rig.gpu, &rig.editMode,
-                                  null, &rig.vc, &rig.ec, &rig.fc);
+                                  null);
     tool.activate();
 
     // Arm above zero.
@@ -560,7 +556,7 @@ unittest {
     assert(buildsAtArm > 0, "the arming frame must have built a preview");
 
     auto tool = new PolyBevelTool(() => &rig.mesh, &rig.gpu, &rig.editMode,
-                                  null, &rig.vc, &rig.ec, &rig.fc);
+                                  null);
     tool.activate();
 
     const size_t vertsBare = rig.mesh.vertices.length;

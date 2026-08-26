@@ -24,7 +24,6 @@ import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import selection_product : addNewLoopEdgesAndVerts;
-import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 import document : primaryModelSpace;
 import perf_probe : g_perf, Cat;
@@ -190,9 +189,6 @@ private:
     EditMode*        editMode;
     LitShader        litShader;
 
-    VertexCache*     vc;
-    EdgeCache*       ec;
-    FaceBoundsCache* fc;
 
     CommandHistory       history;
     LoopSliceEditFactory factory;
@@ -376,15 +372,11 @@ private:
     uint[]       armedSelFaces_;
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader,
-         VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader) {
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
         this.litShader = litShader;
-        this.vc        = vc;
-        this.ec        = ec;
-        this.fc        = fc;
         // Per-instance backing store for the slice offsets — see the
         // `positions_` field comment. Must stay in the ctor (not a field
         // initializer) so no two tool instances ever share it.
@@ -1647,6 +1639,6 @@ private:
     }
 
     void refreshCaches() {
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplay(mesh, gpu);
     }
 }

@@ -36,7 +36,6 @@ import gizmo;
 import view;
 import viewgrid : g_viewGrid, viewGridSizeFor, viewGridFadeRadius;
 import shader;
-import viewcache;
 import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot;
 import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
 import ui.availability : actionRefusal, recordDrawnButton;

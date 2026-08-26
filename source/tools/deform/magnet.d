@@ -12,7 +12,6 @@ import shader : Shader;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import snapshot : MeshSnapshot;
-import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 import deform_magnet : applyMagnet;
 import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, ElementConnect;
@@ -45,9 +44,6 @@ private:
     GpuMesh*         gpu;
     EditMode*        editMode;
 
-    VertexCache*     vc;
-    EdgeCache*       ec;
-    FaceBoundsCache* fc;
 
     CommandHistory        history;
     MeshVertexEditFactory factory;
@@ -86,14 +82,10 @@ private:
     enum float STRENGTH_PX = 150.0f;
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode,
-         VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode) {
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
-        this.vc        = vc;
-        this.ec        = ec;
-        this.fc        = fc;
     }
 
     void setUndoBindings(CommandHistory h, MeshVertexEditFactory f) {
@@ -313,6 +305,6 @@ private:
     }
 
     void refreshCaches() {
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplay(mesh, gpu);
     }
 }

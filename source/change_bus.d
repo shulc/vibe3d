@@ -4,7 +4,7 @@ module change_bus;
 // Change-notification bus.
 //
 // One in-process publish-subscribe bus replacing per-consumer version polling
-// and blanket per-frame cache invalidation.
+// and the blanket per-frame cache sweep that task 1930 finished removing.
 //
 // TWO DELIVERY SITES SINCE TASK 1906 STAGE 3, and which one a channel uses is
 // decided by whether it has an owning `Mesh`:

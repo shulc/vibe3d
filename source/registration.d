@@ -20,7 +20,7 @@ module registration;
 // import reachability (CLAUDE.md build note), so this file's own imports
 // are already gated by the compiler even before app.d references it.
 import editor_app : EditorApp, Ai3dModalState, Ai3dModalRefs, RemeshModalRefs,
-    MeshDg, ViewDg, VertexCacheDg, FaceCacheDg, EdgeCacheDg;
+    MeshDg, ViewDg;
 
 import bindbc.sdl;
 import bindbc.opengl;
@@ -53,7 +53,6 @@ import toolpipe.pipeline : g_pipeCtx;
 import gizmo;
 import view;
 import shader;
-import viewcache;
 import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot;
 import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
@@ -452,29 +451,25 @@ private void registerTransformTools(EditorApp app) {
     // (one-shot, not brush-interactive). Brush interactivity is a
     // follow-up; the tool surface is the prerequisite.
     reg.toolFactories["xfrm.smooth"] = () {
-        auto t = new XfrmSmoothTool(&mesh(), cameraView, editMode, &gpu(),
-                                    &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new XfrmSmoothTool(&mesh(), cameraView, editMode, &gpu());
         t.setUndoBindings(history, vxEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
         return cast(Tool)t;
     };
     reg.toolFactories["xfrm.jitter"] = () {
-        auto t = new XfrmJitterTool(&mesh(), cameraView, editMode, &gpu(),
-                                    &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new XfrmJitterTool(&mesh(), cameraView, editMode, &gpu());
         t.setUndoBindings(history, vxEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
         return cast(Tool)t;
     };
     reg.toolFactories["edge.slide"] = () {
-        auto t = new EdgeSlideTool(&mesh(), cameraView, editMode, &gpu(),
-                                   &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new EdgeSlideTool(&mesh(), cameraView, editMode, &gpu());
         t.setUndoBindings(history, vxEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
         return cast(Tool)t;
     };
     reg.toolFactories["xfrm.quantize"] = () {
-        auto t = new XfrmQuantizeTool(&mesh(), cameraView, editMode, &gpu(),
-                                      &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new XfrmQuantizeTool(&mesh(), cameraView, editMode, &gpu());
         t.setUndoBindings(history, vxEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
         return cast(Tool)t;
@@ -588,8 +583,7 @@ private void registerGeneratorTools(EditorApp app) {
     // Remove factories differ ONLY by wire name, so a mis-ordered argument here
     // would compile and silently label one op as another.
     reg.toolFactories["mesh.topoPen"] = () {
-        auto t = new TopologyPenTool(() => &mesh(), &gpu(),
-                                     &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new TopologyPenTool(() => &mesh(), &gpu());
         t.setUndoBindings(history, () => new MeshVertexNew(&mesh(), cameraView, editMode),
                          topoPenBuildEditFactory, topoPenMoveEditFactory,
                          topoPenRemoveEditFactory, topoPenAddLoopEditFactory,
@@ -711,8 +705,7 @@ private void registerPrimitiveTools(EditorApp app) {
     // Pen has no headless path — interactive only. Tool factory
     // only; no commandFactories entry. See doc/pen_plan.md.
     reg.toolFactories["pen"] = () {
-        auto t = new PenTool(() => &mesh(), &gpu(), litShader,
-                             &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new PenTool(() => &mesh(), &gpu(), litShader);
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
@@ -721,8 +714,7 @@ private void registerPrimitiveTools(EditorApp app) {
     // No commandFactories entry: headless geometry creation uses mesh.addVertex
     // (task 0131).
     reg.toolFactories["prim.vertex"] = () {
-        auto t = new VertexTool(() => &mesh(), &gpu(), litShader,
-                                &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new VertexTool(() => &mesh(), &gpu(), litShader);
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
@@ -744,8 +736,7 @@ private void registerEditTools(EditorApp app) {
     // LMB-down picks the source; LMB-up picks the target; one snapshot-undo
     // entry per completed gesture. Gated to Vertices mode.
     reg.toolFactories["mesh.dragWeld"] = () {
-        auto t = new DragWeldTool(() => &mesh(), &gpu(), litShader,
-                                  &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new DragWeldTool(() => &mesh(), &gpu(), litShader);
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
@@ -756,8 +747,7 @@ private void registerEditTools(EditorApp app) {
     // wired via the prim.cube registration template. Gated to Edges mode by
     // EdgeExtrudeTool.supportedModes().
     reg.toolFactories["edge.extrude"] = () {
-        auto t = new EdgeExtrudeTool(() => &mesh(), &gpu(), &editMode(), litShader,
-                                     &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new EdgeExtrudeTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setUndoBindings(history, edgeExtrudeEditFactory);
         return cast(Tool)t;
     };
@@ -767,8 +757,7 @@ private void registerEditTools(EditorApp app) {
     // tool: own typed edit factory (MeshSessionEdit, snapshot-only undo).
     // Gated to Polygons mode by PolyExtrudeTool.supportedModes().
     reg.toolFactories["poly.extrude"] = () {
-        auto t = new PolyExtrudeTool(() => &mesh(), &gpu(), &editMode(), litShader,
-                                     &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new PolyExtrudeTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setUndoBindings(history, polyExtrudeEditFactory);
         return cast(Tool)t;
     };
@@ -781,8 +770,7 @@ private void registerEditTools(EditorApp app) {
     // mesh.radial_array command. Topology-creating tool: own typed edit
     // factory (MeshSessionEdit, snapshot-only undo).
     reg.toolFactories["mesh.radialArrayTool"] = () {
-        auto t = new RadialArrayTool(() => &mesh(), &gpu(), &editMode(), litShader,
-                                     &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new RadialArrayTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setUndoBindings(history, radialArrayEditFactory);
         return cast(Tool)t;
     };
@@ -796,8 +784,7 @@ private void registerEditTools(EditorApp app) {
     // (MeshSessionEdit, snapshot-only undo). Gated to Polygons mode
     // by StrokeExtrudeTool.supportedModes().
     reg.toolFactories["tool.strokeExtrude"] = () {
-        auto t = new StrokeExtrudeTool(() => &mesh(), &gpu(), litShader,
-                                       &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new StrokeExtrudeTool(() => &mesh(), &gpu(), litShader);
         t.setUndoBindings(history, strokeExtrudeEditFactory);
         return cast(Tool)t;
     };
@@ -807,8 +794,7 @@ private void registerEditTools(EditorApp app) {
     // tool.doApply). Topology-creating tool: own typed edit factory
     // (MeshSessionEdit). Gated to Edges mode by EdgeExtendTool.supportedModes().
     reg.toolFactories["edge.extend"] = () {
-        auto t = new EdgeExtendTool(() => &mesh(), &gpu(), &editMode(), litShader,
-                                    &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new EdgeExtendTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setUndoBindings(history, edgeExtendEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
         return cast(Tool)t;
@@ -817,8 +803,7 @@ private void registerEditTools(EditorApp app) {
     // Poly Bevel — interactive + headless (inset, shift params). Topology-creating
     // tool: reuses bevelEditFactory (MeshSessionEdit snapshot undo). Gated to Polygons.
     reg.toolFactories["poly.bevel"] = () {
-        auto t = new PolyBevelTool(() => &mesh(), &gpu(), &editMode(), litShader,
-                                   &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new PolyBevelTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
@@ -829,8 +814,7 @@ private void registerEditTools(EditorApp app) {
     // before/after-snapshot undo path, same as mesh.mirrorTool/mesh.tack
     // above. Gated to Polygons.
     reg.toolFactories["mesh.polyInsetTool"] = () {
-        auto t = new PolyInsetTool(() => &mesh(), &gpu(), &editMode(), litShader,
-                                   &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new PolyInsetTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
@@ -843,14 +827,12 @@ private void registerEditTools(EditorApp app) {
     // button is confirmed (task 0358) to be THIS SAME tool with thicken=1
     // forced, not a separate tool — see config/buttons.yaml.
     reg.toolFactories["mesh.smoothShiftTool"] = () {
-        auto t = new SmoothShiftTool(() => &mesh(), &gpu(), &editMode(), litShader,
-                                     &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new SmoothShiftTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setUndoBindings(history, smoothShiftEditFactory);
         return cast(Tool)t;
     };
     reg.toolFactories["xfrm.magnet"] = () {
-        auto t = new MagnetTool(() => &mesh(), &gpu(), &editMode(),
-                                &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new MagnetTool(() => &mesh(), &gpu(), &editMode());
         t.setUndoBindings(history, vxEditFactory);
         return cast(Tool)t;
     };
@@ -858,8 +840,7 @@ private void registerEditTools(EditorApp app) {
     // Edge Bevel — interactive + headless (width param). Topology-creating tool:
     // reuses bevelEditFactory (MeshSessionEdit snapshot undo). Gated to Edges mode.
     reg.toolFactories["edge.bevel"] = () {
-        auto t = new EdgeBevelTool(() => &mesh(), &gpu(), &editMode(), litShader,
-                                   &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new EdgeBevelTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
@@ -872,8 +853,7 @@ private void registerEditTools(EditorApp app) {
     // untouched) — separate registries, same precedent as poly.extrude/
     // mesh.mirrorTool elsewhere in this file. Gated to Vertices mode.
     reg.toolFactories["mesh.vertexBevel"] = () {
-        auto t = new VertexBevelTool(() => &mesh(), &gpu(), &editMode(), litShader,
-                                     &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new VertexBevelTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
@@ -885,8 +865,7 @@ private void registerEditTools(EditorApp app) {
     // pre-existing one-shot command, separate registries (see
     // mesh.vertexBevel above). Gated to Vertices mode.
     reg.toolFactories["mesh.vertexExtrude"] = () {
-        auto t = new VertexExtrudeTool(() => &mesh(), &gpu(), &editMode(), litShader,
-                                       &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new VertexExtrudeTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
@@ -898,8 +877,7 @@ private void registerEditTools(EditorApp app) {
     // keeps its own range/keep/morph params, untouched — see
     // tools/vert_merge_tool.d's doc-comment). Gated to Vertices mode.
     reg.toolFactories["vert.merge"] = () {
-        auto t = new VertexMergeTool(() => &mesh(), &gpu(), &editMode(), litShader,
-                                     &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new VertexMergeTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
@@ -909,8 +887,7 @@ private void registerEditTools(EditorApp app) {
     // mesh.loopSlice/mesh.addLoop commands (untouched); mutate/revert preview,
     // one MeshSessionEdit undo entry PER committed cut. Gated to Edges mode.
     reg.toolFactories["mesh.loopSliceTool"] = () {
-        auto t = new LoopSliceTool(() => &mesh(), &gpu(), &editMode(), litShader,
-                                   &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new LoopSliceTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setUndoBindings(history, loopSliceEditFactory);
         return cast(Tool)t;
     };
@@ -921,8 +898,7 @@ private void registerEditTools(EditorApp app) {
     // (reuses the generic bevelEditFactory snapshot command, labelled "Slice").
     // Distinct from the camera-plane one-shot mesh.screenSlice command.
     reg.toolFactories["mesh.sliceTool"] = () {
-        auto t = new SliceTool(() => &mesh(), &gpu(), &editMode(), litShader,
-                               &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new SliceTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
@@ -937,8 +913,7 @@ private void registerEditTools(EditorApp app) {
     // mesh.edgeSlice command stays registered below for headless/scripting.
     // Gated to Edges mode.
     reg.toolFactories["mesh.edgeSliceTool"] = () {
-        auto t = new EdgeSliceTool(() => &mesh(), &gpu(), &editMode(), litShader,
-                                   &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new EdgeSliceTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
@@ -947,8 +922,7 @@ private void registerEditTools(EditorApp app) {
     // Whole-mesh decimation via reduceToTarget; snapshot undo via MeshSessionEdit.
     // Gated to Polygons mode (whole-mesh op, but surfaced in polygon mode).
     reg.toolFactories["mesh.reduceTool"] = () {
-        auto t = new ReductionTool(() => &mesh(), &gpu(), &editMode(), litShader,
-                                   &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new ReductionTool(() => &mesh(), &gpu(), &editMode(), litShader);
         t.setUndoBindings(history, reduceEditFactory);
         return cast(Tool)t;
     };
@@ -958,8 +932,7 @@ private void registerEditTools(EditorApp app) {
     // MeshSessionEdit; gated to Polygons mode.  Drag→offset feel is a
     // vibe3d-divergence (no reference tool-model; uses planeDragDelta).
     reg.toolFactories["mesh.clone"] = () {
-        auto t = new CloneTool(() => &mesh(), &gpu(), &editMode(),
-                               &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new CloneTool(() => &mesh(), &gpu(), &editMode());
         t.setUndoBindings(history, cloneEditFactory);
         return cast(Tool)t;
     };
@@ -969,8 +942,7 @@ private void registerEditTools(EditorApp app) {
     // Snapshot undo via MeshSessionEdit; edit-mode-orthogonal (same face-
     // selection-or-whole-mesh convention as mesh.array/mesh.mirror).
     reg.toolFactories["mesh.arrayTool"] = () {
-        auto t = new ArrayTool(() => &mesh(), &gpu(), &editMode(),
-                               &vertexCache(), &edgeCache(), &faceCache());
+        auto t = new ArrayTool(() => &mesh(), &gpu(), &editMode());
         t.setUndoBindings(history, arrayEditFactory);
         return cast(Tool)t;
     };

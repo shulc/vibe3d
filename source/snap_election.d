@@ -536,8 +536,9 @@ private:
     // NARROWER IN A SECOND WAY, and it is named here rather than left to be
     // found: the reference's site is the ELEMENT ENUMERATOR, so its veto also
     // runs for press-picking. Ours is in the snap arbitration only. Our
-    // press-pick path does not come through here at all (it is the screen-space
-    // pick in `viewcache.d` / the BVH surface pick), so nothing about clicking
+    // press-pick path does not come through here at all (it is the GPU
+    // ID-buffer pick in `gpu_select.d` / the BVH surface pick), so nothing
+    // about clicking
     // changed with this port. Putting the veto there too would change what a
     // click selects, which is a selection change with its own evidence bar and
     // its own task — not a rider on a snap port.

@@ -24,8 +24,8 @@ import pipe_gizmo_host : PipeGizmoHost;
 import document : primaryModelSpace;
 
 // Factory: builds a fresh MeshVertexEdit (the tools share a registry-driven
-// constructor that wires gpu+caches; the tool just calls this delegate
-// rather than knowing about ViewCache + GpuMesh + Mesh separately).
+// constructor that wires the mesh, the camera view and the edit mode; the tool
+// just calls this delegate rather than assembling those three itself).
 alias VertexEditFactory = MeshVertexEdit delegate();
 /// Task 1069 — the ROUTED-gesture undo factory, `VertexEditFactory`'s twin.
 /// Nullable: a tool with no morph factory simply records nothing for a

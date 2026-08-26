@@ -2,11 +2,10 @@ module display_sync;
 
 import mesh : Mesh, GpuMesh;
 import mesh_edit_delta : MeshEditScope;
-import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import perf_probe : g_perf, Cat;
 
-/// Change classes that require a DISPLAY refresh (GPU upload + pick-cache
-/// resize/invalidate) of the active mesh — the mask the bus-driven refresh
+/// Change classes that require a DISPLAY refresh (the GPU upload) of the
+/// active mesh — the mask the bus-driven refresh
 /// engine (campaign 0407 §D4-в) keys on, both at the frame's flush site
 /// (capture-and-upload in app.d's main loop) and in the mid-batch pull guard
 /// `ensureDisplayCurrent` in front of every VBO reader that can run BEFORE
@@ -67,9 +66,9 @@ enum uint DisplayRefreshMask =
 // app.d's own pull guard. A tool runs against the mesh it was bound to,
 // which is NOT necessarily the one on screen once multiple layers coexist —
 // so the gate compares the target mesh against the app-installed
-// `activeMeshResolver` and no-ops the GPU upload + cache resize/invalidate
-// when they differ: the active layer's display buffer and the GLOBAL pick
-// caches are never written against a foreign (background) mesh.
+// `activeMeshResolver` and no-ops the GPU upload when they differ: the
+// active layer's display buffer is never written against a foreign
+// (background) mesh.
 //
 // app.d installs `activeMeshResolver` once at init
 // (`() => document.activeMesh()`). The mesh the resolver returns is the one
@@ -84,19 +83,22 @@ __gshared Mesh* delegate() activeMeshResolver;
 /// / previews that own the display mid-gesture) and app.d's mid-batch pull
 /// guard.
 ///
-/// When `target` is the active (on-screen) mesh, this performs the full
-/// GPU upload + cache resize/invalidate in one call. When
-/// `target` is a non-active (background) mesh, it is a no-op — the active
-/// layer's display buffer and the global pick caches are never written
-/// against a foreign mesh. The active layer is re-uploaded by the
-/// layer-switch hook when it becomes active, so nothing is left stale.
+/// When `target` is the active (on-screen) mesh, this performs the GPU
+/// upload. When `target` is a non-active (background) mesh, it is a no-op
+/// — the active layer's display buffer is never written against a foreign
+/// mesh. The active layer is re-uploaded by the layer-switch hook when it
+/// becomes active, so nothing is left stale.
 ///
-/// The `resize` calls are guarded inside the cache types (a resize to the
-/// same length is a genuine no-op), so routing both topology-changing and
-/// position-only refreshes through this single helper is uniform:
-/// topology-preserving refreshes hit the same-length fast path.
-void refreshDisplay(Mesh* target, GpuMesh* gpu,
-                    VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+/// UNTIL TASK 1930 this helper also took three pick-cache pointers (the
+/// vertex / edge / face-bounds caches of the since-deleted `viewcache`
+/// module) and resized+invalidated them here. That payload had no readers
+/// and no writers — the pick path (`gpu_select`, the BVH) never looked at
+/// it — so the work was per-frame byte-clearing of arrays nobody read, and
+/// the parameters existed only to thread three pointers through every
+/// interactive tool. Both are gone; the camera term they were nominally
+/// guarding lives at its real consumer as `CameraStamp`
+/// (`camera_stamp.d`), keyed by `gpu_select`'s slot.
+void refreshDisplay(Mesh* target, GpuMesh* gpu) {
     // Resolver not installed (e.g. tools/tests that construct commands
     // without app init): fall back to the legacy unconditional refresh so
     // those paths behave exactly as before this seam landed.
@@ -104,7 +106,8 @@ void refreshDisplay(Mesh* target, GpuMesh* gpu,
         return; // recorded layer not on screen — display refresh is a no-op
 
     // Perf (task 1370): the REFRESH half of every interactive-tool preview
-    // rebuild — a full `gpu.upload` plus three cache resize/invalidate pairs.
+    // rebuild — a full `gpu.upload`. (Until task 1930 it also paid three
+    // cache resize/invalidate pairs; see the doc comment above.)
     // Timed here, once, rather than at each caller — see Cat.previewRefresh.
     //
     // Opened AFTER the background-mesh gate above, deliberately: a no-op
@@ -118,7 +121,4 @@ void refreshDisplay(Mesh* target, GpuMesh* gpu,
     auto zRefresh = g_perf.scope_(Cat.previewRefresh);
 
     gpu.upload(*target);
-    vc.resize(target.vertices.length);                          vc.invalidate();
-    ec.resize(target.edges.length);                             ec.invalidate();
-    fc.resize(target.vertices.length, target.faces.length);     fc.invalidate();
 }

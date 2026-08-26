@@ -18,7 +18,6 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
-import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 import document : primaryModelSpace;
 import tools.slice.loop_slice_tool;
@@ -82,7 +81,7 @@ unittest {
     import std.conv : to;
 
     static LoopSliceTool build() {
-        return new LoopSliceTool(null, null, null, null, null, null, null);
+        return new LoopSliceTool(null, null, null, null);
     }
 
     auto a = build();
@@ -153,7 +152,7 @@ unittest {
             "setup: a face append without a terminal buildLoops must leave the "
             ~ "loops family stale");
 
-        auto tool = new LoopSliceTool(() => &m, null, &em, null, null, null, null);
+        auto tool = new LoopSliceTool(() => &m, null, &em, null);
         assertThrown!AssertError(tool.toolStateJson(),
             "toolStateJson must refuse a mesh whose loops family was never "
             ~ "rebuilt -- if this stops throwing, the precondition has become "

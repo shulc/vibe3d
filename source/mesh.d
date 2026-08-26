@@ -804,9 +804,8 @@ private Mesh*[] g_deliveryPendingMeshes;
 // `tools/edit/preview_rebuild.d :: PreviewRebuild.run`, once per mouse-motion
 // frame) delivers `0x3f`; `makeCube()` delivers 6 (one per `addFace`);
 // `makeGridPlane(316)` delivers ~99 856. `app.d`'s hub ORs those into
-// `meshChangedFlags`, whose `Geometry` arm runs `syncSelection` plus a full
-// pick-cache invalidation — a private scratch mesh would drive the live
-// document's caches. Filtering at the SOURCE also keeps a stack-local `Mesh`
+// `meshChangedFlags`, whose `Geometry` arm runs `syncSelection` on the LIVE
+// document mesh — a private scratch mesh would drive it. Filtering at the SOURCE also keeps a stack-local `Mesh`
 // out of `g_deliveryPendingMeshes` (review S2), which is the only reason that
 // set cannot name a dead frame.
 //
@@ -2656,7 +2655,7 @@ struct Mesh {
     // Deliberately does NOT bump mutationVersion — selection is a Marks-class
     // change, not a version-bumping geometry change, and the marks setters have
     // always been version-stable (a property other systems rely on; e.g. the
-    // pick-cache geometry key and mid-drag version stability must not move when
+    // GPU upload key and mid-drag version stability must not move when
     // only the highlight changes). Safe inside loops (pure OR) — the bulk
     // lasso/paint setters call it once after a compare-before-set guard so a
     // no-op restore does not spuriously publish.

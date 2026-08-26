@@ -7,6 +7,7 @@ import math   : Viewport, ModelSpace, matMul4;
 import mesh   : GpuMesh, Mesh;
 import shader : compileShader;
 import perf_probe : g_perf, Cat, g_fc, DrawPass;
+import camera_stamp : CameraStamp;
 
 // ---------------------------------------------------------------------------
 // GpuSelectBuffer — offscreen ID-buffer picker for vertices, edges, faces.
@@ -29,7 +30,12 @@ import perf_probe : g_perf, Cat, g_fc, DrawPass;
 // translates back to a cage element via gpu.vertOriginGpu /
 // gpu.edgeOriginGpu / gpu.faceOriginGpu after readback.
 //
-// Cache key: (mode, gpu.uploadVersion, view, proj, FBO size, occlude).
+// Cache key: (mode, gpu.uploadVersion, camera stamp, FBO size, occlude).
+// The camera half is ONE term, not two: `CameraStamp` (`camera_stamp.d`)
+// holds the `view` and `proj` matrices the FBO was rasterised under and
+// answers `changed(mv, vp.proj)` at the point of use. It is pinned by
+// `tests/test_gpu_select_slot_camera_key.d` — deleting the compare leaves a
+// parked hover answering out of the pre-orbit ID buffer.
 // One cache slot per mode so flipping edit modes 1/2/3 doesn't churn the
 // buffer; camera and mesh changes invalidate all three slots.
 //
@@ -178,11 +184,12 @@ private:
     // valid) and read back Face IDs as vert IDs — surfacing as
     // "hover over edge highlights vertex on opposite side".
     struct Slot {
-        bool      valid;
-        ulong     uploadVer;
-        float[16] view;
-        float[16] proj;
-        int       w, h;
+        bool        valid;
+        ulong       uploadVer;
+        /// The camera pose this slot's FBO was rasterised under — the
+        /// `view`/`proj` pair as one value (`camera_stamp.d`).
+        CameraStamp cam;
+        int         w, h;
         /// Was the face depth pre-pass run into this FBO? Part of the KEY,
         /// not a note — see the module header.
         bool      occlude;
@@ -483,8 +490,7 @@ private:
             && slot.occlude == occlude
             && slot.uploadVer == gpu.uploadVersion
             && slot.w == fboW && slot.h == fboH
-            && matricesEqual(slot.view, mv)
-            && matricesEqual(slot.proj, vp.proj))
+            && !slot.cam.changed(mv, vp.proj))
             return;
 
         renderMode(mode, gpu, vp, mv, occlude);
@@ -497,8 +503,7 @@ private:
         }
         slot.valid     = true;
         slot.uploadVer = gpu.uploadVersion;
-        slot.view      = mv;
-        slot.proj      = vp.proj;
+        slot.cam.update(mv, vp.proj);
         slot.w         = fboW;
         slot.h         = fboH;
         slot.occlude   = occlude;
@@ -750,9 +755,5 @@ private GLuint linkProgram(string vertSrc, string fragSrc) {
     return prog;
 }
 
-private bool matricesEqual(const ref float[16] a, const ref float[16] b) {
-    foreach (i; 0 .. 16) if (a[i] != b[i]) return false;
-    return true;
-}
 
 private int abs(int x) { return x < 0 ? -x : x; }

@@ -12,7 +12,6 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
-import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 import document : primaryModelSpace;
 
@@ -82,9 +81,6 @@ private:
     GpuMesh*         gpu;
     LitShader        litShader;
 
-    VertexCache*     vc;
-    EdgeCache*       ec;
-    FaceBoundsCache* fc;
 
     CommandHistory           history;
     StrokeExtrudeEditFactory factory;
@@ -118,14 +114,10 @@ private:
     enum size_t maxSpans = 4096;
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader,
-         VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader) {
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.litShader = litShader;
-        this.vc        = vc;
-        this.ec        = ec;
-        this.fc        = fc;
     }
 
     void destroy() {}
@@ -349,7 +341,7 @@ private:
     }
 
     void refreshCaches() {
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplay(mesh, gpu);
     }
 
     void cancelLiveEdit() {

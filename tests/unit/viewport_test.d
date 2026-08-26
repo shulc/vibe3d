@@ -4,7 +4,6 @@
 module tests.unit.viewport_test;
 
 import view          : View, ProjKind, ViewPreset;
-import viewcache     : VertexCache, FaceBoundsCache, EdgeCache;
 import gpu_select    : GpuSelectBuffer;
 import math          : Viewport, Vec3, Orientation;
 import display_state : ViewportDisplay, DrawPlan, resolveDrawPlan, kBackdropDim;

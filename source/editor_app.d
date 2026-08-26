@@ -46,7 +46,6 @@ import toolpipe.pipeline : g_pipeCtx;
 import gizmo;
 import view;
 import shader;
-import viewcache;
 import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot;
 import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
@@ -682,9 +681,6 @@ bool seedDefaultLayoutIfMissing(string userIniPath) {
 // ---------------------------------------------------------------------------
 alias MeshDg        = ref Mesh delegate();
 alias ViewDg         = ref View delegate();
-alias VertexCacheDg = ref VertexCache delegate();
-alias FaceCacheDg   = ref FaceBoundsCache delegate();
-alias EdgeCacheDg   = ref EdgeCache delegate();
 
 // ---------------------------------------------------------------------------
 // AI3D generate-modal field cluster (task 0415 Phase 2 -- symmetric pairing
@@ -741,14 +737,9 @@ struct RemeshModalRefs {
 // ---------------------------------------------------------------------------
 struct EditorApp {
     // ---- (б) nested-accessor delegates: lazy, live-binding ----
-    // `vertexCache`/`faceCache`/`edgeCache` are ALWAYS called with an
-    // explicit `()` at their app.d call sites (&vertexCache(), ...) so a
-    // plain delegate-typed field is verbatim: bare `vertexCache` never
-    // appears as a value-expression in Span A/B or the task-0419 panel
-    // block (grep-verified).
-    VertexCacheDg vertexCache;
-    FaceCacheDg   faceCache;
-    EdgeCacheDg   edgeCache;
+    // (Task 1930 removed `vertexCache`/`faceCache`/`edgeCache` from here
+    // along with `viewcache.d`; they were write-only fields feeding a
+    // payload nothing read.)
 
     // `mesh` is DIFFERENT (task 0419 finding -- same class of gotcha 0415
     // found for `cameraView`, not caught by 0415 itself because Span A/B

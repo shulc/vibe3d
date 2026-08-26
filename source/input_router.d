@@ -1593,8 +1593,8 @@ struct InputRouter {
         // primitives (addVertex / addFace), which publish a Geometry change on
         // the change-notification bus. The per-frame flush therefore delivers
         // Geometry on this same frame (event dispatch precedes the flush), and
-        // the loop's pick-cache block does the resize + invalidate +
-        // syncSelection. No explicit hand-off needed here any more (Stage 2).
+        // the loop's mesh-change block does the syncSelection. No explicit
+        // hand-off needed here any more (Stage 2).
         if (btn.button == SDL_BUTTON_LEFT) {
             ifs.dragMode = DragMode.None;
             // LMB up — close any open selection edit session. If the LMB
@@ -1897,9 +1897,7 @@ struct InputRouter {
         setOverrideMouse(mx, my);
         Viewport vp = app.vpm.activeSnapshot();
         ifs.pickVertices(vp, false);
-        if (app.edgeCache().needsUpdate(vp)) { app.edgeCache().invalidate(); app.edgeCache().update(vp); }
         ifs.pickEdges(vp, false);
-        if (app.faceCache().needsUpdate(vp)) { app.faceCache().invalidate(); app.faceCache().update(vp); }
         ifs.pickFaces(vp, false);
         int pickedVertex = ifs.hoveredVertex;
         int pickedEdge = ifs.hoveredEdge;

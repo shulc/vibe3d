@@ -10,7 +10,6 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
-import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 import editmode : EditMode;
 import operator : VectorStack;
@@ -53,9 +52,6 @@ private:
     GpuMesh*         gpu_;
     LitShader        litShader_;
 
-    VertexCache*     vc_;
-    EdgeCache*       ec_;
-    FaceBoundsCache* fc_;
 
     CommandHistory    history_;
     VertexEditFactory factory_;
@@ -71,15 +67,11 @@ private:
     int  source_   = -1;   // vertex index picked on button-down
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader,
-         VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc)
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader)
     {
         this.meshSrc_   = meshSrc;
         this.gpu_       = gpu;
         this.litShader_ = litShader;
-        this.vc_        = vc;
-        this.ec_        = ec;
-        this.fc_        = fc;
     }
 
     void setUndoBindings(CommandHistory h, VertexEditFactory f) {
@@ -199,7 +191,7 @@ public:
 
         // Refresh selection / picking caches (mirrors vertex_place.d:174-187).
         mesh.syncSelection();
-        refreshDisplay(mesh, gpu_, vc_, ec_, fc_);
+        refreshDisplay(mesh, gpu_);
         return true;
     }
 

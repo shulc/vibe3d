@@ -74,7 +74,6 @@ enum Cat {
     drawMesh,          // foreground faces (solid/lit) draw
     drawEdges,         // foreground wireframe edge draw (+ occasional sel-edge cache)
     drawOverlays,      // selection checker + vertex dots + tool/falloff gizmo & handles
-    viewcacheRebuild,  // screen-space pick-cache invalidate (camera/mesh change)
     hoverPick,         // per-frame hover pick (GPU ID-FBO + BVH face raycast)
     subpatchPreview,   // OSD subpatch preview rebuild
     // --- interactive-tool preview rebuild (task 1370) ---
@@ -85,7 +84,8 @@ enum Cat {
     //
     //     before.restore(*mesh);   // <- previewRestore
     //     <the tool's own kernel>  // <- what we actually want to watch
-    //     refreshCaches();         // <- previewRefresh (upload + cache resize)
+    //     refreshCaches();         // <- previewRefresh (the GPU upload; the
+    //                              //    cache-resize half went at task 1930)
     //
     // `toolPreview` wraps the whole method; `previewRestore` and
     // `previewRefresh` are opened ONCE EACH in the two shared callees
@@ -104,11 +104,12 @@ enum Cat {
     //
     // Nesting is deliberate and the JSON keys are distinct, so there is no
     // within-category double count — only a naive cross-category SUM would
-    // count the restore/refresh twice (same caveat as `viewcacheRebuild`
-    // nesting inside `cacheInvalidate`; see app.d).
+    // count the restore/refresh twice. (Until task 1930 the same caveat
+    // applied to `viewcacheRebuild` nesting inside `cacheInvalidate`; that
+    // inner category is gone with `viewcache.d`.)
     toolPreview,       // one whole rebuildPreview()/rebuildCut() call
     previewRestore,    // MeshSnapshot.restore — the ~16 array dups + buildLoops
-    previewRefresh,    // display_sync.refreshDisplay — gpu.upload + cache resize
+    previewRefresh,    // display_sync.refreshDisplay — the gpu.upload
     // ONE `Mesh.visibilityProbe` construction — passes 0 and 1 of the snap
     // visibility mask (task 1351). A TIMER, at REQUEST granularity: one
     // open/close per built probe, never one per candidate, so the
@@ -138,8 +139,9 @@ enum Cat {
     // the geometry the GPU rasterised (the LIMIT surface while a subpatch
     // preview is active, ~400 K faces at n=316). 1500 measured the frame
     // phase `cache` at 87-94 % of the first Tab's worst frame and named
-    // this rebuild as its bulk, but the phase timer also spans the
-    // viewcache block, so the attribution was an inference. This timer is
+    // this rebuild as its bulk, but the phase timer also spanned the
+    // pick-cache invalidate block (deleted with `viewcache.d` in task
+    // 1930), so the attribution was an inference. This timer is
     // what turns it into an observation: opened inside `BvhPick.rebuild`,
     // it is the construction and nothing else, so
     // `hoverPick - bvhRebuild` is the raycast half and
@@ -1173,7 +1175,6 @@ struct FrameWork {
     long cellsRendered;       /// cells whose dirty key actually fired a scene render
     long uploadCalls;         /// GpuMesh buffer (re)uploads issued this frame
     long uploadVerts;         /// mesh vertices those uploads covered
-    long viewCacheRebuilds;   /// screen-space pick-cache invalidate+update passes
     long hoverPicks;          /// pick operations run (GPU ID-buffer pass
                               /// AND BVH ray-casts — an interaction can be
                               /// several, so this is operations, not frames)
@@ -1260,7 +1261,6 @@ struct FrameWorkProbe {
         total_.cellsRendered     += cur_.cellsRendered;
         total_.uploadCalls       += cur_.uploadCalls;
         total_.uploadVerts       += cur_.uploadVerts;
-        total_.viewCacheRebuilds += cur_.viewCacheRebuilds;
         total_.hoverPicks        += cur_.hoverPicks;
         total_.pipeEvals         += cur_.pipeEvals;
         total_.stageEvals        += cur_.stageEvals;
@@ -1307,7 +1307,6 @@ struct FrameWorkProbe {
 
     void bumpCellConsidered()  { cur_.cellsConsidered++; }
     void bumpCellRendered()    { cur_.cellsRendered++; }
-    void bumpViewCacheRebuild(){ cur_.viewCacheRebuilds++; }
     void bumpHoverPick()       { cur_.hoverPicks++; }
     void bumpPipeEval()        { cur_.pipeEvals++; }
     void bumpStatRebuild()     { cur_.statRebuilds++; }
@@ -1389,7 +1388,6 @@ struct FrameWorkProbe {
         app.put(`,"drawVerts":`);        putLong(app, w.drawVerts);
         app.put(`,"uploadCalls":`);      putLong(app, w.uploadCalls);
         app.put(`,"uploadVerts":`);      putLong(app, w.uploadVerts);
-        app.put(`,"viewCacheRebuilds":`);putLong(app, w.viewCacheRebuilds);
         app.put(`,"hoverPicks":`);       putLong(app, w.hoverPicks);
         app.put(`,"pipeEvals":`);        putLong(app, w.pipeEvals);
         app.put(`,"stageEvals":`);       putLong(app, w.stageEvals);

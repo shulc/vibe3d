@@ -12,9 +12,10 @@
 //      the wrong layer's geometry.
 //
 //   2. Gated display refresh (Stage 0a): a mutating command refreshes the GPU
-//      buffer + global pick caches through `refreshDisplay`, which NO-OPs when
-//      the command's target mesh is not the active layer. Cross-layer undo of a
-//      background layer must never resize the global caches against a
+//      buffer through `refreshDisplay`, which NO-OPs when the command's target
+//      mesh is not the active layer. (It refreshed the global pick caches too
+//      until task 1930 deleted them.) Cross-layer undo of a background layer
+//      must never drive the active layer's display against a
 //      foreign-sized mesh, nor upload a background layer's geometry into the
 //      active display buffer.
 //
@@ -394,8 +395,8 @@ unittest {
 
 // ===========================================================================
 // 3. Stale-colliding-cache PROOF via interactive picking. After all the
-//    cross-layer churn above, the active layer's pick caches must be clean —
-//    a stale colliding snap/visibility/pick cache from another (equal-version,
+//    cross-layer churn above, the active layer's picking must be clean —
+//    a stale colliding snap/visibility/BVH cache from another (equal-version,
 //    equal-count) layer would make an interactive pick land on the wrong
 //    geometry or miss. We drive a real event-log vertex pick on the active
 //    cube and assert it selects exactly the recorded vertices.
@@ -423,7 +424,7 @@ unittest {
     // recorded log would re-select a layer and the pick below would measure
     // nothing. `mode` alone cannot catch that: it reports `editMode`, the
     // remembered GEOMETRY view, which reads "vertices" under Item too. This
-    // flow is about the pick CACHES, not about the selection type, so it says
+    // flow is about the PICKING PATH's caches, not about the selection type, so it says
     // which type it wants instead of inheriting one.
     cmd("select.vertex");
     assert(getSelection()["selType"].str == "vertex",
@@ -431,9 +432,9 @@ unittest {
         ~ "got " ~ getSelection()["selType"].str);
 
     // Interactive vertex pick on the now-active layer. The recorded log selects
-    // two cube vertices. A clean result proves the global pick caches resized /
-    // refreshed against the ACTIVE mesh, never reading a colliding background
-    // layer's stale entry.
+    // two cube vertices. A clean result proves the picking path keyed against
+    // the ACTIVE mesh, never reading a colliding background layer's stale
+    // entry.
     playEvents("tests/events/selection_points.log");
     auto sel = getSelection();
     assert(sel["mode"].str == "vertices", "pick mode on the active layer");

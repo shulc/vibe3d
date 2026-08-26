@@ -15,7 +15,6 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
-import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 import tools.create.create_common : pickWorkplane, BuildPlane,
                               pickWorkplaneFrame, WorkplaneFrame,
@@ -106,11 +105,6 @@ private:
     GpuMesh*         gpu;
     LitShader        litShader;
 
-    // Cache refs — refreshed after each commit since Pen mutates mesh
-    // mid-session (commits don't go through setActiveTool's bulk refresh).
-    VertexCache*     vc;
-    EdgeCache*       ec;
-    FaceBoundsCache* fc;
 
     PenParams        params_;
     CommandHistory   history;
@@ -154,14 +148,10 @@ private:
     SnapResult lastSnap;
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader,
-         VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader) {
         this.meshSrc_ = meshSrc;
         this.gpu       = gpu;
         this.litShader = litShader;
-        this.vc        = vc;
-        this.ec        = ec;
-        this.fc        = fc;
         toolHandles    = new ToolHandles();
     }
 
@@ -937,7 +927,7 @@ private:
         // Refresh selection/picking caches so the new face is hover-pickable
         // and selection arrays match the grown geometry.
         mesh.syncSelection();
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplay(mesh, gpu);
         // Drop in-progress state — tool stays active for the next polygon.
         state = PenState.Idle;
         clearVertHandlers();

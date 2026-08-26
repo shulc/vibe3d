@@ -479,11 +479,11 @@ final class InputFrameState {
         // may disagree.
         //
         // WHAT IT COSTS: ~143 us per pick against ~0.8 us, and a full ID
-        // re-render whenever the camera moves (the GPU slot key carries view
-        // and proj). Both are bounded — this branch is only taken while a
-        // preview is live, and `pickFaces` returns above during a camera
-        // drag, so the re-render is one per camera settle rather than one per
-        // frame. `/api/pick?engine=bvh` is UNCHANGED and still reaches the
+        // re-render whenever the camera moves (the GPU slot key carries a
+        // `CameraStamp` — `camera_stamp.d` — over view and proj). Both are
+        // bounded — this branch is only taken while a preview is live, and
+        // `pickFaces` returns above during a camera drag, so the re-render is
+        // one per camera settle rather than one per frame. `/api/pick?engine=bvh` is UNCHANGED and still reaches the
         // BVH directly, so the oracle that proves the equivalence above does
         // not route through this decision.
         int hit;

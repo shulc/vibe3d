@@ -14,7 +14,6 @@ import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
-import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 
 import std.math : lround;
 import perf_probe : g_perf, Cat;
@@ -46,9 +45,6 @@ private:
     EditMode*        editMode;
     LitShader        litShader;
 
-    VertexCache*     vc;
-    EdgeCache*       ec;
-    FaceBoundsCache* fc;
 
     CommandHistory        history;
     MeshReduceEditFactory factory;
@@ -61,15 +57,11 @@ private:
     MeshSnapshot before;    // session baseline (captured on activate)
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader,
-         VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader) {
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
         this.litShader = litShader;
-        this.vc        = vc;
-        this.ec        = ec;
-        this.fc        = fc;
     }
 
     void setUndoBindings(CommandHistory h, MeshReduceEditFactory f) {
@@ -114,7 +106,7 @@ public:
     override void cancelUncommittedEdit() {
         if (built && before.filled) before.restore(*mesh);
         built = false;
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplay(mesh, gpu);
     }
 
     override void resyncSession() {
@@ -169,7 +161,7 @@ public:
         }
         if (n == 0) return false;
 
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplay(mesh, gpu);
         return true;
     }
 
@@ -186,7 +178,7 @@ private:
 
         if (mesh.faces.length == 0) {
             built = false;
-            refreshDisplay(mesh, gpu, vc, ec, fc);
+            refreshDisplay(mesh, gpu);
             return;
         }
 
@@ -196,7 +188,7 @@ private:
         if (target >= origFaces) {
             // No-op ratio — mesh already at baseline, leave it clean.
             built = false;
-            refreshDisplay(mesh, gpu, vc, ec, fc);
+            refreshDisplay(mesh, gpu);
             return;
         }
 
@@ -222,7 +214,7 @@ private:
             ed.close();
         }
         built = (n != 0);
-        refreshDisplay(mesh, gpu, vc, ec, fc);
+        refreshDisplay(mesh, gpu);
     }
 
     // Record the interactive session as one snapshot-pair undo entry.

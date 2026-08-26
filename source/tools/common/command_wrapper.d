@@ -7,7 +7,6 @@ import mesh    : Mesh, GpuMesh;
 import view    : View;
 import editmode : EditMode;
 import seltype  : SelType;
-import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 import tool   : Tool;
 import edit_session : RefireClient;
@@ -67,9 +66,6 @@ abstract class CommandWrapperTool : Tool, RefireClient {
     protected Command inner;
     protected Mesh*   meshPtr;
     protected GpuMesh*        gpu;
-    protected VertexCache*    vc;
-    protected EdgeCache*      ec;
-    protected FaceBoundsCache* fc;
     protected View             viewRef;
 
     // Undo plumbing — same shape as TransformTool. Optional: tests /
@@ -734,7 +730,7 @@ abstract class CommandWrapperTool : Tool, RefireClient {
     }
 
     private void refreshCaches() {
-        refreshDisplay(meshPtr, gpu, vc, ec, fc);
+        refreshDisplay(meshPtr, gpu);
     }
 }
 
@@ -748,12 +744,12 @@ final class XfrmSmoothTool : CommandWrapperTool {
     private float      lastStrn;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+         GpuMesh* gpu) {
         inner_ = new MeshSmooth(mesh, view, editMode);
         inner  = inner_;
         meshPtr = mesh;
         viewRef = view;
-        this.gpu = gpu; this.vc = vc; this.ec = ec; this.fc = fc;
+        this.gpu = gpu;
     }
 
     override string name() const { return "xfrm.smooth"; }
@@ -780,12 +776,12 @@ final class XfrmJitterTool : CommandWrapperTool {
     private float      lastRange;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+         GpuMesh* gpu) {
         inner_ = new MeshJitter(mesh, view, editMode);
         inner  = inner_;
         meshPtr = mesh;
         viewRef = view;
-        this.gpu = gpu; this.vc = vc; this.ec = ec; this.fc = fc;
+        this.gpu = gpu;
     }
 
     override string name() const { return "xfrm.jitter"; }
@@ -812,12 +808,12 @@ final class XfrmQuantizeTool : CommandWrapperTool {
     private float        lastStep;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
-         GpuMesh* gpu, VertexCache* vc, EdgeCache* ec, FaceBoundsCache* fc) {
+         GpuMesh* gpu) {
         inner_ = new MeshQuantize(mesh, view, editMode);
         inner  = inner_;
         meshPtr = mesh;
         viewRef = view;
-        this.gpu = gpu; this.vc = vc; this.ec = ec; this.fc = fc;
+        this.gpu = gpu;
     }
 
     override string name() const { return "xfrm.quantize"; }
@@ -853,8 +849,7 @@ unittest {
     m.buildLoops();
     View view = new View(0, 0, 800, 600);
     auto hist = new CommandHistory();
-    auto t = new XfrmSmoothTool(&m, view, EditMode.Vertices,
-                                null, null, null, null);
+    auto t = new XfrmSmoothTool(&m, view, EditMode.Vertices, null);
     t.setUndoBindings(hist, () => new MeshVertexEdit(&m, view, EditMode.Vertices));
 
     // Count entries through the history's own record hook, throughout. task

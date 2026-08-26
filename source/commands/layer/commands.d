@@ -19,7 +19,8 @@ module commands.layer.commands;
 //
 // The active-layer switch (add / delete / select all move activeIndex) funnels
 // through ONE app-installed hook `onSwitch(prev, next)` so tool-drop, the
-// coalesce barrier, GPU re-upload, cache invalidation and the MeshChangeAll
+// coalesce barrier, GPU re-upload, the version-keyed cache invalidation and
+// the MeshChangeAll
 // notification happen in one place — see app.d's installSwitchHook.
 
 import command;
