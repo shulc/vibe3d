@@ -6,6 +6,35 @@ module tests.unit.mesh_ops.loop_slice_test;
 import mesh;
 import math;
 import mesh_ops.loop_slice;
+import mesh_edit_delta : MeshEditDelta, MeshEditScope, MeshOpEntry;
+
+// Task 1903 Stage F1: every MUTATING entry point of this family is a free
+// function over `ref MeshEditBatch` now, so a test cannot call one on a bare
+// `Mesh` — that is a COMPILE error, and it is the enforcement, not an
+// inconvenience. One helper for both entries, so there is ONE place that says
+// why the batch is `unrecorded`: nothing in these blocks reads an op-log, and
+// track 1 is the conversion axis only. The production callers open theirs the
+// same way (`commands/mesh/loop_slice.d` ×2, `tools/slice/loop_slice_tool.d`
+// ×2 — commit and per-frame preview — and `tools/edit/topology_pen/tool.d`'s
+// Add Loop). The RECORDING block at the bottom of this file is the one
+// deliberate exception, and it is the only block that looks at what the delta
+// says.
+//
+// `auto ref` is load-bearing: the 3-arg `insertEdgeLoops` and
+// `insertEdgeLoopsMulti` take `out uint[] newFaceIndices`, so the argument
+// must reach the kernel as an lvalue for the `out` to land back on the
+// caller's variable.
+//
+// The READ-ONLY entries need no helper: `collectEdgeRing` and
+// `loopSliceRingEdges` take `ref const(Mesh)`, so `m.collectEdgeRing(seed, c)`
+// keeps compiling verbatim on a `Mesh` lvalue (plan §4.1's whole point about
+// the const receiver).
+private bool sliceOnce(alias kernel, Args...)(ref Mesh m, auto ref Args args) {
+    auto ed = MeshEditBatch.unrecorded(m, kLoopSliceEditScope);
+    const ok = kernel(ed, args);
+    ed.close();
+    return ok;
+}
 
 unittest {
     import std.math : abs;
@@ -67,7 +96,7 @@ unittest {
         uint eiSeed = m.edgeIndex(0, 1);
         assert(eiSeed != ~0u, "seed edge 0-1 must exist in cube");
 
-        bool ok = m.insertEdgeLoops(eiSeed, [0.5f]);
+        bool ok = sliceOnce!insertEdgeLoops(m, eiSeed, [0.5f]);
         assert(ok, "insertEdgeLoops must succeed on cube");
 
         // Counts + Euler (V-E+F=2 for closed manifold).
@@ -153,7 +182,7 @@ unittest {
         uint eiSeed = m.edgeIndex(1, 5);
         assert(eiSeed != ~0u, "seed edge 1-5 must exist in strip");
 
-        bool ok = m.insertEdgeLoops(eiSeed, [0.5f]);
+        bool ok = sliceOnce!insertEdgeLoops(m, eiSeed, [0.5f]);
         assert(ok, "insertEdgeLoops must succeed on open strip");
 
         // V=12, E=17, F=6, Euler=1 (disk topology).
@@ -236,7 +265,7 @@ unittest {
 
     uint eiSeed = m.edgeIndex(0, 1);
     assert(eiSeed != ~0u, "seed edge 0-1 must exist in cube");
-    assert(m.insertEdgeLoops(eiSeed, [0.5f]), "insertEdgeLoops must succeed");
+    assert(sliceOnce!insertEdgeLoops(m, eiSeed, [0.5f]), "insertEdgeLoops must succeed");
     assert(m.faces.length == 10, "one belt loop on the cube must yield 10 faces");
     assert(m.faceMaterial.length == m.faces.length,
            "faceMaterial must be rebuilt to the new face count");
@@ -332,7 +361,7 @@ unittest {
         assert(!closed, "sanity: this belt's ring must be OPEN");
         assert(ring.length == 3, "sanity: ring crosses LEFT+FRONT (side A) + BACK (side B)");
 
-        bool ok = m.insertEdgeLoops(seed, [0.234f]);
+        bool ok = sliceOnce!insertEdgeLoops(m, seed, [0.234f]);
         assert(ok, "open-ring insertEdgeLoops must succeed");
         assert(m.vertices.length == 12, "4 distinct rails (seed + 3 exit rails) get one midpoint each");
 
@@ -370,7 +399,7 @@ unittest {
         auto ring = cube.collectEdgeRing(eiSeed, closed);
         assert(closed, "sanity: cube's equatorial ring must be CLOSED");
 
-        bool ok = cube.insertEdgeLoops(eiSeed, [0.234f]);
+        bool ok = sliceOnce!insertEdgeLoops(cube, eiSeed, [0.234f]);
         assert(ok, "closed-ring insertEdgeLoops must succeed");
         assert(cube.vertices.length == 12, "closed ring: 8 + 4 belt midpoints");
 
@@ -411,7 +440,7 @@ unittest {
     assert(eiSeed != ~0u, "seed edge 0-1 must exist in cube");
 
     uint[] newFaceIndices;
-    bool ok = m.insertEdgeLoops(eiSeed, [0.5f], newFaceIndices);
+    bool ok = sliceOnce!insertEdgeLoops(m, eiSeed, [0.5f], newFaceIndices);
     assert(ok, "insertEdgeLoops(3-arg) must succeed on cube");
 
     enum ringLen = 4;   // the equatorial ring crosses 4 quad faces
@@ -432,7 +461,7 @@ unittest {
     Mesh m2 = makeCube();
     m2.buildLoops();
     uint eiSeed2 = m2.edgeIndex(0, 1);
-    bool ok2 = m2.insertEdgeLoops(eiSeed2, [0.5f]);
+    bool ok2 = sliceOnce!insertEdgeLoops(m2, eiSeed2, [0.5f]);
     assert(ok2, "2-arg forwarder must still succeed");
     assert(m2.vertices.length == m.vertices.length
            && m2.edges.length == m.edges.length
@@ -460,13 +489,13 @@ unittest {
     uint eiDup = dup.edgeIndex(0, 1);
     assert(eiDup != ~0u, "seed edge 0-1 must exist on cube");
     uint[] nfDup;
-    bool okDup = dup.insertEdgeLoopsMulti([eiDup], [0.5f, 0.5f], nfDup);
+    bool okDup = sliceOnce!insertEdgeLoopsMulti(dup, [eiDup], [0.5f, 0.5f], nfDup);
     assert(okDup, "duplicate cut positions must still succeed (clean single cut)");
 
     Mesh clean = makeCube();
     uint eiClean = clean.edgeIndex(0, 1);
     uint[] nfClean;
-    bool okClean = clean.insertEdgeLoopsMulti([eiClean], [0.5f], nfClean);
+    bool okClean = sliceOnce!insertEdgeLoopsMulti(clean, [eiClean], [0.5f], nfClean);
     assert(okClean, "single-position reference insert must succeed");
 
     assert(dup.vertices.length == clean.vertices.length,
@@ -513,7 +542,7 @@ unittest {
     Mesh triple = makeCube();
     uint eiTriple = triple.edgeIndex(0, 1);
     uint[] nfTriple;
-    bool okTriple = triple.insertEdgeLoopsMulti([eiTriple], [0.5f, 0.5f, 0.5f], nfTriple);
+    bool okTriple = sliceOnce!insertEdgeLoopsMulti(triple, [eiTriple], [0.5f, 0.5f, 0.5f], nfTriple);
     assert(okTriple, "triple-duplicate cut positions must still succeed");
     assert(triple.vertices.length == clean.vertices.length
            && triple.faces.length == clean.faces.length
@@ -539,7 +568,7 @@ unittest {
     Mesh whole = makeCube();
     uint eiW = whole.edgeIndex(0, 1);
     uint[] nfW;
-    assert(whole.insertEdgeLoopsMulti([eiW], [0.5f], nfW),
+    assert(sliceOnce!insertEdgeLoopsMulti(whole, [eiW], [0.5f], nfW),
            "whole-ring insert must succeed");
     assert(whole.vertices.length == 12,
            "whole ring: 8 + 4 belt midpoints = 12 verts");
@@ -551,7 +580,7 @@ unittest {
     Mesh restr = makeCube();
     uint eiR = restr.edgeIndex(0, 1);
     uint[] nfR;
-    assert(restr.insertEdgeLoopsMulti([eiR], [0.5f], nfR, [0u, 5u]),
+    assert(sliceOnce!insertEdgeLoopsMulti(restr, [eiR], [0.5f], nfR, [0u, 5u]),
            "restricted insert must succeed");
     assert(restr.vertices.length == 11,
            "restricted: 8 + 3 (two boundary + one shared seed) midpoints = 11 verts");
@@ -603,7 +632,7 @@ unittest {
     uint eiOff = off.edgeIndex(1, 4);
     assert(eiOff != ~0u, "seed edge (1,4) must exist");
     uint[] nfOff;
-    assert(off.insertEdgeLoopsMulti([eiOff], [0.5f], nfOff, null, /*keepQuads*/false),
+    assert(sliceOnce!insertEdgeLoopsMulti(off, [eiOff], [0.5f], nfOff, null, /*keepQuads*/false),
            "keep-quads-off insert must succeed");
     assert(off.vertices.length == 10, "off: 7 + 3 midpoints = 10 verts");
     assert(off.faces.length == 5,     "off: Q0×2 + Q1×2 + T(now quad) = 5 faces");
@@ -616,7 +645,7 @@ unittest {
     Mesh on = makeStrip();
     uint eiOn = on.edgeIndex(1, 4);
     uint[] nfOn;
-    assert(on.insertEdgeLoopsMulti([eiOn], [0.5f], nfOn, null, /*keepQuads*/true),
+    assert(sliceOnce!insertEdgeLoopsMulti(on, [eiOn], [0.5f], nfOn, null, /*keepQuads*/true),
            "keep-quads-on insert must succeed");
     assert(on.vertices.length == 10, "on: identical vertex set (10 verts)");
     assert(on.faces.length == 5,     "on: same 5 faces (T is a quad)");
@@ -670,7 +699,7 @@ unittest {
     uint eiOff = off.edgeIndex(1, 6);
     assert(eiOff != ~0u, "seed edge (1,6) must exist");
     uint[] nfOff;
-    assert(off.insertEdgeLoopsMulti([eiOff], [0.5f], nfOff, null, false, /*ngon*/false),
+    assert(sliceOnce!insertEdgeLoopsMulti(off, [eiOff], [0.5f], nfOff, null, false, /*ngon*/false),
            "ngon-off insert must succeed");
     assert(off.vertices.length == 15, "off: 12 + 3 midpoints = 15 verts");
     assert(off.edges.length    == 20, "off: 20 edges (hexagon absorbs the terminating midpoint — watertight)");
@@ -687,7 +716,7 @@ unittest {
     Mesh on = makeStrip();
     uint eiOn = on.edgeIndex(1, 6);
     uint[] nfOn;
-    assert(on.insertEdgeLoopsMulti([eiOn], [0.5f], nfOn, null, false, /*ngon*/true),
+    assert(sliceOnce!insertEdgeLoopsMulti(on, [eiOn], [0.5f], nfOn, null, false, /*ngon*/true),
            "ngon-on insert must succeed");
     assert(on.vertices.length == 17, "on: 12 + 5 midpoints = 17 verts");
     assert(on.edges.length    == 24, "on: 24 edges (watertight crossing, no T-junction)");
@@ -745,7 +774,7 @@ unittest {
     uint eiOff = off.edgeIndex(0, 1);
     assert(eiOff != ~0u, "cube seed edge (0,1) must exist");
     uint[] nfOff;
-    assert(off.insertEdgeLoopsMulti([eiOff], [0.5f], nfOff, null, false, false, /*split*/false),
+    assert(sliceOnce!insertEdgeLoopsMulti(off, [eiOff], [0.5f], nfOff, null, false, false, /*split*/false),
            "split-off insert must succeed");
     immutable offV = off.vertices.length, offE = off.edges.length, offF = off.faces.length;
     assert(boundaryEdgeCount(off) == 0, "split off: closed cube, no boundary edges");
@@ -756,7 +785,7 @@ unittest {
     uint eiOn = on.edgeIndex(0, 1);
     uint[] nfOn;
     uint[2][] pairs;
-    assert(on.insertEdgeLoopsMulti([eiOn], [0.5f], nfOn, null, false, false, /*split*/true, /*caps*/false, &pairs),
+    assert(sliceOnce!insertEdgeLoopsMulti(on, [eiOn], [0.5f], nfOn, null, false, false, /*split*/true, /*caps*/false, &pairs),
            "split-on insert must succeed");
     assert(on.vertices.length == offV + 4, "split on: 4 rail midpoints duplicated");
     assert(on.edges.length    == offE + 4, "split on: 4 loop edges doubled into boundaries");
@@ -778,7 +807,7 @@ unittest {
     Mesh off2 = makeCube();
     uint[] nf2;
     uint[2][] pairs2;
-    off2.insertEdgeLoopsMulti([off2.edgeIndex(0, 1)], [0.5f], nf2, null, false, false, false, /*caps*/false, &pairs2);
+    sliceOnce!insertEdgeLoopsMulti(off2, [off2.edgeIndex(0, 1)], [0.5f], nf2, null, false, false, false, /*caps*/false, &pairs2);
     assert(pairs2.length == 0, "split off: no seam pairs emitted");
 }
 
@@ -825,7 +854,7 @@ unittest {
     uint eiO = open.edgeIndex(0, 1);
     assert(eiO != ~0u, "cube seed edge (0,1) must exist");
     uint[] nfOpen;
-    assert(open.insertEdgeLoopsMulti([eiO], [0.5f], nfOpen, null, false, false, /*split*/true, /*caps*/false),
+    assert(sliceOnce!insertEdgeLoopsMulti(open, [eiO], [0.5f], nfOpen, null, false, false, /*split*/true, /*caps*/false),
            "split-on caps-off insert must succeed");
     immutable openV = open.vertices.length, openE = open.edges.length, openF = open.faces.length;
     assert(boundaryEdgeCount(open) == 8, "caps off: two 4-edge boundary loops (8 boundary edges)");
@@ -835,7 +864,7 @@ unittest {
     Mesh capped = makeCube();
     uint eiC = capped.edgeIndex(0, 1);
     uint[] nfCap;
-    assert(capped.insertEdgeLoopsMulti([eiC], [0.5f], nfCap, null, false, false, /*split*/true, /*caps*/true),
+    assert(sliceOnce!insertEdgeLoopsMulti(capped, [eiC], [0.5f], nfCap, null, false, false, /*split*/true, /*caps*/true),
            "split-on caps-on insert must succeed");
     assert(capped.vertices.length == openV,     "caps on: adds NO new vertices");
     assert(capped.faces.length    == openF + 2, "caps on: +2 cap polys (one per shell loop)");
@@ -851,7 +880,7 @@ unittest {
     // caps is a no-op when Split is off (byte-for-byte the connected loop).
     Mesh nosplit = makeCube();
     uint[] nfNo;
-    assert(nosplit.insertEdgeLoopsMulti([nosplit.edgeIndex(0, 1)], [0.5f], nfNo, null, false, false, /*split*/false, /*caps*/true),
+    assert(sliceOnce!insertEdgeLoopsMulti(nosplit, [nosplit.edgeIndex(0, 1)], [0.5f], nfNo, null, false, false, /*split*/false, /*caps*/true),
            "caps-on split-off insert must succeed");
     assert(boundaryEdgeCount(nosplit) == 0 && componentCount(nosplit) == 1,
            "caps no-op with Split off: still the closed connected cube");
@@ -883,7 +912,7 @@ unittest {
     uint eiZ = z.edgeIndex(0, 1);
     assert(eiZ != ~0u, "cube seed edge (0,1) must exist");
     uint[] nfZ; uint[2][] prZ;
-    assert(z.insertEdgeLoopsMulti([eiZ], [0.5f], nfZ, null, false, false,
+    assert(sliceOnce!insertEdgeLoopsMulti(z, [eiZ], [0.5f], nfZ, null, false, false,
                                   /*split*/true, /*caps*/true, &prZ, /*gap*/0.0f),
            "split+caps, gap=0 insert must succeed");
     immutable zV = z.vertices.length, zE = z.edges.length, zF = z.faces.length;
@@ -898,7 +927,7 @@ unittest {
     Mesh g = makeCube();
     uint eiG = g.edgeIndex(0, 1);
     uint[] nfG; uint[2][] prG;
-    assert(g.insertEdgeLoopsMulti([eiG], [0.5f], nfG, null, false, false,
+    assert(sliceOnce!insertEdgeLoopsMulti(g, [eiG], [0.5f], nfG, null, false, false,
                                   /*split*/true, /*caps*/true, &prG, /*gap*/G),
            "split+caps, gap>0 insert must succeed");
     // Topology unchanged by Gap (positions only).
@@ -965,7 +994,7 @@ unittest {
     uint eiOff = off.edgeIndex(2, 4);
     assert(eiOff != ~0u, "seed edge (2,4) must exist");
     uint[] nfOff;
-    assert(off.insertEdgeLoopsMulti([eiOff], [0.5f], nfOff, null, false, false,
+    assert(sliceOnce!insertEdgeLoopsMulti(off, [eiOff], [0.5f], nfOff, null, false, false,
                                     false, false, null, 0.0f, /*curvature*/false),
            "curvature-off insert must succeed");
     assert(off.vertices.length == 10, "off: 8 + 2 midpoints = 10 verts");
@@ -980,7 +1009,7 @@ unittest {
     Mesh on = makeArcStrip(1.0f, 1.0f);
     uint eiOn = on.edgeIndex(2, 4);
     uint[] nfOn;
-    assert(on.insertEdgeLoopsMulti([eiOn], [0.5f], nfOn, null, false, false,
+    assert(sliceOnce!insertEdgeLoopsMulti(on, [eiOn], [0.5f], nfOn, null, false, false,
                                    false, false, null, 0.0f, /*curvature*/true),
            "curvature-on insert must succeed");
     // Topology IDENTICAL to the off case (curvature relocates verts only).
@@ -998,7 +1027,7 @@ unittest {
     Mesh half = makeArcStrip(1.0f, 1.0f);
     uint eiHalf = half.edgeIndex(2, 4);
     uint[] nfHalf;
-    assert(half.insertEdgeLoopsMulti([eiHalf], [0.5f], nfHalf, null, false, false,
+    assert(sliceOnce!insertEdgeLoopsMulti(half, [eiHalf], [0.5f], nfHalf, null, false, false,
                                      false, false, null, 0.0f, /*curvature*/true,
                                      /*curveTension*/0.5f),
            "curvature-on tension=0.5 insert must succeed");
@@ -1008,7 +1037,7 @@ unittest {
     Mesh zero = makeArcStrip(1.0f, 1.0f);
     uint eiZero = zero.edgeIndex(2, 4);
     uint[] nfZero;
-    assert(zero.insertEdgeLoopsMulti([eiZero], [0.5f], nfZero, null, false, false,
+    assert(sliceOnce!insertEdgeLoopsMulti(zero, [eiZero], [0.5f], nfZero, null, false, false,
                                      false, false, null, 0.0f, /*curvature*/true,
                                      /*curveTension*/0.0f),
            "curvature-on tension=0.0 insert must succeed");
@@ -1021,7 +1050,7 @@ unittest {
     Mesh flat = makeArcStrip(0.0f, 0.0f);
     uint eiFlat = flat.edgeIndex(2, 4);
     uint[] nfFlat;
-    assert(flat.insertEdgeLoopsMulti([eiFlat], [0.5f], nfFlat, null, false, false,
+    assert(sliceOnce!insertEdgeLoopsMulti(flat, [eiFlat], [0.5f], nfFlat, null, false, false,
                                      false, false, null, 0.0f, /*curvature*/true),
            "curvature-on flat-cage insert must succeed");
     assert(hasV(flat, Vec3(1.5f, 0, 0)) && hasV(flat, Vec3(1.5f, 0, 1)),
@@ -1069,7 +1098,7 @@ unittest {
     uint eiF = flat.edgeIndex(2, 4);
     assert(eiF != ~0u, "seed edge (2,4) must exist");
     uint[] nfF;
-    assert(flat.insertEdgeLoopsMulti([eiF], posV, nfF, null, false, false,
+    assert(sliceOnce!insertEdgeLoopsMulti(flat, [eiF], posV, nfF, null, false, false,
                                      false, false, null, 0.0f, false, 1.0f,
                                      /*profileHeights*/null, /*depth*/0.0f),
            "flat profile (null heights) insert must succeed");
@@ -1085,7 +1114,7 @@ unittest {
     Mesh vee = makeFlatStrip();
     uint eiV = vee.edgeIndex(2, 4);
     uint[] nfV;
-    assert(vee.insertEdgeLoopsMulti([eiV], posV, nfV, null, false, false,
+    assert(sliceOnce!insertEdgeLoopsMulti(vee, [eiV], posV, nfV, null, false, false,
                                     false, false, null, 0.0f, false, 1.0f,
                                     /*profileHeights*/hV, /*depth*/2.0f),
            "vee profile insert must succeed");
@@ -1103,7 +1132,7 @@ unittest {
     Mesh d0 = makeFlatStrip();
     uint eiD = d0.edgeIndex(2, 4);
     uint[] nfD;
-    assert(d0.insertEdgeLoopsMulti([eiD], posV, nfD, null, false, false,
+    assert(sliceOnce!insertEdgeLoopsMulti(d0, [eiD], posV, nfD, null, false, false,
                                    false, false, null, 0.0f, false, 1.0f,
                                    /*profileHeights*/hV, /*depth*/0.0f),
            "depth=0 profile insert must succeed");
@@ -1139,7 +1168,7 @@ unittest {
     uint eiVert  = grid.edgeIndex(0, 4);
     assert(eiHoriz != ~0u && eiVert != ~0u, "both cube seeds must exist");
     uint[] gridNewFaces;
-    bool okGrid = grid.insertEdgeLoopsMulti([eiHoriz, eiVert], [0.3f, 0.7f], gridNewFaces);
+    bool okGrid = sliceOnce!insertEdgeLoopsMulti(grid, [eiHoriz, eiVert], [0.3f, 0.7f], gridNewFaces);
     assert(okGrid, "grid insertEdgeLoopsMulti must succeed on the cube");
 
     // --- Sequential path: ring A alone, then re-find ring B's seed (the
@@ -1147,11 +1176,11 @@ unittest {
     //     kernel doc comment — so edgeIndex(0,4) is still valid post-cut).
     Mesh seq = makeCube();
     uint eiHoriz2 = seq.edgeIndex(0, 1);
-    bool okA = seq.insertEdgeLoops(eiHoriz2, [0.3f, 0.7f]);
+    bool okA = sliceOnce!insertEdgeLoops(seq, eiHoriz2, [0.3f, 0.7f]);
     assert(okA, "sequential ring-A insert must succeed");
     uint eiVert2 = seq.edgeIndex(0, 4);
     assert(eiVert2 != ~0u, "vertical seed edge 0-4 must survive ring-A's cut");
-    bool okB = seq.insertEdgeLoops(eiVert2, [0.3f, 0.7f]);
+    bool okB = sliceOnce!insertEdgeLoops(seq, eiVert2, [0.3f, 0.7f]);
     assert(okB, "sequential ring-B insert must succeed");
 
     // Equivalence: identical V/E/F counts...
@@ -1242,7 +1271,7 @@ unittest {
 
     uint eiSeed = m.edgeIndex(0, 1);
     assert(eiSeed != ~0u, "seed edge 0-1 must exist in cube");
-    bool ok = m.insertEdgeLoops(eiSeed, [0.5f]);
+    bool ok = sliceOnce!insertEdgeLoops(m, eiSeed, [0.5f]);
     assert(ok, "insertEdgeLoops must succeed on cube");
     assert(m.faces.length == 10, "cube ring cut must still produce 10 faces");
 
@@ -1426,7 +1455,7 @@ unittest {
            "sanity: the degenerate seed's ring must indeed be empty");
 
     uint[] newFaceIndices;
-    bool ok = m.insertEdgeLoopsMulti([eiValid, eiDegenerate], [0.5f], newFaceIndices);
+    bool ok = sliceOnce!insertEdgeLoopsMulti(m, [eiValid, eiDegenerate], [0.5f], newFaceIndices);
     assert(ok, "one valid + one degenerate seed must still succeed (valid seed's ring cut)");
     assert(m.vertices.length == 12, "valid seed's ring must still be cut (V=12, as single-seed)");
     // F=11: the base cube's single-seed cut gives F=10 (see the closed-ring
@@ -1449,7 +1478,7 @@ unittest {
     uint eBefore = cast(uint)m2.edges.length;
     uint fBefore = cast(uint)m2.faces.length;
     uint[] unused;
-    bool okAll = m2.insertEdgeLoopsMulti([eiDeg2], [0.5f], unused);
+    bool okAll = sliceOnce!insertEdgeLoopsMulti(m2, [eiDeg2], [0.5f], unused);
     assert(!okAll, "all-degenerate seed set must return false");
     assert(m2.vertices.length == vBefore && m2.edges.length == eBefore
            && m2.faces.length == fBefore, "all-degenerate call must not mutate the mesh");
@@ -1483,7 +1512,7 @@ unittest {
            "the collected ring entry must be the QUAD, never the triangle");
 
     // insertEdgeLoops cuts the quad and the triangle absorbs the midpoint.
-    bool ok = m.insertEdgeLoops(eiSeed, [0.5f]);
+    bool ok = sliceOnce!insertEdgeLoops(m, eiSeed, [0.5f]);
     assert(ok, "insertEdgeLoops must now cut a triangle-adjacent seed");
     assert(m.vertices.length == 7, "expected 7 verts after the cut");
     assert(m.edges.length    == 9, "expected 9 edges after the cut");
@@ -1517,7 +1546,7 @@ unittest {
     uint vBefore = cast(uint)m.vertices.length;
     uint eBefore = cast(uint)m.edges.length;
     uint fBefore = cast(uint)m.faces.length;
-    assert(!m.insertEdgeLoops(eiSeed, [0.5f]),
+    assert(!sliceOnce!insertEdgeLoops(m, eiSeed, [0.5f]),
            "insertEdgeLoops must return false with no quad on the seed");
     assert(m.vertices.length == vBefore, "vertex count must not change");
     assert(m.edges.length    == eBefore, "edge count must not change");
@@ -1548,7 +1577,7 @@ unittest { // S4/S5 — ONE ring face hidden, three visible: caps must be VISIBL
 
     uint ei = m.edgeIndex(0, 1);
     uint[] nf;
-    assert(m.insertEdgeLoopsMulti([ei], [0.5f], nf, null, false, false,
+    assert(sliceOnce!insertEdgeLoopsMulti(m, [ei], [0.5f], nf, null, false, false,
                                    /*split*/true, /*caps*/true),
         "split-on caps-on insert must succeed");
 
@@ -1575,7 +1604,7 @@ unittest { // S4/S5 companion — ALL FOUR ring faces hidden: caps must still
 
     uint ei = m.edgeIndex(0, 1);
     uint[] nf;
-    assert(m.insertEdgeLoopsMulti([ei], [0.5f], nf, null, false, false,
+    assert(sliceOnce!insertEdgeLoopsMulti(m, [ei], [0.5f], nf, null, false, false,
                                    /*split*/true, /*caps*/true),
         "split-on caps-on insert must succeed");
 
@@ -1973,7 +2002,7 @@ private BandRunResult runBandAndClassify(Vec3[][] sel, float pos) {
     uint[] bandFaces = m.selectedFaceIndicesInSelectionOrder();
 
     uint[] newFaceIndices;
-    bool ok = m.insertEdgeLoopsMulti(null, [pos], newFaceIndices, bandFaces);
+    bool ok = sliceOnce!insertEdgeLoopsMulti(m, null, [pos], newFaceIndices, bandFaces);
     assert(ok, "band cut must succeed");
 
     BandRunResult res;
@@ -2151,7 +2180,7 @@ unittest {
     immutable size_t facesBefore = m.faces.length;
 
     uint[] newFaceIndices;
-    bool ok = m.insertEdgeLoopsMulti(null, [0.5f], newFaceIndices, bandFaces);
+    bool ok = sliceOnce!insertEdgeLoopsMulti(m, null, [0.5f], newFaceIndices, bandFaces);
 
     assert(!ok, "an all-degenerate band selection must report a no-op");
     // The load-bearing assert: before the fix, the pre-pass's `getMids`
@@ -2172,4 +2201,346 @@ unittest {
         "a no-op band cut must NOT touch the face count");
     assert(newFaceIndices.length == 0,
         "a no-op band cut must report no new faces");
+}
+
+// ===========================================================================
+// Task 1903 Stage F1 — the batch cells and the recording block.
+// ===========================================================================
+
+/// A stand that carries EVERY plane a revert would have to bring back: a
+/// selected vertex / edge / face with their orders and counters, per-face
+/// material and part, all three set masks, one HIDDEN face, one SUBPATCH face
+/// and a PolyVertex UV map. Audited plane by plane rather than by name — the
+/// Stage E2 review's BLOCKER B1 was a recording stand carrying one `faceMarks`
+/// bit and no selection, which made "the revert is complete" hold for free.
+private Mesh recSliceStand() {
+    auto m = makeCube();
+    m.buildLoops();
+    m.resetSelection();
+    m.selectVertex(1);
+    m.selectEdge(3);
+    m.selectFace(4);
+    m.faceMaterial.length = m.faces.length;
+    m.facePart.length     = m.faces.length;
+    foreach (i; 0 .. m.faces.length) {
+        m.faceMaterial[i] = cast(uint)(i % 3);
+        m.facePart[i]     = cast(uint)(i % 2);
+    }
+    m.vertexSetMask.length = m.vertices.length;
+    m.faceSetMask.length   = m.faces.length;
+    m.vertexSetMask[2] = 1UL;
+    m.faceSetMask[1]   = 2UL;
+    m.edgeSetMask[m.edgeKeyOf(0)] = 4UL;
+    m.edgeSetMask[m.edgeKeyOf(5)] = 8UL;
+    m.setFaceHidden(0, true);
+    m.setFaceSubpatch(2, true);
+    auto mp = m.addMeshMap(kUvMapName, 2, MapDomain.PolyVertex);
+    foreach (fi; 0 .. m.faces.length)
+        foreach (c; 0 .. m.faces[fi].length) {
+            const size_t slot = (m.faceLoop[fi] + c) * 2;
+            auto p = m.vertices[m.faces[fi][c]];
+            mp.data[slot]     = p.x + 0.25f;
+            mp.data[slot + 1] = p.y + 0.5f;
+        }
+    return m;
+}
+
+private string kindsOf(ref MeshEditDelta d) {
+    import std.conv : to;
+    string s = "[";
+    foreach (i, ref e; d.log) { if (i) s ~= " "; s ~= e.kind.to!string; }
+    return s ~ "]";
+}
+
+private size_t countKind(ref MeshEditDelta d, MeshOpEntry.Kind k) {
+    size_t n; foreach (ref e; d.log) if (e.kind == k) ++n; return n;
+}
+
+unittest { // ONE stamp, however many loops the cut inserts — and it SCALES
+    import std.format : format;
+    // A SCALE check, not a location check. Measured on this stand with the
+    // deferral disabled (M-F1-BATCH: `if (false) if (auto f =
+    // currentBatchFrame(&this))` in Mesh.commitChange): ONE position costs 6
+    // stamps, THREE cost 14. The batch holds both at 1, and the amplitude
+    // grows with the position count — the half a single-position cell cannot
+    // see, and the half no wire counter can see at all (E3 memo 11: at suite
+    // level a batch per cut and a batch over the ladder read identically on
+    // every /api/changes counter, so `mutationVersion` in the unit lane is the
+    // only discriminator).
+    static immutable ulong[2] kUnbatched = [6, 14];
+    foreach (i, positions; [[0.5f], [0.25f, 0.5f, 0.75f]]) {
+        Mesh m = recSliceStand();
+        immutable uint seed = m.edgeIndex(0, 1);
+        assert(seed != ~0u, "recSliceStand must carry the cube belt seed edge");
+
+        immutable ulong base = m.mutationVersion;
+        uint[] nfi;
+        bool ok;
+        {
+            auto ed = MeshEditBatch.unrecorded(m, kLoopSliceEditScope);
+            ok = ed.insertEdgeLoopsMulti([seed], positions, nfi);
+            ed.close();
+        }
+        immutable ulong d = m.mutationVersion - base;
+
+        // ANTI-VACUITY: a refusal returns false and makes no commits, so
+        // `d == 1` would fail on one — but pin the work anyway, because a
+        // future refusal that stamped once would sail through.
+        assert(ok && nfi.length == 4 * (positions.length + 1),
+            format("the stand cut %s and reported %d new face(s), expected "
+                 ~ "true and %d (a four-face belt ring, %d sub-quads each) — "
+                 ~ "the assertion below would be measuring a refusal "
+                 ~ "(task 1903 Stage F1)",
+                   ok, nfi.length, 4 * (positions.length + 1),
+                   positions.length + 1));
+        assert(d == 1,
+            format("a %d-position loop slice bumped mutationVersion by %d, "
+                 ~ "expected exactly 1. The `MeshEditBatch` its caller opens — "
+                 ~ "the two commands in commands/mesh/loop_slice.d, the tool's "
+                 ~ "commit and per-frame preview in "
+                 ~ "tools/slice/loop_slice_tool.d, the topology pen's Add Loop "
+                 ~ "— is what defers every internal commit to one close(). "
+                 ~ "Without it this reads %d on this stand, and the figure "
+                 ~ "grows with the position count (6 for one, 14 for three) "
+                 ~ "(task 1903 Stage F1).",
+                   positions.length, d, kUnbatched[i]));
+    }
+}
+
+/// The scope this family declares, written out from the enum INDEPENDENTLY of
+/// `kLoopSliceEditScope` — `d.scope_` IS that constant fed through
+/// `MeshEditTracker.declare`, so comparing them proves nothing on its own (a
+/// draft of exactly that shape stayed green under `enum uint kReduceEditScope
+/// = 0;` at Stage D2). Written from what the kernel DOES: it appends a rail
+/// vertex per crossed rail per position and, under Split, a duplicate for each
+/// (Points); it replaces the whole face array with the ring split and appends
+/// Cap Sections polygons (Polygons); it rewrites the mark words through
+/// `setFaceMarksFrom` and clears every selection through `resetSelection`
+/// (Marks); and the Gap and Profile options MOVE vertices through
+/// `setVertexPositions` (Position). The fourth bit is the one that separates
+/// this family from the two bevels, which declare `Geometry|Marks` and move
+/// nothing.
+private enum uint kExpectedSliceScope = MeshEditScope.Points
+                                      | MeshEditScope.Polygons
+                                      | MeshEditScope.Marks
+                                      | MeshEditScope.Position;
+
+unittest { // the loop slice's op-log NAMES NO FACE CHANGE, and its revert FAULTS
+    import std.format : format;
+    Mesh m = recSliceStand();
+
+    // STAND CANARY — asserts the stand, not the code under test.
+    assert(m.isFaceSelected(4) && m.isVertexSelected(1) && m.isEdgeSelected(3)
+           && m.isFaceHidden(0) && m.isFaceSubpatch(2)
+           && m.meshMap(kUvMapName) !is null && m.edgeSetMask.length == 2,
+        "recSliceStand selected/tagged nothing — the Marks half of the law "
+      ~ "below would be vacuous (task 1903 Stage F1, and Stage E2 review "
+      ~ "BLOCKER B1 for the shape)");
+
+    immutable size_t preV = m.vertices.length, preF = m.faces.length;
+    immutable uint seed = m.edgeIndex(0, 1);
+
+    MeshEditDelta d;
+    bool ok;
+    uint[] nfi;
+    {
+        auto ed = MeshEditBatch(m, kLoopSliceEditScope);   // RECORDING
+        ok = ed.insertEdgeLoopsMulti([seed], [0.5f], nfi);
+        d = ed.close();
+    }
+
+    assert(ok && m.vertices.length == preV + 4 && m.faces.length == preF + 4,
+        format("the stand cut %s (V %d -> %d, F %d -> %d), expected true, "
+             ~ "V +4 (one rail midpoint per belt rail) and F +4 (each of the "
+             ~ "four belt faces splits in two) — every assertion below would "
+             ~ "be vacuous on a refusal",
+               ok, preV, m.vertices.length, preF, m.faces.length));
+
+    assert(cast(uint)d.scope_ == kExpectedSliceScope,
+        format("a recording loop slice declared scope 0x%x, expected 0x%x "
+             ~ "(Points|Polygons|Marks|Position). Missing: 0x%x. Unexpected: "
+             ~ "0x%x. `MeshEditDelta.finalize` reads scope_ back on a revert "
+             ~ "to decide what to bump and rebuild (task 1903 Stage F1)",
+               cast(uint)d.scope_, kExpectedSliceScope,
+               kExpectedSliceScope & ~cast(uint)d.scope_,
+               cast(uint)d.scope_ & ~kExpectedSliceScope));
+    assert(cast(uint)d.scope_ == kLoopSliceEditScope,
+        format("the delta's scope_ (0x%x) is not the kLoopSliceEditScope the "
+             ~ "batch was opened with (0x%x) — the declared scope is not "
+             ~ "reaching MeshEditDelta.scope_ at all",
+               cast(uint)d.scope_, kLoopSliceEditScope));
+
+    // THE FINDING, MEASURED (2026-08-26).
+    //
+    // Six faces became ten, every one of the four belt faces was replaced,
+    // and the op-log is ONE entry:
+    //
+    //     entries=1 kinds=[AddVerts]
+    //
+    // — the four rail midpoints and nothing else. The whole face array was
+    // installed through `mesh_planes.rewriteFaces(ed, …, &rw, vertBlend)`,
+    // whose `Kind.FaceReindex` publisher is merely DISARMED
+    // (`MeshEditTracker.wantsFaceReindex` is false). That is the shape Stage
+    // K's per-rewrite arming scope reaches, and plan §5.3's audit row for this
+    // kernel already says "yes, after Stage J" — CONFIRMED here by arming and
+    // measuring, which is the only way a disarmed publisher can be told from
+    // an absent one (E3 memo 12). With the flag armed at its declaration the
+    // log becomes `[AddVerts FaceReindex]` and `revert()` STOPS throwing — it
+    // answers `true`. The potency of that mutation was checked on a FOREIGN
+    // family: the same armed build reddens
+    // `tests/unit/mesh_ops/cleanup_test.d(785)` ("revert restored V=4 F=3,
+    // expected V=4 F=2"), so an unchanged log here would have meant something.
+    //
+    // ARMING IS NOT THE FIX, AND THAT IS MEASURED TOO — the same shape the
+    // vertex chamfer showed at Stage E4. With the flag armed, `revert()`
+    // answers `true`, V/F/E and every winding come back, `faceMaterial`,
+    // `facePart`, `faceSetMask` and `edgeSetMask` come back, the `Hide` and
+    // `Subpatch` bits of `faceMarks` come back — and these do NOT:
+    //
+    // NINE ROWS, and the count is written out here because it was carried as
+    // six / seven / eight in three different artefacts before the F1 review
+    // (2026-08-26). This enumeration is the canonical one; the plan's §5.3 K
+    // row and the card quote it verbatim.
+    //
+    //     1. vertexMarks[1] Select      1 -> 0
+    //     2. edgeMarks[3]   Select      1 -> 0
+    //     3. faceMarks[4]   Select      1 -> 0
+    //     4. vertexSelectionOrder[1]    1 -> 0
+    //     5. edgeSelectionOrder[3]      1 -> 0
+    //     6. faceSelectionOrder[4]      1 -> 0
+    //     7. all three selection-order counters   1,1,1 -> 0,0,0
+    //     8. vertexSetMask  — VALUES correct, LENGTH left grown (8 -> 12)
+    //     9. meshMaps["uv"].data — 48 floats, ALL ZEROED (36 were non-zero)
+    //
+    // THE ATTRIBUTION IS THREE-WAY, NOT ONE-WAY, and each third was measured
+    // by VARIANT on the armed build rather than reasoned from the code:
+    //
+    //   * SEVEN of the nine (1, 2, 4, 5, 6, 7, 8) are the tail
+    //     `resetSelection()`. Deleting that one call restores every one of
+    //     them: `vertexMarks[1]`/`edgeMarks[3]` come back true, all three
+    //     order slots read 1 again, the counters read 1,1,1 and
+    //     `vertexSetMask.length` stays 8. No `FaceReindex` could have carried
+    //     the vertex or edge half.
+    //   * ROW 3 IS NOT `resetSelection`'s, and this is where the pre-review
+    //     text was self-contradictory. `faceMarks[4]` Select is cleared by
+    //     `ed.setFaceMarksFrom(newWord, ~ed.Marks.Select)` (the tail of `insertEdgeLoopsMulti`),
+    //     BEFORE the tail ever runs. Measured: with `resetSelection()` deleted
+    //     the face Select bit is ALREADY false post-op, and `FaceReindex`'s
+    //     reverse faithfully restores a surviving old face from the live
+    //     post-op word — which has Select off. So it stays lost.
+    //   * ROW 9 IS NEITHER. `resetSelection()` deleted, the map is STILL
+    //     zeroed at 48. Its cause is `MeshEditDelta.finalize`'s tail
+    //     `m.resizeAllMeshMaps()` (mesh_edit_delta.d:2032) reaching
+    //     `resizeMeshMapData`, whose documented rule is "topology rewritten
+    //     WITHOUT a relocate … ZERO the whole map at the new length"
+    //     (`resizeMeshMapData`'s own doc comment). The log is `[AddVerts FaceReindex]` — no
+    //     `Kind.MeshMapDelta`, whose only publisher is
+    //     `Mesh.recordPolyVertexPayload`, never called on this path.
+    //
+    // TWO DIFFERENCES FROM E4's vertex chamfer, and they matter to whoever
+    // owns the remedy: here `faceSelectionOrder` IS lost (there it survived),
+    // and here the FORWARD op CARRIES the PolyVertex UV map rather than
+    // zeroing it (measured: 48 floats / 36 non-zero -> 80 / 60, with and
+    // without Split+Gap), so this family IS inside the 0682/0830 corner-carry
+    // census.
+    //
+    // THE FORWARD CARRY DOES NOT MAKE UNDO SAFE, AND THE PRE-REVIEW TEXT SAID
+    // IT DID. That inference was measurably false and it is the sentence L9
+    // would have acted on. The forward carry is a `rewriteFaces` property; the
+    // REVERSE is the half undo needs, and on the armed build — exactly the L9
+    // state — `revert()` restores the map's LENGTH (80 -> 48) and ZEROES all
+    // 48 floats, 36 of which were non-zero:
+    //
+    //     pre  [0..12] = -0.25 0 -0.25 1 0.75 1 0.75 0 -0.25 0 0.75 0
+    //     post-revert  =  0    0  0    0 0    0 0    0  0    0 0    0
+    //
+    // What L9 owes, therefore, is THREE publishers and not one: a MARKS
+    // publisher (plan L0's first production publishers) for all three domains
+    // plus the set-mask resize (rows 1, 2, 4-8); publishing
+    // `setFaceMarksFrom` (row 3), which the Marks publisher does NOT cover;
+    // and a `MeshMapDelta` publisher on this path (row 9), which neither
+    // covers. Any of the three left undone is a stated `MeshSnapshot` refusal,
+    // not a silent gap. None of it is a reorder.
+    //
+    // `revert()` IS NOT CALLED IN THIS BLOCK, and that is a MEASUREMENT, not
+    // caution: on the shipped (disarmed) build it THROWS
+    // `index [8] is out of bounds for array of length 8` and leaves the mesh
+    // half-reverted at V=8 F=10 E=20 with 16 dangling face corners (max
+    // corner index 11 against 8 vertices). The observable that flips when
+    // this is fixed is the KIND LIST below.
+    //
+    // STAGE K/L9 FLIPS THIS.
+    assert(d.log.length == 1,
+        format("the loop slice recorded %d op-log entr(ies) %s, expected "
+             ~ "exactly 1. If a face entry has appeared, K/J has armed the "
+             ~ "rewrite — good news, and this block's whole comment plus plan "
+             ~ "§5.3's row move with it, including the NINE rows the armed "
+             ~ "revert was measured to lose — seven selection planes, the "
+             ~ "set-mask resize, and the PolyVertex UV map zeroed at its "
+             ~ "restored length (task 1903 Stage F1).",
+               d.log.length, kindsOf(d)));
+    assert(countKind(d, MeshOpEntry.Kind.AddVerts) == 1,
+        format("the loop slice's op-log is %s, expected exactly one AddVerts "
+             ~ "(task 1903 Stage F1).", kindsOf(d)));
+    assert(countKind(d, MeshOpEntry.Kind.FaceReindex)  == 0
+        && countKind(d, MeshOpEntry.Kind.AddFaces)     == 0
+        && countKind(d, MeshOpEntry.Kind.ReshapeFaces) == 0
+        && countKind(d, MeshOpEntry.Kind.RemoveFaces)  == 0,
+        format("the loop slice's op-log now names a face change (%s) — see the "
+             ~ "comment above: the rewrite's publisher was DISARMED, and if it "
+             ~ "is armed now the NINE-row loss measured under arming has to "
+             ~ "be re-checked before this is called fixed "
+             ~ "(task 1903 Stage F1, plan §5.3).", kindsOf(d)));
+}
+
+unittest { // the Gap and the Profile writes are RECORDED, one SetPos entry each
+    import std.format : format;
+    // The half of Stage F1 that only a recording batch can see. Before F1 both
+    // blocks were raw `vertices[pr[0]] = …` / `vertices[r.midsVa[i]] = …`
+    // writes: a recording batch around a split-gap or profiled cut produced an
+    // op-log that named the added vertices and said NOTHING about the
+    // coordinates it had just moved. `Kind.SetPos` had a complete
+    // forward+reverse apply and no publisher on this path at all.
+    //
+    // The two blocks are counted SEPARATELY, and the third cell is why: a
+    // single `== 1` row would be satisfied by either block alone, and a cut
+    // that runs both must produce TWO entries — one per `setVertexPositions`
+    // call. Measured: plain `[AddVerts]`; +Gap `[AddVerts SetPos]`; +Profile
+    // `[AddVerts SetPos]`; both `[AddVerts SetPos SetPos]`.
+    static struct Cell { string name; bool split; float gap; float[] heights; float depth; size_t setPos; }
+    static immutable Cell[] cells = [
+        Cell("plain",          false, 0.0f, null,                 0.0f, 0),
+        Cell("split, no gap",  true,  0.0f, null,                 0.0f, 0),
+        Cell("split+gap",      true,  0.2f, null,                 0.0f, 1),
+        Cell("profile",        false, 0.0f, [0.0f, 1.0f, 0.0f],   0.4f, 1),
+        Cell("split+gap+profile", true, 0.1f, [0.0f, 1.0f, 0.0f], 0.4f, 2),
+    ];
+    foreach (c; cells) {
+        Mesh m = recSliceStand();
+        immutable uint seed = m.edgeIndex(0, 1);
+        float[] pos = (c.heights.length > 0) ? [0.25f, 0.5f, 0.75f] : [0.5f];
+        MeshEditDelta d;
+        bool ok;
+        uint[] nfi;
+        {
+            auto ed = MeshEditBatch(m, kLoopSliceEditScope);   // RECORDING
+            ok = ed.insertEdgeLoopsMulti([seed], pos, nfi, null, false, false,
+                                         c.split, false, null, c.gap,
+                                         false, 1.0f, c.heights.dup, c.depth);
+            d = ed.close();
+        }
+        assert(ok, c.name ~ ": the stand refused the cut — every count below "
+                          ~ "would be vacuous (task 1903 Stage F1)");
+        assert(countKind(d, MeshOpEntry.Kind.SetPos) == c.setPos,
+            format("%s: the loop slice recorded %d `SetPos` entr(ies) %s, "
+                 ~ "expected %d. Stage F1 migrated FOUR raw coordinate writes "
+                 ~ "to two `ed.setVertexPositions` calls — the Gap block's "
+                 ~ "seam pair and the Profile block's rail mids — and a raw "
+                 ~ "write inside a recording batch produces NO entry at all: "
+                 ~ "a delta undo would restore the topology and leave every "
+                 ~ "seam half and every profiled rail at its displaced "
+                 ~ "coordinate (task 1903 §2.5, §5.7).",
+                   c.name, countKind(d, MeshOpEntry.Kind.SetPos), kindsOf(d),
+                   c.setPos));
+    }
 }

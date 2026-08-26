@@ -169,7 +169,9 @@ mixin template PenRenderOps() {
                 // Pixel (§1.1), once for the whole ring (§3).
                 const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
                 enum uint loopCol = IM_COL32(255, 90, 220, 220);   // add-loop magenta
-                foreach (ei; m.loopSliceRingEdges(cast(uint)addLoopSeed_)) {
+                // `(*m).`: Stage F1 made this a free function over
+                // `ref const(Mesh)`; UFCS does not auto-deref a pointer.
+                foreach (ei; (*m).loopSliceRingEdges(cast(uint)addLoopSeed_)) {
                     if (ei < 0 || ei >= cast(int)m.edges.length) continue;
                     auto ringE = m.edges[ei];
                     ImVec2 ra, rb;

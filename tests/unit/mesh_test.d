@@ -15,7 +15,11 @@ import change_bus : SelDomain;
 // Nothing in this file ever NAMED any of the templates imported around it; they
 // came across with the 0706 move of mesh.d's unittest blocks and each track-1
 // stage sheds its own line.)
-import mesh_ops.loop_slice : MeshLoopSliceOps;
+// (`import mesh_ops.loop_slice : MeshLoopSliceOps;` was here until task 1903
+// Stage F1 turned that family into free functions — the template name no
+// longer exists. Nothing in this file ever NAMED any of the templates
+// imported around it; they came across with the 0706 move of mesh.d's
+// unittest blocks and each track-1 stage sheds its own line.)
 // (`import mesh_ops.revolve : MeshRevolveOps;` was here until task 1903 Stage
 // E2 turned that family into free functions — the template name no longer
 // exists. Nothing in this file ever NAMED any of the templates imported around

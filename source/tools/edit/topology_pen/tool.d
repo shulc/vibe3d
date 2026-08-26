@@ -16,8 +16,17 @@ import tool;
 // itself, and UFCS needs the name in this module's scope — so they are
 // listed here by name. `render.d`'s mixin body resolves in THIS scope, so
 // its two `selectLoopEdges` call sites are covered by this line too.
-import mesh                : Mesh, GpuMesh, MeshCacheKey,
-                             selectLoopEdges, isEdgeBorder;
+import mesh                : Mesh, GpuMesh, MeshCacheKey, MeshEditBatch,
+                             selectLoopEdges, isEdgeBorder,
+                             // task 1903 Stage F1 — the Loop Slice family is
+                             // free functions now, and a SELECTIVE `import
+                             // mesh : …` is the one spelling that does not
+                             // pick them up for free. `render.d`'s
+                             // `PenRenderOps` body binds its free names in
+                             // THIS scope, so `loopSliceRingEdges` is here for
+                             // it as well as for this file.
+                             insertEdgeLoops, collectEdgeRing,
+                             loopSliceRingEdges, kLoopSliceEditScope;
 import math               : Vec3, Viewport, projectToWindowFull, closestOnSegment2D,
                              screenPointToRay, closestPointOnSegmentToRay, dot,
                              pointInPolygon2D, rayPlaneIntersect,
@@ -4377,7 +4386,10 @@ public:
         auto m = mesh;
         if (m is null) return false;
         bool closed;
-        if (m.collectEdgeRing(cast(uint)seed, closed).length == 0) return false;
+        // `(*m).`, not `m.`: task 1903 Stage F1 made `collectEdgeRing` a free
+        // function over `ref const(Mesh)`, and UFCS does not auto-deref a
+        // pointer the way member lookup did.
+        if ((*m).collectEdgeRing(cast(uint)seed, closed).length == 0) return false;
 
         addLoopSeed_   = seed;
         addLoopArmed_  = true;
@@ -6196,11 +6208,22 @@ public:
         if (!(r > 0.0f && r < 1.0f)) return;
 
         bool closed;
-        if (m.collectEdgeRing(seedEdge, closed).length == 0) return;
+        if ((*m).collectEdgeRing(seedEdge, closed).length == 0) return;   // Stage F1: ref const(Mesh)
 
         MeshSnapshot before = MeshSnapshot.capture(*m);
 
-        bool ok = m.insertEdgeLoops(seedEdge, [r]);
+        // Task 1903 Stage F1 — `insertEdgeLoops` is a free function over
+        // `ref MeshEditBatch` now, so the batch opens HERE, at the pen's own
+        // boundary (§4.1), around the ONE topology op this gesture performs.
+        // UNRECORDED: Add Loop undoes through the whole-mesh `before`/`after`
+        // pair recorded just below, so a recording batch would build an op-log
+        // nothing reads. Stage M owns the topology pen as its own family.
+        bool ok;
+        {
+            auto ed = MeshEditBatch.unrecorded(*m, kLoopSliceEditScope);
+            ok = ed.insertEdgeLoops(seedEdge, [r]);
+            ed.close();
+        }
         if (!ok) { before.restore(*m); return; }
 
         recordSnapshotUndo(m, before, factories_.addLoop, "Topology Add Loop");

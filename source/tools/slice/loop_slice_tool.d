@@ -517,7 +517,10 @@ public:
         int[] ringEdges;
         if (g_hoveredEdge >= 0 && g_hoveredEdge < cast(int)mesh.edges.length) {
             if (edgeLoopHoverSliceRing()) {
-                foreach (ei; mesh.loopSliceRingEdges(cast(uint)g_hoveredEdge))
+                // `(*mesh).`, not `mesh.`: Stage F1 made this a free
+                // function over `ref const(Mesh)` and UFCS does not
+                // auto-deref a pointer.
+                foreach (ei; (*mesh).loopSliceRingEdges(cast(uint)g_hoveredEdge))
                     ringEdges ~= ei;
             } else {
                 // Classic parallel edge loop — reproduces app.d's
@@ -695,7 +698,7 @@ public:
         }
         foreach (seed; activationSeeds()) {
             if (seed >= mesh.edges.length) continue;
-            foreach (ei; mesh.loopSliceRingEdges(seed))
+            foreach (ei; (*mesh).loopSliceRingEdges(seed))   // Stage F1: free fn over ref const(Mesh)
                 if (ei >= 0 && ei < cast(int)res.length)
                     res[ei] = true;
         }
@@ -1021,11 +1024,21 @@ public:
         // Captured BEFORE the cut: every vertex the cut appends lands at or
         // after this index, which is how the new loop is named (task 1180).
         immutable uint firstNewVert = cast(uint)mesh.vertices.length;
-        bool ok = mesh.insertEdgeLoopsMulti(seeds, pos, newFaceIndices,
-                                            restrictFor(selectedFaceIndices()), keepQuads_,
-                                            sliceNgon_, sliceSplit_, sliceCaps_, null, gap_,
-                                            curvature_, curveTension_,
-                                            heights, effectiveDepth(seedEdgeSpan(seeds)));
+        // Task 1903 Stage F1 — the batch opens at the TOOL boundary, which is
+        // where §4.1 says it belongs. UNRECORDED (plan §9): this tool commits
+        // through a whole-mesh `MeshSnapshot` pair, so a recording batch would
+        // build an op-log nothing reads and `close()` would drop. Stage M owns
+        // the tool pair-holders; Stage L9 owns this family's delta undo.
+        bool ok;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kLoopSliceEditScope);
+            ok = ed.insertEdgeLoopsMulti(seeds, pos, newFaceIndices,
+                                         restrictFor(selectedFaceIndices()), keepQuads_,
+                                         sliceNgon_, sliceSplit_, sliceCaps_, null, gap_,
+                                         curvature_, curveTension_,
+                                         heights, effectiveDepth(seedEdgeSpan(seeds)));
+            ed.close();
+        }
         if (!ok) return false;
         if (selectNew_) {
             foreach (fi; newFaceIndices) mesh.selectFace(cast(int)fi);
@@ -1097,7 +1110,7 @@ public:
         if (!willBandMode) {
             foreach (s; candSeeds) {
                 bool closed;
-                if (mesh.collectEdgeRing(s, closed).length > 0) { anyValid = true; break; }
+                if ((*mesh).collectEdgeRing(s, closed).length > 0) { anyValid = true; break; }
             }
         }
         if (!anyValid) return false;
@@ -1300,7 +1313,9 @@ private:
     // (== its own `incFaces[0]`) is the face whose local winding direction
     // for this edge becomes the p-rail's (a,b) — findEdgeInFace + a face-array
     // read reproduce that direction without needing access to the kernel's
-    // private `EdgeRingEntry` fields. Exact for a CLOSED ring (the seed
+    // private `mesh_ops.loop_slice.EdgeRingEntry` fields (module-scope and
+    // still `private` since task 1903 Stage F1 — it was `Mesh.EdgeRingEntry`
+    // when this comment was written). Exact for a CLOSED ring (the seed
     // edgeKey is only ever touched once, via this face — cube/cylinder belts,
     // the common case); for an OPEN (boundary-terminated) ring the OTHER
     // incident face also touches the same edgeKey and — if it happens to sit
@@ -1567,11 +1582,26 @@ private:
         // is the restored mesh, so that is the vertex count the new loop is
         // measured from (task 1180).
         immutable uint firstNewVert = cast(uint)mesh.vertices.length;
-        bool ok = mesh.insertEdgeLoopsMulti(seeds_, pos, newFaceIndices,
-                                            restrictFor(armedSelFaces_), keepQuads_,
-                                            sliceNgon_, sliceSplit_, sliceCaps_, null, gap_,
-                                            curvature_, curveTension_,
-                                            heights, effectiveDepth(seedEdgeSpan(seeds_)));
+        // Task 1903 Stage F1 — one UNRECORDED batch per DRAG FRAME, and
+        // unrecorded is not a convenience here: plan §9 is explicit that a
+        // recording batch opened per frame would build and throw away a full
+        // op-log at 60 Hz. This tool keeps the plain `before_.restore(*mesh)`
+        // preview shape rather than `tools/edit/preview_rebuild.d`, so the
+        // batch is on the LIVE mesh and the frame's deferred stamp lands at
+        // `close()` — one per frame instead of one per appended rail vertex.
+        // That is the STAMP; DELIVERIES are a separate count and the drag test
+        // records the measured per-frame figure rather than assuming it
+        // follows the stamp.
+        bool ok;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kLoopSliceEditScope);
+            ok = ed.insertEdgeLoopsMulti(seeds_, pos, newFaceIndices,
+                                         restrictFor(armedSelFaces_), keepQuads_,
+                                         sliceNgon_, sliceSplit_, sliceCaps_, null, gap_,
+                                         curvature_, curveTension_,
+                                         heights, effectiveDepth(seedEdgeSpan(seeds_)));
+            ed.close();
+        }
         built_ = ok;
         if (ok && selectNew_) {
             foreach (fi; newFaceIndices) mesh.selectFace(cast(int)fi);

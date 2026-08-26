@@ -48,6 +48,19 @@ import std.format : format;
 import std.math : abs, fmin, fmax;
 import fixture_helpers : requireProvenance;
 
+// Task 1903 Stage F1: `insertEdgeLoops` / `insertEdgeLoopsMulti` are free
+// functions over `ref MeshEditBatch` now, so a bare `Mesh` receiver is a
+// COMPILE error. One UNRECORDED batch per call, which is what the production
+// callers open too — nothing in this file reads an op-log. `auto ref` is
+// load-bearing: both entries take `out uint[] newFaceIndices`, so the argument
+// has to reach the kernel as an lvalue.
+private bool sliceOnce(alias kernel, Args...)(ref Mesh m, auto ref Args args) {
+    auto ed = MeshEditBatch.unrecorded(m, kLoopSliceEditScope);
+    const ok = kernel(ed, args);
+    ed.close();
+    return ok;
+}
+
 void main() {}
 
 // Fraction-space slack for asserts (3) and (4). Two orders looser than the
@@ -132,7 +145,7 @@ unittest {
         immutable double scalar = dbl(cs["input"]["scalar"]);
         immutable float  t      = cast(float)(flip ? 1.0 - scalar : scalar);
 
-        assert(m.insertEdgeLoops(seed, [t]), name ~ ": insertEdgeLoops must succeed");
+        assert(sliceOnce!insertEdgeLoops(m, seed, [t]), name ~ ": insertEdgeLoops must succeed");
 
         // ---- counts + the open/closed invariant ----------------------------
         assert(m.vertices.length == cast(size_t)ct["vertices_after"].integer,

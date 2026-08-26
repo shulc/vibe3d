@@ -44,18 +44,21 @@ import mesh_edit_delta : MeshEditScope;
 // assumed: `source/mesh.d` and the remaining `mesh_ops/*.d` were grepped for
 // every name in this family before the conversion, and every hit is inside a
 // COMMENT (`mesh.d`'s banner at the old `mixin` site plus four cross-reference
-// remarks; `loop_slice.d`'s two notes about `capShellCycles`). A hit that is a
+// remarks; `loop_slice.d`'s notes about `capShellCycles`). A hit that is a
 // CALL would mean a kernel-side caller with no batch to take, and §4.4a's debt
 // shape — TRANSITIONAL label, named removing stage, per-command
 // `nestedBatchOpens` delta assert — would apply.
 //
-// THE ONE NAME THAT STILL GOES THROUGH `Mesh.`: `Mesh.capShellCycles`, the
-// shared cap-fill used by `splitAlongCutLoop`'s Cap Sections block. It is a
-// `static` member injected by `mixin MeshLoopSliceOps` (`mesh_ops/loop_slice.d`),
-// which is still a mixin — so a bare `capShellCycles(…)` no longer resolves
-// from module scope here and the call is spelled `Mesh.capShellCycles(…)`.
-// **Stage F1 converts `loop_slice.d`**; when it does, this spelling drops the
-// `Mesh.` and loop_slice.d's own "cut.d still calls it bare" note goes with it.
+// `capShellCycles` — the shared cap-fill `splitAlongCutLoop`'s Cap Sections
+// block borrows from Loop Slice (`mesh_ops/loop_slice.d`) — is spelled BARE at
+// its two call sites here, and has been since task 1903 Stage F1 converted that
+// family. Between Stage E3 (this file) and F1 it had to be
+// `Mesh.capShellCycles(…)`: it was a `static` MEMBER injected by
+// `mixin MeshLoopSliceOps`, so a plain module function here could not see it
+// unqualified. F1 removed the member, which made the qualified spelling a
+// compile error and moved both sites in that same commit. The census carries
+// the absence pin — `Mesh.capShellCycles(` appears nowhere under `source/`, and
+// this file holds exactly two bare `capShellCycles(ed.faces, …)` calls.
 //
 // `struct PlaneCutLoops` MOVED TO MODULE SCOPE, and its call sites moved with
 // it (§2.7 as rewritten at the E2 review): `Mesh.PlaneCutLoops` was spelled at
@@ -897,8 +900,8 @@ private void splitAlongCutLoop(ref MeshEditBatch ed, const bool[] isCutVert,
         // already dropped the map by the time we get here, so this changes
         // nothing user-visible yet — it keeps the site correct on its own
         // terms, and becomes load-bearing the moment the cut itself carries.
-        foreach (cyc; Mesh.capShellCycles(ed.faces, loSet)) ed.appendFaceRaw(cyc);
-        foreach (cyc; Mesh.capShellCycles(ed.faces, hiSet)) ed.appendFaceRaw(cyc);
+        foreach (cyc; capShellCycles(ed.faces, loSet)) ed.appendFaceRaw(cyc);
+        foreach (cyc; capShellCycles(ed.faces, hiSet)) ed.appendFaceRaw(cyc);
         ed.declareCornerAppend();   // tail append, stated (task 0830)
     }
     ed.rebuildEdges();

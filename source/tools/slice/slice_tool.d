@@ -202,7 +202,8 @@ size_t sliceFromBaseline(ref Mesh mesh, const ref MeshSnapshot baseline,
     // splitting the surface into two disconnected sections along the cut.
     // `caps` (task S8): with `split` on, seal each split section's boundary loop
     // with one cap polygon (mesh_ops.cut.cutByPlaneEx forwards it to splitAlongCutLoop →
-    // capShellCycles, the SAME cap geometry as Loop Slice Cap Sections). A no-op
+    // mesh_ops.loop_slice.capShellCycles, the SAME cap geometry as Loop Slice
+    // Cap Sections). A no-op
     // when `split` is off (the non-split kernels never duplicate a loop).
     // `restrictFaces` (task 0279): when non-empty, the cut is confined to those
     // faces — the reference Slice cuts ONLY the selected polygons (the whole
@@ -593,7 +594,8 @@ void sliceRingPlaneBasis(Vec3 axis, out Vec3 right, out Vec3 up) {
 // S8 (task 0274) adds `caps` (Cap Sections, bool, default ON, dep Split): with
 // `split` on, each split section's boundary loop is sealed by one cap polygon in
 // the loop plane — the SAME geometry as Loop Slice Cap Sections (the shared
-// Mesh.capShellCycles helper, via cutByPlaneEx → splitAlongCutLoop). A no-op
+// mesh_ops.loop_slice.capShellCycles helper, via cutByPlaneEx →
+// splitAlongCutLoop). A no-op
 // while `split` is off (greyed by paramEnabled); the seam-pair data survives for
 // Gap (S9). Threads through the preview + commit (sliceFromBaseline) and
 // applyHeadless.
@@ -723,7 +725,8 @@ private:
     // non-split cut never duplicates a loop, so there is no open boundary to
     // cap); the panel greys it out then (paramEnabled). With `split_` on, each
     // split section's boundary loop is sealed by one cap polygon — the SAME
-    // geometry as Loop Slice Cap Sections (Mesh.capShellCycles). Threads through
+    // geometry as Loop Slice Cap Sections
+    // (mesh_ops.loop_slice.capShellCycles). Threads through
     // the preview + commit (sliceFromBaseline) and applyHeadless. Sticky (not
     // reset on activate), like the other tool options. DEFAULT DECISION: the
     // reference live-capture reads caps=on but flags it "may be sticky"; the

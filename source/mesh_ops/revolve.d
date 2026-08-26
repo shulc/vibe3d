@@ -81,11 +81,14 @@ module mesh_ops.revolve;
 // widening is a `dub build` error rather than a silent pass.
 //
 // THE SELECTIVE-IMPORT SWEEP, which the compiler cannot do for us (E1's memo
-// item 1). A `public import` is invisible through a SELECTIVE `import mesh : …`
-// — measured at Stage C and written down at `mesh_ops/connected_mask.d` — so a
+// item 1). A SELECTIVE `import mesh : …` picks up a re-exported name ONLY if
+// the list names it — a list that omits it refuses, a list that names it
+// compiles (probed at Stage F1, `tests/test_uv_carry_loop_slice.d`; first
+// written down at `mesh_ops/connected_mask.d`; this comment used to state the
+// broader "invisible through any selective import", which is false) — so a
 // name that moves out of `mesh` into a `mesh_ops` module silently stops
-// resolving at any site that listed it selectively, and only in the
-// configurations that compile that site. Swept for this family: the 260
+// resolving at any site whose selective list does not carry it, and only in
+// the configurations that compile that site. Swept for this family: the 260
 // selective `import mesh : …` sites in `source/` ∪ `tests/` name none of
 // `RevolveParams`, `revolveProfile`, `revolveProfileEx`, `extrudeAlongPath`,
 // `revolveSweepClosed`, `revolveSweepClosedWithOffset`, `PathExtrudeStep` or

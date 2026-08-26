@@ -25,7 +25,36 @@ public import mesh_ops.cut;
 // (`doc/mesh_edit_seam_plan.md` §4.2). This keeps mesh.d the door for the ops
 // namespace; narrowing that is audit 0678 M9's job, not this task's.
 public import mesh_ops.bridge;
-import mesh_ops.loop_slice : MeshLoopSliceOps, bandWalk, BandCell;
+// task 1903 Stage F1: the Loop Slice ring-walk + insertion family is
+// module-level free functions — `insertEdgeLoops` (both overloads) and
+// `insertEdgeLoopsMulti` over `ref MeshEditBatch`, `loopSliceRingEdges` /
+// `collectEdgeRing` / `walkRingSide` / `railContinuation` over
+// `ref const(Mesh)`, the receiver-less `capShellCycles` / `ngonExitEdge` /
+// `curvatureSplinePoint`, the module-scope `EdgeRingEntry` and the family's
+// declared scope `kLoopSliceEditScope` — not a mixin. PUBLIC so every
+// `import mesh;` re-exports them and `ed.insertEdgeLoops(seed, pos)` /
+// `mesh.loopSliceRingEdges(seed)` resolve through UFCS
+// (`doc/mesh_edit_seam_plan.md` §4.2).
+//
+// `bandWalk` / `BandCell` COME ALONG, and the reason is worth stating exactly
+// because it generalises (corrected at the F1 review, m5). They were never
+// members. Before F1 mesh.d imported them by name (`import mesh_ops.loop_slice
+// : MeshLoopSliceOps, bandWalk, BandCell;`) and mesh.d's own body never
+// mentioned either one — the import existed for the MIXIN BODY, which called
+// `bandWalk(faces, bandFaces)` and, being a `mixin template`, resolved that
+// name at its INSTANTIATION site, i.e. here. F1 deletes the instantiation, so
+// that need is gone: the Loop Slice tool imports both DIRECTLY
+// (`tools/slice/loop_slice_tool.d`), and after F1 this re-export serves no
+// current caller while newly exporting both names to every `import mesh;`
+// client. Kept anyway, per the E3/E4 convention that a conversion stage does
+// not change what mesh.d re-exports — but it is a widening, not a
+// continuation, and narrowing it is audit 0678 M9's job, not this task's.
+//
+// THE GENERAL RULE FOR F2/G/H: a converting stage inherits whatever imports
+// the mixin BODY was resolving in mesh.d's scope. Read each remaining
+// family's mesh.d import line for names mesh.d itself never mentions before
+// widening it to a `public import`.
+public import mesh_ops.loop_slice;
 public import mesh_ops.revolve;
 // task 1903 Stage E1: the mesh-hygiene / orientation-repair family is
 // module-level free functions — `unifyFaces`, `cleanDegenerateFaces`,
@@ -1951,7 +1980,17 @@ struct Mesh {
     // Defensive per-face attribute read for the lazy-resize arrays above
     // (faceMaterial / facePart / faceSelectionOrder): an index past the
     // array's current length yields the default (T.init), not a RangeError.
-    private static T faceAttrOr(T)(in T[] attr, size_t fi) { return fi < attr.length ? attr[fi] : T.init; }
+    // WIDENED out of `private` by task 1903 Stage F1 (plan §2.6): the first
+    // converted family to name it. `mesh_ops/loop_slice.d` reads
+    // `faceMarks` — and ONLY `faceMarks`, corrected at the F1 review — through
+    // it at FOUR sites while emitting the ring split, and a free function in
+    // `source/mesh_ops/` does not see mesh.d's `private` the way a mixin body
+    // instantiated in this scope did. `static`, so UFCS through the batch
+    // handle cannot reach it: the converted callers spell it
+    // `Mesh.faceAttrOr(...)`. `mesh_ops/extrude.d` (Stage H, 10 sites) and
+    // `mesh_ops/edge_bevel.d` (Stage G, 2) name it too and are still mixins —
+    // the census row lists all three files.
+    static T faceAttrOr(T)(in T[] attr, size_t fi) { return fi < attr.length ? attr[fi] : T.init; }
 
     /// One face-local vertex substitution: wherever `oldV` appears in a face's
     /// vertex list, it is replaced IN PLACE by the whole `newVs` run (one
@@ -2017,7 +2056,13 @@ struct Mesh {
     // fold over N sources can seed its accumulator with `Marks.Hide` and get
     // the correct "vacuously all-hidden" value if it ever folds zero sources,
     // exactly like `&&`'s identity is `true`.
-    private static uint combineFaceMarksWords(uint a, uint b) {
+    // WIDENED out of `private` by task 1903 Stage F1 (plan §2.6), for the same
+    // reason as `faceAttrOr` above: `mesh_ops/loop_slice.d`'s Cap Sections arm
+    // folds several ring faces' mark words into one cap face's word through
+    // it. `static`, so the converted caller spells it
+    // `Mesh.combineFaceMarksWords(...)`. `mesh_ops/edge_bevel.d` (Stage G)
+    // names it too and is still a mixin.
+    static uint combineFaceMarksWords(uint a, uint b) {
         return ((a | b) & ~Marks.Hide) | (a & b & Marks.Hide);
     }
     // Monotonic counter bumped on any topology or vertex-position change that
@@ -13972,7 +14017,17 @@ struct Mesh {
 
     // Loop-slice ring walk + insertion kernel family (loopSliceRingEdges /
     // collectEdgeRing / insertEdgeLoops / insertEdgeLoopsMulti) + capShellCycles
-    // — see source/mesh_ops/loop_slice.d (task 0417, 0407 §B.V2).
+    // + `EdgeRingEntry` is NO LONGER a mixin either: task 1903 Stage F1 made it
+    // module-level free functions in source/mesh_ops/loop_slice.d — the two
+    // insert entries over `ref MeshEditBatch`, the four ring-walk entries over
+    // `ref const(Mesh)` — re-exported by the `public import` at the top of this
+    // file. `capShellCycles` in particular is no longer a `static` member, so
+    // `mesh_ops/cut.d` spells it BARE again (it had to say `Mesh.capShellCycles`
+    // between Stage E3 and Stage F1, while cut.d was converted and this file was
+    // not). Do not reinstate the `MeshLoopSliceOps` mixin here — see the note on
+    // the select.loop family just below for why a member would silently take
+    // every call site back (loop_slice.d's own `static assert` tripwire refuses
+    // it at build time as well).
     // select.loop family (border predicates / selectLoopEdges / selectLoopVertices
     // / selectLoopFaces + the head-restart oracles) is NO LONGER a mixin: task
     // 1903 Stage C made it module-level free functions over `ref const(Mesh)` in
@@ -13982,8 +14037,6 @@ struct Mesh {
     // take every call back and the conversion would mean nothing
     // (`doc/mesh_edit_seam_plan.md` Revision 2 caveat 1;
     // tests/unit/commit_seam_census_test.d reddens by name if it returns).
-
-    mixin MeshLoopSliceOps;
 
     /// Return an input range over all loop indices (darts) incident to vertex `vi`.
     /// Each yielded value is a uint loop index `li` with `loops[li].vert == vi`.
@@ -16641,6 +16694,18 @@ struct MeshEditBatch {
     /// N times. Indices out of range, and writes that change nothing, are
     /// dropped from BOTH the write and the record so the entry's before/after
     /// arrays stay in step with each other.
+    ///
+    /// THE OUT-OF-RANGE ARM IS A BEHAVIOUR CHANGE FROM THE RAW WRITE IT
+    /// REPLACES, and it is the quiet direction (noted at the F1 review, n2).
+    /// `vertices[vi] = p` raises `ArrayIndexError` on a bad index; this
+    /// `continue`s and reports nothing, so a future index bug in a migrated
+    /// kernel becomes a SILENT no-op instead of a crash with a stack. It is
+    /// unreachable on every migrated site today — every index passed in is an
+    /// `addVertex` return or an index derived from one — which is why the arm
+    /// is a guard and not an assert. If a stage migrates a site whose indices
+    /// come from anywhere else (a user id, a serialized set, a remap table),
+    /// that site owes its own bounds check BEFORE the call; do not lean on
+    /// this one to report it.
     void setVertexPositions(in uint[] idx, in Vec3[] to) {
         assert(idx.length == to.length,
             "MeshEditBatch.setVertexPositions: index and position arrays differ "

@@ -28,8 +28,41 @@ import std.json;
 import std.math : fabs;
 import std.conv : to;
 
-import mesh : Mesh, MeshMap, MapDomain, kUvMapName;
+import mesh : Mesh, MeshMap, MapDomain, kUvMapName, MeshEditBatch;
+// Named from `mesh_ops.loop_slice` DIRECTLY, and the reason is a choice, not a
+// compiler constraint — the earlier note here ("a `public import` in mesh.d is
+// INVISIBLE through a SELECTIVE `import mesh : …`") was measurably WRONG and
+// was corrected at the F1 review. Probed with `dmd -o- -c`:
+//
+//   import mesh : Mesh, MeshEditBatch, insertEdgeLoops, insertEdgeLoopsMulti,
+//                 kLoopSliceEditScope, collectEdgeRing, loopSliceRingEdges;
+//                                                            // COMPILES
+//   import mesh;                     // plain, unqualified   // COMPILES
+//   import mesh : Mesh;              // then m.collectEdgeRing(…)  // REFUSED
+//
+// So the real rule is narrower: a selective import binds ONLY the names in its
+// list, and a re-exported name has to be listed like any other — what it will
+// not do is come along for free beside a sibling name. `topology_pen/tool.d`
+// takes exactly that route in this same diff. This file names the ops module
+// instead because the DECLARING module is the honest source for a free
+// function, and it keeps the import from going stale if mesh.d ever stops
+// being the door for the ops namespace (audit 0678 M9). (task 1903 Stage F1)
+import mesh_ops.loop_slice : insertEdgeLoops, insertEdgeLoopsMulti,
+                             kLoopSliceEditScope;
 import math : Vec3;
+
+// Task 1903 Stage F1: `insertEdgeLoops` / `insertEdgeLoopsMulti` are free
+// functions over `ref MeshEditBatch` now, so a bare `Mesh` receiver is a
+// COMPILE error. One UNRECORDED batch per call, which is what the production
+// callers open too — nothing in this file reads an op-log. `auto ref` is
+// load-bearing: both entries take `out uint[] newFaceIndices`, so the argument
+// has to reach the kernel as an lvalue.
+private bool sliceOnce(alias kernel, Args...)(ref Mesh m, auto ref Args args) {
+    auto ed = MeshEditBatch.unrecorded(m, kLoopSliceEditScope);
+    const ok = kernel(ed, args);
+    ed.close();
+    return ok;
+}
 
 void main() {}
 
@@ -153,7 +186,7 @@ private void runCase(const JSONValue c) {
     }
 
     uint[] newFaceIndices;
-    const bool ok = m.insertEdgeLoopsMulti(seedEdges(m, op), positions, newFaceIndices);
+    const bool ok = sliceOnce!insertEdgeLoopsMulti(m, seedEdges(m, op), positions, newFaceIndices);
     assert(ok, name ~ ": insertEdgeLoopsMulti reported no-op");
 
     const auto after      = c["after"];
@@ -259,7 +292,7 @@ unittest { // untouched faces keep their corner values BIT-identically
             }
 
         uint[] nfi;
-        assert(m.insertEdgeLoopsMulti(seedEdges(m, c["op"]), [0.25f], nfi));
+        assert(sliceOnce!insertEdgeLoopsMulti(m, seedEdges(m, c["op"]), [0.25f], nfi));
         auto post = m.meshMap(kUvMapName);
         size_t checked = 0;
         foreach (fi; 0 .. cast(uint)m.faces.length) {
@@ -324,7 +357,7 @@ unittest { // TWO crossing rings — the grid-split path, which the frozen captu
     }
     const uint[] seeds = [m.edgeIndex(vA, vB), m.edgeIndex(vA, vC)];
     uint[] nfi;
-    assert(m.insertEdgeLoopsMulti(seeds, [0.25f], nfi),
+    assert(sliceOnce!insertEdgeLoopsMulti(m, seeds, [0.25f], nfi),
            "two-seed slice should apply");
 
     auto post = m.meshMap(kUvMapName);
@@ -415,7 +448,7 @@ unittest { // a mesh with NO per-corner map must be unaffected (and not crash)
     assert(m.meshMap(kUvMapName) is null, "makeCube should register no UV map");
     const uint seed = 0;
     uint[] nfi;
-    const bool ok = m.insertEdgeLoops(seed, [0.5f], nfi);
+    const bool ok = sliceOnce!insertEdgeLoops(m, seed, [0.5f], nfi);
     assert(ok, "cube loop slice should succeed");
     assert(m.meshMap(kUvMapName) is null, "no UV map should have appeared");
 }

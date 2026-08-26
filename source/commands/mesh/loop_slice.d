@@ -75,14 +75,45 @@ class MeshAddLoop : Command, Operator {
         if (position_ <= 0.0f || position_ >= 1.0f) return false;
 
         // Dry-run: check that a ring exists before taking a snapshot.
+        // `(*mesh).`, not `mesh.`: task 1903 Stage F1 made `collectEdgeRing` a
+        // free function over `ref const(Mesh)`, and UFCS does NOT auto-deref a
+        // pointer the way member lookup did.
         bool closed;
-        auto ring = mesh.collectEdgeRing(cast(uint)ei, closed);
+        auto ring = (*mesh).collectEdgeRing(cast(uint)ei, closed);
         if (ring.length == 0) return false;
 
         immutable uint firstNewVert = cast(uint)mesh.vertices.length;
         snap = MeshSnapshot.capture(*mesh);
 
-        bool ok = mesh.insertEdgeLoops(cast(uint)ei, [position_]);
+        // Task 1903 Stage F1: `insertEdgeLoops` is a free function over
+        // `ref MeshEditBatch` (source/mesh_ops/loop_slice.d), so the batch
+        // opens HERE — at the command boundary, which is where §4.1 says it
+        // belongs. One loop insert now STAMPS AND DERIVES once at `close()`
+        // instead of once per appended rail vertex and once per face rebuild.
+        //
+        // SAY STAMP, NOT DELIVERY — corrected at the F1 review. A
+        // `MeshEditBatch` (`g_editBatchStack`) and a DELIVERY batch
+        // (`g_deliveryDepth`) are different mechanisms, and only the second
+        // defers a change-bus delivery: `Mesh.deliverPending()` returns early
+        // on `g_deliveryDepth > 0` and never consults `g_editBatchStack`, and
+        // every selection writer — `clearVertexSelection` /
+        // `clearEdgeSelection` / `clearFaceSelection` among them — calls
+        // `noteSelectionChange(...); deliverPending();` unconditionally. So
+        // the kernel's tail `resetSelection()` DELIVERS FROM INSIDE this
+        // batch; opening one here does not fold that delivery into `close()`.
+        // What holds the delivery count down at this call site is
+        // `Command.apply`'s own `beginDeliveryBatchGlobal()`, which is why
+        // both slice commands measure 1 delivery and the per-frame preview
+        // (which has no such wrapper) measures 19. UNRECORDED
+        // because this command's undo is still the whole-mesh `snap` above;
+        // Stage L9 (`loop slice`, after Stage J) flips it to the recording
+        // constructor.
+        bool ok;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kLoopSliceEditScope);
+            ok = ed.insertEdgeLoops(cast(uint)ei, [position_]);
+            ed.close();
+        }
         if (!ok) { snap = MeshSnapshot.init; return false; }
 
         // Reference parity (task 0476): select the newly-inserted loop.
@@ -136,9 +167,11 @@ class MeshLoopSlice : Command, Operator {
             if (sel) { ei = cast(int)i; break; }
         if (ei < 0 || ei >= cast(int)mesh.edges.length) return false;
 
-        // Dry-run ring check before snapshot.
+        // Dry-run ring check before snapshot. `(*mesh).` for the same reason
+        // as MeshAddLoop above (Stage F1: a free function over
+        // `ref const(Mesh)`, and UFCS does not auto-deref a pointer).
         bool closed;
-        auto ring = mesh.collectEdgeRing(cast(uint)ei, closed);
+        auto ring = (*mesh).collectEdgeRing(cast(uint)ei, closed);
         if (ring.length == 0) return false;
 
         // Evenly-spaced positions: (k+1) / (count+1) for k in 0..count.
@@ -150,7 +183,18 @@ class MeshLoopSlice : Command, Operator {
         immutable uint firstNewVert = cast(uint)mesh.vertices.length;
         snap = MeshSnapshot.capture(*mesh);
 
-        bool ok = mesh.insertEdgeLoops(cast(uint)ei, pos);
+        // Task 1903 Stage F1 — the batch opens at the command boundary, for
+        // the reason MeshAddLoop's does. UNRECORDED (undo is still `snap`);
+        // Stage L9 owns the flip. The whole LADDER of `count_` positions is
+        // ONE `insertEdgeLoops` call, so this is one batch either way — the
+        // scale check that matters here is the per-position rail append, and
+        // it is pinned on `mutationVersion` in the unit lane.
+        bool ok;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kLoopSliceEditScope);
+            ok = ed.insertEdgeLoops(cast(uint)ei, pos);
+            ed.close();
+        }
         if (!ok) { snap = MeshSnapshot.init; return false; }
 
         // Reference parity (task 0476): select every newly-inserted loop.
