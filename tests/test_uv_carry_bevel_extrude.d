@@ -40,7 +40,18 @@ import std.json;
 import std.math : fabs, sqrt;
 import std.conv : to;
 
-import mesh : Mesh, MeshMap, MapDomain, kUvMapName, UvWallLaw;
+import mesh : Mesh, MeshMap, MapDomain, kUvMapName, UvWallLaw,
+              MeshEditBatch, kPolyBevelEditScope, bevelFacesByMask;
+// Task 1903 Stage F2: the polygon-bevel entries are free functions over
+// `ref MeshEditBatch` in `source/mesh_ops/poly_bevel.d`, so this test opens the
+// batch itself. UNRECORDED — the fixture compares MAP payloads, not an op-log.
+private auto polyBevelOnce(alias kernel, Args...)(ref Mesh m, auto ref Args args) {
+    auto ed = MeshEditBatch.unrecorded(m, kPolyBevelEditScope);
+    auto n = kernel(ed, args);
+    ed.close();
+    return n;
+}
+
 import math : Vec3;
 
 void main() {}
@@ -144,7 +155,7 @@ private size_t runOp(ref Mesh m, const JSONValue op, bool wallOverride = false,
     if (kind == "edge_bevel")
         return m.bevelEdgesByMask(edgeMask(m, op["edges"]), jnum(op["offset"]), 0, false);
     if (kind == "face_bevel")
-        return m.bevelFacesByMask(faceMask(m, op["faces"]), jnum(op["inset"]),
+        return polyBevelOnce!bevelFacesByMask(m, faceMask(m, op["faces"]), jnum(op["inset"]),
                                   jnum(op["shift"]), false, 0, false);
     if (kind == "face_extrude") {
         const auto sh = op["shift"].array;
@@ -602,7 +613,7 @@ unittest {
         emask[0] = true;
         size_t n;
         if (which == 0)      n = m.bevelEdgesByMask(emask, 0.2f, 0, false);
-        else if (which == 1) n = m.bevelFacesByMask(fmask, 0.2f, 0.1f, false, 0, false);
+        else if (which == 1) n = polyBevelOnce!bevelFacesByMask(m, fmask, 0.2f, 0.1f, false, 0, false);
         else                 n = m.extrudeFacesByMask(fmask, 0.5f, false);
         assert(n > 0, "cube op should apply");
         assert(m.meshMap(kUvMapName) is null, "no UV map should have appeared");

@@ -23,7 +23,19 @@
 import std.conv : to;
 import std.math : fabs;
 
-import mesh : Mesh, MeshMap, MapDomain, kUvMapName;
+import mesh : Mesh, MeshMap, MapDomain, kUvMapName,
+              MeshEditBatch, kPolyBevelEditScope, insetFacesByMask,
+              spikeFacesByMask;
+// Task 1903 Stage F2: the polygon-bevel entries are free functions over
+// `ref MeshEditBatch` in `source/mesh_ops/poly_bevel.d`, so this test opens the
+// batch itself. UNRECORDED — the fixture compares MAP payloads, not an op-log.
+private auto polyBevelOnce(alias kernel, Args...)(ref Mesh m, auto ref Args args) {
+    auto ed = MeshEditBatch.unrecorded(m, kPolyBevelEditScope);
+    auto n = kernel(ed, args);
+    ed.close();
+    return n;
+}
+
 import math : Vec3;
 
 void main() {}
@@ -216,7 +228,7 @@ unittest { // insetFacesByMask — CONTROL: arity-preserving in-place rewrite +
            // addFace ring quads already keeps the map length-correct, so the
            // untouched face was never at risk. Pins that this stays true.
     Mesh m = twoQuadsWithUv();
-    const n = m.insetFacesByMask(maskFace0(m), 0.2f);
+    const n = polyBevelOnce!insetFacesByMask(m, maskFace0(m), 0.2f);
     assert(n == 1, "expected 1 inset face, got " ~ n.to!string);
     checkLengths(m, "insetFacesByMask");
     auto uv = uvOf(m, "insetFacesByMask");
@@ -230,7 +242,7 @@ unittest { // insetFacesByMask — CONTROL: arity-preserving in-place rewrite +
 unittest { // spikeFacesByMask — an in-place arity change (N-gon → fan of tris)
            // re-lays the corner space, so this one relocates rather than grows.
     Mesh m = twoQuadsWithUv();
-    const n = m.spikeFacesByMask(maskFace0(m), 0.5f);
+    const n = polyBevelOnce!spikeFacesByMask(m, maskFace0(m), 0.5f);
     assert(n == 1, "expected 1 spiked face, got " ~ n.to!string);
     checkLengths(m, "spikeFacesByMask");
 

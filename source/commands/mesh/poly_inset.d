@@ -63,7 +63,28 @@ class MeshPolygonInset : Command, Operator {
 
         snap = MeshSnapshot.capture(*mesh);
         auto mask = mesh.operandFaceMask();
-        size_t n = mesh.insetFacesByMask(mask, inset_);
+        // Task 1903 Stage F2: `insetFacesByMask` is a free function over
+        // `ref MeshEditBatch` (source/mesh_ops/poly_bevel.d), so the batch
+        // opens HERE — at the command boundary, which is where §4.1 says it
+        // belongs. One inset now STAMPS AND DERIVES once at `close()` instead
+        // of once per appended corner vertex, once per appended ring quad and
+        // once at the kernel's tail.
+        //
+        // STAMP, NOT DELIVERY. A `MeshEditBatch` (`g_editBatchStack`) and a
+        // DELIVERY batch (`g_deliveryDepth`) are different mechanisms and only
+        // the second defers a change-bus delivery: `Mesh.deliverPending()`
+        // returns early on `g_deliveryDepth > 0` and never consults
+        // `g_editBatchStack`. What holds the delivery count down at this call
+        // site is `Command.apply`'s own `beginDeliveryBatchGlobal()`.
+        // UNRECORDED because this command's undo is still the whole-mesh
+        // `snap` above; Stage L7 (`bevel / inset`) flips it to the recording
+        // constructor.
+        size_t n;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kPolyBevelEditScope);
+            n = ed.insetFacesByMask(mask, inset_);
+            ed.close();
+        }
         if (n == 0) {
             snap = MeshSnapshot.init;
             return false;

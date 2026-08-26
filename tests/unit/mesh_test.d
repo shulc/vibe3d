@@ -43,6 +43,21 @@ import std.format : format;
 import tests.unit.fixtures : makeTaggedGrid, findEdge;
 import mesh;
 
+// Task 1903 Stage F2: the three polygon-bevel entries (`insetFacesByMask`,
+// `bevelFacesByMask`, `spikeFacesByMask`) are free functions over
+// `ref MeshEditBatch` in `source/mesh_ops/poly_bevel.d`, so a test that drives
+// a kernel DIRECTLY opens the batch itself. ONE helper per file, so there is a
+// single place that says why it is `unrecorded`: nothing in these blocks reads
+// an op-log, and a recording batch would build one for no reader. GENERIC IN
+// THE RETURN TYPE — all three kernels answer `size_t`. `auto ref Args` because
+// callers pass array literals.
+private auto polyBevelOnce(alias kernel, Args...)(ref Mesh m, auto ref Args args) {
+    auto ed = MeshEditBatch.unrecorded(m, kPolyBevelEditScope);
+    auto n = kernel(ed, args);
+    ed.close();
+    return n;
+}
+
     unittest { // connectedComponentVertices: two disjoint cubes — island is
                // exactly the picked cube's 8 verts, not the other cube's.
         import std.conv : to;
@@ -2089,7 +2104,7 @@ unittest { // insetFacesByMask: single flat quad — inset=0 still splits (task 
     // landing the 4 new corners exactly on the 4 original ones (a
     // degenerate zero-width ring — same topology delta as any other inset).
     bool[] allOne = [true];
-    assert(m.insetFacesByMask(allOne, 0.0f) == 1, "inset=0 must still process 1 face");
+    assert(polyBevelOnce!insetFacesByMask(m, allOne, 0.0f) == 1, "inset=0 must still process 1 face");
     assert(m.vertices.length == 8, "expected 8 verts after inset=0 split");
     assert(m.faces.length    == 5, "expected 5 faces (1 inner + 4 ring quads) after inset=0 split");
     bool hasVertExact(float x, float z) {
@@ -2112,7 +2127,7 @@ unittest { // insetFacesByMask: single flat quad — inset=0 still splits (task 
     m2.buildLoops();
 
     // inset=0.1: 4 new verts, 4 ring quads + 1 inner face = 5 faces total.
-    assert(m2.insetFacesByMask(allOne, 0.1f) == 1, "inset=0.1 must process 1 face");
+    assert(polyBevelOnce!insetFacesByMask(m2, allOne, 0.1f) == 1, "inset=0.1 must process 1 face");
     assert(m2.vertices.length == 8, "expected 8 verts after single-face inset");
     assert(m2.faces.length    == 5, "expected 5 faces (1 inner + 4 ring quads)");
 
@@ -2149,7 +2164,7 @@ unittest { // bevelFacesByMask: cube top face, inset=0.1 shift=0.2
     {
         auto mz = makeCube();
         bool[] mzmask; mzmask.length = mz.faces.length; mzmask[] = false; mzmask[4] = true;
-        assert(mz.bevelFacesByMask(mzmask, 0.0f, 0.0f) == 1,
+        assert(polyBevelOnce!bevelFacesByMask(mz, mzmask, 0.0f, 0.0f) == 1,
             "inset=0, shift=0 must build a zero-width ring (fuzz D6 parity)");
         assert(mz.vertices.length == 12, "zero-width ring: expected 12 verts");
         assert(mz.faces.length    == 10, "zero-width ring: expected 10 faces");
@@ -2159,7 +2174,7 @@ unittest { // bevelFacesByMask: cube top face, inset=0.1 shift=0.2
 
         auto me = makeCube();
         bool[] emptyMask; emptyMask.length = me.faces.length; emptyMask[] = false;
-        assert(me.bevelFacesByMask(emptyMask, 0.0f, 0.0f) == 0,
+        assert(polyBevelOnce!bevelFacesByMask(me, emptyMask, 0.0f, 0.0f) == 0,
             "empty mask must remain a no-op even at inset=0/shift=0");
         assert(me.vertices.length == 8);
         assert(me.faces.length    == 6);
@@ -2167,7 +2182,7 @@ unittest { // bevelFacesByMask: cube top face, inset=0.1 shift=0.2
 
     // inset=0.1, shift=0.2 (m is still a pristine cube — the D6 block used
     // its own fresh meshes).
-    assert(m.bevelFacesByMask(mask, 0.1f, 0.2f) == 1, "should process 1 face");
+    assert(polyBevelOnce!bevelFacesByMask(m, mask, 0.1f, 0.2f) == 1, "should process 1 face");
     assert(m.vertices.length == 12, "expected 12 verts");
     assert(m.faces.length    == 10, "expected 10 faces");
 
@@ -2185,7 +2200,7 @@ unittest { // bevelFacesByMask: cube top face, inset=0.1 shift=0.2
     // shift-only: inset=0, shift=0.2 → cap corners at (±0.5, 0.7, ±0.5)
     auto m2 = makeCube();
     bool[] mask2; mask2.length = m2.faces.length; mask2[] = false; mask2[4] = true;
-    assert(m2.bevelFacesByMask(mask2, 0.0f, 0.2f) == 1, "shift-only: should process 1 face");
+    assert(polyBevelOnce!bevelFacesByMask(m2, mask2, 0.0f, 0.2f) == 1, "shift-only: should process 1 face");
     assert(m2.vertices.length == 12);
     assert(m2.faces.length    == 10);
     bool hasV2(float x, float y, float z) {
@@ -2239,7 +2254,7 @@ unittest { // bevelFacesByMask: exact-collapse ring (fuzz D3 parity) — an
     {
         auto m = makeCube();
         bool[] mask; mask.length = m.faces.length; mask[] = false; mask[4] = true;
-        size_t n = m.bevelFacesByMask(mask, 0.5f, 0.0f);
+        size_t n = polyBevelOnce!bevelFacesByMask(m, mask, 0.5f, 0.0f);
         assert(n == 1, "inset==inradius should still process (clamped)");
         assertCollapseRing(m, "inset==inradius", 0.0f);
     }
@@ -2248,7 +2263,7 @@ unittest { // bevelFacesByMask: exact-collapse ring (fuzz D3 parity) — an
     {
         auto m = makeCube();
         bool[] mask; mask.length = m.faces.length; mask[] = false; mask[4] = true;
-        size_t n = m.bevelFacesByMask(mask, 1.0f, 0.0f);
+        size_t n = polyBevelOnce!bevelFacesByMask(m, mask, 1.0f, 0.0f);
         assert(n == 1, "inset==2x inradius should still process (clamped)");
         assertCollapseRing(m, "inset==2x inradius", 0.0f);
     }
@@ -2258,7 +2273,7 @@ unittest { // bevelFacesByMask: exact-collapse ring (fuzz D3 parity) — an
     {
         auto m = makeCube();
         bool[] mask; mask.length = m.faces.length; mask[] = false; mask[4] = true;
-        assert(m.bevelFacesByMask(mask, 0.1f, 0.0f) == 1);
+        assert(polyBevelOnce!bevelFacesByMask(m, mask, 0.1f, 0.0f) == 1);
         assert(m.vertices.length == 12, "normal inset must be unaffected by the collapse path");
         assert(m.faces.length    == 10);
         int atCentroid = 0;
@@ -2302,7 +2317,7 @@ unittest { // bevelFacesByMask: group=true shared-corner accumulator manifold
     mask[3] = true; // +X = [1,2,6,5]
     mask[4] = true; // +Y = [3,7,6,2]
     mask[1] = true; // +Z = [4,5,6,7]
-    size_t n = m.bevelFacesByMask(mask, 0.15f, 0.1f, true, 0);
+    size_t n = polyBevelOnce!bevelFacesByMask(m, mask, 0.15f, 0.1f, true, 0);
     assert(n == 3, "should process all 3 grouped faces");
     assert(m.vertices.length == 14, "expected 14 verts (8-1 orphaned apex-source+7 new)");
     assert(m.faces.length    == 12, "expected 12 faces");
@@ -2335,7 +2350,7 @@ unittest { // bevelFacesByMask: GROUP x SEGMENTS — task 0458 Phase 1 (+S1),
     bool[] mask; mask.length = m.faces.length; mask[] = false;
     mask[4] = true; // +Y = [3,7,6,2]
     mask[1] = true; // +Z = [4,5,6,7]
-    size_t n = m.bevelFacesByMask(mask, 0.25f, 0.15f, true, 2);
+    size_t n = polyBevelOnce!bevelFacesByMask(m, mask, 0.25f, 0.15f, true, 2);
     assert(n == 2);
     assert(m.vertices.length == 20, "expected 20 verts (8 orig + 6 intermediate-ring + 6 final-ring, shared corner not duplicated)");
     assert(m.faces.length    == 18);
@@ -2357,7 +2372,7 @@ unittest { // bevelFacesByMask: SQUARE CORNER, finding Q1 (single-face, no
     auto m = makeCube();
     bool[] mask; mask.length = m.faces.length; mask[] = false;
     mask[4] = true; // +Y = [3,7,6,2]
-    size_t n = m.bevelFacesByMask(mask, 0.25f, 0.15f, false, 0, true);
+    size_t n = polyBevelOnce!bevelFacesByMask(m, mask, 0.25f, 0.15f, false, 0, true);
     assert(n == 1);
     assert(m.vertices.length == 20, "8 orig + 4 final corners + 8 split points");
     assert(m.faces.length    == 14, "1 bottom + 4 side hexagons + 1 inner + 4 panels + 4 caps");
@@ -2401,7 +2416,7 @@ unittest { // bevelFacesByMask: SQUARE CORNER, finding Q2 (two NON-adjacent
     bool[] mask; mask.length = m.faces.length; mask[] = false;
     mask[4] = true; // +Y = [3,7,6,2]
     mask[5] = true; // -Y = [0,1,5,4]
-    size_t n = m.bevelFacesByMask(mask, 0.25f, 0.15f, true, 0, true);
+    size_t n = polyBevelOnce!bevelFacesByMask(m, mask, 0.25f, 0.15f, true, 0, true);
     assert(n == 2);
     assert(m.vertices.length == 32, "8 orig + 2x(4 final + 8 splits) = 32");
     assert(m.faces.length    == 22, "2 inner + 2x(4 panels+4 caps) + 4 octagon sides = 22");
@@ -2427,7 +2442,7 @@ unittest { // bevelFacesByMask: SQUARE CORNER, finding Q3 (square + segments
     auto m = makeCube();
     bool[] mask; mask.length = m.faces.length; mask[] = false;
     mask[4] = true; // +Y = [3,7,6,2]
-    size_t n = m.bevelFacesByMask(mask, 0.25f, 0.15f, false, 2, true);
+    size_t n = polyBevelOnce!bevelFacesByMask(m, mask, 0.25f, 0.15f, false, 2, true);
     assert(n == 1);
     assert(m.vertices.length == 24, "8 orig + 4 ring1(half-step) + 4 final(full-step) + 8 splits(at inset/segs=0.125)");
     assert(m.faces.length    == 18, "1 bottom + 4 side hexagons + 1 final-inner + 4 square-panels + 4 square-caps + 4 plain ring1->final panels");
@@ -2463,7 +2478,7 @@ unittest { // bevelFacesByMask: SQUARE CORNER, finding Q4 (grouped, 2
     bool[] mask; mask.length = m.faces.length; mask[] = false;
     mask[4] = true; // +Y = [3,7,6,2]
     mask[1] = true; // +Z = [4,5,6,7]
-    size_t n = m.bevelFacesByMask(mask, 0.25f, 0.15f, true, 0, true);
+    size_t n = polyBevelOnce!bevelFacesByMask(m, mask, 0.25f, 0.15f, true, 0, true);
     assert(n == 2);
     assert(m.vertices.length == 22, "8 orig + 6 final ring corners (4 standalone + 2 shared ridge) + 8 splits (4 standalone corners x 2, ridge corners get none)");
     assert(m.faces.length    == 16, "4 unselected hexagons + 2 inner quads + 6 panels (one per boundary-contour edge) + 4 caps (standalone corners only)");
@@ -2497,8 +2512,8 @@ unittest { // bevelFacesByMask: square=false is byte-identical to the
     auto m1 = makeCube();
     bool[] mask; mask.length = m0.faces.length; mask[] = false;
     mask[4] = true;
-    size_t n0 = m0.bevelFacesByMask(mask, 0.25f, 0.15f); // pre-0458-Phase-3 call site (5 args)
-    size_t n1 = m1.bevelFacesByMask(mask, 0.25f, 0.15f, false, 0, false); // explicit square=false
+    size_t n0 = polyBevelOnce!bevelFacesByMask(m0, mask, 0.25f, 0.15f); // pre-0458-Phase-3 call site (5 args)
+    size_t n1 = polyBevelOnce!bevelFacesByMask(m1, mask, 0.25f, 0.15f, false, 0, false); // explicit square=false
     assert(n0 == 1 && n1 == 1);
     assert(m0.vertices.length == m1.vertices.length);
     assert(m0.faces.length    == m1.faces.length);
@@ -2516,8 +2531,8 @@ unittest { // bevelFacesByMask: 0458 Phase-3 hardening — square with a ZERO
     auto m1 = makeCube();
     bool[] mask; mask.length = m0.faces.length; mask[] = false;
     mask[4] = true;
-    m0.bevelFacesByMask(mask, 0.0f, 0.15f, false, 0, true);  // inset=0, square ON
-    m1.bevelFacesByMask(mask, 0.0f, 0.15f, false, 0, false); // inset=0, square OFF
+    polyBevelOnce!bevelFacesByMask(m0, mask, 0.0f, 0.15f, false, 0, true);  // inset=0, square ON
+    polyBevelOnce!bevelFacesByMask(m1, mask, 0.0f, 0.15f, false, 0, false); // inset=0, square OFF
     assert(m0.vertices.length == m1.vertices.length,
         "square+inset=0 must fall back to the plain bevel — no extra split/cap verts");
     assert(m0.faces.length == m1.faces.length,
@@ -2537,7 +2552,7 @@ unittest { // bevelFacesByMask: group=false is byte-identical to the pre-0391
     auto m = makeCube();
     bool[] mask; mask.length = m.faces.length; mask[] = false;
     mask[3] = true; mask[4] = true; mask[1] = true;
-    size_t n = m.bevelFacesByMask(mask, 0.15f, 0.1f); // group defaults false, segments 0
+    size_t n = polyBevelOnce!bevelFacesByMask(m, mask, 0.15f, 0.1f); // group defaults false, segments 0
     assert(n == 3);
     // Ungrouped: each face computes its OWN 4 independent corners — no
     // vertex is shared, so no orphaning, and no ring quad is suppressed.
@@ -2552,7 +2567,7 @@ unittest { // bevelFacesByMask: Segments — LINEAR staircase law (task 0391
            // EXACTLY 1/3 and 2/3 of the final inset.
     auto m = makeCube();
     bool[] mask; mask.length = m.faces.length; mask[] = false; mask[4] = true; // +Y top face
-    size_t n = m.bevelFacesByMask(mask, 0.3f, 0.0f, false, 3);
+    size_t n = polyBevelOnce!bevelFacesByMask(m, mask, 0.3f, 0.0f, false, 3);
     assert(n == 1);
     // +4 verts per extra segment (2 intermediate rings of 4 corners each) +
     // the final ring (4) = +12 total; +4 ring quads per segment (3 segs ×
@@ -2579,9 +2594,9 @@ unittest { // bevelFacesByMask: segments<=1 is byte-identical to the flat
     auto m1 = makeCube();
     auto mF = makeCube();
     bool[] mask; mask.length = m0.faces.length; mask[] = false; mask[4] = true;
-    assert(m0.bevelFacesByMask(mask, 0.1f, 0.2f, false, 0) == 1);
-    assert(m1.bevelFacesByMask(mask, 0.1f, 0.2f, false, 1) == 1);
-    assert(mF.bevelFacesByMask(mask, 0.1f, 0.2f)            == 1); // pre-0391 2-arg call site
+    assert(polyBevelOnce!bevelFacesByMask(m0, mask, 0.1f, 0.2f, false, 0) == 1);
+    assert(polyBevelOnce!bevelFacesByMask(m1, mask, 0.1f, 0.2f, false, 1) == 1);
+    assert(polyBevelOnce!bevelFacesByMask(mF, mask, 0.1f, 0.2f)            == 1); // pre-0391 2-arg call site
     assert(m0.vertices.length == m1.vertices.length && m1.vertices.length == mF.vertices.length);
     assert(m0.faces.length    == m1.faces.length    && m1.faces.length    == mF.faces.length);
     foreach (i; 0 .. m0.vertices.length) {
@@ -2597,7 +2612,7 @@ unittest { // bevelFacesByMask: segments DoS clamp — an absurd segment count
            // is UI/HTTP-only and does not clamp this path.
     auto m = makeCube();
     bool[] mask; mask.length = m.faces.length; mask[] = false; mask[4] = true;
-    size_t n = m.bevelFacesByMask(mask, 0.1f, 0.0f, false, 1_000_000);
+    size_t n = polyBevelOnce!bevelFacesByMask(m, mask, 0.1f, 0.0f, false, 1_000_000);
     assert(n == 1, "should still process (segments clamped, not rejected)");
     // MAX_BEVEL_SEGMENTS=64 → 64 rings x 4 edges = 256 ring quads for this
     // one face — bounded, not the 1,000,000 the raw request would imply.
@@ -3861,7 +3876,7 @@ unittest {
     m.setFaceSubpatch(0, true);
 
     bool[] mask = [true];
-    size_t n = m.spikeFacesByMask(mask, 0.5f);
+    size_t n = polyBevelOnce!spikeFacesByMask(m, mask, 0.5f);
 
     assert(n == 1,                 "spikey: expected 1 face processed");
     assert(m.faces.length  == 4,   "spikey: 1 quad → 4 fan tris");
@@ -3900,7 +3915,7 @@ unittest {
 unittest {
     auto m = makeCube();
     bool[] mask = new bool[](m.faces.length); // all false
-    size_t n = m.spikeFacesByMask(mask, 1.0f);
+    size_t n = polyBevelOnce!spikeFacesByMask(m, mask, 1.0f);
     assert(n == 0, "spikey no-op: expected 0 processed");
     assert(m.faces.length == 6, "spikey no-op: face count must not change");
     assert(m.vertices.length == 8, "spikey no-op: vertex count must not change");
@@ -3918,7 +3933,7 @@ unittest {
     m.buildLoops();
     m.syncSelection();
     bool[] mask = [true];
-    size_t n = m.spikeFacesByMask(mask, 0.0f);
+    size_t n = polyBevelOnce!spikeFacesByMask(m, mask, 0.0f);
     assert(n == 1,                "spikey amount=0: expected 1 processed");
     assert(m.faces.length  == 4,  "spikey amount=0: 1 quad → 4 tris");
     assert(m.vertices.length == 5,"spikey amount=0: 4 + 1 apex at centroid");
@@ -3988,7 +4003,7 @@ unittest { // spikeFacesByMask: facePart must carry to all fan tris
     m.facePart[0] = 9u;
 
     bool[] mask = [true];
-    size_t n = m.spikeFacesByMask(mask, 0.5f);
+    size_t n = polyBevelOnce!spikeFacesByMask(m, mask, 0.5f);
     assert(n == 1, "facePart/spike: expected 1 face processed");
     assert(m.faces.length == 4, "facePart/spike: expected 4 fan tris");
     foreach (fi; 0 .. m.faces.length)

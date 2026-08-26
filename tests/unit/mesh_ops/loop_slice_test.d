@@ -6,6 +6,21 @@ module tests.unit.mesh_ops.loop_slice_test;
 import mesh;
 import math;
 import mesh_ops.loop_slice;
+
+// Task 1903 Stage F2: the three polygon-bevel entries (`insetFacesByMask`,
+// `bevelFacesByMask`, `spikeFacesByMask`) are free functions over
+// `ref MeshEditBatch` in `source/mesh_ops/poly_bevel.d`, so a test that drives
+// a kernel DIRECTLY opens the batch itself. ONE helper per file, so there is a
+// single place that says why it is `unrecorded`: nothing in these blocks reads
+// an op-log, and a recording batch would build one for no reader. GENERIC IN
+// THE RETURN TYPE — all three kernels answer `size_t`. `auto ref Args` because
+// callers pass array literals.
+private auto polyBevelOnce(alias kernel, Args...)(ref Mesh m, auto ref Args args) {
+    auto ed = MeshEditBatch.unrecorded(m, kPolyBevelEditScope);
+    auto n = kernel(ed, args);
+    ed.close();
+    return n;
+}
 import mesh_edit_delta : MeshEditDelta, MeshEditScope, MeshOpEntry;
 
 // Task 1903 Stage F1: every MUTATING entry point of this family is a free
@@ -1382,7 +1397,7 @@ unittest {
         Mesh m = makeFlatQuad();
         m.resetSelection();
         m.setFaceSubpatch(0, true);
-        assert(m.insetFacesByMask(allOne, 0.1f) == 1, "must process 1 face");
+        assert(polyBevelOnce!insetFacesByMask(m, allOne, 0.1f) == 1, "must process 1 face");
         assert(m.faces.length == 5, "expected 1 inner + 4 ring quads");
         foreach (fi; 0 .. m.faces.length)
             assert(m.isFaceSubpatch(fi),
@@ -1393,7 +1408,7 @@ unittest {
     {
         Mesh m = makeFlatQuad();
         m.resetSelection();
-        assert(m.insetFacesByMask(allOne, 0.1f) == 1, "must process 1 face");
+        assert(polyBevelOnce!insetFacesByMask(m, allOne, 0.1f) == 1, "must process 1 face");
         assert(m.faces.length == 5, "expected 1 inner + 4 ring quads");
         foreach (fi; 0 .. m.faces.length)
             assert(!m.isFaceSubpatch(fi),

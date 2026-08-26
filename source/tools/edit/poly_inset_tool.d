@@ -185,7 +185,19 @@ public:
         }
         if (mesh.faces.length == 0) return false;
         auto mask = currentMask();
-        size_t n = mesh.insetFacesByMask(mask, inset_);
+        // Task 1903 Stage F2 — the batch opens at the TOOL boundary (§4.1).
+        // This is the COMMIT path (`tool.doApply` / the panel Apply button),
+        // so one deferred stamp at `close()`. UNRECORDED all the same: this
+        // tool's undo is the whole-mesh `MeshSnapshot` pair `commitEdit()`
+        // records, so a recording batch would build an op-log nothing reads.
+        // Stage M owns the tool pair-holders; Stage L7 owns this family's
+        // delta undo.
+        size_t n;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kPolyBevelEditScope);
+            n = ed.insetFacesByMask(mask, inset_);
+            ed.close();
+        }
         if (n == 0) return false;
         gpu.upload(*mesh);
         return true;
@@ -288,7 +300,22 @@ private:
         auto zPreview = g_perf.scope_(Cat.toolPreview);
         before.restore(*mesh);
         auto mask = currentMask();
-        size_t n = mesh.insetFacesByMask(mask, inset_);
+        // Task 1903 Stage F2 — ONE UNRECORDED batch per DRAG FRAME, and
+        // unrecorded is not a convenience here: plan §9 is explicit that a
+        // recording batch opened per frame would build and throw away a full
+        // op-log at 60 Hz. This tool keeps the plain `before.restore(*mesh)`
+        // preview shape (it is not one of `preview_rebuild.d`'s three), so the
+        // batch is on the LIVE mesh and the frame's deferred stamp lands at
+        // `close()` — one per frame instead of one per appended corner vertex
+        // and ring quad. That is the STAMP; DELIVERIES are a separate count
+        // with a separate mechanism, and the drag test records the measured
+        // per-frame figure rather than assuming it follows the stamp.
+        size_t n;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kPolyBevelEditScope);
+            n = ed.insetFacesByMask(mask, inset_);
+            ed.close();
+        }
         built = (n != 0);
         refreshCaches();
     }

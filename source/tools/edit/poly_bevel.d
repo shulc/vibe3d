@@ -241,7 +241,17 @@ public:
         if (mesh.faces.length == 0) return false;
         if (inset_ == 0.0f && shift_ == 0.0f) return true;
         auto mask = currentMask();
-        size_t n = mesh.bevelFacesByMask(mask, inset_, shift_, group_, segments_, square_);
+        // Task 1903 Stage F2 — the batch opens at the TOOL boundary (§4.1),
+        // on the COMMIT path (`tool.doApply` / panel Apply). UNRECORDED: this
+        // tool's undo is the whole-mesh `MeshSnapshot` pair `commitEdit()`
+        // records. Stage M owns the tool pair-holders, Stage L7 the family's
+        // delta undo.
+        size_t n;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kPolyBevelEditScope);
+            n = ed.bevelFacesByMask(mask, inset_, shift_, group_, segments_, square_);
+            ed.close();
+        }
         if (n == 0) return false;
         gpu.upload(*mesh);
         return true;
@@ -453,9 +463,33 @@ private:
                                    segments_, group_ ? 1 : 0, square_ ? 1 : 0),
             (ref Mesh target) {
                 if (inset_ == 0.0f && shift_ == 0.0f) return cast(size_t)0;
-                return target.bevelFacesByMask(target.operandFaceMask(),
-                                               inset_, shift_, group_,
-                                               segments_, square_);
+                // Task 1903 Stage F2 — ONE UNRECORDED batch per DRAG FRAME
+                // (plan §9: a recording batch per frame would build and throw
+                // away a full op-log at 60 Hz).
+                //
+                // THE BATCH IS OPENED INSIDE THE LAMBDA, NOT AROUND
+                // `preview_.run`, and that is the whole point. `target` is
+                // `PreviewRebuild`'s PRIVATE CLEAN CAGE on the placement path
+                // and the LIVE mesh on the key-changed full-rebuild path, so
+                // opening it here lands the batch on whichever mesh the kernel
+                // actually runs on — which is exactly the two consequences
+                // plan §9.1 spells out, with no edit to the shared seam.
+                // §9.1's own recipe (change both delegate signatures to
+                // `ref MeshEditBatch`) would reach `preview_rebuild.d`, which
+                // serves TWO families this stage has not converted
+                // (`edge_bevel.d` at Stage G, `edge_extend`/`extrude.d` at
+                // Stage H); that edit belongs to whichever of them lands last.
+                // The live mesh's only write stays
+                // `adoptVertexPositions`'s `commitChange(Position)`
+                // (task 1620 — `topologyVersion` must not move or the subpatch
+                // preview drops `active`), and `close()` on the cage stamps a
+                // mesh nothing keys on.
+                auto ed = MeshEditBatch.unrecorded(target, kPolyBevelEditScope);
+                const size_t nb = ed.bevelFacesByMask(ed.operandFaceMask(),
+                                                      inset_, shift_, group_,
+                                                      segments_, square_);
+                ed.close();
+                return nb;
             });
         built = (n != 0);
         refreshCaches();

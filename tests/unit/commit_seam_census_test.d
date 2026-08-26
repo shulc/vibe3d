@@ -562,8 +562,10 @@ unittest // the mixin count is falling, and the converted families stay converte
     // D3: MeshBridgeOps; E1: MeshCleanupOps; E2: MeshRevolveOps;
     // E3: MeshCutOps; E4: MeshBevelFinOps AND MeshBevelVertexOps (the one
     // stage that converts two families, plan §12's E4 row — so this number
-    // falls by TWO there and by one everywhere else); F1: MeshLoopSliceOps.
-    enum size_t kExpected = 3;
+    // falls by TWO there and by one everywhere else); F1: MeshLoopSliceOps;
+    // F2: MeshPolyBevelOps. The two left are `MeshEdgeBevelOps` (Stage G) and
+    // `MeshExtrudeOps` (Stage H).
+    enum size_t kExpected = 2;
     assert(live.length == kExpected,
         format("source/mesh.d instantiates %d `mixin Mesh*Ops` templates; this "
              ~ "gate expects %d. Track 1 started at %d and every conversion "
@@ -583,7 +585,8 @@ unittest // the mixin count is falling, and the converted families stay converte
                                             "MeshCutOps",               // Stage E3
                                             "MeshBevelFinOps",          // Stage E4
                                             "MeshBevelVertexOps",       // Stage E4
-                                            "MeshLoopSliceOps"];        // Stage F1
+                                            "MeshLoopSliceOps",         // Stage F1
+                                            "MeshPolyBevelOps"];        // Stage F2
     foreach (name; kConverted)
         assert(!live.canFind(name),
             format("`mixin %s;` is back in struct Mesh. That family is free "
@@ -1857,6 +1860,344 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
 
 }
 
+unittest // Stage F2 — the polygon bevel / inset / spike family
+{
+    // ---------------------------------------------------------------------
+    // Stage F2 — poly.bevel + poly.inset + poly.spike. FIVE things are pinned
+    // here that no earlier stage needed:
+    //
+    //   * THREE receiver classes in ONE file — three mutating entries, TWO
+    //     `ref const(Mesh)` readers, and FIVE helpers with NO receiver at all.
+    //     F1 had all three too, but its receiver-less group was `static`
+    //     MEMBERS; here two of the five (`aveNormal`, `boundaryContourInset`)
+    //     were static and THREE (`insetCorner`, `insetCornerBisector`,
+    //     `maxSafeUniformInset`) were ordinary private members that simply
+    //     never touched `this`. The rows below pin the `static` GONE as well
+    //     as the receiver absent, because "still a static free function"
+    //     would compile and would mean the classification was never made.
+    //   * A QUALIFIER REMOVED, not added. E3 had to spell
+    //     `Mesh.capShellCycles` and E4 `Mesh.rebuildFaceWithVertexSubs`
+    //     because those names were `static` members of a struct their caller
+    //     had already left. F2 is the mirror: the sixth unittest block wrote
+    //     `Mesh.boundaryContourInset(...)` from INSIDE the template, of a
+    //     static this very file DECLARES. Once the family leaves `Mesh` that
+    //     qualifier stops resolving, so the three call sites are BARE — and
+    //     the walk below refuses the qualifier coming back anywhere under
+    //     `source/`.
+    //   * SEVEN private module-scope helpers, held by TEXT and not by the
+    //     build (plan §2.7 as corrected at the F1 review; памятка 32).
+    //     `private` at module scope in D hides the NAME and nothing else, so
+    //     a green build proves only that nobody SPELLS them. What the rows
+    //     below hold is the DECISION: `mesh.d`'s `public import
+    //     mesh_ops.poly_bevel;` re-exports this module's public names to
+    //     every `import mesh;` client, and none of the seven has a caller
+    //     outside this file — publishing them would open seven doors for
+    //     nobody.
+    //   * THE §5.7 ROW IS A `== 0` STATEMENT, not a retirement. This family
+    //     has never carried a raw position write: every new coordinate goes
+    //     through `ed.addVertex`. The zero is earned by M-V1/F2 (a raw write
+    //     through a NESTED index, the shape the predicate was blind to before
+    //     E3 widened it), not by the count.
+    //   * THE FOUR INDEXED `ed.faces[fi] = …` INSTALLS, counted. There is no
+    //     `rewriteFaces` in this family, so plan §5.3's K audit — whose needle
+    //     is `rewriteFaces` — does not carry it, and its OTHER audit does.
+    //     MEASURED (Stage F2): under a RECORDING batch every entry's op-log is
+    //     `[AddVerts AddFaces]` per processed face and names NO face reshape,
+    //     `revert()` THROWS, and arming `MeshEditTracker.wantsFaceReindex`
+    //     leaves the log BYTE-IDENTICAL — the ABSENT-publisher diagnosis, not
+    //     the disarmed one (памятка 12/21). Counting the installs is what
+    //     makes a FIFTH one visible to the stage that owns the remedy.
+    // ---------------------------------------------------------------------
+    immutable pbPath = buildPath(repoRoot, "source", "mesh_ops", "poly_bevel.d");
+    assert(exists(pbPath), "cannot find source/mesh_ops/poly_bevel.d at " ~ pbPath);
+    immutable pb = stripCommentsAndStrings(readText(pbPath));
+    assert(countOccurrences(pb, "mixin template MeshPolyBevelOps") == 0,
+        "source/mesh_ops/poly_bevel.d still declares `mixin template "
+      ~ "MeshPolyBevelOps` — Stage F2 converted this family to free functions; "
+      ~ "a surviving template is either dead or a second implementation "
+      ~ "(task 1903 Stage F2).");
+
+    // THE THREE MUTATING RECEIVERS. The trailing comma is load-bearing (D2
+    // review, MINOR-1: without it the needle is a PREFIX and `ed` -> `edb`
+    // stays green).
+    static immutable string[3] kEntries = ["insetFacesByMask", "bevelFacesByMask",
+                                           "spikeFacesByMask"];
+    foreach (name; kEntries) {
+        assert(countOccurrences(pb, name ~ "(ref MeshEditBatch ed,") == 1,
+            format("source/mesh_ops/poly_bevel.d no longer declares `%s` over "
+                 ~ "`ref MeshEditBatch ed,`. That receiver is the enforcement, "
+                 ~ "not the style: it is what makes a batchless call a COMPILE "
+                 ~ "error, so one inset / bevel / spike STAMPS AND DERIVES once "
+                 ~ "at close() instead of once per appended corner or apex "
+                 ~ "vertex, once per appended ring quad or fan triangle and "
+                 ~ "once at the tail. MEASURED on a 3x3 tagged grid: the "
+                 ~ "batched `mutationVersion` delta is 1 for every selection "
+                 ~ "size, where the unbatched ladder is 10 / 34 / 66 for "
+                 ~ "inset and bevel and 6 / 18 / 34 for spike "
+                 ~ "(task 1903 §4.1, §5.2 F2).", name));
+        assert(countOccurrences(pb, name ~ "(ref Mesh ") == 0,
+            format("`%s` has a `ref Mesh` receiver again — that compiles, and "
+                 ~ "it drops the batch: the kernel's internal commits go back "
+                 ~ "to stamping one at a time. Plan §4.4a REJECTED exactly "
+                 ~ "this overload, by name, because nothing in the two lanes "
+                 ~ "can see it — the geometry is identical and the receiver "
+                 ~ "pin is satisfied by the `ref MeshEditBatch` overload that "
+                 ~ "still exists. This row is the one thing that can "
+                 ~ "(task 1903 Stage F2).", name));
+        assert(countOccurrences(pb, name ~ "(ref const(Mesh)") == 0,
+            format("`%s` cannot have a `ref const(Mesh)` receiver — it appends "
+                 ~ "vertices and faces and replaces a winding in place. Such "
+                 ~ "an overload could only exist by casting const away "
+                 ~ "(task 1903 Stage F2).", name));
+    }
+
+    // THE TWO READ-ONLY RECEIVERS. Both WERE `const` members; nothing in a
+    // mixin body forces the keyword, so the const receiver states what the
+    // code already did and now ENFORCES it at the seam. Reached from inside
+    // `bevelFacesByMask` as `f(ed.mesh, …)` — the spelling Stage E1 settled on.
+    foreach (name; ["cornerNormalAt", "findGroupBoundaryContour"]) {
+        assert(countOccurrences(pb, name ~ "(ref const(Mesh) m,") == 1,
+            format("source/mesh_ops/poly_bevel.d no longer declares `%s` over "
+                 ~ "`ref const(Mesh) m`. Both of these only READ — the corner "
+                 ~ "cross-product normal and the group-boundary contour walk — "
+                 ~ "and the const receiver is what states that, now enforced at "
+                 ~ "the seam rather than by a keyword the mixin could have "
+                 ~ "dropped at any time (task 1903 Stage F2, plan §4.1).", name));
+        assert(countOccurrences(pb, name ~ "(ref MeshEditBatch") == 0,
+            format("`%s` took a `ref MeshEditBatch` receiver — that compiles, "
+                 ~ "and it means a pure READ now opens an edit batch and "
+                 ~ "publishes a change for a call that changes nothing. "
+                 ~ "`bevelFacesByMask`'s group pre-pass calls one of these "
+                 ~ "once per (vertex, selected face) pair. If a later stage "
+                 ~ "wants that, it is a decision to argue for here "
+                 ~ "(task 1903 Stage F2).", name));
+    }
+
+    // THE SEVEN HELPERS STAY `private` AT MODULE SCOPE (column 0), AND THIS
+    // ROW — not the build — IS WHAT HOLDS THAT (памятка 32, F1 review M3).
+    // `private` at MODULE scope in D restricts NAME LOOKUP only: it is not an
+    // encapsulation boundary, and probed with `dmd -o- -c` on `EdgeRingEntry`
+    // both a field READ and a field WRITE compile from outside through
+    // `auto`/`typeof`. So "the build is green with `private`" would be green
+    // whatever any caller did. A TEXT census can see the spelling the compiler
+    // cannot, which is why the decision lives here: widening any of these to
+    // public would publish it through `mesh.d`'s `public import
+    // mesh_ops.poly_bevel;` to every `import mesh;` client, and none of the
+    // seven has a caller outside this file.
+    static immutable string[7] kPrivateHelpers = [
+        "\nprivate Vec3 insetCorner(",          "\nprivate Vec3 insetCornerBisector(",
+        "\nprivate float maxSafeUniformInset(", "\nprivate Vec3 cornerNormalAt(",
+        "\nprivate Vec3 aveNormal(",            "\nprivate bool findGroupBoundaryContour(",
+        "\nprivate bool boundaryContourInset("];
+    foreach (needle; kPrivateHelpers)
+        assert(countOccurrences(pb, needle) == 1,
+            format("source/mesh_ops/poly_bevel.d no longer declares `%s` at "
+                 ~ "MODULE scope (column 0) with `private`. All seven helpers "
+                 ~ "of this family are module-private BY DECISION, not by "
+                 ~ "accident: `mesh.d` re-exports this module's PUBLIC names to "
+                 ~ "every `import mesh;` client and not one of the seven has a "
+                 ~ "caller outside this file. NOTE WHAT `private` DOES AND DOES "
+                 ~ "NOT DO: at module scope it hides the NAME only, so no build "
+                 ~ "can enforce this and THIS ROW is the enforcement. If one "
+                 ~ "has to widen, say why here (task 1903 Stage F2, plan §2.7).",
+                   needle[1 .. $]));
+
+    // …and `static` is GONE from the two that carried it. A module-level
+    // `private static` function still compiles and still has no receiver, so
+    // the row above alone cannot tell "classified as receiver-less" from
+    // "dedented with the keyword still attached" — this is the half that can.
+    foreach (needle; ["private static Vec3 aveNormal(",
+                      "private static bool boundaryContourInset("])
+        assert(countOccurrences(pb, needle) == 0,
+            format("source/mesh_ops/poly_bevel.d still spells `%s`. Both were "
+                 ~ "`private static` MEMBERS of `Mesh`; at module scope the "
+                 ~ "keyword is noise that reads as if a struct were still "
+                 ~ "involved (task 1903 Stage F2).", needle));
+
+    // The family's declared scope lives ONCE, beside the kernels — D2's reason
+    // for `kReduceEditScope`. ONE constant for all three entries, because all
+    // three declare the same class (measured: `scope_` reads 0xe on a recording
+    // batch around each). SEVEN production call sites pass it.
+    assert(countOccurrences(pb, "enum uint kPolyBevelEditScope =") == 1,
+        "source/mesh_ops/poly_bevel.d no longer declares `kPolyBevelEditScope` "
+      ~ "at module scope — SEVEN production call sites pass it (three commands, "
+      ~ "the two tools' commit paths and their two per-frame previews), and a "
+      ~ "per-call-site literal is the drift this constant exists to prevent "
+      ~ "(task 1903 Stage F2).");
+
+    // The constant is declared once beside the kernels, but each of the three
+    // ENTRIES spells its own `commitChange` call independently — `d.scope_`
+    // comes from the BATCH DECLARATION (`pushEditFrame` -> `rec.declare`), not
+    // from this tail call, so a kernel's `commitChange` argument can drift
+    // from `kPolyBevelEditScope` with no test noticing (review round 1,
+    // MINOR-2, 2026-08-26): `poly_bevel_test.d`'s own scope-declared unittest
+    // pins the CONSTANT against a hand-written `Points|Polygons|Marks`
+    // duplicate and never reads a kernel's own `commitChange` line. Pin the
+    // three call sites' TEXT instead — one row, all three kernels, exact
+    // spelling.
+    assert(countOccurrences(pb,
+            "ed.commitChange(MeshEditScope.Geometry | MeshEditScope.Marks)") == 3,
+        "source/mesh_ops/poly_bevel.d: the three kernels' own "
+      ~ "`ed.commitChange(MeshEditScope.Geometry | MeshEditScope.Marks)` tail "
+      ~ "calls no longer number exactly 3 (one per entry) with this exact "
+      ~ "spelling — `kPolyBevelEditScope` above is what a RECORDING batch "
+      ~ "declares, not what a kernel stamps at `commitChange`, and those two "
+      ~ "can drift independently. G's `edge_bevel.d` and H's `extrude.d` "
+      ~ "inherit this same hole and need their own row (task 1903 Stage F2).");
+
+    // A KERNEL NEVER OPENS A BATCH (§4.1, §2.3 rule 2) — the absence pin, and
+    // like cut.d and loop_slice.d this file cannot use the plain `== 0`
+    // spelling because it keeps FIVE MUTATING module unittests that
+    // legitimately open one through their own `bevelOnce` helper. So the pin
+    // is two-sided: the TOTAL must be 1 (the helper is the only open, and the
+    // five unittests share it), and it must be the helper's exact spelling. A
+    // kernel that opened its own would take the total to 2; one that replaced
+    // the helper's would keep the total and drop the shaped count.
+    assert(countOccurrences(pb, "MeshEditBatch.unrecorded(") == 1
+        && countOccurrences(pb, "MeshEditBatch(") == 0,
+        format("source/mesh_ops/poly_bevel.d opens %d unrecorded "
+             ~ "`MeshEditBatch`(es) and %d RECORDING one(s); expected exactly "
+             ~ "1 and 0 — the one is the `bevelOnce` helper the five MUTATING "
+             ~ "module unittests share, and a recording open anywhere in this "
+             ~ "file would build an op-log nothing reads. A KERNEL never opens "
+             ~ "a batch at all — the command or the tool does (plan §4.1, §2.3 "
+             ~ "rule 2). If a new intra-kernel batch is genuinely needed, "
+             ~ "§4.4a says what it costs: a TRANSITIONAL label, a named "
+             ~ "removing stage, and a per-command nestedBatchOpens DELTA "
+             ~ "assert in that command's own suite test (task 1903 Stage F2).",
+               countOccurrences(pb, "MeshEditBatch.unrecorded("),
+               countOccurrences(pb, "MeshEditBatch(")));
+    assert(countOccurrences(pb,
+            "auto ed = MeshEditBatch.unrecorded(m, kPolyBevelEditScope);") == 1,
+        "the one `MeshEditBatch.unrecorded` open in source/mesh_ops/poly_bevel.d "
+      ~ "is no longer the module unittests' `bevelOnce` helper — it is the only "
+      ~ "open this file is allowed, and the row above only counts them. It now "
+      ~ "has a different subject or a different scope, which means a KERNEL is "
+      ~ "opening it (task 1903 Stage F2).");
+
+    // §5.7 over this file — a `== 0` STATEMENT, not a retirement. Nothing in
+    // this family has ever moved an EXISTING vertex: every new corner, ring
+    // and apex coordinate is an `ed.addVertex` argument, which is also why
+    // `kPolyBevelEditScope` carries no `Position` bit. The zero is earned by
+    // the drill rather than by the count — M-V1/F2 writes the raw line through
+    // a NESTED index (`ed.vertices[origFaceVerts[i]].x += 0.0f;`), the exact
+    // spelling the predicate was blind to before Stage E3 widened it, and this
+    // row reddens naming it.
+    {
+        string firstHitPb;
+        immutable size_t rawWritesPb = countRawPositionWrites(pb, firstHitPb);
+        assert(rawWritesPb == 0,
+            format("source/mesh_ops/poly_bevel.d: %d raw position write(s) "
+                 ~ "under §5.7's predicate, expected 0. First hit: `%s`. "
+                 ~ "`alias mesh this` means `ed.vertices[i] = p` COMPILES "
+                 ~ "inside a recording batch and records nothing, which is why "
+                 ~ "the boundary is a counted census and not a type. This "
+                 ~ "family declares no `Position` scope bit precisely because "
+                 ~ "it moves no existing vertex; a write here breaks both "
+                 ~ "statements at once (task 1903 §5.7, M-V1/F2).",
+                   rawWritesPb, firstHitPb));
+    }
+
+    // THE FOUR INDEXED `ed.faces[fi] = …` INSTALLS, plan §5.3's OTHER audit.
+    // `insetFacesByMask` replaces the source face's winding with the inset
+    // ring in its own slot; `bevelFacesByMask` does the same with the cap and
+    // ALSO rewrites an UNSELECTED neighbour's winding on the `square` splice;
+    // `spikeFacesByMask` replaces the source face with the first fan triangle.
+    // NONE of them calls `rewriteFaces` — MEASURED comment-stripped, the row
+    // below — so K's audit needle cannot see any of it, and arming
+    // `wantsFaceReindex` was measured to leave the op-log BYTE-IDENTICAL.
+    assert(countOccurrences(pb, "rewriteFaces") == 0
+        && countOccurrences(pb, "rewriteVertices") == 0,
+        "source/mesh_ops/poly_bevel.d now calls `rewriteFaces`/"
+      ~ "`rewriteVertices`. It did not when Stage F2 measured this family, and "
+      ~ "that ABSENCE is the whole diagnosis: the op-log names no face change "
+      ~ "because the primitive is never reached, not because its publisher is "
+      ~ "disarmed. If the primitive is here now, Stage K's per-rewrite arming "
+      ~ "DOES reach this family and the recording block's "
+      ~ "\"STAGE K/L7/L2 FLIPS THIS\" comment has to be re-measured "
+      ~ "(task 1903 §5.3, Stage F2).");
+    assert(countOccurrences(pb, "ed.faces[fi] = ") == 4,
+        format("source/mesh_ops/poly_bevel.d makes %d indexed `ed.faces[fi] = "
+             ~ "…` installs; Stage F2 measured exactly 4 (the inset ring, the "
+             ~ "bevel cap, the square splice into the UNSELECTED neighbour, "
+             ~ "and the spike's first fan triangle). Every one of them is a "
+             ~ "face reshape no mutation hook sees — plan §5.3's OTHER audit, "
+             ~ "the class whose needle is NOT `rewriteFaces`. A fifth install "
+             ~ "is a fifth silent reshape and the owning L stage (L7 for "
+             ~ "bevel/inset, L2 for spikey) has to know about it "
+             ~ "(task 1903 §5.3, Stage F2).",
+               countOccurrences(pb, "ed.faces[fi] = ")));
+
+    // `Mesh.boundaryContourInset` IS GONE FROM THE WHOLE TREE — the MIRROR of
+    // Stage F1's `Mesh.capShellCycles` row. There the qualifier had to be
+    // ADDED at E3 because cut.d converted before loop_slice.d did; here the
+    // qualifier existed only because a `unittest` block INSIDE the template
+    // body could reach a `static` member of the struct it was mixed into. The
+    // compiler enforces the forward direction (the member no longer exists);
+    // this row enforces the reverse — it reddens if the qualifier comes back,
+    // which can only happen if somebody re-adds the member and defeats the
+    // roster and the tripwire too.
+    {
+        import std.file : dirEntries, SpanMode;
+        import std.path : relativePath;
+        import std.string : replace;
+        immutable srcRootF2 = buildPath(repoRoot, "source");
+        string[] qualifiedF2;
+        size_t scannedF2 = 0;
+        foreach (e; dirEntries(srcRootF2, "*.d", SpanMode.depth)) {
+            ++scannedF2;
+            immutable srcF2 = stripCommentsAndStrings(readText(e.name));
+            if (countOccurrences(srcF2, "Mesh.boundaryContourInset(") >= 1)
+                qualifiedF2 ~= relativePath(e.name, repoRoot).replace("\\", "/");
+        }
+        assert(scannedF2 >= 100,
+            format("the `Mesh.boundaryContourInset` walk visited only %d .d "
+                 ~ "file(s) under source/ — the tree has well over 100, so the "
+                 ~ "walk is mis-rooted and the assertion below would be "
+                 ~ "measuring nothing.", scannedF2));
+        assert(qualifiedF2.length == 0,
+            format("`Mesh.boundaryContourInset(` is spelled in %s. Stage F2 "
+                 ~ "made `boundaryContourInset` a module-private free function "
+                 ~ "of mesh_ops.poly_bevel — it is no longer a `static` member "
+                 ~ "of `Mesh`, so the qualified spelling can only compile if "
+                 ~ "somebody re-added the member, which the roster above and "
+                 ~ "poly_bevel.d's own tripwire also refuse (%d file(s) "
+                 ~ "scanned) (task 1903 Stage F2, §2.7).",
+                   qualifiedF2, scannedF2));
+        assert(countOccurrences(pb, "assert(boundaryContourInset(") == 1
+            && countOccurrences(pb, "assert(!boundaryContourInset(") == 2,
+            format("source/mesh_ops/poly_bevel.d's degeneracy-gate unittest no "
+                 ~ "longer makes its three BARE `boundaryContourInset(…)` "
+                 ~ "calls (%d positive, %d negated; expected 1 and 2). Those "
+                 ~ "three are the other half of the qualifier removal: they "
+                 ~ "read `Mesh.boundaryContourInset(...)` while the block lived "
+                 ~ "inside the mixin template, and the walk above only refuses "
+                 ~ "the qualifier coming back — this says the calls are still "
+                 ~ "there to make it (task 1903 Stage F2).",
+                   countOccurrences(pb, "assert(boundaryContourInset("),
+                   countOccurrences(pb, "assert(!boundaryContourInset(")));
+    }
+
+    // THE SIX MOVED `unittest` BLOCKS (§2.7), and the ledger they must not
+    // move. `tests/unit/census_gate.d` counts blocks LEXICALLY over
+    // `source/ ∪ tests/unit/`, so a block inside a `mixin template` and a
+    // block at module scope count the same and this move is a ledger no-op —
+    // which is exactly the claim §2.7 makes ("Expected: 0 dropped") and which
+    // the gate itself is what verifies. What THIS row adds is that all six are
+    // still HERE rather than quietly deleted: the ledger arithmetic would also
+    // close if someone removed a block and added an unrelated one elsewhere in
+    // the same lane.
+    assert(countOccurrences(pb, "\nunittest {") == 6,
+        format("source/mesh_ops/poly_bevel.d holds %d module `unittest` "
+             ~ "block(s) at column 0; Stage F2 moved SIX out of the template "
+             ~ "body (the `boundaryContourInset` degeneracy gate, the three "
+             ~ "GROUP-accumulator findings G1/G2/G3, the WARPED isolated-face "
+             ~ "law W1 and the FLAT byte-identity guard). Five of the six "
+             ~ "MUTATE and reach the kernels through `bevelOnce` "
+             ~ "(task 1903 §2.7, Stage F2).",
+               countOccurrences(pb, "\nunittest {")));
+}
+
 // ---------------------------------------------------------------------------
 // THE §2.6 WIDENINGS, AND THE HALF THAT KEEPS THEM HONEST (task 1903 Stage D3).
 //
@@ -1921,6 +2262,9 @@ unittest // every §2.6 widening this stage made still has the caller it names
     immutable lsPath2 = buildPath(repoRoot, "source", "mesh_ops", "loop_slice.d");
     assert(exists(lsPath2), "cannot find source/mesh_ops/loop_slice.d at " ~ lsPath2);
     immutable ls2 = stripCommentsAndStrings(readText(lsPath2));
+    immutable pbPath2 = buildPath(repoRoot, "source", "mesh_ops", "poly_bevel.d");
+    assert(exists(pbPath2), "cannot find source/mesh_ops/poly_bevel.d at " ~ pbPath2);
+    immutable pb2 = stripCommentsAndStrings(readText(pbPath2));
 
     // The file each row's `callSite` is looked for in. D3's three rows are all
     // bridge.d's; E3 added three that are cut.d's, so the row carries its own
@@ -1930,7 +2274,8 @@ unittest // every §2.6 widening this stage made still has the caller it names
                                        "source/mesh_ops/cut.d":          ct,
                                        "source/mesh_ops/bevel_fin.d":    bf2,
                                        "source/mesh_ops/bevel_vertex.d": bv2,
-                                       "source/mesh_ops/loop_slice.d":   ls2];
+                                       "source/mesh_ops/loop_slice.d":   ls2,
+                                       "source/mesh_ops/poly_bevel.d":   pb2];
 
     // name, the `private` declaration that must be GONE from mesh.d, the
     // declaration that must be THERE, the call in the ops file that justifies it,
@@ -2109,6 +2454,42 @@ unittest // every §2.6 widening this stage made still has the caller it names
                ~ "from: Loop Slice's Cap Sections arm folds every ring face's "
                ~ "word into the cap's. `mesh_ops/edge_bevel.d` (Stage G) is "
                ~ "the other caller and is still a mixin."),
+        // --- Stage F2's one, and it is NOT a `Mesh` member ------------------
+        // The same CLASS as `mesh.smoothstep01` (Stage D3): a module-level
+        // free function of `mesh` that a converted family names, whose privacy
+        // was an artefact of the mixin body being looked up in `mesh.d`'s
+        // scope. The difference is that this one is `version (unittest)`, so
+        // the surface it opens exists only in a unittest build — but the row
+        // is the same shape and for the same reason, and it is what refuses a
+        // re-privatisation that would break `dub test --config=tests` while
+        // leaving `dub build` green.
+        //
+        // WHY NOT A LOCAL COPY IN poly_bevel.d, which would have needed no
+        // widening at all: measured, not preferred. A copy carries
+        // `m.vertices = verts;`, which §5.7's predicate counts, and it would
+        // turn Stage F2's clean `== 0` raw-position-write row into a `kAllow`
+        // entry — trading a five-line duplicate for a permanently weaker
+        // census row.
+        Widening("mesh.buildRawMesh",
+                 "version (unittest) private Mesh buildRawMesh(",
+                 "version (unittest) Mesh buildRawMesh(Vec3[] verts, uint[][] faceList)",
+                 "source/mesh_ops/poly_bevel.d",
+                 "buildRawMesh(",
+                 "buildRawMesh(",
+                 ["source/mesh_ops/poly_bevel.d"],
+                 "the raw fixture builder (`vertices = …; faces = …; "
+               ~ "rebuildEdgesFromFaces(); buildLoops(); resetSelection();`) "
+               ~ "shared by `mesh.d`'s own T-S1 grid and by the five "
+               ~ "`bevelFacesByMask` unittest blocks Stage F2 moved out of the "
+               ~ "template body. Those blocks reached it only because a mixin "
+               ~ "body — unittest blocks included — is looked up in its "
+               ~ "INSTANTIATION scope; as module unittests of "
+               ~ "mesh_ops.poly_bevel they cannot. CALLER WALK IS "
+               ~ "`source/**`-SCOPED (review round 1, MINOR-3, 2026-08-26): "
+               ~ "the walk below reads `source/` only, so a `tests/**` caller "
+               ~ "of this `version (unittest)` name — none exists today — "
+               ~ "would be invisible to it and this row would stay green over "
+               ~ "a caller it cannot see."),
     ];
 
     foreach (w; kWidenings) {

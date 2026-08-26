@@ -42,7 +42,20 @@ class MeshSpikey : Command, Operator {
 
         snap = MeshSnapshot.capture(*mesh);
         auto mask = mesh.operandFaceMask();
-        size_t n = mesh.spikeFacesByMask(mask, amount_);
+        // Task 1903 Stage F2 — the batch opens at the command boundary, for
+        // the reason `mesh.poly_inset`'s does (§4.1). One spike now stamps
+        // once at `close()` instead of once per apex vertex, once per appended
+        // fan triangle and once at the tail. UNRECORDED: undo here is still
+        // the whole-mesh `snap` above, and `spikey` is a Stage **L2**
+        // command (create + index-stable topo-misc), not an L7 one — the
+        // kernel ships in this family's file but the L table is keyed by
+        // COMMAND (памятка E1 №3).
+        size_t n;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kPolyBevelEditScope);
+            n = ed.spikeFacesByMask(mask, amount_);
+            ed.close();
+        }
         if (n == 0) {
             snap = MeshSnapshot.init;
             return false;

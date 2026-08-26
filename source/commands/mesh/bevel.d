@@ -96,7 +96,19 @@ class MeshBevel : Command, Operator {
 
         if (editMode == EditMode.Polygons) {
             auto mask = mesh.operandFaceMask();
-            n = mesh.bevelFacesByMask(mask, inset_, shift_, group_, segments_, square_);
+            // Task 1903 Stage F2 — the batch opens at the command boundary
+            // (§4.1) and is scoped to the POLYGON ARM ALONE. Not to
+            // `evaluate`, and deliberately not around the `else` arm: that one
+            // calls `bevelEdgesByMask`, still a mixin member until Stage G,
+            // and spanning it would change `mesh.bevel`'s publish shape on a
+            // path this conversion did not touch — the narrowing Stage D3's
+            // review (MAJOR-3) had to make after the fact. UNRECORDED (undo is
+            // still the whole-mesh `snap` above); Stage L7 owns the flip.
+            {
+                auto ed = MeshEditBatch.unrecorded(*mesh, kPolyBevelEditScope);
+                n = ed.bevelFacesByMask(mask, inset_, shift_, group_, segments_, square_);
+                ed.close();
+            }
         } else if (editMode == EditMode.Edges) {
             auto mask = mesh.operandEdgeMask();
             n = mesh.bevelEdgesByMask(mask, width_, roundLevel_, widthMode_);
