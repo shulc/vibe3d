@@ -8,6 +8,8 @@ import math : Vec3, Viewport, AimViewport, aimSpace;
 import document : primaryModelSpace;
 import params : Param;
 import change_bus : MeshEditScope;
+import mesh_edit_delta : undoTrackerEnabled;
+import commands.mesh.position_undo : PositionUndo;
 import toolpipe.packets : FalloffPacket, SubjectPacket;
 import falloff : evaluateFalloff, IFalloffAware;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
@@ -35,6 +37,21 @@ class MeshQuantize : Command, Operator, IFalloffAware {
     // mutated; revert restores them. Same shape as MeshTransform.
     private uint[] touchedIdx;
     private Vec3[] touchedPrev;
+    // Recorded `Kind.SetPos` undo (task 1903 L0-d4).
+    private PositionUndo undo_;
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded undo (task 1903 §L0-d,
+        /// witness W-d3a). The op-log SHAPE is not derivable from the outside:
+        /// a command that records nothing falls back to its legacy revert and
+        /// restores the right positions anyway, so every result-shaped
+        /// assertion — the plane diff, the redo cell, the parity cell — is
+        /// GREEN over a deleted recorder. Only reading the log itself is not.
+        /// `version (unittest)`, so this is not a door in a shipped build; both
+        /// gate lanes compile the sources with `-unittest`. `public` on the
+        /// declaration and NOT a `public:` section — a section marker here
+        /// would silently change the protection of every member below it.
+        public ref const(PositionUndo) recordedUndo() const return { return undo_; }
+    }
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -72,11 +89,35 @@ class MeshQuantize : Command, Operator, IFalloffAware {
         // below, which may be a Screen/Lasso type, so it needs a real
         // aim space — it used to declare an empty `Viewport` instead.
         const auto aim = aimSpace(subj.viewport, primaryModelSpace());
-        return this.applyKernel(aim);
+
+        // §2.4 — the step guard is resolved BEFORE the batch is opened. A
+        // `return` out of an open batch leaves `~MeshEditBatch` to pop the
+        // frame and tick `changeBus.batchLeaks`, asserted 0 by the suite.
+        if (stepX_ <= 0 || stepY_ <= 0 || stepZ_ <= 0) return false;
+
+        // REDO: re-run the kernel UNRECORDED and keep the first delta.
+        if (undo_.armed()) {
+            auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+            const ok = applyKernel(ed, aim);
+            ed.close();
+            return ok;
+        }
+        if (undoTrackerEnabled()) {
+            auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
+            const ok = applyKernel(ed, aim);
+            undo_.arm(ed.close());
+            if (!ok) { undo_.disarm(); return false; }
+            return true;
+        }
+        // Legacy path — the SAME kernel through an UNRECORDED batch, so this
+        // file's raw-write census row is 0 on BOTH paths.
+        auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+        const ok = applyKernel(ed, aim);
+        ed.close();
+        return ok;
     }
 
-    private bool applyKernel(const ref AimViewport aim) {
-        if (stepX_ <= 0 || stepY_ <= 0 || stepZ_ <= 0) return false;
+    private bool applyKernel(ref MeshEditBatch ed, const ref AimViewport aim) {
 
         // Build affected-vertex mask the same way MeshTransform does.
         //
@@ -90,6 +131,10 @@ class MeshQuantize : Command, Operator, IFalloffAware {
 
         touchedIdx.length  = 0;
         touchedPrev.length = 0;
+        // Task 1903 L0-d4 — local accumulate + ONE `ed.setVertexPositions`.
+        // Byte-identical: every read of vertex `i` below already happened
+        // before the write to `i`, and no vertex is visited twice.
+        Vec3[] newPos;
         // Task 0619: cursorless — see jitter.d. No viewport, by design.
         foreach (i; 0 .. mesh.vertices.length) {
             if (!vmask[i]) continue;
@@ -115,20 +160,40 @@ class MeshQuantize : Command, Operator, IFalloffAware {
                 ? evaluateFalloff(falloff_, mesh.vertices[i], cast(int)i, aim)
                 : 1.0f;
             Vec3 orig = mesh.vertices[i];
-            mesh.vertices[i].x = orig.x + (qx - orig.x) * fw;
-            mesh.vertices[i].y = orig.y + (qy - orig.y) * fw;
-            mesh.vertices[i].z = orig.z + (qz - orig.z) * fw;
+            Vec3 nv;
+            nv.x = orig.x + (qx - orig.x) * fw;
+            nv.y = orig.y + (qy - orig.y) * fw;
+            nv.z = orig.z + (qz - orig.z) * fw;
+            newPos ~= nv;
         }
 
-        mesh.commitChange(MeshEditScope.Position);
+        ed.setVertexPositions(touchedIdx, newPos);
+        ed.commitChange(MeshEditScope.Position);
         return true;
     }
 
     override bool revert() {
+        if (undo_.armed()) return undo_.revert(*mesh);
+        // The tracker-off oracle (W-d3c), and the 0099 arm (task 2110).
         if (touchedIdx.length == 0) return true;   // no-op quantize: positions unchanged, revert succeeds
-        foreach (i, vi; touchedIdx)
-            if (vi < mesh.vertices.length) mesh.vertices[vi] = touchedPrev[i];
-        mesh.commitChange(MeshEditScope.Position);
+        // TASK 1903 L0-d — THE LEGACY REVERT WRITES THROUGH THE BATCH TOO.
+        // The plan's §2.5 template left this loop "untouched"; that is
+        // incompatible with its own §1/§3/W-d1, which require this file to read
+        // `countRawPositionWrites == 0` — §1's measured table counts THIS LOOP
+        // among the file's raw writes. Resolved the way §2.5 already resolved
+        // the forward: the same write, through the same primitive, on an
+        // UNRECORDED batch. It stays a genuine oracle for W-d3c because it
+        // restores from the command's own stored pre-op array while the delta
+        // path replays the op-log's `posBefore` — two independent data paths
+        // that share only the write primitive, which is what a mutation of the
+        // RECORDING has to be measured against. Byte-identical to the loop it
+        // replaces: `setVertexPositions` skips only writes whose new value is
+        // BIT-identical to the current one, and writing identical bits back was
+        // what the loop did there; the bounds guard is the same `continue`.
+        auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+        ed.setVertexPositions(touchedIdx, touchedPrev);
+        ed.commitChange(MeshEditScope.Position);
+        ed.close();
         return true;
     }
 }

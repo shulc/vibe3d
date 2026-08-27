@@ -9,6 +9,8 @@ import shader;
 import math : Vec3;
 import params : Param;
 import change_bus : MeshEditScope;
+import mesh_edit_delta : undoTrackerEnabled;
+import commands.mesh.position_undo : PositionUndo;
 
 /// Set the position of every selected vertex — either all three coordinates
 /// at once (`axis: all`, the default) or ONE of them (`axis: x|y|z`, leaving
@@ -59,8 +61,23 @@ class MeshSetPosition : Command, Operator {
     private float  value_ = 0.0f;
 
     // Position-restore undo state.
-    private int[]  idxs;
+    private uint[] idxs;
     private Vec3[] orig;
+    // Recorded `Kind.SetPos` undo (task 1903 L0-d4).
+    private PositionUndo undo_;
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded undo (task 1903 §L0-d,
+        /// witness W-d3a). The op-log SHAPE is not derivable from the outside:
+        /// a command that records nothing falls back to its legacy revert and
+        /// restores the right positions anyway, so every result-shaped
+        /// assertion — the plane diff, the redo cell, the parity cell — is
+        /// GREEN over a deleted recorder. Only reading the log itself is not.
+        /// `version (unittest)`, so this is not a door in a shipped build; both
+        /// gate lanes compile the sources with `-unittest`. `public` on the
+        /// declaration and NOT a `public:` section — a section marker here
+        /// would silently change the protection of every member below it.
+        public ref const(PositionUndo) recordedUndo() const return { return undo_; }
+    }
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -84,13 +101,18 @@ class MeshSetPosition : Command, Operator {
         if (vts.get!SubjectPacket() is null)  return false;
         if (!mesh.hasAnySelectedVertices())   return false;
 
-        // Read the selection mask ONCE (selectedVertices allocates a fresh bool[]
-        // each call — re-calling inside the loop would be O(n²)).
-        auto sel = mesh.selectedVertices;
-
         // Resolve the axis ONCE, outside the loop, and reject an unknown token
         // before a single vertex has moved — a half-applied edit would leave
         // the mesh in a state `revert()` describes only partially.
+        //
+        // §2.4, AND THIS IS THE CONCRETE SITE THE RULE WAS WRITTEN FOR. The
+        // `throw` below must be resolved BEFORE the batch is opened. An
+        // exception escaping an open batch unwinds through `~MeshEditBatch`,
+        // which pops the leaked frame and ticks `changeBus.batchLeaks` — a
+        // counter the suite asserts is 0. It cannot assert instead: that
+        // destructor runs DURING unwinding, so an `Error` raised there would
+        // replace the exception the command funnel is already handling and the
+        // caller would get a process exit instead of `status:error`.
         int comp;   // -1 = write the whole Vec3
         switch (axis_) {
             case "all": comp = -1; break;
@@ -103,33 +125,82 @@ class MeshSetPosition : Command, Operator {
                     ~ "' — expected all, x, y or z");
         }
 
+        // REDO: re-run the kernel UNRECORDED and keep the first delta.
+        if (undo_.armed()) {
+            auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+            const ok = applyKernel(ed, comp);
+            ed.close();
+            return ok;
+        }
+        if (undoTrackerEnabled()) {
+            auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
+            const ok = applyKernel(ed, comp);
+            undo_.arm(ed.close());
+            if (!ok) { undo_.disarm(); return false; }
+            return true;
+        }
+        // Legacy path — the SAME kernel through an UNRECORDED batch, so this
+        // file's raw-write census row is 0 on BOTH paths.
+        auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+        const ok = applyKernel(ed, comp);
+        ed.close();
+        return ok;
+    }
+
+    private bool applyKernel(ref MeshEditBatch ed, int comp) {
+        // Read the selection mask ONCE (selectedVertices allocates a fresh bool[]
+        // each call — re-calling inside the loop would be O(n²)).
+        auto sel = mesh.selectedVertices;
+
+        // Task 1903 L0-d4 — local accumulate + ONE `ed.setVertexPositions`.
         idxs = [];
         orig = [];
+        Vec3[] newPos;
         foreach (i; 0 .. sel.length) {
             if (!sel[i]) continue;
-            idxs ~= cast(int)i;
+            idxs ~= cast(uint)i;
             orig ~= mesh.vertices[i];
             if (comp < 0) {
-                mesh.vertices[i] = pos_;
+                newPos ~= pos_;
             } else {
                 // One coordinate, world space; the other two keep their value.
                 Vec3 p = mesh.vertices[i];
                 if      (comp == 0) p.x = value_;
                 else if (comp == 1) p.y = value_;
                 else                p.z = value_;
-                mesh.vertices[i] = p;
+                newPos ~= p;
             }
         }
 
-        mesh.commitChange(MeshEditScope.Position);
+        ed.setVertexPositions(idxs, newPos);
+        ed.commitChange(MeshEditScope.Position);
         return true;
     }
 
     override bool revert() {
+        if (undo_.armed()) return undo_.revert(*mesh);
+        // The tracker-off oracle (W-d3c). Its empty arm answers FALSE and is
+        // UNREACHABLE with a history entry: the forward already refuses on
+        // `!hasAnySelectedVertices()` (task 2110 §R2.1 row 8).
         if (idxs.length == 0) return false;
-        foreach (k; 0 .. idxs.length)
-            mesh.vertices[idxs[k]] = orig[k];
-        mesh.commitChange(MeshEditScope.Position);
+        // TASK 1903 L0-d — THE LEGACY REVERT WRITES THROUGH THE BATCH TOO.
+        // The plan's §2.5 template left this loop "untouched"; that is
+        // incompatible with its own §1/§3/W-d1, which require this file to read
+        // `countRawPositionWrites == 0` — §1's measured table counts THIS LOOP
+        // among the file's raw writes. Resolved the way §2.5 already resolved
+        // the forward: the same write, through the same primitive, on an
+        // UNRECORDED batch. It stays a genuine oracle for W-d3c because it
+        // restores from the command's own stored pre-op array while the delta
+        // path replays the op-log's `posBefore` — two independent data paths
+        // that share only the write primitive, which is what a mutation of the
+        // RECORDING has to be measured against. Byte-identical to the loop it
+        // replaces: `setVertexPositions` skips only writes whose new value is
+        // BIT-identical to the current one, and writing identical bits back was
+        // what the loop did there; the bounds guard is the same `continue`.
+        auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+        ed.setVertexPositions(idxs, orig);
+        ed.commitChange(MeshEditScope.Position);
+        ed.close();
         return true;
     }
 }

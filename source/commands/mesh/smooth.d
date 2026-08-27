@@ -8,6 +8,8 @@ import math : Vec3, Viewport, AimViewport, aimSpace;
 import document : primaryModelSpace;
 import params : Param;
 import change_bus : MeshEditScope;
+import mesh_edit_delta : undoTrackerEnabled;
+import commands.mesh.position_undo : PositionUndo;
 import toolpipe.packets : FalloffPacket, SubjectPacket;
 import falloff : evaluateFalloff, IFalloffAware;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
@@ -66,6 +68,23 @@ class MeshSmooth : Command, Operator, IFalloffAware {
     // constraining the smoothed points to the original surface.
     private uint[] touchedIdx;
     private Vec3[] touchedPrev;
+    // Recorded `Kind.SetPos` undo (task 1903 L0-d3). ONE entry, from
+    // `touchedPrev` — see `applyKernel`'s tail for why the three passes record
+    // once rather than three times.
+    private PositionUndo undo_;
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded undo (task 1903 §L0-d,
+        /// witness W-d3a). The op-log SHAPE is not derivable from the outside:
+        /// a command that records nothing falls back to its legacy revert and
+        /// restores the right positions anyway, so every result-shaped
+        /// assertion — the plane diff, the redo cell, the parity cell — is
+        /// GREEN over a deleted recorder. Only reading the log itself is not.
+        /// `version (unittest)`, so this is not a door in a shipped build; both
+        /// gate lanes compile the sources with `-unittest`. `public` on the
+        /// declaration and NOT a `public:` section — a section marker here
+        /// would silently change the protection of every member below it.
+        public ref const(PositionUndo) recordedUndo() const return { return undo_; }
+    }
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -128,12 +147,44 @@ class MeshSmooth : Command, Operator, IFalloffAware {
         // below, which may be a Screen/Lasso type, so it needs a real
         // aim space — it used to declare an empty `Viewport` instead.
         const auto aim = aimSpace(subj.viewport, primaryModelSpace());
-        return this.applyKernel(aim);
-    }
 
-    private bool applyKernel(const ref AimViewport aim) {
+        // §2.4 — the guard is resolved BEFORE the batch is opened; a `return`
+        // out of an open batch leaves `~MeshEditBatch` to pop the frame and
+        // tick `changeBus.batchLeaks`, which the suite asserts is 0.
+        //
+        // It answers TRUE, and that is task 2110's ruling, not a shortcut:
+        // `mesh.smooth {iter:0}` answers `ok` and records a history entry, so a
+        // `false` from the matching `revert()` would make `CommandHistory.undo`
+        // discard that entry AND the whole trailing suffix (regression 0099).
+        // The entry it leaves is unarmed, and `revert()`'s legacy arm below
+        // answers true for it.
         if (iter_ <= 0 || strn_ <= 0.0f) return true;  // no-op apply
 
+        // REDO: re-run the kernel UNRECORDED and keep the first delta. The
+        // laplacian, the falloff blend and the preserve projection are pure
+        // functions of the params and the restored pre-op mesh.
+        if (undo_.armed()) {
+            auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+            const ok = applyKernel(ed, aim);
+            ed.close();
+            return ok;
+        }
+        if (undoTrackerEnabled()) {
+            auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
+            const ok = applyKernel(ed, aim);
+            undo_.arm(ed.close());
+            if (!ok) { undo_.disarm(); return false; }
+            return true;
+        }
+        // Legacy path — the SAME kernel through an UNRECORDED batch, so this
+        // file's raw-write census row is 0 on BOTH paths.
+        auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+        const ok = applyKernel(ed, aim);
+        ed.close();
+        return ok;
+    }
+
+    private bool applyKernel(ref MeshEditBatch ed, const ref AimViewport aim) {
         // DoS backstop (task 0365 P1): `iter` scales the Laplacian pass
         // count below; Param `.min()` hints are UI-only and do not clamp a
         // direct/scripted `tool.attr`/command write.
@@ -289,7 +340,19 @@ class MeshSmooth : Command, Operator, IFalloffAware {
             auto tmp = prev; prev = cur; cur = tmp;
         }
         // After the loop, `prev` holds the final state (last swap).
-        mesh.vertices = prev;
+        //
+        // TASK 1903 L0-d3 — `mesh.vertices = prev;` USED TO BE HERE, and its
+        // retirement is what takes this file to `countRawPositionWrites == 0`.
+        // The two passes below now read and write `prev` instead of the live
+        // array, and ONE `ed.setVertexPositions` at the tail publishes the
+        // composed result. Byte-identical by construction: `prev` and `cur`
+        // both start as `mesh.vertices.dup` and are written only at masked
+        // indices, so at every swap their UNMASKED entries still hold the
+        // original values; `origPos` and `vertNormal` were captured before pass
+        // 1; and pass 2 reads its origin from `touchedPrev`, not from the live
+        // array. The per-index write also removes the ARRAY-IDENTITY change
+        // this line made — nothing holds a slice of `mesh.vertices` today, and
+        // the per-index form makes that irrelevant rather than merely true.
 
         // Falloff blend: lerp each touched vert from its pre-smooth
         // position toward the post-smooth position by per-vert weight.
@@ -303,8 +366,8 @@ class MeshSmooth : Command, Operator, IFalloffAware {
         // weighted result.
         if (falloff_.enabled) {
             foreach (i, vi; touchedIdx) {
-                if (vi >= mesh.vertices.length) continue;
-                Vec3 sm = mesh.vertices[vi];
+                if (vi >= prev.length) continue;
+                Vec3 sm = prev[vi];
                 Vec3 orig = touchedPrev[i];
                 // Evaluate at the ORIGINAL position — the falloff
                 // describes "which verts are affected based on input
@@ -312,9 +375,9 @@ class MeshSmooth : Command, Operator, IFalloffAware {
                 // convention evaluates at the pre-smooth snapshot
                 // positions[].
                 float w = evaluateFalloff(falloff_, orig, cast(int)vi, aim);
-                mesh.vertices[vi].x = orig.x + (sm.x - orig.x) * w;
-                mesh.vertices[vi].y = orig.y + (sm.y - orig.y) * w;
-                mesh.vertices[vi].z = orig.z + (sm.z - orig.z) * w;
+                prev[vi].x = orig.x + (sm.x - orig.x) * w;
+                prev[vi].y = orig.y + (sm.y - orig.y) * w;
+                prev[vi].z = orig.z + (sm.z - orig.z) * w;
             }
         }
 
@@ -327,29 +390,63 @@ class MeshSmooth : Command, Operator, IFalloffAware {
         // pure normal-direction motion): preserve cancels everything
         // → smooth no-op.
         if (preserve_) {
-            foreach (vi; 0 .. mesh.vertices.length) {
+            foreach (vi; 0 .. prev.length) {
                 if (!vmask[vi]) continue;
                 Vec3 n  = vertNormal[vi];
                 Vec3 o  = origPos[vi];
-                Vec3 s  = mesh.vertices[vi];
+                Vec3 s  = prev[vi];
                 Vec3 d  = Vec3(s.x - o.x, s.y - o.y, s.z - o.z);
                 float dn = d.x * n.x + d.y * n.y + d.z * n.z;
                 // s' = s - (d · n) n  =  o + (d − (d · n) n)
-                mesh.vertices[vi].x = s.x - dn * n.x;
-                mesh.vertices[vi].y = s.y - dn * n.y;
-                mesh.vertices[vi].z = s.z - dn * n.z;
+                prev[vi].x = s.x - dn * n.x;
+                prev[vi].y = s.y - dn * n.y;
+                prev[vi].z = s.z - dn * n.z;
             }
         }
 
-        mesh.commitChange(MeshEditScope.Position);
+        // ONE `SetPos` entry, from the PRE-OP image — task 1903 §2.1's ruling,
+        // and the argument is that it is byte-identical to the shipped revert
+        // BY CONSTRUCTION: that revert was `vertices[touchedIdx] = touchedPrev`
+        // and this entry's `posBefore` IS `touchedPrev`. So nothing has to be
+        // argued about how the three passes compose. Per-pass recording (three
+        // entries) is also correct under LIFO, but it would write the live mesh
+        // three times and triple the log for no observable gain — the batch
+        // defers every `commitChange`, so no intermediate state is observable.
+        //
+        // `touchedIdx` is repeat-free by its own construction loop above (one
+        // append per masked index), so the single entry carries no duplicated
+        // index and its reverse is unambiguous.
+        Vec3[] finalPos;
+        finalPos.reserve(touchedIdx.length);
+        foreach (vi; touchedIdx) finalPos ~= prev[vi];
+        ed.setVertexPositions(touchedIdx, finalPos);
+
+        ed.commitChange(MeshEditScope.Position);
         return true;
     }
 
     override bool revert() {
+        if (undo_.armed()) return undo_.revert(*mesh);
+        // The tracker-off oracle (W-d3c), and the 0099 arm (task 2110).
         if (touchedIdx.length == 0) return true;   // no-op smooth: positions unchanged, revert succeeds
-        foreach (i, vi; touchedIdx)
-            if (vi < mesh.vertices.length) mesh.vertices[vi] = touchedPrev[i];
-        mesh.commitChange(MeshEditScope.Position);
+        // TASK 1903 L0-d — THE LEGACY REVERT WRITES THROUGH THE BATCH TOO.
+        // The plan's §2.5 template left this loop "untouched"; that is
+        // incompatible with its own §1/§3/W-d1, which require this file to read
+        // `countRawPositionWrites == 0` — §1's measured table counts THIS LOOP
+        // among the file's raw writes. Resolved the way §2.5 already resolved
+        // the forward: the same write, through the same primitive, on an
+        // UNRECORDED batch. It stays a genuine oracle for W-d3c because it
+        // restores from the command's own stored pre-op array while the delta
+        // path replays the op-log's `posBefore` — two independent data paths
+        // that share only the write primitive, which is what a mutation of the
+        // RECORDING has to be measured against. Byte-identical to the loop it
+        // replaces: `setVertexPositions` skips only writes whose new value is
+        // BIT-identical to the current one, and writing identical bits back was
+        // what the loop did there; the bounds guard is the same `continue`.
+        auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+        ed.setVertexPositions(touchedIdx, touchedPrev);
+        ed.commitChange(MeshEditScope.Position);
+        ed.close();
         return true;
     }
 }

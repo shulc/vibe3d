@@ -182,6 +182,16 @@ private size_t countOccurrences(string haystack, string needle) {
 //                                `mesh.vertices = prev;` — an L0 file, so the
 //                                stage that builds the full scanner inherits it)
 //
+// AMENDED AT TASK 1903 L0-d3. `smooth.d`'s `mesh.vertices = prev;` IS GONE:
+// the laplacian's two follow-on passes now run into the local `prev` buffer and
+// one `ed.setVertexPositions` publishes the composed result, so the sentence
+// above describes a line that no longer exists. It is kept rather than deleted
+// because the +9/+1 arithmetic is what a later reader budgets the full scanner
+// off. The number it produced is now one lower, and the nine `== 0` rows in the
+// L0-d block near the end of this file are the live statement of where those
+// writes went. `kMustMatch` still carries the retired spelling as a POSITIVE
+// CONTROL — the predicate must go on matching it whether or not the tree does.
+//
 // So §5.7's measured table reads 4/39/47 for the three zones and the honest
 // numbers are 8/49 for the two this census scans. Anyone budgeting the full
 // scanner off the plan's table should use these instead.
@@ -3385,4 +3395,234 @@ unittest {
             ~ "review round 2)");
         pos += loop + 1;
     }
+}
+
+// ---------------------------------------------------------------------------
+// TASK 1903 L0-d — the nine plain POSITION commands
+//
+// `smooth`, `jitter`, `quantize`, `magnet`, `linear_align`, `radial_align`,
+// `vertex_center`, `vertex_set`, `edge_slide` moved their hand-rolled sparse
+// reverts onto a recorded `Kind.SetPos` delta. Every one of the nine used to
+// carry at least its own revert loop under §5.7's predicate — that loop IS a
+// raw position write — and several carried their forward as well.
+//
+// THREE THINGS ARE PINNED HERE AND THEY ARE NOT THE SAME THING:
+//
+//   1. the nine `== 0` rows — the TEXT half, per file;
+//   2. an ANTI-DUPLICATION term over the nine literals plus a zone sweep, so a
+//      repeated path cannot silently leave one of the nine unscanned;
+//   3. `source/deform_magnet.d`'s two-sided `kAllow` row plus `magnet.d`'s
+//      recorder pin — the hole a zone boundary leaves open.
+//
+// (3) IS THE LOAD-BEARING ONE AND IT IS WHY THIS BLOCK EXISTS AT ALL. Retiring
+// a command's census row does not retire the write (памятка 54): `magnet.d`'s
+// forward writer is `applyMagnet` at `source/deform_magnet.d:64`, in a file
+// NEITHER census zone scans, and its signature belongs to Stage M / task 1905.
+// So `magnet.d` reads 0 whether or not the migration records anything, and the
+// recorder pin is the only text half that can tell those two apart.
+// ---------------------------------------------------------------------------
+
+private enum string[9] kL0dPositionCommands = [
+    "edge_slide.d", "jitter.d", "linear_align.d", "magnet.d", "quantize.d",
+    "radial_align.d", "smooth.d", "vertex_center.d", "vertex_set.d",
+];
+
+unittest // L0-d — the nine files hold no raw position write
+{
+    import std.algorithm : sort, uniq;
+    import std.array     : array;
+    import std.conv      : to;
+
+    // TERM 1 — the roster is nine DISTINCT names. These are hand-written path
+    // literals: a typo throws (`readText` on a missing file, loud), but a
+    // DUPLICATE is silent — it leaves one of the nine unscanned and green
+    // forever, and the count below would still read "nine rows asserted".
+    // Mutation: duplicate one literal and drop another; this reddens naming the
+    // repeat, and the zone sweep in the next block reddens for its own reason.
+    assert(kL0dPositionCommands.length == 9,
+        "the L0-d roster is no longer nine commands. §L0-d's scope IS exactly "
+      ~ "nine files; a tenth belongs to L0-b (transform/symmetrize, which write "
+      ~ "through source/symmetry.d) or L0-e (move_vertex, whose forward is "
+      ~ "deliberately version-silent).");
+    auto sorted = kL0dPositionCommands.dup;
+    sort(sorted);
+    const size_t distinct = sorted.uniq.array.length;
+    assert(distinct == 9,
+        format("the L0-d roster names only %d DISTINCT files across its nine "
+             ~ "entries: %s. A duplicated literal leaves one of the nine "
+             ~ "unscanned and green forever — the count of ROWS is not the "
+             ~ "count of FILES.", distinct, sorted));
+
+    foreach (name; kL0dPositionCommands) {
+        immutable path = buildPath(repoRoot, "source", "commands", "mesh", name);
+        // TERM 2 — every literal exists, asserted BEFORE any count is taken. A
+        // count over a file that is not there is not zero, it is nothing.
+        assert(exists(path),
+            "cannot find source/commands/mesh/" ~ name ~ " at " ~ path
+          ~ " — the L0-d roster names a file that is not in the tree, so its "
+          ~ "`== 0` row below would be measuring nothing.");
+        immutable src = stripCommentsAndStrings(readText(path));
+
+        // Non-vacuity floor for the stripper, per file: every one of the nine
+        // is a Command with an `evaluate` and a `revert`. A stripper that ate
+        // the file would report 0 raw writes and pass by saying nothing.
+        assert(countOccurrences(src, "override bool revert()") == 1,
+            "source/commands/mesh/" ~ name ~ ": the comment stripper ate the "
+          ~ "file (or the command lost its `revert` override) — the raw-write "
+          ~ "count below would be 0 for the wrong reason.");
+
+        string firstHit;
+        immutable size_t raw = countRawPositionWrites(src, firstHit);
+        assert(raw == 0,
+            format("source/commands/mesh/%s: %d raw position write(s) under "
+                 ~ "§5.7's predicate, expected 0. First hit: `%s`.\n"
+                 ~ "  THIS ROW IS THE TEXT HALF, AND ONLY THAT. A file reading "
+                 ~ "zero raw writes can still record NOTHING — it can run its "
+                 ~ "kernel through `MeshEditBatch.unrecorded`, or its "
+                 ~ "`ed.rec().recordSetPos(...)` can be deleted, and this row "
+                 ~ "stays green through both. The BEHAVIOURAL half is "
+                 ~ "tests/unit/commands/mesh/position_delta_test.d's "
+                 ~ "op-log-shape cell for this command, which asserts the "
+                 ~ "recorded log is exactly [SetPos] and that its revert lands "
+                 ~ "on the pre-op planes. A green here is NOT evidence that "
+                 ~ "this command's undo records anything.\n"
+                 ~ "  Why it is counted at all: `alias mesh this` means "
+                 ~ "`ed.vertices[i] = p` COMPILES inside a recording batch and "
+                 ~ "produces no op-log entry, so the boundary is a counted "
+                 ~ "census and not a type (task 1903 §2.5, §5.7, §L0-d).",
+                   name, raw, firstHit));
+    }
+}
+
+unittest // L0-d — the zone total equals the nine plus the recorded remainder
+{
+    import std.file : dirEntries, SpanMode;
+    import std.path : baseName;
+    import std.algorithm : canFind;
+
+    // TERM 3 — the anti-duplication term that TERM 1 cannot supply on its own.
+    // A duplicated literal makes the roster scan eight files twice; this sweep
+    // walks the DIRECTORY, so it sees the ninth whatever the roster says. The
+    // remainder below is enumerated by name and count, not merely summed, so a
+    // NEW raw write in a file the roster does not name cannot hide inside a
+    // total either.
+    immutable zone = buildPath(repoRoot, "source", "commands", "mesh");
+    size_t scanned = 0;
+    size_t zoneTotal = 0;
+    size_t rosterTotal = 0;
+    string[] offenders;
+    foreach (e; dirEntries(zone, "*.d", SpanMode.shallow)) {
+        ++scanned;
+        immutable src = stripCommentsAndStrings(readText(e.name));
+        string hit;
+        immutable size_t n = countRawPositionWrites(src, hit);
+        zoneTotal += n;
+        if (kL0dPositionCommands[].canFind(baseName(e.name))) rosterTotal += n;
+        else if (n > 0) offenders ~= format("%s:%d", baseName(e.name), n);
+    }
+    // A mis-rooted walk reports 0 files, 0 writes, and passes.
+    assert(scanned >= 50,
+        format("the source/commands/mesh sweep visited only %d .d file(s) — "
+             ~ "the directory holds well over 50, so the walk is mis-rooted and "
+             ~ "the totals below would be measuring nothing.", scanned));
+
+    assert(rosterTotal == 0,
+        format("the nine L0-d files contribute %d raw position write(s) to the "
+             ~ "zone total. The per-file rows in the block above name which; "
+             ~ "this row exists because a DUPLICATED literal in that roster "
+             ~ "leaves one of the nine unscanned, and only a directory sweep "
+             ~ "can see the file the roster skipped.", rosterTotal));
+
+    // The remainder, enumerated. These are NOT L0-d's: `transform.d` and
+    // `symmetrize.d` write through source/symmetry.d and belong to L0-b;
+    // `move_vertex.d` is L0-e (owner Q4 — its forward is deliberately
+    // version-silent via `publishChange`); `edge_join.d`, `morph.d`,
+    // `remesh.d` and `vertex_edit.d` are later families. Listing them by NAME
+    // is what stops a tenth file's new raw write from hiding inside a total
+    // that merely "did not change".
+    static immutable string[] kRemainder = [
+        "edge_join.d:2", "morph.d:1", "move_vertex.d:2", "remesh.d:1",
+        "symmetrize.d:1", "transform.d:6", "vertex_edit.d:2",
+    ];
+    import std.algorithm : sort;
+    auto got = offenders.dup;
+    sort(got);
+    assert(got == kRemainder[],
+        format("source/commands/mesh's UNMIGRATED raw-write remainder is %s; "
+             ~ "the recorded set is %s. A file that gained a raw write, or one "
+             ~ "that a later stage migrated, must move this list in the SAME "
+             ~ "commit — otherwise the zone-total row below goes on adding up "
+             ~ "to the same number over a different set of files.",
+               got, kRemainder));
+    assert(zoneTotal == 15,
+        format("source/commands/mesh holds %d raw position write(s) in total, "
+             ~ "expected 15 = 0 (the nine L0-d files) + 15 (the enumerated "
+             ~ "remainder above). %d file(s) scanned.", zoneTotal, scanned));
+}
+
+unittest // L0-d — the hole a zone boundary leaves: deform_magnet.d
+{
+    // THE ROW THIS WHOLE BLOCK EXISTS FOR. `magnet.d` reaches `== 0` above and
+    // THAT ZERO IS WORTHLESS ON ITS OWN: magnet's forward writer was never in
+    // that file. `applyMagnet` writes `mesh.vertices[i] = attractToPoint(...)`
+    // in source/deform_magnet.d, which is under neither census zone
+    // (`source/mesh_ops/**` + `source/commands/**`), and its signature is Stage
+    // M / task 1905's — `source/tools/deform/magnet.d` is its other caller.
+    // So L0-d does not touch it; it brings it INTO the census instead.
+    immutable path = buildPath(repoRoot, "source", "deform_magnet.d");
+    assert(exists(path), "cannot find source/deform_magnet.d at " ~ path);
+    immutable dm = stripCommentsAndStrings(readText(path));
+
+    assert(countOccurrences(dm, "bool applyMagnet(") == 1,
+        "source/deform_magnet.d no longer declares `applyMagnet` — the comment "
+      ~ "stripper ate the file, or the function moved, and both counts below "
+      ~ "would be 0 for the wrong reason.");
+
+    string firstHit;
+    immutable size_t raw = countRawPositionWrites(dm, firstHit);
+    assert(raw == 1,
+        format("source/deform_magnet.d: %d raw position write(s) under §5.7's "
+             ~ "predicate, expected exactly 1 — `applyMagnet`'s displacement "
+             ~ "write, a kAllow entry because its signature belongs to Stage M "
+             ~ "/ task 1905 (tools/deform/magnet.d is its other caller). First "
+             ~ "hit: `%s`. A SECOND write here would be invisible to every "
+             ~ "other row in this file, because neither census zone scans this "
+             ~ "module at all.", raw, firstHit));
+    // The two-sided half (the loop_slice idiom): the count row above would
+    // still read 1 if a DIFFERENT production write had replaced this one, so
+    // this says WHICH write the allowance is for — and it makes "retire the row
+    // by deleting the line" not a way to go green.
+    assert(countOccurrences(dm, "mesh.vertices[i] = attractToPoint(") == 1,
+        "source/deform_magnet.d's ONE allowed raw position write is no longer "
+      ~ "`applyMagnet`'s `mesh.vertices[i] = attractToPoint(...)`. The count "
+      ~ "row above reads 1 for ANY single raw write in this file, so this is "
+      ~ "the half that names the one the allowance covers "
+      ~ "(task 1903 §L0-d, the loop_slice.d two-sided idiom).");
+
+    // AND THE OTHER SIDE OF THE SAME HOLE — the recorder pin.
+    //
+    // Under a recording batch that raw write produces NO op-log entry (the
+    // `alias mesh this` hole), so `commands/mesh/magnet.d` records EXPLICITLY.
+    // Delete that statement and: the forward geometry is still correct, the
+    // `== 0` row above is still green, `deform_magnet.d`'s two rows are still
+    // green — and magnet's undo silently falls back to the legacy revert with
+    // an empty delta. This is the ONLY text half that reddens for it.
+    immutable mg = stripCommentsAndStrings(readText(
+        buildPath(repoRoot, "source", "commands", "mesh", "magnet.d")));
+    assert(countOccurrences(mg, "recordSetPos(") == 1,
+        "source/commands/mesh/magnet.d no longer calls `recordSetPos` exactly "
+      ~ "once. magnet is the ONE command in L0-d whose recording is a statement "
+      ~ "SEPARATE from its write — `applyMagnet` does the writing, in a file "
+      ~ "this census can only allow, never inspect — so `the write happened and "
+      ~ "nothing was recorded` is representable here and nowhere else in the "
+      ~ "family. Every count row in this file stays green over that state; only "
+      ~ "this pin and position_delta_test.d's magnet op-log cell do not.");
+    assert(countOccurrences(mg, "MeshEditBatch(*mesh,") == 1,
+        "source/commands/mesh/magnet.d no longer opens exactly one RECORDING "
+      ~ "`MeshEditBatch`. The other two opens in the file are "
+      ~ "`MeshEditBatch.unrecorded` (the redo and the tracker-off arms), which "
+      ~ "record nothing by design; if the recording open became `unrecorded` "
+      ~ "too, `recordSetPos` above would still be spelled and would still be "
+      ~ "reached — `ed.recording()` guards it — and the command would record "
+      ~ "nothing with every text row green.");
 }

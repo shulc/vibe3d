@@ -8,6 +8,8 @@ import math : Vec3, Viewport, AimViewport, aimSpace;
 import document : primaryModelSpace;
 import params : Param;
 import change_bus : MeshEditScope;
+import mesh_edit_delta : undoTrackerEnabled;
+import commands.mesh.position_undo : PositionUndo;
 import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, ElementConnect, SubjectPacket;
 import falloff : evaluateFalloff, IFalloffAware;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
@@ -41,6 +43,24 @@ private:
     // Undo delta.
     uint[] touchedIdx_;
     Vec3[] touchedPrev_;
+    // Recorded `Kind.SetPos` undo (task 1903 L0-d1). The two arrays above stay
+    // — `applyMagnet` fills them and they are ALSO the values this command
+    // records — and the legacy loop in `revert()` stays as the
+    // `VIBE3D_UNDO_TRACKER=off` oracle.
+    PositionUndo undo_;
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded undo (task 1903 §L0-d,
+        /// witness W-d3a). The op-log SHAPE is not derivable from the outside:
+        /// a command that records nothing falls back to its legacy revert and
+        /// restores the right positions anyway, so every result-shaped
+        /// assertion — the plane diff, the redo cell, the parity cell — is
+        /// GREEN over a deleted recorder. Only reading the log itself is not.
+        /// `version (unittest)`, so this is not a door in a shipped build; both
+        /// gate lanes compile the sources with `-unittest`. `public` on the
+        /// declaration and NOT a `public:` section — a section marker here
+        /// would silently change the protection of every member below it.
+        public ref const(PositionUndo) recordedUndo() const return { return undo_; }
+    }
 
 public:
     this(Mesh* mesh, ref View view, EditMode editMode) {
@@ -76,21 +96,71 @@ public:
         // Task 0619: the injected packet above can be Screen/Lasso, and the
         // subject packet carries the viewport it must be projected with.
         const auto aim = aimSpace(subj.viewport, primaryModelSpace());
-        return applyKernel(aim);
+
+        // §2.4 — EVERY guard resolved BEFORE the batch is opened. A `return`
+        // (or a `throw`) out of an open batch leaves `~MeshEditBatch` to pop
+        // the frame, and that pop ticks `changeBus.batchLeaks`, which the suite
+        // asserts is 0. These two are magnet's whole guard set; they read only
+        // params, so hoisting them changes no answer.
+        if (strength_ <= 0.0f) return false;
+        if (!hasFalloff_ && dist_ <= 1e-9f) return false;
+
+        // REDO (CommandHistory.redo): re-run the kernel UNRECORDED and keep the
+        // first delta. `applyMagnet` is a pure function of the params and the
+        // restored pre-op mesh, so the replay lands where the first run landed
+        // and the delta's `posBefore` still inverts it exactly.
+        if (undo_.armed()) {
+            auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+            const ok = applyKernel(ed, aim);
+            ed.close();
+            return ok;
+        }
+        if (undoTrackerEnabled()) {
+            auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
+            const ok = applyKernel(ed, aim);
+            undo_.arm(ed.close());
+            if (!ok) { undo_.disarm(); return false; }
+            return true;
+        }
+        // Legacy path (VIBE3D_UNDO_TRACKER=off). The SAME kernel through an
+        // UNRECORDED batch, so this file's raw-write census row is 0 on BOTH
+        // paths rather than only on the one the default happens to take.
+        auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+        const ok = applyKernel(ed, aim);
+        ed.close();
+        return ok;
     }
 
     override bool revert() {
+        if (undo_.armed()) return undo_.revert(*mesh);
+        // The tracker-off oracle. Kept, not deleted: the plane-diff cells run
+        // the same sequence under `undo.tracker.off` and diff the two
+        // post-revert dumps against each other, so this loop is the reference
+        // the recorded revert is measured against (W-d3c).
         if (touchedIdx_.length == 0) return false;
-        foreach (k; 0 .. touchedIdx_.length)
-            if (touchedIdx_[k] < mesh.vertices.length)
-                mesh.vertices[touchedIdx_[k]] = touchedPrev_[k];
-        mesh.commitChange(MeshEditScope.Position);
+        // TASK 1903 L0-d — THE LEGACY REVERT WRITES THROUGH THE BATCH TOO.
+        // The plan's §2.5 template left this loop "untouched"; that is
+        // incompatible with its own §1/§3/W-d1, which require this file to read
+        // `countRawPositionWrites == 0` — §1's measured table counts THIS LOOP
+        // among the file's raw writes. Resolved the way §2.5 already resolved
+        // the forward: the same write, through the same primitive, on an
+        // UNRECORDED batch. It stays a genuine oracle for W-d3c because it
+        // restores from the command's own stored pre-op array while the delta
+        // path replays the op-log's `posBefore` — two independent data paths
+        // that share only the write primitive, which is what a mutation of the
+        // RECORDING has to be measured against. Byte-identical to the loop it
+        // replaces: `setVertexPositions` skips only writes whose new value is
+        // BIT-identical to the current one, and writing identical bits back was
+        // what the loop did there; the bounds guard is the same `continue`.
+        auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+        ed.setVertexPositions(touchedIdx_, touchedPrev_);
+        ed.commitChange(MeshEditScope.Position);
+        ed.close();
         return true;
     }
 
 private:
-    bool applyKernel(const ref AimViewport aim) {
-        if (strength_ <= 0.0f) return false;
+    bool applyKernel(ref MeshEditBatch ed, const ref AimViewport aim) {
         // `dist` is an EXPLICIT command param (a real spatial radius),
         // not the interactive tool-pipe's "not yet picked" sentinel.
         // falloff.d's elementWeight() has a degenerate-radius fallback
@@ -104,8 +174,9 @@ private:
         // it as invalid input instead, mirroring the strength_ guard
         // above; a genuinely tiny-but-positive dist (e.g. 0.001) still
         // falls through to the normal sphere math and correctly no-ops
-        // when nothing is within radius.
-        if (!hasFalloff_ && dist_ <= 1e-9f) return false;
+        // when nothing is within radius. HOISTED to `evaluate` at task 1903
+        // L0-d1 (§2.4) together with the `strength_` guard it mirrors — the
+        // reasoning above is unchanged, only the site is.
 
         // Build moving set (same mask as mesh.jitter).
         //
@@ -137,12 +208,36 @@ private:
                 fp.anchorRing = [cast(uint)anchor_];
         }
 
+        // THE ONE FORWARD IN L0-d THAT DOES NOT CHANGE. `applyMagnet` writes
+        // `mesh.vertices[i]` raw at source/deform_magnet.d:64 and its signature
+        // is Stage M / task 1905's, not ours — so this command records
+        // EXPLICITLY instead. Under a recording batch that raw write produces
+        // no op-log entry (the known `alias mesh this` hole), which is exactly
+        // why magnet is the discriminating piece of L0-d: it is the only one of
+        // the nine where "the write happened and nothing was recorded" is
+        // representable at all, and the only one whose forward writer lives in
+        // a module NEITHER census zone scans. `commit_seam_census_test.d`
+        // therefore carries a two-sided `kAllow` row for deform_magnet.d AND
+        // the `recordSetPos(` pin below — deleting this statement leaves every
+        // count row green and only that pin red.
         applyMagnet(mesh, indices, target_, strength_, fp, aim,
                     touchedIdx_, touchedPrev_);
 
         if (touchedIdx_.length == 0) return false;
 
-        mesh.commitChange(MeshEditScope.Position);
+        if (ed.recording()) {
+            Vec3[] after;
+            after.reserve(touchedIdx_.length);
+            foreach (vi; touchedIdx_) after ~= mesh.vertices[vi];
+            // No `sameBits` filter here, unlike `setVertexPositions`: a
+            // `w`-tiny vertex whose new value is bit-identical produces a
+            // no-op cell, whose revert writes the same bits back. That is
+            // precisely what the legacy loop below does unconditionally, so
+            // the two paths stay byte-identical.
+            ed.rec().recordSetPos(touchedIdx_, touchedPrev_, after);
+        }
+
+        ed.commitChange(MeshEditScope.Position);
         return true;
     }
 }
