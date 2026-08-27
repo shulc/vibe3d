@@ -907,61 +907,47 @@ unittest { // fixFaceOrientation: the delta is EMPTY, so its revert is a no-op
     // entry" check on it cannot come out differently. The claim it would make
     // is subsumed by `d.log.length == 0`.
 
-    // KNOWN-INCOMPLETE, AND STAGE L2 FLIPS THIS — the strongest case in the
-    // family, and `fix_orientation` is an L2 command (§5.5's "create +
-    // index-stable topo-misc" row), not an L5 one. `flipFacesByMask` reverses
-    // a face's vertex cycle IN PLACE: no face slot is added, removed or
-    // reordered, so not one of the hooked mutators sees it and the op-log
-    // comes back EMPTY. A delta undo of `mesh.fixOrientation` therefore
-    // answers TRUE and changes nothing. (`mesh.fixOrientation`'s shipped undo
-    // is the whole-mesh snapshot, so this is a statement about the delta path
-    // only — but it is the exact shape that would ship a silent no-op undo if
-    // L2 migrated this command without first giving the in-place reshape a
-    // publisher.)
+    // FLIPPED BY STAGE L2-a, 2026-08-27, EXACTLY AS THIS BLOCK WAS WRITTEN TO
+    // BE. What stood here until then were three assertions in their NEGATIVE
+    // form — `d.log.length == 0`, `m.faces[1] != corrupted`,
+    // `dumpMeshState(m) != preState` — each labelled "STAGE L2 FLIPS THIS" and
+    // each naming the fix: a `recordReshapeFaces` call INSIDE the primitive
+    // `Mesh.flipFacesByMask`, which until L2-a reversed a face's vertex cycle
+    // in place, added/removed/reordered no slot, reached no hooked mutator, and
+    // so produced an EMPTY op-log whose `revert()` answered TRUE and changed
+    // nothing.
     //
-    // AND THE GAP IS IN THE PRIMITIVE, NOT IN THE KIND. `Kind.ReshapeFaces`
-    // is published in production TODAY — measured by grepping
-    // `editRecorder_.recordReshapeFaces(` over `source/`: five producers, one
-    // in `mesh.d` (`dissolveVerticesByMask`'s reshape/remove pair) and four in
-    // `mesh_ops/extrude.d` (the neighbour, side, reduce and winding passes).
-    // (Stage L2-P1 added three more CALL SITES that are not producers: the
-    // ones inside `Mesh.setFaceWinding`/`setFaceWindings`, the door the
-    // in-place rewrites are meant to walk through and which no kernel takes
-    // yet. That grep now returns 8 occurrences and still FIVE kernels that
-    // publish — count kernels, not occurrences.)
-    // What has NO hook is the PRIMITIVE `Mesh.flipFacesByMask`: it `reverse()`s
-    // `faces[fi]` in place, adds, removes and reorders no slot, and never
-    // reaches the recorder. So what L2 owes here is a `recordReshapeFaces`
-    // call INSIDE `flipFacesByMask`, not a new kind — and L2's row reads
-    // "needs FaceReindex: NO", so Stage J is NOT a prerequisite for it and
-    // nothing below should send an L2 engineer to look at J.
-    assert(d.log.length == 0,
-        format("STAGE L2 FLIPS THIS. fixFaceOrientation's op-log now carries "
-             ~ "%d entr(ies); at Stage E1 it carries none, because "
-             ~ "Mesh.flipFacesByMask rewrites windings in place and no "
-             ~ "mutation hook sees an in-place reshape. Kind.ReshapeFaces "
-             ~ "itself is NOT the gap — it has five production publishers "
-             ~ "(mesh.d's dissolveVerticesByMask plus four sites in "
-             ~ "mesh_ops/extrude.d); the gap is that the primitive never calls "
-             ~ "recordReshapeFaces. If L2 has now put that call in, replace "
-             ~ "this block's last three assertions with a full state "
-             ~ "comparison against preState", d.log.length));
+    // THAT IS WHY THIS BLOCK IS WORTH MORE THAN A PLAN ROW: it could not be
+    // green both before and after. It was red on the unmodified tree the
+    // moment `flipFacesByMask` started routing its windings through
+    // `Mesh.setFaceWindings`, with the message above naming the entry count it
+    // had just gained.
+    //
+    // WHY ONE ENTRY AND NOT THE `[MeshMapDelta, ReshapeFaces]` PAIR that
+    // `mesh.flip`'s own cells assert: `corruptWindingCube()` carries no
+    // PolyVertex map, so `recordPolyVertexPayload` declines and there is
+    // nothing for a payload to hold. The pair — and the corner PERMUTATION it
+    // exists to restore — is measured on a stand that has one,
+    // `tests/unit/flip_and_spin_delta_test.d` cell C. A cube is the wrong
+    // stand for that half and the right one for this.
+    assert(d.log.length == 1,
+        format("fixFaceOrientation's op-log carries %d entr(ies), expected 1 "
+             ~ "(a ReshapeFaces over the healed face). ZERO is the pre-L2 "
+             ~ "state, in which the revert below is a silent no-op",
+               d.log.length));
+    assert(d.log[0].kind == MeshOpEntry.Kind.ReshapeFaces,
+        format("the entry is %s, expected ReshapeFaces", d.log[0].kind));
     const bool reverted = d.revert(m);
-    assert(reverted, "revert() refused the empty delta outright — re-measure "
-                   ~ "before changing this block");
-    assert(m.faces[1] != corrupted,
-        format("STAGE L2 FLIPS THIS. revert() put face 1's corrupted winding "
-             ~ "back (%s) — at Stage E1 the delta is empty and the revert is a "
-             ~ "no-op, so the healed winding must still be there. If this is "
-             ~ "red because L2 gave Mesh.flipFacesByMask its recordReshapeFaces "
-             ~ "call, that is the fix: assert `m.faces[1] == corrupted` and "
-             ~ "compare the full state", m.faces[1].to!string));
-    assert(dumpMeshState(m) != preState,
-        "STAGE L2 FLIPS THIS. The revert restored the pre-fix state, which at "
-      ~ "Stage E1 it cannot: the delta is empty. Either Mesh.flipFacesByMask "
-      ~ "got its recordReshapeFaces call (good — rewrite this block) or the "
-      ~ "stand stopped corrupting anything (bad — the anti-vacuity assertions "
-      ~ "above should have caught it).");
+    assert(reverted, "revert() refused the delta outright");
+    assert(m.faces[1] == corrupted,
+        format("revert() left face 1 healed (%s); the pre-op winding was %s. "
+             ~ "An equal-arity winding rewrite changes no count, so this "
+             ~ "per-winding compare is the only channel that can see a revert "
+             ~ "which answered true and did nothing",
+               m.faces[1].to!string, corrupted.to!string));
+    assert(dumpMeshState(m) == preState,
+        format("revert() restored the winding but not the whole state.\n"
+             ~ "  pre : %s\n  post: %s", preState, dumpMeshState(m)));
 }
 
 unittest { // cleanupMesh: the six-stage sweep, and the three channels it loses

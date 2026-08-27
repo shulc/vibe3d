@@ -1464,6 +1464,24 @@ struct Mesh {
     /// deliberately NOT a live face yet. Read it BEFORE the append.
     FaceIdx faceAppendBase() const { return FaceIdx.assumeFaceSpace(faces.length); }
 
+    /// The `FaceIdx` for ONE live face index — the single-index sibling of
+    /// `faceIndices`, added at task 1903 Stage L2-b for a kernel that already
+    /// holds an index the mesh itself handed it (an incidence walk such as
+    /// `facesAroundEdge`, an `edgeFaces` lookup) rather than one derived from a
+    /// scratch array's length.
+    ///
+    /// WHAT IT BUYS OVER `FaceIdx.assumeFaceSpace`, which it wraps: the BOUNDS
+    /// ASSERT. `assumeFaceSpace` is deliberately verbose because it can mint an
+    /// index the mesh does not have and is therefore "a review question, not a
+    /// conversion" (its own doc). This one cannot, so a kernel taking it is not
+    /// making a claim a reader has to re-check.
+    FaceIdx faceIndexAt(size_t fi) const {
+        assert(fi < faces.length,
+            "Mesh.faceIndexAt: not a live face index — the caller derived it "
+          ~ "from something other than the current `faces` array");
+        return FaceIdx.assumeFaceSpace(fi);
+    }
+
     Loop[]     loops;        // all half-edge loops
     uint[]     faceLoop;     // faceLoop[fi] = index of first loop of face fi
     uint[]     vertLoop;     // vertLoop[vi] = loop starting at vi (anchored to fan start for boundary verts)
@@ -5434,14 +5452,93 @@ struct Mesh {
         // `reverse` so that silence here costs the plane instead.
         auto rw = beginCornerRelocate();
         const bool needUV = rw.active();
-        size_t flipped = 0;
-        foreach (fi; 0 .. faces.length) {
-            if (!mask[fi]) continue;
-            if (faces[fi].length < 3) continue;   // degenerate guard
-            reverse(faces[fi]);                    // reverse vertex list in-place
-            ++flipped;
+
+        // ONE predicate, read three times below (the count, the write, the
+        // relocation map). Hoisted out of the loop it used to be inlined in so
+        // that the two write arms below cannot drift about WHICH faces they
+        // touch — that drift is the standing hazard of a two-armed kernel and
+        // `flipped` is the only number either arm reports.
+        bool isTarget(size_t fi) {
+            return mask[fi] && faces[fi].length >= 3;   // degenerate guard
         }
+
+        size_t flipped = 0, corners = 0;
+        foreach (fi; 0 .. faces.length)
+            if (isTarget(fi)) { ++flipped; corners += faces[fi].length; }
         if (flipped == 0) return 0;
+
+        // --- TASK 1903 STAGE L2-a: THE WINDING WRITE, AND WHY IT IS TWO ARMS
+        //
+        // Until L2-a this was one `reverse(faces[fi])` per masked face: an
+        // IN-PLACE permutation that adds, removes and reorders no face slot, so
+        // not one hooked mutator saw it and a recording batch around this kernel
+        // came back with an EMPTY op-log. `MeshEditDelta.revert` then answered
+        // `true` and changed NOTHING — which §5.3 rates worse than a throw,
+        // because a throw is caught on the first run. `mesh.flip` and
+        // `mesh.fixOrientation` are the only two callers and both are stage-L2
+        // commands, so this publisher is unshared.
+        //
+        // THE SPLIT IS BY RECORDING STATE, NOT BY TASTE. `Mesh.setFaceWindings`
+        // needs the new windings in FRESH arrays — an in-place `reverse` would
+        // hand it a "before" that is already the "after", which is exactly what
+        // its aliasing guard refuses. Building those arrays costs one pass and
+        // three pre-sized allocations, and on an UNRECORDED batch (the redo arm,
+        // every interactive preview, `cleanupMesh`'s hygiene sweep) there is
+        // nobody to hand them to. So the unrecorded arm keeps the in-place
+        // reverse verbatim and allocates nothing, and the recorded arm pays for
+        // what it records. The differential unittest below
+        // (`flipFacesByMask: the two arms agree`) is what stops the two drifting.
+        //
+        // THE BULK FORM, not one `setFaceWinding` per face: the per-element door
+        // is QUADRATIC (each call resolves the corner payload by its own ordered
+        // sweep over `faces`), measured 2.22 ms against 146 ms at ten thousand
+        // faces — task 2260. A whole-mesh flip is precisely the caller that must
+        // not take the per-element door.
+        //
+        // BUFFERS ARE PRE-SIZED, and the reversed windings share ONE backing
+        // array sliced per face — three allocations for the whole flip rather
+        // than one per face, and no `~=` anywhere (task 2160: an element-wise
+        // append is a runtime call per element that `reserve` does not remove).
+        if (editRecorder_ is null) {
+            foreach (fi; 0 .. faces.length)
+                if (isTarget(fi)) reverse(faces[fi]);   // in-place, as before
+        } else {
+            import std.array : uninitializedArray;
+            auto backing = uninitializedArray!(uint[])(corners);
+            auto newWind = uninitializedArray!(uint[][])(flipped);
+            // `uninitializedArray` and not `new FaceIdx[](n)`: `FaceIdx`
+            // `@disable`s default construction on purpose (a defaulted face
+            // index would be face 0, and face 0 is a real face), so `new` and
+            // `.length =` do not compile on a `FaceIdx[]` in either direction.
+            auto idx = uninitializedArray!(FaceIdx[])(flipped);
+            size_t w = 0, b = 0;
+            foreach (fi; faceIndices) {          // the mint — never assumeFaceSpace
+                if (!isTarget(fi)) continue;
+                const uint[] cur = faces[fi];
+                auto dst = backing[b .. b + cur.length];
+                foreach (j, v; cur) dst[$ - 1 - j] = v;   // the reversal
+                idx[w] = fi;
+                newWind[w] = dst;
+                b += cur.length;
+                ++w;
+            }
+            // The return is deliberately NOT used as `flipped`. `setFaceWindings`
+            // drops an IDENTITY write from both the record and the write, and a
+            // winding that is its own reverse is reachable — a face carrying a
+            // repeated vertex, e.g. `[a, b, a]`, on a mesh the cleanup sweep has
+            // not been over. Today's kernel counts such a face as flipped and
+            // relocates its corners, and this migration is behaviour-preserving
+            // on the FORWARD, so `flipped` keeps that meaning.
+            //
+            // RECORDED RESIDUAL, named rather than papered: that face's corner
+            // relocation is therefore not in the op-log, so an undo does not put
+            // its per-corner values back. It is unreachable on any well-formed
+            // mesh (a face with a repeated vertex is what `hasRepeatedVertex_`
+            // and the cleanup sweep exist to remove) and the alternative — making
+            // `flipped` mean "installed" — would change which meshes
+            // `mesh.flip` refuses.
+            cast(void) setFaceWindings(idx, newWind);
+        }
         if (needUV) {
             // Build oldLoopOfNewLoop BEFORE buildLoops.  faceLoop[] is still
             // the pre-flip CSR (arity is preserved ⇒ offsets are identical):
@@ -5456,7 +5553,7 @@ struct Mesh {
                 // stale.
                 const uint base = rw.oldFaceLoop()[fi];
                 const uint n    = cast(uint) faces[fi].length;
-                if (mask[fi] && n >= 3)
+                if (isTarget(fi))   // the SAME predicate the write arms used
                     foreach (j; 0 .. n) oldLoopOfNewLoop[base + j] = base + (n - 1 - j);
                 else
                     foreach (j; 0 .. n) oldLoopOfNewLoop[base + j] = base + j;
@@ -14145,6 +14242,34 @@ struct Mesh {
     /// caller must run `rebuildEdges(); buildLoops(); commitChange(Geometry);`
     /// before the mesh is read again.
     private bool spinEdgeRings_(uint ei, out uint[2] newDiagonal) {
+        FaceIdx[] idx;
+        uint[][]  wind;
+        if (!spinEdgeRingsCollect_(ei, newDiagonal, idx, wind)) return false;
+        installSpinRings_(idx, wind);
+        return true;
+    }
+
+    /// `spinEdgeRings_`, except that the two new windings are APPENDED to the
+    /// caller's accumulators instead of being installed.
+    ///
+    /// TASK 1903 STAGE L2-b — THE SPLIT EXISTS FOR ONE MEASURED REASON, and
+    /// the number is large. `Mesh.setFaceWindings` records a per-corner payload
+    /// whose corner-base walk is ONE ORDERED SWEEP over `faces`, so a caller
+    /// that takes the door once per spin pays O(S·F). Measured on this lane at
+    /// 99 856 faces / 99 540 spin keys: **179.77 ms unrecorded against
+    /// 6 843.65 ms recorded, a 38x regression** — the same quadratic shape
+    /// task 2260 measured for the writer's per-element form (2.22 ms against
+    /// 146 ms at ten thousand faces) arriving through a different caller.
+    /// `spinEdgesByKeys` therefore collects a whole ROUND and installs it with
+    /// ONE bulk call, which is legal precisely because a round's face pairs are
+    /// pairwise disjoint (its `faceUsed` gate) — no spin in a round reads a
+    /// face another spin in that round wrote, so deferring the installs to the
+    /// end of the round changes nothing a spin can observe.
+    ///
+    /// The single-edge caller above keeps the eager form; at one spin the
+    /// sweep is paid once either way.
+    private bool spinEdgeRingsCollect_(uint ei, out uint[2] newDiagonal,
+                                       ref FaceIdx[] outIdx, ref uint[][] outWind) {
         if (ei >= edges.length) return false;
 
         // Collect at most 2 incident faces, and the bound is written HERE
@@ -14239,10 +14364,73 @@ struct Mesh {
         // faces. `rebuildEdges()` below dedups the diagonal, so the edge count
         // FALLS by one on that cell instead of staying put.
 
-        faces[f1i] = ring1;
-        faces[f2i] = ring2;
+        // --- TASK 1903 STAGE L2-b: THE TWO WINDING INSTALLS GO THROUGH THE DOOR
+        //
+        // These two lines used to be `faces[f1i] = ring1; faces[f2i] = ring2;`
+        // — two indexed installs that reach no hook, so a recording batch
+        // around `spinEdgesByKeys` came back with an EMPTY op-log and
+        // `MeshEditDelta.revert` answered `true` while both spun faces kept
+        // their new windings. A spin is arity-PRESERVING on both faces, so the
+        // face, vertex and edge counts are identical either way and only a
+        // per-winding compare can see the difference.
+        //
+        // (This site is also a row §5.3's other audit does not have: that
+        // census's needle was `faces._store =` / `faces =` / `faces[fi] =` over
+        // `mesh.d` + `mesh_ops/**`, and these two ARE `faces[fi] =`.)
+        //
+        // ASCENDING, because `setFaceWindings` requires it: the per-corner
+        // payload resolves each face's corner base by ONE ordered sweep over
+        // `faces` and silently DECLINES on an unordered list, which would leave
+        // the entry unpaired and the per-corner plane re-derived slot-for-slot
+        // instead of restored verbatim. `f1i`/`f2i` are NOT ordered here —
+        // the a→b orientation swap above may exchange them — so the pair is
+        // sorted at the door rather than assumed.
+        //
+        // BULK, not two `setFaceWinding` calls: the per-element door is
+        // quadratic (one ordered sweep over `faces` per call) and would record
+        // two entries and two payloads where one of each is correct. At two
+        // faces the time is noise; the ENTRY SHAPE is not, and
+        // `flip_and_spin_delta_test.d` asserts it is one pair.
+        outIdx  ~= faceIndexAt(f1i);
+        outWind ~= ring1;
+        outIdx  ~= faceIndexAt(f2i);
+        outWind ~= ring2;
         newDiagonal = [c, e];   // the product, for the post-op selection
         return true;
+    }
+
+    /// Install a collected set of windings through `Mesh.setFaceWindings` —
+    /// ONE call, ONE op-log entry, ONE per-corner payload for the whole set.
+    ///
+    /// SORTS FIRST, because the door requires a STRICTLY ASCENDING index list:
+    /// its payload's corner-base walk is a single ordered sweep and silently
+    /// DECLINES on an unordered one, which would leave the `ReshapeFaces`
+    /// entry unpaired and the per-corner plane re-derived slot-for-slot instead
+    /// of restored verbatim. The collector produces neither order (a spin's
+    /// `a`->`b` orientation swap may exchange its two faces, and a round
+    /// collects its spins in caller order), so the sort is not a tidy-up.
+    ///
+    /// The indices within one round are DISTINCT by construction (the round's
+    /// `faceUsed` gate), so "ascending" and "strictly ascending" coincide and
+    /// no de-duplication is owed.
+    private void installSpinRings_(FaceIdx[] idx, uint[][] wind) {
+        import std.algorithm.sorting : makeIndex;
+        import std.array : uninitializedArray;
+        assert(idx.length == wind.length,
+            "Mesh.installSpinRings_: index and winding arrays differ in length");
+        if (idx.length == 0) return;
+        // ONE sort path and no special case for the two-element (single-spin)
+        // set, deliberately: a swap-if-descending branch is not reachable on
+        // any stand in the suite — measured, every single spin on the 3x3 grid
+        // stand collects its pair already ascending — so it would be an
+        // UNTESTED branch bought for an allocation a spin's `rebuildEdges`
+        // dwarfs. The general sort is exercised by every multi-spin round.
+        auto ord = new size_t[](idx.length);
+        makeIndex!((a, b) => a.raw < b.raw)(idx, ord);
+        auto si = uninitializedArray!(FaceIdx[])(idx.length);
+        auto sw = uninitializedArray!(uint[][])(idx.length);
+        foreach (i, o; ord) { si[i] = idx[o]; sw[i] = wind[o]; }
+        setFaceWindings(si, sw);
     }
 
     /// A spin round may not run more than this many times. Task 1471's
@@ -14344,6 +14532,14 @@ struct Mesh {
             bool[ulong] roundProducts;
             ulong[] deferred;
             size_t spunThisRound = 0;
+            // The round's collected windings. `reserve`d rather than counted:
+            // how many of `pending` will actually spin is not knowable before
+            // the walk, and a per-element `~=` here is O(S) total, against the
+            // O(S·F) the eager door cost.
+            FaceIdx[] roundIdx;
+            uint[][]  roundWind;
+            roundIdx.reserve(pending.length * 2);
+            roundWind.reserve(pending.length * 2);
 
             foreach (k; pending) {
                 immutable uint ei = edgeIndexByKey(k);
@@ -14364,7 +14560,10 @@ struct Mesh {
                 }
 
                 uint[2] diag;
-                if (!spinEdgeRings_(ei, diag)) continue;   // a real refusal — drop it
+                // COLLECT, do not install: see `spinEdgeRingsCollect_` for the
+                // 38x measurement that makes the round the recording unit.
+                if (!spinEdgeRingsCollect_(ei, diag, roundIdx, roundWind))
+                    continue;   // a real refusal — drop it
 
                 immutable ulong pk = edgeKey(diag[0], diag[1]);
                 version (unittest) {
@@ -14387,6 +14586,11 @@ struct Mesh {
             }
 
             if (spunThisRound == 0) break;   // the remainder is all refusals
+            // ONE bulk install for the whole round, BEFORE the derived arrays
+            // are rebuilt: `setFaceWindings` reads the pre-op `faces` for its
+            // before-image and its corner payload, and both must be the state
+            // the round started from.
+            installSpinRings_(roundIdx, roundWind);
             rebuildEdges();
             buildLoops();
             commitChange(MeshEditScope.Geometry);

@@ -441,6 +441,180 @@ unittest // makeTaggedGridFull scales, and the tagging survives the scaling
 }
 
 // ---------------------------------------------------------------------------
+// makeTaggedGridBent (task 1903 Stage L2) — `makeTaggedGridFull` plus the two
+// additions without which two of stage L2's twelve commands REFUSE.
+// ---------------------------------------------------------------------------
+
+/// The stand for stage L2's parity fixture
+/// (`tests/fixtures/undo_parity/create_stable.json`) and for its witnesses.
+///
+/// WHY A FOURTH STAND AND NOT AN EDIT OF `makeTaggedGridFull`. The same
+/// argument that made `makeTaggedGridFull` a sibling of `makeTaggedGrid` and
+/// `makeTaggedGridMaps` a sibling of `makeTaggedGridFull`, one level down:
+/// `makeTaggedGridFull` is the stand of L0's frozen parity fixture
+/// (`undo_parity_l0_test.d`) and of §8's O(Δ) cells, and changing what it
+/// CONTAINS changes what those gates OBSERVE. This is a fourth stand, and the
+/// superset unittest below is the guard against the two drifting apart.
+///
+/// THE TWO ADDITIONS, AND NEITHER IS FLAVOUR — MEASURED ON THIS TREE
+/// (2026-08-27, `makeTaggedGridFull(3)`, this lane, both numbers came out of a
+/// run rather than off a plan row):
+///
+///  1. **One face wound BACKWARDS.** Without it
+///     `mesh_ops.cleanup.computeOrientationFlipMask` returns a mask with
+///     **0** faces set on `makeTaggedGridFull(3)` — the sheet is already
+///     uniformly wound — so `fixFaceOrientation` flips nothing,
+///     `mesh.fixOrientation`'s `nFlipped == 0` arm REFUSES, and its parity
+///     cell would freeze a pair of identical dumps.
+///  2. **Two interior vertices lifted OFF the plane.** Without them
+///     `Mesh.alignFacesByMask` returns **0** on all four operand
+///     configurations measured (empty ⇒ whole-mesh operand, one face, one row
+///     of three, every face): a planar sheet is its own best-fit plane, every
+///     vertex is already on it, and `mesh.align` REFUSES. `alignFacesByMask`
+///     unions selected faces into ISLANDS and fits one plane per island, so a
+///     single lifted vertex is enough for the whole-mesh operand — the second
+///     is what keeps a ONE-FACE operand non-vacuous too, which is the operand
+///     `polygon_align`'s own cell drives.
+///
+/// Both refusals are also on record from the perf lane's exclusion list
+/// (`tools/perf/run.d`, `CmdExclusion("mesh.fixOrientation", …)` /
+/// `CmdExclusion("mesh.align", …)`, 2026-08-19). They were RE-MEASURED here
+/// rather than inherited: a `CmdExclusion` is a statement about the stand the
+/// perf lane used, and reading one as a statement about YOUR stand is how a
+/// fixture ends up unable to exhibit its own phenomenon.
+///
+/// WHICH FACE, AND WHY NOT ANY FACE. Face **5 is HIDDEN** in
+/// `makeTaggedGridFull` and every one of L2's face kernels runs its mask
+/// through `maskMinusHiddenFaces`, so a corruption placed there would be
+/// skipped by `flipFacesByMask` and the stand would be silently back to
+/// uniform. Face 2 is visible, is not the selected face (7), is not the
+/// polygon-set member (4), and carries `faceMaterial == 0` / `facePart == 5`,
+/// so the mark planes stay non-uniform across it.
+Mesh makeTaggedGridBent(int n = 3)
+{
+    import std.algorithm.mutation : reverse;
+
+    assert(n >= 3, "makeTaggedGridBent: inherits makeTaggedGridFull's floor");
+
+    Mesh m = makeTaggedGridFull(n);
+
+    // Addition 1 — one face wound backwards. Written RAW (`reverse` on the
+    // winding, then `buildLoops`) and NOT through `flipFacesByMask`: that
+    // kernel is the very thing stage L2-a migrates, so building the stand with
+    // it would make the stand a function of the code under test.
+    reverse(m.faces[2]);
+
+    // Addition 2 — two interior vertices off the plane. On a 3x3 grid the
+    // interior vertices are 5, 6, 9 and 10; 5 and 10 are diagonal, so no single
+    // face carries both and every face of the sheet is left non-planar by one
+    // of them.
+    m.vertices[5].y  += 0.37f;
+    m.vertices[10].y -= 0.21f;
+
+    m.buildLoops();
+    return m;
+}
+
+unittest // makeTaggedGridBent: BOTH additions are live, asserted BY NAME
+{
+    import mesh_ops.cleanup : computeOrientationFlipMask;
+    import std.format : format;
+
+    // The control first: the SHIPPED stand exhibits NEITHER phenomenon. This
+    // half is what makes the two asserts below findings rather than
+    // decorations — without it "the bent stand flips a face" is satisfied by a
+    // predicate that says yes to everything.
+    {
+        auto flat = makeTaggedGridFull(3);
+        flat.buildLoops();
+        size_t nFlat = 0;
+        foreach (b; computeOrientationFlipMask(flat)) if (b) ++nFlat;
+        assert(nFlat == 0,
+            format("the CONTROL moved: makeTaggedGridFull(3) now wants %d "
+                 ~ "face(s) flipped. It measured 0 on 2026-08-27, which is the "
+                 ~ "whole reason this stand exists — re-derive both additions "
+                 ~ "before trusting anything below", nFlat));
+
+        bool[] all = new bool[](flat.faces.length);
+        all[] = true;
+        assert(flat.alignFacesByMask(all) == 0,
+            "the CONTROL moved: makeTaggedGridFull(3) is no longer planar, so "
+          ~ "`mesh.align` no longer refuses it and addition 2 is no longer a "
+          ~ "finding");
+    }
+
+    auto m = makeTaggedGridBent(3);
+
+    // Addition 1: EXACTLY one face is inconsistently wound. Not ">= 1": a
+    // mask that names every face is what a broken seed produces, and it would
+    // satisfy a `> 0` test while making `mesh.flip`'s and
+    // `mesh.fixOrientation`'s cells drive completely different operands.
+    size_t nFlip = 0;
+    foreach (b; computeOrientationFlipMask(m)) if (b) ++nFlip;
+    assert(nFlip == 1,
+        format("makeTaggedGridBent: computeOrientationFlipMask names %d "
+             ~ "face(s), expected exactly 1 — without it mesh.fixOrientation "
+             ~ "REFUSES (nFlipped == 0) and its parity cell freezes a pair of "
+             ~ "identical dumps", nFlip));
+
+    // …and the corrupted face is not the HIDDEN one, or `maskMinusHiddenFaces`
+    // deletes it from the operand and the stand is uniform again in effect.
+    assert(!m.isFaceHidden(2),
+        "makeTaggedGridBent corrupts face 2 — it must be VISIBLE, because "
+      ~ "every face kernel in stage L2 runs its mask through "
+      ~ "maskMinusHiddenFaces and would skip it silently");
+
+    // Addition 2: the sheet is BENT, on both the whole-mesh operand and a
+    // single-face one (the operand `polygon_align`'s own parity cell drives).
+    {
+        auto a = makeTaggedGridBent(3);
+        bool[] all = new bool[](a.faces.length);
+        all[] = true;
+        immutable size_t moved = a.alignFacesByMask(all);
+        assert(moved > 0,
+            format("makeTaggedGridBent: alignFacesByMask moved %d vertices on "
+                 ~ "the whole-mesh operand, expected > 0 — mesh.align REFUSES "
+                 ~ "a planar sheet in all four operand configurations "
+                 ~ "(measured 2026-08-27)", moved));
+    }
+    {
+        auto a = makeTaggedGridBent(3);
+        bool[] one = new bool[](a.faces.length);
+        one[4] = true;          // interior face, carries vertex 5
+        assert(a.alignFacesByMask(one) > 0,
+            "makeTaggedGridBent: a ONE-FACE operand must also be non-planar — "
+          ~ "the second lifted vertex is what buys this, and polygon_align's "
+          ~ "parity cell drives exactly this operand");
+    }
+
+    // The stand still IS makeTaggedGridFull in every other respect: the
+    // additions must not have cost a plane. (`faces` is deliberately excluded —
+    // face 2's winding is addition 1.)
+    auto f = makeTaggedGridFull(3);
+    assert(m.vertices.length == f.vertices.length, "vertex count preserved");
+    assert(m.faces.length    == f.faces.length,    "face count preserved");
+    assert(m.faceMaterial    == f.faceMaterial,    "faceMaterial preserved");
+    assert(m.facePart        == f.facePart,        "facePart preserved");
+    assert(m.faceSetMask     == f.faceSetMask,     "faceSetMask preserved");
+    assert(m.faceMarks       == f.faceMarks,       "faceMarks preserved");
+    assert(m.edgeSetMask     == f.edgeSetMask,     "edgeSetMask preserved");
+    assert(m.surfaces.length == f.surfaces.length, "surfaces preserved");
+    auto uv = m.meshMap(kUvMapName);
+    assert(uv !is null && uv.domain == MapDomain.PolyVertex,
+        "the PolyVertex map is what makes L2-a's corner-permutation witness "
+      ~ "possible at all — a stand without it cannot exhibit the residual");
+    assert(uv.data.length == m.cornerCount() * 2, "the corner map is in step");
+    assert(m.meshMap("W") !is null, "the Point-domain map survives");
+
+    // OPEN, and it is the thicken row that needs it: `thickenSurface`'s rim
+    // bridge only runs on boundary loops, so on a closed solid the one
+    // prerequisite that command owns is unreachable.
+    bool sawBoundary = false;
+    foreach (c; m.edgePolygonCounts()) if (c == 1) { sawBoundary = true; break; }
+    assert(sawBoundary, "makeTaggedGridBent must be OPEN (mesh.thicken's rim)");
+}
+
+// ---------------------------------------------------------------------------
 // makeTaggedGridMaps (task 1903 Stage L1) — `makeTaggedGridFull` plus the five
 // things the MAP / SET family needs and which no existing stand carries.
 // ---------------------------------------------------------------------------

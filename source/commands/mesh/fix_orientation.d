@@ -7,6 +7,8 @@ import view;
 import editmode;
 import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
+import commands.mesh.position_undo : RecordedUndo;
+import commands.mesh.map_edit_undo : runMapEdit, revertMapEditEmptyOk;
 
 /// `mesh.fixOrientation` — "Fix Orientation" cleanup op (task 0394 Part B):
 /// heals inconsistently-wound faces (already-corrupt imports, old saves, or
@@ -22,12 +24,29 @@ import mesh_edit_delta : MeshEditScope;
 /// (mirrors that operation's selection-restricted behavior) -- this is
 /// automatic, not a parameter, so no dialog is needed.
 ///
-/// Rejections (no-op, no snapshot, no undo entry):
+/// Rejections (no-op, no undo image, no undo entry):
 ///   - 0 faces flipped (mesh already consistently wound, or the selected
 ///     component(s) already were)
+///
+/// TASK 1903 STAGE L2-a — the batch is now RECORDING and the undo image is the
+/// operation-log delta. It reaches `Mesh.flipFacesByMask` (through
+/// `fixFaceOrientation`), the same primitive `mesh.flip` drives, and the pin
+/// that measured this gap — `tests/unit/mesh_ops/cleanup_test.d`'s
+/// "fixFaceOrientation: the delta is EMPTY, so its revert is a no-op" block —
+/// was written with its three assertions inverted so that it MUST be rewritten
+/// by this commit and cannot be green both before and after.
 class MeshFixOrientation : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;
+    private MeshSnapshot     snap;      // the hatch's arm only
+    private RecordedUndo     undo_;
+    /// The forward SUCCEEDED — see `MeshFlip.applied_` for why the bit is not
+    /// derivable from the two images.
+    private bool             applied_;
+
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded undo (see `MeshFlip`).
+        public ref const(RecordedUndo) recordedUndo() const return { return undo_; }
+    }
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -40,36 +59,35 @@ class MeshFixOrientation : Command, Operator {
         return MeshEditScope.Geometry;
     }
 
+    /// See `MeshFlip.isOperationInverse` — a cheap tell, not the observable.
+    override bool isOperationInverse() const { return undo_.armed(); }
+
     bool evaluate(ref VectorStack vts) {
         import toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
 
-        snap = MeshSnapshot.capture(*mesh);
-
-        // TASK 1903 Stage E1 — the kernel takes `ref MeshEditBatch`, so the
-        // batch opens HERE, at the command boundary, and never inside the
-        // kernel (plan §4.1). The batch is UNRECORDED because undo here is
-        // still the whole-mesh `snap` above (plan §5.1), and it is scoped to
-        // the kernel call ALONE so the `nFlipped == 0` rejection below runs
-        // outside the frame. See commands/mesh/unify.d for the full note,
-        // including why there is no `scope(failure)`.
-        size_t nFlipped;
-        {
-            auto ed = MeshEditBatch.unrecorded(*mesh, kCleanupEditScope);
-            nFlipped = ed.fixFaceOrientation();
-            ed.close();
-        }
-        if (nFlipped == 0) {
-            snap = MeshSnapshot.init;
-            return false;
-        }
-        return true;
+        // TASK 1903 Stage E1 put the batch here, at the command boundary, and
+        // never inside the kernel (plan §4.1); Stage L2-a only changed WHICH
+        // batch. `runMapEdit` supplies the three arms — redo (re-run
+        // unrecorded, keep the FIRST delta), record, and the
+        // `VIBE3D_UNDO_TRACKER=0` hatch — and closes the batch on every one of
+        // them, which is what keeps `changeBus.batchLeaks` at 0.
+        //
+        // `fixFaceOrientation` returning 0 is a TRUE no-op: it computes the
+        // flip mask first and `flipFacesByMask` returns before its first write
+        // on an empty one. So answering false from inside the batch is atomic
+        // and no roll-back is owed. See `MeshFlip.evaluate` for the four
+        // commands that are NOT in that position.
+        applied_ = runMapEdit(mesh, undo_, snap, kCleanupEditScope,
+                              (ref MeshEditBatch ed) => ed.fixFaceOrientation() != 0);
+        return applied_;
     }
 
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
-        return true;
+        // `…EmptyOk` for the same reason as `mesh.flip`: a face that is its own
+        // reverse records nothing, and a `false` from `revert()` truncates the
+        // undo stack rather than declining one step (regression 0099).
+        return revertMapEditEmptyOk(mesh, undo_, snap, applied_);
     }
 }

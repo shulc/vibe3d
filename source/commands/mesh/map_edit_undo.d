@@ -35,6 +35,18 @@
 // `runMapEdit` is entered — which for the L1-b groups meant hoisting the
 // duplicate-name and `MAX_MESH_MAPS` pre-checks out of the create paths, where
 // they used to be a `throw` from the middle of the mutation.
+// TASK 1903 STAGE L2-a — THE NAME IS NOW HISTORICAL, AND DELIBERATELY NOT
+// CHANGED. Stage L2's `mesh.flip`, `mesh.fixOrientation` and `mesh.spinEdge`
+// take `runMapEdit` / `revertMapEditEmptyOk` unchanged: nothing in either body
+// is about MAPS — the arm dispatch is the same three arms for any family, and
+// `declared` is the caller's scope, here `MeshEditScope.Geometry` rather than
+// `Material`. A private copy in a geometry file would be the SECOND
+// implementation of one mechanism, which is what this module's own header
+// refuses; a rename to `recorded_edit` would touch 75 references across eleven
+// files in a lane that has just landed, for no behaviour. So the mechanism is
+// shared under L1's name and the misnomer is written down rather than hidden.
+// (`mapSlotOf` below IS map-specific and has no geometry caller.) Renaming it
+// is carried as a follow-up, not taken here.
 module commands.mesh.map_edit_undo;
 
 import mesh            : Mesh, MeshEditBatch;

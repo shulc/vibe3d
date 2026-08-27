@@ -155,19 +155,34 @@ unittest { // mesh.fixOrientation runs its kernel inside ONE edit batch
     postReset();
     selectFaces([0]);
 
-    // POSITIVE CONTROL. Every assertion below is "this counter did not move",
-    // and a dead counter satisfies that for free. mesh.flip is the command
-    // this file already uses to INJECT the corruption, it mutates, and it is
-    // deliberately still batchless — so it is both the setup and the proof
-    // that the counter is alive.
-    auto c0 = getChanges();
+    // Corrupt one face's winding so fixOrientation has something to heal.
     postCommand(`{"id":"mesh.flip"}`);
+
+    // POSITIVE CONTROL. Every assertion below is "this counter did not move",
+    // and a dead counter satisfies that for free, so one command that DOES
+    // move it has to run in the same process first.
+    //
+    // IT USED TO BE `mesh.flip`, WHICH WAS BOTH THE CORRUPTION AND THE
+    // CONTROL, AND TASK 1903 STAGE L2-a TOOK THAT AWAY: `mesh.flip` now opens
+    // a recording `MeshEditBatch` at the command boundary, so it commits
+    // INSIDE a frame and ticks nothing. Re-based on `mesh.addVertex`, which is
+    // still batchless and needs no parameters (its `pos` defaults to the
+    // origin) — `Mesh.addVertex` publishes `MeshEditScope.Points`, a Geometry
+    // bit, with no frame open.
+    //
+    // EXPECT TO RE-BASE THIS LINE AGAIN. Every batchless mesh command is on
+    // task 1903's migration list, `mesh.addVertex` included (stage L2-g), so
+    // when this control stops ticking the fix is to name another still-
+    // batchless command — NOT to delete the control, which is the only thing
+    // standing between the three assertions below and a dead counter.
+    auto c0 = getChanges();
+    postCommand(`{"id":"mesh.addVertex"}`);
     auto c1 = getChanges();
     const long ctrl = c1["unbatchedGeometryCommits"].integer
                     - c0["unbatchedGeometryCommits"].integer;
     assert(ctrl > 0,
         format("positive control: an UNBATCHED command must tick "
-             ~ "unbatchedGeometryCommits, and mesh.flip ticked %d. A dead "
+             ~ "unbatchedGeometryCommits, and mesh.addVertex ticked %d. A dead "
              ~ "counter passes the assertions below for free "
              ~ "(task 1903 §3.2 L2, M-DM).", ctrl));
 
@@ -192,7 +207,7 @@ unittest { // mesh.fixOrientation runs its kernel inside ONE edit batch
       ~ "the delta assertion above is vacuous on a rejected command");
 
     assert(after["nestedBatchOpens"].integer
-        == c0["nestedBatchOpens"].integer,
+        == before["nestedBatchOpens"].integer,
         "mesh.fixOrientation moved changeBus.nestedBatchOpens. Its batch is "
       ~ "opened at the command boundary and nowhere else; this family has no "
       ~ "intra-Mesh caller and therefore owes no transitional batch "
