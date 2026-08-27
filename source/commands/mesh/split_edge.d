@@ -6,12 +6,15 @@ import mesh;
 import view;
 import editmode;
 import shader;
-import math : Vec3;
 import snapshot : MeshSnapshot;
 
 /// Split the (first) currently selected edge at its midpoint, inserting a
 /// new vertex and updating every incident face. Edges are re-derived from
 /// faces afterwards. The selection is reset on success.
+///
+/// The split itself is `Mesh.addEdgePoint(ei, 0.5)` — the same primitive
+/// `mesh.addPoint` drives, at a fixed parameter. See `evaluate` for why this
+/// command stopped carrying its own copy of the splice (task 1903 §L2-P0).
 class MeshSplitEdge : Command, Operator {
     mixin OperatorActrCommon;
     private MeshSnapshot     snap;
@@ -39,36 +42,57 @@ class MeshSplitEdge : Command, Operator {
         // correct revert. Cheap enough at typical mesh sizes.
         snap = MeshSnapshot.capture(*mesh);
 
-        uint va = mesh.edges[ei][0];
-        uint vb = mesh.edges[ei][1];
-        Vec3 mid = (mesh.vertices[va] + mesh.vertices[vb]) * 0.5f;
-        uint vm  = mesh.addVertex(mid);
-
-        // Insert vm between (va, vb) (in either traversal direction) in
-        // every face containing the edge.
-        foreach (ref face; mesh.faces) {
-            for (size_t k = 0; k < face.length; k++) {
-                uint a = face[k];
-                uint b = face[(k + 1) % face.length];
-                if ((a == va && b == vb) || (a == vb && b == va)) {
-                    face = face[0 .. k + 1] ~ vm ~ face[k + 1 .. $];
-                    break;
-                }
-            }
+        // THE MIDPOINT SPLIT IS `Mesh.addEdgePoint(ei, 0.5)` — not a private
+        // copy of it (task 1903 Stage L2-P0).
+        //
+        // This command used to splice the new corner into every incident
+        // winding with its own loop right here, and then call
+        // `rebuildEdges()` / `buildLoops()` by hand. `mesh.addPoint` already
+        // reached the same splice through `addEdgePoint`, so the tree carried
+        // the same edit twice, and only one of the two copies was correct:
+        //
+        //   * the splice changes the mesh's TOTAL corner count, and the copy
+        //     here opened no corner rewrite at all, so `buildLoops`'s
+        //     `resizePolyVertexMaps` fell through to the length insurance and
+        //     ZEROED every PolyVertex map WHOLE — a point added on one edge
+        //     cost the entire mesh its UVs, on the FORWARD; and
+        //   * in a `-debug` build (which is what the module-unittest lane is)
+        //     that same fall-through trips `mesh.d`'s
+        //     `debug assert(false, "corner provenance: a face rewrite reached
+        //     buildLoops without declaring what became of the corners…")`,
+        //     so the command ABORTED the process on any map-carrying mesh
+        //     rather than merely losing the plane.
+        //
+        // `addEdgePoint` is the sanctioned home: it wraps the identical
+        // `insertEdgePoint` splice in the `beginCornerRewrite()` /
+        // `declareCornerProvenance()` pair (mesh.d), carrying each new corner
+        // as the per-FACE blend of its two endpoint corners, and then runs the
+        // same `rebuildEdges()` / `buildLoops()` tail. Nothing about the
+        // geometry changes: one vertex at the midpoint, spliced between the
+        // endpoints in every incident winding.
+        //
+        // Two deliberate consequences, neither an accident:
+        //   * the midpoint is now `a + 0.5·(b − a)` rather than `(a + b)·0.5`,
+        //     which can differ by one ulp on coordinates that are not exactly
+        //     representable. It is the SAME arithmetic `mesh.addPoint` has
+        //     always used at t = 0.5, and one spelling of a midpoint in the
+        //     tree is worth more than a bit-for-bit freeze of the other; and
+        //   * `resetSelection()` stays HERE. `addEdgePoint` deliberately
+        //     leaves the selection alone (the loop-insert family does too);
+        //     this command's contract is that the selection is reset on
+        //     success, and that is this line, not the primitive's.
+        uint vm = mesh.addEdgePoint(cast(uint)ei, 0.5f);
+        if (vm == uint.max) {
+            // Unreachable on today's guards — `addEdgePoint` refuses only an
+            // out-of-range edge (checked above) and a t outside (0,1) (a
+            // literal here). Kept so that a later parameterisation of the
+            // split position cannot silently mutate nothing and report
+            // success; a refusal here has changed nothing, so the snapshot is
+            // dropped with it.
+            snap = MeshSnapshot.init;
+            return false;
         }
 
-        // Re-derive edges from faces. `rebuildEdges()` (task 0860) — not a
-        // hand-inlined copy of its body: the copy this replaced cleared
-        // `edgeIndexMap` and rebuilt it via the same `addEdge` calls, but
-        // did so OUTSIDE the mechanism `rebuildEdges()` is the one sanctioned
-        // home for — any future hardening of that mechanism (e.g. an
-        // explicit early invalidation before the rebuild loop, matching how
-        // `addFaceFast`/`rebuildEdgesFromFaces`/`markDerivedEmpty` each mark
-        // the edgeIndexMap validity stamp honestly STALE the moment they
-        // stop maintaining it) would silently not apply to a duplicate.
-        mesh.rebuildEdges();
-
-        mesh.buildLoops();
         mesh.resetSelection();
 
         return true;

@@ -3240,6 +3240,227 @@ struct Mesh {
                                         dropSetMsk, dropOrd, survIdx, survLists);
     }
 
+    // --- Task 1903 Stage L2-P1: THE WINDING WRITER -------------------------
+    //
+    // `MeshEditBatch`'s write surface is four methods (`setVertexPos`,
+    // `setVertexPositions`, `addVertex`, `addFace`) and NOT ONE OF THEM WRITES
+    // A WINDING. Six of the nine undo-breaking sites Stage L2 has to close are
+    // winding writes — `flipFacesByMask`'s reverse, `spinEdgeRings_`'s two ring
+    // installs, `insertEdgePoint`'s corner splice, `splitVerticesByMask`'s
+    // corner repoint, `poly_bevel`'s spike install — and every one of them
+    // today is a raw `faces[fi] = …` that reaches no hook at all. A raw
+    // winding write leaves the op-log EMPTY, so `revert()` answers `true` and
+    // either changes nothing (`flip`, `spinEdge`) or truncates vertices that
+    // the surviving windings still name, which THROWS out of
+    // `finalize`→`buildLoops`. This pair of methods is the one door those
+    // sites go through instead.
+    //
+    // ---------------------------------------------------------------------
+    // WHY IT IS ON `Mesh` AND NOT ON `MeshEditBatch`
+    // ---------------------------------------------------------------------
+    // Four of the five call sites are `Mesh` members (`flipFacesByMask`,
+    // `spinEdgeRings_`, `insertEdgePoint`, `splitVerticesByMask`); only
+    // `poly_bevel.spikeFacesByMask` holds a batch. A batch method would have
+    // to be threaded into four kernels that have no batch to thread, so the
+    // door would be reachable from one caller in five. The precedent is
+    // `recordFaceReindexIfWanted` above: a `Mesh` member that owns the
+    // `editRecorder_` reach for a mechanism whose callers are not batch
+    // holders.
+    //
+    // ---------------------------------------------------------------------
+    // IT CAPTURES THE BEFORE-IMAGE ITSELF, AND THAT IS THE DESIGN
+    // ---------------------------------------------------------------------
+    // A signature taking `(idx, before, after)` — the shape
+    // `recordReshapeFaces` itself has — is one transposition away from
+    // recording the inverse of the edit, and a transposed `ReshapeFaces` is
+    // INVISIBLE to every count: face count, vertex count, edge count and the
+    // whole mark plane are identical whichever way round the two lists go, so
+    // only a per-winding compare after a revert can see it. Here the
+    // before-image is read out of the live `faces` array by the method, one
+    // statement before the write, so "before" and "after" cannot be swapped by
+    // a caller. The bug is not tested for; it is unrepresentable.
+    //
+    // THE ALIASING GUARD IS THE OTHER HALF OF THAT. `reverse(faces[fi])` — the
+    // exact spelling `flipFacesByMask` uses today — mutates the winding IN
+    // PLACE, so a caller that reverses first and then calls this with
+    // `faces[fi]` would hand us a "before" that is already the "after", and
+    // the entry would record a no-op while the mesh changed. The pointer
+    // compare below catches precisely that, because an in-place reverse keeps
+    // the array's pointer. A migrating kernel must build its new winding into
+    // a FRESH array.
+    //
+    // ---------------------------------------------------------------------
+    // WHAT IT DOES *NOT* DO: PUBLISH
+    // ---------------------------------------------------------------------
+    // No `commitChange` here, deliberately, and this is the one place the
+    // shape departs from `MeshEditBatch.setVertexPos`. Every one of the five
+    // target sites already publishes at the END of its own kernel — the
+    // winding write is a step inside a topology op, not an edit in itself —
+    // and a per-face commit is the task 1330 shape that made bulk kernels
+    // quadratic (one derived-hide pass per element). The kernel owns the
+    // publish; this owns the write and the record.
+    //
+    // ---------------------------------------------------------------------
+    // THE PER-CORNER PAYLOAD, AND WHY THE PAIR IS RECORDED HERE
+    // ---------------------------------------------------------------------
+    // A `ReshapeFaces` entry restores the winding and says nothing about the
+    // per-corner (UV / morph) plane. For an ARITY-CHANGING reshape the corner
+    // carry can usually re-derive the correspondence slot-for-slot; for an
+    // equal-arity PERMUTATION — a winding reversal, i.e. `mesh.flip` — it
+    // cannot: `renumbersCorners` and `CornerCarry.reshapeSrc` both keep the
+    // slots and never notice that what sits under them changed
+    // (`mesh_edit_delta.d`'s comment on `renumbersCorners` names `mesh.flip`
+    // by name). Recording `recordPolyVertexPayload` IMMEDIATELY BEFORE the
+    // entry is what closes that: on the reverse the carry finds the pre-op
+    // corner values verbatim and restores them, instead of matching windings.
+    // The pairing is BY ADJACENCY and nothing may be recorded between the two,
+    // which is a second reason the pair lives inside one method rather than at
+    // five call sites.
+    //
+    // ---------------------------------------------------------------------
+    // THE ONE EXISTING RESHAPE PUBLISHER, AND WHAT THIS CANNOT EXPRESS
+    // ---------------------------------------------------------------------
+    // `dissolveVerticesByMask` builds the same pair by hand. This writer does
+    // NOT subsume it and is not meant to: there the `ReshapeFaces` entry
+    // describes faces that are then installed by a WHOLESALE
+    // `mesh_planes.rewriteFaces` (which also drops degenerate faces and
+    // reindexes), so the record and the write are two separate acts against
+    // two different index spaces. This method's contract is the opposite —
+    // record and write are ONE act, in place, at a live index. A kernel that
+    // replaces the whole `faces` array still records by hand, or routes
+    // through `rewriteFaces`. Stated so that the next reader does not "unify"
+    // the two and silently move the dissolve's entry into a post-rewrite
+    // space.
+    //
+    // Returns true when the winding was actually installed. A write that
+    // changes nothing is dropped from BOTH the write and the record, so an
+    // entry never carries an identity reshape.
+    bool setFaceWinding(FaceIdx fi, uint[] to) {
+        if (fi >= faces.length) return false;
+        assert(to.ptr !is faces[fi].ptr,
+            "Mesh.setFaceWinding: the new winding aliases the live one — the "
+          ~ "caller mutated `faces[fi]` in place (e.g. `reverse(faces[fi])`) "
+          ~ "and the before-image is already the after-image. Build the new "
+          ~ "winding into a fresh array.");
+        if (to == faces[fi]) return false;   // identity write records nothing
+
+        if (editRecorder_ !is null) {
+            // `recordPolyVertexPayload` and `recordReshapeFaces` both copy
+            // what they are handed, and both read the LIVE (pre-op) space, so
+            // the record runs before the write and needs no `.dup` here.
+            const FaceIdx[1] idx = [fi];
+            const uint[][1] before = [faces[fi]];
+            const uint[][1] after  = [to];
+            recordPolyVertexPayload(idx[]);
+            editRecorder_.recordReshapeFaces(idx[], before[], after[]);
+        }
+        faces[fi] = to;
+        return true;
+    }
+
+    /// The bulk form: ONE op-log entry (and one per-corner payload) for the
+    /// whole set. `idx` must be STRICTLY ASCENDING and parallel to `to`.
+    ///
+    /// THE BULK FORM IS NOT AN ERGONOMIC CONVENIENCE — the per-element path is
+    /// QUADRATIC. `recordPolyVertexPayload` resolves each requested face's
+    /// corner base by ONE ordered sweep over `faces`, so N single writes cost
+    /// N sweeps, i.e. O(N·F); and each one appends two `MeshOpEntry` of
+    /// `MeshOpEntry.sizeof` apiece (560 B on this tree) where the bulk form
+    /// appends two, total. `insertEdgePoint` and `splitVerticesByMask` reshape
+    /// every incident face of a splice, so they are exactly the callers that
+    /// must not take the per-element door. Measured cost is in the task card
+    /// (2260).
+    ///
+    /// Buffers are PRE-SIZED, never grown with `~=`: an element-wise append is
+    /// a runtime call per element that `reserve` does not remove (task 2160
+    /// measured 2.39–3.27 ms against 0.12–1.08 ms at 100 489 elements for the
+    /// same payload), and the GC byte counter points the WRONG WAY on that
+    /// choice — an append-grown array is charged its page blocks while a
+    /// pre-sized one is charged its whole payload. Judged by time.
+    ///
+    /// The common case is cheaper still: when every requested write lands (no
+    /// out-of-range index, no identity winding) the caller's own arrays are
+    /// handed to the recorder unchanged and this method allocates NOTHING —
+    /// the recorder copies, as it always did. Only a filtered set is compacted,
+    /// and then exactly once.
+    ///
+    /// Returns the number of windings actually installed, so a kernel can
+    /// assert its own non-vacuity.
+    size_t setFaceWindings(in FaceIdx[] idx, uint[][] to) {
+        assert(idx.length == to.length,
+            "Mesh.setFaceWindings: index and winding arrays differ in length");
+        // Strictly ascending is a REQUIREMENT, not a preference: the payload's
+        // corner-base walk is a single ordered sweep and silently DECLINES on
+        // an unordered list, which would leave the entry unpaired and the
+        // per-corner plane re-derived instead of restored. Callers filter
+        // `faces` front-to-back, so ascending is what they already produce.
+        foreach (i; 1 .. idx.length)
+            assert(idx[i - 1].raw < idx[i].raw,
+                "Mesh.setFaceWindings: `idx` must be strictly ascending — the "
+              ~ "per-corner payload pairs by a single ordered sweep");
+
+        // Resolve the recording state ONCE, up front (task 2160): on an
+        // unrecorded batch — the redo arm, the legacy arm, every interactive
+        // preview — nothing below is built at all.
+        const bool recording = editRecorder_ !is null;
+
+        // One counting pass, shared by both arms, so the compaction below
+        // knows its size before it allocates.
+        size_t nHit = 0;
+        foreach (i, fi; idx) {
+            if (fi >= faces.length) continue;
+            assert(to[i].ptr !is faces[fi].ptr,
+                "Mesh.setFaceWindings: a new winding aliases the live one — "
+              ~ "see Mesh.setFaceWinding's aliasing guard");
+            if (to[i] == faces[fi]) continue;
+            ++nHit;
+        }
+        if (nHit == 0) return 0;
+
+        if (recording) {
+            if (nHit == idx.length) {
+                // Every write lands: hand the caller's own arrays over. The
+                // recorder copies them; we allocate nothing.
+                uint[][] before = new uint[][](idx.length);
+                foreach (i, fi; idx) before[i] = faces[fi];
+                recordPolyVertexPayload(idx);
+                editRecorder_.recordReshapeFaces(idx, before, to);
+            } else {
+                auto hitIdx = idx.dup;              // ascending subsequence
+                auto before = new uint[][](nHit);
+                auto after  = new uint[][](nHit);
+                size_t w = 0;
+                foreach (i, fi; idx) {
+                    if (fi >= faces.length) continue;
+                    if (to[i] == faces[fi]) continue;
+                    hitIdx[w] = fi;
+                    before[w] = faces[fi];
+                    after[w]  = to[i];
+                    ++w;
+                }
+                // SLICED, not `.length = nHit`: `FaceIdx` disables default
+                // construction (deliberately — a defaulted face index would be
+                // face 0, and face 0 is a real face), so `.length =` does not
+                // compile on a `FaceIdx[]` in either direction.
+                auto hits = hitIdx[0 .. nHit];
+                recordPolyVertexPayload(hits);
+                editRecorder_.recordReshapeFaces(hits, before, after);
+            }
+        }
+
+        // The write comes LAST, after every read of the pre-op space.
+        size_t n = 0;
+        foreach (i, fi; idx) {
+            if (fi >= faces.length) continue;
+            if (to[i] == faces[fi]) continue;
+            faces[fi] = to[i];
+            ++n;
+        }
+        assert(n == nHit, "Mesh.setFaceWindings: the counting pass and the "
+                        ~ "write pass disagree");
+        return n;
+    }
+
     // --- Task 1903 Stage K: arming is PER REWRITE, never per batch ---------
     //
     // `MeshEditTracker.wantsFaceReindex` is a field on the RECORDER, i.e. on

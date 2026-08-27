@@ -924,6 +924,11 @@ unittest { // fixFaceOrientation: the delta is EMPTY, so its revert is a no-op
     // `editRecorder_.recordReshapeFaces(` over `source/`: five producers, one
     // in `mesh.d` (`dissolveVerticesByMask`'s reshape/remove pair) and four in
     // `mesh_ops/extrude.d` (the neighbour, side, reduce and winding passes).
+    // (Stage L2-P1 added three more CALL SITES that are not producers: the
+    // ones inside `Mesh.setFaceWinding`/`setFaceWindings`, the door the
+    // in-place rewrites are meant to walk through and which no kernel takes
+    // yet. That grep now returns 8 occurrences and still FIVE kernels that
+    // publish — count kernels, not occurrences.)
     // What has NO hook is the PRIMITIVE `Mesh.flipFacesByMask`: it `reverse()`s
     // `faces[fi]` in place, adds, removes and reorders no slot, and never
     // reaches the recorder. So what L2 owes here is a `recordReshapeFaces`
