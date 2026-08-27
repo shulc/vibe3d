@@ -340,7 +340,15 @@ size_t cleanDegenerateFaces(ref MeshEditBatch ed) {
     // correspondence built above, a different shape from the primitive's
     // own per-NEW-FACE `rw.carriedPerFace()` call — same reasoning as
     // Mesh.deleteFacesByMask (Stage B site 3).
-    rewriteFaces(ed, newFaces, FaceSource(oldOfNew));
+    // Task 1903 Stage K — ARMED, per rewrite. The degenerate sweep both DROPS
+    // a face (zero Newell area) and RESHAPES another (a repeated index) by
+    // handing one new array to the primitive; neither goes through
+    // `deleteFacesByMask`, so a disarmed op-log carries no face entry at all
+    // and its revert restores the vertices over a mesh that has lost a face.
+    // The scope, not a batch-wide flag: `ed.compactUnreferenced()` below
+    // records the vertex side through the other hooked path.
+    { auto arm = ed.faceReindexScope();
+      rewriteFaces(ed, newFaces, FaceSource(oldOfNew)); }
     // Re-mask the just-carried word in place — src here IS faceMarks
     // (self-aliasing; see Mesh.setFaceMarksFrom's own doc comment for
     // why that is safe).

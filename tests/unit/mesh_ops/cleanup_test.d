@@ -790,9 +790,10 @@ unittest { // unifyFaces: the ONE entry of this family whose delta reverts whole
              ~ "  post: %s", preState, dumpMeshState(m)));
 }
 
-unittest { // cleanDegenerateFaces: the vertex side reverts, the FACE side does not
+unittest { // cleanDegenerateFaces: ARMED at Stage K — the whole edit reverts
     import std.format : format;
     Mesh m = degenerateStand();
+    immutable string preState = dumpMeshState(m);
     immutable size_t preV = m.vertices.length, preF = m.faces.length;
 
     MeshEditDelta d;
@@ -827,52 +828,54 @@ unittest { // cleanDegenerateFaces: the vertex side reverts, the FACE side does 
                countKind(d, MeshOpEntry.Kind.RemoveVerts),
                countKind(d, MeshOpEntry.Kind.Reindex)));
 
-    // KNOWN-INCOMPLETE, AND STAGE L5 FLIPS THIS. The face side of this kernel
-    // leaves through `mesh_planes.rewriteFaces`, whose op-log publisher is
-    // gated on `MeshEditTracker.wantsFaceReindex` — default false, armed by no
-    // production code — so the log carries NO face entry at all and a revert
-    // restores the vertices over a mesh that has lost a face and reshaped
-    // another. `revert()` still answers TRUE, which is exactly the shape
-    // Stage B named as the precondition for arming: a kernel migrating to a
-    // delta must ARM FaceReindex or REFUSE to write one.
-    assert(countKind(d, MeshOpEntry.Kind.FaceReindex) == 0
+    // THE FACE SIDE IS RECORDED TOO, SINCE STAGE K (2026-08-27). This kernel
+    // hands one whole new face array to `mesh_planes.rewriteFaces` and records
+    // its face change nowhere else, so Stage K wrapped that call in a
+    // `faceReindexScope()` and the publisher now fires. This block used to
+    // assert the OPPOSITE — "no face entry, and the revert leaves the
+    // post-clean face count while answering true" — and its own message named
+    // this as the flip. It is not a widening of what was asserted: the
+    // incomplete-revert assertions have been REPLACED by the complete ones,
+    // so a regression that disarms the scope reddens here rather than going
+    // quietly back to the weaker law.
+    //
+    // ONE entry, not two: `RemoveFaces`/`ReshapeFaces` must stay at zero.
+    // Both would describe the same drop a second time, and the LIFO revert
+    // would then re-insert the face TWICE — the double revert the per-rewrite
+    // scope exists to prevent (plan §5.3, "K's red row";
+    // tests/unit/face_reindex_arming_test.d drives the mixed batch that shows
+    // it end to end).
+    assert(countKind(d, MeshOpEntry.Kind.FaceReindex) == 1
         && countKind(d, MeshOpEntry.Kind.RemoveFaces) == 0
         && countKind(d, MeshOpEntry.Kind.ReshapeFaces) == 0,
-        "STAGE L5 FLIPS THIS. The op-log now carries a face entry for "
-      ~ "cleanDegenerateFaces' rewriteFaces call. If that is Stage L5 arming "
-      ~ "FaceReindex (after Stage J gives CornerCarry its FaceReindex case), "
-      ~ "rewrite this block: the three assertions below become "
-      ~ "`m.faces.length == preF` and a full state comparison. If it is not, "
-      ~ "something armed the publisher without the carry and this family's "
-      ~ "undo is now dropping per-corner UV provenance "
-      ~ "(task 1903 §5.3, plan §12 J/K/L5).");
+        format("the op-log carries %d FaceReindex / %d RemoveFaces / %d "
+             ~ "ReshapeFaces entr(ies), expected 1 / 0 / 0. ZERO FaceReindex "
+             ~ "means `cleanDegenerateFaces`' rewrite lost its "
+             ~ "`faceReindexScope()` and the face side of this delta is "
+             ~ "unrecorded again. MORE THAN ONE, or a RemoveFaces beside it, "
+             ~ "means the same drop is described twice and the revert will "
+             ~ "overshoot (task 1903 Stage K, plan §5.3)",
+               countKind(d, MeshOpEntry.Kind.FaceReindex),
+               countKind(d, MeshOpEntry.Kind.RemoveFaces),
+               countKind(d, MeshOpEntry.Kind.ReshapeFaces)));
     const bool reverted = d.revert(m);
-    assert(reverted,
-        "revert() refused the delta outright — that is a THIRD state, neither "
-      ~ "the incomplete revert measured at E1 nor the complete one L5 owes; "
-      ~ "re-measure before changing this block");
+    assert(reverted, "revert() refused the delta outright");
     assert(m.vertices.length == preV,
-        format("revert restored %d vertices of %d — the vertex side of this "
-             ~ "delta (RemoveVerts + Reindex) is the half that IS complete "
-             ~ "today", m.vertices.length, preV));
-    assert(m.faces.length == postF && m.faces.length != preF,
-        format("STAGE L5 FLIPS THIS. revert() restored %d faces (pre-clean "
-             ~ "%d, post-clean %d). At Stage E1 the face side of a degenerate "
-             ~ "sweep is NOT recorded — rewriteFaces' FaceReindex publisher is "
-             ~ "disarmed by default — so revert leaves the post-clean face "
-             ~ "count and still answers true. If this line just went red "
-             ~ "because the faces came back, that is L5 landing: change this "
-             ~ "to `m.faces.length == preF` and add the state comparison the "
-             ~ "unifyFaces block above already makes",
+        format("revert restored %d vertices of %d", m.vertices.length, preV));
+    assert(m.faces.length == preF,
+        format("revert restored %d faces (pre-clean %d, post-clean %d) — the "
+             ~ "dropped collinear face must come back with the armed entry",
                m.faces.length, preF, postF));
-    assert(m.faces[1].length == 3,
-        format("STAGE L5 FLIPS THIS, second channel. Face 1 was RESHAPED from "
-             ~ "[0,1,1,2] to a triangle by the collapse, and no op-log entry "
-             ~ "describes a reshape either — so after the revert it is still "
-             ~ "the collapsed triangle (arity %d, expected 3 at E1). A face "
+    assert(m.faces[1].length == 4,
+        format("face 1 was RESHAPED from [0,1,1,2] to a triangle by the "
+             ~ "collapse and came back with arity %d, expected 4. A face "
              ~ "COUNT that comes back while a WINDING does not is the failure "
-             ~ "mode a count-only revert assertion cannot see",
+             ~ "mode a count-only revert assertion cannot see, which is why "
+             ~ "this channel is separate from the count above",
                m.faces[1].length));
+    assert(dumpMeshState(m) == preState,
+        format("revert restored the counts but not the state.\n  pre : %s\n"
+             ~ "  post: %s", preState, dumpMeshState(m)));
 }
 
 unittest { // fixFaceOrientation: the delta is EMPTY, so its revert is a no-op
@@ -993,60 +996,74 @@ unittest { // cleanupMesh: the six-stage sweep, and the three channels it loses
     assertDeclaredScope("cleanupMesh", d);
     assertNoPositionWrite("cleanupMesh", d);
 
-    // THE OP-LOG SHAPE across a multi-stage sweep: the unify's drop
-    // (RemoveFaces) and the compaction's vertex removal + remap
-    // (RemoveVerts + Reindex). The degenerate stage's `rewriteFaces` and the
-    // weld's face-index rewrite contribute NOTHING, which is the same
-    // disarmed-publisher hole the block above measures on its own.
+    // THE OP-LOG SHAPE across a multi-stage sweep — and since Stage K this is
+    // the one PRODUCTION cell in the tree where an ARMED rewrite and a
+    // `RemoveFaces`-recording op share a single batch, which is exactly the
+    // pairing the per-rewrite arming scope exists for. `cleanDegenerateFaces`
+    // drops its collinear face through `mesh_planes.rewriteFaces` inside a
+    // `faceReindexScope()`; `unifyFaces` drops its duplicate through the
+    // hooked `Mesh.deleteFacesByMask`, which records `RemoveFaces` itself.
+    //
+    // ONE of each. TWO FaceReindex entries would mean the arming outlived
+    // `cleanDegenerateFaces` and described the unify's drop a SECOND time —
+    // the double revert Stage E1 measured, which lands the face count PAST
+    // where it started (task 1903 Stage K, plan §5.3 "K's red row";
+    // tests/unit/face_reindex_arming_test.d drives the same pairing directly).
+    // The weld's own face-index rewrite still contributes nothing: it leaves
+    // through `Mesh.applyVertexRemap`, which Stage K measured and deliberately
+    // did NOT arm (its vertex side is already recorded by
+    // `compactUnreferenced`'s `recordReindex`).
     assert(countKind(d, MeshOpEntry.Kind.RemoveFaces) == 1
         && countKind(d, MeshOpEntry.Kind.RemoveVerts) == 1
         && countKind(d, MeshOpEntry.Kind.Reindex) == 1
-        && countKind(d, MeshOpEntry.Kind.FaceReindex) == 0,
+        && countKind(d, MeshOpEntry.Kind.FaceReindex) == 1,
         format("the sweep's op-log is RemoveFaces=%d RemoveVerts=%d "
-             ~ "Reindex=%d FaceReindex=%d, expected 1/1/1/0 at Stage E1 "
-             ~ "(task 1903 Stage E1; a non-zero FaceReindex is Stage L5 "
-             ~ "landing and this whole block is then rewritten)",
+             ~ "Reindex=%d FaceReindex=%d, expected 1/1/1/1 "
+             ~ "(task 1903 Stage K). FaceReindex=0 means "
+             ~ "`cleanDegenerateFaces` lost its arming scope; FaceReindex=2 "
+             ~ "means the scope stopped RESTORING and the unify's drop is now "
+             ~ "described twice",
                countKind(d, MeshOpEntry.Kind.RemoveFaces),
                countKind(d, MeshOpEntry.Kind.RemoveVerts),
                countKind(d, MeshOpEntry.Kind.Reindex),
                countKind(d, MeshOpEntry.Kind.FaceReindex)));
 
-    // KNOWN-INCOMPLETE, AND STAGE L5 FLIPS THIS — measured on this stand:
-    // every VERTEX comes back and one of the four faces does not, plus two
-    // windings that a count-only assertion could never see:
-    //   * the degenerate DROP (face 3, collinear) leaves through
-    //     `rewriteFaces` with `FaceReindex` disarmed — F comes back as 3;
-    //   * face 1 was [0,4,2,3] and comes back as [0,1,2,3]: the WELD's vertex
-    //     remap rewrote it, and `applyVertexRemap` has no op-log publisher for
-    //     the face-index rewrite it performs;
-    //   * face 2 was [0,1,1,2] and comes back as the collapsed triangle — the
-    //     same weld remap, collapsing the repeated index.
+    // STILL KNOWN-INCOMPLETE, but for ONE reason now instead of three. Stage K
+    // closed the degenerate stage's hole: both dropped faces come back and the
+    // count is whole. What remains is the WELD's face-index rewrite —
+    // `Mesh.applyVertexRemap` rewrites every winding that referenced the
+    // welded-away vertex and has no op-log publisher for it — so the windings
+    // come back REMAPPED rather than pre-weld. That is L5/L10's, not K's, and
+    // it is the failure mode a count-only revert assertion cannot see, which
+    // is why the two winding channels below are separate from the count.
     const bool reverted = d.revert(m);
     assert(reverted,
         "revert() refused the delta outright — that is a THIRD state, neither "
-      ~ "the incomplete revert measured at E1 nor the complete one L5 owes");
+      ~ "the incomplete revert measured here nor the complete one L5 owes");
     assert(m.vertices.length == preV,
         format("revert restored %d vertices of %d — the VERTEX side of this "
-             ~ "delta (RemoveVerts + Reindex) is the half that IS complete "
-             ~ "today", m.vertices.length, preV));
-    assert(m.faces.length == preF - 1,
-        format("STAGE L5 FLIPS THIS. revert() restored %d faces of %d. At "
-             ~ "Stage E1 the unify's drop comes back (RemoveFaces is recorded) "
-             ~ "and the degenerate stage's does NOT (its rewriteFaces has no "
-             ~ "publisher), so exactly one face stays missing. If this is red "
-             ~ "because they all came back, that is L5 landing: change this to "
-             ~ "`m.faces.length == preF` and add a full state comparison",
-               m.faces.length, preF));
+             ~ "delta (RemoveVerts + Reindex) is the half that has been "
+             ~ "complete since Stage E1", m.vertices.length, preV));
+    assert(m.faces.length == preF,
+        format("revert restored %d faces of %d. Since Stage K BOTH drops are "
+             ~ "recorded — the unify's through `RemoveFaces` and the "
+             ~ "degenerate stage's through `FaceReindex` — so the count must "
+             ~ "come back whole. `preF - 1` is the pre-K reading (the "
+             ~ "degenerate drop unrecorded); `preF + 1` is the DOUBLE REVERT, "
+             ~ "one face re-inserted twice", m.faces.length, preF));
     assert(m.faces[1] != preFace1,
-        format("STAGE L5 FLIPS THIS. revert() restored face 1's pre-weld "
-             ~ "winding %s. At Stage E1 the weld's face-index rewrite has no "
-             ~ "op-log publisher, so face 1 must come back as the REMAPPED "
-             ~ "[0,1,2,3] and not as %s. If this is red because L5 armed one, "
-             ~ "replace this and the next assertion with a full state "
-             ~ "comparison", m.faces[1].to!string, preFace1.to!string));
+        format("STAGE L5/L10 FLIPS THIS. revert() restored face 1's PRE-WELD "
+             ~ "winding %s. The weld's face-index rewrite leaves through "
+             ~ "`Mesh.applyVertexRemap`, which has no op-log publisher, so "
+             ~ "face 1 must come back REMAPPED and not as %s. If this is red "
+             ~ "because a publisher landed there, replace this and the next "
+             ~ "assertion with a full state comparison",
+               m.faces[1].to!string, preFace1.to!string));
     assert(m.faces[2].length == 3,
-        format("STAGE L5 FLIPS THIS, third channel. Face 2 was [0,1,1,2] and "
-             ~ "the weld's remap collapsed its repeated index to a triangle "
-             ~ "with no entry describing that, so after the revert it is still "
-             ~ "the triangle (arity %d, expected 3 at E1)", m.faces[2].length));
+        format("STAGE L5/L10 FLIPS THIS, second channel. Face 2 was [0,1,1,2] "
+             ~ "and the WELD's remap collapsed its repeated index to a "
+             ~ "triangle with no entry describing that, so after the revert it "
+             ~ "is still the triangle (arity %d, expected 3). Note this is the "
+             ~ "weld's collapse and not the degenerate stage's, which Stage K "
+             ~ "now reverts", m.faces[2].length));
 }

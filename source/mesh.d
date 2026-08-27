@@ -3239,6 +3239,84 @@ struct Mesh {
                                         dropSetMsk, dropOrd, survIdx, survLists);
     }
 
+    // --- Task 1903 Stage K: arming is PER REWRITE, never per batch ---------
+    //
+    // `MeshEditTracker.wantsFaceReindex` is a field on the RECORDER, i.e. on
+    // the whole batch. Setting it there and leaving it set is not a stronger
+    // version of setting it here — it is a DIFFERENT and wrong thing, and the
+    // difference was measured, not argued (plan §5.3, "K's red row", Stage E1
+    // 2026-08-25): `unifyFaces`' stand is F=2, its drop goes through
+    // `Mesh.deleteFacesByMask` which already records `RemoveFaces`, and with
+    // the flag armed batch-wide the SAME drop is also described by
+    // `rewriteFaces`' `FaceReindex` publisher. The LIFO revert then re-inserts
+    // the face TWICE and lands on F=3 against a pre-op F=2 — a revert that
+    // overshoots its own starting state.
+    //
+    // So the arming is a SCOPE around one `rewriteFaces` call, opened inside
+    // the kernel that owns that rewrite. Two things follow, and both are the
+    // point rather than side effects:
+    //
+    //   * the audit question — "does this op already record its face change
+    //     some other way?" — is answered NEXT TO the code it is about, by the
+    //     presence or absence of these three lines, instead of in a table that
+    //     rots; and
+    //   * a kernel that calls a hooked mutator (`deleteFacesByMask`,
+    //     `compactUnreferenced`, `removeEdgesByMask`) somewhere else in its
+    //     body cannot accidentally double-record it, because the flag is false
+    //     again by the time control reaches that call.
+    //
+    // NESTING IS SAFE BY RESTORE, NOT BY ASSERT. The destructor puts back the
+    // value it found, so an armed kernel calling an armed kernel arms once and
+    // disarms once. Two rewrites in ONE function want TWO scopes, not one
+    // spanning both (`mesh_ops/edge_bevel.d` is the case) — one scope per
+    // rewrite is what makes each rewrite's arming decision separately
+    // readable and separately revertible.
+    //
+    // INERT WITHOUT A RECORDING BATCH. With no batch open, or with an
+    // `unrecorded` one, `editRecorder_` is null: construction stores null,
+    // the destructor returns on its first line, and the whole scope is two
+    // predictable branches. Every production caller of every armed kernel
+    // today opens an UNRECORDED batch (plan §9), so arming changes no shipped
+    // behaviour — it changes what a RECORDING batch would produce, which is
+    // what the L-stages flip on.
+    struct FaceReindexArm {
+        private MeshEditTracker* rec_;
+        private bool prev_;
+
+        // One owner: a copy's destructor would restore the old value while the
+        // original still believes it is armed, disarming the rewrite half way
+        // through — the same reason `CornerRewrite` disables its postblit.
+        @disable this(this);
+
+        ~this() {
+            if (rec_ is null) return;
+            rec_.wantsFaceReindex = prev_;
+            rec_ = null;
+        }
+    }
+
+    /// Arm `Kind.FaceReindex` recording for the lifetime of the returned
+    /// handle. Spelled at the call site as
+    ///
+    ///     { auto arm = ed.faceReindexScope();
+    ///       rewriteFaces(ed, newFaces, src); }
+    ///
+    /// The tracker pointer is captured HERE rather than re-resolved in the
+    /// destructor: `editRecorder_` is an accessor keyed on `&this`, and a
+    /// kernel that replaces the whole struct mid-batch (`*mesh = result`)
+    /// would make the two lookups answer differently. The frame owns the
+    /// tracker on the GC, so the captured pointer stays valid and stays the
+    /// one the flag was set on.
+    FaceReindexArm faceReindexScope() {
+        FaceReindexArm a;
+        a.rec_ = editRecorder_;
+        if (a.rec_ !is null) {
+            a.prev_ = a.rec_.wantsFaceReindex;
+            a.rec_.wantsFaceReindex = true;
+        }
+        return a;
+    }
+
     // Resize selection arrays to match geometry and clear them.
     // Call after any wholesale geometry replacement — `catmullClarkOsd`,
     // an importer building a fresh Mesh, `reset`.
@@ -3595,6 +3673,16 @@ struct Mesh {
         // No corner handle here — this site declares through a bare
         // dropCornerProvenance(WeldTailNoSource) below (task 0830, no begin*
         // ever opened), so `rw` stays unpassed (defaults null).
+        // Task 1903 Stage K — NOT armed, and the reason is 1902 §5.4's: the
+        // VERTEX renumbering this rewrite serves is already recorded, by
+        // `Mesh.compactUnreferenced`'s `recordReindex`, which holds the
+        // oldToNew `remap[]` for free. A `FaceReindex` here would describe the
+        // same renumbering a second time, in the opposite direction.
+        // MEASURED CONSEQUENCE, and it is a real gap owned by L5/L10 rather
+        // than by K: the face-index rewrite this call performs is therefore
+        // unrecorded, so a recorded weld's revert brings its windings back
+        // REMAPPED. Pinned by the `cleanupMesh` sweep block in
+        // `tests/unit/mesh_ops/cleanup_test.d`.
         rewriteFaces(this, newFaces, FaceSource(oldOfNew));
         setFaceMarksFrom(faceMarks, ~Marks.Select);
         clearFaceSelectionResize();
@@ -4684,6 +4772,8 @@ struct Mesh {
                 faceRemap[fi] = -1;
             }
         }
+        // Task 1903 Stage K — NOT armed; same reason as
+        // `applyVertexRemapAndRebuild` above (1902 §5.4).
         rewriteFaces(this, newFaces, FaceSource.fromOldToNew(faceRemap, newFaces.length));
         setFaceMarksFrom(faceMarks, ~Marks.Select);
         if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
@@ -5054,6 +5144,11 @@ struct Mesh {
         // rewrite (`CornerRewrite.carried()` asserts on exactly that
         // mismatch). So the corner declaration below stays this site's own,
         // unchanged.
+        // Task 1903 Stage K — NOT armed, and this is the row the whole
+        // per-rewrite scope exists for. This kernel already recorded
+        // `RemoveFaces` above; arming here would describe the SAME drop a
+        // second time and the LIFO revert would land on a state neither entry
+        // describes (plan §5.3, "K's red row", measured at Stage E1).
         rewriteFaces(this, keptFaces, FaceSource(oldOfNew));
         // Select is still dropped deliberately (~Marks.Select) — the
         // subsequent clearFaceSelectionResize() below relied on that being
@@ -5291,6 +5386,9 @@ struct Mesh {
                                             removedFaceMat, removedFacePart, removedFaceSub,
                                             removedFaceSetMask, removedFaceOrd);
         }
+        // Task 1903 Stage K — NOT armed: this kernel records `ReshapeFaces`
+        // AND `RemoveFaces` above, so its face change is already in the log
+        // twice over. A third description is the double revert.
         rewriteFaces(this, newFaces, FaceSource(oldOfNew));
         setFaceMarksFrom(faceMarks, ~Marks.Select);
         // PolyVertex relocate (b): per-corner values follow surviving corners
@@ -6328,6 +6426,8 @@ struct Mesh {
             editRecorder_.recordAddFaces(FaceIdx.assumeFaceSpace(firstMerged),
                                          cast(uint)keptFaces.length, mergedLists);
         }
+        // Task 1903 Stage K — NOT armed: `RemoveFaces` + `AddFaces` above
+        // already name this kernel's face change.
         rewriteFaces(this, keptFaces, FaceSource(oldOfNew));
         setFaceMarksFrom(faceMarks, ~Marks.Select);
         // PolyVertex relocate (b): per-corner values follow the merged/kept
@@ -7100,7 +7200,16 @@ struct Mesh {
 
         if (changed == 0) return 0;
 
-        rewriteFaces(this, newFaces, FaceSource(faceOrigin));
+        // Task 1903 Stage K — ARMED, per rewrite. A triangulation records its
+        // face change NOWHERE ELSE: it adds no face through `addFace` and
+        // drops none through `deleteFacesByMask`, it hands one whole new array
+        // to the primitive, so with the publisher disarmed the op-log names no
+        // face change at all. The scope and not a batch-wide flag because
+        // `compactUnreferenced()` five lines down records `RemoveVerts` +
+        // `Reindex` through the OTHER hooked path, and this kernel must not
+        // describe anything twice (plan §5.3, "K's red row").
+        { auto arm = faceReindexScope();
+          rewriteFaces(this, newFaces, FaceSource(faceOrigin)); }
         setFaceMarksFrom(faceMarks, ~Marks.Select);
         if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
         clearFaceSelectionResize();
@@ -7893,6 +8002,42 @@ struct Mesh {
                     oldOfNew     ~= cast(uint) fi;
                     keptSelected ~= (fi < selectedFaces.length ? selectedFaces[fi] : false);
                 }
+                // TASK 1903 STAGE K MEASURED THIS ROW AND LEFT IT DISARMED
+                // (2026-08-27, numbers re-measured after the Stage K review's
+                // MAJOR-4), correcting the plan, which listed `arrayFacesGrid`
+                // under "arm".
+                //
+                // THE FAMILY IS UNREVERTIBLE IN A RECORDING BATCH TODAY,
+                // ARMED OR NOT, and the arming is not what breaks it. The
+                // array's OWN growth is hook-free: vertices arrive by a bare
+                // `vertices ~= cloneVertex(…)` and faces by `appendFaceRaw`,
+                // whose body is `faces ~= idx;` — neither reaches a tracker
+                // hook. So the only thing a recording batch can see in this
+                // kernel is the OPTIONAL weld-dedup pass right here, and the
+                // delta therefore describes the compaction and nothing else.
+                //
+                // Measured on a 3×3 tagged grid arrayed 2×1×1 (offset 2.0 =
+                // the bbox width, Merge Vertices on, distance 0.001 — the weld
+                // really fires, V 32→28), pre-op V=16 F=9 E=24, post-op
+                // V=28 F=18 E=45:
+                //
+                //   DISARMED (as it ships) — log `[RemoveVerts Reindex]`,
+                //     `revert()` answers TRUE, mesh lands V=32 F=18 E=45.
+                //   ARMED                  — log `[MeshMapDelta FaceReindex
+                //     MeshMapDelta FaceReindex RemoveVerts Reindex]`,
+                //     `revert()` answers TRUE, mesh lands V=32 F=18 E=48.
+                //
+                // So the "answers true, does not restore" shape §5.3's other
+                // audit calls WORSE than a throw is ALREADY PRESENT with the
+                // publisher disarmed, and the revert does not stop at the
+                // post-array state either — V=32 is a THIRD state, neither
+                // pre-op nor post-op, because `RemoveVerts⁻¹` re-inserts the
+                // welded vertices into a face array nothing described.
+                //
+                // The family's prerequisite is therefore a publisher at the
+                // two hook-free appends — `vertices ~= cloneVertex(…)` and
+                // `appendFaceRaw` — and it belongs to L6, not to any arming
+                // decision here. See the plan's §5.3 other-audit table.
                 rewriteFaces(this, keptFaces, FaceSource(oldOfNew));
                 if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
                 // keptSelected is applied right after via setFacesSelectedFrom,

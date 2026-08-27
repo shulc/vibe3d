@@ -471,3 +471,156 @@ unittest // makeDisk: hub-first fan, n triangles, n+1 verts, all rim on the unit
                "disk: n spokes + n rim edges");
     }
 }
+
+// ---------------------------------------------------------------------------
+// dumpMeshPlanes (task 1903 Stage K) — the WHOLE mesh state as a plane -> text
+// table, for a revert that claims to restore all of it.
+// ---------------------------------------------------------------------------
+
+/// Every plane a `MeshSnapshot` would have restored, one map entry per plane,
+/// so a diff can NAME what a delta revert did not put back instead of only
+/// answering "different".
+///
+/// WHY A TABLE AND NOT ONE STRING. The three test modules that had a
+/// `dumpMeshState` before this one each compared a single concatenated string,
+/// and the failure message could then only say "the state differs". Stage K's
+/// whole result is a LIST of surviving residuals per family — Select bits and
+/// array lengths on the armed families, per-vertex VALUES on the two bevels —
+/// and a single string cannot express the difference between those two, which
+/// is exactly the line the stage draws (plan §5.3).
+///
+/// `%a` — the HEX float form, so floats compare BITS: `%g` would let a
+/// `-0.0`/`+0.0` pair read as equal (task 1903 Stage D2's signed-zero cell).
+/// Every array is dumped with its LENGTH, because "values right, array grown"
+/// is a distinct measured outcome here and a value-only dump hides it.
+string[string] dumpMeshPlanes(ref Mesh m)
+{
+    import std.format : format;
+    import std.conv : to;
+    import snapshot : MeshSnapshot;
+
+    // A NEW `MeshSnapshot` PLANE CANNOT BE BORN UNCOVERED. This dump's whole
+    // contract is "every plane a snapshot would have restored", and the one
+    // way that contract rots silently is a field added to `MeshSnapshot` and
+    // not to the table below — the diff then keeps answering "the planes
+    // agree" about a plane it never read. 23 is the 22 state planes plus
+    // `filled`. Precedent for the shape of this guard: `MeshMap.dup`'s own
+    // field-count assert (`source/mesh.d`) and the two in `source/snapshot.d`.
+    static assert(MeshSnapshot.tupleof.length == 23,
+        "MeshSnapshot gained or lost a field — add the plane to "
+      ~ "dumpMeshPlanes below, or write here why it is not restorable state, "
+      ~ "before bumping this count");
+
+    string[string] t;
+    t["counts"] = format("V=%d F=%d E=%d",
+                         m.vertices.length, m.faces.length, m.edges.length);
+
+    string vs;
+    foreach (i, v; m.vertices) vs ~= format(" v%d(%a,%a,%a)", i, v.x, v.y, v.z);
+    t["vertices"] = vs;
+
+    string fs;
+    foreach (i, f; m.faces) fs ~= format(" f%d%s", i, f.to!string);
+    t["faces"] = fs;
+
+    string es;
+    foreach (i; 0 .. m.edges.length)
+        es ~= format(" e%d[%d,%d]", i, m.edges[i][0], m.edges[i][1]);
+    t["edges"] = es;
+
+    t["vertexMarks"]          = m.vertexMarks.to!string;
+    t["edgeMarks"]            = m.edgeMarks.to!string;
+    t["faceMarks"]            = m.faceMarks.to!string;
+    t["vertexSelectionOrder"] = m.vertexSelectionOrder.to!string;
+    t["edgeSelectionOrder"]   = m.edgeSelectionOrder.to!string;
+    t["faceSelectionOrder"]   = m.faceSelectionOrder.to!string;
+    t["orderCounters"]        = format("%d/%d/%d",
+                                       m.vertexSelectionOrderCounter,
+                                       m.edgeSelectionOrderCounter,
+                                       m.faceSelectionOrderCounter);
+    t["faceMaterial"]  = m.faceMaterial.to!string;
+    t["facePart"]      = m.facePart.to!string;
+    t["faceSetMask"]   = m.faceSetMask.to!string;
+    t["vertexSetMask"] = m.vertexSetMask.to!string;
+
+    // `edgeSetMask` is an associative array keyed by an endpoint PAIR — sorted
+    // so the dump is order-stable across rebuilds (its iteration order is not).
+    import std.algorithm.sorting : sort;
+    string eks;
+    foreach (k; m.edgeSetMask.keys.dup.sort) eks ~= format(" %d=%d", k, m.edgeSetMask[k]);
+    t["edgeSetMask"] = eks;
+
+    // `surfaces` USED TO BE ITS LENGTH ALONE, and the three set-NAME
+    // registries were absent outright (Stage K review, MINOR-5). Both holes
+    // have the same shape: a revert that put back two surfaces with the wrong
+    // colours, or dropped the name of a set whose mask plane it restored,
+    // compared EQUAL here. Measured inert on today's stands — pre == post on
+    // every armed family — which is the reason to write them down now rather
+    // than after something starts moving them.
+    string sfs;
+    foreach (i, ref sf; m.surfaces)
+        sfs ~= format(" s%d(%s|%a,%a,%a|%a,%a,%a,%a|%s)", i, sf.name,
+                      sf.baseColor.x, sf.baseColor.y, sf.baseColor.z,
+                      sf.diffuseAmount, sf.specularAmount, sf.glossiness,
+                      sf.opacity, sf.compiledFromTreeId);
+    t["surfaces"] = format("len=%d:%s", m.surfaces.length, sfs);
+
+    t["vertexSetNames"]  = m.vertexSetNames.to!string;
+    t["edgeSetNames"]    = m.edgeSetNames.to!string;
+    t["polygonSetNames"] = m.polygonSetNames.to!string;
+
+    foreach (ref mm; m.meshMaps) {
+        // `kind` and `present` are the two `MeshMap` fields this dump dropped.
+        // `present` is the dangerous one: EMPTY MEANS "ALL PRESENT", so a
+        // revert that dropped the presence channel outright yields a legal,
+        // WRONG map — not garbage, not a crash — and a values-only dump reads
+        // it as identical. That is the same trap `MeshMap.dup` guards with its
+        // own field-count assert (`source/mesh.d`).
+        string s = format("dim=%d dom=%s kind=%s present=%s len=%d:",
+                          mm.dim, mm.domain, mm.kind, mm.present,
+                          mm.data.length);
+        foreach (v; mm.data) s ~= format(" %a", v);
+        t["map:" ~ mm.name] = s;
+    }
+    return t;
+}
+
+/// The names of the planes on which `a` and `b` disagree, sorted, comma-joined;
+/// `""` when they agree on every plane. A plane present in only one side is
+/// reported with a `(GONE)`/`(NEW)` suffix rather than skipped — a map that a
+/// revert deleted outright is a difference, not an absence of one.
+string diffMeshPlanes(string[string] a, string[string] b)
+{
+    import std.algorithm.sorting : sort;
+    import std.array : join;
+
+    string[] bad;
+    foreach (k; a.keys.dup.sort) {
+        auto pb = k in b;
+        if (pb is null)   { bad ~= k ~ "(GONE)"; continue; }
+        if (*pb != a[k])    bad ~= k;
+    }
+    foreach (k; b.keys.dup.sort)
+        if ((k in a) is null) bad ~= k ~ "(NEW)";
+    return bad.join(", ");
+}
+
+/// The same diff, rendered with the values, for a failure message that has to
+/// show what came back instead of only which plane did not.
+string explainMeshPlaneDiff(string[string] a, string[string] b)
+{
+    import std.algorithm.sorting : sort;
+    import std.format : format;
+
+    string s;
+    foreach (k; a.keys.dup.sort) {
+        auto pb = k in b;
+        if (pb !is null && *pb == a[k]) continue;
+        immutable string got = pb is null ? "<plane gone>" : *pb;
+        s ~= format("\n    %s\n      expected: %s\n      got     : %s",
+                    k, clip(a[k]), clip(got));
+    }
+    return s;
+}
+
+private string clip(string s) { return s.length > 400 ? s[0 .. 400] ~ " …" : s; }

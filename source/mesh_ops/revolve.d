@@ -690,7 +690,31 @@ private PathExtrudeStep extrudePathStep_(ref MeshEditBatch ed, in bool[] mask,
     // immediately after the call — the reselect loop below overwrites
     // the CAP portion of this range again (via selectFace); the wall
     // portion is what this line alone determines.
-    rewriteFaces(ed, newFaces, FaceSource(oldOfNew));
+    // Task 1903 Stage K — ARMED, per rewrite, and here it is a PREREQUISITE
+    // rather than an improvement: `extrudePathStep_` never calls `addFace`,
+    // it hands a whole new face array to the primitive, so with the publisher
+    // disarmed a recorded `strokeExtrude` logs `AddVerts` alone and `revert()`
+    // THROWS mid-way, leaving the mesh HALF-reverted (plan §5.5's L8 note).
+    //
+    // AND IT IS THE MOST EXPENSIVE ARM IN THE STAGE — the number L8 has to
+    // know before it turns the tracker on for a sweep. This function runs ONCE
+    // PER PATH SPAN, and every run records a WHOLE PRE-OP CORNER MAP as its
+    // `MeshMapDelta` payload, so the cost is O(mesh) × spans, not O(Δ).
+    // Measured on `makeTaggedGridFull(20)` (400 faces, 1600 corners, a UV map
+    // and a `W` map), one selected face swept along an N-span path, against a
+    // `MeshSnapshot.capture` of the pre-op mesh at 63 424 B:
+    //
+    //     spans   1 →  30 329 B (0.48×)    3 →  91 851 B (1.45×)
+    //             2 →  60 946 B (0.96×)   12 → 382 956 B (6.04×)
+    //
+    // The delta-vs-snapshot ratio INVERTS between the second and third span on
+    // any mesh with a per-corner map, and at twelve spans the op-log is six
+    // times the whole snapshot it exists to replace. Narrowing the payload to
+    // the corners that actually move (Stage J review, MINOR-6) is therefore an
+    // L8 PREREQUISITE, not a later optimisation — see the seam plan's §8.1
+    // Cell D, which carries the whole table.
+    { auto arm = ed.faceReindexScope();
+      rewriteFaces(ed, newFaces, FaceSource(oldOfNew)); }
     foreach (i; capStart .. ed.faces.length) ed.faceSelectionOrder[i] = 0;
 
     // Re-mask the just-carried word in place — src here IS faceMarks

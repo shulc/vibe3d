@@ -1085,65 +1085,114 @@ unittest { // RECORDING: extendEdgesByMask op-log kinds (cube, one edge)
       ~ " diff(s): " ~ diffs.to!string);
 }
 
-unittest { // RECORDING: the three LATENT ops -- disarmed ships, armed is Stage K/L8's future
-    import mesh_edit_delta : MeshEditScope, MeshOpEntry;
-    import core.exception : ArrayIndexError;
+unittest { // RECORDING: the three extrude kernels Stage K ARMED, and what their revert restores
+    import mesh_edit_delta : MeshEditScope, MeshOpEntry, MeshEditDelta;
     import std.conv : to;
+    import std.format : format;
 
-    // extrudeVerticesByMask -- disarmed: [AddVerts, SetPos] (SetPos is task
-    // 1903 Stage H's OWN §5.7 migration of the raw apex-shift write: before
-    // this stage this kernel recorded NOTHING disarmed; now setVertexPos
-    // self-logs whenever the batch is recording, independent of
-    // wantsFaceReindex). revert() still throws -- arming is Stage K/L8's.
+    // THIS BLOCK ASSERTED THE OPPOSITE UNTIL STAGE K (2026-08-27), and its own
+    // messages named the flip: disarmed, each of these kernels logged its
+    // vertex appends and NOTHING about the faces it rewrote, and `revert()`
+    // THREW an `ArrayIndexError` out of `buildLoops` over windings that
+    // referenced vertices the reverse had just removed. Stage K wrapped each
+    // kernel's `mesh_planes.rewriteFaces` call in its own `faceReindexScope()`,
+    // so the face change is now in the log and the throw is gone.
+    //
+    // The assertions are REPLACED, not relaxed: each cell now pins the armed
+    // shape (one `FaceReindex`, no throw, geometry restored byte-for-byte), so
+    // a regression that disarms a scope reddens here instead of quietly
+    // reverting to the weaker law. What the armed revert does NOT restore is
+    // measured per family in `tests/unit/face_reindex_arming_test.d`, on a
+    // stand that carries every plane; these stands carry no per-corner map, so
+    // no `MeshMapDelta` payload is recorded — asserted below, because "the
+    // payload is absent" and "the payload is empty" must not read alike.
+
+    static string geom(ref Mesh m) {
+        string t = format("V=%d F=%d E=%d", m.vertices.length, m.faces.length,
+                          m.edges.length);
+        foreach (i, v; m.vertices) t ~= format(" v%d(%a,%a,%a)", i, v.x, v.y, v.z);
+        foreach (i, f; m.faces)    t ~= format(" f%d%s", i, f.to!string);
+        return t;
+    }
+
+    static size_t nKind(ref MeshEditDelta d, MeshOpEntry.Kind k) {
+        size_t n; foreach (ref e; d.log) if (e.kind == k) ++n; return n;
+    }
+
+    static string kinds(ref MeshEditDelta d) {
+        string t; foreach (ref e; d.log) t ~= " " ~ e.kind.to!string; return "[" ~ t ~ " ]";
+    }
+
+    // extrudeVerticesByMask — armed: [AddVerts, SetPos, FaceReindex].
+    // `SetPos` is Stage H's own §5.7 migration of the raw apex-shift write and
+    // is independent of the arming; it is named here so a future reader does
+    // not read the third entry as having replaced it.
     {
         Mesh m = gridStand4_();
+        immutable string pre = geom(m);
         bool[] mask = new bool[](m.vertices.length);
         mask[2 * 5 + 2] = true;   // interior vertex of a 4x4 grid (5x5 verts)
         auto ed = MeshEditBatch(m, MeshEditScope.Geometry | MeshEditScope.Marks);
         immutable n = ed.extrudeVerticesByMask(mask, 0.1f, 0.15f);
         auto delta = ed.close();
-        assert(n == 1);
-        assert(delta.log.length == 2 && delta.log[0].kind == MeshOpEntry.Kind.AddVerts
-                                       && delta.log[1].kind == MeshOpEntry.Kind.SetPos,
-            "extrudeVerticesByMask disarmed: expected [AddVerts, SetPos], got "
-          ~ delta.log.length.to!string ~ " entries");
-        bool threw = false;
-        try { delta.revert(m); } catch (ArrayIndexError) { threw = true; }
-        assert(threw, "extrudeVerticesByMask disarmed: revert() must still "
-                     ~ "throw -- arming wantsFaceReindex is Stage K/L8's, not "
-                     ~ "H's; a revert that stops throwing here without that "
-                     ~ "stage landing is a silent behaviour change");
+        assert(n == 1, "the stand extruded nothing — the cell would be vacuous");
+        assert(delta.log.length == 3
+            && delta.log[0].kind == MeshOpEntry.Kind.AddVerts
+            && delta.log[1].kind == MeshOpEntry.Kind.SetPos
+            && delta.log[2].kind == MeshOpEntry.Kind.FaceReindex,
+            "extrudeVerticesByMask armed: expected [AddVerts, SetPos, "
+          ~ "FaceReindex], got " ~ kinds(delta));
+        assert(nKind(delta, MeshOpEntry.Kind.MeshMapDelta) == 0,
+            "this stand carries no PolyVertex map, so no corner payload should "
+          ~ "be recorded; one here means the payload is being written "
+          ~ "unconditionally and its cost is no longer paid only where there "
+          ~ "is something to save");
+        assert(delta.revert(m),
+            "extrudeVerticesByMask armed: revert() refused the delta");
+        assert(geom(m) == pre,
+            format("extrudeVerticesByMask armed: revert did not restore the "
+                 ~ "geometry.\n  pre : %s\n  post: %s", pre, geom(m)));
     }
-    // extrudeFacesByMask -- disarmed: [AddVerts] alone, revert() throws.
+    // extrudeFacesByMask — armed: [AddVerts, FaceReindex]. This is one of the
+    // two `&rw` sites, so its arming depended on Stage J's corner carry.
     {
         Mesh m = cubeStandL_();
+        immutable string pre = geom(m);
         bool[] mask = new bool[](m.faces.length);
         mask[0] = true;
         auto ed = MeshEditBatch(m, MeshEditScope.Geometry | MeshEditScope.Marks);
         immutable n = ed.extrudeFacesByMask(mask, 0.3f);
         auto delta = ed.close();
-        assert(n == 1);
-        assert(delta.log.length == 1 && delta.log[0].kind == MeshOpEntry.Kind.AddVerts,
-            "extrudeFacesByMask disarmed: expected [AddVerts] alone, got "
-          ~ delta.log.length.to!string ~ " entries");
-        bool threw = false;
-        try { delta.revert(m); } catch (ArrayIndexError) { threw = true; }
-        assert(threw, "extrudeFacesByMask disarmed: revert() must still throw");
+        assert(n == 1, "the stand extruded nothing — the cell would be vacuous");
+        assert(delta.log.length == 2
+            && delta.log[0].kind == MeshOpEntry.Kind.AddVerts
+            && delta.log[1].kind == MeshOpEntry.Kind.FaceReindex,
+            "extrudeFacesByMask armed: expected [AddVerts, FaceReindex], got "
+          ~ kinds(delta));
+        assert(delta.revert(m), "extrudeFacesByMask armed: revert() refused");
+        assert(geom(m) == pre,
+            format("extrudeFacesByMask armed: revert did not restore the "
+                 ~ "geometry.\n  pre : %s\n  post: %s", pre, geom(m)));
     }
-    // smoothShiftFacesByMask -- disarmed: [AddVerts] alone, revert() throws.
+    // smoothShiftFacesByMask — armed: [AddVerts, FaceReindex], on a WHOLE-mesh
+    // mask, so the rewrite replaces every face rather than a handful.
     {
         Mesh m = gridStand4_();
+        immutable string pre = geom(m);
         bool[] mask = new bool[](m.faces.length);
         mask[] = true;
         auto ed = MeshEditBatch(m, MeshEditScope.Geometry | MeshEditScope.Marks);
         immutable n = ed.smoothShiftFacesByMask(mask, 0.2f, 0.8f, true);
         auto delta = ed.close();
-        assert(n == 16);
-        assert(delta.log.length == 1 && delta.log[0].kind == MeshOpEntry.Kind.AddVerts,
-            "smoothShiftFacesByMask disarmed: expected [AddVerts] alone, got "
-          ~ delta.log.length.to!string ~ " entries");
-        bool threw = false;
-        try { delta.revert(m); } catch (ArrayIndexError) { threw = true; }
-        assert(threw, "smoothShiftFacesByMask disarmed: revert() must still throw");
+        assert(n == 16, "the stand shifted nothing — the cell would be vacuous");
+        assert(delta.log.length == 2
+            && delta.log[0].kind == MeshOpEntry.Kind.AddVerts
+            && delta.log[1].kind == MeshOpEntry.Kind.FaceReindex,
+            "smoothShiftFacesByMask armed: expected [AddVerts, FaceReindex], "
+          ~ "got " ~ kinds(delta));
+        assert(delta.revert(m), "smoothShiftFacesByMask armed: revert() refused");
+        assert(geom(m) == pre,
+            format("smoothShiftFacesByMask armed: revert did not restore the "
+                 ~ "geometry.\n  pre : %s\n  post: %s", pre, geom(m)));
     }
 }

@@ -2362,8 +2362,9 @@ private enum uint kExpectedSliceScope = MeshEditScope.Points
                                       | MeshEditScope.Marks
                                       | MeshEditScope.Position;
 
-unittest { // the loop slice's op-log NAMES NO FACE CHANGE, and its revert FAULTS
+unittest { // the loop slice is ARMED at Stage K — geometry, planes and UV come back
     import std.format : format;
+    import std.conv : to;
     Mesh m = recSliceStand();
 
     // STAND CANARY — asserts the stand, not the code under test.
@@ -2376,6 +2377,22 @@ unittest { // the loop slice's op-log NAMES NO FACE CHANGE, and its revert FAULT
 
     immutable size_t preV = m.vertices.length, preF = m.faces.length;
     immutable uint seed = m.edgeIndex(0, 1);
+
+    // The whole pre-op state the armed revert is measured against, captured by
+    // VALUE (`.dup`, and a deep dup for `faces`, whose elements are slices the
+    // rewrite reassigns in place).
+    uint[][] preFaces; foreach (f; m.faces) preFaces ~= f.dup;
+    auto preMat  = m.faceMaterial.dup;
+    auto prePart = m.facePart.dup;
+    auto preFSet = m.faceSetMask.dup;
+    auto preESet = m.edgeSetMask.dup;
+    auto preUv   = m.meshMap(kUvMapName).data.dup;
+    assert(preUv.length > 0, "the stand's UV map is empty — channel (d) below "
+                           ~ "would compare nothing with nothing");
+    bool uvVaries = false;
+    foreach (v; preUv) if (v != preUv[0]) { uvVaries = true; break; }
+    assert(uvVaries, "the stand's UV map is uniform — a zeroing revert would "
+                   ~ "be indistinguishable from a carry on a constant map");
 
     MeshEditDelta d;
     bool ok;
@@ -2407,37 +2424,35 @@ unittest { // the loop slice's op-log NAMES NO FACE CHANGE, and its revert FAULT
              ~ "reaching MeshEditDelta.scope_ at all",
                cast(uint)d.scope_, kLoopSliceEditScope));
 
-    // THE FINDING, MEASURED (2026-08-26).
+    // WHAT STAGE K CHANGED HERE, MEASURED 2026-08-27.
     //
-    // Six faces became ten, every one of the four belt faces was replaced,
-    // and the op-log is ONE entry:
+    // Until Stage K this block asserted `d.log.length == 1` — six faces became
+    // ten, every one of the four belt faces was replaced, and the op-log named
+    // only the four rail midpoints. The whole face array was installed through
+    // `mesh_planes.rewriteFaces(ed, …, &rw, vertBlend)`, whose
+    // `Kind.FaceReindex` publisher was merely DISARMED, and `revert()` THREW
+    // `index [8] is out of bounds for array of length 8`, leaving the mesh
+    // half-reverted at V=8 F=10 E=20 with 16 dangling face corners.
     //
-    //     entries=1 kinds=[AddVerts]
+    // Stage K wrapped that call in its own `faceReindexScope()`. The op-log is
+    // now `[AddVerts MeshMapDelta FaceReindex]`, `revert()` answers `true`, and
+    // the throw is gone.
     //
-    // — the four rail midpoints and nothing else. The whole face array was
-    // installed through `mesh_planes.rewriteFaces(ed, …, &rw, vertBlend)`,
-    // whose `Kind.FaceReindex` publisher is merely DISARMED
-    // (`MeshEditTracker.wantsFaceReindex` is false). That is the shape Stage
-    // K's per-rewrite arming scope reaches, and plan §5.3's audit row for this
-    // kernel already says "yes, after Stage J" — CONFIRMED here by arming and
-    // measuring, which is the only way a disarmed publisher can be told from
-    // an absent one (E3 memo 12). With the flag armed at its declaration the
-    // log becomes `[AddVerts FaceReindex]` and `revert()` STOPS throwing — it
-    // answers `true`. The potency of that mutation was checked on a FOREIGN
-    // family: the same armed build reddens
-    // `tests/unit/mesh_ops/cleanup_test.d(785)` ("revert restored V=4 F=3,
-    // expected V=4 F=2"), so an unchanged log here would have meant something.
+    // THE UV MAP NOW COMES BACK, AND THAT IS STAGE J, NOT STAGE K. Stage F1
+    // measured this family under a batch-wide arming and found the map
+    // restored to its pre-op LENGTH with all 48 floats ZEROED (36 of them had
+    // been non-zero) — row 9 of the nine-row loss list this block used to
+    // enumerate. The cause was that `Kind.FaceReindex` had no case in
+    // `CornerCarry`, so both replay directions declared
+    // `dropCornerProvenance(DeltaReplayDeclined)` unconditionally. Stage J
+    // gave it that case plus a `Kind.MeshMapDelta` payload recorded
+    // IMMEDIATELY BEFORE the face entry, and row 9 is closed: the assertion
+    // below compares the map BYTE FOR BYTE. Arming this kernel BEFORE Stage J
+    // would have zeroed UV on every loop-slice undo, which is why the two
+    // stages are ordered the way they are.
     //
-    // ARMING IS NOT THE FIX, AND THAT IS MEASURED TOO — the same shape the
-    // vertex chamfer showed at Stage E4. With the flag armed, `revert()`
-    // answers `true`, V/F/E and every winding come back, `faceMaterial`,
-    // `facePart`, `faceSetMask` and `edgeSetMask` come back, the `Hide` and
-    // `Subpatch` bits of `faceMarks` come back — and these do NOT:
-    //
-    // NINE ROWS, and the count is written out here because it was carried as
-    // six / seven / eight in three different artefacts before the F1 review
-    // (2026-08-26). This enumeration is the canonical one; the plan's §5.3 K
-    // row and the card quote it verbatim.
+    // WHAT IS STILL LOST — rows 1 through 8 of that list, unchanged, and they
+    // are asserted below as a RESIDUAL so that closing one reddens here:
     //
     //     1. vertexMarks[1] Select      1 -> 0
     //     2. edgeMarks[3]   Select      1 -> 0
@@ -2447,87 +2462,108 @@ unittest { // the loop slice's op-log NAMES NO FACE CHANGE, and its revert FAULT
     //     6. faceSelectionOrder[4]      1 -> 0
     //     7. all three selection-order counters   1,1,1 -> 0,0,0
     //     8. vertexSetMask  — VALUES correct, LENGTH left grown (8 -> 12)
-    //     9. meshMaps["uv"].data — 48 floats, ALL ZEROED (36 were non-zero)
     //
-    // THE ATTRIBUTION IS THREE-WAY, NOT ONE-WAY, and each third was measured
-    // by VARIANT on the armed build rather than reasoned from the code:
+    // The three-way attribution the F1 review established still holds and is
+    // what L9 acts on: seven of the eight (1, 2, 4-8) are the tail
+    // `resetSelection()` — delete that one call and every one of them comes
+    // back; row 3 is NOT — `faceMarks[4]` Select is cleared by
+    // `ed.setFaceMarksFrom(newWord, ~ed.Marks.Select)` before the tail ever
+    // runs, so the reverse faithfully restores an already-cleared word. So L9
+    // owes TWO publishers, not the three the disarmed measurement named: a
+    // MARKS publisher (plan L0's first production publishers) for all three
+    // domains plus the set-mask resize, and a publish of `setFaceMarksFrom`,
+    // which the Marks publisher does not cover. The third — a `MeshMapDelta`
+    // publisher on this path — is what Stage J shipped.
     //
-    //   * SEVEN of the nine (1, 2, 4, 5, 6, 7, 8) are the tail
-    //     `resetSelection()`. Deleting that one call restores every one of
-    //     them: `vertexMarks[1]`/`edgeMarks[3]` come back true, all three
-    //     order slots read 1 again, the counters read 1,1,1 and
-    //     `vertexSetMask.length` stays 8. No `FaceReindex` could have carried
-    //     the vertex or edge half.
-    //   * ROW 3 IS NOT `resetSelection`'s, and this is where the pre-review
-    //     text was self-contradictory. `faceMarks[4]` Select is cleared by
-    //     `ed.setFaceMarksFrom(newWord, ~ed.Marks.Select)` (the tail of `insertEdgeLoopsMulti`),
-    //     BEFORE the tail ever runs. Measured: with `resetSelection()` deleted
-    //     the face Select bit is ALREADY false post-op, and `FaceReindex`'s
-    //     reverse faithfully restores a surviving old face from the live
-    //     post-op word — which has Select off. So it stays lost.
-    //   * ROW 9 IS NEITHER. `resetSelection()` deleted, the map is STILL
-    //     zeroed at 48. Its cause is `MeshEditDelta.finalize`'s tail
-    //     `m.resizeAllMeshMaps()` (mesh_edit_delta.d:2032) reaching
-    //     `resizeMeshMapData`, whose documented rule is "topology rewritten
-    //     WITHOUT a relocate … ZERO the whole map at the new length"
-    //     (`resizeMeshMapData`'s own doc comment). The log is `[AddVerts FaceReindex]` — no
-    //     `Kind.MeshMapDelta`, whose only publisher is
-    //     `Mesh.recordPolyVertexPayload`, never called on this path.
-    //
-    // TWO DIFFERENCES FROM E4's vertex chamfer, and they matter to whoever
-    // owns the remedy: here `faceSelectionOrder` IS lost (there it survived),
-    // and here the FORWARD op CARRIES the PolyVertex UV map rather than
-    // zeroing it (measured: 48 floats / 36 non-zero -> 80 / 60, with and
-    // without Split+Gap), so this family IS inside the 0682/0830 corner-carry
-    // census.
-    //
-    // THE FORWARD CARRY DOES NOT MAKE UNDO SAFE, AND THE PRE-REVIEW TEXT SAID
-    // IT DID. That inference was measurably false and it is the sentence L9
-    // would have acted on. The forward carry is a `rewriteFaces` property; the
-    // REVERSE is the half undo needs, and on the armed build — exactly the L9
-    // state — `revert()` restores the map's LENGTH (80 -> 48) and ZEROES all
-    // 48 floats, 36 of which were non-zero:
-    //
-    //     pre  [0..12] = -0.25 0 -0.25 1 0.75 1 0.75 0 -0.25 0 0.75 0
-    //     post-revert  =  0    0  0    0 0    0 0    0  0    0 0    0
-    //
-    // What L9 owes, therefore, is THREE publishers and not one: a MARKS
-    // publisher (plan L0's first production publishers) for all three domains
-    // plus the set-mask resize (rows 1, 2, 4-8); publishing
-    // `setFaceMarksFrom` (row 3), which the Marks publisher does NOT cover;
-    // and a `MeshMapDelta` publisher on this path (row 9), which neither
-    // covers. Any of the three left undone is a stated `MeshSnapshot` refusal,
-    // not a silent gap. None of it is a reorder.
-    //
-    // `revert()` IS NOT CALLED IN THIS BLOCK, and that is a MEASUREMENT, not
-    // caution: on the shipped (disarmed) build it THROWS
-    // `index [8] is out of bounds for array of length 8` and leaves the mesh
-    // half-reverted at V=8 F=10 E=20 with 16 dangling face corners (max
-    // corner index 11 against 8 vertices). The observable that flips when
-    // this is fixed is the KIND LIST below.
-    //
-    // STAGE K/L9 FLIPS THIS.
-    assert(d.log.length == 1,
-        format("the loop slice recorded %d op-log entr(ies) %s, expected "
-             ~ "exactly 1. If a face entry has appeared, K/J has armed the "
-             ~ "rewrite — good news, and this block's whole comment plus plan "
-             ~ "§5.3's row move with it, including the NINE rows the armed "
-             ~ "revert was measured to lose — seven selection planes, the "
-             ~ "set-mask resize, and the PolyVertex UV map zeroed at its "
-             ~ "restored length (task 1903 Stage F1).",
-               d.log.length, kindsOf(d)));
-    assert(countKind(d, MeshOpEntry.Kind.AddVerts) == 1,
-        format("the loop slice's op-log is %s, expected exactly one AddVerts "
-             ~ "(task 1903 Stage F1).", kindsOf(d)));
-    assert(countKind(d, MeshOpEntry.Kind.FaceReindex)  == 0
+    // STAGE L9 FLIPS THE REMAINDER.
+    assert(countKind(d, MeshOpEntry.Kind.FaceReindex) == 1,
+        format("the loop slice's op-log is %s, expected exactly one "
+             ~ "FaceReindex entry. ZERO means `insertEdgeLoopsMulti`'s "
+             ~ "rewrite lost its `faceReindexScope()` and this family's "
+             ~ "recorded revert is back to THROWING out of buildLoops "
+             ~ "(task 1903 Stage K, plan §5.3).", kindsOf(d)));
+    assert(countKind(d, MeshOpEntry.Kind.MeshMapDelta) == 1,
+        format("the loop slice's op-log is %s, expected exactly one "
+             ~ "MeshMapDelta payload beside the face entry. Without it the "
+             ~ "reverse has nothing to restore the pre-cut corner values from "
+             ~ "and zeroes the whole UV map — which is what this family did "
+             ~ "before Stage J (task 1903 Stage J/K).", kindsOf(d)));
+    assert(countKind(d, MeshOpEntry.Kind.AddVerts) == 1
         && countKind(d, MeshOpEntry.Kind.AddFaces)     == 0
         && countKind(d, MeshOpEntry.Kind.ReshapeFaces) == 0
         && countKind(d, MeshOpEntry.Kind.RemoveFaces)  == 0,
-        format("the loop slice's op-log now names a face change (%s) — see the "
-             ~ "comment above: the rewrite's publisher was DISARMED, and if it "
-             ~ "is armed now the NINE-row loss measured under arming has to "
-             ~ "be re-checked before this is called fixed "
-             ~ "(task 1903 Stage F1, plan §5.3).", kindsOf(d)));
+        format("the loop slice's op-log is %s, expected one AddVerts and NO "
+             ~ "second description of the face change. A RemoveFaces or "
+             ~ "ReshapeFaces beside the FaceReindex would describe the same "
+             ~ "change twice and the LIFO revert would overshoot — the double "
+             ~ "revert the per-rewrite scope exists to prevent "
+             ~ "(plan §5.3).", kindsOf(d)));
+
+    // THE REVERT, IN FOUR SEPARATE CHANNELS. They are separate because they
+    // fail for different reasons and a single concatenated dump could only
+    // ever assert the weakest of them.
+    assert(d.revert(m),
+        format("revert() refused the armed loop-slice delta outright (%s) — "
+             ~ "that is a third state, neither the pre-K throw nor the clean "
+             ~ "revert measured at K", kindsOf(d)));
+
+    // (a) geometry and windings.
+    assert(m.vertices.length == preV && m.faces.length == preF,
+        format("revert restored V=%d F=%d, expected V=%d F=%d",
+               m.vertices.length, m.faces.length, preV, preF));
+    assert(m.faces == preFaces,
+        format("revert restored the face COUNT but not the windings:\n"
+             ~ "  pre : %s\n  post: %s", preFaces.to!string, m.faces.to!string));
+
+    // (b) the per-face planes the entry carries.
+    assert(m.faceMaterial == preMat && m.facePart == prePart
+        && m.faceSetMask == preFSet && m.edgeSetMask == preESet,
+        "revert restored the windings but not the per-face planes "
+      ~ "(faceMaterial / facePart / faceSetMask / edgeSetMask) the "
+      ~ "FaceReindex entry carries");
+
+    // (c) the two mark bits that are NOT Select. They share a word with it, so
+    // without this the residual below would be indistinguishable from "the
+    // whole faceMarks word is lost".
+    assert(m.isFaceHidden(0) && m.isFaceSubpatch(2),
+        "revert lost the Hide/Subpatch bits of faceMarks. Those sit in the "
+      ~ "same word as Select and are carried by the same entry, so losing "
+      ~ "them means the word is not being carried at all — a different "
+      ~ "failure from the Select-only residual below");
+
+    // (d) THE PER-CORNER MAP, BYTE FOR BYTE. This is the row Stage J closed,
+    // and it is why K could arm this kernel at all.
+    {
+        auto uv = m.meshMap(kUvMapName);
+        assert(uv !is null, "the UV map is gone entirely after the revert");
+        assert(uv.data == preUv,
+            format("revert restored the map's length (%d floats) but not its "
+                 ~ "values — this is exactly the shape Stage F1 measured "
+                 ~ "before Stage J: length-correct and zeroed. If the values "
+                 ~ "are zero, `CornerCarry`'s FaceReindex case declined; check "
+                 ~ "that the MeshMapDelta payload is still ADJACENT to the "
+                 ~ "face entry (task 1903 Stage J).", uv.data.length));
+    }
+
+    // (e) THE RESIDUAL, asserted as a residual. Each of these is still lost,
+    // and L9 owes it. A line here going red because something came back is
+    // GOOD NEWS and means this block plus plan §5.5's L9 row move together.
+    assert(!m.isVertexSelected(1) && !m.isEdgeSelected(3) && !m.isFaceSelected(4),
+        "a Select bit came back that Stage K measured as still lost (rows 1-3 "
+      ~ "of the loss list above). If L9's Marks publisher has landed, rewrite "
+      ~ "this block and plan §5.5's L9 row together — do not simply delete "
+      ~ "this line");
+    assert(m.vertexSelectionOrderCounter == 0
+        && m.edgeSelectionOrderCounter == 0
+        && m.faceSelectionOrderCounter == 0,
+        "a selection-order counter came back that Stage K measured as still "
+      ~ "lost (row 7). Same instruction as the line above");
+    assert(m.vertexSetMask.length == preV + 4,
+        format("vertexSetMask is %d long, expected %d — the post-op length, "
+             ~ "left grown by `finalizeTopologyEdit`'s resize with every VALUE "
+             ~ "intact (row 8). This is the residual that is a LENGTH and not "
+             ~ "a value, and it is the reason this stage's rule is stated in "
+             ~ "terms of values", m.vertexSetMask.length, preV + 4));
 }
 
 unittest { // the Gap and the Profile writes are RECORDED, one SetPos entry each

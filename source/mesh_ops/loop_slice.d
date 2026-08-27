@@ -1605,7 +1605,15 @@ bool insertEdgeLoopsMulti(ref MeshEditBatch ed, const(uint)[] seeds, const(float
     // time.
     assert(newSrc.length == newFaces.length,
            "insertEdgeLoopsMulti: newSrc/newFaces length mismatch");
-    rewriteFaces(ed, newFaces, FaceSource(newSrc), &rw, vertBlend);
+    // Task 1903 Stage K — ARMED, per rewrite, and the second of the two sites
+    // Stage J had to land first (the `&rw` handle carries a PolyVertex plane;
+    // before J a recorded revert of a belt cut restored the map's LENGTH and
+    // zeroed all of it). Disarmed, the op-log of a belt cut is `[AddVerts …]`
+    // alone — six faces became ten and nothing names the face change — and
+    // `revert()` THROWS out of `buildLoops`. What arming does NOT fix is
+    // recorded in the plan's Stage K row and in this stage's card.
+    { auto arm = ed.faceReindexScope();
+      rewriteFaces(ed, newFaces, FaceSource(newSrc), &rw, vertBlend); }
 
     // Rebuild faceMarks in lock-step with the just-replaced `faces`
     // (task 0389 — Template A, mirrors bevelEdgesByMask; generalized to

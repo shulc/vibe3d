@@ -688,14 +688,17 @@ unittest { // revolveProfileEx: BOTH arms record a complete, fully-revertible de
     }
 }
 
-unittest { // extrudeAlongPath: the op-log names NO face change, and that is a GAP
+unittest { // extrudeAlongPath: ARMED at Stage K — its revert no longer faults
     import std.format : format;
+    import std.conv : to;
 
     Mesh m = makeCube();
     bool[] mask = new bool[](m.faces.length);
     mask[0] = true;
     Vec3[] path = [Vec3(0, 0, 0), Vec3(0, 0, 0.2f), Vec3(0, 0, 0.4f), Vec3(0, 0, 0.6f)];
     immutable size_t preF = m.faces.length;
+    immutable string preGeom  = dumpGeometry(m);
+    immutable string preMarks = dumpMarkPlanes(m);
 
     MeshEditDelta d;
     size_t n;
@@ -713,60 +716,85 @@ unittest { // extrudeAlongPath: the op-log names NO face change, and that is a G
     assertDeclaredScope("extrudeAlongPath", d);
     assertNoPositionWrite("extrudeAlongPath", d);
 
-    // MEASURED, and it is the finding this block exists for. Three path spans,
-    // 12 vertices cloned and 12 faces created — and the op-log is ONE entry:
+    // WHAT STAGE K CHANGED HERE, MEASURED 2026-08-27.
     //
-    //     entries=1 kinds=[AddVerts]
-    //
-    // `extrudePathStep_` does not `addFace`: it builds a whole new face array
-    // and hands it to `mesh_planes.rewriteFaces`, whose `Kind.FaceReindex`
-    // publisher is DISARMED (`MeshEditTracker.wantsFaceReindex` is false, and
-    // plan §5.3's Stage-K audit lists `mesh_ops.revolve.extrudePathStep_` as
-    // "arm? yes"). So the delta names the vertices it added and NOTHING about
-    // the faces.
-    //
-    // NO `revert()` IS ATTEMPTED HERE, and that is not squeamishness — it was
-    // measured. Reverting this delta un-adds the 12 cloned vertices while the
-    // cap and wall faces still reference them, and `MeshEditDelta.finalize`'s
-    // `buildLoops()` walks straight off the end:
+    // Until Stage K this block asserted that the op-log carried NO face entry
+    // at all: three path spans, 12 vertices cloned and 12 faces created, and
+    // the log read `[AddVerts]`. `extrudePathStep_` does not `addFace` — it
+    // builds a whole new face array and hands it to
+    // `mesh_planes.rewriteFaces`, whose publisher was DISARMED. `revert()` was
+    // deliberately NOT called, because it had been measured to un-add the 12
+    // cloned vertices while the cap and wall faces still referenced them and
+    // to walk straight off the end inside `MeshEditDelta.finalize`'s
+    // `buildLoops()`:
     //
     //     core.exception.ArrayIndexError@source/mesh.d(13841):
     //     index [8] is out of bounds for array of length 8
     //
-    // That is unreachable in production TODAY — all four callers of this
-    // kernel open UNRECORDED batches, so no such delta exists outside this
-    // block — but it is exactly the trap Stage L8 walks into if it flips
-    // `mesh.strokeExtrude` onto the delta path before Stage K arms the
-    // rewrite. Recorded here rather than in a commit message, next to the
-    // assertion that will redden when it is fixed.
+    // That was plan §5.5's L8 BLOCKING PREREQUISITE, and Stage K discharged
+    // it: `extrudePathStep_`'s rewrite is now inside its own
+    // `faceReindexScope()`, so `mesh.strokeExtrude` can write a delta that
+    // survives its own undo. The block now CALLS `revert()`, which is the
+    // whole point of the flip.
     //
-    // STAGE K/L8 FLIPS THIS. When the FaceReindex publisher is armed at
-    // `extrudePathStep_`'s `rewriteFaces` call (Stage K, after Stage J gives
-    // `CornerCarry` its FaceReindex case), this count stops being 0 and this
-    // assertion reddens by design: replace it with a full state comparison
-    // across `d.revert(m)`, which is what the block above already does for
-    // `revolveProfileEx`.
-    immutable size_t faceEntries = countKind(d, MeshOpEntry.Kind.AddFaces)
-                                 + countKind(d, MeshOpEntry.Kind.RemoveFaces)
-                                 + countKind(d, MeshOpEntry.Kind.ReshapeFaces)
-                                 + countKind(d, MeshOpEntry.Kind.FaceReindex);
-    assert(faceEntries == 0,
-        format("extrudeAlongPath's op-log now carries %d face entr(ies); at "
-             ~ "Stage E2 it carries none, because extrudePathStep_ rewrites the "
-             ~ "face array through mesh_planes.rewriteFaces with FaceReindex "
-             ~ "DISARMED. If that is Stage K arming it (after Stage J gives "
-             ~ "CornerCarry its FaceReindex case), rewrite this block: the "
-             ~ "assertions here become a `d.revert(m)` and a full state "
-             ~ "comparison. If it is NOT, something armed the publisher without "
-             ~ "the carry and this family's undo is now dropping per-corner UV "
-             ~ "provenance (task 1903 §5.3, plan §12 J/K/L8).", faceEntries));
+    // ONE PAIR PER SPAN, and the pairing is what matters rather than the
+    // count. `extrudeAlongPath` calls `extrudePathStep_` once per path span,
+    // and each call opens its OWN scope, so each face entry gets its own
+    // corner payload recorded immediately before it. A `FaceReindex` without
+    // an adjacent `MeshMapDelta` makes `CornerCarry` decline on reverse and
+    // zero the whole per-corner map — measured on `edge_bevel.bevelEdgesByMask`,
+    // which is why that family is NOT armed (plan §5.3).
+    immutable size_t faceEntries = countKind(d, MeshOpEntry.Kind.FaceReindex);
+    assert(faceEntries == 3,
+        format("extrudeAlongPath's op-log carries %d FaceReindex entr(ies), "
+             ~ "expected 3 — one per path span. ZERO means "
+             ~ "`extrudePathStep_`'s rewrite lost its `faceReindexScope()` and "
+             ~ "this family's recorded revert is back to FAULTING out of "
+             ~ "buildLoops (task 1903 Stage K, plan §5.5 L8).", faceEntries));
+    assert(countKind(d, MeshOpEntry.Kind.AddFaces)     == 0
+        && countKind(d, MeshOpEntry.Kind.RemoveFaces)  == 0
+        && countKind(d, MeshOpEntry.Kind.ReshapeFaces) == 0,
+        "extrudeAlongPath's op-log now describes its face change a SECOND "
+      ~ "time, beside the FaceReindex entries. Two descriptions of one change "
+      ~ "make the LIFO revert overshoot — the double revert the per-rewrite "
+      ~ "scope exists to prevent (plan §5.3)");
 
     immutable size_t addV = countKind(d, MeshOpEntry.Kind.AddVerts);
-    assert(addV == 1 && d.log.length == 1,
+    assert(addV == 3 && d.log.length == 6,
         format("extrudeAlongPath's op-log carries %d entr(ies), %d of them "
-             ~ "AddVerts — expected exactly one AddVerts and nothing else. The "
-             ~ "clone loop must reach Mesh.addVertex (the hooked appender), and "
-             ~ "the three spans COALESCE into one entry (measured). A bare "
-             ~ "`ed.vertices ~= …` would leave this at 0 "
-             ~ "(task 1903 Stage E2).", d.log.length, addV));
+             ~ "AddVerts — expected 6 and 3, i.e. one "
+             ~ "[AddVerts, FaceReindex] pair per span. The clone loop must "
+             ~ "reach Mesh.addVertex (the hooked appender); a bare "
+             ~ "`ed.vertices ~= …` would leave AddVerts at 0. Note the spans "
+             ~ "no longer COALESCE into one AddVerts entry, and that is the "
+             ~ "arming's doing rather than a change in the clone loop: a "
+             ~ "FaceReindex entry now sits between consecutive appends, so "
+             ~ "`recordAddVert`'s contiguity test no longer sees the previous "
+             ~ "range as the last entry (task 1903 Stage K).",
+               d.log.length, addV));
+
+    // THE REVERT. Geometry comes back whole — that is what the arming buys.
+    // The marks do NOT, and the dump is deliberately SPLIT so that the weaker
+    // half cannot be asserted by the stronger one's comparison (this file's
+    // `dumpMarkPlanes` doc comment carries the history of exactly that bug).
+    assert(d.revert(m),
+        format("revert() refused the armed sweep delta outright — that is a "
+             ~ "third state, neither the pre-K fault nor the clean geometry "
+             ~ "revert Stage K measured. Log: %d entries", d.log.length));
+    assert(dumpGeometry(m) == preGeom,
+        format("the armed sweep's revert did not restore the geometry.\n"
+             ~ "  pre : %s\n  post: %s", preGeom, dumpGeometry(m)));
+
+    // THE RESIDUAL, asserted as a residual. `extrudeAlongPath` re-selects the
+    // cap faces on the way out and clears the vertex selection, both AFTER the
+    // rewrite, so no FaceReindex entry could carry them back. This line going
+    // red because the marks DID come back is good news and means plan §5.5's
+    // L0 Marks publisher has landed — rewrite this block and that row
+    // together rather than deleting the line.
+    assert(dumpMarkPlanes(m) != preMarks,
+        "the armed sweep's revert restored the MARK planes too. Stage K "
+      ~ "measured them as still lost (the tail re-selection and "
+      ~ "clearVertexSelection run after the rewrite); if L0's Marks publisher "
+      ~ "has landed, this assertion becomes `==` and plan §5.5's L8 row moves "
+      ~ "with it");
 }

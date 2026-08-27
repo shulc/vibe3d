@@ -1976,6 +1976,9 @@ size_t extrudeEdgesByMask(ref MeshEditBatch ed, in bool[] maskIn, float extrude,
                 ed.rec().recordRemoveFaces(droppedFaceIdx, droppedFaceLists,
                                                 droppedFaceMat, droppedFacePart, droppedFaceSub,
                                                 droppedFaceSetMask, droppedFaceOrd);
+            // Task 1903 Stage K — NOT armed: `recordRemoveFaces` three lines
+            // above already names this kernel's face drop, and a second
+            // description of one change is the double revert (plan §5.3).
             rewriteFaces(ed, keptFaces, FaceSource.fromOldToNew(faceRemap, keptFaces.length));
             // Select ends up cleared regardless (clearFaceSelection() runs
             // later in this function), so dropping it here via keepMask
@@ -2441,7 +2444,14 @@ size_t extrudeVerticesByMask(ref MeshEditBatch ed, in bool[] maskIn, float shift
         oldOfNew ~= nf.srcFi;
     }
 
-    rewriteFaces(ed, newFaces, FaceSource(oldOfNew));
+    // Task 1903 Stage K — ARMED, per rewrite. Unlike `extrudeEdgesByMask`,
+    // which records `RemoveFaces` at the adjacent line for its consumed
+    // originals, this kernel records its face change nowhere else: every
+    // surviving face is RESHAPED in place through the new array and every fan
+    // face is appended by the same array, so a disarmed op-log names no face
+    // change at all.
+    { auto arm = ed.faceReindexScope();
+      rewriteFaces(ed, newFaces, FaceSource(oldOfNew)); }
     // faceSelectionOrder is the one plane where the hand-rolled kernel
     // diverged per new-vs-surviving face: material/part/setmask/marks
     // ALL inherit from `nf.srcFi` on the tail (which the primitive above
@@ -3496,7 +3506,13 @@ size_t extrudeFacesByMask(ref MeshEditBatch ed, in bool[] maskIn, float distance
     // old `if (remapUv) declareCornerProvenance(...)`: `carriedPerFace`
     // on an inactive handle degrades to `unchanged()` for free (Stage C
     // precedent, this module's header).
-    rewriteFaces(ed, newFaces, FaceSource(oldOfNew), &rw, vertBlend, gens);
+    // Task 1903 Stage K — ARMED, per rewrite, and this is one of the two
+    // sites Stage J had to land first: the `&rw` handle means this rewrite
+    // carries a PolyVertex plane, and before J's `CornerCarry.FaceReindex`
+    // case a recorded revert of a face extrude came back length-correct and
+    // ENTIRELY ZERO on UV. The kernel records its face change nowhere else.
+    { auto arm = ed.faceReindexScope();
+      rewriteFaces(ed, newFaces, FaceSource(oldOfNew), &rw, vertBlend, gens); }
     // faceSelectionOrder: cap clones AND wall quads must start UNSELECTED
     // (order 0), never inheriting whatever order stamp their source face
     // happened to carry (was `newOrd ~= 0;` for both ranges, unlike
@@ -3800,7 +3816,12 @@ size_t smoothShiftFacesByMask(ref MeshEditBatch ed, in bool[] maskIn, float shif
     // matches the unchanged `dropCornerProvenance(SweptSurfaceNoLaw)`
     // below, a stated loss, task 0830), so `rewriteFaces` is called with
     // no handle, same as extrudeEdgesByMask/extrudeVerticesByMask.
-    rewriteFaces(ed, newFaces, FaceSource(oldOfNew));
+    // Task 1903 Stage K — ARMED, per rewrite. Same shape as
+    // `extrudeVerticesByMask`: one whole new array to the primitive, no
+    // `addFace`, no `deleteFacesByMask`, so nothing else in this kernel's
+    // op-log names the face change.
+    { auto arm = ed.faceReindexScope();
+      rewriteFaces(ed, newFaces, FaceSource(oldOfNew)); }
     // faceSelectionOrder: cap clones, thicken skins AND wall quads must
     // all start UNSELECTED (order 0), never inheriting whatever order
     // stamp their source face happened to carry (was `newOrd ~= 0;` for

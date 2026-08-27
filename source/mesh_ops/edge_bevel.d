@@ -2067,6 +2067,10 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
     // rewrite below (the merge pass) — the shared-`rwB` constraint
     // (plan §2.6): this kernel opens ONE handle and rewrites `faces`
     // TWICE, declaring only once.
+    // TASK 1903 STAGE K MEASURED THIS ROW AND LEFT BOTH REWRITES DISARMED
+    // (2026-08-27). The plan asked for TWO scopes here, one per rewrite, and
+    // that shape is right — but the arming itself cannot land yet, and the
+    // blocker is the SECOND rewrite, not this one. See the note at that call.
     rewriteFaces(ed, newFaces, FaceSource(oldOfNew));
     // The two chamfer-strip faces above fold two source faces'
     // faceMarks into one word no single `oldOfNew` entry can express —
@@ -2246,6 +2250,34 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
     // — the shared-`rwB` constraint (plan §2.6): this kernel opens ONE
     // handle and rewrites `faces` twice (the rebuild pass above, this
     // merge pass here), declaring only once, after this second rewrite.
+    // TASK 1903 STAGE K MEASURED THIS ROW AND LEFT IT DISARMED (2026-08-27) —
+    // and this call is the reason the whole family stays out, so the reason
+    // lives here rather than in a table.
+    //
+    // THE SHARED-`rwB` SHAPE AND THE STAGE J PAYLOAD ARE INCOMPATIBLE AS
+    // WRITTEN. `Kind.FaceReindex` restores per-corner values from a
+    // `Kind.MeshMapDelta` payload that `mesh_planes.rewriteFaces` records
+    // IMMEDIATELY BEFORE the face entry — and that capture declines, silently,
+    // when `Mesh.polyVertexMapsInStepWithFaces()` is false. It is false HERE:
+    // this kernel opens ONE `rwB` handle, rewrites `faces` TWICE and issues
+    // its corner relocation only AFTER this second rewrite (1902 §2.6), so
+    // between the two rewrites the map still describes the PRE-op corner space
+    // while `faces` already describes the post-first-rewrite one. Measured
+    // 2026-08-27 with both scopes in place, on a `makeTaggedGridFull` stand
+    // bevelling edge (5,6): the primitive reports `hasMap=true inStep=false`
+    // at this call, the op-log comes out
+    // `[AddVerts MeshMapDelta FaceReindex FaceReindex RemoveVerts Reindex]` —
+    // ONE payload for TWO face entries — and the reverse, finding no payload
+    // adjacent to the entry it plays first, declines the carry and ZEROES all
+    // 72 floats of the UV map. `revert()` still answers `true`.
+    //
+    // So this is not the "arming is incomplete" residual the armed families
+    // carry (Select bits and array lengths, owed to L0): it is a loss INSIDE
+    // what `FaceReindex` is the publisher for, which is the line Stage K
+    // draws. L7 owns the fix and it is a real choice — bring the map into step
+    // before this rewrite, or relocate once per rewrite instead of once per
+    // kernel, or capture the payload where the map IS in step. Arming before
+    // one of those lands would zero UV on every edge-bevel undo.
     rewriteFaces(ed, mergedFaces, FaceSource.fromOldToNew(faceRemap, mergedFaces.length));
     // Select is about to be fully re-derived below (chamfer + hub-cap
     // faces via `selectFace`), so it is dropped here same as every

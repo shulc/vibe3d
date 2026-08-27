@@ -47,10 +47,18 @@ import mesh_planes : rewriteFaces, FaceSource;
 //
 // WHAT THIS KERNEL DOES **NOT** RECORD, measured at E4 and owned by STAGE L7
 // (`bevel/inset`). It DOES call `mesh_planes.rewriteFaces`, so unlike its fin
-// sibling it is reachable by Stage K's per-rewrite arming — K's audit table
-// already carries the row (`mesh_ops.bevel_vertex.bevelVerticesByMask`, arm:
-// yes). But arming alone is not enough here, and the E4 review ATTRIBUTED
-// why, plane by plane, on the armed build. An armed `revert()` answers `true`
+// sibling it is reachable by Stage K's per-rewrite arming — and **STAGE K
+// MEASURED IT AND LEFT IT DISARMED (2026-08-27)**, correcting its own audit
+// table, which had carried this row as "arm: yes". The refusal and the rule
+// behind it are written at the `rewriteFaces` call below. In short: every
+// family Stage K DID arm loses only Select-class planes and array LENGTHS on
+// the way back, while this one loses per-vertex map VALUES — `meshMaps["W"]`
+// zeroed at the bevelled vertex, its `vertexSetMask` bit cleared, one
+// `edgeSetMask` entry gone — and a revert that answers `true` while a weight
+// map silently loses a value is the thing this stage refuses to ship.
+//
+// The E4 review ATTRIBUTED the loss plane by plane on the armed build, and
+// that attribution is what L7 acts on. An armed `revert()` answers `true`
 // and loses SEVEN planes, in three groups with three different causes:
 //
 //   * `faceMarks` (the pre-op face Select bit) — cleared by
@@ -76,7 +84,10 @@ import mesh_planes : rewriteFaces, FaceSource;
 // half, L0 again for the vertex/edge half, or a stated `MeshSnapshot`
 // refusal — never a reorder. The op-log kinds and what `revert()` does with
 // them are pinned in `tests/unit/mesh_ops/bevel_vertex_test.d`'s recording
-// block, labelled "STAGE K/L7 FLIPS THIS".
+// block, labelled "STAGE K/L7 FLIPS THIS" — a label Stage K deliberately left
+// standing, because it is L7 and not K that flips it. The armed set itself is
+// pinned by name in `tests/unit/face_reindex_arming_test.d`'s census, so an
+// arm added here reddens with this kernel's name in the message.
 //
 // `Mesh.finalizeTopologyEdit` and `Mesh.rebuildFaceWithVertexSubs` are two of
 // §2.6's eleven private names, widened to public in this stage's commit
@@ -328,6 +339,24 @@ size_t bevelVerticesByMask(ref MeshEditBatch ed, const bool[] maskIn, float amou
     // hand-rolled code always zeroed the cap range's order (`newOrd ~=
     // 0;`), never the survived range's (inherited by identity), which
     // the carry already reproduces via oldOfNew[i] == i.
+    // TASK 1903 STAGE K MEASURED THIS ROW AND LEFT IT DISARMED (2026-08-27),
+    // confirming Stage E4's warning on today's tree and on a stand that also
+    // carries a Point-domain map. Arming does reach the publisher — the
+    // op-log becomes `[AddVerts MeshMapDelta FaceReindex RemoveVerts Reindex]`
+    // and the `revert()` THROW goes away — and the FACE side then comes back
+    // whole, per-corner UV included (Stage J). What does NOT come back is on
+    // the VERTEX side, and it is a VALUE loss rather than a Select bit or an
+    // array length: on a `makeTaggedGridFull` stand bevelling vertex 5, the
+    // revert leaves `meshMaps["W"][5]` (Point domain) ZEROED, `vertexSetMask`
+    // bit 5 cleared, and one of the two `edgeSetMask` entries gone. Those ride
+    // `compactUnreferenced`'s `RemoveVerts`/`Reindex` pair, which restores
+    // POSITIONS and nothing else per vertex — no `FaceReindex` could have
+    // carried them, and arming here would buy a revert that answers `true`
+    // while a weight map silently loses a value. Every ARMED family in this
+    // stage was measured to lose only Select-class planes and array LENGTHS;
+    // this one loses values, which is the line Stage K draws.
+    // L7 owes the vertex-side publisher (or a stated `MeshSnapshot` refusal)
+    // before this line changes — see the plan's §5.5 L7 note.
     rewriteFaces(ed, newFaces, FaceSource(oldOfNew));
     foreach (i; capStart .. ed.faces.length) ed.faceSelectionOrder[i] = 0;
 
