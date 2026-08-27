@@ -394,8 +394,43 @@ struct MeshEditDelta {
         // Per-corner (PolyVertex) map carry — task 0689. Snapshotting the
         // provenance BEFORE the first entry is the whole point: from here on
         // `faces` moves and the live corner indices move with it.
+        // On apply/redo we want the POST-op selection, so the scan reads
+        // `edgeEndsAfter`; `revert` below is the same code over
+        // `edgeEndsBefore`.
+        const(uint)[] edgeSel = null;
+        bool haveEdgeSel = false;
+        foreach (ref e; log)
+            if (e.kind == MeshOpEntry.Kind.EdgeSelByEnds) {
+                edgeSel = e.edgeEndsAfter;
+                haveEdgeSel = true;
+            }
+        // TASK 1903 L0.P1 — ONE boolean, computed ONCE, ABOVE the replay loop.
+        //
+        // The `EdgeSelByEnds` scan is over `log` and independent of the replay,
+        // so it hoists cleanly — and it MUST hoist. `indexSpaceStable(log)`
+        // alone is a LOG-ONLY predicate; a `fast` wired to `finalize` from that
+        // alone would lose the `edgeMapUsable` term, and losing it is not
+        // loud. The edge-selection restore resolves endpoint pairs through
+        // `edgeIndexMap`, whose validity stamp is refreshed by the very
+        // rebuildEdges+buildLoops pair the fast path skips. If the map was
+        // Valid on entry it stays Valid (nothing in a stable log bumps
+        // `structVersion`); if it was INVALID on entry — the importer shape,
+        // `addFaceFast` with no terminal `buildLoops` — today's path REPAIRS it
+        // and the fast path would not, resolving each pair against the previous
+        // topology's edge index and selecting the WRONG edges. Silently: the
+        // guard that would catch it (`assertEdgeMapValid`) is `debug`-only and
+        // the suite lane does not compile it. So: an invalid map with an
+        // `EdgeSelByEnds` entry takes the SLOW path, which is exactly today's
+        // behaviour.
+        const bool fast = indexSpaceStable(log)
+                       && (!haveEdgeSel || m.edgeMapUsable());
+        const StableEntry e0 = captureStableEntry(m);
         CornerCarry carry;
-        carry.begin(m, log);
+        // Skipped on the fast path: on an all-stable log `begin` records
+        // identity provenance, `commit`'s self-check cannot fire (nothing moved
+        // faces) and the whole thing degenerates to a byte-identical gather.
+        // The skip removes an O(F) allocation and an O(corners x maps) gather.
+        if (!fast) carry.begin(m, log);
         foreach (i, ref e; log) {
             // Compaction pair (RemoveVerts immediately followed by Reindex): the
             // Reindex's perm carries the FULL old->new map INCLUDING the dropped
@@ -418,15 +453,9 @@ struct MeshEditDelta {
         }
         // Edge selection is endpoint-keyed and must be re-applied AFTER finalize
         // rebuilds the edge array + edgeIndexMap (edge indices are unstable
-        // across rebuildEdges). On apply/redo we want the post-op selection.
-        const(uint)[] edgeSel = null;
-        bool haveEdgeSel = false;
-        foreach (ref e; log)
-            if (e.kind == MeshOpEntry.Kind.EdgeSelByEnds) {
-                edgeSel = e.edgeEndsAfter;
-                haveEdgeSel = true;
-            }
-        finalize(m, scope_, edgeSel, haveEdgeSel, renumbersCorners(log), &carry);
+        // across rebuildEdges) — scanned above the loop, see the block there.
+        finalize(m, scope_, edgeSel, haveEdgeSel, renumbersCorners(log),
+                 fast ? null : &carry, log, fast, e0);
         return true;
     }
 
@@ -434,14 +463,7 @@ struct MeshEditDelta {
     // then finalize() re-derives edges/loops. See doc §2.3 for the extrude
     // reverse-composition trace this generalizes.
     bool revert(ref Mesh m) const {
-        CornerCarry carry;
-        carry.begin(m, log);
-        foreach_reverse (i, ref e; log) {
-            carry.step(m, i, e, /*forward=*/false);
-            applyReverse(m, e, carry.active);
-        }
-        // On revert we want the pre-op (before) edge selection, re-applied after
-        // finalize rebuilds edges (doc §1.3 / §2.3 step 1's endpoint-keyed part).
+        // On revert we want the PRE-op (before) edge selection.
         const(uint)[] edgeSel = null;
         bool haveEdgeSel = false;
         foreach (ref e; log)
@@ -449,7 +471,37 @@ struct MeshEditDelta {
                 edgeSel = e.edgeEndsBefore;
                 haveEdgeSel = true;
             }
-        finalize(m, scope_, edgeSel, haveEdgeSel, renumbersCorners(log), &carry);
+        // TASK 1903 L0.P1 — ONE boolean, computed ONCE, ABOVE the replay loop.
+        //
+        // The `EdgeSelByEnds` scan is over `log` and independent of the replay,
+        // so it hoists cleanly — and it MUST hoist. `indexSpaceStable(log)`
+        // alone is a LOG-ONLY predicate; a `fast` wired to `finalize` from that
+        // alone would lose the `edgeMapUsable` term, and losing it is not
+        // loud. The edge-selection restore resolves endpoint pairs through
+        // `edgeIndexMap`, whose validity stamp is refreshed by the very
+        // rebuildEdges+buildLoops pair the fast path skips. If the map was
+        // Valid on entry it stays Valid (nothing in a stable log bumps
+        // `structVersion`); if it was INVALID on entry — the importer shape,
+        // `addFaceFast` with no terminal `buildLoops` — today's path REPAIRS it
+        // and the fast path would not, resolving each pair against the previous
+        // topology's edge index and selecting the WRONG edges. Silently: the
+        // guard that would catch it (`assertEdgeMapValid`) is `debug`-only and
+        // the suite lane does not compile it. So: an invalid map with an
+        // `EdgeSelByEnds` entry takes the SLOW path, which is exactly today's
+        // behaviour.
+        const bool fast = indexSpaceStable(log)
+                       && (!haveEdgeSel || m.edgeMapUsable());
+        const StableEntry e0 = captureStableEntry(m);
+        CornerCarry carry;
+        if (!fast) carry.begin(m, log);   // identity on a stable log — see apply
+        foreach_reverse (i, ref e; log) {
+            carry.step(m, i, e, /*forward=*/false);
+            applyReverse(m, e, carry.active);
+        }
+        // The pre-op edge selection is re-applied after finalize rebuilds edges
+        // (doc §1.3 / §2.3 step 1's endpoint-keyed part) — scanned above.
+        finalize(m, scope_, edgeSel, haveEdgeSel, renumbersCorners(log),
+                 fast ? null : &carry, log, fast, e0);
         return true;
     }
 }
@@ -1179,6 +1231,484 @@ private bool renumbersCorners(in MeshOpEntry[] log) {
         }
     }
     return false;
+}
+
+// ---------------------------------------------------------------------------
+// TASK 1903 L0.P1 — the rulings the `finalize` carve-out is made of.
+//
+// Four module-private predicates over `MeshOpEntry.Kind`, ALL `final switch`
+// ON PURPOSE: a new kind must be a COMPILE ERROR in each of them, never a
+// silent `default:` into whichever answer happened to be cheapest. That is the
+// whole reason they are switches and not `canFind` over a spelling list.
+//
+// `renumbersCorners` directly above is the OLDER shape (a plain `switch` with
+// a `default: break;`) and is deliberately left alone — converting it is a
+// separate behaviour question (its `default` currently answers "does not
+// renumber" for every unlisted kind) and putting that in this commit would mix
+// two changes.
+//
+// The plan section is doc/mesh_edit_seam_plan.md §L0.P1; the ruling table is
+// §P1.2 and the switches are §P1.2b.
+// ---------------------------------------------------------------------------
+
+// True iff replaying this log moves NO index space: no vertex, edge, face or
+// CORNER changes identity, so every structure `finalize` re-derives from
+// `faces`/`vertices` — `edges`, `loops`, `faceLoop`, `vertLoop`, `loopEdge`,
+// `edgeIndexMap` and their `structVersion` stamps — is already correct and
+// re-deriving it would be a byte-identical O(mesh) no-op.
+//
+// IT READS THE ENTRY KINDS, NEVER THE DECLARED `scope_`. A log whose `scope_`
+// is `Position` but which carries a `FaceReindex` (task 1902 Stage H/K) answers
+// FALSE and takes the full path; a `Points`-scoped log whose entries are all
+// `SetPos` answers TRUE and takes the fast path. `scope_` then survives only
+// where it always did — in `commitRestored(scope_)`.
+//
+// `MeshMapDelta` is classified UNSTABLE even though it applies nothing itself
+// (`applyForward`/`applyReverse` are no-ops for it): its presence means the
+// per-corner plane is in play and `CornerCarry` has a payload to place, and
+// `CornerCarry.payloadForCount` makes its adjacency to the next entry
+// contractual. Conservative by construction.
+private bool indexSpaceStable(in MeshOpEntry[] log) {
+    foreach (ref e; log) {
+        final switch (e.kind) with (MeshOpEntry.Kind) {
+            case SetPos: case SelectionDelta: case SubpatchDelta:
+            case HideDelta: case MaterialDelta: case EdgeSelByEnds:
+                break;                       // value-only: index space held
+            case AddVerts: case RemoveVerts: case AddFaces: case RemoveFaces:
+            case ReshapeFaces: case Reindex: case FaceReindex: case MeshMapDelta:
+                return false;                // moves verts, faces, or corners
+        }
+    }
+    return true;
+}
+
+// Does this log owe `finalize`'s tail `++topologyVersion` on the FAST path?
+//
+// The tail bump's own comment says it exists because "finalize ALWAYS rebuilds
+// edges + loops, so it ALWAYS bumped topologyVersion before". On the fast path
+// nothing is rebuilt, so that premise is false and the bump is not owed for
+// `SetPos` / `SelectionDelta` / `MaterialDelta` / `EdgeSelByEnds`.
+//
+// It IS owed for `SubpatchDelta` and `HideDelta` — and NOT for the rebuild's
+// sake. `topologyVersion` is the subpatch-preview + GPU LAYOUT key, and each of
+// those two kinds' LIVE writers carries the bump explicitly with the reason at
+// its own site: `Mesh.setSubpatch` ("commitChange(Marks) alone would not, since
+// Marks is not a Geometry class"), `Mesh.setFaceHidden` / `setFaceHiddenFrom`
+// ("the preview + GPU LAYOUT key"). A THIRD member of that family already
+// exists — `Mesh.setCreaseWeight`, which publishes `Material` and bumps for the
+// same preview reason — and there is no crease KIND in the enum today, so this
+// switch has no arm for it. When one lands, the `final switch` is what forces
+// someone to decide, and this comment names the writer to read it off.
+//
+// THE FLIP GUARD IS NOT PEDANTRY. Every one of those live writers bumps only on
+// an actual flip (`if (cur != on)`, `if (hideChanged)`) — the guards exist
+// precisely to stop a no-op gesture forcing a preview rebuild and a GPU
+// re-upload. The RECORDERS above guard only `idx.length == 0`, so a
+// `before == after` entry IS representable. Bumping on a non-empty index list
+// would therefore over-bump exactly where those guards were put to prevent it.
+private bool owesTopologyBump(in MeshOpEntry[] log) {
+    foreach (ref e; log) {
+        bool owing = false;
+        final switch (e.kind) with (MeshOpEntry.Kind) {
+            case SubpatchDelta: case HideDelta:
+                owing = true;  break;
+            case SetPos: case SelectionDelta: case MaterialDelta:
+            case EdgeSelByEnds:
+            case AddVerts: case RemoveVerts: case AddFaces: case RemoveFaces:
+            case ReshapeFaces: case Reindex: case FaceReindex: case MeshMapDelta:
+                owing = false; break;
+        }
+        if (!owing) continue;
+        const size_t n = e.markIdx.length;
+        foreach (i; 0 .. n)
+            if (i < e.markBefore.length && i < e.markAfter.length
+                && e.markBefore[i] != e.markAfter[i])
+                return true;
+    }
+    return false;
+}
+
+// The display class the SKIPPED `rebuildEdges` was publishing incidentally, and
+// which the fast path therefore has to re-issue itself.
+//
+// `rebuildEdges` ends in its own `commitChange(MeshEditScope.Polygons)`, which
+// is inside `display_sync.DisplayRefreshMask`. `Marks` deliberately is NOT in
+// that mask (it would re-upload the whole mesh on every selection click). So:
+//
+//   * `SetPos` (`Position`), `MaterialDelta` (`Material`) and `HideDelta`
+//     (`Visibility`) already publish a class inside the mask through `scope_`
+//     — nothing is lost and this returns 0;
+//   * `SubpatchDelta`'s surviving `scope_` is `Marks` ALONE. Undo a Tab toggle
+//     and the cage would stay on screen at the old geometry. This returns
+//     `Polygons` — byte-identical to what the slow path published, which is the
+//     argument for `Polygons` rather than an invented class — and it delivers
+//     the topology bump through the funnel at the same time (`Polygons` is a
+//     Geometry class), which is the direction CLAUDE.md's "every bump goes
+//     through the funnel" law wants.
+//
+// The identical failure is already MEASURED at mesh.d's `setFaceHiddenFrom`:
+// with the Marks-only publish, hiding a cube face left `/api/gpu/face-vbo`'s
+// faceVertCount at 36.
+private uint displayTermFor(in MeshOpEntry[] log) {
+    uint term = 0;
+    foreach (ref e; log) {
+        final switch (e.kind) with (MeshOpEntry.Kind) {
+            case SubpatchDelta:
+                term |= MeshEditScope.Polygons; break;
+            case SetPos: case SelectionDelta: case HideDelta:
+            case MaterialDelta: case EdgeSelByEnds:
+            case AddVerts: case RemoveVerts: case AddFaces: case RemoveFaces:
+            case ReshapeFaces: case Reindex: case FaceReindex: case MeshMapDelta:
+                break;
+        }
+    }
+    return term;
+}
+
+// Does this log change anything the DISPLAY shows — as opposed to only the
+// selection highlight?
+//
+// WRITER'S DEVIATION FROM THE PLAN, ARGUED (task 2090; see the card's
+// "Отклонение" section). §P1.2b specifies the guard below `finalize`'s fast
+// branch as the UNQUANTIFIED
+//
+//     assert(((scope_ | displayTermFor(log)) & DisplayRefreshMask) != 0, …)
+//
+// and that assert CONTRADICTS the same section's own ruling three paragraphs
+// later, which states — correctly — that a `SelectionDelta` fast path must
+// publish `Marks` alone, because "`Marks`'s absence from `DisplayRefreshMask`
+// is a deliberate, documented decision" and a selection undo that stops forcing
+// a full re-upload "is the mask's doctrine working, not a regression". A
+// `SelectionDelta`-only log has `scope_ == Marks` and `displayTermFor == 0`, so
+// the unquantified assert ABORTS on exactly the case the ruling blesses — and
+// W12's `SelectionDelta` row is the cell that hits it. Measured, not reasoned:
+// see the card's Мутация table, row W12-guard.
+//
+// So the guard keeps its subject and gains the quantifier §P1.2b's prose
+// already implies: *a kind that owes a display refresh must not lose it*. The
+// two kinds whose entire payload IS the selection highlight owe none.
+//
+// This is a FOURTH `final switch` where the plan named three. Same property,
+// same reason: a new kind is a compile error here too, and whoever adds one has
+// to answer "does undoing this change what is on screen?" instead of inheriting
+// an answer from a `default:`.
+private bool owesDisplayRefresh(in MeshOpEntry[] log) {
+    foreach (ref e; log) {
+        final switch (e.kind) with (MeshOpEntry.Kind) {
+            case SelectionDelta: case EdgeSelByEnds:
+                break;                       // the highlight, and only it
+            case SetPos: case SubpatchDelta: case HideDelta: case MaterialDelta:
+            case AddVerts: case RemoveVerts: case AddFaces: case RemoveFaces:
+            case ReshapeFaces: case Reindex: case FaceReindex: case MeshMapDelta:
+                return true;
+        }
+    }
+    return false;
+}
+
+// The mesh quantities `finalize`'s fast branch asserts UNMOVED, captured in
+// `apply`/`revert` BEFORE the replay loop runs.
+//
+// Every field is compared against ITSELF at two times — never against a sibling
+// plane. That is not a stylistic choice: `addFace`/`addFaceFast` append to
+// `faces` only and the mark/material/part/set planes are sized LAZILY (by
+// `resetSelection` / `syncSelection`), so `makeCube()` and `makeGridPlane()`
+// both leave `faceMaterial.length == 0` beside `faces.length` of 6 and 99 856.
+// A "plane in step with its owner" assert would abort on the FIRST undo of any
+// position command over a factory- or importer-built mesh that never selected
+// anything — correct code, aborted. See §P1.3.
+//
+// STATE THE HOLE: a drop-free `Reindex` — a pure permutation — keeps
+// `vertices.length`, `faces.length`, the corner total AND `structVersion`, so
+// it slips ALL FOUR compares. Only the skipped `rebuildEdges` would have
+// repaired `edges`' now-wrong vertex indices. These asserts are a cheap
+// always-on backstop for the LOUD half of a misclassification, never the proof
+// of the predicate — that is what the witness cells are for.
+private struct StableEntry {
+    size_t nV = size_t.max;
+    size_t nF = size_t.max;
+    ulong  sv = ulong.max;
+    version (unittest) size_t corners = size_t.max;
+}
+
+private StableEntry captureStableEntry(in Mesh m) {
+    StableEntry e;
+    e.nV = m.vertices.length;
+    e.nF = m.faces.length;
+    e.sv = m.structVersion;
+    version (unittest) {
+        size_t c = 0;
+        foreach (ref f; m.faces) c += f.length;
+        e.corners = c;
+    }
+    return e;
+}
+
+// ---------------------------------------------------------------------------
+// W3 / W7 — task 1903 L0.P1's two IN-MODULE witnesses.
+//
+// They live here and not in `tests/unit/` for two DIFFERENT reasons, and both
+// reasons are load-bearing:
+//
+//   * W3 calls the four module-private predicates directly. A `tests/unit/`
+//     cell cannot; driving them through `g_rebuildEdgesRuns` instead would be
+//     weaker AND would only ever reach `indexSpaceStable`.
+//   * W7 shows that the fast path's asserts FIRE — it drives them through
+//     `finalize` and requires the throw, which only an in-module caller can do
+//     for a module-private function with module-private parameter types.
+//
+// Precedent for a `finalize` caller in this module: the two `CornerCarry`
+// self-check cells further up.
+//
+// ---------------------------------------------------------------------------
+// A PLAN PREMISE THAT DIED ON MEASUREMENT — read this before moving either
+// block, and before writing `debug assert` anywhere in `finalize`.
+// ---------------------------------------------------------------------------
+// §P1.4 placed W7 here on the reasoning that "`source/**` is compiled by BOTH
+// gate lanes, and only one of them can see the difference between `assert` and
+// `debug assert`": `run_test.d` compiles with no `-debug`, so a `debug assert`
+// would vanish there and W7 would redden, while `dub test --config=tests`
+// defines `-debug` and W7 stays green.
+//
+// The first half is FALSE, and it was measured rather than read (2026-08-27).
+// `./run_test.d` never RUNS a `source/**` unittest at all: source-backed tests
+// LINK the prebuilt `libvibe3d_test.a` (`run_test.d :: buildProjectLib`), and
+// the `dmd -unittest -i` line beside it is only the fallback for when that lib
+// fails to build. THE EXPERIMENT: an unconditional, hard failure planted in
+// this module's W3 census left `./run_test.d test_falloff_combine` GREEN.
+//
+// So the blocks below run in ONE gate lane, `dub test --config=tests` — and
+// that lane defines `-debug`, where `debug assert` throws exactly like a plain
+// one. A `debug assert` in `finalize` would therefore be invisible to BOTH
+// gates: stripped from the binary the suite lane builds (which never runs
+// these blocks anyway) and indistinguishable from a plain assert in the lane
+// that does.
+//
+// WHAT CLOSES IT is a SOURCE-TEXT census —
+// `tests/unit/mesh_edit_delta_carveout_test.d`'s "the fast-path asserts are
+// PLAIN" cell — which reads this file and refuses the spelling outright. It
+// runs in the lane that runs, and its own mutation reddens it there. The
+// blocks below keep their own job: they say the asserts FIRE, which no text
+// scan can.
+// ---------------------------------------------------------------------------
+
+unittest // W3 — the classification census: every Kind, all four rulings
+{
+    import std.traits : EnumMembers;
+    import std.format : format;
+    alias K = MeshOpEntry.Kind;
+
+    // The count term is read from the ENUM, not from the table — an
+    // independent source, so this cell cannot be "an enumeration gate keyed on
+    // the list it guards". The `final switch`es give the COMPILE-time half for
+    // free (a new kind is a build error in all four); this is the RUN-time
+    // half, which catches a kind added to the enum and to all four switches but
+    // never argued here.
+    static assert(EnumMembers!K.length == 14,
+        "MeshOpEntry.Kind gained or lost a member. Add its row to the table "
+      ~ "below — deciding indexSpaceStable / owesTopologyBump / displayTermFor "
+      ~ "/ owesDisplayRefresh for it is the point of this cell, and the four "
+      ~ "`final switch`es have already refused to compile until you answered "
+      ~ "them there.");
+    static assert(K.max == K.MeshMapDelta,
+        "the LAST member of MeshOpEntry.Kind changed — the table below is "
+      ~ "ordered against EnumMembers and its tail row is now wrong.");
+
+    struct Ruling {
+        K    kind;
+        bool stable;        // indexSpaceStable
+        bool owesBump;      // owesTopologyBump, given an entry that really flips
+        uint displayTerm;   // displayTermFor
+        bool owesDisplay;   // owesDisplayRefresh
+    }
+    // Order matches EnumMembers!K exactly and is asserted to, below.
+    const Ruling[] table = [
+        Ruling(K.AddVerts,       false, false, 0,                      true ),
+        Ruling(K.RemoveVerts,    false, false, 0,                      true ),
+        Ruling(K.SetPos,         true,  false, 0,                      true ),
+        Ruling(K.AddFaces,       false, false, 0,                      true ),
+        Ruling(K.RemoveFaces,    false, false, 0,                      true ),
+        Ruling(K.ReshapeFaces,   false, false, 0,                      true ),
+        Ruling(K.Reindex,        false, false, 0,                      true ),
+        Ruling(K.FaceReindex,    false, false, 0,                      true ),
+        Ruling(K.SelectionDelta, true,  false, 0,                      false),
+        Ruling(K.SubpatchDelta,  true,  true,  MeshEditScope.Polygons, true ),
+        Ruling(K.HideDelta,      true,  true,  0,                      true ),
+        Ruling(K.MaterialDelta,  true,  false, 0,                      true ),
+        Ruling(K.EdgeSelByEnds,  true,  false, 0,                      false),
+        Ruling(K.MeshMapDelta,   false, false, 0,                      true ),
+    ];
+    assert(table.length == EnumMembers!K.length,
+        format("the ruling table lists %d kinds, the enum has %d",
+               table.length, EnumMembers!K.length));
+
+    foreach (i, m; EnumMembers!K)
+        assert(table[i].kind == m,
+            format("row %d of the ruling table is %s where the enum's member "
+                 ~ "%d is %s — the table lists a kind twice and skips another, "
+                 ~ "so some kind is going unasserted", i, table[i].kind, i, m));
+
+    foreach (ref r; table) {
+        // One entry of this kind, carrying a REAL mark flip so that
+        // owesTopologyBump's kind ruling is what decides the answer and not its
+        // flip guard. The flip guard has its own cell below.
+        MeshOpEntry e;
+        e.kind       = r.kind;
+        e.markIdx    = [0u];
+        e.markBefore = [0u];
+        e.markAfter  = [1u];
+        const MeshOpEntry[] log = [e];
+
+        assert(indexSpaceStable(log) == r.stable,
+            format("indexSpaceStable(%s) answered %s, the table says %s. A "
+                 ~ "kind that MOVES an index space classified stable takes the "
+                 ~ "fast path, where edges/loops are never re-derived; a stable "
+                 ~ "kind classified unstable only costs the rebuild.",
+                   r.kind, indexSpaceStable(log), r.stable));
+        assert(owesTopologyBump(log) == r.owesBump,
+            format("owesTopologyBump(%s) answered %s, the table says %s. The "
+                 ~ "owing family is the kinds whose LIVE writers carry the bump "
+                 ~ "explicitly — Mesh.setSubpatch and Mesh.setFaceHidden/"
+                 ~ "setFaceHiddenFrom — because topologyVersion is the subpatch-"
+                 ~ "preview + GPU layout key.",
+                   r.kind, owesTopologyBump(log), r.owesBump));
+        assert(displayTermFor(log) == r.displayTerm,
+            format("displayTermFor(%s) answered %d, the table says %d. This is "
+                 ~ "the class the SKIPPED rebuildEdges was publishing "
+                 ~ "incidentally; drop it for a kind whose scope_ is Marks "
+                 ~ "alone and the display never refreshes.",
+                   r.kind, displayTermFor(log), r.displayTerm));
+        assert(owesDisplayRefresh(log) == r.owesDisplay,
+            format("owesDisplayRefresh(%s) answered %s, the table says %s. "
+                 ~ "Only SelectionDelta and EdgeSelByEnds owe nothing — their "
+                 ~ "whole payload is the highlight, which DisplayRefreshMask "
+                 ~ "deliberately excludes.",
+                   r.kind, owesDisplayRefresh(log), r.owesDisplay));
+    }
+
+    // An EMPTY log answers stable — stated, because it is the shape that makes
+    // `finalize`'s `fast` default to FALSE necessary: the two in-module callers
+    // above pass a NULL log, and a log-derived predicate over null is the gate
+    // reporting clean over an empty input.
+    const MeshOpEntry[] empty = null;
+    assert(indexSpaceStable(empty),
+        "a null log must answer stable — that is exactly why finalize's `fast` "
+      ~ "parameter defaults to false instead of being derived here.");
+}
+
+unittest // W3b — the FLIP GUARD: a no-op mark entry owes no topology bump
+{
+    alias K = MeshOpEntry.Kind;
+    foreach (kind; [K.SubpatchDelta, K.HideDelta]) {
+        MeshOpEntry flat;
+        flat.kind       = kind;
+        flat.markIdx    = [0u, 1u, 2u];
+        flat.markBefore = [1u, 0u, 1u];
+        flat.markAfter  = [1u, 0u, 1u];        // a representable no-op entry
+        assert(!owesTopologyBump([flat]),
+            "owesTopologyBump bumped on a non-empty index list whose values "
+          ~ "did not move. The recorders guard only `idx.length == 0`, so a "
+          ~ "before == after entry IS representable, and every live writer "
+          ~ "guards on an ACTUAL flip precisely so a no-op gesture cannot force "
+          ~ "a preview rebuild and a GPU re-upload for nothing.");
+
+        MeshOpEntry moved = flat;
+        moved.markAfter = [1u, 0u, 0u];        // one word, at the tail
+        assert(owesTopologyBump([moved]),
+            "POTENCY: the same entry with ONE value changed must owe the bump. "
+          ~ "If this fails the cell above is vacuous — it would read false for "
+          ~ "a flipped entry too.");
+    }
+}
+
+unittest // W7 — the fast path's asserts are COMPILED (see the header above)
+{
+    import core.exception : AssertError;
+    import mesh_corner_maps : CornerDrop;
+
+    Mesh m = makeGridPlane(2);
+    m.resetSelection();
+    m.buildLoops();
+    // A registered per-corner map is a PRECONDITION of the hazard, not stand
+    // decoration: `Mesh.declareCornerProvenance` returns early when
+    // `hasPolyVertexMap()` is false ("no per-corner plane ⇒ no obligation"), so
+    // on a map-less mesh no declaration is ever outstanding and the assert
+    // under test is unreachable by construction.
+    auto uv = m.addMeshMap(kUvMapName, 2, MapDomain.PolyVertex);
+    assert(uv !is null, "stand: the UV map must register");
+
+    // A declaration nobody will consume. On the SLOW path finalize's buildLoops
+    // eats it silently; the fast path has no buildLoops, so the next one to run
+    // would consume it against faces it never described.
+    m.dropCornerProvenance(CornerDrop.DeltaReplayDeclined);
+    assert(m.cornerRewritePending(),
+        "stand: the provenance declaration must be ARMED, or the cell below "
+      ~ "measures nothing at all");
+
+    MeshEditDelta d;
+    d.scope_ = MeshEditScope.Position;
+    MeshOpEntry e;
+    e.kind      = MeshOpEntry.Kind.SetPos;
+    e.vIdx      = [0u];
+    e.posBefore = [m.vertices[0]];
+    e.posAfter  = [Vec3(9, 9, 9)];
+    d.log = [e];
+
+    bool threw = false;
+    string msg;
+    try
+        d.revert(m);
+    catch (AssertError err) {
+        threw = true;
+        msg = err.msg;
+    }
+    assert(threw,
+        "the fast path ran with a corner-provenance declaration still pending "
+      ~ "and said nothing. Either the assert is not there, or it was written "
+      ~ "`debug assert` (which vanishes from every build without `-debug` — "
+      ~ "see the source-text census in "
+      ~ "tests/unit/mesh_edit_delta_carveout_test.d), or the fast path was not "
+      ~ "taken at all.");
+    assert(msg.length > 0 && msg.canFindSub("corner-provenance"),
+        "the throw came from somewhere else: " ~ msg);
+}
+
+unittest // W7b — the owner-length backstop is compiled, and it is PLAIN
+{
+    import core.exception : AssertError;
+
+    Mesh m = makeGridPlane(2);
+    m.resetSelection();
+    m.buildLoops();
+
+    // Entry state captured, then an index-space move the predicate would have
+    // refused. Calling `finalize` directly with `fast = true` is the in-module
+    // privilege this cell exists to use: it drives the backstop without
+    // mutating the predicate, so the cell is a real check and not a mutation
+    // rehearsal.
+    const StableEntry e0 = captureStableEntry(m);
+    m.vertices ~= Vec3(0, 0, 0);
+
+    bool threw = false;
+    string msg;
+    try
+        finalize(m, MeshEditScope.Position, null, false, false, null, null,
+                 /*fast=*/true, e0);
+    catch (AssertError err) {
+        threw = true;
+        msg = err.msg;
+    }
+    assert(threw,
+        "the fast path accepted a log that changed vertices.length. The "
+      ~ "always-on backstop is either missing or was written `debug assert`, "
+      ~ "which vanishes from every build that does not define `-debug`.");
+    assert(msg.canFindSub("vertices.length"),
+        "the throw came from somewhere else: " ~ msg);
+}
+
+version (unittest) private bool canFindSub(string hay, string needle) {
+    import std.algorithm.searching : canFind;
+    return hay.canFind(needle);
 }
 
 // ---------------------------------------------------------------------------
@@ -2302,20 +2832,49 @@ private void removeFacesReverse(ref Mesh m, in FaceIdx[] idx, in uint[][] lists,
 // ---------------------------------------------------------------------------
 private void patchSelection(ref Mesh m, MeshOpEntry.SelDomain dom,
                             in uint[] idx, in uint[] vals) {
+    import change_bus : BusSelDomain = SelDomain;
+    bool any = false;
+    BusSelDomain busDom;
     final switch (dom) {
         case MeshOpEntry.SelDomain.Vertex:
-            foreach (i, e; idx) if (e < m.vertexMarks.length) setSelectBit(m.vertexMarks[e], vals[i]);
+            busDom = BusSelDomain.Vertex;
+            foreach (i, e; idx) if (e < m.vertexMarks.length) any |= setSelectBit(m.vertexMarks[e], vals[i]);
             break;
         case MeshOpEntry.SelDomain.Edge:
-            foreach (i, e; idx) if (e < m.edgeMarks.length) setSelectBit(m.edgeMarks[e], vals[i]);
+            busDom = BusSelDomain.Edge;
+            foreach (i, e; idx) if (e < m.edgeMarks.length) any |= setSelectBit(m.edgeMarks[e], vals[i]);
             break;
         case MeshOpEntry.SelDomain.Face:
-            foreach (i, e; idx) if (e < m.faceMarks.length) setSelectBit(m.faceMarks[e], vals[i]);
+            busDom = BusSelDomain.Face;
+            foreach (i, e; idx) if (e < m.faceMarks.length) any |= setSelectBit(m.faceMarks[e], vals[i]);
             break;
     }
+    // TASK 1903 L0.P1 — NOTE THE SELECTION DOMAIN, on BOTH paths.
+    //
+    // This loop writes Select marks RAW (see `setSelectBit` below) and, until
+    // now, noted no selection domain at all: on the slow path the incidental
+    // full `Polygons` re-upload that `rebuildEdges` publishes repainted the
+    // highlight by brute force, so nobody noticed. The carve-out drops that
+    // publish, and `Marks` is deliberately outside `display_sync`'s
+    // DisplayRefreshMask, so the domain note is what a selection consumer has
+    // left to key on.
+    //
+    // Placed HERE rather than in the fast branch so the two paths cannot
+    // diverge: it is the funnel every guarded marks setter on `Mesh` already
+    // uses, it accumulates without delivering (`finalize`'s `commitRestored`
+    // is the delivery), and it can only invalidate MORE, never less.
+    //
+    // Guarded on a REAL flip, like every one of those setters — `setSelectBit`
+    // reports whether the word actually changed. The recorders guard only
+    // `idx.length == 0`, so a `before == after` entry is representable, and a
+    // no-op restore must not publish (памятка: a paint stroke without
+    // compare-before-set delivered 280 times for 42 edits).
+    if (any) m.noteSelectionChange(busDom);
 }
 
-private void setSelectBit(ref uint word, uint on) {
+// Returns TRUE iff the word actually changed — see `patchSelection`'s domain
+// note above for why the caller needs to know.
+private bool setSelectBit(ref uint word, uint on) {
     // §3.1 Select ∧ Hide = ∅ (doc/hide_geometry_plan.md, code review task
     // 0613 — S2) — this sparse patch is the delta-backed undo/redo replay's
     // own Select writer (delete / remove / edge extrude / edge extend), and
@@ -2323,9 +2882,11 @@ private void setSelectBit(ref uint word, uint on) {
     // setXSelectedFrom primitives. Refuse the same way they do — silently —
     // or a redo/undo round-trip could resurrect a Select bit on an element
     // that is (still) hidden at this index.
-    if (on != 0 && (word & Mesh.Marks.Hide) != 0) return;
+    if (on != 0 && (word & Mesh.Marks.Hide) != 0) return false;
+    const uint was = word;
     if (on) word |=  Mesh.Marks.Select;
     else    word &= ~Mesh.Marks.Select;
+    return word != was;
 }
 
 private void patchSubpatch(ref Mesh m, in uint[] idx, in uint[] vals) {
@@ -2373,7 +2934,114 @@ private void patchMaterial(ref Mesh m, in uint[] idx, in uint[] vals) {
 private void finalize(ref Mesh m, MeshEditScope scope_,
                       in uint[] edgeSelEnds = null, bool haveEdgeSel = false,
                       bool cornersRenumbered = false,
-                      CornerCarry* carry = null) {
+                      CornerCarry* carry = null,
+                      in MeshOpEntry[] log = null,
+                      bool fast = false,
+                      StableEntry e0 = StableEntry.init) {
+    import display_sync : DisplayRefreshMask;
+    // TASK 1903 L0.P1 — THE CARVE-OUT.
+    //
+    // `fast` says the log is index-space stable AND (if it restores an edge
+    // selection) the edge map is usable — see `MeshEditDelta.revert`, which is
+    // where the ONE boolean is computed. Steps SKIPPED on the fast path: the
+    // corner carry, `rebuildEdges`, `buildLoops`, and (provably, see the assert
+    // below) the corner-map drop. Steps KEPT: the nine length-syncs,
+    // `resizeAllMeshMaps`, `refreshHiddenDerived`, the edge-selection restore,
+    // `commitRestored`. Step 10, the tail bump, is per-KIND.
+    //
+    // BOTH NEW PARAMETERS DEFAULT TO THE SLOW PATH, and that is a ruling rather
+    // than tidiness: `finalize` has FOUR callers, and the two in-module
+    // `unittest` cells further up build a `CornerCarry` out of band and pass a
+    // NULL log. Any log-derived predicate answers "stable" over a null log —
+    // the gate reporting clean over an empty input — so `fast` defaults FALSE
+    // and those two cells provably keep the slow path.
+    assert(!(fast && carry !is null),
+        "mesh_edit_delta.finalize: the fast path was entered with a live "
+      ~ "CornerCarry. The fast path skips carry.commit, so the carry's payload "
+      ~ "would be dropped silently; a caller that built a carry out of band "
+      ~ "must take the slow path (leave `fast` at its default).");
+
+    if (fast) {
+        // §P1.3 — the always-on backstop for the LOUD half of a
+        // misclassification. PLAIN asserts, and the spelling is pinned by a
+        // source census (see W7-TEXT in
+        // tests/unit/mesh_edit_delta_carveout_test.d) because neither gate can
+        // tell the two spellings apart at runtime: `run_test.d` builds its
+        // project test-lib with `dmd -lib -unittest` and NO `-debug`, so the
+        // conditional form would be stripped from the very binary the
+        // source-backed suite tests call `finalize` through, while
+        // `dub test --config=tests` defines `-debug` and would see no
+        // difference at all. Precedent for the plain spelling: mesh.d's
+        // `assert(g_deliveryDepth > 0, …)` inside `commitStamps`.
+        //
+        // Each compares a quantity against ITSELF at two times — never against
+        // a sibling plane. See `StableEntry` for why the sibling form would
+        // abort on `makeCube()`.
+        assert(m.vertices.length == e0.nV,
+            "mesh_edit_delta: an index-space-stable log changed vertices.length. "
+          ~ "indexSpaceStable() classified a kind wrong — the skipped "
+          ~ "rebuildEdges/buildLoops would have re-derived edges and loops over "
+          ~ "the new vertex space.");
+        assert(m.faces.length == e0.nF,
+            "mesh_edit_delta: an index-space-stable log changed faces.length. "
+          ~ "indexSpaceStable() classified a kind wrong — `edges` and the loops "
+          ~ "family are functions of `faces` and are now stale.");
+        // recorded remainder (1906 §3.6): `structVersion` owns this compare and
+        // KEEPS it, and it is not the shape §3.6 exists to police. Every site
+        // in that table is a FRESHNESS poll — "is my cache still valid for the
+        // current counter" — and the objection against those is that a gizmo
+        // drag is version-silent, so a change class would have answered better.
+        // This compare asks the opposite question, of the SAME counter, inside
+        // one call: `e0.sv` was read from THIS mesh a few statements ago in
+        // `apply`/`revert`, and the assert says the replay in between wrote no
+        // edges. A bus class cannot answer that — delivery happens at the edit
+        // BOUNDARY, which is after `finalize` has already had to decide — and
+        // there is no cache here to key on an epoch. Nothing is memoised, no
+        // work is skipped on the strength of it: it is an ASSERT, and its only
+        // effect is to abort.
+        assert(m.structVersion == e0.sv,
+            "mesh_edit_delta: an index-space-stable log wrote `edges` "
+          ~ "(structVersion moved). Not a general structural witness (it counts "
+          ~ "writes to `edges` and misses a face DROP), but on an all-stable log "
+          ~ "it must not move at all: indexSpaceStable() classified a kind wrong.");
+        version (unittest) {
+            // O(F) — test-lane oracle only. Covers the equal-LENGTH hole the
+            // three compares above leave: a `ReshapeFaces` that changes arity
+            // keeps `faces.length` and moves every corner after it.
+            size_t corners = 0;
+            foreach (ref f; m.faces) corners += f.length;
+            assert(corners == e0.corners,
+                "mesh_edit_delta: an index-space-stable log changed the CORNER "
+              ~ "count. An arity-changing ReshapeFaces was classified stable and "
+              ~ "buildLoops was skipped over a re-laid loop array.");
+        }
+        // The second latent repair the skip removes. `buildLoops` is what
+        // CONSUMES a pending CornerProvenance declaration (inside
+        // `resizePolyVertexMaps`). Nothing in an all-stable replay ARMS one —
+        // the only armers are applyFaceReindexForward/Reverse and
+        // CornerCarry.commit's self-check, all of them skipped or unstable — so
+        // a declaration pending at ENTRY is one somebody else left outstanding
+        // across a command boundary. Today `finalize` eats it and the bug is
+        // invisible; here it is loud.
+        assert(!m.cornerRewritePending(),
+            "mesh_edit_delta: a corner-provenance declaration was already "
+          ~ "pending when a fast-path replay began. The skipped buildLoops would "
+          ~ "have consumed it, and the NEXT buildLoops will now consume it "
+          ~ "against the wrong faces. Find the kernel that declared and did not "
+          ~ "rebuild.");
+        // Ties the two predicates together: `renumbersCorners` answers true
+        // only for AddFaces / RemoveFaces / FaceReindex, all of which
+        // `indexSpaceStable` classifies UNSTABLE. Widening the predicate to any
+        // of those three reddens HERE, always-on, before any geometry check
+        // runs. It covers 3 of the 8 unstable kinds and no more — the witness
+        // cells cover the rest.
+        assert(!cornersRenumbered,
+            "mesh_edit_delta: the fast path was entered for a log that "
+          ~ "renumbers corners (AddFaces / RemoveFaces / FaceReindex). "
+          ~ "indexSpaceStable() and renumbersCorners() disagree — the former was "
+          ~ "widened without the latter.");
+    }
+
     // Per-corner (PolyVertex) map carry (task 0689) — FIRST, while the maps are
     // still in the pre-replay corner space and before `buildLoops` re-lays the
     // loop array. It leaves every map length-correct for the replayed faces, so
@@ -2388,8 +3056,21 @@ private void finalize(ref Mesh m, MeshEditScope scope_,
     // the topology mutators run, and the same canonical edge order the kernels
     // produce (so a revert is byte-identical to the pre-op edges). buildLoops
     // then rebuilds loops + edgeIndexMap from those edges.
-    m.rebuildEdges();
-    m.buildLoops();
+    //
+    // L0.P1 — SKIPPED as a PAIR on the fast path, and only as a pair: removing
+    // the tail bump alone is INERT, because `rebuildEdges` publishes its own
+    // `commitChange(MeshEditScope.Polygons)` and so moves topologyVersion
+    // anyway (measured, task 2060 mutation M3). The derivation half is safe —
+    // `edges` is a pure function of `faces` (index pairs; positions never
+    // enter), the loops family and `edgeIndexMap` are functions of `faces`
+    // alone, and no index-space-stable kind writes `faces`. Their
+    // structVersion-keyed validity stamps stay Valid because `structVersion`
+    // does not move either (asserted above). The PUBLISH half is NOT part of
+    // the win and is re-issued per kind at `commitRestored` below.
+    if (!fast) {
+        m.rebuildEdges();
+        m.buildLoops();
+    }
     // Keep the per-element marks / order arrays length-correct with the
     // restored geometry (the same resize primitives the topology mutators run).
     // These GROW/SHRINK without clearing; the SelectionDelta entries restored
@@ -2468,12 +3149,43 @@ private void finalize(ref Mesh m, MeshEditScope scope_,
     // redo. Same version bumps, same derive, same delivery; it just does not
     // tick `changeBus.unbatchedGeometryCommits`, whose whole job is to count
     // MUTATION sites that have not yet moved behind a batch.
-    m.commitRestored(scope_);
+    //
+    // L0.P1 — on the fast path this publish also carries the class the skipped
+    // `rebuildEdges` was publishing incidentally (`displayTermFor`). On the
+    // slow path the term is 0 and the call is byte-identical to what it was.
+    const uint displayTerm = fast ? displayTermFor(log) : 0u;
+    // The guard that makes the re-issue checkable. It is quantified over the
+    // kinds that OWE a display refresh — see `owesDisplayRefresh` for the
+    // argued deviation from §P1.2b's unquantified form and the measurement
+    // behind it.
+    assert(!fast || !owesDisplayRefresh(log)
+                 || ((scope_ | displayTerm) & DisplayRefreshMask) != 0,
+        "mesh_edit_delta: a fast-path replay would publish only Marks — the "
+      ~ "display would never refresh. MEASURED precedent: mesh.d's "
+      ~ "setFaceHiddenFrom, where a Marks-only hide left /api/gpu/face-vbo's "
+      ~ "faceVertCount at 36.");
+    m.commitRestored(scope_ | displayTerm);
     // This raw bump touches topologyVersion only. It is decoupled from the
     // structVersion-keyed loops/edgeIndexMap validity stamp (mesh.d) — that
     // stamp is set by the rebuildEdges()+buildLoops() pair above, which
     // already landed Valid regardless of this line.
-    if (!(scope_ & MeshEditScope.Geometry)) ++m.topologyVersion;
+    //
+    // L0.P1 — PER KIND on the fast path. The comment above says the bump exists
+    // because finalize ALWAYS rebuilt; on the fast path nothing was rebuilt, so
+    // that premise is gone and `owesTopologyBump` decides from the kind's own
+    // live writer instead (and from an ACTUAL mark flip). Note the guard reads
+    // the PUBLISHED flags, not `scope_`: for a `SubpatchDelta` the `Polygons`
+    // term above is a Geometry class, so `commitRestored` has already bumped
+    // topologyVersion through the funnel and a raw bump here would double it.
+    // `HideDelta` publishes `Marks|Visibility`, neither of them Geometry, and
+    // takes the raw bump — which is exactly the shape `setFaceHiddenFrom`
+    // already ships (`noteChange(Visibility); ++topologyVersion;`).
+    if (fast) {
+        if (!((scope_ | displayTerm) & MeshEditScope.Geometry) && owesTopologyBump(log))
+            ++m.topologyVersion;
+    } else {
+        if (!(scope_ & MeshEditScope.Geometry)) ++m.topologyVersion;
+    }
 }
 
 // Re-select the edges named by the flat vertex-index endpoint pairs

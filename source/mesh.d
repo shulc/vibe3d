@@ -9663,6 +9663,27 @@ struct Mesh {
     private CornerProvenance pendingCornerProvenance_;
     private bool             cornerRewriteArmed_;
 
+    /// Is a corner-provenance declaration still OUTSTANDING — declared by some
+    /// kernel and not yet consumed by a `buildLoops`?
+    ///
+    /// Task 1903 L0.P1 added this reader for one caller, and the question it
+    /// answers is narrow enough to be worth naming: `mesh_edit_delta`'s
+    /// carved-out fast path SKIPS `buildLoops`, and `buildLoops` is what
+    /// consumes a pending declaration (inside `resizePolyVertexMaps`,
+    /// `declareCornerProvenance` below). Today the skipped call silently EATS
+    /// any declaration someone left outstanding across a command boundary; on
+    /// the fast path there is no such call, so a stale declaration would sit
+    /// there and be consumed by the NEXT `buildLoops` against faces it never
+    /// described. The fast path asserts this is clear, which turns a latent
+    /// invisible repair into a loud red.
+    ///
+    /// `const` and O(1) — it reads the declaration's own `Kind` tag, whose
+    /// zero value is `Undeclared` precisely so a `.init` field cannot pass for
+    /// a claim (see `CornerProvenance` in mesh_corner_maps.d).
+    bool cornerRewritePending() const {
+        return pendingCornerProvenance_.declared();
+    }
+
     /// Open a corner rewrite: capture the old corner space and arm the drop.
     /// See the block comment above for what the arming means.
     CornerRewrite beginCornerRewrite() {
