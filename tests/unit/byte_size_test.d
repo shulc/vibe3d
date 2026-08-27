@@ -239,6 +239,67 @@ unittest // a hand-built RemoveFaces entry is at or above its hand-derived floor
                d.byteSize(), floor));
 }
 
+unittest // the RemoveVerts SELECTION-SET payload is charged for (Stage L5-b)
+{
+    // WHY THIS CELL EXISTS. §8's whole subject is the delta-vs-snapshot RATIO,
+    // and it is only a measurement while `byteSize` reads every array. Stage
+    // L5-b put three more on `Kind.RemoveVerts`; unread, a compaction entry
+    // over a mesh with real selection sets reports roughly the size of an
+    // empty one, and the ratio is biased in the DELTA's favour — the same
+    // direction, and the same mechanism, as the seven arrays Stage B
+    // recovered.
+    //
+    // MUTATION: delete any one of the three `vertSetMaskBefore` /
+    // `edgeSetKeyDropped` / `edgeSetWordDropped` lines from
+    // `MeshEditDelta.byteSize` -> "delta byteSize N is below the hand-derived
+    // floor M". The FieldNameTuple census below this file's fold reddens too,
+    // by field NAME; both are kept, because the census cannot say the sum is
+    // right and this cannot say a NEW field was added.
+    MeshOpEntry e;
+    e.kind               = MeshOpEntry.Kind.RemoveVerts;
+    e.vIdx               = [3u, 7u, 11u];
+    e.pos                = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0)];
+    e.vertSetMaskBefore  = [1UL, 0UL, 5UL];
+    e.edgeSetKeyDropped  = [(3UL << 32) | 7UL, (7UL << 32) | 11UL];
+    e.edgeSetWordDropped = [1UL, 3UL];
+
+    MeshEditDelta d;
+    d.log = [e];
+
+    // Written out term by term, an independent sum — NOT a call to planeBytes
+    // and NOT a call to byteSize.
+    immutable size_t floor =
+          MeshOpEntry.sizeof                    // the entry itself, once
+        + 3 * uint.sizeof                       // vIdx
+        + 3 * Vec3.sizeof                       // pos
+        + 3 * ulong.sizeof                      // vertSetMaskBefore
+        + 2 * ulong.sizeof                      // edgeSetKeyDropped
+        + 2 * ulong.sizeof;                     // edgeSetWordDropped
+
+    assert(d.byteSize() >= floor,
+        format("delta byteSize %s is below the hand-derived floor %s — an "
+             ~ "accounting line is missing from MeshEditDelta.byteSize() for "
+             ~ "Kind.RemoveVerts' selection-set payload (task 1903 Stage L5-b)",
+               d.byteSize(), floor));
+
+    // …and the payload is a real term, not noise inside the struct: the same
+    // entry with the three arrays EMPTY must be strictly smaller. Without this
+    // the floor above is satisfied by `MeshOpEntry.sizeof` alone on a tree
+    // where all three accounting lines were deleted at once.
+    MeshOpEntry bare;
+    bare.kind = MeshOpEntry.Kind.RemoveVerts;
+    bare.vIdx = e.vIdx.dup;
+    bare.pos  = e.pos.dup;
+    MeshEditDelta db;
+    db.log = [bare];
+    assert(d.byteSize() == db.byteSize() + 7 * ulong.sizeof,
+        format("the selection-set payload accounts for %s bytes, expected "
+             ~ "exactly 7 * 8 = 56 (3 vertex words + 2 keys + 2 words). A "
+             ~ "difference of 0 means all three accounting lines are missing "
+             ~ "together, which the floor assert above cannot see",
+               d.byteSize() - db.byteSize()));
+}
+
 unittest // the FaceReindex payload is charged for — the six arrays that were lost
 {
     // A FaceReindex entry is O(mesh) BY CONSTRUCTION (mesh_planes.rewriteFaces

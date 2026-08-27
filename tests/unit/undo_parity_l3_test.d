@@ -117,7 +117,9 @@ import mesh_edit_delta : undoTrackerEnabled, setUndoTrackerEnabled;
 
 import tests.unit.fixtures            : makeTaggedGridFull;
 import tests.unit.undo_parity_l0_test : ParityCell, comparePlanes, fixturePath,
-                                        fixtureJson;
+                                        fixtureJson, PlaneException,
+                                        compareWithExceptions,
+                                        assertExceptionTableWellFormed;
 
 import commands.mesh.delete_ : MeshDelete;
 import commands.mesh.remove_ : MeshRemove;
@@ -539,18 +541,13 @@ ParityCell[] l3Cells(bool captureMode)
 // re-capture is exactly what those files' own headers forbid.
 // ===========================================================================
 
-/// One plane, on one cell, on one of the two dumps, where the DELTA path is
-/// KNOWN and ARGUED to differ from the frozen snapshot oracle.
-///
-/// `check` receives the whole frozen dump and the whole fresh dump, so an
-/// entry can pin the SHAPE of the divergence rather than merely tolerating it.
-private struct PlaneException {
-    string cell;
-    string which;      // "postOp" | "postUndo"
-    string plane;
-    string why;
-    void function(string cell, in JSONValue frozenDump, in JSONValue freshDump) check;
-}
+// `PlaneException` and `compareWithExceptions` MOVED to
+// `undo_parity_l0_test` at task 1903 Stage L5, unchanged in behaviour. Stage
+// L5's family hit the IDENTICAL `faceSelectionOrder` divergence for the
+// identical reason, and the plan's rule for that case is "the same argument,
+// not a new one" — so the struct and the driver are shared and the ARGUMENT
+// stays here, at `checkOrderNormalisation`, which L5's reader imports rather
+// than restates.
 
 /// The normalisation: `faceSelectionOrder` on a face that is NOT selected.
 ///
@@ -574,8 +571,8 @@ private struct PlaneException {
 /// The pin: every UNSELECTED face's order must be 0, and every SELECTED face's
 /// order must match the frozen oracle exactly. A revert that dropped a real
 /// selected face's stamp is NOT covered by this entry and still reddens.
-private void checkOrderNormalisation(string cell, in JSONValue frozenDump,
-                                     in JSONValue freshDump)
+void checkOrderNormalisation(string cell, in JSONValue frozenDump,
+                             in JSONValue freshDump)
 {
     auto fzMarks = frozenDump["faceMarks"].array;
     auto frMarks = freshDump["faceMarks"].array;
@@ -634,71 +631,11 @@ private immutable PlaneException[] kL3Exceptions = [
         "as mesh.delete/vertices", &checkOrderNormalisation),
 ];
 
-/// `comparePlanes` with the exception table applied.
-///
-/// Delegates to `undo_parity_l0_test.comparePlanes` for every plane with no
-/// entry — one implementation of the plane walk, so a fixture that gains a
-/// plane cannot be silently ignored by this file's copy of it. A plane WITH an
-/// entry is removed from both dumps first (so the shared walk does not see it)
-/// and then scored by the entry itself.
-private void compareWithExceptions(string file, string cell, string which,
-                                   const ref JSONValue frozenDump,
-                                   string freshText)
-{
-    JSONValue fresh  = parseJSON(freshText);
-    JSONValue frozen = frozenDump;   // JSONValue is a value type; this copies
-
-    foreach (ref e; kL3Exceptions) {
-        if (e.cell != cell || e.which != which) continue;
-        assert((e.plane in frozen.objectNoRef) !is null,
-            format("%s [%s/%s]: exception names plane '%s', which the frozen "
-                 ~ "dump does not carry", file, cell, which, e.plane));
-        assert(frozen[e.plane].toString() != fresh[e.plane].toString(),
-            format("%s [%s/%s]: plane '%s' now AGREES with the frozen oracle, "
-                 ~ "but this reader carries a standing exception for it (%s). "
-                 ~ "The divergence was fixed — RETIRE THE EXCEPTION in the "
-                 ~ "same commit, or it becomes a licence over a plane nobody "
-                 ~ "is comparing", file, cell, which, e.plane, e.why));
-        e.check(cell ~ "/" ~ which, frozen, fresh);
-        frozen.object.remove(e.plane);
-        fresh.object.remove(e.plane);
-    }
-
-    comparePlanes(file, cell, which, frozen, fresh.toString());
-}
-
 unittest // the exception table is well-formed and cannot silence a whole cell
 {
-    // MUTATION: add a `PlaneException` naming a plane no cell diverges on —
-    // `compareWithExceptions`'s "now AGREES" assert reddens on the first cell
-    // it applies to, naming the plane. An entry that silences a plane which is
-    // in fact identical is exactly the blind spot this file must not grow.
-    assert(kL3Exceptions.length > 0,
-        "the exception table is empty — then `compareWithExceptions` is dead "
-      ~ "code and the mutation above scores nothing");
-    foreach (ref e; kL3Exceptions) {
-        assert(e.why.length > 8,
-            "exception on " ~ e.cell ~ "/" ~ e.plane ~ " carries no reason");
-        assert(e.check !is null,
-            "exception on " ~ e.cell ~ "/" ~ e.plane ~ " has no shape check — "
-          ~ "a bare skip is not an exception, it is a blind spot");
-        assert(e.which == "postOp" || e.which == "postUndo",
-            "exception on " ~ e.cell ~ " names dump '" ~ e.which ~ "'");
-        // No entry may name a plane on a cell twice, and none may name the
-        // geometry itself: an exception over `vertices` or `faces` would let a
-        // wrong revert through wholesale.
-        assert(e.plane != "vertices" && e.plane != "faces"
-            && e.plane != "counts",
-            "exception on " ~ e.cell ~ " names '" ~ e.plane ~ "' — the "
-          ~ "geometry planes may never carry one");
-    }
-    size_t declared = 0;
-    foreach (ref s; kL3Specs)
-        foreach (ref e; kL3Exceptions)
-            if (e.cell == s.name) ++declared;
-    assert(declared == kL3Exceptions.length,
-        "an exception names a cell that is not in the roster — it would then "
-      ~ "never be applied and never be retired");
+    string[] roster;
+    foreach (ref sp; kL3Specs) roster ~= sp.name;
+    assertExceptionTableWellFormed(kL3Family, kL3Exceptions, roster);
 }
 
 private void compareOrCaptureL3(ParityCell[] cells)
@@ -757,8 +694,10 @@ private void compareOrCaptureL3(ParityCell[] cells)
         assert(fc["name"].str == c.name,
                format("%s: cell %d is '%s' in the fixture and '%s' now — the "
                     ~ "roster was reordered", path, i, fc["name"].str, c.name));
-        compareWithExceptions(path, c.name, "postOp",   fc["postOp"],   c.postOp);
-        compareWithExceptions(path, c.name, "postUndo", fc["postUndo"], c.postUndo);
+        compareWithExceptions(path, c.name, "postOp",   fc["postOp"],
+                              c.postOp,  kL3Exceptions);
+        compareWithExceptions(path, c.name, "postUndo", fc["postUndo"],
+                              c.postUndo, kL3Exceptions);
     }
 }
 

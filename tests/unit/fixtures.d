@@ -441,6 +441,311 @@ unittest // makeTaggedGridFull scales, and the tagging survives the scaling
 }
 
 // ---------------------------------------------------------------------------
+// makeTaggedGridDirty (task 1903 Stage L5) — `makeTaggedGridFull` plus the
+// dirt without which `mesh.cleanup` REFUSES.
+// ---------------------------------------------------------------------------
+
+/// The stand for stage L5's parity fixture
+/// (`tests/fixtures/undo_parity/cleanup.json`) and for its witnesses.
+///
+/// WHY A FIFTH STAND AND NOT AN EDIT OF `makeTaggedGridFull`. The same
+/// argument `makeTaggedGridBent` makes one line down: `makeTaggedGridFull` is
+/// the stand of L0's and L3's frozen parity fixtures and of §8's O(Δ) cells,
+/// and changing what it CONTAINS changes what those gates OBSERVE. This is a
+/// fifth stand, and the superset unittest below is the guard against the two
+/// drifting apart.
+///
+/// WHY IT HAS TO EXIST AT ALL, and it is measured rather than inherited. The
+/// perf lane records `CmdExclusion("mesh.cleanup", "refuses: nothing
+/// degenerate to clean on a fresh grid")` (`tools/perf/run.d`, 2026-08-19) —
+/// a statement about the stand THAT lane used. Re-measured here on
+/// `makeTaggedGridFull(3)` (2026-08-28): `cleanupMesh()` returns
+/// `welded=0 degenerate=0 unified=0 orphans=0 dissolved=0 finalOrphans=0`,
+/// so `anyAffected()` is FALSE, `MeshCleanup.evaluate` returns false and
+/// every cell of an L5 fixture built on it would freeze a pair of identical
+/// dumps. A cube is worse, not better, for two reasons rather than one: the
+/// exclusion above was measured on a GRID and a cube is not less clean; and
+/// on a closed solid the weld's face-DROP arm (a face falling below three
+/// distinct corners) is unreachable without breaking the solid.
+///
+/// THE FOUR INJECTIONS, each traceable to the stage it must make fire, with
+/// the measured per-stage counts they produce under a DEFAULT sweep
+/// (`welded=1 degenerate=1 unified=1`, `V 19 -> 16`, `F 12 -> 10`):
+///
+///  1. **A coincident vertex** (`v16`, a bit-identical copy of `v1`) — the
+///     WELD's operand, and the one injection Stage L5-a exists for. It is
+///     referenced by TWO new faces rather than one, which is a deliberate
+///     strengthening of the plan's shape: `f9` is DROPPED by the unify stage,
+///     so a stand where the coincident vertex appears only there could observe
+///     the weld's winding rewrite only through a RESTORED face. `f10` survives
+///     the whole sweep with its winding rewritten `[16,4,8,9] -> [1,4,8,9]`,
+///     which is the sharper channel.
+///  2. **A zero-area face** (`f11 = [0, 1, v17]`, three collinear points —
+///     `v0`, `v1` and `v17` all sit on `z == -1, y == 0`) — `cleanDegenerateFaces`'
+///     operand. `v17` is referenced by NOTHING ELSE, so dropping the face
+///     orphans it.
+///  3. **A face that only becomes a duplicate once the weld lands**
+///     (`f9 = [0, v16, 5, 4]`, which the weld rewrites to `[0, 1, 5, 4]` ==
+///     face 0) — `unifyFaces`' operand, and the `RemoveFaces` half of the
+///     mixed batch.
+///  4. **A floating orphan vertex** (`v18`, referenced by no face) — so the
+///     compaction has something to do.
+///
+/// THE FOURTH STAGE IS NOT ASSERTED BY ITS `CleanupResult` COUNT, and that is
+/// a correction to the plan rather than a shortcut. `r.orphans` and
+/// `r.finalOrphans` both read **0** on this stand — measured — because
+/// `cleanDegenerateFaces` runs its own `compactUnreferenced` internally and
+/// there is nothing left by the time the explicit orphan stages run. An
+/// assertion of `orphans >= 1` would therefore REDDEN ON CORRECT CODE, which
+/// is the vacuity disease from the other side. The compaction is asserted
+/// where it is OBSERVABLE instead: exactly one `RemoveVerts` entry in the
+/// op-log, and a drop in the vertex count across it (see
+/// `tests/unit/undo_parity_l5_test.d`).
+///
+/// FOUR MORE THINGS THE INJECTIONS CARRY, none of them geometry, each named
+/// because a plane the stand does not populate is a plane the fixture cannot
+/// notice:
+///
+///  * `v16` and `v18` JOIN the vertex selection set `"V"`, so the sweep welds
+///    one set member away and compacts another — without which stage L5-b's
+///    `vertSetMaskBefore` payload has nothing to restore and its cells are
+///    vacuous.
+///  * BOTH new edges of the degenerate face (`(0,v17)` and `(1,v17)`) join the
+///    edge selection set `"E"`, so the sweep drops two `edgeSetMask` entries
+///    whose ENDPOINT disappears — the other half of that payload.
+///  * `f9` is SELECTED and is dropped; face 7 (the base stand's selection) is
+///    selected and survives. "Restored the selection" and "restored
+///    everything" are then different pictures.
+///  * Both maps are re-filled with distinct values ACROSS the appended
+///    elements. `appendFaceRaw` zero-fills the appended corners and
+///    `resizeVertexSelection` zero-fills the appended Point-map entries, so
+///    without the re-fill the new corners all read 0.0 and a per-corner value
+///    restored onto the WRONG corner would compare EQUAL.
+Mesh makeTaggedGridDirty(int n = 3)
+{
+    import mesh_selsets : selSetEditVertex, selSetEditEdge, SetEditMode;
+
+    Mesh m = makeTaggedGridFull(n);
+
+    // ---- the three appended vertices ---------------------------------------
+    // `p1` is read into a local first: `m.vertices ~= m.vertices[1]` reads an
+    // element of the array it is appending to, which is safe today but is the
+    // shape a reallocation makes a reader stop and think about.
+    immutable Vec3 p1 = m.vertices[1];
+    immutable uint vCoin = cast(uint) m.vertices.length;
+    m.vertices ~= p1;                            // injection 1
+    immutable uint vCol  = cast(uint) m.vertices.length;
+    m.vertices ~= Vec3(3.0f, 0.0f, -1.0f);       // injection 2's third corner
+    immutable uint vOrph = cast(uint) m.vertices.length;
+    m.vertices ~= Vec3(0.0f, 5.0f, 0.0f);        // injection 4
+    // Grows vertexMarks / vertexSelectionOrder / every Point-domain map /
+    // vertexSetMask in one call — the primitive the topology mutators use, so
+    // the stand cannot drift from what a real growth does.
+    m.resizeVertexSelection();
+
+    // ---- the three appended faces ------------------------------------------
+    // `appendFaceRaw`, not a bare `faces ~=`: it grows every PolyVertex map by
+    // the appended corners, which a bare append does not (task 0690 — "wipes
+    // the UV of every face it never touched").
+    immutable uint fDup  = cast(uint) m.faces.length;
+    m.appendFaceRaw([0u, vCoin, 5u, 4u]);        // injection 3
+    immutable uint fLive = cast(uint) m.faces.length;
+    m.appendFaceRaw([vCoin, 4u, 8u, 9u]);        // injection 1's surviving face
+    immutable uint fDeg  = cast(uint) m.faces.length;
+    m.appendFaceRaw([0u, 1u, vCol]);             // injection 2
+
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    // GROW, never `resetSelection()`: the base stand's whole tagging —
+    // selection, order stamps, subpatch and hide bits, materials, parts, set
+    // masks — is exactly what makes this a superset, and `resetSelection`
+    // clears the three selections.
+    m.syncSelection();
+
+    // The per-face planes stay non-uniform across the appended faces too.
+    m.faceMaterial[fDup] = 1; m.faceMaterial[fLive] = 0; m.faceMaterial[fDeg] = 1;
+    m.facePart[fDup]     = 2; m.facePart[fLive]     = 5; m.facePart[fDeg]     = 0;
+    // A SELECTED face that the sweep DROPS (face 7, selected by the base
+    // stand, is the one that survives).
+    m.selectFace(cast(int) fDup);
+
+    // Set membership on the two vertices the sweep removes.
+    bool[] vs = new bool[](m.vertices.length);
+    vs[vCoin] = true;
+    vs[vOrph] = true;
+    selSetEditVertex(m, "V", SetEditMode.add, vs);
+
+    // …and on both edges whose endpoint the sweep removes.
+    bool[] es = new bool[](m.edges.length);
+    immutable uint e0c = m.edgeIndex(0, vCol);
+    immutable uint e1c = m.edgeIndex(1, vCol);
+    assert(e0c != ~0u && e1c != ~0u,
+           "makeTaggedGridDirty: the degenerate face's two new edges are not "
+         ~ "in the rebuilt edge array — the edge-set half of the L5-b payload "
+         ~ "would then have nothing to drop");
+    es[e0c] = true;
+    es[e1c] = true;
+    selSetEditEdge(m, "E", SetEditMode.add, es);
+
+    // Re-fill BOTH maps across their grown length, so no two elements share a
+    // value. Same sequences `makeTaggedGridFull` uses, extended.
+    auto uv = m.meshMap(kUvMapName);
+    assert(uv !is null, "makeTaggedGridDirty: the base stand's UV map vanished");
+    foreach (i; 0 .. uv.data.length) uv.data[i] = cast(float) i;
+    auto wm = m.meshMap("W");
+    assert(wm !is null, "makeTaggedGridDirty: the base stand's Point map vanished");
+    foreach (i; 0 .. wm.data.length) wm.data[i] = 0.5f + cast(float) i;
+
+    return m;
+}
+
+unittest // makeTaggedGridDirty: all four injections FIRE, and the fourth by its consequence
+{
+    import std.format : format;
+    import mesh_ops.cleanup : cleanupMesh;
+    import mesh_edit_delta  : MeshEditDelta, MeshOpEntry;
+
+    auto m = makeTaggedGridDirty(3);
+    assert(m.vertices.length == 19 && m.faces.length == 12,
+        format("the stand is V=%d F=%d, expected V=19 F=12 — every index "
+             ~ "constant in the L5 reader names a face or a vertex at random "
+             ~ "otherwise", m.vertices.length, m.faces.length));
+
+    // ---- 1/2/3 BY COUNT. MUTATION: build this on `makeTaggedGridFull(3)` —
+    // all three read 0 and `anyAffected()` is false, i.e. `mesh.cleanup`
+    // REFUSES, so every cell of the L5 fixture would freeze a pair of
+    // identical dumps.
+    immutable size_t preV = m.vertices.length;
+    MeshEditDelta d;
+    CleanupResult r;
+    {
+        auto ed = MeshEditBatch(m, kCleanupEditScope);   // RECORDING
+        r = cleanupMesh(ed);
+        d = ed.close();
+    }
+    assert(r.welded == 1 && r.degenerate == 1 && r.unified == 1,
+        format("the sweep reported welded=%d degenerate=%d unified=%d, "
+             ~ "expected 1/1/1 — this stand exists to make all three fire in "
+             ~ "one call", r.welded, r.degenerate, r.unified));
+
+    // ---- 4 BY ITS OBSERVABLE CONSEQUENCE, never by `r.orphans`. Both orphan
+    // counters read 0 here as a MEASURED fact and not as slack: the earlier
+    // stages compact internally. Asserting `orphans >= 1` would redden on
+    // correct code — which is what the plan's own first draft of this stand
+    // demanded, and why it is written out here.
+    assert(r.orphans == 0 && r.finalOrphans == 0,
+        format("the sweep reported orphans=%d finalOrphans=%d, expected 0/0 — "
+             ~ "if these are non-zero the earlier stages stopped compacting "
+             ~ "internally and the op-log below carries more than one "
+             ~ "RemoveVerts", r.orphans, r.finalOrphans));
+    size_t nRemoveVerts = 0;
+    foreach (ref e; d.log)
+        if (e.kind == MeshOpEntry.Kind.RemoveVerts) ++nRemoveVerts;
+    assert(nRemoveVerts == 1,
+        format("the sweep's op-log carries %d RemoveVerts entr(ies), expected "
+             ~ "exactly 1 — this is where injection 4 is observable, since the "
+             ~ "CleanupResult counters cannot see it", nRemoveVerts));
+    assert(m.vertices.length < preV,
+        format("the sweep left %d vertices of %d — nothing was compacted away, "
+             ~ "so the RemoveVerts entry above describes an empty drop",
+               m.vertices.length, preV));
+}
+
+unittest // makeTaggedGridDirty carries the four NON-geometry things its cells read
+{
+    import std.format : format;
+    auto m = makeTaggedGridDirty(3);
+
+    // ---- set membership on vertices the sweep removes (L5-b's vertex half).
+    import mesh_selsets : selSetMembersVertex, selSetMembersEdge;
+    auto vm = selSetMembersVertex(m, "V");
+    assert(vm == [0u, 5u, 16u, 18u],
+        format("vertex set \"V\" is %s, expected [0, 5, 16, 18] — 16 is the "
+             ~ "coincident vertex the weld removes and 18 the floating orphan "
+             ~ "the compaction removes. Without a MEMBER among the removed, "
+             ~ "the `vertSetMaskBefore` payload has nothing to restore", vm));
+
+    // ---- an edge-set entry on BOTH edges whose endpoint disappears.
+    auto em = selSetMembersEdge(m, "E");
+    bool sawColl = false;
+    foreach (pr; em) if (pr[0] == 17u || pr[1] == 17u) sawColl = true;
+    assert(sawColl,
+        format("edge set \"E\" is %s and names no edge with endpoint 17 — that "
+             ~ "vertex is the one the degenerate drop orphans, so without it "
+             ~ "`selSetRekeyEdges` drops nothing and L5-b's EDGE half is "
+             ~ "unreachable", em));
+
+    // ---- a selected face that is DROPPED and one that SURVIVES.
+    assert(m.isFaceSelected(7) && m.isFaceSelected(9),
+        "the stand must select face 7 (interior, survives the sweep) AND face "
+      ~ "9 (the duplicate the unify stage drops) — one alone makes 'restored "
+      ~ "the selection' and 'restored everything' the same picture");
+    assert(m.faceSelectionOrder[2] != 0 && m.faceSelectionOrder[6] != 0,
+        "faceSelectionOrder is flat outside the selected faces — a revert that "
+      ~ "drops the order plane would read identical");
+
+    // ---- distinct per-corner and per-vertex values, ACROSS the appended tail.
+    auto uv = m.meshMap(kUvMapName);
+    assert(uv !is null && uv.domain == MapDomain.PolyVertex);
+    assert(uv.data.length == m.cornerCount() * uv.dim,
+        "the UV map is out of step with the appended corners");
+    bool[float] seenU;
+    foreach (k; 0 .. uv.data.length / uv.dim) {
+        immutable float u = uv.data[k * uv.dim];
+        assert((u in seenU) is null,
+            format("uv corner %d repeats the value %s — a value restored onto "
+                 ~ "the wrong corner would compare EQUAL, and the appended "
+                 ~ "corners are exactly the ones `appendFaceRaw` zero-fills",
+                   k, u));
+        seenU[u] = true;
+    }
+    auto wm = m.meshMap("W");
+    assert(wm !is null && wm.data.length == m.vertices.length,
+        "the Point map is out of step with the appended vertices");
+    bool[float] seenW;
+    foreach (i; 0 .. wm.data.length) {
+        assert((wm.data[i] in seenW) is null,
+            format("Point-map vertex %d repeats the value %s", i, wm.data[i]));
+        seenW[wm.data[i]] = true;
+    }
+}
+
+unittest // makeTaggedGridDirty is a SUPERSET of makeTaggedGridFull — no drift
+{
+    // The guard on the fifth stand, the same shape `makeTaggedGridBent` and
+    // `makeTaggedGridMaps` carry: every plane of the base stand must survive
+    // the injections unchanged over its own index range.
+    auto a = makeTaggedGridFull(3);
+    auto b = makeTaggedGridDirty(3);
+    import std.conv : to;
+
+    assert(b.vertices.length == a.vertices.length + 3, "exactly three vertices added");
+    assert(b.faces.length    == a.faces.length + 3,    "exactly three faces added");
+    foreach (vi; 0 .. a.vertices.length)
+        assert(a.vertices[vi] == b.vertices[vi],
+               "base vertex " ~ vi.to!string ~ " moved");
+    foreach (fi; 0 .. a.faces.length)
+        assert(a.faces[fi] == b.faces[fi],
+               "base winding differs at face " ~ fi.to!string);
+    foreach (fi; 0 .. a.faces.length) {
+        assert(a.faceMaterial[fi] == b.faceMaterial[fi], "faceMaterial drifted");
+        assert(a.facePart[fi]     == b.facePart[fi],     "facePart drifted");
+        assert(a.faceMarks[fi]    == b.faceMarks[fi],    "faceMarks drifted");
+        assert(a.faceSetMask[fi]  == b.faceSetMask[fi],  "faceSetMask drifted");
+    }
+    assert(a.surfaces.length == b.surfaces.length, "the surface registry drifted");
+
+    // …and the injections are exactly what the base stand does NOT have.
+    CleanupResult ra, rb;
+    { auto ed = MeshEditBatch.unrecorded(a, kCleanupEditScope); ra = ed.cleanupMesh(); ed.close(); }
+    { auto ed = MeshEditBatch.unrecorded(b, kCleanupEditScope); rb = ed.cleanupMesh(); ed.close(); }
+    assert(!ra.anyAffected() && rb.anyAffected(),
+        "the base stand must be CLEAN (mesh.cleanup refuses it) and the dirty "
+      ~ "one must not — that difference is the whole reason the fifth stand "
+      ~ "exists, and it is the mutation W-5-0 reddens with");
+}
+
+// ---------------------------------------------------------------------------
 // makeTaggedGridBent (task 1903 Stage L2) — `makeTaggedGridFull` plus the two
 // additions without which two of stage L2's twelve commands REFUSE.
 // ---------------------------------------------------------------------------

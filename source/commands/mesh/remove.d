@@ -44,30 +44,40 @@ class MeshRemove : Command, Operator {
     private uint[]             preEdgeEnds_;
     private uint[]             preMarksWord_;
     private MeshMap[]          preMaps_;      // whole mesh-map set, by value, pre-op
-    // The three SELECTION-SET planes, by value, pre-op (task 2280, stage L3-0).
+    // THE THREE SELECTION-SET BELTS WERE DELETED AT TASK 1903 STAGE L5-e, and
+    // the vacancy is written down rather than left as a silence.
     //
-    // FOUND BY THE FROZEN PARITY FIXTURE, which is what it was frozen for.
-    // `tests/unit/undo_parity_l3_test` captured this family's undo under BOTH
-    // arms while the fork still existed and the delta arm came back with
-    // `vertexSetMask` and `edgeSetMask` EMPTY where the snapshot arm restored
-    // them. The mechanism is in the replay and not here: the `AddVerts`
-    // inverse of a `RemoveVerts` re-adds each vertex with `vertexSetMask = 0`
-    // (`mesh_edit_delta.d`'s insert arm), because the removal never recorded
-    // the word it was dropping; and `selSetRekeyEdges` has by then already
-    // dropped every `edgeSetMask` entry whose endpoint went, keyed on
-    // `uint.max`. So a named selection set — user-visible, persisted in `.v3d`
-    // — silently vanished on Ctrl+Z, on the shipped default path, for every
-    // delete that compacts a vertex.
+    // Task 2280 added a `preVertSetMask` / `preEdgeSetMask` / `preFaceSetMask`
+    // belt here because a delta undo lost `vertexSetMask` and `edgeSetMask` on
+    // every cell that compacts a vertex — a named selection set vanishing on
+    // Ctrl+Z, on the shipped default path. That is now the STRUCTURAL payload
+    // on `MeshOpEntry.Kind.RemoveVerts` (`vertSetMaskBefore` /
+    // `edgeSetKeyDropped` / `edgeSetWordDropped`, Stage L5-b), captured at the
+    // one publisher, `Mesh.compactUnreferenced`.
     //
-    // THE STRUCTURAL FIX IS A PAYLOAD ON `MeshOpEntry.Kind.RemoveVerts` and it
-    // is NOT taken here: a new array on that struct moves `MeshOpEntry.sizeof`
-    // and therefore every pinned `byteSize` number in the task. This is the
-    // same shape of belt `preMaps_` above already is, for the same reason —
-    // the command holds the exact pre-op state for one dup of a plane the
-    // replay cannot carry — and it is what the user gets back meanwhile.
-    private ulong[]            preVertSetMask_;
-    private ulong[ulong]       preEdgeSetMask_;
-    private ulong[]            preFaceSetMask_;
+    // WHY THE BELTS COULD NOT SIMPLY BE LEFT IN PLACE AS A SECOND LINE. A belt
+    // runs AFTER `delta_.revert` and OVERWRITES what the replay restored, so
+    // while both existed the payload's output on THIS family was never
+    // observed: `tests/unit/undo_parity_l3_test` could not tell a working
+    // payload from a broken one here, permanently. That is the "a second,
+    // unnamed guard refuses first" shape, inverted.
+    //
+    // THE DELETION WAS RUN AS A CONTROL BEFORE IT WAS TAKEN, both ways, in
+    // isolation (2026-08-28):
+    //   * belt deleted, payload live      -> `undo_parity_l3_test` GREEN;
+    //   * belt deleted, AND the payload's capture at `Mesh.compactUnreferenced`
+    //     also deleted -> RED, `[mesh.delete/vertices/postUndo]: plane
+    //     'vertexSetMask' differs from the frozen capture`, frozen
+    //     `[1,0,0,0,0,1,...]` against `[1,0,0,0,0,0,...]`.
+    // The first alone would only have shown that nothing looks; the pair shows
+    // the payload does the work. `undo_parity_l3_test` is the standing gate on
+    // it from here on.
+    //
+    // `faceSetMask` had no observed loss and was carried only so the third
+    // plane's absence would not read as a decision; it goes with the other two.
+    // The delta carries it through `RemoveFaces.faceSetMsk` and `FaceReindex`'s
+    // copy of the same field — measured on `makeTaggedGridDirty(3)`, where it
+    // comes back byte-identical with no belt of any kind.
     // First run vs REDO, and `revert()`'s guard — see `MeshDelete.recorded_`.
     private bool               recorded_;
 
@@ -172,15 +182,6 @@ class MeshRemove : Command, Operator {
             // (see the `recorded_` redo branch above), which carries the map itself.
             preMaps_ = new MeshMap[](mesh.meshMaps.length);
             foreach (i, ref m; mesh.meshMaps) preMaps_[i] = m.dup;
-            // The selection-set planes (see the field comment). `edgeSetMask`
-            // is an `ulong[ulong]` keyed by `mesh.edgeKey`, i.e. by ENDPOINT
-            // PAIR and not by edge index, so it survives the edge re-derive
-            // and needs no re-keying on the way back — which is exactly why
-            // restoring it wholesale is correct here and would not be for an
-            // index-keyed plane.
-            preVertSetMask_ = mesh.vertexSetMask.dup;
-            preEdgeSetMask_ = mesh.edgeSetMask.dup;
-            preFaceSetMask_ = mesh.faceSetMask.dup;
             auto rec = MeshEditTracker();
             mesh.beginEditBatch(&rec, MeshEditScope.Geometry | MeshEditScope.Marks);
             // TASK 1903 S1 — the unwind path for the handle-less spelling.
@@ -204,9 +205,6 @@ class MeshRemove : Command, Operator {
                 preEdgeEnds_  = null;
                 preMarksWord_ = null;
                 preMaps_      = null;
-                preVertSetMask_ = null;
-                preEdgeSetMask_ = null;
-                preFaceSetMask_ = null;
                 return false;
             }
             recorded_ = true;
@@ -237,16 +235,6 @@ class MeshRemove : Command, Operator {
                 mesh.meshMaps.length = preMaps_.length;
                 foreach (i, ref m; preMaps_) mesh.meshMaps[i] = m.dup;
             }
-            // The selection-set planes, wholesale, for the same reason and in
-            // the same position as the maps above: after the geometry replay
-            // (they are sized against it) and before the selection restore
-            // (which does not touch them). `preFaceSetMask_` is carried too —
-            // it is not currently observed to be lost, and capturing two of
-            // three planes would leave the third's loss looking like a
-            // deliberate decision rather than an oversight.
-            if (preVertSetMask_.length) mesh.vertexSetMask = preVertSetMask_.dup;
-            if (preFaceSetMask_.length) mesh.faceSetMask   = preFaceSetMask_.dup;
-            if (preEdgeSetMask_ !is null) mesh.edgeSetMask = preEdgeSetMask_.dup;
             if (preMarksWord_.length) {
                 assert(preMarksWord_.length == mesh.faces.length,
                     "MeshRemove.revert: preMarksWord_ length != restored face "

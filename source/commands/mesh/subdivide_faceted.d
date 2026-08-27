@@ -41,6 +41,24 @@ package void runFacetedFamily(Mesh* mesh, EditMode editMode, bool smooth)
     // `facetedSubdivide`/`smoothSubdivide` return a fresh `Mesh result` with
     // no PolyVertex map of its own, and this `*mesh = ...` REPLACES the whole
     // value. The old map disappears with the old mesh; nothing here zeroes it.
+    // TASK 1903 STAGE L5-P0 — the axis-0 commit seam (plan §5.0: a row whose
+    // undo stays a snapshot still owes the batch). Everything from the install
+    // to the tail publish runs inside ONE unrecorded batch, so the six-odd
+    // `commitChange`es below (`resetSelection`, one per re-selected face, the
+    // final `publishChange`) defer and stamp once at `close()` instead of
+    // ticking `changeBus.unbatchedGeometryCommits` one at a time.
+    //
+    // UNRECORDED, deliberately: this family is declined on axis 2 (§6.6) —
+    // the kernel builds a FRESH `Mesh` and installs it wholesale, so there is
+    // no op-log an inverse could be built from and the undo image stays the
+    // caller's `MeshSnapshot`.
+    //
+    // `*mesh = …` INSIDE the frame is safe because the batch state is
+    // MODULE-level and keyed by `Mesh*` (§2.2a): the assignment replaces the
+    // pointee's contents, not the pointer, so the frame the handle owns is
+    // still found by `close()`. A `batchDepth_` FIELD on `Mesh` would have
+    // been zeroed by this very line.
+    auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Geometry);
     *mesh = smooth ? smoothSubdivide(*mesh, mask) : facetedSubdivide(*mesh, mask);
     mesh.resetSelection();
     // Rebuild the output selection: each selected cage face produced
@@ -73,6 +91,7 @@ package void runFacetedFamily(Mesh* mesh, EditMode editMode, bool smooth)
     // close, so the delivery COUNT per command is unchanged (one) while
     // the delivery itself is now guaranteed.
     mesh.publishChange(MeshEditScope.Geometry);
+    ed.close();
 }
 
 class SubdivideFaceted : Command, Operator {

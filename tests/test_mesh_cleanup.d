@@ -169,18 +169,75 @@ unittest { // mesh.cleanup defaults: all stages fire, final counts correct
 }
 
 unittest { // mesh.cleanup undo: restores original dirty mesh
+    // TASK 1903 STAGE L5-c — this cell now covers a DELTA replay, not a
+    // whole-mesh snapshot restore, and its undo-depth half is new for that
+    // reason. `MeshCleanup` records an operation-log delta and reverts it; the
+    // failure mode that shape brings is an `/api/undo` that answers `ok`
+    // having done nothing, which the geometry compare below cannot see —
+    // it would then be comparing a mesh against itself. A witness was inert
+    // TWICE in this task for exactly that, so the count is asserted.
     postReset();
     postLoadMesh(dirtyMeshFixture());
 
+    const depthBefore = undoCount();
     postCommand(`{"id":"mesh.cleanup"}`);
     assert(getModel()["faceCount"].integer == 2, "post-cleanup: 2 faces");
+    assert(undoCount() == depthBefore + 1,
+        "mesh.cleanup left the undo stack at " ~ undoCount().to!string
+      ~ ", expected " ~ (depthBefore + 1).to!string ~ " — the command applied "
+      ~ "but recorded no history entry, so there is nothing for the undo "
+      ~ "below to act on");
 
     postUndo();
+    assert(undoCount() == depthBefore,
+        "/api/undo answered but the undo stack went from "
+      ~ (depthBefore + 1).to!string ~ " to " ~ undoCount().to!string
+      ~ " — nothing was undone and the geometry compare below is a mesh "
+      ~ "against itself");
     auto undone = getModel();
     assert(undone["vertexCount"].integer == 9,
         "undo: expected 9 verts, got " ~ undone["vertexCount"].integer.to!string);
     assert(undone["faceCount"].integer == 4,
         "undo: expected 4 faces, got " ~ undone["faceCount"].integer.to!string);
+}
+
+unittest { // mesh.edgeCrease.set / .clear: one undo step each, and it restores
+    // TASK 1903 STAGE L5-d — the crease pair moved from `MeshSnapshot` to the
+    // delta, and this is the suite-lane half of that: a map-value edit moves
+    // NO geometry count, so the only thing a lane-S cell can read cheaply is
+    // the undo DEPTH — and that is what separates "the undo restored it" from
+    // "the undo did nothing and there was never anything to restore". The
+    // stored weights themselves are pinned by value in
+    // `tests/test_edge_weight_v3d.d`, which round-trips them through a saved
+    // document rather than through this endpoint.
+    postReset();
+    // Two edges of the default cube, named explicitly — the same operand
+    // `tests/test_edge_weight_v3d.d` uses. Two and not one: a single-edge
+    // crease plane is uniform, and a restore onto the wrong edge would
+    // compare EQUAL.
+    auto selResp = post("http://localhost:8080/api/select",
+                        `{"mode":"edges","indices":[6,9]}`);
+    assert(parseJSON(selResp)["status"].str == "ok",
+           "/api/select failed: " ~ selResp);
+
+    const depth0 = undoCount();
+    postCommand(`{"id":"mesh.edgeCrease.set","params":{"weight":0.5}}`);
+    assert(undoCount() == depth0 + 1,
+        "mesh.edgeCrease.set left the undo stack at " ~ undoCount().to!string
+      ~ ", expected " ~ (depth0 + 1).to!string);
+
+    postCommand(`{"id":"mesh.edgeCrease.clear"}`);
+    assert(undoCount() == depth0 + 2,
+        "mesh.edgeCrease.clear left the undo stack at " ~ undoCount().to!string
+      ~ ", expected " ~ (depth0 + 2).to!string ~ " — a clear over a map that "
+      ~ "really carries 0.5 on every edge is a REAL edit, not a no-op");
+
+    postUndo();
+    assert(undoCount() == depth0 + 1,
+        "the clear's undo did not pop a step");
+    postUndo();
+    assert(undoCount() == depth0,
+        "the set's undo did not pop a step");
 }
 
 unittest { // weld-creates-a-duplicate order guard

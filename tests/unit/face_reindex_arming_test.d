@@ -959,6 +959,15 @@ unittest // the resolver itself, on hand-written text — it is the census's onl
 /// the cheaper `AddFaces` + `ReshapeFaces`.
 private static immutable string[] kArmedSites = [
     "source/mesh.d:rebuildFacesWithChordSplits",
+    // Task 1903 Stage L5-a. The weld's apply half, reached by
+    // `weldCoincidentVertices` and therefore by `mesh_ops/cleanup.cleanupMesh`
+    // (L5), by `arrayFaces` / `radialArrayFaces` / `mirrorFacesPlane` (L6) and
+    // by the reduce family (L10). Its TWIN `applyVertexRemapAndRebuild` — same
+    // file, reached by `weldVertexPairs` — is deliberately NOT here: L5
+    // measured this one and left the other to L10, and the two are separable
+    // on purpose. Adding the twin without its own measured residual row in
+    // block 2 is the mutation this census exists to redden.
+    "source/mesh.d:applyVertexRemap",
     "source/mesh.d:triangulateFacesByMask",
     "source/mesh_ops/cleanup.d:cleanDegenerateFaces",
     "source/mesh_ops/extrude.d:extrudeFacesByMask",

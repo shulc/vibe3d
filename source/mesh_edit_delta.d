@@ -386,6 +386,58 @@ struct MeshOpEntry {
                                         //   must not inherit, plan §7.3)
     uint[]    perm;                    // Reindex: old->new remap
 
+    // --- RemoveVerts SELECTION-SET payload (task 1903 Stage L5-b) ----------
+    //
+    // WHAT IT FIXES, and it is a shipped user-visible defect rather than a
+    // completeness itch: a named selection set VANISHED ON Ctrl+Z, on the
+    // shipped default path, for every command whose kernel compacts a vertex.
+    // Found by task 2280's frozen parity fixture, closed there by a
+    // three-field BELT in `commands/mesh/delete.d` and `remove.d` ONLY. Every
+    // other compacting command carried the identical loss — `mesh.cleanup` on
+    // four paths, three of L6's five, all thirteen of L10's — so the belt was
+    // a six-line copy queued for ~30 classes. This is the structural place.
+    //
+    // TWO HALVES, because the plane has two shapes:
+    //
+    //   `vertSetMaskBefore` — the VERTEX half. One word per entry of `vIdx`,
+    //       in the same order, read off `Mesh.vertexSetMask` at record time.
+    //       `removeVertsReverse` writes it back instead of the 0 it used to
+    //       write on all three of its arms.
+    //
+    //   `edgeSetKeyDropped` / `edgeSetWordDropped` — the EDGE half, parallel
+    //       arrays. `Mesh.edgeSetMask` is an `ulong[ulong]` keyed by ENDPOINT
+    //       PAIR, and `selSetRekeyEdges` DROPS an entry whose endpoint maps to
+    //       `uint.max`. The keys here are in the PRE-compaction vertex space —
+    //       the space `applyReindexReverse` has already restored by the time
+    //       `removeVertsReverse` runs — so they are re-inserted verbatim.
+    //
+    // THE EDGE HALF IS COMPUTED AT THE RECORDER AND THAT WAS MEASURED, NOT
+    // ASSUMED (P0-L5-2, 2026-08-28). The drop happens in `mesh_selsets.d`, one
+    // call AFTER `recordRemoveVerts`, so the question was whether the recorder
+    // can predict it from `remap` + the live mask alone. On
+    // `makeTaggedGridDirty(3)` the predicted key set and the set
+    // `selSetRekeyEdges` actually dropped were IDENTICAL, both ways, keys and
+    // words — {(0,17), (1,17)} — so no call had to move.
+    //
+    // AN EMPTY ARRAY MEANS "NOTHING TO RESTORE", not "the recorder forgot",
+    // and the recorder is what makes that true: it captures the vertex half
+    // only when some dropped vertex actually carries a bit, so a mesh with no
+    // selection sets (the common case) pays ZERO bytes and keeps the previous
+    // behaviour bit-for-bit. `vertSetMaskBefore.length` is therefore either 0
+    // or `vIdx.length`, never anything else — the recorder asserts it and
+    // `removeVertsReverse` re-checks it rather than half-applying.
+    //
+    // WHAT THIS DELIBERATELY DOES *NOT* CARRY. `vertexMarks`, the
+    // Point-domain `MeshMap` values and their `present` bytes are still zeroed
+    // on the three re-insert arms, by the SAME convention this payload just
+    // stopped applying to the set mask. That is not an oversight, and the
+    // comment at `removeVertsReverse` says which planes are now in which
+    // class — a comment that lumps four planes together while one of them is
+    // restored is a trap for the next reader.
+    ulong[]   vertSetMaskBefore;
+    ulong[]   edgeSetKeyDropped;
+    ulong[]   edgeSetWordDropped;
+
     // --- FaceReindex-only payload (task 1902 Stage H) ----------------------
     uint[]    faceOldOfNew;            // forward newToOld correspondence, one entry
                                         //   per NEW face; mesh_planes.kNoSource = no
@@ -499,8 +551,13 @@ struct MeshOpEntry {
     /// grew in between would trade a wrong ORDER for a missing MAP.
     ///
     /// Costs nothing per entry: it lands in the 4-byte padding hole after
-    /// `mapKind`, so `MeshOpEntry.sizeof` is unchanged at 560 (measured before
-    /// and after) and no pinned `byteSize` moves.
+    /// `mapKind`, so `MeshOpEntry.sizeof` was unchanged at 560 by THIS field
+    /// (measured before and after) and no pinned `byteSize` moved for it.
+    /// (`sizeof` is 608 since task 1903 Stage L5-b, which added three dynamic
+    /// arrays to `Kind.RemoveVerts` — 3 x 16 B of header, measured — and moved
+    /// the two pins in `tests/unit/mesh_ops/extrude_test.d` by exactly
+    /// `entries x 48`. The claim above is about the padding hole and still
+    /// holds; the absolute number is not this field's to own.)
     uint      mapSlot = uint.max;
 
     /// `MapAddressing.Listed`: the element indices, in the MAP'S OWN element
@@ -586,6 +643,14 @@ struct MeshEditDelta {
             n += planeBytes(e.faceSetMsk);
             n += planeBytes(e.faceOrd);
             n += planeBytes(e.perm);
+            // Kind.RemoveVerts' selection-set payload (task 1903 Stage L5-b).
+            // Three lines, because `byte_size_test.d` walks `MeshOpEntry`
+            // through `FieldNameTuple` and reddens on any dynamic array this
+            // method does not read — which is exactly how the seven arrays
+            // Stage B recovered went missing in the first place.
+            n += planeBytes(e.vertSetMaskBefore);
+            n += planeBytes(e.edgeSetKeyDropped);
+            n += planeBytes(e.edgeSetWordDropped);
             // Kind.FaceReindex's own payload — the six arrays whose absence
             // made this method under-report exactly the entries task 1903 adds.
             n += planeBytes(e.faceOldOfNew);
@@ -2447,12 +2512,38 @@ struct MeshEditTracker {
         append(e);
     }
 
-    void recordRemoveVerts(in uint[] idx, in Vec3[] pos) {
+    /// Record a vertex drop, WITH the selection-set planes the re-insert
+    /// cannot otherwise recover (task 1903 Stage L5-b — see
+    /// `MeshOpEntry.vertSetMaskBefore` for the defect and the measurement).
+    ///
+    /// THE THREE PAYLOAD PARAMETERS ARE REQUIRED, not defaulted, and that is
+    /// the point of the signature: there is exactly ONE production publisher
+    /// (`Mesh.compactUnreferenced`), and a second one added later must make
+    /// the same decision explicitly rather than inherit a silent `null` that
+    /// re-opens the "a named selection set vanished on Ctrl+Z" defect for its
+    /// own family. Pass `null, null, null` to mean "the dropped vertices carry
+    /// no set membership" — the honest empty, which costs nothing and restores
+    /// exactly what the pre-L5-b code did.
+    void recordRemoveVerts(in uint[] idx, in Vec3[] pos,
+                           in ulong[] vertSetMaskBefore,
+                           in ulong[] edgeSetKeyDropped,
+                           in ulong[] edgeSetWordDropped) {
         if (idx.length == 0) return;
+        assert(vertSetMaskBefore.length == 0
+            || vertSetMaskBefore.length == idx.length,
+            "recordRemoveVerts: the vertex set-mask payload must be empty or "
+          ~ "parallel to `idx` — a partial one would restore membership onto "
+          ~ "whichever vertices happen to line up");
+        assert(edgeSetKeyDropped.length == edgeSetWordDropped.length,
+            "recordRemoveVerts: the dropped edge-set keys and words are not "
+          ~ "parallel");
         MeshOpEntry e;
         e.kind = MeshOpEntry.Kind.RemoveVerts;
         e.vIdx = idx.dup;
         e.pos  = pos.dup;
+        e.vertSetMaskBefore  = vertSetMaskBefore.dup;
+        e.edgeSetKeyDropped  = edgeSetKeyDropped.dup;
+        e.edgeSetWordDropped = edgeSetWordDropped.dup;
         append(e);
     }
 
@@ -2911,7 +3002,8 @@ private void applyReverse(ref Mesh m, ref const MeshOpEntry e,
             break;
         case MeshOpEntry.Kind.RemoveVerts:
             // Inverse of drop = re-insert at the recorded (pre-removal) indices.
-            removeVertsReverse(m, e.vIdx, e.pos);
+            removeVertsReverse(m, e.vIdx, e.pos, e.vertSetMaskBefore,
+                               e.edgeSetKeyDropped, e.edgeSetWordDropped);
             break;
         case MeshOpEntry.Kind.SetPos:
             foreach (i, vi; e.vIdx)
@@ -3440,6 +3532,27 @@ private void removeVertsForward(ref Mesh m, in uint[] idx) {
 // documented limit; `MeshOpEntry.RemoveVerts` does not carry a removed
 // vertex's own map values any more than it carries its marks word).
 //
+// TASK 1903 STAGE L5-b — `vertexSetMask` LEFT THAT CLASS AND THE OTHERS DID
+// NOT. Read the paragraph above as history: it lumps four planes together
+// (`vertexMarks`, the Point-map values, the `present` bytes, and the set mask)
+// under one "documented limit", and exactly one of the four is now RESTORED.
+//
+//   RESTORED, from the entry's own payload: `vertexSetMask`, on all three
+//       arms, plus the `edgeSetMask` entries whose endpoint vanished (re-
+//       inserted after the loop, in the pre-compaction key space
+//       `applyReindexReverse` has just put the mesh back into).
+//   STILL ZEROED, unchanged: `vertexMarks`, every Point-domain `MeshMap`
+//       value and its `present` byte.
+//
+// WHY THE SPLIT IS NOT ARBITRARY. The set mask is DOCUMENT state a user
+// names, saves in `.v3d` and reloads — "a named selection set vanished on
+// Ctrl+Z" is a data-loss report (task 2280). A re-inserted vertex coming back
+// VISIBLE and un-marked is the convention the rest of `mesh.d` already
+// follows for index changes (`clearFaceSelectionResize` et al.), and the
+// Point-map half is covered belt-and-braces by the migrated commands' own
+// `preMaps_` capture. Widening the payload to the other three is a separate
+// decision with its own byte cost; it is NOT implied by this one.
+//
 // `vertexSelectionOrder` (task 0930, secondary finding) now gets the SAME
 // standalone-insert treatment `vertexMarks` already had: the gap-fill and
 // tail-append branches were already safe (the gap/tail slot arrives at 0 via
@@ -3451,7 +3564,17 @@ private void removeVertsForward(ref Mesh m, in uint[] idx) {
 // with no paired Reindex — see the doc comment above), so this is a
 // preventive close, not a measured-by-value fix; closed here because the
 // adjacent lines were already being touched for the meshMaps fix.
-private void removeVertsReverse(ref Mesh m, in uint[] idx, in Vec3[] pos) {
+private void removeVertsReverse(ref Mesh m, in uint[] idx, in Vec3[] pos,
+                                in ulong[] vertSetMaskBefore,
+                                in ulong[] edgeSetKeyDropped,
+                                in ulong[] edgeSetWordDropped) {
+    // Task 1903 Stage L5-b. EMPTY means "nothing to restore" — the honest
+    // empty a mesh with no selection sets produces — and a payload of the
+    // WRONG length is refused WHOLE rather than applied to the prefix that
+    // happens to line up: a set membership landing on the wrong vertex is a
+    // legal-looking wrong answer, which is worse than the zero it replaces.
+    const bool haveVsm = vertSetMaskBefore.length == idx.length;
+    ulong vsmFor(size_t i) { return haveVsm ? vertSetMaskBefore[i] : 0UL; }
     foreach (i, vi; idx) {
         if (vi < m.vertices.length) {
             m.vertices[vi] = pos[i];          // fill the gap re-opened by Reindex^-1
@@ -3464,10 +3587,10 @@ private void removeVertsReverse(ref Mesh m, in uint[] idx, in Vec3[] pos) {
                 // value above — the re-inserted vertex has no entry.
                 if (vi < mm.present.length) mm.present[vi] = 0;
             }
-            // Task 1060: same "not a restored capture" convention as
-            // vertexMarks/meshMaps just above — the re-inserted vertex's
-            // own set membership was never captured by this entry.
-            if (vi < m.vertexSetMask.length) m.vertexSetMask[vi] = 0UL;
+            // Task 1903 Stage L5-b: this IS a restored capture now — the
+            // one plane of the four that left the "documented limit" class.
+            // See this function's header for which three did not.
+            if (vi < m.vertexSetMask.length) m.vertexSetMask[vi] = vsmFor(i);
         } else if (vi == m.vertices.length) {
             m.vertices ~= pos[i];             // contiguous append at the tail
             m.vertexMarks ~= 0u;
@@ -3476,7 +3599,7 @@ private void removeVertsReverse(ref Mesh m, in uint[] idx, in Vec3[] pos) {
                 foreach (_; 0 .. mm.dim) mm.data ~= 0f;
                 if (mm.present.length != 0) mm.present ~= cast(ubyte)0; // task 1069
             }
-            m.vertexSetMask ~= 0UL;
+            m.vertexSetMask ~= vsmFor(i);   // task 1903 Stage L5-b
         } else {
             m.vertices.insertInPlace(vi, pos[i]); // standalone removal (no Reindex)
             if (vi <= m.vertexMarks.length) m.vertexMarks.insertInPlace(vi, 0u);
@@ -3494,7 +3617,8 @@ private void removeVertsReverse(ref Mesh m, in uint[] idx, in Vec3[] pos) {
                         mm.present.insertInPlace(vi, cast(ubyte)0);
                 }
             }
-            if (vi <= m.vertexSetMask.length) m.vertexSetMask.insertInPlace(vi, 0UL);
+            if (vi <= m.vertexSetMask.length)
+                m.vertexSetMask.insertInPlace(vi, vsmFor(i));   // Stage L5-b
             // Task 1060, Stage 5b: this is the STANDALONE insert branch — no
             // live producer reaches it today (see the comment above this
             // function), but the edge-set re-key belongs here for the same
@@ -3506,6 +3630,17 @@ private void removeVertsReverse(ref Mesh m, in uint[] idx, in Vec3[] pos) {
             // `vertexSelectionOrder`'s insert two lines above.
             selSetRekeyEdges(m, (uint v) => v >= vi ? v + 1 : v);
         }
+    }
+    // Task 1903 Stage L5-b — the EDGE half, AFTER the whole loop and not
+    // inside it. The recorded keys name PRE-compaction vertex indices, which
+    // is the space the mesh is in only once every arm above has run (the
+    // standalone-insert arm shifts existing keys up as it goes). Merged with
+    // `|=` rather than assigned, matching `selSetRekeyEdges`' own conservative
+    // rule for two old keys landing on one new one: a restore may add
+    // membership back, never take it away.
+    foreach (k, key; edgeSetKeyDropped) {
+        if (auto p = key in m.edgeSetMask) *p |= edgeSetWordDropped[k];
+        else                               m.edgeSetMask[key] = edgeSetWordDropped[k];
     }
 }
 

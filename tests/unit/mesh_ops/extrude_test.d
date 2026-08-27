@@ -1029,12 +1029,22 @@ unittest { // RECORDING: extrudeEdgesByMask op-log kinds + byteSize (cube, one e
     // `MeshOpEntry`, whose `sizeof` went 432 -> 560 B (MEASURED, both numbers).
     // `byteSize` charges that struct once per entry (accounting rule 5), and
     // this log has seven entries: 7 x 128 = 896, and 3600 + 896 = 4496 exactly.
-    // NOT a payload change — this delta carries no map entry and none of its
+    // NOT a payload change -- this delta carries no map entry and none of its
     // arrays moved. The cost is the one the plan priced: every entry of every
     // OTHER kind grows by the same amount.
-    assert(delta.byteSize == 4496,
+    //
+    // 4496 -> 4832 at task 1903 Stage L5-b, structural for the SAME reason a
+    // second time: `Kind.RemoveVerts` gained the selection-set payload
+    // (`vertSetMaskBefore` + `edgeSetKeyDropped` + `edgeSetWordDropped`), three
+    // dynamic arrays at 16 B of header apiece, so `MeshOpEntry.sizeof` went
+    // 560 -> 608 B (MEASURED, both numbers). Seven entries: 7 x 48 = 336, and
+    // 4496 + 336 = 4832 exactly. The PAYLOAD itself contributes 0 B here: this
+    // stand's compaction drops vertices that carry no selection-set membership
+    // and the recorder stores nothing for an all-zero capture, which is the
+    // property that keeps this number derivable from the sizeof alone.
+    assert(delta.byteSize == 4832,
         "extrudeEdgesByMask (cube, one interior edge): op-log byteSize "
-      ~ "changed from the measured 4496 -- got " ~ delta.byteSize.to!string);
+      ~ "changed from the measured 4832 -- got " ~ delta.byteSize.to!string);
 
     Mesh pre = cubeStandL_();
     immutable ok = delta.revert(m);
@@ -1083,9 +1093,16 @@ unittest { // RECORDING: extendEdgesByMask op-log kinds (cube, one edge)
     // the sibling pin above: `MeshOpEntry.sizeof` went 432 -> 560 B and this
     // log has three entries -- 3 x 128 = 384, and 1368 + 384 = 1752 exactly.
     // No array on this delta moved.
-    assert(delta.byteSize == 1752,
+    //
+    // 1752 -> 1896 at task 1903 Stage L5-b, same shape again: `sizeof` went
+    // 560 -> 608 B for `Kind.RemoveVerts`' three-array selection-set payload,
+    // and this log has three entries -- 3 x 48 = 144, and 1752 + 144 = 1896
+    // exactly. This family is pure-add and records no `RemoveVerts` at all, so
+    // the new arrays are empty here by construction; the growth is the struct
+    // term alone, charged once per entry of EVERY kind.
+    assert(delta.byteSize == 1896,
         "extendEdgesByMask (cube, one edge): op-log byteSize changed from "
-      ~ "the measured 1752 -- got " ~ delta.byteSize.to!string);
+      ~ "the measured 1896 -- got " ~ delta.byteSize.to!string);
 
     Mesh pre = cubeStandL_();
     immutable ok = delta.revert(m);

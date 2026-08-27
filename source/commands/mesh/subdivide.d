@@ -92,6 +92,20 @@ class Subdivide : Command, Operator {
                 ? mesh.selectedFaces.dup : null;
             uint[] faceOrigin;
             Mesh sub = catmullClarkOsd(*mesh, mask, &faceOrigin);
+            // TASK 1903 STAGE L5-P0 — the axis-0 commit seam (plan §5.0). See
+            // `runFacetedFamily`'s copy of this note for the three reasons it
+            // is UNRECORDED, for why `*mesh = …` inside the frame is safe
+            // (§2.2a — module-level batch state keyed by `Mesh*`), and for
+            // what the batch buys (`clearSubpatch` + `resetSelection` + one
+            // commit per re-selected face + the tail publish, deferred to one
+            // stamp instead of N ticks of
+            // `changeBus.unbatchedGeometryCommits`).
+            //
+            // OPENED AFTER the GIGO guard below, not before: that arm restores
+            // the snapshot and returns `false`, and a rollback belongs OUTSIDE
+            // the frame (§6.5 item 1). Opening first would mean closing the
+            // batch on the refusal path too, for a frame that has nothing to
+            // stamp.
             // `catmullClarkOsd` returns `Mesh.init` (empty) when OSD can't
             // build a topology — a degenerate marked face, or an
             // all-degenerate/empty subset. Without this guard the
@@ -103,6 +117,7 @@ class Subdivide : Command, Operator {
                 snap = MeshSnapshot.init;
                 return false;
             }
+            auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Geometry);
             // Corner-provenance (task 0901, `CornerDrop.SubdivideNoLaw`):
             // verified NOT APPLICABLE. `*mesh = sub` REPLACES the whole `Mesh`
             // value — `sub` never had a PolyVertex map of its own (it comes
@@ -138,6 +153,7 @@ class Subdivide : Command, Operator {
             // coupling that survives until someone tidies the reset away.
             // `Mesh.publishChange`'s doc comment carries the whole rule.
             mesh.publishChange(MeshEditScope.Geometry);
+            ed.close();
         }
         return true;
     }

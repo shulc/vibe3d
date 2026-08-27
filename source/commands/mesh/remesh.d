@@ -111,6 +111,13 @@ final class Remesh : Command, Operator {
         // `Mesh`. `*mesh = result` REPLACES the whole value, same shape as
         // `commands/mesh/subdivide.d`: the old map disappears with the old
         // mesh rather than being zeroed by a face rewrite.
+        // TASK 1903 STAGE L5-P0 — the axis-0 commit seam (plan §5.0). See
+        // `runFacetedFamily`'s copy of this note (subdivide_faceted.d) for why
+        // it is UNRECORDED and why `*mesh = …` inside the frame is safe
+        // (§2.2a). Opened AFTER the GIGO guard above, which restores the
+        // snapshot and returns `false` — a rollback belongs outside the frame
+        // (§6.5 item 1).
+        auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Geometry);
         *mesh = result;
         mesh.resetSelection();
         // `*mesh = result` swap reset the fresh struct's version counters to
@@ -129,6 +136,7 @@ final class Remesh : Command, Operator {
         // close, so the delivery COUNT per command is unchanged (one) while
         // the delivery itself is now guaranteed.
         mesh.publishChange(MeshEditScope.Geometry);
+        ed.close();
         applied_ = true;
         return true;
     }

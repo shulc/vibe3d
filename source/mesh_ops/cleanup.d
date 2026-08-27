@@ -388,6 +388,32 @@ CleanupResult cleanupMesh(ref MeshEditBatch ed, CleanupOptions o = CleanupOption
     if (o.removeOrphans)   r.orphans      = ed.compactUnreferenced();
     if (o.dissolve2Valent) r.dissolved    = ed.dissolveDegree2Verts();
     if (o.removeOrphans)   r.finalOrphans = ed.compactUnreferenced();
+    // TASK 1903 STAGE L5-P0 — THE SWEEP CLOSES ITS OWN CORNER-PROVENANCE
+    // DECLARATION, and this is a FORWARD defect the L5 fixture found rather
+    // than a tidy-up.
+    //
+    // `Mesh.applyVertexRemap` (the weld's apply half) opens
+    // `beginCornerRelocate()` and closes it with `declareCornerProvenance`,
+    // but it rebuilds EDGES only — never loops. The thing that CONSUMES a
+    // pending declaration is `buildLoops` (inside `resizePolyVertexMaps`).
+    // Stage 2 `cleanDegenerateFaces` ends with one, so on the DEFAULT sweep
+    // the declaration was consumed by accident; on any sweep where stage 2
+    // does not fire (`dropDegenerate:false`, or nothing degenerate to drop —
+    // both reachable from `mesh.cleanup`'s own parameters) it was left
+    // OUTSTANDING ACROSS THE COMMAND BOUNDARY. Two consequences, measured on
+    // `makeTaggedGridDirty(3)` with the weld alone enabled: the per-corner
+    // relocation the weld declared is never applied, so the UV values stay in
+    // the pre-weld corner space; and the next delta replay on that mesh trips
+    // `mesh_edit_delta`'s always-on "a corner-provenance declaration was
+    // already pending when a fast-path replay began" assert — which is
+    // exactly the assert's stated job ("find the kernel that declared and did
+    // not rebuild").
+    //
+    // Guarded on `anyAffected()` so a no-op sweep still costs nothing, and
+    // idempotent against stage 2's own rebuild: `buildLoops` on an already
+    // -rebuilt mesh re-derives the same arrays and finds no declaration
+    // pending. ONE rebuild per SWEEP, never one per stage or per element.
+    if (r.anyAffected()) ed.buildLoops();
     return r;
 }
 

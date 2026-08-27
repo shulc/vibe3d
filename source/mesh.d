@@ -3383,8 +3383,9 @@ struct Mesh {
     /// QUADRATIC. `recordPolyVertexPayload` resolves each requested face's
     /// corner base by ONE ordered sweep over `faces`, so N single writes cost
     /// N sweeps, i.e. O(N·F); and each one appends two `MeshOpEntry` of
-    /// `MeshOpEntry.sizeof` apiece (560 B on this tree) where the bulk form
-    /// appends two, total. `insertEdgePoint` and `splitVerticesByMask` reshape
+    /// `MeshOpEntry.sizeof` apiece (608 B on this tree since task 1903 Stage
+    /// L5-b; 560 B when this note was written, and the argument does not turn
+    /// on which) where the bulk form appends two, total. `insertEdgePoint` and `splitVerticesByMask` reshape
     /// every incident face of a splice, so they are exactly the callers that
     /// must not take the per-element door. Measured cost is in the task card
     /// (2260).
@@ -4018,6 +4019,16 @@ struct Mesh {
         // unrecorded, so a recorded weld's revert brings its windings back
         // REMAPPED. Pinned by the `cleanupMesh` sweep block in
         // `tests/unit/mesh_ops/cleanup_test.d`.
+        //
+        // TASK 1903 STAGE L5-a ANSWERED THAT GAP FOR THE SIBLING AND NOT FOR
+        // THIS ONE, deliberately. `Mesh.applyVertexRemap` — the twin below,
+        // reached by `weldCoincidentVertices` and therefore by
+        // `mesh_ops/cleanup.cleanupMesh` — IS armed now, with its measurement
+        // written at its own site. THIS call is `applyVertexRemapAndRebuild`,
+        // reached by `weldVertexPairs`, and it is **L10's**: L5's green says
+        // nothing about it. Read the sibling's note before arming here — the
+        // measurement it records was taken through the OTHER function and does
+        // not transfer by inspection.
         rewriteFaces(this, newFaces, FaceSource(oldOfNew));
         setFaceMarksFrom(faceMarks, ~Marks.Select);
         clearFaceSelectionResize();
@@ -5229,9 +5240,63 @@ struct Mesh {
                 faceRemap[fi] = -1;
             }
         }
-        // Task 1903 Stage K — NOT armed; same reason as
-        // `applyVertexRemapAndRebuild` above (1902 §5.4).
-        rewriteFaces(this, newFaces, FaceSource.fromOldToNew(faceRemap, newFaces.length));
+        // TASK 1903 STAGE L5-a — ARMED, per rewrite, and the reason the K-era
+        // note above it said "NOT armed" is measured DEAD rather than merely
+        // overruled.
+        //
+        // WHAT THE ARM BUYS, measured 2026-08-28 on `makeTaggedGridDirty(3)`
+        // with a RECORDING batch, weld stage alone (`mergeVerts` on, every
+        // other `CleanupOptions` stage off):
+        //   * disarmed — the op-log is EMPTY, `revert()` answers **true** and
+        //     changes NOTHING. Face count, vertex count, edge count and every
+        //     mark word round-trip while `faces` comes back REMAPPED: on that
+        //     stand `f9 [0,16,5,4]` and `f10 [16,4,8,9]` stay at their
+        //     post-weld `[0,1,5,4]` / `[1,4,8,9]`. That is the `revert()`-true
+        //     -and-silent shape §5.5's L2 note calls worse than a throw.
+        //   * armed — `[MeshMapDelta, FaceReindex]`, `revert()` true, and the
+        //     residual is exactly two planes: the Select bits of `faceMarks`
+        //     and `edgeMarks`, written by the `setFaceMarksFrom` /
+        //     `clearFaceSelectionResize` / `clearEdgeSelectionResize` TAILS
+        //     below, which run AFTER this rewrite and are therefore outside
+        //     what any face entry can describe.
+        //
+        // 1902 §5.4 declined this on the ground that "the VERTEX renumbering
+        // this rewrite serves is already recorded by `compactUnreferenced`'s
+        // `recordReindex`". Read as index spaces the two are different
+        // objects — `Reindex` permutes VERTICES, `FaceReindex` restores the
+        // FACE array — and the LIFO revert orders them correctly: `Reindex⁻¹`
+        // + `RemoveVerts⁻¹` re-open the pre-compaction vertex space BEFORE
+        // `FaceReindex⁻¹` installs the pre-weld windings, which name
+        // pre-compaction vertex indices.
+        //
+        // THE PREDICTION THAT HAD TO BE MEASURED, because the identical one
+        // died at `arrayFacesGrid` under Stage K (plan §5.3, MAJOR-4, where
+        // arming landed E=48 against a pre-op E=24): NO DOUBLE REVERT. On the
+        // full default sweep the op-log reads, in order,
+        // `[MeshMapDelta, FaceReindex, MeshMapDelta, FaceReindex, RemoveVerts,
+        // Reindex, MeshMapDelta, RemoveFaces]` — entry 2 is THIS rewrite,
+        // entry 4 is `cleanDegenerateFaces`' — and the revert lands V, F and E
+        // on exactly their pre-op values, with `faces` and `edges` byte
+        // -identical.
+        //
+        // THE SCOPE, NEVER A BATCH-WIDE FLAG, and for this family that is an
+        // ENUMERATED reason rather than an inherited caution. The four-needle
+        // sweep over `mesh_ops/cleanup.d` and every `Mesh` member it reaches
+        // (2026-08-28) found FOUR `rewriteFaces` calls and no hook-free face
+        // writer at all: this one, `cleanDegenerateFaces`' (armed),
+        // `deleteFacesByMask`' and `dissolveVerticesByMask`' — and the last
+        // two must NOT be armed, because each already records its own
+        // `RemoveFaces` / `ReshapeFaces`. Arming either is K's red row: the
+        // drop described twice, and a revert that lands the face count PAST
+        // where it started.
+        //
+        // ITS TWIN IS DELIBERATELY LEFT ALONE. `applyVertexRemapAndRebuild`
+        // (above in this file) carries the same "NOT armed" note and is L10's;
+        // L5's green says nothing about it, and the two are separable on
+        // purpose. `tests/unit/face_reindex_arming_test.d` carries this site
+        // in its roster.
+        { auto arm = faceReindexScope();
+          rewriteFaces(this, newFaces, FaceSource.fromOldToNew(faceRemap, newFaces.length)); }
         setFaceMarksFrom(faceMarks, ~Marks.Select);
         if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
 
@@ -5322,13 +5387,65 @@ struct Mesh {
         if (editRecorder_ !is null) {
             uint[] droppedIdx;
             Vec3[] droppedPos;
+            droppedIdx.reserve(removed);
+            droppedPos.reserve(removed);
             foreach (i, p; remap) {
                 if (p == cast(uint)~0u) {
                     droppedIdx ~= cast(uint)i;
                     droppedPos ~= vertices[i];
                 }
             }
-            editRecorder_.recordRemoveVerts(droppedIdx, droppedPos);
+            // TASK 1903 STAGE L5-b — the SELECTION-SET payload, captured HERE
+            // because here is the last place both planes are still live and in
+            // the pre-compaction index space. This is the one production
+            // publisher of `Kind.RemoveVerts`; the defect it closes is task
+            // 2280's "a named selection set vanished on Ctrl+Z", and
+            // `MeshOpEntry.vertSetMaskBefore` carries the whole argument.
+            //
+            // PER ROUND, NOT PER ELEMENT, on both halves: one pass over the
+            // dropped list and one pass over the edge-set AA (whose length is
+            // the number of TAGGED EDGES, not of mesh edges), both outside any
+            // per-vertex loop.
+            //
+            // AN ALL-ZERO VERTEX PAYLOAD IS DROPPED rather than stored. A mesh
+            // with no selection sets is the common case and pays nothing;
+            // "empty" and "all bits clear" restore identically, so collapsing
+            // them costs no information and keeps `MeshEditDelta.byteSize`
+            // (and therefore §8's delta-vs-snapshot ratio) unmoved on every
+            // mesh that carries no membership.
+            ulong[] vertSetWords;
+            if (vertexSetMask.length != 0) {
+                bool anyBit = false;
+                auto w = new ulong[](droppedIdx.length);
+                foreach (k, vi; droppedIdx) {
+                    if (vi >= vertexSetMask.length) continue;
+                    w[k] = vertexSetMask[vi];
+                    if (w[k] != 0) anyBit = true;
+                }
+                if (anyBit) vertSetWords = w;
+            }
+            // The edge half. `selSetRekeyEdges` runs one call below with the
+            // SAME `remap` and the SAME two predicates (`uint.max` on either
+            // endpoint, or both endpoints landing on one new index); this
+            // mirrors them rather than moving the drop, which P0-L5-2 measured
+            // to be exact — predicted key set == dropped key set, both ways.
+            ulong[] esKeys, esWords;
+            if (edgeSetMask.length != 0) {
+                esKeys.reserve(edgeSetMask.length);
+                esWords.reserve(edgeSetMask.length);
+                foreach (key, msk; edgeSetMask) {
+                    const uint a = cast(uint)(key >> 32);
+                    const uint b = cast(uint)(key & 0xFFFF_FFFFUL);
+                    const uint na = a < remap.length ? remap[a] : uint.max;
+                    const uint nb = b < remap.length ? remap[b] : uint.max;
+                    if (na == uint.max || nb == uint.max || na == nb) {
+                        esKeys  ~= key;
+                        esWords ~= msk;
+                    }
+                }
+            }
+            editRecorder_.recordRemoveVerts(droppedIdx, droppedPos,
+                                            vertSetWords, esKeys, esWords);
             editRecorder_.recordReindex(remap);
         }
         // Rewrite face vertex IDs

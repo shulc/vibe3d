@@ -256,6 +256,97 @@ void comparePlanes(string file, string cell, string which,
     }
 }
 
+/// One plane, on one cell, on one of the two dumps, where the migrated path is
+/// KNOWN and ARGUED to differ from the frozen snapshot oracle.
+///
+/// `check` receives the whole frozen dump and the whole fresh dump, so an entry
+/// can pin the SHAPE of the divergence rather than merely tolerating it.
+///
+/// SHARED FROM STAGE L5 ON, and the move is the point rather than a tidy-up:
+/// `undo_parity_l3_test` grew this for one normalisation
+/// (`faceSelectionOrder` on an unselected face), stage L5's family hit the
+/// IDENTICAL divergence for the identical reason, and the plan's own rule for
+/// that case is "the same argument, not a new one". A second copy of the
+/// struct and the driver would be a second place for that argument to drift.
+/// The ARGUMENT itself stays where it was written — see
+/// `undo_parity_l3_test.checkOrderNormalisation`.
+struct PlaneException {
+    string cell;
+    string which;      // "postOp" | "postUndo"
+    string plane;
+    string why;
+    void function(string cell, in JSONValue frozenDump, in JSONValue freshDump) check;
+}
+
+/// `comparePlanes` with an exception table applied.
+///
+/// Delegates to `comparePlanes` for every plane with no entry — ONE
+/// implementation of the plane walk, so a fixture that gains a plane cannot be
+/// silently ignored by a reader's private copy of it. A plane WITH an entry is
+/// removed from both dumps first (so the shared walk does not see it) and then
+/// scored by the entry itself.
+void compareWithExceptions(string file, string cell, string which,
+                           const ref JSONValue frozenDump,
+                           string freshText,
+                           in PlaneException[] table)
+{
+    JSONValue fresh  = parseJSON(freshText);
+    JSONValue frozen = frozenDump;   // JSONValue is a value type; this copies
+
+    foreach (ref e; table) {
+        if (e.cell != cell || e.which != which) continue;
+        assert((e.plane in frozen.objectNoRef) !is null,
+            format("%s [%s/%s]: exception names plane '%s', which the frozen "
+                 ~ "dump does not carry", file, cell, which, e.plane));
+        assert(frozen[e.plane].toString() != fresh[e.plane].toString(),
+            format("%s [%s/%s]: plane '%s' now AGREES with the frozen oracle, "
+                 ~ "but this reader carries a standing exception for it (%s). "
+                 ~ "The divergence was fixed — RETIRE THE EXCEPTION in the "
+                 ~ "same commit, or it becomes a licence over a plane nobody "
+                 ~ "is comparing", file, cell, which, e.plane, e.why));
+        e.check(cell ~ "/" ~ which, frozen, fresh);
+        frozen.object.remove(e.plane);
+        fresh.object.remove(e.plane);
+    }
+
+    comparePlanes(file, cell, which, frozen, fresh.toString());
+}
+
+/// The shared well-formedness gate on ONE reader's exception table.
+///
+/// MUTATION: add a `PlaneException` naming a plane no cell diverges on —
+/// `compareWithExceptions`'s "now AGREES" assert reddens on the first cell it
+/// applies to, naming the plane. An entry that silences a plane which is in
+/// fact identical is exactly the blind spot a parity reader must not grow.
+void assertExceptionTableWellFormed(string family, in PlaneException[] table,
+                                    in string[] rosterNames)
+{
+    assert(table.length > 0,
+        family ~ ": the exception table is empty — then `compareWithExceptions` "
+      ~ "is dead code for this reader and the mutation above scores nothing");
+    foreach (ref e; table) {
+        assert(e.why.length > 8,
+            family ~ ": exception on " ~ e.cell ~ "/" ~ e.plane
+          ~ " carries no reason");
+        assert(e.check !is null,
+            family ~ ": exception on " ~ e.cell ~ "/" ~ e.plane
+          ~ " has no shape check — a bare skip is not an exception, it is a "
+          ~ "blind spot");
+        assert(e.which == "postOp" || e.which == "postUndo",
+            family ~ ": exception on " ~ e.cell ~ " names dump '" ~ e.which ~ "'");
+        // No entry may name the geometry itself: an exception over `vertices`
+        // or `faces` would let a wrong revert through wholesale.
+        assert(e.plane != "vertices" && e.plane != "faces" && e.plane != "counts",
+            family ~ ": exception on " ~ e.cell ~ " names '" ~ e.plane
+          ~ "' — the geometry planes may never carry one");
+        bool inRoster = false;
+        foreach (n; rosterNames) if (n == e.cell) inRoster = true;
+        assert(inRoster,
+            family ~ ": exception names cell '" ~ e.cell ~ "', which is not in "
+          ~ "the roster — it would then never be applied and never be retired");
+    }
+}
+
 /// The two renderings, WINDOWED ON THE FIRST CHARACTER THAT DIFFERS.
 ///
 /// A leading clip is the wrong instrument for these planes and this is not a

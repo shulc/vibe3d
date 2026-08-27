@@ -231,6 +231,15 @@ unittest
         SymRow("recordMapCreateFilledOwned(", "uv_project.d",       1, "…and its CREATED branch. Two spellings in one file is what a hybrid IS, and the branch is invisible after the write — once it has run the map exists either way"),
         SymRow("recordMapValueDiff(",         "uv_unwrap.d",        1, "uv.unwrap's EXISTING-map branch"),
         SymRow("recordMapCreateFilledOwned(", "uv_unwrap.d",        1, "…and its CREATED branch, through the same one `recordUnwrap` site that the seed-only arm uses — so the two arms cannot drift into recording different shapes"),
+
+        // ---- Stage L5-d (task 2300): the crease pair ----------------------
+        // ONE call each, both inside the shared `runCreaseWrites`, which is
+        // why the counts are 1 and not 2 despite two command classes: the
+        // classes differ only in the weight they pass. This is the kind's
+        // first EDGE-domain caller, and the first production execution of
+        // `owesTopologyBump`'s creaseWeight arm (W-K9).
+        SymRow("recordMapCreate(",            "edge_crease.d",      1, "mesh.edgeCrease.set / .clear on a mesh that has no crease map yet — created zero-filled with no presence channel, so DefaultInit is faithful in BOTH directions. Without it the undo leaves an empty crease map registered where the snapshot arm removed it, which the frozen L5 oracle reads on `meshMaps`"),
+        SymRow("recordMapValueDiff(",         "edge_crease.d",      1, "the POST-HOC door — `setCreaseWeight` has already written, so the diff against the pre-image IS the record. Called on the FAILURE arm too: the writes have already landed by the time an edge fails, and the delta is then the only thing that can roll the half-loop back"),
     ];
 
     // The symbols, DEDUPED — most are listed under several files and counting
@@ -447,6 +456,31 @@ unittest
           ~ "refuses AFTER the seed write, which is why it is taken on every "
           ~ "arm and not behind `recording()`"),
         ArgRow("uv_unwrap.d", "recordMapValueDiff", 0, 3, "MeshEditScope.Material", "uv.unwrap's class"),
+
+        // ===================================================================
+        // STAGE L5-d (task 2300) — the crease pair.
+        // ===================================================================
+        ArgRow("edge_crease.d", "recordMapValueDiff", 0, 1, "pre",
+            "the pre-op crease values, dup'd from the live map AFTER it is "
+          ~ "created and BEFORE the first setCreaseWeight. Replace this with "
+          ~ "`mm.data` — the LIVE array — and the entry's before-image equals "
+          ~ "its after-image: the undo restores nothing and reports success, "
+          ~ "which is the exact failure this half of the census exists for"),
+        ArgRow("edge_crease.d", "recordMapValueDiff", 0, 2, "null",
+            "no presence channel: `kindInfo(creaseWeight).tracksPresence` is "
+          ~ "false, and `recordMapValueDiff` refuses an entry that carries the "
+          ~ "channel anyway — a refusal applies nothing and still answers true"),
+        ArgRow("edge_crease.d", "recordMapValueDiff", 0, 3, "MeshEditScope.Material",
+            "the class `setCreaseWeight` itself publishes, so the recorded arm "
+          ~ "stamps exactly what the redo and the pre-migration path stamped"),
+        ArgRow("edge_crease.d", "recordMapCreate", 0, 1, "mm.dim",
+            "the shape terms are read back off the LIVE map rather than "
+          ~ "hard-coded from `kindInfo`, so a registry that produced something "
+          ~ "else cannot be described as something it is not"),
+        ArgRow("edge_crease.d", "recordMapCreate", 0, 3, "mm.kind",
+            "the KIND, which the replay uses as a refusal term — and it is "
+          ~ "load-bearing here rather than a sanity check: an Edge/dim-1 map "
+          ~ "of the WRONG kind binds on every other term"),
     ];
 
     // NON-VACUITY FIRST: the table must name at least one file, and the
