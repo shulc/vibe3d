@@ -17262,9 +17262,26 @@ struct MeshEditBatch {
     /// `==` no-op filter treats `-0.0` and `+0.0` as one value, and
     /// `meshPlanesJson` prints `%.9g`, so a plane fixture sees the sign.
     ///
+    /// `publishScope` IS A PARAMETER AND NOT A CONSTANT, and the reason is a
+    /// rule rather than a taste (task 1903 Stage L1-b, the first callers).
+    /// `recordPositionDiff` above can hard-code `Position` because there is
+    /// only one position class; a map write has TWO live ones. Every command
+    /// this primitive vouches for already publishes something — the UV and
+    /// weight families publish `Material`, `morph.d` publishes `Maps` — and it
+    /// calls this from its RECORDED arm only. A hard-coded class here would
+    /// therefore OR a second bit into the recorded arm's stamp and not into
+    /// the redo or hatch arms, making the commit seam depend on
+    /// `VIBE3D_UNDO_TRACKER` and moving `docRevision()` — the unsaved-changes
+    /// asterisk — by a different amount on each. Reclassifying those
+    /// publishers is a real behaviour question (`MeshEditScope.Maps`'s own doc
+    /// says the pre-existing `setMeshMapValue` publishers keep `Material` so
+    /// that no existing consumer changes behaviour) and it is carried open,
+    /// not decided here as a migration side effect.
+    ///
     /// Returns true iff an entry was recorded.
     bool recordMapValueDiff(string mapName, in float[] dataBefore,
                             in ubyte[] presentBefore,
+                            uint publishScope = MeshEditScope.Maps,
                             bool* outWholeArray = null) {
         auto f = currentBatchFrame(m_);
         if (f is null || f.rec is null || f.errored) return false;   // FREE
@@ -17329,7 +17346,7 @@ struct MeshEditBatch {
             f.rec.recordMapValuesOwned(live.name, live.dim, live.domain, live.kind,
                 MeshOpEntry.MapAddressing.Listed, idx, bef, aft, pb, pa);
         }
-        m_.commitChange(MeshEditScope.Maps);
+        m_.commitChange(cast(MeshEditScope) publishScope);
         return true;
     }
 

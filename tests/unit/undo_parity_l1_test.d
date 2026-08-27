@@ -70,10 +70,13 @@ private Mesh* l1Stand()
 /// `path` — WHICH UNDO PATH THE CELL RUNS TODAY, not which one produced the
 /// frozen file. The two diverge from Stage L1-a onwards and that is the whole
 /// point of the fixture: the JSON still records `"path": "snapshot"` because a
-/// snapshot really did produce it, at `17679d17`, while the six `mesh.morph.*`
-/// cells below now run `MeshEditDelta.revert` against it. The field travels in
-/// the dump's `provenance` block, which `comparePlanes` skips — so this is a
-/// statement for the reader and moves no comparison.
+/// snapshot really did produce it, at `17679d17`, while TWENTY-TWO of the 26
+/// cells below now run `MeshEditDelta.revert` against it — the six
+/// `mesh.morph.*` since L1-a, and the twelve `uv.*` plus four
+/// `mesh.weightmap.*` since L1-b. The four `select.set.*` cells are the only
+/// ones still on a snapshot, permanently and by the owner's L1 decision. The
+/// field travels in the dump's `provenance` block, which `comparePlanes`
+/// skips — so this is a statement for the reader and moves no comparison.
 ParityCell[] l1Cells(string sha)
 {
     ParityCell[] out_;
@@ -85,51 +88,64 @@ ParityCell[] l1Cells(string sha)
     }
 
     // ---- uv_map_util.d — the map REGISTRY, (R) ---------------------------
-    cell("uv.delete", (m, v) {
+    //
+    // MIGRATED AT STAGE L1-b (task 2250), together with `uv_transform.d`,
+    // `uv_pack.d`, `uv_project.d`, `uv_relax.d`, `uv_unwrap.d` and
+    // `weightmap.d`: sixteen cells that now run the DELTA path against a
+    // fixture the SNAPSHOT path produced. One finding came out of it and was
+    // fixed in the code rather than re-frozen, and it is the SAME class L1-a
+    // hit on `mesh.morph.remove`: `uv.delete` and `mesh.weightmap.remove` both
+    // remove a map that is not last in `meshMaps`, and their undo
+    // re-registered it at the END (`removeMeshMap` splices, `addMeshMap`
+    // appends) while the snapshot restored the array whole. Both reddened on
+    // the `meshMaps` plane; both now record `MeshOpEntry.mapSlot`. The fix did
+    // NOT generalise for free — the entry already carried the field, but each
+    // recorder has to pass it.
+    deltaCell("uv.delete", (m, v) {
         auto c = new UvDelete(m, v, EditMode.Polygons);
         setS(c, "name", "uv2"); return cast(Command)c; });
-    cell("uv.rename", (m, v) {
+    deltaCell("uv.rename", (m, v) {
         auto c = new UvRename(m, v, EditMode.Polygons);
         setS(c, "from", "uv2"); setS(c, "to", "uv3"); return cast(Command)c; });
-    cell("uv.copy", (m, v) {
+    deltaCell("uv.copy", (m, v) {
         auto c = new UvCopy(m, v, EditMode.Polygons);
         // `uv.copy` CREATES its target (`addMeshMap`, which refuses an
         // existing name), so the destination must be a NEW name — that is
         // also what makes its undo owe a map REMOVAL and not a value restore.
         setS(c, "from", "uv"); setS(c, "to", "uvC"); return cast(Command)c; });
-    cell("uv.clear", (m, v) {
+    deltaCell("uv.clear", (m, v) {
         auto c = new UvClear(m, v, EditMode.Polygons);
         setS(c, "name", "uv"); return cast(Command)c; });
 
     // ---- uv_transform.d — map VALUES over a loop subset, (V) -------------
-    cell("uv.flip", (m, v) {
+    deltaCell("uv.flip", (m, v) {
         auto c = new UvFlip(m, v, EditMode.Polygons);
         setS(c, "axis", "u"); setS(c, "pivot", "unit"); return cast(Command)c; });
-    cell("uv.mirror", (m, v) {
+    deltaCell("uv.mirror", (m, v) {
         auto c = new UvMirror(m, v, EditMode.Polygons);
         setS(c, "axis", "v"); setS(c, "pivot", "centroid"); return cast(Command)c; });
-    cell("uv.rotate", (m, v) {
+    deltaCell("uv.rotate", (m, v) {
         auto c = new UvRotate(m, v, EditMode.Polygons);
         setF(c, "angle", 37.0f); setS(c, "pivot", "centroid");
         return cast(Command)c; });
 
     // ---- uv_pack.d — whole-map VALUE rewrites, (V) -----------------------
-    cell("uv.fit", (m, v) {
+    deltaCell("uv.fit", (m, v) {
         auto c = new UvFit(m, v, EditMode.Polygons);
         setS(c, "keepAspect", "stretch"); return cast(Command)c; });
-    cell("uv.pack", (m, v) {
+    deltaCell("uv.pack", (m, v) {
         auto c = new UvPack(m, v, EditMode.Polygons);
         setF(c, "gutter", 0.02f); return cast(Command)c; });
 
     // ---- the two create-if-absent hybrids, (V)+(R) -----------------------
-    cell("uv.project", (m, v) {
+    deltaCell("uv.project", (m, v) {
         auto c = new UvProject(m, v, EditMode.Polygons);
         setF(c, "size", 2.0f); return cast(Command)c; });
-    cell("uv.unwrap", (m, v) {
+    deltaCell("uv.unwrap", (m, v) {
         auto c = new UvUnwrap(m, v, EditMode.Polygons);
         setI(c, "iter", 3); return cast(Command)c; });
 
-    cell("uv.relax", (m, v) {
+    deltaCell("uv.relax", (m, v) {
         // WHOLE-MAP mode, reached by dropping the stand's single-face polygon
         // selection. `uvRelax` pins the corners of every UNSELECTED face, and
         // one selected quad has nothing BUT pinned neighbours, so with the
@@ -140,16 +156,16 @@ ParityCell[] l1Cells(string sha)
         setI(c, "iter", 3); setF(c, "strn", 0.7f); return cast(Command)c; });
 
     // ---- weightmap.d — Point-domain (R) and (V) --------------------------
-    cell("mesh.weightmap.create", (m, v) {
+    deltaCell("mesh.weightmap.create", (m, v) {
         auto c = new WeightmapCreate(m, v, EditMode.Vertices);
         setS(c, "name", "W2"); return cast(Command)c; });
-    cell("mesh.weightmap.remove", (m, v) {
+    deltaCell("mesh.weightmap.remove", (m, v) {
         auto c = new WeightmapRemove(m, v, EditMode.Vertices);
         setS(c, "name", "W"); return cast(Command)c; });
-    cell("mesh.weightmap.rename", (m, v) {
+    deltaCell("mesh.weightmap.rename", (m, v) {
         auto c = new WeightmapRename(m, v, EditMode.Vertices);
         setS(c, "from", "W"); setS(c, "to", "W9"); return cast(Command)c; });
-    cell("mesh.weightmap.set", (m, v) {
+    deltaCell("mesh.weightmap.set", (m, v) {
         auto c = new WeightmapSet(m, v, EditMode.Vertices);
         setS(c, "name", "W"); setI(c, "vert", 6); setF(c, "weight", 0.875f);
         return cast(Command)c; });

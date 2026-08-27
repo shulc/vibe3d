@@ -11,21 +11,54 @@ module commands.mesh.uv_relax;
 ///   - All UV vertices pinned, or iter < 1, or strn == 0 → returns false
 ///     → HTTP status:error, NO history entry (no-op convention).
 ///
-/// Undo: MeshSnapshot deep-dups meshMaps, so UV undo is free.
+/// Undo: a recorded `MeshOpEntry.Kind.MapValueDelta` since task 1903 Stage
+/// L1-b, through the post-hoc door `MeshEditBatch.recordMapValueDiff` —
+/// `uvRelax` takes a `const ref Mesh` plus the map pointer and writes through
+/// it, so the command holds a pre-op image and the DIFF is the record. The
+/// kernel signature is UNCHANGED. `MeshSnapshot` is the escape hatch's arm
+/// (`VIBE3D_UNDO_TRACKER=0`) only.
+///
+/// THE REFUSAL ARM IS SAFE TO TAKE FROM INSIDE THE BATCH, and that is a
+/// property of the kernel rather than an assumption: every `return false` in
+/// `uvRelax` — `iterations < 1`, `strength == 0`, no loops, nothing relaxable
+/// — precedes its first write, so a refusal leaves the map untouched and
+/// there is nothing to roll back. `uv.unwrap`'s kernel does NOT have that
+/// property (it writes its seed first) and its command says so at its own
+/// site.
 
 import command;
-import mesh            : Mesh, MapDomain, kUvMapName;
+import mesh            : Mesh, MapDomain, MeshEditBatch, kUvMapName;
 import view            : View;
 import editmode        : EditMode;
 import snapshot        : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
 import params          : Param;
+import commands.mesh.position_undo : RecordedUndo;
+import commands.mesh.map_edit_undo : runMapEdit, revertMapEditEmptyOk;
 import uv_relax        : uvRelax;
 
 class UvRelax : Command {
     private int          iter_ = 5;
     private float        strn_ = 0.5f;
-    private MeshSnapshot snap;
+    private MeshSnapshot snap;      // the hatch's arm only
+    private RecordedUndo undo_;
+    /// The forward SUCCEEDED. NOT derivable from `undo_`/`snap`, and the three
+    /// shipped cells that caught the attempt say why: these commands' `revert()`
+    /// must answer FALSE when the forward refused or never ran
+    /// (`test_uv_transform.d` "revert without apply must return false",
+    /// `test_uv_pack.d`, `test_uv_project.d`) and TRUE when the forward
+    /// SUCCEEDED while moving nothing a bitwise diff could see (regression
+    /// 0099: `CommandHistory.undo` discards an entry whose revert answers false
+    /// AND its whole trailing suffix). Both states are "no delta and no
+    /// snapshot", so only a bit set by the forward can separate them.
+    private bool applied_;
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded undo (task 2250). A
+        /// command that recorded NOTHING falls back to its snapshot and
+        /// restores every plane correctly, so every result-shaped assertion is
+        /// green over a deleted recorder; only reading the log is not.
+        public ref const(RecordedUndo) recordedUndo() const return { return undo_; }
+    }
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -60,26 +93,35 @@ class UvRelax : Command {
         // selected; null = whole-map mode (no selection restriction).
         const bool[] cp = buildCornerPinned(*mesh);
 
-        // Snapshot before mutation (deep-dups meshMaps → UV undo is free).
-        snap = MeshSnapshot.capture(*mesh);
+        applied_ = runMapEdit(mesh, undo_, snap, MeshEditScope.Material,
+                          (ref MeshEditBatch ed) => kernel(ed, cp));
+        return applied_;
+    }
 
-        // Re-fetch map pointer (defensive after capture, which may reallocate
-        // meshMaps to separate original from snapshot storage).
-        map = mesh.meshMap(kUvMapName);
+    private bool kernel(ref MeshEditBatch ed, const bool[] cp) {
+        auto map = ed.mesh.meshMap(kUvMapName);
+        assert(map !is null, "uv.relax: the map resolved in applyImpl "
+                           ~ "vanished before the kernel ran");
+        // ONE block `dup` of the payload, and ONLY on the recording arm
+        // (plan §K.5 rules 2 and 3).
+        float[] pre;
+        const bool rec = ed.recording();
+        if (rec) pre = map.data.dup;
 
-        if (!uvRelax(*mesh, map, iter_, strn_, cp)) {
-            snap = MeshSnapshot.init;   // discard unused snapshot
-            return false;
-        }
+        // A refusal here is a TRUE no-op — see the module header — so simply
+        // returning false is correct: `runMapEdit` closes the batch, disarms
+        // the delta, and `applyImpl` answers false, which lands no history
+        // entry. Nothing was written and nothing is rolled back.
+        if (!uvRelax(ed.mesh, map, iter_, strn_, cp)) return false;
 
-        mesh.commitChange(MeshEditScope.Material);
+        if (rec) ed.recordMapValueDiff(kUvMapName, pre, null,
+                                       MeshEditScope.Material);
+        ed.commitChange(MeshEditScope.Material);
         return true;
     }
 
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
-        return true;
+        return revertMapEditEmptyOk(mesh, undo_, snap, applied_);
     }
 }
 

@@ -18,16 +18,33 @@ module commands.mesh.uv_transform;
 ///     zero corners, e.g. on an empty mesh): returns `false` → dispatcher
 ///     returns status:error with NO history entry recorded.
 ///
-/// Undo: `MeshSnapshot` (snapshot.d:68 deep-dups `meshMaps`), verbatim
-/// weightmap.d pattern — UV undo is free.
+/// UNDO IS A RECORDED `MeshOpEntry.Kind.MapValueDelta` SINCE TASK 1903 STAGE
+/// L1-b, through the POST-HOC door `MeshEditBatch.recordMapValueDiff`:
+/// `applyUvAffine` takes the map pointer and writes it, so the command holds a
+/// pre-op image and the DIFF against the live map is the record. Kernel
+/// signatures are unchanged. `MeshSnapshot` survives only as the escape
+/// hatch's arm (`VIBE3D_UNDO_TRACKER=0`).
+///
+/// MODE C, and the ratio is stated rather than assumed: these three rewrite
+/// every affected corner, so the payload is two whole images of the map —
+/// ~6.10 MB against the 20.81 MB whole-mesh capture at 99 856 faces, a ratio
+/// of 3.4x that is SCALE-INVARIANT (task 2210). The owner accepted it because
+/// the absolute saving is 71 % of the dense side, not because the ratio is
+/// large; do not read the small ratio as "barely worth it".
+///
+/// THE PRE-OP `dup` IS BEHIND `ed.recording()`. It is the whole payload, and
+/// paying it on the redo and hatch arms is exactly what made four L0-d
+/// commands twice as slow (task 2160, plan §K.5 rule 2).
 
 import command;
-import mesh           : Mesh, MapDomain, kUvMapName;
+import mesh           : Mesh, MapDomain, MeshEditBatch, kUvMapName;
 import view           : View;
 import editmode       : EditMode;
 import snapshot       : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
 import params         : Param;
+import commands.mesh.position_undo : RecordedUndo;
+import commands.mesh.map_edit_undo : runMapEdit, revertMapEditEmptyOk;
 import uv_transform;
 
 // ---------------------------------------------------------------------------
@@ -45,7 +62,25 @@ import uv_transform;
 class UvFlip : Command {
     private string       axis_  = "u";
     private string       pivot_ = "unit";
-    private MeshSnapshot snap;
+    private MeshSnapshot snap;      // the hatch's arm only
+    private RecordedUndo undo_;
+    /// The forward SUCCEEDED. NOT derivable from `undo_`/`snap`, and the three
+    /// shipped cells that caught the attempt say why: these commands' `revert()`
+    /// must answer FALSE when the forward refused or never ran
+    /// (`test_uv_transform.d` "revert without apply must return false",
+    /// `test_uv_pack.d`, `test_uv_project.d`) and TRUE when the forward
+    /// SUCCEEDED while moving nothing a bitwise diff could see (regression
+    /// 0099: `CommandHistory.undo` discards an entry whose revert answers false
+    /// AND its whole trailing suffix). Both states are "no delta and no
+    /// snapshot", so only a bit set by the forward can separate them.
+    private bool applied_;
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded undo (task 2250). A
+        /// command that recorded NOTHING falls back to its snapshot and
+        /// restores every plane correctly, so every result-shaped assertion is
+        /// green over a deleted recorder; only reading the log is not.
+        public ref const(RecordedUndo) recordedUndo() const return { return undo_; }
+    }
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -76,23 +111,43 @@ class UvFlip : Command {
             throw new Exception("uv.flip: UV map data out of sync");
 
         auto loops = collectAffectedUvLoops(*mesh);
-        // Empty only when selected-faces mode yields zero corners (e.g. empty
-        // mesh).  Return false → no snapshot, no history entry.
+        // Empty only when selected-faces mode yields zero corners (e.g. an
+        // empty mesh). Return false BEFORE the batch opens — no undo image, no
+        // history entry, and nothing to roll back.
         if (loops.length == 0) return false;
 
-        snap = MeshSnapshot.capture(*mesh);
+        applied_ = runMapEdit(mesh, undo_, snap, MeshEditScope.Material,
+                          (ref MeshEditBatch ed) => kernel(ed, loops));
+        return applied_;
+    }
+
+    private bool kernel(ref MeshEditBatch ed, size_t[] loops) {
+        auto map = ed.mesh.meshMap(kUvMapName);
+        assert(map !is null, "uv.flip: the map resolved in applyImpl "
+                           ~ "vanished before the kernel ran");
+        // ONE block `dup` of the payload, and ONLY on the recording arm.
+        float[] pre;
+        const bool rec = ed.recording();
+        if (rec) pre = map.data.dup;
+
         const UvPivot pv    = parsePivot(pivot_);
         float[2]      pivot = computePivot(map, loops, pv);
         auto          a     = (axis_ == "v") ? makeFlipV(pivot) : makeFlipU(pivot);
         applyUvAffine(map, loops, a);
-        mesh.commitChange(MeshEditScope.Material);
+
+        // THE POST-HOC DOOR. `applyUvAffine` has already written; asking the
+        // setters to re-announce those values would record nothing useful and
+        // re-publish per element, so the diff against `pre` IS the record. It
+        // publishes `Material` — the class this command has always published —
+        // so the recorded arm's stamp equals the redo and hatch arms'.
+        if (rec) ed.recordMapValueDiff(kUvMapName, pre, null,
+                                       MeshEditScope.Material);
+        ed.commitChange(MeshEditScope.Material);
         return true;
     }
 
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
-        return true;
+        return revertMapEditEmptyOk(mesh, undo_, snap, applied_);
     }
 }
 
@@ -106,7 +161,22 @@ class UvFlip : Command {
 class UvMirror : Command {
     private string       axis_  = "u";
     private string       pivot_ = "centroid";
-    private MeshSnapshot snap;
+    private MeshSnapshot snap;      // the hatch's arm only
+    private RecordedUndo undo_;
+    /// The forward SUCCEEDED. NOT derivable from `undo_`/`snap`, and the three
+    /// shipped cells that caught the attempt say why: these commands' `revert()`
+    /// must answer FALSE when the forward refused or never ran
+    /// (`test_uv_transform.d` "revert without apply must return false",
+    /// `test_uv_pack.d`, `test_uv_project.d`) and TRUE when the forward
+    /// SUCCEEDED while moving nothing a bitwise diff could see (regression
+    /// 0099: `CommandHistory.undo` discards an entry whose revert answers false
+    /// AND its whole trailing suffix). Both states are "no delta and no
+    /// snapshot", so only a bit set by the forward can separate them.
+    private bool applied_;
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded undo — see UvFlip.
+        public ref const(RecordedUndo) recordedUndo() const return { return undo_; }
+    }
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -136,21 +206,43 @@ class UvMirror : Command {
             throw new Exception("uv.mirror: UV map data out of sync");
 
         auto loops = collectAffectedUvLoops(*mesh);
+        // Empty only when selected-faces mode yields zero corners (e.g. an
+        // empty mesh). Return false BEFORE the batch opens — no undo image, no
+        // history entry, and nothing to roll back.
         if (loops.length == 0) return false;
 
-        snap = MeshSnapshot.capture(*mesh);
+        applied_ = runMapEdit(mesh, undo_, snap, MeshEditScope.Material,
+                          (ref MeshEditBatch ed) => kernel(ed, loops));
+        return applied_;
+    }
+
+    private bool kernel(ref MeshEditBatch ed, size_t[] loops) {
+        auto map = ed.mesh.meshMap(kUvMapName);
+        assert(map !is null, "uv.mirror: the map resolved in applyImpl "
+                           ~ "vanished before the kernel ran");
+        // ONE block `dup` of the payload, and ONLY on the recording arm.
+        float[] pre;
+        const bool rec = ed.recording();
+        if (rec) pre = map.data.dup;
+
         const UvPivot pv    = parsePivot(pivot_);
         float[2]      pivot = computePivot(map, loops, pv);
         auto          a     = (axis_ == "v") ? makeFlipV(pivot) : makeFlipU(pivot);
         applyUvAffine(map, loops, a);
-        mesh.commitChange(MeshEditScope.Material);
+
+        // THE POST-HOC DOOR. `applyUvAffine` has already written; asking the
+        // setters to re-announce those values would record nothing useful and
+        // re-publish per element, so the diff against `pre` IS the record. It
+        // publishes `Material` — the class this command has always published —
+        // so the recorded arm's stamp equals the redo and hatch arms'.
+        if (rec) ed.recordMapValueDiff(kUvMapName, pre, null,
+                                       MeshEditScope.Material);
+        ed.commitChange(MeshEditScope.Material);
         return true;
     }
 
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
-        return true;
+        return revertMapEditEmptyOk(mesh, undo_, snap, applied_);
     }
 }
 
@@ -164,7 +256,22 @@ class UvMirror : Command {
 class UvRotate : Command {
     private float        angle_ = 90.0f;
     private string       pivot_ = "centroid";
-    private MeshSnapshot snap;
+    private MeshSnapshot snap;      // the hatch's arm only
+    private RecordedUndo undo_;
+    /// The forward SUCCEEDED. NOT derivable from `undo_`/`snap`, and the three
+    /// shipped cells that caught the attempt say why: these commands' `revert()`
+    /// must answer FALSE when the forward refused or never ran
+    /// (`test_uv_transform.d` "revert without apply must return false",
+    /// `test_uv_pack.d`, `test_uv_project.d`) and TRUE when the forward
+    /// SUCCEEDED while moving nothing a bitwise diff could see (regression
+    /// 0099: `CommandHistory.undo` discards an entry whose revert answers false
+    /// AND its whole trailing suffix). Both states are "no delta and no
+    /// snapshot", so only a bit set by the forward can separate them.
+    private bool applied_;
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded undo — see UvFlip.
+        public ref const(RecordedUndo) recordedUndo() const return { return undo_; }
+    }
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -193,21 +300,43 @@ class UvRotate : Command {
             throw new Exception("uv.rotate: UV map data out of sync");
 
         auto loops = collectAffectedUvLoops(*mesh);
+        // Empty only when selected-faces mode yields zero corners (e.g. an
+        // empty mesh). Return false BEFORE the batch opens — no undo image, no
+        // history entry, and nothing to roll back.
         if (loops.length == 0) return false;
 
-        snap = MeshSnapshot.capture(*mesh);
+        applied_ = runMapEdit(mesh, undo_, snap, MeshEditScope.Material,
+                          (ref MeshEditBatch ed) => kernel(ed, loops));
+        return applied_;
+    }
+
+    private bool kernel(ref MeshEditBatch ed, size_t[] loops) {
+        auto map = ed.mesh.meshMap(kUvMapName);
+        assert(map !is null, "uv.rotate: the map resolved in applyImpl "
+                           ~ "vanished before the kernel ran");
+        // ONE block `dup` of the payload, and ONLY on the recording arm.
+        float[] pre;
+        const bool rec = ed.recording();
+        if (rec) pre = map.data.dup;
+
         const UvPivot pv    = parsePivot(pivot_);
         float[2]      pivot = computePivot(map, loops, pv);
         auto          a     = makeRotate(angle_, pivot);
         applyUvAffine(map, loops, a);
-        mesh.commitChange(MeshEditScope.Material);
+
+        // THE POST-HOC DOOR. `applyUvAffine` has already written; asking the
+        // setters to re-announce those values would record nothing useful and
+        // re-publish per element, so the diff against `pre` IS the record. It
+        // publishes `Material` — the class this command has always published —
+        // so the recorded arm's stamp equals the redo and hatch arms'.
+        if (rec) ed.recordMapValueDiff(kUvMapName, pre, null,
+                                       MeshEditScope.Material);
+        ed.commitChange(MeshEditScope.Material);
         return true;
     }
 
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
-        return true;
+        return revertMapEditEmptyOk(mesh, undo_, snap, applied_);
     }
 }
 

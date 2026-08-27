@@ -31,11 +31,19 @@
 // `source/mesh_edit_delta.d` -> `mapDeltaBindRefused` moves on the undo pass
 // and this block reddens naming it. Verified in this lane, task 2230.
 //
-// STILL PARTLY OWED, and named so nobody reads the green as total: the
-// `mesh.weightmap.*` and `uv.*` lines are exercising commands that are STILL
-// DENSE (their groups are L1-c and L1-d), so those four commands contribute
-// nothing to these counters yet and their zeros remain dead cells. Only the
-// five morph lines and their undo/redo are live.
+// STAGE L1-b (task 2250) FINISHED IT. `weightmap.d` (4 classes),
+// `uv_map_util.d` (4) and the five UV value files (8) now record the kind too,
+// so every line below drives the recorder, the replay guard and the bind terms
+// — the note that used to stand here, saying the `mesh.weightmap.*` and `uv.*`
+// zeros were dead cells, is retired rather than left to be believed.
+//
+// TWO OF THE SIXTEEN ARE DELIBERATELY NOT IN THIS BLOCK: `uv.relax` and
+// `uv.unwrap` both REFUSE on some meshes (all corners pinned; a closed mesh
+// with no seams has zero pinned classes), and `cmdJ` asserts `status == "ok"`,
+// so driving them here would make this block's greenness depend on the
+// starting mesh rather than on the counters. They are driven in lane U
+// (`tests/unit/uv_weight_delta_test.d`, cells E4 and E6) where the refusal is
+// the point rather than an accident.
 //
 // The witnesses that ARE potent at this commit all live in the OTHER lane —
 // `dub test --config=tests`, over `tests/unit/map_value_delta_test.d`,
@@ -115,20 +123,39 @@ unittest { // block 1 — the family moves none of the three. LIVE for morph.*
 
     const before = changes();
 
-    // The map family, one representative of each `MapOp` arm the kind will
-    // carry once the groups migrate: Create, Values, Rename, Remove.
-    cmdJ("mesh.weightmap.create", `{"name":"wmA"}`);
-    cmdJ("mesh.weightmap.set",    `{"name":"wmA","vert":0,"weight":1.0}`);
-    cmdJ("mesh.weightmap.rename", `{"from":"wmA","to":"wmB"}`);
-    cmdJ("mesh.weightmap.remove", `{"name":"wmB"}`);
+    // THE WHOLE MIGRATED FAMILY, in an order where every command succeeds:
+    // `uv.project` has to create the map before the value commands can touch
+    // it, and the two registry-destroying ones (`uv.clear`, `uv.delete`) come
+    // last so they do not pull the map out from under their siblings.
+    //
+    // Every `MapOp` arm is represented more than once and by more than one
+    // group, which is what makes a refusal in ONE of them visible: a bind term
+    // that starts refusing ticks `mapDeltaBindRefused` once per replayed
+    // entry, and the delta below is the sum over the whole sequence.
+    size_t landed = 0;
+    void cmd(string id, string params = "{}") { cmdJ(id, params); ++landed; }
 
-    cmdJ("mesh.morph.create", `{"name":"mA","kind":"relative"}`);
-    cmdJ("mesh.morph.set",    `{"name":"mA","vert":6,"x":2.0,"y":0.0,"z":0.0}`);
-    cmdJ("mesh.morph.clear",  `{"name":"mA","vert":6}`);
-    cmdJ("mesh.morph.rename", `{"from":"mA","to":"mB"}`);
-    cmdJ("mesh.morph.remove", `{"name":"mB"}`);
+    cmd("uv.project", `{"mode":"planar","axis":"z"}`);   // Create (map absent)
+    cmd("uv.flip",    `{"axis":"u","pivot":"unit"}`);    // Values, post-hoc
+    cmd("uv.mirror",  `{"axis":"v"}`);
+    cmd("uv.rotate",  `{"angle":37.0}`);
+    cmd("uv.fit");
+    cmd("uv.pack",    `{"gutter":0.02}`);
+    cmd("uv.copy",    `{"from":"uv","to":"uvB"}`);       // Create (filled)
+    cmd("uv.rename",  `{"from":"uvB","to":"uvC"}`);      // Rename
+    cmd("uv.clear",   `{"name":"uv"}`);                  // Values, WholeArray
+    cmd("uv.delete",  `{"name":"uvC"}`);                 // Remove
 
-    cmdJ("uv.project", `{"mode":"planar","axis":"z"}`);
+    cmd("mesh.weightmap.create", `{"name":"wmA"}`);      // Create, DefaultInit
+    cmd("mesh.weightmap.set",    `{"name":"wmA","vert":0,"weight":1.0}`);
+    cmd("mesh.weightmap.rename", `{"from":"wmA","to":"wmB"}`);
+    cmd("mesh.weightmap.remove", `{"name":"wmB"}`);      // Remove + slot
+
+    cmd("mesh.morph.create", `{"name":"mA","kind":"relative"}`);
+    cmd("mesh.morph.set",    `{"name":"mA","vert":6,"x":2.0,"y":0.0,"z":0.0}`);
+    cmd("mesh.morph.clear",  `{"name":"mA","vert":6}`);
+    cmd("mesh.morph.rename", `{"from":"mA","to":"mB"}`);
+    cmd("mesh.morph.remove", `{"name":"mB"}`);
 
     // …and their UNDOs, because the replay guard and the bind terms only run
     // on `apply`/`revert`. A forward-only exercise cannot move `mapDeltaMix`-
@@ -138,25 +165,25 @@ unittest { // block 1 — the family moves none of the three. LIVE for morph.*
     // of them lands a history entry, so ten undos must succeed; anything less
     // means the replay this block is measuring did not run and its three zeros
     // are dead cells again.
-    const size_t undone = undoN(10);
-    assert(undone == 10, format(
-        "only %d of 10 undos succeeded — the replay that moves these counters "
+    const size_t undone = undoN(landed);
+    assert(undone == landed, format(
+        "only %d of %d undos succeeded — the replay that moves these counters "
       ~ "did not run, so the zeros below would be measuring nothing. (This is "
       ~ "the exact shape the file shipped with: ten posts to a command id that "
-      ~ "does not exist, none of them checked.)", undone));
+      ~ "does not exist, none of them checked.)", undone, landed));
 
     // …and their REDOs, and then the undos again. `applyForward` is a separate
     // dispatch from `applyReverse` and has its own bind path: the `Create`
     // arm's forward REGISTERS a map and refuses on a taken name, which only a
     // redo can reach. Without this pass the whole forward half of
     // `patchMapValues` is unexercised in this lane.
-    const size_t redone = redoN(10);
-    assert(redone == 10, format(
-        "only %d of 10 redos succeeded — the FORWARD half of the map dispatch "
-      ~ "is then unexercised in this lane.", redone));
-    const size_t undone2 = undoN(10);
-    assert(undone2 == 10, format(
-        "only %d of 10 second-pass undos succeeded", undone2));
+    const size_t redone = redoN(landed);
+    assert(redone == landed, format(
+        "only %d of %d redos succeeded — the FORWARD half of the map dispatch "
+      ~ "is then unexercised in this lane.", redone, landed));
+    const size_t undone2 = undoN(landed);
+    assert(undone2 == landed, format(
+        "only %d of %d second-pass undos succeeded", undone2, landed));
 
     const after = changes();
 

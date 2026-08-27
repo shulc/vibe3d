@@ -21,8 +21,13 @@
 // the first, and the argument table below is now DRIVEN: it pins the before /
 // after / presence arguments of all six of its calls, and a mutation that
 // swaps one for another keeps every count row green and reddens only here.
-// (`recordMapValueDiff`'s own set is still empty and still owed by L1-e; that
-// row is labelled where it stands.)
+// STAGE L1-b (task 2250) DISCHARGED `recordMapValueDiff`'s half of the debt.
+// Eight production call sites now exist across the five UV value files, and
+// two arguments of each are pinned below: the BEFORE-IMAGE (the one a caller
+// substitutes for the live array, which keeps the count green and makes the
+// undo restore nothing) and the PUBLISH CLASS (the one that silently moves the
+// family from `Material` to `Maps`, changing what `docRevision()` counts —
+// i.e. the unsaved-changes asterisk — on the RECORDED arm only).
 //
 // WHY AN ARGUMENT ROW AND NOT JUST A COUNT — L0-b's M-b4/M-b6 lesson, and this
 // family gives it its sharpest form: the presence channel's before-image and
@@ -205,10 +210,31 @@ unittest
         SymRow("recordMapRemoveOwned(",       "morph.d",            1, "mesh.morph.remove"),
         SymRow("recordMapRename(",            "mesh_edit_delta.d",  1, "its declaration"),
         SymRow("recordMapRename(",            "morph.d",            1, "mesh.morph.rename — two strings, which is the whole reason the arm exists"),
+
+        // ---- Stage L1-b (task 2250): the other three groups ---------------
+        // `weightmap.d` — four commands, one recorder call each, one arm each.
+        SymRow("recordMapCreate(",            "weightmap.d",        1, "mesh.weightmap.create — created zero-filled with no presence channel, so DefaultInit is faithful in BOTH directions and carries no array at all"),
+        SymRow("recordMapRemoveOwned(",       "weightmap.d",        1, "mesh.weightmap.remove — the whole map plus its registry SLOT (`W` sits at index 1 of the parity stand)"),
+        SymRow("recordMapRename(",            "weightmap.d",        1, "mesh.weightmap.rename"),
+        SymRow("recordMapValuesOwned(",       "weightmap.d",        1, "mesh.weightmap.set — ONE element, `Listed`, recorded from a known index rather than diffed. Mode A's extreme: twelve bytes of arrays"),
+        // `uv_map_util.d` — the UV registry group.
+        SymRow("recordMapRemoveOwned(",       "uv_map_util.d",      1, "uv.delete — whole map plus the SLOT (`uv2` sits at index 2)"),
+        SymRow("recordMapRename(",            "uv_map_util.d",      1, "uv.rename"),
+        SymRow("recordMapCreateFilledOwned(", "uv_map_util.d",      1, "uv.copy — it CREATES its target AND FILLS it, so the content must ride or a forward replay reproduces an empty channel of the right length"),
+        SymRow("recordMapValuesOwned(",       "uv_map_util.d",      1, "uv.clear — `WholeArray`, never sparsified (plan §K.5 rule 5: every corner is a candidate, so the sparse form is strictly larger)"),
+        // The five UV VALUE files — the POST-HOC door, one call per class
+        // except the two hybrids, which also own a Create.
+        SymRow("recordMapValueDiff(",         "uv_transform.d",     3, "uv.flip / uv.mirror / uv.rotate — one per class"),
+        SymRow("recordMapValueDiff(",         "uv_pack.d",          2, "uv.fit / uv.pack. `uv.pack` records ONE entry for all its islands: the recorder diffs the finished map, so the per-island structure of the forward is invisible to the undo"),
+        SymRow("recordMapValueDiff(",         "uv_relax.d",         1, "uv.relax"),
+        SymRow("recordMapValueDiff(",         "uv_project.d",       1, "uv.project's EXISTING-map branch"),
+        SymRow("recordMapCreateFilledOwned(", "uv_project.d",       1, "…and its CREATED branch. Two spellings in one file is what a hybrid IS, and the branch is invisible after the write — once it has run the map exists either way"),
+        SymRow("recordMapValueDiff(",         "uv_unwrap.d",        1, "uv.unwrap's EXISTING-map branch"),
+        SymRow("recordMapCreateFilledOwned(", "uv_unwrap.d",        1, "…and its CREATED branch, through the same one `recordUnwrap` site that the seed-only arm uses — so the two arms cannot drift into recording different shapes"),
     ];
 
-    // The symbols, DEDUPED — `recordMapValuesOwned` is listed under two
-    // files and counting it once per ROW would double every one of its counts.
+    // The symbols, DEDUPED — most are listed under several files and counting
+    // one once per ROW would multiply every one of its counts.
     bool[string] symSet;
     foreach (ref r; rows) symSet[r.sym] = true;
     auto syms = symSet.keys;
@@ -250,10 +276,12 @@ unittest
         "census: a map recorder is called from a file the table does not name: "
       ~ "%s.\n"
       ~ "The recorder callers of Kind.MapValueDelta are ENUMERATED, not merely "
-      ~ "counted: `commands/mesh/morph.d` (Stage L1-a, six calls) and "
-      ~ "`recordMapValueDiff`'s own two arms in mesh.d. L1-c (weightmap.d), "
-      ~ "L1-d (uv_map_util.d) and L1-e (the six UV value files) each owe their "
-      ~ "own rows. If you are one of them: add your call sites to the table "
+      ~ "counted: `commands/mesh/morph.d` (Stage L1-a, six calls), "
+      ~ "`recordMapValueDiff`'s own two arms in mesh.d, and Stage L1-b's "
+      ~ "three groups — `weightmap.d` (4), `uv_map_util.d` (4) and the five "
+      ~ "UV value files (10 calls across 8 classes; the two hybrids each own "
+      ~ "a Create as well as a diff). If you are a later stage: add your call "
+      ~ "sites to the table "
       ~ "TOGETHER WITH the exact TEXT of each one's before-image / content "
       ~ "argument in the block below, because a count row stays green when the "
       ~ "ARGUMENT changes (L0-b, M-b4) and the two create spellings differ by "
@@ -332,6 +360,93 @@ unittest
         // mesh.morph.rename — two strings and nothing else.
         ArgRow("morph.d", "recordMapRename", 0, 0, "from_", "the old name"),
         ArgRow("morph.d", "recordMapRename", 0, 1, "to_",   "the new name"),
+
+        // ===================================================================
+        // STAGE L1-b (task 2250).
+        // ===================================================================
+        // --- weightmap.d ---------------------------------------------------
+        // mesh.weightmap.set — one element, both images read from the LIVE map
+        // on either side of a write this command does not own.
+        ArgRow("weightmap.d", "recordMapValuesOwned", 0, 6, "[before]",
+            "the pre-op value, captured BEFORE setVertexWeight runs"),
+        ArgRow("weightmap.d", "recordMapValuesOwned", 0, 7, "[after]",
+            "the post-op value, READ BACK from the live map rather than "
+          ~ "reconstructed from the command's own `weight_` parameter — the "
+          ~ "write goes through a Mesh setter, and an entry whose after-image "
+          ~ "disagrees with the mesh writes the wrong thing on redo"),
+        ArgRow("weightmap.d", "recordMapValuesOwned", 0, 8,
+            "tracks ? [presBefore] : null",
+            "the presence channel, decided by the KIND and never by the "
+          ~ "array. A weight map does not track presence, and "
+          ~ "`patchMapValuesWrite` REFUSES an entry that carries the channel "
+          ~ "anyway — a refusal applies nothing and still answers true"),
+        ArgRow("weightmap.d", "recordMapValuesOwned", 0, 9,
+            "tracks ? [presAfter] : null", "…and its after-image"),
+        // mesh.weightmap.remove — the whole map plus the registry slot.
+        ArgRow("weightmap.d", "recordMapRemoveOwned", 0, 4, "slot",
+            "the map's index in meshMaps BEFORE the splice. `uint.max` here "
+          ~ "restores the map's CONTENT at the END of the registry: measured "
+          ~ "on the frozen oracle, which reddens on "
+          ~ "[mesh.weightmap.remove/postUndo] plane 'meshMaps'"),
+        ArgRow("weightmap.d", "recordMapRemoveOwned", 0, 5, "data",
+            "the pre-op values, dup'd before removeMeshMap splices them away"),
+        ArgRow("weightmap.d", "recordMapRemoveOwned", 0, 6, "pres",
+            "…and the presence channel, empty for this kind but carried "
+          ~ "through the same field rather than hard-coded to null"),
+        // --- uv_map_util.d -------------------------------------------------
+        ArgRow("uv_map_util.d", "recordMapRemoveOwned", 0, 4, "slot",
+            "uv.delete's registry slot. `uint.max` reddens the frozen oracle "
+          ~ "on [uv.delete/postUndo] plane 'meshMaps'"),
+        ArgRow("uv_map_util.d", "recordMapCreateFilledOwned", 0, 4, "dst.data.dup",
+            "uv.copy carries the COPIED content: the undo needs only a name, "
+          ~ "but MeshSessionEdit replays a delta FORWARD for redo, and a "
+          ~ "DefaultInit create would bring the map back correctly shaped and "
+          ~ "full of zeros"),
+        ArgRow("uv_map_util.d", "recordMapCreateFilledOwned", 0, 5, "dst.present.dup",
+            "…and its presence channel"),
+        ArgRow("uv_map_util.d", "recordMapValuesOwned", 0, 5, "null",
+            "uv.clear addresses WholeArray, so it lists NO indices. A "
+          ~ "`Listed` entry with an empty index list is refused, which is the "
+          ~ "empty-means-all trap the addressing enum exists to close"),
+        ArgRow("uv_map_util.d", "recordMapValuesOwned", 0, 6, "before",
+            "THE ARGUMENT THIS WHOLE BLOCK EXISTS FOR. uv.clear's forward "
+          ~ "result is all zeros, so passing the POST-clear image here makes "
+          ~ "the undo zero-fill — every length still matches, the entry still "
+          ~ "binds, and `revert()` still answers true. Stage F1 measured "
+          ~ "exactly that failure"),
+        ArgRow("uv_map_util.d", "recordMapValuesOwned", 0, 7, "m.data.dup",
+            "…and the after-image, read from the live map"),
+        // --- the five UV value files: the POST-HOC door --------------------
+        // Two arguments per call. Arg 1 is the pre-op image — substitute the
+        // LIVE array and the call still compiles, still records one entry, and
+        // that entry's before-image equals its after-image, so the undo
+        // restores nothing and reports success. Arg 3 is the publish class —
+        // drop it and the default `Maps` applies, moving what
+        // `ChangeBus.docRevision()` counts, on the RECORDED arm only.
+        ArgRow("uv_transform.d", "recordMapValueDiff", 0, 1, "pre", "uv.flip"),
+        ArgRow("uv_transform.d", "recordMapValueDiff", 0, 3, "MeshEditScope.Material", "uv.flip's class"),
+        ArgRow("uv_transform.d", "recordMapValueDiff", 1, 1, "pre", "uv.mirror"),
+        ArgRow("uv_transform.d", "recordMapValueDiff", 1, 3, "MeshEditScope.Material", "uv.mirror's class"),
+        ArgRow("uv_transform.d", "recordMapValueDiff", 2, 1, "pre", "uv.rotate"),
+        ArgRow("uv_transform.d", "recordMapValueDiff", 2, 3, "MeshEditScope.Material", "uv.rotate's class"),
+        ArgRow("uv_pack.d", "recordMapValueDiff", 0, 1, "pre", "uv.fit"),
+        ArgRow("uv_pack.d", "recordMapValueDiff", 0, 3, "MeshEditScope.Material", "uv.fit's class"),
+        ArgRow("uv_pack.d", "recordMapValueDiff", 1, 1, "pre", "uv.pack"),
+        ArgRow("uv_pack.d", "recordMapValueDiff", 1, 3, "MeshEditScope.Material", "uv.pack's class"),
+        ArgRow("uv_relax.d", "recordMapValueDiff", 0, 1, "pre", "uv.relax"),
+        ArgRow("uv_relax.d", "recordMapValueDiff", 0, 3, "MeshEditScope.Material", "uv.relax's class"),
+        ArgRow("uv_project.d", "recordMapValueDiff", 0, 1, "preData",
+            "uv.project's EXISTING-map branch. Named `preData` and not `pre` "
+          ~ "because `pre` in that file is the map POINTER resolved before the "
+          ~ "batch — passing it would not even compile, which is the only "
+          ~ "reason this row differs from its siblings"),
+        ArgRow("uv_project.d", "recordMapValueDiff", 0, 3, "MeshEditScope.Material", "uv.project's class"),
+        ArgRow("uv_unwrap.d", "recordMapValueDiff", 0, 1, "preData",
+            "uv.unwrap's EXISTING-map branch — and this image has a SECOND "
+          ~ "job: it is also the rollback the kernel applies when `uvUnwrap` "
+          ~ "refuses AFTER the seed write, which is why it is taken on every "
+          ~ "arm and not behind `recording()`"),
+        ArgRow("uv_unwrap.d", "recordMapValueDiff", 0, 3, "MeshEditScope.Material", "uv.unwrap's class"),
     ];
 
     // NON-VACUITY FIRST: the table must name at least one file, and the

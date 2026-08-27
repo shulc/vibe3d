@@ -11,6 +11,7 @@ import mesh_morph : morphApply;
 import morph_target;
 import params : Param;
 import commands.mesh.position_undo : RecordedUndo, PositionUndo;
+import commands.mesh.map_edit_undo : runMapEdit, revertMapEdit, mapSlotOf;
 import std.array : uninitializedArray;
 
 // ---------------------------------------------------------------------------
@@ -136,71 +137,15 @@ private MeshMap* morphMapOrNull(Mesh* m, string name) {
     return mm;
 }
 
-/// The map's index in `Mesh.meshMaps`, or `uint.max`. Recorded by the REMOVE
-/// arm so its reverse puts the map back where it was: `removeMeshMap` splices
-/// and the delta's re-registration appends, and `meshPlanesJson` reads
-/// `meshMaps` in ARRAY ORDER (see `MeshOpEntry.mapSlot` for the measurement).
-private uint mapSlotOf(Mesh* m, string name) {
-    foreach (i, ref mm; m.meshMaps) if (mm.name == name) return cast(uint) i;
-    return uint.max;
-}
-
-// ---------------------------------------------------------------------------
-// runMapEdit — the three arms every migrated map command in this file shares.
-//
-// It exists so that the arm dispatch is spelled ONCE. What it deliberately
-// does NOT own is the empty-edit answer: each command's `revert()` keeps its
-// own arm, next to the guard that makes it reachable or not
-// (`commands/mesh/position_undo.d` states the same rule for L0-d, and the
-// reason there was measured: four position commands must answer TRUE on an
-// empty edit because a `false` makes `CommandHistory.undo` discard the entry
-// AND its trailing suffix — regression 0099).
-//
-// THE KERNEL RUNS INSIDE THE BATCH AND MAY ONLY `return false`, never throw:
-// an exception between the open and the close leaves the destructor to pop
-// the frame and tick `changeBus.batchLeaks`, which the suite asserts is 0.
-// Every guard that can refuse is therefore resolved by the caller BEFORE this
-// function is entered.
-// ---------------------------------------------------------------------------
-private bool runMapEdit(Mesh* mesh, ref RecordedUndo undo, ref MeshSnapshot snap,
-                        uint declared, scope bool delegate(ref MeshEditBatch) kernel)
-{
-    // REDO: `CommandHistory.redo` re-runs `apply()`, so a second `evaluate`
-    // on an armed command must re-run the kernel UNRECORDED and keep the
-    // FIRST delta rather than record a second one over it.
-    if (undo.armed()) {
-        auto ed = MeshEditBatch.unrecorded(*mesh, declared);
-        const ok = kernel(ed);
-        ed.close();
-        return ok;
-    }
-    if (undoTrackerEnabled()) {
-        auto ed = MeshEditBatch(*mesh, declared);
-        const ok = kernel(ed);
-        undo.arm(ed.close());
-        if (!ok) { undo.disarm(); return false; }
-        return true;
-    }
-    // THE HATCH (`VIBE3D_UNDO_TRACKER=0`). The same kernel through an
-    // UNRECORDED batch, so this file's commit seam is identical on both paths
-    // and only the undo IMAGE differs.
-    snap = MeshSnapshot.capture(*mesh);
-    auto ed = MeshEditBatch.unrecorded(*mesh, declared);
-    const ok = kernel(ed);
-    ed.close();
-    if (!ok) snap = MeshSnapshot.init;
-    return ok;
-}
-
-/// The mesh half of every migrated `revert()` in this file. The command's own
-/// non-mesh tail (the `morph_target` binding) stays at the call site, because
-/// three of the five have a different one and one has none.
-private bool revertMapEdit(Mesh* mesh, ref RecordedUndo undo, ref MeshSnapshot snap) {
-    if (undo.armed()) return undo.revert(*mesh);
-    if (!snap.filled) return false;
-    snap.restore(*mesh);
-    return true;
-}
+// THE THREE ARMS — redo / recorded / hatch — AND THE MESH HALF OF THE REVERT
+// LIVE IN `commands/mesh/map_edit_undo.d` SINCE STAGE L1-b. They were private
+// to this file while it was the family's only migrated group; seven more files
+// migrated in L1-b, and a private copy each would be eight implementations of
+// one mechanism. The bodies are unchanged and that module's header carries the
+// reasoning, including what deliberately did NOT move: the empty-edit answer
+// (each `revert()` keeps its own arm, per `position_undo.d`'s measured rule)
+// and the non-mesh tail (three of the five commands below re-point the
+// `morph_target` binding; no UV or weight command has one).
 
 class MorphCreate : Command {
     private string       name_;

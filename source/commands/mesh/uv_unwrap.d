@@ -9,29 +9,56 @@ module commands.mesh.uv_unwrap;
 ///   boundary — cut at mesh boundary only (seams = mesh holes / open edges).
 ///   selected  — additionally cut at currently selected edges.
 ///
+/// UNDO IS A RECORDED `MeshOpEntry.Kind.MapValueDelta` SINCE TASK 1903 STAGE
+/// L1-b. Like `uv.project` this is a HYBRID and records one of two shapes: a
+/// `MapOp.Create` in the `WholeArray` spelling when it created the map, and a
+/// post-hoc `MapOp.Values` diff when it did not. `MeshSnapshot` is the escape
+/// hatch's arm only.
+///
+/// THE ONE PLACE IN THE WHOLE L1 FAMILY WHERE A REFUSAL FOLLOWS A WRITE, and
+/// it is why this file does not read like `uv.relax`. `uvUnwrap` is called
+/// AFTER the seed has been written, and it can still answer false (no pinned
+/// class, nothing relaxable). Before the migration that was undone by
+/// `snap.restore` — a whole-mesh restore for a map-sized mistake. There is no
+/// snapshot on the delta path, so the kernel keeps its OWN rollback image and
+/// undoes exactly what it wrote: the map's `data` if it existed, the whole
+/// registration if it did not.
+///
+/// THAT IMAGE IS NOT "BOOKKEEPING ON AN UNRECORDED PATH". It is the command's
+/// own rollback, needed by every arm, and it is strictly CHEAPER than what it
+/// replaces (one `float[].dup` of the map against a deep copy of the entire
+/// mesh). Plan §K.5 rule 2 forbids paying for RECORDING on a path that does
+/// not record; the recording-only cost here is the `preData` the diff needs,
+/// and that one is behind `ed.recording()`.
+///
 /// Ordering invariant (same as uv.project):
 ///   (a) read-only walk + empty-check  → before any mutation
-///   (b) MeshSnapshot.capture          → snapshot first
-///   (c) create-if-absent addMeshMap   → after snapshot
+///   (b) validate an existing map, or pre-check MAX_MESH_MAPS → before the batch
+///   (c) open the batch; create-if-absent inside it
 ///   (d) write seed via projectUv
 ///   (e) build seamLoop[] + cornerPinned[]
-///   (f) call uvUnwrap; iter=0 → commit seed only; iter>0 + false → restore
-///   (g) commitChange(Material)
+///   (f) call uvUnwrap; iter=0 → commit seed only; iter>0 + false → roll the
+///       seed back and return false
+///   (g) record, commitChange(Material)
 ///
 /// Error contracts (mirrors uv.project / uv.relax family):
 ///   - zero affected loops         → false (no map created, mesh clean)
 ///   - wrong dim / domain on map   → throws → status:error
-///   - uvUnwrap returns false       → snapshot restored, returns false
+///   - uvUnwrap returns false       → seed rolled back, returns false
 ///   - iter=0                      → seed only; committed, returns true
 
 import command;
-import mesh            : Mesh, MeshMap, MapDomain, kUvMapName;
+import mesh            : Mesh, MeshMap, MapDomain, MeshEditBatch, kUvMapName,
+                         MAX_MESH_MAPS;
 import math            : Vec3;
 import view            : View;
 import editmode        : EditMode;
 import snapshot        : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
 import params          : Param;
+import commands.mesh.position_undo : RecordedUndo;
+import commands.mesh.map_edit_undo : runMapEdit, revertMapEditEmptyOk;
+import commands.mesh.uv_project    : UvLoopRef;
 import uv_project      : UvProjMode, UvProjAxis, projectUv;
 import uv_unwrap       : uvUnwrap;
 
@@ -43,7 +70,25 @@ class UvUnwrap : Command {
     private int    iter_   = 30;
     private string seams_  = "selected";
 
-    private MeshSnapshot snap;
+    private MeshSnapshot snap;      // the hatch's arm only
+    private RecordedUndo undo_;
+    /// The forward SUCCEEDED. NOT derivable from `undo_`/`snap`, and the three
+    /// shipped cells that caught the attempt say why: these commands' `revert()`
+    /// must answer FALSE when the forward refused or never ran
+    /// (`test_uv_transform.d` "revert without apply must return false",
+    /// `test_uv_pack.d`, `test_uv_project.d`) and TRUE when the forward
+    /// SUCCEEDED while moving nothing a bitwise diff could see (regression
+    /// 0099: `CommandHistory.undo` discards an entry whose revert answers false
+    /// AND its whole trailing suffix). Both states are "no delta and no
+    /// snapshot", so only a bit set by the forward can separate them.
+    private bool applied_;
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded undo (task 2250). A
+        /// command that recorded NOTHING falls back to its snapshot and
+        /// restores every plane correctly, so every result-shaped assertion is
+        /// green over a deleted recorder; only reading the log is not.
+        public ref const(RecordedUndo) recordedUndo() const return { return undo_; }
+    }
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -83,8 +128,7 @@ class UvUnwrap : Command {
         foreach (fi; 0 .. mesh.faces.length)
             if (mesh.isFaceSelected(fi)) { anyFaceSelected = true; break; }
 
-        struct LoopRef { uint fi; size_t loop; }
-        LoopRef[] affected;
+        UvLoopRef[] affected;
 
         float bxMin = float.infinity, bxMax = -float.infinity;
         float byMin = float.infinity, byMax = -float.infinity;
@@ -96,7 +140,7 @@ class UvUnwrap : Command {
             foreach (uint c; 0 .. nc) {
                 const size_t l = mesh.faceCornerLoop(fi, c);
                 if (l == size_t.max) continue;
-                affected ~= LoopRef(fi, l);
+                affected ~= UvLoopRef(fi, l);
                 Vec3 pos = mesh.vertices[mesh.loops[l].vert];
                 if (pos.x < bxMin) bxMin = pos.x;
                 if (pos.x > bxMax) bxMax = pos.x;
@@ -136,33 +180,60 @@ class UvUnwrap : Command {
         }
 
         // -----------------------------------------------------------------
-        // (c) Snapshot FIRST — before addMeshMap — so revert() restores the
-        //     pre-create state (snapshot.d wholesale meshMaps replace).
+        // (b) EVERY REFUSAL THAT CAN BE RESOLVED WITHOUT WRITING, resolved
+        //     BEFORE the batch opens — a throw out of an open batch leaves
+        //     `~MeshEditBatch` to pop the frame and tick
+        //     `changeBus.batchLeaks`, which the suite asserts is 0.
         // -----------------------------------------------------------------
-        snap = MeshSnapshot.capture(*mesh);
+        auto pre = mesh.meshMap(kUvMapName);
+        if (pre is null) {
+            if (mesh.meshMaps.length >= MAX_MESH_MAPS)
+                throw new Exception(
+                    "uv.unwrap: this mesh already carries the maximum number "
+                  ~ "of maps");
+        } else {
+            if (pre.dim != 2 || pre.domain != MapDomain.PolyVertex)
+                throw new Exception("uv.unwrap: existing UV map has wrong dim/domain");
+            if (pre.data.length != mesh.loops.length * 2)
+                throw new Exception("uv.unwrap: UV map data out of sync with loop count");
+        }
+
+        applied_ = runMapEdit(mesh, undo_, snap, MeshEditScope.Material,
+                          (ref MeshEditBatch ed) =>
+                              kernel(ed, affected, mode, axis, ctr, sz));
+        return applied_;
+    }
+
+    private bool kernel(ref MeshEditBatch ed, UvLoopRef[] affected,
+                        UvProjMode mode, UvProjAxis axis, Vec3 ctr, float sz) {
+        // -----------------------------------------------------------------
+        // (c) Create-if-absent.
+        // -----------------------------------------------------------------
+        auto map = ed.mesh.meshMap(kUvMapName);
+        const bool created = (map is null);
+        if (created)
+            map = ed.mesh.addMeshMap(kUvMapName, 2, MapDomain.PolyVertex);
+        assert(map !is null, "uv.unwrap: addMeshMap refused after applyImpl "
+                           ~ "pre-checked the map cap");
+
+        // THE ROLLBACK IMAGE, taken on EVERY arm because (i) below can refuse
+        // after the seed has been written. See the module header: this is not
+        // recording bookkeeping, it is the command's own undo of a write it is
+        // about to make, and it is cheaper than the whole-mesh snapshot it
+        // replaces. `preData` is null when the map is new — the rollback there
+        // is `removeMeshMap`, not a restore.
+        float[] preData;
+        if (!created) preData = map.data.dup;
 
         // -----------------------------------------------------------------
-        // (d) Create-if-absent + validate.
-        // -----------------------------------------------------------------
-        auto map = mesh.meshMap(kUvMapName);
-        if (map is null)
-            map = mesh.addMeshMap(kUvMapName, 2, MapDomain.PolyVertex);
-        if (map is null)
-            throw new Exception("uv.unwrap: addMeshMap failed unexpectedly");
-        if (map.dim != 2 || map.domain != MapDomain.PolyVertex)
-            throw new Exception("uv.unwrap: existing UV map has wrong dim/domain");
-        if (map.data.length != mesh.loops.length * 2)
-            throw new Exception("uv.unwrap: UV map data out of sync with loop count");
-
-        // -----------------------------------------------------------------
-        // (e) Write seed UVs via projectUv (same pattern as uv.project).
+        // (d) Write seed UVs via projectUv (same pattern as uv.project).
         // -----------------------------------------------------------------
         uint lastFi = uint.max;
         Vec3 fn     = Vec3(0, 0, 1);
         foreach (ref lr; affected) {
-            Vec3 pos = mesh.vertices[mesh.loops[lr.loop].vert];
+            Vec3 pos = ed.mesh.vertices[ed.mesh.loops[lr.loop].vert];
             if (mode == UvProjMode.Box && lr.fi != lastFi) {
-                fn     = mesh.faceNormal(lr.fi);
+                fn     = ed.mesh.faceNormal(lr.fi);
                 lastFi = lr.fi;
             }
             float[2] uv = projectUv(pos, mode, axis, ctr, sz, fn);
@@ -174,7 +245,8 @@ class UvUnwrap : Command {
         // (f) Seed-only shortcut: iter=0 commits the seed and returns true.
         // -----------------------------------------------------------------
         if (iter_ <= 0) {
-            mesh.commitChange(MeshEditScope.Material);
+            recordUnwrap(ed, map, created, preData);
+            ed.commitChange(MeshEditScope.Material);
             return true;
         }
 
@@ -184,43 +256,63 @@ class UvUnwrap : Command {
         //     is handled inside uvUnwrap's weld loop directly.
         // -----------------------------------------------------------------
         bool[] seamLoop = null;
-        if (seams_ == "selected" && mesh.loopEdge.length == mesh.loops.length) {
-            seamLoop = new bool[](mesh.loops.length);
-            foreach (L; 0 .. mesh.loops.length) {
-                if (mesh.loops[L].twin == uint.max) continue; // boundary handled by kernel
-                const size_t ei = mesh.loopEdge[L];
-                if (ei < mesh.edges.length)
-                    seamLoop[L] = mesh.isEdgeSelected(ei);
+        if (seams_ == "selected" && ed.mesh.loopEdge.length == ed.mesh.loops.length) {
+            seamLoop = new bool[](ed.mesh.loops.length);
+            foreach (L; 0 .. ed.mesh.loops.length) {
+                if (ed.mesh.loops[L].twin == uint.max) continue; // boundary handled by kernel
+                const size_t ei = ed.mesh.loopEdge[L];
+                if (ei < ed.mesh.edges.length)
+                    seamLoop[L] = ed.mesh.isEdgeSelected(ei);
             }
         }
 
         // -----------------------------------------------------------------
         // (h) Build cornerPinned for selected-face scope.
         // -----------------------------------------------------------------
-        const bool[] cp = buildCornerPinned(*mesh);
+        const bool[] cp = buildCornerPinned(ed.mesh);
 
         // Re-fetch map pointer after potential meshMaps reallocation.
-        map = mesh.meshMap(kUvMapName);
+        map = ed.mesh.meshMap(kUvMapName);
 
         // -----------------------------------------------------------------
         // (i) Run cotangent-weighted harmonic relax.
         //     If it returns false (all-pinned, no-pin guard, etc.), undo the
-        //     seed write via the snapshot and report no-op.
+        //     SEED WRITE and report no-op. Rolling back exactly what was
+        //     written — the map's values, or the whole registration — is what
+        //     the wholesale `MeshSnapshot.restore` did here before the
+        //     migration; nothing else on the mesh has been touched.
         // -----------------------------------------------------------------
-        if (!uvUnwrap(*mesh, map, iter_, seamLoop, cp)) {
-            snap.restore(*mesh);       // undo seed write
-            snap = MeshSnapshot.init;  // discard (no undo entry)
+        if (!uvUnwrap(ed.mesh, map, iter_, seamLoop, cp)) {
+            if (created) ed.mesh.removeMeshMap(kUvMapName);
+            else         map.data[] = preData[];
             return false;
         }
 
-        mesh.commitChange(MeshEditScope.Material);
+        recordUnwrap(ed, map, created, preData);
+        ed.commitChange(MeshEditScope.Material);
         return true;
     }
 
+    /// The ONE recording site, shared by the seed-only arm and the relaxed
+    /// one so the two cannot drift into recording different shapes.
+    private static void recordUnwrap(ref MeshEditBatch ed, MeshMap* map,
+                                     bool created, const float[] preData) {
+        if (!ed.recording()) return;
+        if (created)
+            // `WholeArray`, not `DefaultInit`: `MeshSessionEdit` replays a
+            // delta FORWARD for redo (`session_edit.d:140`), and a
+            // default-init create would redo into a correctly-shaped map of
+            // zeros.
+            ed.rec.recordMapCreateFilledOwned(kUvMapName, map.dim, map.domain,
+                                              map.kind,
+                                              map.data.dup, map.present.dup);
+        else
+            ed.recordMapValueDiff(kUvMapName, preData, null,
+                                  MeshEditScope.Material);
+    }
+
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
-        return true;
+        return revertMapEditEmptyOk(mesh, undo_, snap, applied_);
     }
 }
 

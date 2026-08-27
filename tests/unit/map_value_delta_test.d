@@ -747,7 +747,13 @@ unittest // it records what a foreign writer did, and pays NOTHING when off
         live.data[6 * 3 + 1] = -2.5f;
         live.data[6 * 3 + 2] = 3.75f;
         live.present[6] = 1;
-        assert(ed.recordMapValueDiff("MR", pre, preP, &whole),
+        // `MeshEditScope.Maps` is passed EXPLICITLY since Stage L1-b made the
+        // publish class a parameter: every command that calls this primitive
+        // already publishes something of its own, and the class had to stop
+        // being hard-coded so the recorded arm's stamp could equal the redo
+        // and hatch arms'. `Maps` is still the default and is what this cell
+        // was written against.
+        assert(ed.recordMapValueDiff("MR", pre, preP, MeshEditScope.Maps, &whole),
             "the diff recorder must record a real write — an anti-vacuity "
           ~ "assert, because everything below is about WHAT it recorded");
         d = ed.close();
