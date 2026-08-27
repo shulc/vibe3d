@@ -297,3 +297,67 @@ unittest // a recording reduce declares kReduceEditScope and records the SetPos
              ~ "family a face-side publisher decision rather than a "
              ~ "constructor flip", m.faces.length, preF, postF));
 }
+
+unittest { // THE WITNESS: reduceToTarget's collapse heap must not allocate
+    // quadratically (task 2130/2240).
+    //
+    // Same defect shape task 2130 fixed at four sibling stack walks, but on a
+    // BINARY MIN-HEAP rather than a plain stack: the old heapPop() did `heap[0]
+    // = heap[$ - 1]; heap.length--;` (pop by shrinking the slice) and heapPush()
+    // did `heap ~= e;` (push by appending) — the GC's in-place-append invariant
+    // needs `ptr + length` to match the used-length recorded in the block, and
+    // the shrink breaks exactly that, so the first heapPush after EVERY
+    // heapPop reallocated and copied the whole heap. The main collapse loop
+    // calls heapPop then (usually) several heapPush calls per iteration, so a
+    // reduction with many collapses is exactly the interleaved pop/push
+    // pattern task 2130 measured elsewhere.
+    //
+    // Fixed with an explicit length pointer (`hlen`) rather than `heap.length`
+    // — see the comment above `heap` in source/mesh_ops/decimate.d for why this
+    // is safe for a HEAP specifically: every read/write only ever touches an
+    // index below the CURRENT `hlen`, so the pop order (and therefore the
+    // downstream collapse order / final geometry) is bit-identical to before.
+    import core.memory : GC;
+    import std.format  : format;
+
+    Mesh m = makeGridPlane(60); // 61x61 = 3721 verts, 3600 quads
+    auto triMask = new bool[](m.faces.length); triMask[] = true;
+    m.triangulateFacesByMask(triMask);
+    immutable size_t f0 = m.faces.length; // 7200 triangles
+    immutable size_t target = f0 / 4;     // force ~thousands of collapses
+
+    // Measured on this rig, 2026-08-27, with the same instrument, 2760
+    // collapses from 7200 faces:
+    //   shrink-then-append (before the fix) ....  1 502 695 600 B (1433.08 MB)
+    //   explicit length pointer (after) ........     16 851 120 B (  16.07 MB)
+    // Unlike connected_mask/falloff's isolated walk, `reduceToTarget` also
+    // allocates for the union-find / alive / incident-face / candidate-face
+    // scratch that has nothing to do with the heap, so the achievable gap is
+    // narrower (~89x total, not ~2000x) — the bound sits inside it with ~4x
+    // headroom over the fixed code and ~22x under the broken code, not
+    // derived from either measurement.
+    enum ulong kBoundBytes = 64UL * 1024 * 1024;
+
+    immutable ulong before = GC.allocatedInCurrentThread;
+    size_t n = reduceOnce(m, target, false);
+    immutable ulong used = GC.allocatedInCurrentThread - before;
+
+    // Anti-vacuity: prove the rig actually did a large number of collapses,
+    // not a no-op or a handful.
+    assert(n > 1000,
+        format("expected thousands of collapses from %d faces to target %d, "
+             ~ "got %d — the rig cannot exhibit a heap-churn defect with too "
+             ~ "few", f0, target, n));
+    assert(m.faces.length <= f0, "face count must not increase");
+
+    assert(used < kBoundBytes,
+        format("reduceToTarget allocated %s B (%.2f MB) doing %d collapses "
+             ~ "from %d faces; the bound is %s B (%.2f MB). This is the "
+             ~ "shrink-then-append defect (task 2130/2240): heapPop's "
+             ~ "`heap.length--` breaks the GC's in-place-append invariant, so "
+             ~ "the first heapPush after every heapPop reallocates and copies "
+             ~ "the whole heap. Use an explicit length pointer — never shrink "
+             ~ "the slice.",
+               used, used / (1024.0 * 1024.0), n, f0,
+               kBoundBytes, kBoundBytes / (1024.0 * 1024.0)));
+}

@@ -509,3 +509,84 @@ unittest {
     assert(veq(merged.editAfter()[0], Vec3(0,5,0)),
         "consolidated after = latest re-grade");
 }
+
+// ===========================================================================
+// 11. replaceInSessionTail AT THE DEPTH CAP (task 2130/2240). Task 2130 fixed
+//     four sibling walks that pop by re-slicing then push (`stack = stack[0
+//     .. $-1]` / `.length -=`, then `~=` — the GC's in-place-append invariant
+//     needs ptr+length to match the block's recorded used-length, and a
+//     shrink breaks exactly that). replaceInSessionTail() had the same shape:
+//     `undoStack.length -= 1;` immediately before the append inside
+//     recordInSession().
+//
+//     The bare "explicit stack pointer" rewrite used at the other four sites
+//     does NOT transplant here without care: the append is pushEntry's
+//     SHARED `undoStack ~= e` (record()/recordCoalescing()/box.d/
+//     transform.d all reach it too), and it carries its own maxDepth
+//     front-eviction trim that is ORDER-SENSITIVE against the shrink. A
+//     naive reorder — append first, shrink after — changes OBSERVABLE
+//     behaviour exactly at `undoStack.length == maxDepth` (50): growing to
+//     51 before shrinking back fires the trim, evicting the OLDEST surviving
+//     undo entry, which the ORIGINAL shrink-first ordering never does for a
+//     replace (drop one, add one nets zero, so `length > maxDepth` never
+//     holds). That is a real behaviour change, not a memory-shape one.
+//
+//     The shipped fix instead fuses replace into a single in-place overwrite
+//     of the tail slot — no shrink, no append, no reallocation, and the trim
+//     is correctly never reached, matching the ORIGINAL ordering's cap
+//     behaviour exactly (verified below: reverting command_history.d's fix
+//     leaves this test GREEN — the fix is allocation-shape-only, same as the
+//     other three sites). This test's discriminating power is against the
+//     NAIVE reorder instead: that mutation (append-then-shrink, no fused
+//     overwrite) reddens the "oldest entry survives" assertion below.
+// ===========================================================================
+unittest {
+    Scratch s;
+    auto h = new CommandHistory();
+
+    // Fill the undo stack to ONE BELOW the cap (49) with plain foreign
+    // records, leaving room for the run's opening gesture to land exactly AT
+    // the cap.
+    foreach (i; 0 .. 49)
+        h.record(new ForeignCmd(&s.mesh, s.view, EditMode.Vertices));
+    assert(h.undoEntries().length == 49, "setup: stack must be one below the cap");
+
+    ulong run = h.nextRun();
+    h.recordInSession(
+        s.makeEdit([0u], [Vec3(0,0,0)], [Vec3(1,0,0)], "Move"), run);
+    assert(h.undoEntries().length == 50,
+        "setup: the run's opening gesture lands exactly AT the cap");
+
+    // FIRST re-grade: the tail is the plain gesture (InSession, no Refire
+    // yet), so replaceInSessionTail DEGRADES TO APPEND regardless of depth
+    // (see test 10) — this genuinely GROWS the stack to 51 and pushEntry's
+    // maxDepth trim correctly evicts the OLDEST entry. That eviction is
+    // expected here (both the original code and the fix agree — this call
+    // never reaches the fused replace path at all, since dropTail is false),
+    // and is what makes the NEXT call the interesting one.
+    auto tweak1 = s.makeEdit([0u], [Vec3(0,0,0)], [Vec3(2,0,0)], "Tweak1");
+    h.replaceInSessionTail(tweak1, run);
+    assert(h.undoEntries().length == 50,
+        "the first re-grade's append+trim must land back at the cap; got "
+        ~ h.undoEntries().length.to!string);
+    auto frontAfterAppend = h.undoEntries()[0].cmd;
+
+    // SECOND re-grade: the tail IS now a matching Refire entry (tweak1), so
+    // THIS is the genuine REPLACE — drop one, add one, net zero. At the cap
+    // this is exactly the case a naive append-then-shrink reorder gets
+    // wrong (see the block comment above): it would grow to 51 and trim
+    // again, evicting yet another old entry the ORIGINAL shrink-first
+    // ordering never touches for a replace.
+    auto tweak2 = s.makeEdit([0u], [Vec3(0,0,0)], [Vec3(3,0,0)], "Tweak2");
+    h.replaceInSessionTail(tweak2, run);
+    assert(h.undoEntries().length == 50,
+        "a replace AT the cap must keep the stack AT the cap, not grow it; got "
+        ~ h.undoEntries().length.to!string);
+    assert(h.undoEntries()[0].cmd is frontAfterAppend,
+        "a replace at the cap must not evict any further entry — the front "
+        ~ "must be UNCHANGED from before the replace (that extra eviction is "
+        ~ "the naive-reorder bug this test exists to catch)");
+    assert(h.undoEntries()[$ - 1].cmd is tweak2,
+        "the tail must be REPLACED with the newest re-grade by identity, "
+        ~ "not appended above it");
+}

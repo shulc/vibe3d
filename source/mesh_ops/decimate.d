@@ -265,12 +265,33 @@ size_t reduceToTarget(ref MeshEditBatch ed, size_t targetFaces, bool preserveBou
     }
 
     // ---- Min-heap ----
+    // EXPLICIT LENGTH POINTER — the backing slice is NEVER shrunk (task
+    // 2130/2240). `heap.length--` in the old heapPop() breaks the GC's
+    // in-place-append invariant the same way `stack = stack[0 .. $-1]` does:
+    // `~=` extends a block in place only while `ptr + length` equals the
+    // used-length recorded in that block, so the first heapPush() after
+    // EVERY heapPop() reallocated and copied the whole heap. `hlen` is the
+    // live heap size; `heap` only ever grows, at the top (index `hlen`), and
+    // is reused across the whole collapse loop rather than reallocated per
+    // pop/push pair.
+    //
+    // POSITIONS ARE UNCHANGED, which is what makes this safe for a HEAP and
+    // not just a stack: heapPush/heapPop are pure index-and-comparison
+    // routines over `heap[0 .. hlen]` — every read/write below only ever
+    // touches an index strictly less than the CURRENT `hlen` (or `i`/`n`
+    // derived from it), so replacing `heap.length` (the shrinking property)
+    // with `hlen` (a plain counter) changes nothing about which entry sits
+    // at which index, when, or which comparisons fire. The heap's pop order
+    // — the greedy edge-collapse sequence downstream depends on — is
+    // therefore bit-identical to before.
     struct HeapEntry { float cost; uint u, v, genU, genV; }
     HeapEntry[] heap;
+    size_t hlen = 0;
 
     void heapPush(HeapEntry e) {
-        heap ~= e;
-        size_t i = heap.length - 1;
+        if (hlen == heap.length) heap ~= e; else heap[hlen] = e;
+        size_t i = hlen;
+        ++hlen;
         while (i > 0) {
             size_t p = (i - 1) / 2;
             if (heap[i].cost < heap[p].cost) {
@@ -281,9 +302,9 @@ size_t reduceToTarget(ref MeshEditBatch ed, size_t targetFaces, bool preserveBou
 
     HeapEntry heapPop() {
         auto top = heap[0];
-        heap[0] = heap[$ - 1];
-        heap.length--;
-        size_t i = 0, n = heap.length;
+        heap[0] = heap[hlen - 1];
+        --hlen;
+        size_t i = 0, n = hlen;
         while (true) {
             size_t l = 2*i+1, r = 2*i+2, s = i;
             if (l < n && heap[l].cost < heap[s].cost) s = l;
@@ -309,7 +330,7 @@ size_t reduceToTarget(ref MeshEditBatch ed, size_t targetFaces, bool preserveBou
     size_t aliveFaces = F;
     size_t collapses  = 0;
 
-    while (aliveFaces > targetFaces && heap.length > 0) {
+    while (aliveFaces > targetFaces && hlen > 0) {
         auto e = heapPop();
         uint u = e.u, v = e.v;
 

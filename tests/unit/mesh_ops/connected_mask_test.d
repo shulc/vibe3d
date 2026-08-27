@@ -64,6 +64,55 @@ unittest { // connectedComponentMask: two disjoint components — the mask
     foreach (vi; 4 .. 8) assert(fromB[vi],  "seed 4 reaches its own quad");
 }
 
+unittest { // THE WITNESS: connectedComponentMask must not allocate
+    // quadratically (task 2130/2240).
+    //
+    // Task 2130 fixed four sibling BFS/DFS walks that pop by re-slicing then
+    // push — `stack = stack[0 .. $-1]` breaks the GC's in-place-append
+    // invariant (`~=` extends a block in place only while `ptr + length`
+    // equals the used-length recorded in that block), so the first push
+    // after EVERY pop reallocated and copied the whole stack. This kernel
+    // was measured together with the other three as the same shape and left
+    // for task 2240 — fixed with an explicit stack pointer, never shrinking
+    // the slice (see source/mesh_ops/connected_mask.d).
+    //
+    // The result is order-independent (a `bool[]` visited SET, per the
+    // function's own doc comment) so there is no traversal order to freeze,
+    // unlike `Mesh.faceComponentsOf`'s pin in island_walk_alloc_test.d.
+    import core.memory : GC;
+    import std.format  : format;
+
+    Mesh m = makeGridPlane(200); // 201x201 = 40401 verts, all ONE component
+    assert(m.vertices.length == 201 * 201, "setup: grid vertex count");
+
+    // Measured on this rig, 2026-08-27, with the same instrument:
+    //   shrink-then-append (before the fix) ....  2 653 488 768 B (2530.56 MB)
+    //   explicit stack pointer (after) .........      1 343 360 B (   1.28 MB)
+    // The bound sits inside that ~1975x gap: ~6x of headroom over the fixed
+    // code and ~316x under the broken code. Not derived from either measurement.
+    enum ulong kBoundBytes = 8UL * 1024 * 1024;
+
+    immutable ulong before = GC.allocatedInCurrentThread;
+    bool[] mask = m.connectedComponentMask(0);
+    immutable ulong used = GC.allocatedInCurrentThread - before;
+
+    // Anti-vacuity: prove the rig is genuinely one big walk, not a no-op.
+    assert(mask.length == m.vertices.length, "mask is one entry per vertex");
+    foreach (reached; mask)
+        assert(reached, "a grid plane must be a single connected component");
+
+    assert(used < kBoundBytes,
+        format("connectedComponentMask allocated %s B (%.2f MB) walking %d "
+             ~ "verts in one component; the bound is %s B (%.2f MB). This is "
+             ~ "the shrink-then-append defect (task 2130/2240): `queue.length "
+             ~ "-= 1` breaks the GC's in-place-append invariant, so the first "
+             ~ "push after every pop reallocates and copies the whole "
+             ~ "stack. Use an explicit stack pointer — never shrink the "
+             ~ "slice.",
+               used, used / (1024.0 * 1024.0), m.vertices.length,
+               kBoundBytes, kBoundBytes / (1024.0 * 1024.0)));
+}
+
 unittest { // edgeCentroid is the midpoint of the edge's two endpoints.
     import std.math : abs;
     Mesh m = makeCube();

@@ -1145,18 +1145,34 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
         const(uint)[]    adjNeighbors;
         m.vertexAdjacencyCSR(adjOffset, adjNeighbors);   // Mesh-owned, structVer-cached
         auto visited = new bool[](nV);
+        // EXPLICIT STACK POINTER — the slice is NEVER shrunk (task 2130/2240).
+        // `stack.length -= 1` breaks the GC's in-place-append invariant:
+        // `~=` extends a block in place only while `ptr + length` equals the
+        // used-length recorded in that block, so the first push after EVERY
+        // pop reallocated and copied the whole stack. `sp` is the live
+        // depth; the slice only ever grows, at the top. `stack` itself is
+        // never read after this loop — only `visited` (a set, membership
+        // claimed at PUSH time both here and below) feeds `connectMask_` —
+        // so no traversal order needs preserving.
         size_t[] stack;
+        size_t sp = 0;
         foreach (vi; anchorRing) {
             if (cast(size_t)vi >= nV || visited[vi]) continue;
             visited[vi] = true;
-            stack ~= cast(size_t)vi;
+            if (sp == stack.length) stack ~= cast(size_t)vi;
+            else stack[sp] = cast(size_t)vi;
+            ++sp;
         }
-        while (stack.length > 0) {
-            size_t v = stack[$ - 1];
-            stack.length -= 1;
+        while (sp > 0) {
+            size_t v = stack[--sp];
             foreach (j; adjOffset[v] .. adjOffset[v + 1]) {
                 size_t nb = adjNeighbors[j];
-                if (!visited[nb]) { visited[nb] = true; stack ~= nb; }
+                if (!visited[nb]) {
+                    visited[nb] = true;
+                    if (sp == stack.length) stack ~= nb;
+                    else stack[sp] = nb;
+                    ++sp;
+                }
             }
         }
         connectMask_ = visited;

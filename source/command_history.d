@@ -762,15 +762,68 @@ final class CommandHistory {
         // step (reference fact G2). A caller that never bumps (default
         // generation 0 throughout — the replaceInSessionTail unit tests) keeps
         // pure REPLACE, the historical Refire-keyed behaviour.
+        bool dropTail = false;
         if (undoStack.length > 0) {
             auto tail = undoStack[$ - 1];
-            if ((tail.flags & HistoryFlags.InSession)
-             && (tail.flags & HistoryFlags.Refire)
-             && tail.runId == runId
-             && tail.tweakGeneration == _tweakGeneration) {
-                undoStack.length -= 1;
-            }
+            dropTail = (tail.flags & HistoryFlags.InSession) != 0
+                    && (tail.flags & HistoryFlags.Refire)   != 0
+                    && tail.runId == runId
+                    && tail.tweakGeneration == _tweakGeneration;
         }
+
+        // TASK 2240 — same defect shape as 2130's four sites: this used to be
+        // `undoStack.length -= 1;` HERE, unconditionally, immediately before
+        // the append inside recordInSession() below — pop-by-shrink then
+        // push, on `~=`. The bare "explicit stack pointer" rewrite used at
+        // the other four sites does not transplant here: the append is
+        // pushEntry's SHARED `undoStack ~= e` (record()/recordCoalescing()/
+        // box.d/transform.d all reach it too), and it carries its own
+        // maxDepth eviction trim that is ORDER-SENSITIVE against the shrink.
+        // Simply swapping the order (append first, shrink after) changes
+        // behaviour at exactly `undoStack.length == maxDepth`: growing to
+        // maxDepth+1 fires the FRONT-eviction trim, which the ORIGINAL
+        // shrink-first ordering never does for a replace (drop one, add one
+        // stays at maxDepth, so `length > maxDepth` never holds) — a reorder
+        // would silently evict one extra old undo entry at the depth cap.
+        // That is a real behaviour change, not a memory-shape one, and this
+        // task changes allocation shape ONLY.
+        //
+        // A REPLACE never changes the stack's length at all (drop one, add
+        // one, net zero), so it is written as ONE in-place OVERWRITE of the
+        // tail slot instead: no shrink, no append, no reallocation, and the
+        // maxDepth trim is correctly never reached — matching the original
+        // ordering's cap behaviour exactly. The guard replica below mirrors
+        // recordInSession()'s own guards (this file's recorders already
+        // duplicate their guard sets rather than share them — see the note
+        // above pushEntry) purely to decide whether the append it performs
+        // would actually land; when it would not (lockout / not undoable /
+        // suspended / inside a command block), replaceInSessionTail falls
+        // back to the ORIGINAL two-step (a lone shrink that nothing
+        // subsequently appends onto, since recordInSession hits the same
+        // guard and returns without touching undoStack).
+        if (dropTail && !_lockout && cmd.isUndoable
+            && _state == UndoState.Active && blockDepth == 0) {
+            // Set BEFORE the hook fires, same ordering recordInSession()
+            // documents: a re-entrant hook must see _runOpen already true.
+            _runOpen = true;
+            immutable string argsStr = serializeParams(cmd.params());
+            immutable uint baseFlags = historyFlagsFor(cmd) | HistoryFlags.InSession;
+            HistoryEntry e = { label: cmd.label,
+                               args:  argsStr,
+                               commandName: cmd.name,
+                               cmd: cmd,
+                               timestampMs: nowMs(),
+                               flags: baseFlags,
+                               runId: runId,
+                               tweakGeneration: _tweakGeneration };
+            undoStack[$ - 1] = e;
+            redoStack.length = 0;
+            fireRecordHook(cmd.name, argsStr, baseFlags);
+            undoStack[$ - 1].flags |= HistoryFlags.Refire;
+            return;
+        }
+
+        if (dropTail) undoStack.length -= 1;
         // Append the replacement as a fresh tagged in-session entry, then stamp
         // the Refire bit so the NEXT re-grade recognises it as a re-grade tail.
         // recordInSession clears the redo stack (N1) and re-sets _runOpen.

@@ -251,3 +251,63 @@ unittest {
         }
     }
 }
+
+unittest { // THE WITNESS: FalloffStage.resolveConnectMask must not allocate
+    // quadratically (task 2130/2240).
+    //
+    // Same defect shape task 2130 fixed at four sibling walks: `stack.length
+    // -= 1` (a pop by shrinking the slice) directly precedes a later `~=`
+    // (the push) inside one loop — the GC's in-place-append invariant needs
+    // `ptr + length` to match the used-length recorded in the block, and the
+    // shrink breaks exactly that, so the first push after every pop
+    // reallocated and copied the whole stack. This walk was grouped with
+    // connected_mask.d/decimate.d/command_history.d as the same class and
+    // left for task 2240 — fixed with an explicit stack pointer (see
+    // resolveConnectMask() in source/toolpipe/stages/falloff.d). `stack`
+    // itself is discarded after the loop — only `visited` (membership
+    // claimed at PUSH time) feeds `connectMask_` — so there is no traversal
+    // order to freeze.
+    import core.memory : GC;
+    import std.format  : format;
+    import mesh         : makeGridPlane;
+
+    Mesh mesh = makeGridPlane(200); // 201x201 = 40401 verts, ONE component
+    EditMode em = EditMode.Vertices;
+    Mesh* meshPtr = &mesh;
+    auto fs = new FalloffStage(() => meshPtr, &em);
+    fs.type        = FalloffType.Element;
+    fs.connect     = ElementConnect.UseConnectivity;
+    fs.anchorRing  = [0u];
+    fs.connectMask = null;
+
+    // Measured on this rig, 2026-08-27, with the same instrument (identical
+    // shape/grid to connected_mask_test.d's THE WITNESS, so the same numbers):
+    //   shrink-then-append (before the fix) ....  2 653 488 768 B (2530.56 MB)
+    //   explicit stack pointer (after) .........      1 343 360 B (   1.28 MB)
+    // The bound sits inside that gap: ~6x of headroom over the fixed code and
+    // ~316x under the broken code. Not derived from either measurement.
+    enum ulong kBoundBytes = 8UL * 1024 * 1024;
+
+    // Bracket ONLY the call under test.
+    immutable ulong before = GC.allocatedInCurrentThread;
+    fs.resolveConnectMask();
+    immutable ulong used = GC.allocatedInCurrentThread - before;
+
+    // Anti-vacuity, outside the bracket: prove the rig is one big walk.
+    auto er = fs.resolveElementBuffers();
+    assert(er.connectMask.length == mesh.vertices.length,
+        "resolved mask is one entry per vertex");
+    foreach (reached; er.connectMask)
+        assert(reached, "a grid plane must be a single connected component");
+
+    assert(used < kBoundBytes,
+        format("resolveConnectMask allocated %s B (%.2f MB) walking %d "
+             ~ "verts in one component; the bound is %s B (%.2f MB). This is "
+             ~ "the shrink-then-append defect (task 2130/2240): `stack.length "
+             ~ "-= 1` breaks the GC's in-place-append invariant, so the first "
+             ~ "push after every pop reallocates and copies the whole "
+             ~ "stack. Use an explicit stack pointer — never shrink the "
+             ~ "slice.",
+               used, used / (1024.0 * 1024.0), mesh.vertices.length,
+               kBoundBytes, kBoundBytes / (1024.0 * 1024.0)));
+}

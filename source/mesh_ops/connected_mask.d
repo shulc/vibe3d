@@ -76,14 +76,27 @@ bool[] connectedComponentMask(ref Mesh m, size_t seedVi) {
     const(uint)[]   adjNbrs;
     m.vertexAdjacencyCSR(adjOff, adjNbrs);
     bool[] visited = new bool[](n);
+    // EXPLICIT STACK POINTER — the slice is NEVER shrunk (task 2130/2240).
+    // `queue.length -= 1` breaks the GC's in-place-append invariant: `~=`
+    // extends a block in place only while `ptr + length` equals the
+    // used-length recorded in that block, so the first push after EVERY pop
+    // reallocated and copied the whole stack. `sp` is the live depth; the
+    // slice only ever grows, at the top. Membership order is provably
+    // irrelevant here (this returns a `bool[]` visited SET, not an ordered
+    // list — see the doc comment above), so no order needs preserving.
     size_t[] queue;
-    queue ~= seedVi;
+    size_t sp = 0;
+    if (sp == queue.length) queue ~= seedVi; else queue[sp] = seedVi;
+    ++sp;
     visited[seedVi] = true;
-    while (queue.length > 0) {
-        size_t v = queue[$ - 1];
-        queue.length -= 1;
+    while (sp > 0) {
+        size_t v = queue[--sp];
         foreach (nb; adjNbrs[adjOff[v] .. adjOff[v + 1]])
-            if (!visited[nb]) { visited[nb] = true; queue ~= nb; }
+            if (!visited[nb]) {
+                visited[nb] = true;
+                if (sp == queue.length) queue ~= nb; else queue[sp] = nb;
+                ++sp;
+            }
     }
     return visited;
 }
