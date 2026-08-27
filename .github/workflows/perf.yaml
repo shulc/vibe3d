@@ -103,12 +103,24 @@ jobs:
         rm -rf tools/perf/history
         ln -s "$HOME/perf-history" tools/perf/history
 
+    # Task 2030 — this runner's host now also serves a companion perf job
+    # from a private sibling repository (a second self-hosted runner
+    # service on the SAME machine). Two perf measurements sharing one host
+    # produce contention noise on both, silently — every timed step below
+    # (ops/tools/frames) is wrapped in `with_perf_lock.sh`, a host-wide
+    # `flock` that serializes this job's measuring window against that
+    # one's. 1200s (20 min) is a WAIT-to-acquire budget, not a run budget:
+    # picked well above this lane's own measured worst case (ops alone has
+    # taken 375s) so an ordinary overlap waits it out rather than failing,
+    # while a genuinely stuck holder still gets caught inside this job's
+    # existing 240-minute ceiling instead of hanging it silently.
     - name: 'Ops matrix, absolute vs committed baseline (recorded)'
       id: ops
       continue-on-error: true
       run: |
         set -o pipefail
         env -u WAYLAND_DISPLAY SDL_VIDEODRIVER=x11 DISPLAY=:0 \
+          tools/perf/lib/with_perf_lock.sh 1200 -- \
           rdmd tools/perf/run.d --n 316 2>&1 | tee ops.log
 
     - name: 'Day-over-day gate (--vs-last)'
@@ -193,6 +205,7 @@ jobs:
       run: |
         set -o pipefail
         env -u WAYLAND_DISPLAY SDL_VIDEODRIVER=x11 DISPLAY=:0 \
+          tools/perf/lib/with_perf_lock.sh 1200 -- \
           rdmd tools/perf/run.d tools --no-build --n 96 2>&1 | tee tools.log
 
     - name: 'Frame scenario counter invariants (frames --ci)'
@@ -203,6 +216,7 @@ jobs:
       run: |
         set -o pipefail
         env -u WAYLAND_DISPLAY SDL_VIDEODRIVER=x11 DISPLAY=:0 \
+          tools/perf/lib/with_perf_lock.sh 1200 -- \
           rdmd tools/perf/run.d frames --no-build --ci --n 316 2>&1 | tee frames.log
 
     - name: 'Job summary'

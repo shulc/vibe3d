@@ -453,6 +453,13 @@ struct CaseResult {
     JSONValue  lastBreakdown;    // full /api/perf from the last repeat
     bool       isCommand;        // true for delete/remove command cases
     long       commandApplyCount;// commandApply.count from last repeat (for I6)
+    // Task 2030 — per-case process memory. Process RSS around the command,
+    // in kB, from `lib.lifecycle.processRssKb` (median across repeats, same
+    // shape as kernelMedianUs). NOT gated yet — see the writer's comment.
+    // -1 (rssAvailable == false) when /proc/<pid>/statm could not be read on
+    // this host (rather than printing a bogus 0 kB reading).
+    bool       rssAvailable;
+    double     rssBeforeKb, rssAfterKb, rssDeltaKb;
     // --- `tools` subcommand: one interactive-tool preview rebuild (task 1370)
     bool       isToolPreview;    // true for ToolCase rows
     long       toolPreviewCount;      // rebuildPreview() calls in the window
@@ -1286,6 +1293,13 @@ CaseResult runCommandCase(ref CmdCase c, int n, string meshType, int repeats) {
     long beforeVerts = 0, afterVerts = 0;
     MeshProbe after;
 
+    // Task 2030 — per-repeat RSS samples, medianed the same way applyUs is.
+    // A single before/after pair (rather than one sample) would let one
+    // scheduling-noisy repeat set the recorded number; medianOf is already
+    // the harness's answer to that for timing, so memory reuses it.
+    double[] rssBeforeSamples, rssAfterSamples;
+    bool rssReadable = true;
+
     foreach (r; 0 .. repeats) {
         // Rebuild the cage every repeat — most of these are destructive.
         resetMesh(meshType, n);
@@ -1301,11 +1315,20 @@ CaseResult runCommandCase(ref CmdCase c, int n, string meshType, int repeats) {
         beforeFaces = mb.faceCount;
         beforeVerts = mb.vertexCount;
         perfReset();
+        // RSS "before" is read as close to the command as the HTTP round
+        // trip allows — right after perfReset, right before the POST that
+        // starts the timed work — so the window it brackets matches the
+        // window commandApply times, not the whole repeat (reset + select
+        // also allocate, and are not what this column is about).
+        long rssBefore = processRssKb(g_vibePid);
         if (!postCommand(c.commandId)) {
             res.status = CaseStatus.ERROR;
             res.detail = "command failed";
             return res;
         }
+        long rssAfter = processRssKb(g_vibePid);
+        if (rssBefore < 0 || rssAfter < 0) rssReadable = false;
+        else { rssBeforeSamples ~= cast(double)rssBefore; rssAfterSamples ~= cast(double)rssAfter; }
         auto perf = perfRead();
         applyUs ~= cast(double)sumNs(perf, "commandApply") / 1000.0;
         lastCount = ("commandApply" in perf)
@@ -1317,6 +1340,17 @@ CaseResult runCommandCase(ref CmdCase c, int n, string meshType, int repeats) {
         // The dump is taken around repeat 0 only, and OUTSIDE the measured
         // window (perfReset..perfRead already closed above).
         if (wantsProbe && r == 0) after = meshProbe();
+    }
+
+    // rssReadable is false the moment ANY repeat failed to read /proc — a
+    // partial reading (some repeats have it, some don't) would let a median
+    // silently sit over fewer samples than the timing one, and a reader has
+    // no way to tell "3 of 5" from "5 of 5" without this flag.
+    res.rssAvailable = rssReadable && rssBeforeSamples.length == repeats;
+    if (res.rssAvailable) {
+        res.rssBeforeKb = medianOf(rssBeforeSamples);
+        res.rssAfterKb  = medianOf(rssAfterSamples);
+        res.rssDeltaKb  = res.rssAfterKb - res.rssBeforeKb;
     }
 
     auto v = judgeWitness(c.witness, before, after,
@@ -3067,6 +3101,16 @@ void writeResultsJson(string path, string meshType, int n, long faceCount,
             a.put(format(`      "vertsTouched": %d,` ~ "\n", r.vertsTouched));
             a.put(format(`      "kernelInternalP95Ns": %d,` ~ "\n",
                          r.kernelInternalP95Ns));
+            // Task 2030 — process RSS around the command, recorded but not
+            // yet gated (see the card: a follow-up once a week of nightly
+            // rows exists to set a threshold against). Emitted only when
+            // every repeat's /proc read succeeded, so an absent triple means
+            // "not available on this host", never "zero".
+            if (r.rssAvailable) {
+                a.put(format(`      "rssBeforeKb": %s,` ~ "\n", jsonNum(r.rssBeforeKb)));
+                a.put(format(`      "rssAfterKb": %s,` ~ "\n", jsonNum(r.rssAfterKb)));
+                a.put(format(`      "rssDeltaKb": %s,` ~ "\n", jsonNum(r.rssDeltaKb)));
+            }
             a.put(`      "breakdown": ` ~ r.lastBreakdown.toString() ~ "\n");
         } else {
             a.put(format(`      "detail": "%s"` ~ "\n",
@@ -5296,7 +5340,15 @@ int main(string[] args) {
         stdout.flush();
         auto r = runCommandCase(cc, meshParam, meshType, repeats);
         final switch (r.status) {
-            case CaseStatus.OK:    writeln("OK");                  break;
+            // Task 2030 — RSS delta printed inline (not only into
+            // results.json/history): "record, print" per the task brief.
+            // Recorded, not gated — see the CaseResult field comment.
+            case CaseStatus.OK:
+                if (r.rssAvailable)
+                    writefln("OK  (rss %+.0f KB)", r.rssDeltaKb);
+                else
+                    writeln("OK");
+                break;
             case CaseStatus.SKIP:  writeln("SKIP (", r.detail, ")"); break;
             case CaseStatus.ERROR: writeln("ERROR (", r.detail, ")"); break;
         }
@@ -5491,6 +5543,14 @@ int main(string[] args) {
                     kernelMedianByCase[r.historyKey ~ "#snapVisMask"] =
                         r.snapVisMaskMedianUs;
             }
+            // Task 2030 — per-case memory, same `#`-suffix convention as
+            // `#snapQuery` above: `appendHistory`'s map is metric-agnostic,
+            // so this rides the existing history file for free and needs no
+            // schema change. `checkVsLast` explicitly SKIPS this suffix (see
+            // its loop) — recorded, not gated, until a week of nightly rows
+            // exists to set a threshold against.
+            if (r.rssAvailable)
+                kernelMedianByCase[r.historyKey ~ "#rssDeltaKb"] = r.rssDeltaKb;
         }
         lib.history.appendHistory(g_repoRoot, curHeader, kernelMedianByCase, "ops",
                                   lib.lifecycle.runWasContaminated());

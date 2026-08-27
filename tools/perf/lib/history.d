@@ -369,6 +369,14 @@ int checkVsLast(HistoryEntry[] entries, double threshold, double snapThreshold,
         if (pp is null) continue;                       // new case — no reference
         double cur = current.medians[name], prv = *pp;
         if (cur.isNaN || prv.isNaN) continue;
+        // Task 2030 — memory columns (`#rssDeltaKb`) are RECORDED into this
+        // same history file but deliberately NOT gated: one night's numbers
+        // are not a threshold, and RSS deltas are noisier host-to-host than
+        // a timing median (allocator/OS page-reclaim behaviour, not just
+        // scheduling). A separate, explicit skip rather than folding it into
+        // the floor check below, so the day someone sets a real memory
+        // threshold, deleting this one line is the whole diff.
+        if (name.endsWith("#rssDeltaKb")) continue;
         if (cur < floorUs && prv < floorUs) continue;   // µs-jitter band
         compared++;
         // The `#snapQuery` keys get their OWN threshold, resolved by the

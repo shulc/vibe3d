@@ -344,6 +344,48 @@ bool runWasContaminated() { return g_foreignVibeSeen.length > 0; }
 
 string contaminationDetail() { return g_foreignVibeSeen.join("; "); }
 
+// ---------------------------------------------------------------------------
+// Process RSS (task 2030 — per-case memory recording)
+// ---------------------------------------------------------------------------
+//
+// The app has no memory-observable endpoint as of this task (a sibling lane
+// is adding `GET /api/memory`; not landed on `main` at the time this was
+// written, and this harness does not block on it — see the ops-case caller
+// for the fallback note). So the ops matrix's before/after reading comes
+// straight from the KERNEL's own count of the process's resident pages,
+// `/proc/<pid>/statm`, read from the harness process rather than the app:
+// this is the harness measuring the app from OUTSIDE it, which needs no
+// instrumentation in vibe3d itself and cannot be fooled by a build that
+// forgot to wire a counter.
+//
+// `/proc/<pid>/statm` fields (all in PAGES, space-separated): size resident
+// shared text lib data dt. Field 1 (0-indexed) is RESIDENT. Page size is
+// hardcoded at 4096 rather than queried via `sysconf(_SC_PAGESIZE)` — every
+// host this harness runs on (the dev workstation, `fedora-perf`, the CI
+// runners) is x86_64 Linux, where the page size is architecturally fixed at
+// 4 KiB; querying it would add an FFI declaration to save nothing real.
+//
+// Returns -1 on any failure (process gone, /proc unavailable, malformed
+// line) so a caller can tell "no reading" from "0 kB resident" — the two
+// are not the same claim, and the ops case's caller needs to know when RSS
+// simply is not available on this host rather than silently print a zero.
+enum long kPageSizeBytes = 4096;
+
+long processRssKb(int pid) {
+    import std.file   : readText;
+    import std.string : split;
+
+    try {
+        auto text = readText(format("/proc/%d/statm", pid));
+        auto fields = text.split();
+        if (fields.length < 2) return -1;
+        long pages = fields[1].to!long;
+        return (pages * kPageSizeBytes) / 1024;
+    } catch (Exception) {
+        return -1;
+    }
+}
+
 bool launchVibe(ushort port, string viewport, string logPath) {
     auto logFile = File(logPath, "wb");
     string[] argv = [buildPath(g_repoRoot, "vibe3d"),
