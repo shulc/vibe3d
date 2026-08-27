@@ -12,6 +12,37 @@ import change_bus : MeshEditScope;
 /// faces; if nothing is selected, inverts the flag on every face. Exposed as
 /// a Command so it can be invoked through /api/command in tests and through
 /// future UI buttons without duplicating the logic.
+/// PERMANENTLY DENSE — task 1903 Stage L0, owner's ruling of 2026-08-27.
+///
+/// THE DECISION. `origSubpatch` stays a whole-array `dup` of `isSubpatch[]`
+/// for good, and `revert()` keeps patching the Subpatch bit index by index.
+/// L0's content for this file is AXIS 0 ONLY — the commit seam, i.e. the
+/// `commitChange` site and the bare `++topologyVersion` in `revert()` moving
+/// into a batch. Axis 1 is vacuous (there is no `mesh_ops` kernel: the loop
+/// calls `Mesh.setSubpatch` directly, a plain member and never a mixin), and
+/// axis 2 — the undo migration — is what this ruling declines.
+///
+/// THE QUESTION IT ANSWERS. "Does L0 give `MeshOpEntry.Kind.SubpatchDelta`
+/// its first production publisher?" No. The kind stays DORMANT after L0, and
+/// says so at its own declaration in `source/mesh_edit_delta.d`.
+///
+/// THE REASON. It would be the same delta spelled twice, for a strictly worse
+/// undo. This command already keeps a per-index bit capture and already writes
+/// back exactly the indices it captured — it has been off the `MeshSnapshot`
+/// path since task 0613. A `SubpatchDelta` log would carry the identical
+/// (index, before, after) triple through a second encoding, a second dispatch
+/// branch and a replay, and would restore the same bits at the same indices.
+/// Nothing about what undo gives back changes; the only deltas are an extra
+/// representation to keep correct and a kind that acquires its first caller
+/// for no behavioural reason. The dense capture is ~1 byte per face
+/// (`bool[]`), ~100 KB on a 100 000-face mesh, and it is transient.
+///
+/// The index-stability premise the sparse patch rests on is stated where it is
+/// used, in `revert()` below: a toggle changes no topology, so nothing
+/// compacts between capture and revert and index i still names face i. That
+/// premise is the same one a `SubpatchDelta` replay would need, so migrating
+/// would not buy safety there either.
+///
 class SubpatchToggle : Command, Operator {
     mixin OperatorActrCommon;
     private bool[] origSubpatch;     // pre-apply isSubpatch[] snapshot

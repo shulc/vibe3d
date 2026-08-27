@@ -197,7 +197,68 @@ struct MeshOpEntry {
                         //   recorder sets MeshEditTracker.wantsFaceReindex, so
                         //   this kind is produced only by its own unittest.
         SelectionDelta, // markIdx + markBefore / markAfter (Select bit, by element)
+        // DORMANT — no production publisher, and none is coming from task
+        // 1903 Stage L0 (owner's ruling of 2026-08-27, Q5). NOT shipped
+        // functionality; a reader who takes this kind for a working feature
+        // has read it wrong.
+        //
+        // THE COUNT THAT MAKES THIS LOAD-BEARING, measured on this tree
+        // 2026-08-27 over a code view (comments and string literals blanked):
+        // `MeshEditTracker.recordSubpatchDelta` — the only thing that can put
+        // this kind into a log — occurs ONCE in `source/**`, and that once is
+        // its own declaration. Production callers: ZERO. Test callers: ONE,
+        // `tests/test_mesh_edit_delta.d`'s round-trip cell (d). So every
+        // `SubpatchDelta` that has ever existed was made by a test.
+        //
+        // WHY IT STAYS THAT WAY. The only command that would publish it is
+        // `mesh.subpatch_toggle`, and it is declared PERMANENTLY DENSE at its
+        // own class (`source/commands/mesh/subpatch_toggle.d`): it already
+        // keeps a per-index bit capture and already writes back exactly the
+        // indices it captured, so a log here would be the same delta spelled
+        // twice with nothing gained. The kind is kept — its dispatch and its
+        // L0.P1 rulings are correct and tested — but its status is
+        // infrastructure, not feature.
+        //
+        // The census that keeps this honest is
+        // `tests/unit/l0_declined_census_test.d`: it pins the two counts
+        // above, so a FIRST caller cannot be added while this comment still
+        // says there is none.
         SubpatchDelta,  // markIdx + markBefore / markAfter (Subpatch bit, by face)
+        // DORMANT — no publisher at all, and none is coming from task 1903
+        // Stage L0 (owner's ruling of 2026-08-27, Q5). NOT shipped
+        // functionality.
+        //
+        // THE COUNT THAT MAKES THIS LOAD-BEARING, measured on this tree
+        // 2026-08-27 over a code view (comments and string literals blanked):
+        // `MeshEditTracker.recordHideDelta` occurs ONCE in `source/**` — its
+        // own declaration — and ZERO times in `tests/**`. It has NO caller
+        // anywhere, production or test. No `MeshEditTracker` has ever put a
+        // `HideDelta` into a log, so the RECORDER-to-dispatch path has never
+        // run and no mutation of `recordHideDelta` can redden anything.
+        //
+        // WHAT THAT DOES *NOT* MEAN, and the plan said otherwise until this
+        // was checked: the DISPATCH is not unexercised. Three unit modules
+        // hand-build a `MeshOpEntry` with `kind = HideDelta` and drive
+        // `apply` / `revert` directly, bypassing the recorder —
+        // `mesh_edit_delta_carveout_hide_test.d` (witness W5, the derived
+        // vertex/edge planes after a fast-path revert),
+        // `mesh_edit_delta_carveout_delivery_test.d` and
+        // `mesh_edit_delta_carveout_preview_test.d`. So `patchHide` DOES run,
+        // and a mutation aimed at it reddens W5. "Zero callers of the
+        // recorder" and "the branch never executes" are different facts, and
+        // only the first one is true here.
+        //
+        // WHY IT STAYS DORMANT. The four commands that would publish it are
+        // declared PERMANENTLY DENSE at `HideRevertCommon`
+        // (`source/commands/mesh/hide.d`), because a measured capture shows
+        // one undo of a Hide must also restore the component selection, its
+        // ORDER and other domains — nine planes this kind does not carry. A
+        // `HideDelta`-only revert answers `true` and loses them.
+        //
+        // The census that keeps this honest is
+        // `tests/unit/l0_declined_census_test.d`: it pins the two counts
+        // above, so a FIRST caller cannot be added while this comment still
+        // says there is none.
         HideDelta,      // markIdx + markBefore / markAfter (Hide bit, by face — task 0613)
         MaterialDelta,  // markIdx + markBefore / markAfter (faceMaterial[], by face)
         EdgeSelByEnds,  // edge selection keyed by VERTEX-INDEX endpoint pairs,

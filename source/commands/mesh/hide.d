@@ -206,6 +206,65 @@ private bool[] keepVisibleTargets(Mesh* mesh, SelType type) {
 // ambiguity the stamps exist to resolve. Restoring the counter alongside the
 // stamps it belongs to keeps "counter >= every live stamp" true by
 // construction, in both directions.
+// ===========================================================================
+// PERMANENTLY DENSE — task 1903 Stage L0, owner's ruling of 2026-08-27.
+//
+// THE DECISION. The four Hide commands keep this WHOLESALE nine-plane capture
+// for good. They do not move to a recorded `MeshEditDelta`, and
+// `MeshEditDelta.MeshOpEntry.Kind.HideDelta` gets no publisher from here (it
+// stays dormant — its own declaration carries that half).
+//
+// THE QUESTION IT ANSWERS. "Does one undo of a Hide restore only the
+// visibility change, or the component selection as well?" The L0 plan had
+// `hide` down as the group that trades this dense capture for a sparse
+// `HideDelta` carrying the Hide bits and nothing else.
+//
+// THE REASON, AND IT IS A MEASUREMENT, NOT A COST JUDGEMENT. Captured
+// 2026-08-27; fixture `toolcards/hide_undo_selection/` (fifteen headless
+// cells). ONE undo restores the visibility change AND the component selection
+// exactly as it stood immediately before the undone command. Three separable
+// parts, each with a cell that can tell it from the alternative:
+//
+//   * MEMBERSHIP comes back (H1_SEL).
+//
+//   * POSITION IN THE ORDER comes back, not merely the set. Vertices picked
+//     [7, 0, 2]; vertex 0 is hidden and leaves; the undo reads [7, 0, 2] with
+//     0 back in its MIDDLE slot (D2_CROSS). A restore that re-appends reads
+//     [7, 2, 0]; a sorted one reads [0, 2, 7]. That is what the three
+//     *SelectionOrder arrays above are for, and it is why they are CAPTURED
+//     rather than re-derived — order is not recoverable from a set.
+//
+//   * THE SELECTION OF A DOMAIN THE COMMAND NEVER RAN IN comes back. A
+//     Polygons-mode hide that hides the only face of a selected VERTEX drops
+//     that vertex from the VERTEX selection, and one undo puts it back, in
+//     order (D2_CROSS); the mirror cell holds too (H2X_UNSEL_CROSS_POLY, a
+//     Vertices-mode hide restoring a FACE selection). That is why all three
+//     domains are captured and not just the one `editMode` names.
+//
+//   The stand is a flat 3x3 quad grid ON PURPOSE and a cube would have proved
+//   nothing: the cross-domain cells need a selected vertex ALL of whose faces
+//   get hidden, and no such vertex exists on a closed solid, so every one of
+//   them would have been silently vacuous. The selections are non-monotonic
+//   ([5,1,3], [7,0,2], [8,2,4]) for the same reason — against a monotonic one
+//   an index-ordered readback and a selection-ordered one are indistinguishable.
+//
+// SO THE MIGRATION WAS NOT "NOT WORTH IT" — IT WAS MEASURABLY WRONG IN KIND.
+// `HideRevertCommon` restores nine planes wholesale and therefore satisfies
+// the measured law by construction. A `HideDelta`-only revert restores the
+// Hide bits, returns `true`, and silently loses the other nine: the Select bit
+// on all three marks arrays, the three order arrays and the three counters.
+// It answers `true` while being wrong, which is the failure this project pays
+// for most. And it is invisible in every other L0 group: no other L0 command
+// clears a Select bit, zeroes an order stamp, or moves an order counter.
+//
+// ONE DELIBERATE DIVERGENCE, recorded here so nobody "fixes" it back toward
+// the capture. `mesh.hideInvert`'s undo in the reference restores the hidden
+// set to EMPTY instead of to the set that was hidden before the invert ran,
+// and never brings it back on a later undo either (H3B_INVERT_CLEAN, whose
+// discriminating term is a NON-EMPTY prior hidden set; H3C_INVERT_NOPRIOR is
+// blind to it because "restore to empty" is right there by accident). Ours
+// restores the pre-invert marks. Ours is the correct one; do not port it.
+// ===========================================================================
 private mixin template HideRevertCommon() {
     private uint[] origVertexMarks_;
     private uint[] origEdgeMarks_;
@@ -300,6 +359,9 @@ private mixin template HideRevertCommon() {
 /// M2CTRL hides only the second corner and reads 1. A replace rule reads 1
 /// in all three, so the pair separates them, and the same law holds in both
 /// modes. Un-hiding is what Unhide All / Invert Hidden are for.
+/// PERMANENTLY DENSE (task 1903 Stage L0) — undo of this command must give
+/// back the selection it cleared, in order, across all three domains; the
+/// measurement and the fixture are at `HideRevertCommon` above.
 class MeshHide : Command, Operator {
     mixin OperatorActrCommon;
     mixin HideRevertCommon;
@@ -359,6 +421,11 @@ class MeshHide : Command, Operator {
 /// everything. That is the measured behaviour, not an accident of this
 /// implementation; the mitigation is a hidden-count readout in a later
 /// stage, not a special case here.
+/// PERMANENTLY DENSE (task 1903 Stage L0) — same ruling as `MeshHide`, and
+/// this is the command whose SAME-DOMAIN cell is vacuous by construction:
+/// its forward cannot disturb the selection of its own mode's domain, so
+/// only the cross-domain cells separate the candidates. See
+/// `HideRevertCommon` above.
 class MeshHideUnselected : Command, Operator {
     mixin OperatorActrCommon;
     mixin HideRevertCommon;
@@ -459,6 +526,9 @@ class MeshHideUnselected : Command, Operator {
 /// reproducing. The one exception is a LOOSE point, which has no face to
 /// propagate to and whose own bit is already independently writable
 /// (`Mesh.setVertexHidden`) — those are written directly.
+/// PERMANENTLY DENSE (task 1903 Stage L0) — and the one command where we
+/// deliberately DIVERGE on the visibility half of undo (the reference loses
+/// the pre-invert hidden set; we restore it). See `HideRevertCommon` above.
 class MeshHideInvert : Command, Operator {
     mixin OperatorActrCommon;
     mixin HideRevertCommon;
@@ -543,6 +613,10 @@ class MeshHideInvert : Command, Operator {
 /// ONE command, not two — the reference's `mode` argument (0="sel", 1="all")
 /// measured IDENTICAL across six rigs (§5, §9), so no distinction is
 /// invented here.
+/// PERMANENTLY DENSE (task 1903 Stage L0) — its own forward disturbs no
+/// selection, so on its own it cannot separate "undo restores visibility"
+/// from "undo restores visibility AND selection"; it inherits the ruling
+/// its three siblings' cells settled. See `HideRevertCommon` above.
 class MeshUnhideAll : Command, Operator {
     mixin OperatorActrCommon;
     mixin HideRevertCommon;
