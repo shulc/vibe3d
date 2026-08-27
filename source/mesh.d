@@ -17088,6 +17088,57 @@ struct MeshEditBatch {
                 f.rec.recordSetPos(hitIdx, before, after);
         m_.commitChange(MeshEditScope.Position);
     }
+
+    /// THE SECOND RECORDER (plan §L0.3, writer shape (D); task 1903 §L0-b).
+    /// Record the position writes some OTHER writer already made, by diffing
+    /// the live array against a pre-op image: ONE `Kind.SetPos` entry, the same
+    /// BIT predicate as `setVertexPositions`, and NO write of its own.
+    ///
+    /// WHY A SECOND RECORDER EXISTS AT ALL, because the obvious spelling is a
+    /// silent no-op: a post-hoc `ed.setVertexPositions(idx, alreadyWritten)`
+    /// records NOTHING. The bits are already equal, so `sameBits` short-circuits
+    /// the write AND the record, and the command ships with an empty delta while
+    /// its forward geometry is perfect. `magnet`'s shape — the external writer
+    /// hands back the index list it touched, and the command calls
+    /// `rec().recordSetPos` on it — stays the cheaper default and is what L0-d's
+    /// nine use. This primitive is for the writer that hands back NO usable
+    /// index list.
+    ///
+    /// THE WRITER IT WAS BUILT FOR: `source/symmetry.d`'s `applySymmetryMirror`
+    /// and `applySymmetryMirrorDelta`. Their `outAlsoTouched` array looks like
+    /// such a list and is not one — it UNDER-reports (an on-plane vertex is
+    /// projected in place through `vertices[i]` and sets no bit) and OVER-reports
+    /// (a mirror write landing on the value already there sets one). That was
+    /// measured before this stage existed and written down at
+    /// `commands/mesh/symmetrize.d`'s movement gate. Under-reporting is fatal for
+    /// a delta: the missing vertex comes back at its POST-op position on undo.
+    /// So the recorder reads the array rather than the writer's opinion of it.
+    ///
+    /// NOT RECORDING IS FREE — the early-out precedes the O(V) compare, so the
+    /// redo and tracker-off arms pay nothing. The `.dup` that builds `before` is
+    /// the CALLER's, though, so a caller that does not otherwise need the image
+    /// should guard the snapshot with `ed.recording()`.
+    ///
+    /// `before` shorter or longer than `vertices` is not an error: the diff runs
+    /// over the common prefix. A writer that APPENDED vertices is out of scope
+    /// here — `addVertex` is hooked and records its own `Kind.AddVerts`.
+    void recordPositionDiff(in Vec3[] before) {
+        auto f = currentBatchFrame(m_);
+        if (f is null || f.rec is null || f.errored) return;
+        const size_t n = before.length < m_.vertices.length
+                       ? before.length : m_.vertices.length;
+        uint[] hitIdx;
+        Vec3[] bef, aft;
+        foreach (i; 0 .. n) {
+            if (sameBits(before[i], m_.vertices[i])) continue;
+            hitIdx ~= cast(uint)i;
+            bef    ~= before[i];
+            aft    ~= m_.vertices[i];
+        }
+        if (hitIdx.length == 0) return;
+        f.rec.recordSetPos(hitIdx, bef, aft);
+        m_.commitChange(MeshEditScope.Position);
+    }
 }
 
 

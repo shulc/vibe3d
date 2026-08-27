@@ -3441,9 +3441,10 @@ unittest // L0-d — the nine files hold no raw position write
     // repeat, and the zone sweep in the next block reddens for its own reason.
     assert(kL0dPositionCommands.length == 9,
         "the L0-d roster is no longer nine commands. §L0-d's scope IS exactly "
-      ~ "nine files; a tenth belongs to L0-b (transform/symmetrize, which write "
-      ~ "through source/symmetry.d) or L0-e (move_vertex, whose forward is "
-      ~ "deliberately version-silent).");
+      ~ "nine files; `transform.d`/`symmetrize.d` have their own roster in the "
+      ~ "L0-b block below (they write through source/symmetry.d, which needs a "
+      ~ "kAllow row this one does not), and `move_vertex.d` is L0-e (its "
+      ~ "forward is deliberately version-silent).");
     auto sorted = kL0dPositionCommands.dup;
     sort(sorted);
     const size_t distinct = sorted.uniq.array.length;
@@ -3517,7 +3518,8 @@ unittest // L0-d — the zone total equals the nine plus the recorded remainder
         string hit;
         immutable size_t n = countRawPositionWrites(src, hit);
         zoneTotal += n;
-        if (kL0dPositionCommands[].canFind(baseName(e.name))) rosterTotal += n;
+        if (kL0dPositionCommands[].canFind(baseName(e.name))
+         || kL0bSymmetryCommands[].canFind(baseName(e.name))) rosterTotal += n;
         else if (n > 0) offenders ~= format("%s:%d", baseName(e.name), n);
     }
     // A mis-rooted walk reports 0 files, 0 writes, and passes.
@@ -3527,22 +3529,29 @@ unittest // L0-d — the zone total equals the nine plus the recorded remainder
              ~ "the totals below would be measuring nothing.", scanned));
 
     assert(rosterTotal == 0,
-        format("the nine L0-d files contribute %d raw position write(s) to the "
-             ~ "zone total. The per-file rows in the block above name which; "
-             ~ "this row exists because a DUPLICATED literal in that roster "
-             ~ "leaves one of the nine unscanned, and only a directory sweep "
-             ~ "can see the file the roster skipped.", rosterTotal));
+        format("the nine L0-d files plus the two L0-b ones contribute %d raw "
+             ~ "position write(s) to the zone total. The per-file rows in the "
+             ~ "blocks above name which; this row exists because a DUPLICATED "
+             ~ "literal in either roster leaves one of the files unscanned, "
+             ~ "and only a directory sweep can see the file the roster "
+             ~ "skipped.", rosterTotal));
 
-    // The remainder, enumerated. These are NOT L0-d's: `transform.d` and
-    // `symmetrize.d` write through source/symmetry.d and belong to L0-b;
-    // `move_vertex.d` is L0-e (owner Q4 — its forward is deliberately
-    // version-silent via `publishChange`); `edge_join.d`, `morph.d`,
-    // `remesh.d` and `vertex_edit.d` are later families. Listing them by NAME
-    // is what stops a tenth file's new raw write from hiding inside a total
-    // that merely "did not change".
+    // The remainder, enumerated. These are NOT L0-d's: `move_vertex.d` is L0-e
+    // (owner Q4 — its forward is deliberately version-silent via
+    // `publishChange`); `edge_join.d`, `morph.d`, `remesh.d` and
+    // `vertex_edit.d` are later families. Listing them by NAME is what stops a
+    // tenth file's new raw write from hiding inside a total that merely "did
+    // not change".
+    //
+    // `transform.d:6` and `symmetrize.d:1` LEFT this list at task 1903 §L0-b
+    // and are now `== 0` rows of their own, in the L0-b block below. Their
+    // seven writes are the whole of the drop from 15 to 8 — and the row that
+    // matters for them is NOT this one: their forward writer moved into
+    // `source/symmetry.d`, which neither census zone scans, so the L0-b block
+    // brings that file in by name (the `deform_magnet.d` shape).
     static immutable string[] kRemainder = [
         "edge_join.d:2", "morph.d:1", "move_vertex.d:2", "remesh.d:1",
-        "symmetrize.d:1", "transform.d:6", "vertex_edit.d:2",
+        "vertex_edit.d:2",
     ];
     import std.algorithm : sort;
     auto got = offenders.dup;
@@ -3554,10 +3563,12 @@ unittest // L0-d — the zone total equals the nine plus the recorded remainder
              ~ "commit — otherwise the zone-total row below goes on adding up "
              ~ "to the same number over a different set of files.",
                got, kRemainder));
-    assert(zoneTotal == 15,
+    assert(zoneTotal == 8,
         format("source/commands/mesh holds %d raw position write(s) in total, "
-             ~ "expected 15 = 0 (the nine L0-d files) + 15 (the enumerated "
-             ~ "remainder above). %d file(s) scanned.", zoneTotal, scanned));
+             ~ "expected 8 = 0 (the nine L0-d files) + 0 (the two L0-b files) "
+             ~ "+ 8 (the enumerated remainder above). It was 15 before task "
+             ~ "1903 §L0-b took transform.d's six and symmetrize.d's one. "
+             ~ "%d file(s) scanned.", zoneTotal, scanned));
 }
 
 unittest // L0-d — the hole a zone boundary leaves: deform_magnet.d
@@ -3625,4 +3636,258 @@ unittest // L0-d — the hole a zone boundary leaves: deform_magnet.d
       ~ "too, `recordSetPos` above would still be spelled and would still be "
       ~ "reached — `ed.recording()` guards it — and the command would record "
       ~ "nothing with every text row green.");
+}
+
+// ---------------------------------------------------------------------------
+// TASK 1903 L0-b — `transform` + `symmetrize`, the two commands that write
+// through `source/symmetry.d`
+//
+// WHY THIS IS A SEPARATE BLOCK FROM L0-d'S AND NOT TWO MORE LITERALS IN ITS
+// ROSTER. Both commands' forward position writes happen in
+// `source/symmetry.d` — `applySymmetryMirror` and `applySymmetryMirrorDelta` —
+// a module NEITHER census zone scans (`source/mesh_ops/**` +
+// `source/commands/**`) and whose signature belongs to Stage M / task 1905
+// (`source/tools/transform/**` are its other callers). `symmetrize` has ZERO
+// forward position writes of its own: its entire forward is one call.
+//
+// So retiring the two command rows to `== 0` retires NOTHING (памятка 54) —
+// it is the `deform_magnet.d` hole with a second door. Four things are pinned
+// here and they are not the same thing:
+//
+//   1. the two `== 0` rows — the TEXT half, per file;
+//   2. `source/symmetry.d`'s two-sided `kAllow` row: the COUNT, plus every
+//      one of its eleven raw writes named by exact text, four production and
+//      seven unittest-fixture;
+//   3. the RECORDER PIN on each command — `recordPositionDiff(` present
+//      exactly once, and exactly one RECORDING batch open. Deleting either
+//      leaves the forward geometry correct, both `== 0` rows green, both of
+//      symmetry.d's rows green, and the undo silently served by the legacy
+//      array. (3) is the load-bearing one;
+//   4. the recorder's CALLER SET, closed. `recordPositionDiff` is a second
+//      write-surface recorder with no write of its own, so a third caller is
+//      a place where "the batch observed a write it did not make" becomes
+//      representable with nothing watching it.
+// ---------------------------------------------------------------------------
+
+private enum string[2] kL0bSymmetryCommands = ["symmetrize.d", "transform.d"];
+
+unittest // L0-b — the two files hold no raw position write
+{
+    import std.algorithm : sort, uniq;
+    import std.array     : array;
+
+    // The same anti-duplication term L0-d's roster carries, for the same
+    // reason: a typo throws (`readText` on a missing file), a DUPLICATE is
+    // silent and leaves one of the two unscanned and green forever.
+    auto sorted = kL0bSymmetryCommands.dup;
+    sort(sorted);
+    assert(sorted.uniq.array.length == 2,
+        format("the L0-b roster names only %d DISTINCT file(s) across its two "
+             ~ "entries: %s.", sorted.uniq.array.length, sorted));
+
+    foreach (name; kL0bSymmetryCommands) {
+        immutable path = buildPath(repoRoot, "source", "commands", "mesh", name);
+        assert(exists(path),
+            "cannot find source/commands/mesh/" ~ name ~ " at " ~ path
+          ~ " — the L0-b roster names a file that is not in the tree, so its "
+          ~ "`== 0` row below would be measuring nothing.");
+        immutable src = stripCommentsAndStrings(readText(path));
+
+        // Non-vacuity floor for the stripper: a stripper that ate the file
+        // would report 0 raw writes and pass by saying nothing.
+        assert(countOccurrences(src, "override bool revert()") == 1,
+            "source/commands/mesh/" ~ name ~ ": the comment stripper ate the "
+          ~ "file (or the command lost its `revert` override) — the raw-write "
+          ~ "count below would be 0 for the wrong reason.");
+
+        string firstHit;
+        immutable size_t raw = countRawPositionWrites(src, firstHit);
+        assert(raw == 0,
+            format("source/commands/mesh/%s: %d raw position write(s) under "
+                 ~ "§5.7's predicate, expected 0. First hit: `%s`.\n"
+                 ~ "  THIS ROW IS WORTH LESS HERE THAN IN L0-d, and the "
+                 ~ "difference is the point of the L0-b group: this command's "
+                 ~ "FORWARD writer never lived in this file. It is "
+                 ~ "`applySymmetryMirror` / `applySymmetryMirrorDelta` in "
+                 ~ "source/symmetry.d, which neither census zone scans, so "
+                 ~ "this row read 0 for the forward before the migration and "
+                 ~ "reads 0 after it. What moved it off its old count is the "
+                 ~ "REVERT loop. The halves that can tell a recording build "
+                 ~ "from a non-recording one are the `recordPositionDiff` pin "
+                 ~ "below and "
+                 ~ "tests/unit/commands/mesh/symmetry_delta_test.d's W-b1/W-b2 "
+                 ~ "op-log cells (task 1903 §L0-b, §5.7, §L0.3 shape (D)).",
+                   name, raw, firstHit));
+    }
+}
+
+unittest // L0-b — the hole a zone boundary leaves: source/symmetry.d
+{
+    // THE ROW THIS BLOCK EXISTS FOR, and it is `deform_magnet.d`'s shape with
+    // a wider mouth: TWO writer functions, FOUR production writes, and TWO
+    // commands depending on them.
+    immutable path = buildPath(repoRoot, "source", "symmetry.d");
+    assert(exists(path), "cannot find source/symmetry.d at " ~ path);
+    immutable sy = stripCommentsAndStrings(readText(path));
+
+    assert(countOccurrences(sy, "void applySymmetryMirror(Mesh* mesh,") == 1
+        && countOccurrences(sy, "void applySymmetryMirrorDelta(Mesh* mesh,") == 1,
+        "source/symmetry.d no longer declares BOTH `applySymmetryMirror` and "
+      ~ "`applySymmetryMirrorDelta` with a `Mesh*` receiver — the comment "
+      ~ "stripper ate the file, or a signature changed. The counts below would "
+      ~ "be 0 for the wrong reason, and a receiver change is exactly what task "
+      ~ "1903 §L0.3 forbids L0 from making here (task 1905/T2 owns the other "
+      ~ "callers, in source/tools/transform/**).");
+
+    string firstHit;
+    immutable size_t raw = countRawPositionWrites(sy, firstHit);
+    assert(raw == 11,
+        format("source/symmetry.d: %d raw position write(s) under §5.7's "
+             ~ "predicate, expected exactly 11 — FOUR production (the two "
+             ~ "mirror writers' on-plane projection and partner write, one "
+             ~ "pair each) plus SEVEN unittest-fixture writes below the "
+             ~ "kernels. All eleven are named by text in the rows that follow. "
+             ~ "First hit: `%s`. A TWELFTH write here would be invisible to "
+             ~ "every other row in this file, because neither census zone "
+             ~ "scans this module at all (task 1903 §L0-b, §L0.3 shape (D)).",
+               raw, firstHit));
+
+    // The two-sided half — WHICH writes the allowance covers. The count row
+    // above reads 11 for ANY eleven raw writes, so a production write swapped
+    // for a differently-spelled one, or a fixture deleted while a production
+    // one was added, would keep it green. This is the loop_slice.d idiom, run
+    // over the whole file because every one of the eleven is enumerable.
+    static immutable string[2][] kAllowedSymmetryWrites = [
+        // --- the four PRODUCTION writes, the ones L0-b's deltas depend on ---
+        ["mesh.vertices[i] = projectOnPlane(sp, mesh.vertices[i]);", "2"],
+        ["mesh.vertices[mi] = mirrorPosition(sp, mesh.vertices[i]);", "1"],
+        ["mesh.vertices[mi] = baseline[mi] + mirrorDirection(sp, delta);", "1"],
+        // --- the seven unittest-FIXTURE writes, a local mesh with no batch ---
+        ["m.vertices[2] = baseline[2] + delta;", "2"],
+        ["m.vertices[4] = baseline[4];", "1"],
+        ["m.vertices[2].y += DRAG_Y;", "4"],
+    ];
+    size_t named = 0;
+    foreach (row; kAllowedSymmetryWrites) {
+        import std.conv : to;
+        immutable size_t want = row[1].to!size_t;
+        immutable size_t got  = countOccurrences(sy, row[0]);
+        assert(got == want,
+            format("source/symmetry.d spells `%s` %d time(s); the L0-b "
+                 ~ "allowance is for exactly %d. Every one of this file's "
+                 ~ "eleven raw position writes is named here, so a count row "
+                 ~ "that still reads 11 over a DIFFERENT set of writes cannot "
+                 ~ "hide behind the total.", row[0], got, want));
+        named += got;
+    }
+    assert(named == raw,
+        format("the L0-b allowance names %d raw position write(s) but the "
+             ~ "predicate counts %d in source/symmetry.d. The two halves of "
+             ~ "this row have drifted: either a write was added that no row "
+             ~ "names, or a named spelling is being counted twice by the "
+             ~ "predicate. Neither half is trustworthy until they agree.",
+               named, raw));
+}
+
+unittest // L0-b — the recorder pins, one per command
+{
+    // AND THE OTHER SIDE OF THE SAME HOLE. Under a recording batch those four
+    // production writes produce NO op-log entry — `alias mesh this` makes
+    // `mesh.vertices[mi] = …` compile inside one — so each command records
+    // EXPLICITLY, by diffing against a pre-op image. Delete that statement
+    // and: the forward geometry is still correct, both `== 0` rows above are
+    // still green, all of symmetry.d's rows are still green, and the undo
+    // silently falls back to the legacy array. These are the only TEXT halves
+    // that redden for it.
+    struct Pin { string file; string diffCall; size_t recordingOpens; string why; }
+    static immutable Pin[] kPins = [
+        Pin("transform.d", "ed.recordPositionDiff(preMirror);", 1,
+            "mesh.transform records in TWO passes: `ed.setVertexPositions` for "
+          ~ "the kind switch and `ed.recordPositionDiff` for the symmetry "
+          ~ "mirror. Only the second one covers the mirror PARTNER, and this "
+          ~ "command's own legacy `touchedIdx`/`touchedPrev` capture already "
+          ~ "covers that vertex — so with the diff call gone the forward, the "
+          ~ "census and the tracker-OFF undo are all still right and only the "
+          ~ "ARMED revert is short"),
+        Pin("symmetrize.d", "ed.recordPositionDiff(prevPositions);", 1,
+            "mesh.symmetrize has NO forward position write of its own — its "
+          ~ "entire forward is the `applySymmetryMirror` call — so this one "
+          ~ "statement is the whole of what the migration added. Without it "
+          ~ "the op-log is EMPTY and `revert()` still answers `true`, which is "
+          ~ "plan §5.3's \"answers true, changes nothing\" shape"),
+    ];
+    foreach (pin; kPins) {
+        immutable src = stripCommentsAndStrings(readText(
+            buildPath(repoRoot, "source", "commands", "mesh", pin.file)));
+        assert(countOccurrences(src, "recordPositionDiff(") == 1,
+            format("source/commands/mesh/%s calls `recordPositionDiff` %d "
+                 ~ "time(s), expected exactly 1. %s.",
+                   pin.file, countOccurrences(src, "recordPositionDiff("),
+                   pin.why));
+        assert(countOccurrences(src, pin.diffCall) == 1,
+            format("source/commands/mesh/%s no longer spells its recorder "
+                 ~ "`%s` exactly once. The count row above reads 1 for ANY "
+                 ~ "single call — including one handed the WRONG pre-image, "
+                 ~ "which is a delta that reverts to an intermediate state — "
+                 ~ "so this is the half that names the image.",
+                   pin.file, pin.diffCall));
+        assert(countOccurrences(src, "MeshEditBatch(*mesh,") == pin.recordingOpens,
+            format("source/commands/mesh/%s opens %d RECORDING `MeshEditBatch`"
+                 ~ "(es), expected %d. Its other two opens are "
+                 ~ "`MeshEditBatch.unrecorded` (the redo and tracker-off "
+                 ~ "arms), which record nothing by design; if the recording "
+                 ~ "open became `unrecorded` too, `recordPositionDiff` above "
+                 ~ "would still be spelled and would still be REACHED — it "
+                 ~ "early-outs on a non-recording frame — and the command "
+                 ~ "would record nothing with every text row green.",
+                   pin.file, countOccurrences(src, "MeshEditBatch(*mesh,"),
+                   pin.recordingOpens));
+    }
+}
+
+unittest // L0-b — `recordPositionDiff`'s caller set is CLOSED
+{
+    import std.file : dirEntries, SpanMode;
+    import std.path : relativePath;
+
+    // WHY A CENSUS AND NOT JUST THE TWO PINS ABOVE. `recordPositionDiff` is a
+    // recorder with NO WRITE OF ITS OWN: it tells the op-log that some other
+    // writer already moved these vertices. That is exactly the statement a
+    // future caller can get wrong in a way nothing else sees — a pre-image
+    // taken at the wrong moment records a delta that reverts to a state the
+    // mesh was never in, and the forward stays perfect. Every use of it needs
+    // its own W-b1-shaped cell, so a THIRD caller must be a deliberate,
+    // reviewed line rather than a copied one. (The `confined_publisher_census`
+    // shape, task 2000.)
+    immutable srcRoot = buildPath(repoRoot, "source");
+    size_t scanned = 0;
+    string[] sites;
+    foreach (e; dirEntries(srcRoot, "*.d", SpanMode.depth)) {
+        ++scanned;
+        immutable src = stripCommentsAndStrings(readText(e.name));
+        immutable size_t n = countOccurrences(src, "recordPositionDiff(");
+        if (n > 0)
+            sites ~= format("%s:%d", relativePath(e.name, srcRoot), n);
+    }
+    // A mis-rooted walk reports 0 files, 0 sites, and passes.
+    assert(scanned >= 100,
+        format("the source/** sweep visited only %d .d file(s) — the tree "
+             ~ "holds well over 100, so the walk is mis-rooted and the site "
+             ~ "list below would be measuring nothing.", scanned));
+
+    import std.algorithm : sort;
+    sort(sites);
+    static immutable string[] kExpected = [
+        "commands/mesh/symmetrize.d:1",   // shape (D): its ONLY forward write
+        "commands/mesh/transform.d:1",    // shape (D): pass 2, the mirror
+        "mesh.d:1",                       // the definition itself
+    ];
+    assert(sites == kExpected,
+        format("`recordPositionDiff` is spelled at %s; the recorded set is "
+             ~ "%s. A NEW caller owes its own armed-revert witness on a stand "
+             ~ "where the external writer touches a vertex the command does "
+             ~ "not name — that is the whole content of task 1903 §L0-b's "
+             ~ "W-b1 — and it owes a row here in the SAME commit. A caller "
+             ~ "that merely appears is a delta nothing measures.",
+               sites, kExpected));
 }

@@ -8,6 +8,8 @@ import editmode;
 import math   : Vec3;
 import params : Param;
 import change_bus : MeshEditScope;
+import mesh_edit_delta : undoTrackerEnabled;
+import commands.mesh.position_undo : PositionUndo;
 import toolpipe.packets : SymmetryPacket, SubjectPacket;
 import symmetry : rebuildPairing, rebuildPairingTopological, applySymmetryMirror;
 
@@ -48,9 +50,25 @@ class MeshSymmetrize : Command, Operator {
     private float  offset_   = 0.0f;
     private float  epsilon_  = 1e-4f;
 
-    // Positional undo snapshot.
+    // Positional undo snapshot. Kept after task 1903 §L0-b as the TRACKER-OFF
+    // ORACLE and as the movement gate's pre-image — `undo_` below serves the
+    // default undo path.
     private Vec3[] prevPositions;
     private bool   captured;
+
+    // Recorded `Kind.SetPos` undo (task 1903 §L0-b).
+    private PositionUndo undo_;
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded undo (task 1903 §L0-b,
+        /// witness W-b2). THIS COMMAND HAS NO FORWARD POSITION WRITE OF ITS
+        /// OWN — its entire forward is the `applySymmetryMirror` call below —
+        /// so "recorded nothing" is a state in which the census reads 0, the
+        /// forward geometry is right, and `revert()` still answers `true` off
+        /// the legacy array. Only reading the log sees it. `version
+        /// (unittest)`, so this is not a door in a shipped build; `public` on
+        /// the declaration and NOT a `public:` section.
+        public ref const(PositionUndo) recordedUndo() const return { return undo_; }
+    }
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -78,8 +96,54 @@ class MeshSymmetrize : Command, Operator {
         if (axis_.length != 1
          || (axis_[0] != 'X' && axis_[0] != 'Y' && axis_[0] != 'Z'))
             return false;
+        // §2.4 — all three guards above resolve BEFORE any batch opens; this
+        // command has no `throw`, so those `return false`s are the whole set.
 
+        // REDO (CommandHistory.redo): re-run the kernel UNRECORDED and keep
+        // the first delta. The kernel rebuilds its own pairing from the
+        // restored pre-op mesh and its own params — it reads no pipeline state
+        // at all — so the replay lands where the first run landed.
+        if (undo_.armed()) {
+            auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+            const ok = applyKernel(ed);
+            ed.close();
+            return ok;
+        }
+        if (undoTrackerEnabled()) {
+            auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
+            const ok = applyKernel(ed);
+            undo_.arm(ed.close());
+            if (!ok) { undo_.disarm(); return false; }
+            return true;
+        }
+        // Legacy path (VIBE3D_UNDO_TRACKER=off). The SAME kernel through an
+        // UNRECORDED batch, so this file's raw-write census row is 0 on BOTH
+        // paths rather than only on the one the default happens to take.
+        auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+        const ok = applyKernel(ed);
+        ed.close();
+        return ok;
+    }
+
+    // -----------------------------------------------------------------------
+    // THE RECORDING STRATEGY IS shape (D), AND IT IS THE ONLY ONE AVAILABLE
+    // (plan §L0.3; task 1903 §L0-b).
+    //
+    // This command makes ZERO forward position writes of its own: its entire
+    // forward is the `applySymmetryMirror(mesh, …)` call below, in
+    // `source/symmetry.d` — a module this stage may not change (its other
+    // callers are `source/tools/transform/**`, task 1905/T2's zone) and which
+    // writes `mesh.vertices[…]` RAW. Under a RECORDING batch a raw write
+    // produces no op-log entry, because `alias mesh this` makes that spelling
+    // compile. So the recorder cannot be a write and cannot be an index list
+    // either: the writer's own `alsoTouched` output is not one (see the
+    // movement gate below, which had already measured that). It is a DIFF
+    // against the pre-op image the command already keeps.
+    // -----------------------------------------------------------------------
+    private bool applyKernel(ref MeshEditBatch ed) {
         // Positional snapshot — taken BEFORE apply so we can diff and revert.
+        // It is now THREE things at once: the movement gate's reference, the
+        // tracker-off revert's source, and `recordPositionDiff`'s pre-image.
         prevPositions = mesh.vertices.dup;
         captured = false;
 
@@ -120,9 +184,16 @@ class MeshSymmetrize : Command, Operator {
         auto alsoTouched = new bool[](mesh.vertices.length);  alsoTouched[] = false;
         applySymmetryMirror(mesh, sp, selected, alsoTouched);
 
+        // THE RECORDER, placed immediately after the write it records. On an
+        // unrecorded batch it early-outs before the O(V) compare.
+        ed.recordPositionDiff(prevPositions);
+
         // Movement gate: diff pre-apply snapshot vs live positions.
         // Do NOT use alsoTouched — it under-reports on-plane projection
         // changes and over-reports no-op mirror writes (see plan §Undo shape).
+        // That sentence is also why the recorder above is a diff: an
+        // under-reporting index list loses a vertex from the delta, and the
+        // one it loses comes back at its POST-op position on undo.
         bool moved = false;
         foreach (i; 0 .. prevPositions.length) {
             if (i < mesh.vertices.length && mesh.vertices[i] != prevPositions[i]) {
@@ -133,16 +204,31 @@ class MeshSymmetrize : Command, Operator {
         if (!moved) return false;   // already symmetric — no history entry
 
         captured = true;
-        mesh.commitChange(MeshEditScope.Position);
+        ed.commitChange(MeshEditScope.Position);
         return true;
     }
 
     override bool revert() {
+        if (undo_.armed()) return undo_.revert(*mesh);
+        // THE TRACKER-OFF ORACLE (W-b4). Kept, not deleted.
         if (!captured) return false;
-        foreach (i; 0 .. prevPositions.length)
-            if (i < mesh.vertices.length)
-                mesh.vertices[i] = prevPositions[i];
-        mesh.commitChange(MeshEditScope.Position);
+        // TASK 1903 §L0-b — THE LEGACY REVERT WRITES THROUGH THE BATCH TOO,
+        // for the reason L0-d recorded at the same line in nine other files:
+        // §2.5's "leave the loop untouched" is incompatible with §1/§3/W-d1's
+        // `countRawPositionWrites == 0` for this file — that count included
+        // this loop, and it was this file's ONLY raw position write. Resolved
+        // the way §2.5 already resolved the forward: the same write, through
+        // the same primitive, on an UNRECORDED batch. Byte-identical —
+        // `setVertexPositions` skips only writes whose new value is
+        // BIT-identical to the current one (writing identical bits back was
+        // what the loop did), and it drops out-of-range indices, which is the
+        // same guard as the old `if (i < mesh.vertices.length)`.
+        auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+        uint[] idx = new uint[](prevPositions.length);
+        foreach (i; 0 .. idx.length) idx[i] = cast(uint)i;
+        ed.setVertexPositions(idx, prevPositions);
+        ed.commitChange(MeshEditScope.Position);
+        ed.close();
         return true;
     }
 }
