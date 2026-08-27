@@ -440,6 +440,370 @@ unittest // makeTaggedGridFull scales, and the tagging survives the scaling
            "the corner map is re-sized to the larger corner count");
 }
 
+// ---------------------------------------------------------------------------
+// makeTaggedGridMaps (task 1903 Stage L1) — `makeTaggedGridFull` plus the five
+// things the MAP / SET family needs and which no existing stand carries.
+// ---------------------------------------------------------------------------
+
+/// The stand for stage L1's parity fixture (`tests/fixtures/undo_parity/
+/// uv_maps_sets.json`) and for its dense/payload measurement.
+///
+/// WHY A THIRD STAND AND NOT AN EXTENSION OF `makeTaggedGridFull`. Identical
+/// argument to the one that made `makeTaggedGridFull` a sibling rather than an
+/// edit of `makeTaggedGrid`, one level down: `makeTaggedGridFull` is read by
+/// stage §8's O(Δ) cells and by L0-b's and L0-d's witnesses, and its own
+/// superset unittest asserts it agrees with `makeTaggedGrid`. Changing what it
+/// CONTAINS changes what those gates observe. So this is a third, larger stand
+/// and the superset unittest below is the guard against the two drifting.
+///
+/// THE FIVE ADDITIONS over `makeTaggedGridFull`, each with why the L1 family
+/// cannot be measured without it:
+///
+///  1. **Two morph maps (`morphAbsolute` + `morphRelative`) with a SPARSE
+///     presence channel.** `MeshMap.present` is the plane a forward-only check
+///     misses in this family: empty MEANS "all present" (`mesh.d`'s `isPresent`),
+///     so a revert that restores `data` and drops `present` produces a legal,
+///     WRONG map rather than a crash. The channel is only discriminating if it
+///     carries all three states at once, so each map gets:
+///       * an ABSENT element,
+///       * a PRESENT element with a non-zero value,
+///       * a PRESENT element whose stored value is EXACTLY 0.0f — the cell
+///         that separates "restored the value" from "restored the presence",
+///         because those two are indistinguishable everywhere else.
+///     Both KINDS are present because they are not one kind with a flag: they
+///     differ in `absentIsZero`, so for `morphAbsolute` an absent entry MOVES
+///     the vertex and for `morphRelative` it does not.
+///  2. **An Edge-domain map.** `MapDomain` has three members and no stand
+///     exercised the third; the L1 family's (V) payload is indexed in the
+///     map's OWN element space, which is a different array per domain.
+///  3. **A SECOND named set per domain.** With one set per domain every bit
+///     position is 0, so a delta that carried the mask and dropped the NAME
+///     registry — or carried bit 0 for the wrong name — reads identical.
+///  4. **Non-monotonic selection ORDER in two domains.** The restoration law
+///     for a set-apply is by ORDER POSITION, so a stand whose order stamps
+///     ascend with the element index is green under a revert that re-derives
+///     the order from the index instead of restoring it.
+///  5. **A second UV-shaped PolyVertex map**, so `uv.copy`'s source and
+///     destination are both real and its undo has a registry to shrink.
+///  6. **A REALISTIC layout on the inherited `uv` map.** `makeTaggedGridFull`
+///     fills it with `data[i] = i`, which is fine for a plane dump — every
+///     corner distinct — and useless as an operand: with a unique UV per
+///     corner every corner is its own UV island, so every corner is a SEAM,
+///     `uvRelax` finds nothing unpinned and REFUSES, and the cell freezes a
+///     refusal rather than an edit. Replaced here by a planar unwrap in which
+///     corners meeting at a vertex share a UV, i.e. what a UV map on a grid
+///     actually looks like. This is the one place the stand overwrites an
+///     inherited plane rather than adding one, and it is why the superset
+///     unittest below compares the geometry and mark planes but NOT `uv`.
+///
+/// `n` defaults to 3 so the parity capture reads `makeTaggedGridMaps()`; the
+/// dense/payload measurement passes 316 (99 856 faces).
+Mesh makeTaggedGridMaps(int n = 3)
+{
+    import mesh_selsets : selSetEditPolygon, selSetEditVertex, selSetEditEdge,
+                          SetEditMode;
+
+    assert(n >= 3, "makeTaggedGridMaps: inherits makeTaggedGridFull's n >= 3");
+
+    Mesh m = makeTaggedGridFull(n);
+
+    // ---- addition 6: a REAL UV layout on the inherited map ----------------
+    // Planar (x, z) unwrap normalised to [0,1]. Corners that meet at a vertex
+    // get the SAME uv, which is what makes the map have interior (non-seam)
+    // corners at all — the property every UV kernel in the family needs and
+    // `data[i] = i` destroys.
+    {
+        auto uv0 = m.meshMap(kUvMapName);
+        assert(uv0 !is null, "fixture: the inherited UV map must be there");
+        float minX = m.vertices[0].x, maxX = minX;
+        float minZ = m.vertices[0].z, maxZ = minZ;
+        foreach (ref p; m.vertices) {
+            if (p.x < minX) minX = p.x;  if (p.x > maxX) maxX = p.x;
+            if (p.z < minZ) minZ = p.z;  if (p.z > maxZ) maxZ = p.z;
+        }
+        immutable float spanX = (maxX > minX) ? (maxX - minX) : 1.0f;
+        immutable float spanZ = (maxZ > minZ) ? (maxZ - minZ) : 1.0f;
+        // A per-VERTEX table, then broadcast to that vertex's corners — so
+        // the shared-uv property is a property of the construction and not an
+        // accident of the formula.
+        auto uvOfVert = new float[2][](m.vertices.length);
+        foreach (vi, ref p; m.vertices)
+            uvOfVert[vi] = [(p.x - minX) / spanX, (p.z - minZ) / spanZ];
+
+        // …and then PERTURB two interior vertices. A perfectly uniform unwrap
+        // is a FIXED POINT of the relax kernel — it moves nothing and
+        // `uvRelax` answers false — which is the identical trap `mesh.smooth`
+        // has on a flat grid. The perturbation is what gives the family's
+        // smoothing kernels something to converge from. Interior vertices of a
+        // 3x3 grid are 5/6/9/10 (row-major, i*4+j); two of them are enough and
+        // the asymmetry is deliberate.
+        if (uvOfVert.length > 10) {
+            uvOfVert[5][0]  += 0.17f;  uvOfVert[5][1]  -= 0.11f;
+            uvOfVert[10][0] -= 0.09f;  uvOfVert[10][1] += 0.21f;
+        }
+
+        foreach (L; 0 .. m.loops.length) {
+            const uint vi = m.loops[L].vert;
+            uv0.data[L * 2]     = uvOfVert[vi][0];
+            uv0.data[L * 2 + 1] = uvOfVert[vi][1];
+        }
+    }
+
+    // ---- addition 5: a second PolyVertex map, so uv.copy has a real target.
+    auto uv2 = m.addMeshMap("uv2", 2, MapDomain.PolyVertex);
+    assert(uv2 !is null, "fixture: second UV map registration must succeed");
+    foreach (i; 0 .. uv2.data.length)
+        uv2.data[i] = 0.25f * cast(float) i;
+
+    // ---- addition 2: the Edge domain, through the classified door so `dim`
+    // and `domain` come from `kindInfo` and cannot drift from the shape table.
+    auto cw = m.addMeshMapOfKind(MapKind.creaseWeight);
+    assert(cw !is null, "fixture: crease map registration must succeed");
+    assert(cw.domain == MapDomain.Edge, "fixture: crease map must be Edge-domain");
+    // Written directly rather than through `setCreaseWeight`, which publishes
+    // AND bumps `topologyVersion` per call; the stand is built, not edited, and
+    // a stand that arrives with a version history is a stand whose counters
+    // cannot be used as a baseline.
+    foreach (i; 0 .. cw.data.length)
+        cw.data[i] = (i % 3 == 0) ? 0.0f : (0.1f * cast(float)(i + 1));
+
+    // ---- addition 1: the two morph maps, with the three presence states.
+    //
+    // `addMeshMapOfKind` creates a presence-tracked map ABSENT EVERYWHERE, so
+    // "absent" is the default and the two present states are written through
+    // the PRODUCTION path (`setMorphValue`) rather than by hand — which is what
+    // makes the fixture exercise the presence write the family will have to
+    // restore.
+    static struct MorphSpec { MapKind kind; string name; }
+    static immutable MorphSpec[2] morphSpecs =
+        [ MorphSpec(MapKind.morphAbsolute, "MA"),
+          MorphSpec(MapKind.morphRelative, "MR") ];
+    foreach (ref spec; morphSpecs)
+    {
+        auto mm = m.addMeshMapOfKind(spec.kind, spec.name);
+        assert(mm !is null, "fixture: morph map registration must succeed");
+        assert(mm.present.length == m.vertices.length,
+               "fixture: a morph map must carry a per-vertex presence channel");
+        // present, NON-ZERO
+        m.setMorphValue(spec.name, 1, Vec3(0.30f, -0.20f, 0.10f));
+        m.setMorphValue(spec.name, 4, Vec3(-0.05f, 0.45f, 0.00f));
+        // present, stored value EXACTLY zero — indistinguishable from absent
+        // in `data`, distinguishable only in `present`.
+        m.setMorphValue(spec.name, 2, Vec3(0.0f, 0.0f, 0.0f));
+        // absent, and reached through the production clear rather than left at
+        // the creation default, so the clear path itself is in the fixture.
+        m.setMorphValue(spec.name, 3, Vec3(9.0f, 9.0f, 9.0f));
+        m.clearMorphValue(spec.name, 3);
+    }
+
+    // ---- addition 3: a second named set in each of the three domains.
+    bool[] polySel2 = new bool[](m.faces.length);
+    polySel2[0] = true;
+    polySel2[3] = true;
+    selSetEditPolygon(m, "S2", SetEditMode.replace, polySel2);
+
+    bool[] vertSel2 = new bool[](m.vertices.length);
+    vertSel2[1] = true;
+    vertSel2[4] = true;
+    vertSel2[7] = true;
+    selSetEditVertex(m, "V2", SetEditMode.replace, vertSel2);
+
+    bool[] edgeSel2 = new bool[](m.edges.length);
+    edgeSel2[0] = true;
+    edgeSel2[2] = true;
+    selSetEditEdge(m, "E2", SetEditMode.replace, edgeSel2);
+
+    // ---- addition 4: make the inherited selection order NON-MONOTONIC.
+    //
+    // `makeTaggedGridFull` stamps `faceSelectionOrder[2] = 11` and `[6] = 23`,
+    // which ASCENDS with the index; and its vertex/edge selections are stamped
+    // by `selectVertex`/`selectEdge` in index order for the same reason. A
+    // revert that re-derives the order from the element index is green on
+    // that. Two domains are re-stamped in DESCENDING order here, which is the
+    // shape only a restore can reproduce.
+    assert(m.vertexSelectionOrder.length > 9 && m.edgeSelectionOrder.length > 3,
+           "fixture: the inherited selections must exist before re-stamping");
+    m.vertexSelectionOrder[2] = 40;
+    m.vertexSelectionOrder[9] = 17;   // later index, EARLIER stamp
+    m.edgeSelectionOrder[0]   = 31;
+    m.edgeSelectionOrder[3]   = 12;   // later index, EARLIER stamp
+    if (m.vertexSelectionOrderCounter < 41) m.vertexSelectionOrderCounter = 41;
+    if (m.edgeSelectionOrderCounter   < 32) m.edgeSelectionOrderCounter   = 32;
+
+    return m;
+}
+
+unittest // makeTaggedGridMaps: every one of the five additions, asserted by NAME
+{
+    // MUTATION M-F′ FOR THIS BLOCK: point `makeTaggedGridMaps`'s body at
+    // `makeTaggedGridFull(n)` and return immediately. Every presence, domain,
+    // second-set and order witness below goes red — which is the point: without
+    // this block a stand that quietly lost its morph maps would leave the L1
+    // parity fixture green under a delta that carries no presence channel at
+    // all, and nothing else in the tree would notice.
+    auto m = makeTaggedGridMaps();
+
+    // ---- 1: the two morph kinds, and all THREE presence states in each ------
+    foreach (nm; ["MA", "MR"])
+    {
+        auto mm = m.meshMap(nm);
+        assert(mm !is null, "morph map '" ~ nm ~ "' must exist");
+        assert(mm.domain == MapDomain.Point && mm.dim == 3,
+               "morph map '" ~ nm ~ "' must be Point/dim 3");
+        assert(mm.present.length == m.vertices.length,
+               "morph map '" ~ nm ~ "' must carry a per-vertex presence channel; "
+             ~ "an EMPTY channel MEANS all-present and is the whole failure this "
+             ~ "stand exists to expose");
+
+        size_t absent, presentZero, presentNonZero;
+        foreach (vi; 0 .. m.vertices.length)
+        {
+            const b = vi * 3;
+            const bool isZero = mm.data[b] == 0.0f && mm.data[b + 1] == 0.0f
+                             && mm.data[b + 2] == 0.0f;
+            if (!mm.isPresent(vi)) { ++absent; continue; }
+            if (isZero) ++presentZero; else ++presentNonZero;
+        }
+        assert(absent > 0,
+               "morph map '" ~ nm ~ "': no ABSENT element — the presence channel "
+             ~ "is uniform and carries no information");
+        assert(presentNonZero > 0,
+               "morph map '" ~ nm ~ "': no PRESENT non-zero element");
+        assert(presentZero > 0,
+               "morph map '" ~ nm ~ "': no element that is PRESENT with a stored "
+             ~ "value of exactly 0.0f — that element is the ONLY one on which "
+             ~ "'restored the value' and 'restored the presence' differ");
+    }
+    assert(m.meshMap("MA").kind == MapKind.morphAbsolute
+        && m.meshMap("MR").kind == MapKind.morphRelative,
+           "the two morph maps must be of DIFFERENT kinds: they have identical "
+         ~ "shape and differ only in what an absent entry MEANS");
+
+    // ---- 2: the third MapDomain -------------------------------------------
+    size_t edgeDomainMaps;
+    foreach (ref mm; m.meshMaps) if (mm.domain == MapDomain.Edge) ++edgeDomainMaps;
+    assert(edgeDomainMaps > 0, "no Edge-domain map — MapDomain's third member "
+                             ~ "is unexercised by every other stand");
+    auto cw = m.meshMap(kCreaseWeightMapName);
+    assert(cw !is null && cw.data.length == m.edges.length,
+           "the Edge-domain map must be sized to the EDGE array");
+    bool creaseNonUniform;
+    foreach (v; cw.data) if (v != cw.data[0]) { creaseNonUniform = true; break; }
+    assert(creaseNonUniform, "the Edge-domain map's values must be non-uniform");
+
+    // ---- 3: a second named set in each domain ------------------------------
+    assert(m.vertexSetNames.length  >= 2, "vertex sets: need a SECOND name, or "
+                                        ~ "every mask bit is bit 0");
+    assert(m.polygonSetNames.length >= 2, "polygon sets: need a SECOND name");
+    assert(m.edgeSetNames.length    >= 2, "edge sets: need a SECOND name");
+    // …and the second name's bit must actually be set somewhere, or the extra
+    // registry entry is a name with no mask and the masks are still one-bit.
+    bool sawHighVertexBit, sawHighFaceBit, sawHighEdgeBit;
+    foreach (w; m.vertexSetMask) if ((w & ~1UL) != 0) { sawHighVertexBit = true; break; }
+    foreach (w; m.faceSetMask)   if ((w & ~1UL) != 0) { sawHighFaceBit   = true; break; }
+    foreach (k; m.edgeSetMask.keys) if ((m.edgeSetMask[k] & ~1UL) != 0) { sawHighEdgeBit = true; break; }
+    assert(sawHighVertexBit, "the second VERTEX set owns no mask bit");
+    assert(sawHighFaceBit,   "the second POLYGON set owns no mask bit");
+    assert(sawHighEdgeBit,   "the second EDGE set owns no mask bit");
+
+    // ---- 4: the selection order is NON-MONOTONIC in two domains ------------
+    static bool nonMonotonic(const(int)[] order)
+    {
+        int prev = 0; bool sawDescent;
+        foreach (v; order) {
+            if (v == 0) continue;               // unstamped
+            if (prev != 0 && v < prev) sawDescent = true;
+            prev = v;
+        }
+        return sawDescent;
+    }
+    assert(nonMonotonic(m.vertexSelectionOrder),
+           "vertexSelectionOrder ascends with the index — a revert that "
+         ~ "RE-DERIVES the order instead of restoring it is green on that");
+    assert(nonMonotonic(m.edgeSelectionOrder),
+           "edgeSelectionOrder ascends with the index — same hole");
+
+    // ---- 6: the inherited UV map has INTERIOR (non-seam) corners ----------
+    // The property, not the layout: at least one vertex must be reached by two
+    // corners carrying the SAME uv. Under `data[i] = i` no vertex is, every
+    // corner is a seam, and `uv.relax` refuses outright.
+    {
+        auto uv0 = m.meshMap(kUvMapName);
+        assert(uv0 !is null, "the inherited UV map must be there");
+        size_t sharedCorners;
+        foreach (a; 0 .. m.loops.length)
+            foreach (b; a + 1 .. m.loops.length) {
+                if (m.loops[a].vert != m.loops[b].vert) continue;
+                if (uv0.data[a * 2] == uv0.data[b * 2]
+                 && uv0.data[a * 2 + 1] == uv0.data[b * 2 + 1]) ++sharedCorners;
+            }
+        assert(sharedCorners > 0,
+               "no two corners at one vertex share a uv — every corner is its "
+             ~ "own UV island, so every corner is a SEAM and the UV kernels "
+             ~ "have nothing unpinned to move. A stand in that state freezes "
+             ~ "REFUSALS, not edits.");
+    }
+
+    // ---- 5: the second PolyVertex map --------------------------------------
+    size_t polyVertexMaps;
+    foreach (ref mm; m.meshMaps) if (mm.domain == MapDomain.PolyVertex) ++polyVertexMaps;
+    assert(polyVertexMaps >= 2, "uv.copy needs a real destination map");
+
+    // ---- the tripwire for the NEXT MeshMap field --------------------------
+    // The third copy of this assert (the other two are `MeshMap.dup` in
+    // mesh.d and `MeshSnapshot.byteSize` in snapshot.d). It is here because a
+    // seventh field would be invisible to every check above: they enumerate
+    // the fields this stand was written to populate, so a new one arrives
+    // populated with its default and nothing says the stand stopped covering
+    // the struct.
+    static assert(MeshMap.tupleof.length == 6,
+        "MeshMap gained a field — decide whether makeTaggedGridMaps must "
+      ~ "populate it non-uniformly before bumping this count. A field left at "
+      ~ "its default here is a plane the L1 parity fixture cannot discriminate.");
+}
+
+unittest // makeTaggedGridMaps is a SUPERSET of makeTaggedGridFull — no drift
+{
+    // The guard on the third copy. `makeTaggedGridMaps` is documented as
+    // "makeTaggedGridFull plus five", and this is what makes that executable:
+    // every plane the parent populates must read identically here, so a later
+    // edit to this stand that perturbs an INHERITED plane is caught rather than
+    // silently changing what L1's fixture and L0's fixture disagree about.
+    auto a = makeTaggedGridFull(3);
+    auto b = makeTaggedGridMaps(3);
+
+    assert(a.vertices.length == b.vertices.length, "vertex count must match");
+    assert(a.faces.length    == b.faces.length,    "face count must match");
+    assert(a.edges.length    == b.edges.length,    "edge count must match");
+    assert(a.vertices        == b.vertices,        "positions must match");
+    assert(a.faceMarks       == b.faceMarks,       "faceMarks must match");
+    assert(a.vertexMarks     == b.vertexMarks,     "vertexMarks must match");
+    assert(a.edgeMarks       == b.edgeMarks,       "edgeMarks must match");
+    assert(a.faceMaterial    == b.faceMaterial,    "faceMaterial must match");
+    assert(a.facePart        == b.facePart,        "facePart must match");
+    assert(a.faceSelectionOrder == b.faceSelectionOrder,
+           "faceSelectionOrder must match — additions 4 re-stamps the VERTEX "
+         ~ "and EDGE orders only, deliberately, so this one stays inherited");
+    assert(a.surfaces.length == b.surfaces.length, "surfaces must match");
+
+    // …and the five additions are exactly what the parent does NOT have.
+    assert(a.meshMap("MA") is null && a.meshMap("MR") is null
+        && a.meshMap(kCreaseWeightMapName) is null && a.meshMap("uv2") is null,
+           "the parent must NOT carry the additions — if it does, this stand "
+         ~ "has stopped being the thing that adds them");
+    assert(a.vertexSetNames.length == 1 && a.polygonSetNames.length == 1
+        && a.edgeSetNames.length == 1,
+           "the parent must carry exactly ONE set per domain");
+    assert(b.meshMaps.length == a.meshMaps.length + 4,
+           "four new maps: uv2, crease, MA, MR");
+    // …and `uv` is DELIBERATELY not compared: addition 6 replaces its values.
+    // Asserted as a difference rather than skipped in silence, so a later edit
+    // that drops the re-layout is caught here and not only by a refusing cell.
+    assert(a.meshMap(kUvMapName).data != b.meshMap(kUvMapName).data,
+           "addition 6 (the realistic UV layout) is gone — the child now "
+         ~ "inherits `data[i] = i`, on which every UV kernel refuses");
+}
+
 unittest // makeDisk: hub-first fan, n triangles, n+1 verts, all rim on the unit circle
 {
     import std.math : abs, sqrt;

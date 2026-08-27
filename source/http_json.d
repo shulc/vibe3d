@@ -351,8 +351,29 @@ struct PlaneDumpMeta {
     /// after the fact — i.e. against the code it was meant to be independent
     /// of. The reviewer checks the ancestry; the test checks the field is there.
     string producedBy;
-    /// Which undo path produced it: "snapshot" (the pre-migration capture) or
-    /// "delta" (what the surviving test runs).
+    /// Which undo path produced it. THREE values, not two (task 1903 L1's
+    /// fixture freeze, 2026-08-27):
+    ///
+    ///   * `"snapshot"`    — `MeshSnapshot.restore` / `SelectionSnapshot.restore`:
+    ///                       a whole-mesh (or whole-selection) dense capture
+    ///                       held by the command;
+    ///   * `"dense-inline"`— the command's own hand-rolled restore from a
+    ///                       stored per-plane image (`origPos[]`,
+    ///                       `origMaterial[]`, `origSubpatch[]`), replayed by
+    ///                       its own `revert()`;
+    ///   * `"delta"`       — `MeshEditDelta.revert`, what the surviving test
+    ///                       runs after a family migrates.
+    ///
+    /// WHY THE THIRD VALUE EXISTS. The vocabulary was written as
+    /// snapshot-or-delta on the reading that a family sits on one path.
+    /// Measured at `a8cdb05d`, stage L0's sixteen commands did not: only
+    /// `mesh.hide*` and `mesh.centerVertices` held a `MeshSnapshot`; the other
+    /// fourteen restored from a per-command image, which is neither. Recording
+    /// those as `"snapshot"` would put a false statement in the one field a
+    /// reviewer reads to decide whether a fixture predates the code it is the
+    /// oracle for — so the value is recorded PER CELL, and a family that mixes
+    /// paths says so. L1's fixture is uniformly `"snapshot"` and that is
+    /// honest: 26 of its 27 classes really do hold one.
     string path;
     /// The command family the fixture belongs to, e.g. "delete", "weld_merge".
     string family;
