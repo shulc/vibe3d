@@ -1,5 +1,6 @@
 module commands.mesh.jitter;
 
+import std.array : uninitializedArray;
 import command;
 import mesh;
 import view;
@@ -164,7 +165,15 @@ class MeshJitter : Command, Operator, IFalloffAware {
         // loop. Byte-identical: every read this loop makes of vertex `i` (the
         // `touchedPrev` capture, and the falloff evaluation) already happened
         // BEFORE the write to `i`, and no vertex is visited twice.
-        Vec3[] newPos;
+        // PRE-SIZED, NOT APPEND-GROWN (task 2160). `~=` is a runtime call per
+        // element that looks the block's used-length up in the GC; over a
+        // hundred thousand vertices that is ~0.85 ms of pure bookkeeping, and
+        // this array exists only to be handed to `setVertexPositions` and
+        // dropped. The ceiling is exact — the loop writes at most one entry per
+        // visited vertex — and `Vec3` holds no pointer, so the unwritten tail
+        // is nothing the collector can misread; it is sliced off at the call.
+        auto newPos = uninitializedArray!(Vec3[])(mesh.vertices.length);
+        size_t nNew = 0;
         // Task 0619: the empty `Viewport vp;` that used to sit here is gone.
         // It was NOT harmless-because-unreachable: `parseFalloffJson` rejects
         // the two pixel-based types, but this command is also an `Operator`,
@@ -195,10 +204,10 @@ class MeshJitter : Command, Operator, IFalloffAware {
             if (enableX_) nv.x += u * rangeX_ * fw;
             if (enableY_) nv.y += v * rangeY_ * fw;
             if (enableZ_) nv.z += w * rangeZ_ * fw;
-            newPos ~= nv;
+            newPos[nNew++] = nv;
         }
 
-        ed.setVertexPositions(touchedIdx, newPos);
+        ed.setVertexPositions(touchedIdx, newPos[0 .. nNew]);
         ed.commitChange(MeshEditScope.Position);
         return true;
     }

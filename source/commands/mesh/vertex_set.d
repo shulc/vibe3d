@@ -1,5 +1,6 @@
 module commands.mesh.vertex_set;
 
+import std.array : uninitializedArray;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -155,24 +156,30 @@ class MeshSetPosition : Command, Operator {
         // Task 1903 L0-d4 — local accumulate + ONE `ed.setVertexPositions`.
         idxs = [];
         orig = [];
-        Vec3[] newPos;
+        // PRE-SIZED, NOT APPEND-GROWN (task 2160) — see the note in
+        // `MeshEditBatch.setVertexPositions`: `~=` is a runtime call per
+        // element, and this array exists only to be handed to that setter and
+        // dropped. The ceiling is exact (at most one entry per visited
+        // vertex) and the unwritten tail is sliced off at the call.
+        auto newPos = uninitializedArray!(Vec3[])(sel.length);
+        size_t nNew = 0;
         foreach (i; 0 .. sel.length) {
             if (!sel[i]) continue;
             idxs ~= cast(uint)i;
             orig ~= mesh.vertices[i];
             if (comp < 0) {
-                newPos ~= pos_;
+                newPos[nNew++] = pos_;
             } else {
                 // One coordinate, world space; the other two keep their value.
                 Vec3 p = mesh.vertices[i];
                 if      (comp == 0) p.x = value_;
                 else if (comp == 1) p.y = value_;
                 else                p.z = value_;
-                newPos ~= p;
+                newPos[nNew++] = p;
             }
         }
 
-        ed.setVertexPositions(idxs, newPos);
+        ed.setVertexPositions(idxs, newPos[0 .. nNew]);
         ed.commitChange(MeshEditScope.Position);
         return true;
     }

@@ -1,5 +1,6 @@
 module commands.mesh.linear_align;
 
+import std.array : uninitializedArray;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -115,11 +116,13 @@ class MeshLinearAlign : Command, Operator {
         // same array the retired revert loop wrote back.
         touchedIdx.length  = 0;
         touchedPrev.length = 0;
-        Vec3[] newPos;
+        // PRE-SIZED, NOT append-grown (task 2160): an exact-length map,
+        // one output per `chainVerts` entry.
+        auto newPos = uninitializedArray!(Vec3[])(chainVerts.length);
         foreach (i, vi; chainVerts) {
             touchedIdx  ~= vi;
             touchedPrev ~= mesh.vertices[vi];
-            newPos      ~= lerp3(source[i], aligned[i], weight_);
+            newPos[i]    = lerp3(source[i], aligned[i], weight_);
         }
 
         ed.setVertexPositions(touchedIdx, newPos);

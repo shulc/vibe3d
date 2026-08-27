@@ -1,6 +1,7 @@
 module mesh;
 
 import std.math : sqrt, isIdentical;
+import std.array : uninitializedArray;
 import std.parallelism : parallel;
 import std.range : iota;
 import math;
@@ -17025,13 +17026,26 @@ struct MeshEditBatch {
     /// raw loop also made. `Kind.SetPos` has no other publisher, so no op-log
     /// consumer can be surprised by the extra entries either.
     ///
+    /// Spelled as a 32-bit compare of the float bits rather than as
+    /// `isIdentical` (task 2160). `std.math.isIdentical` takes `real`, so on
+    /// x86-64 each of the six operands makes an x87 round trip: MEASURED at
+    /// 0.94 ms per 100 489 vertices against 0.08 ms for this form, on the
+    /// short-circuiting case (`x` differs), which is the one a moved vertex
+    /// takes. The predicate is UNCHANGED — for `float` inputs, bit equality
+    /// and `isIdentical` agree on every pair, including `-0.0` vs `+0.0` and
+    /// distinct NaN payloads, and where they could differ at all (an SNaN
+    /// quieted by the x87 load) this form is the STRICTER one, i.e. it writes
+    /// where the old one skipped, which is the direction the paragraph above
+    /// already licenses.
+    ///
     /// Mutation: put `a == b` back → `tests/unit/mesh_edit_batch_test.d`'s
     /// signed-zero block reddens ("setVertexPositions skipped a write whose
     /// new value is `==` but not identical to the old one"), and the Stage D2
     /// `-0.0` sweep goes back to 9 diverging cells.
     private static bool sameBits(Vec3 a, Vec3 b) {
-        return isIdentical(a.x, b.x) && isIdentical(a.y, b.y)
-            && isIdentical(a.z, b.z);
+        return *cast(const(uint)*)&a.x == *cast(const(uint)*)&b.x
+            && *cast(const(uint)*)&a.y == *cast(const(uint)*)&b.y
+            && *cast(const(uint)*)&a.z == *cast(const(uint)*)&b.z;
     }
 
     void setVertexPos(uint vi, Vec3 p) {
@@ -17051,6 +17065,31 @@ struct MeshEditBatch {
     /// dropped from BOTH the write and the record so the entry's before/after
     /// arrays stay in step with each other.
     ///
+    /// THE BOOKKEEPING IS PAID ONLY WHEN SOMETHING READS IT (task 2160).
+    ///
+    /// The first shape of this method built `hitIdx`/`before`/`after`
+    /// unconditionally and then handed them to `recordSetPos`, which COPIED
+    /// all three. On an UNRECORDED batch — the redo arm, the legacy arm and
+    /// every interactive preview — the three arrays were built and dropped
+    /// with no reader at all; on a recording one they were built, copied, and
+    /// the originals dropped. At the perf lane's n=316 grid (100 489 verts,
+    /// `/whole`) that is 2.68 MB of temporaries plus 2.68 MB of copies per
+    /// apply, and it is what made the four migrated `/whole` cases 104–155 %
+    /// dearer at task 1903 §L0-d than the hand-rolled capture they replaced.
+    ///
+    /// So the recording state is resolved ONCE, up front, and the two paths
+    /// are separate: no recorder ⇒ write and commit, nothing else; a recorder
+    /// ⇒ build the three arrays exactly once and hand OWNERSHIP of them to the
+    /// entry. Both paths keep the `sameBits` filter and the out-of-range
+    /// `continue` verbatim, so which vertices are WRITTEN, and what the entry
+    /// holds, are unchanged — this removes copies, not behaviour.
+    ///
+    /// Mutation: make the fast arm record (drop the `recording` test) and
+    /// `tests/unit/commands/mesh/position_delta_test.d`'s redo cells see a
+    /// SECOND delta over the first; make the slow arm skip recording and the
+    /// same file's `armed(c)` / `d.log.length >= 1` cells redden on every one
+    /// of the nine commands.
+    ///
     /// THE OUT-OF-RANGE ARM IS A BEHAVIOUR CHANGE FROM THE RAW WRITE IT
     /// REPLACES, and it is the quiet direction (noted at the F1 review, n2).
     /// `vertices[vi] = p` raises `ArrayIndexError` on a bad index; this
@@ -17066,26 +17105,71 @@ struct MeshEditBatch {
         assert(idx.length == to.length,
             "MeshEditBatch.setVertexPositions: index and position arrays differ "
           ~ "in length");
-        uint[] hitIdx;
-        Vec3[] before, after;
-        // `idx.length` is the exact ceiling for all three: the loop only ever
-        // appends, and only ever one element per input index.
-        hitIdx.reserve(idx.length);
-        before.reserve(idx.length);
-        after.reserve(idx.length);
+        // Read the frame ONCE for the decision, and never hold the pointer
+        // across the loop — this file's rule at `currentBatchFrame`. The loop
+        // opens no batch, but the re-lookup below costs one scan of a
+        // two-entry array and keeps that rule true by construction rather
+        // than by argument.
+        bool recording = false;
+        if (auto f0 = currentBatchFrame(m_))
+            recording = f0.rec !is null && !f0.errored;
+
+        if (!recording) {
+            bool any = false;
+            foreach (k, vi; idx) {
+                if (vi >= m_.vertices.length) continue;
+                if (sameBits(m_.vertices[vi], to[k])) continue;
+                m_.vertices[vi] = to[k];
+                any = true;
+            }
+            if (!any) return;
+            m_.commitChange(MeshEditScope.Position);
+            return;
+        }
+
+        // PRE-SIZED AND INDEX-WRITTEN, NOT `reserve` + `~=` (task 2160).
+        //
+        // `a ~= x` is not an inlined store: it is a runtime call that looks the
+        // block's used-length up in the GC on every element, and `reserve`
+        // removes the REALLOCATION, not the call. Three of them per vertex is
+        // what made this arm dear. MEASURED on this host over 100 489
+        // elements, same 2.691 MB of payload either way: `reserve` + three
+        // appends per element 2.39-3.27 ms, `uninitializedArray` + indexed
+        // writes 0.12-1.08 ms. That difference is most of what task 1903
+        // §L0-d added to `jitter`/`quantize`/`smooth`'s forward.
+        //
+        // `idx.length` is the exact ceiling for all three: the loop writes at
+        // most one element per input index. `uninitializedArray` is safe for
+        // both element types — neither `uint` nor `Vec3` holds a pointer, so
+        // there is nothing for the collector to misread in the tail, and the
+        // tail is sliced off before the entry ever sees it.
+        auto hitIdx = uninitializedArray!(uint[])(idx.length);
+        auto before = uninitializedArray!(Vec3[])(idx.length);
+        auto after  = uninitializedArray!(Vec3[])(idx.length);
+        size_t nHit = 0;
         foreach (k, vi; idx) {
             if (vi >= m_.vertices.length) continue;
             const Vec3 b = m_.vertices[vi];
             if (sameBits(b, to[k])) continue;
             m_.vertices[vi] = to[k];
-            hitIdx ~= vi;
-            before  ~= b;
-            after   ~= to[k];
+            hitIdx[nHit] = vi;
+            before[nHit] = b;
+            after[nHit]  = to[k];
+            ++nHit;
         }
-        if (hitIdx.length == 0) return;
+        if (nHit == 0) return;
+        // Slice to what was actually written. When some indices were filtered
+        // the tail stays allocated behind the slice until the delta dies —
+        // bounded by the caller's own index array, and the whole-mesh case
+        // (every write lands) wastes nothing.
+        hitIdx = hitIdx[0 .. nHit];
+        before = before[0 .. nHit];
+        after  = after [0 .. nHit];
+        // The three arrays were built for this entry and nothing else holds
+        // them, so the entry TAKES them rather than copying them.
         if (auto f = currentBatchFrame(m_))
             if (f.rec !is null && !f.errored)
-                f.rec.recordSetPos(hitIdx, before, after);
+                f.rec.recordSetPosOwned(hitIdx, before, after);
         m_.commitChange(MeshEditScope.Position);
     }
 

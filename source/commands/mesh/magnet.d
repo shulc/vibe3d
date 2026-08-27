@@ -1,5 +1,6 @@
 module commands.mesh.magnet;
 
+import std.array : uninitializedArray;
 import command;
 import mesh;
 import view;
@@ -226,15 +227,24 @@ private:
         if (touchedIdx_.length == 0) return false;
 
         if (ed.recording()) {
-            Vec3[] after;
-            after.reserve(touchedIdx_.length);
-            foreach (vi; touchedIdx_) after ~= mesh.vertices[vi];
+            // PRE-SIZED, NOT `reserve` + append (task 2160) — see the note
+            // in `MeshEditBatch.setVertexPositions`: `reserve` removes the
+            // reallocation, not the per-element runtime call.
+            auto after = uninitializedArray!(Vec3[])(touchedIdx_.length);
+            foreach (k, vi; touchedIdx_) after[k] = mesh.vertices[vi];
             // No `sameBits` filter here, unlike `setVertexPositions`: a
             // `w`-tiny vertex whose new value is bit-identical produces a
             // no-op cell, whose revert writes the same bits back. That is
             // precisely what the legacy loop below does unconditionally, so
             // the two paths stay byte-identical.
-            ed.rec().recordSetPos(touchedIdx_, touchedPrev_, after);
+            // OWNERSHIP IS EXPLICIT AND ASYMMETRIC (task 2160). `after` was
+            // built two lines up for this entry and nothing else refers to it,
+            // so it is handed over. `touchedIdx_` and `touchedPrev_` are CLASS
+            // FIELDS that the next `applyMagnet` refills — a delta aliasing
+            // them would rewrite an installed history entry — so those two are
+            // copied, here, where the reason is visible, rather than inside a
+            // publisher that cannot know which of its arguments is which.
+            ed.rec().recordSetPosOwned(touchedIdx_.dup, touchedPrev_.dup, after);
         }
 
         ed.commitChange(MeshEditScope.Position);

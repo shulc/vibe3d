@@ -3620,7 +3620,13 @@ unittest // L0-d — the hole a zone boundary leaves: deform_magnet.d
     // an empty delta. This is the ONLY text half that reddens for it.
     immutable mg = stripCommentsAndStrings(readText(
         buildPath(repoRoot, "source", "commands", "mesh", "magnet.d")));
-    assert(countOccurrences(mg, "recordSetPos(") == 1,
+    // The pin is on the NAME, not on one spelling of the call. Task 2160
+    // moved this site from `recordSetPos(` to `recordSetPosOwned(` — the
+    // copying publisher to the ownership-taking one — and a pin that named the
+    // paren would have reddened on a change that keeps the recording exactly
+    // where it was. What the row exists to catch is the statement being
+    // DELETED, and `== 1` on the name still catches that.
+    assert(countOccurrences(mg, "recordSetPos") == 1,
         "source/commands/mesh/magnet.d no longer calls `recordSetPos` exactly "
       ~ "once. magnet is the ONE command in L0-d whose recording is a statement "
       ~ "SEPARATE from its write — `applyMagnet` does the writing, in a file "

@@ -1,5 +1,6 @@
 module commands.mesh.vertex_center;
 
+import std.array : uninitializedArray;
 import command;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
@@ -113,7 +114,13 @@ class MeshCenterVertices : Command, Operator {
         // Task 1903 L0-d4 — local accumulate + ONE `ed.setVertexPositions`.
         idxs = [];
         orig = [];
-        Vec3[] newPos;
+        // PRE-SIZED, NOT APPEND-GROWN (task 2160) — see the note in
+        // `MeshEditBatch.setVertexPositions`: `~=` is a runtime call per
+        // element, and this array exists only to be handed to that setter and
+        // dropped. The ceiling is exact (at most one entry per visited
+        // vertex) and the unwritten tail is sliced off at the call.
+        auto newPos = uninitializedArray!(Vec3[])(sel.length);
+        size_t nNew = 0;
         foreach (i; 0 .. sel.length) {
             if (!sel[i]) continue;
             idxs ~= cast(uint)i;
@@ -122,10 +129,10 @@ class MeshCenterVertices : Command, Operator {
             if (zx) v.x = 0;
             if (zy) v.y = 0;
             if (zz) v.z = 0;
-            newPos ~= v;
+            newPos[nNew++] = v;
         }
 
-        ed.setVertexPositions(idxs, newPos);
+        ed.setVertexPositions(idxs, newPos[0 .. nNew]);
         ed.commitChange(MeshEditScope.Position);
         return true;
     }

@@ -1833,11 +1833,39 @@ struct MeshEditTracker {
 
     void recordSetPos(in uint[] idx, in Vec3[] before, in Vec3[] after) {
         if (idx.length == 0) return;
+        recordSetPosOwned(idx.dup, before.dup, after.dup);
+    }
+
+    /// `recordSetPos` without the three copies, for a caller that built the
+    /// arrays FOR this entry and keeps no reference to them (task 2160).
+    ///
+    /// WHY IT EXISTS. `recordSetPos` duplicates because its `in` parameters may
+    /// alias state the caller mutates later — `magnet`'s `touchedIdx_` and
+    /// `touchedPrev_` are class fields refilled on the next apply, and a delta
+    /// aliasing them would silently rewrite an installed history entry. But
+    /// `MeshEditBatch.setVertexPositions` builds its three arrays inside the
+    /// call, hands them over and drops them, so there the `.dup` was a whole
+    /// second copy of the edit for nothing. MEASURED on the perf lane's
+    /// `jitter|quantize|smooth /whole` at n=316 (100 489 verts): the three
+    /// duplicates are 2.68 MB of the ~10 MB the forward gained at task 1903
+    /// §L0-d.
+    ///
+    /// THE CONTRACT IS OWNERSHIP, NOT SPEED. After this call the entry owns the
+    /// three slices; a caller that writes through its own reference to any of
+    /// them is mutating an installed undo record. If ownership is not certain,
+    /// call `recordSetPos` — the copy is the safe default and stays the one
+    /// every external publisher gets.
+    void recordSetPosOwned(uint[] idx, Vec3[] before, Vec3[] after) {
+        if (idx.length == 0) return;
+        assert(idx.length == before.length && idx.length == after.length,
+            "MeshEditTracker.recordSetPosOwned: the three arrays must be in "
+          ~ "step — a SetPos entry whose posBefore is shorter than vIdx has no "
+          ~ "inverse and would throw mid-revert, leaving a half-restored mesh");
         MeshOpEntry e;
         e.kind      = MeshOpEntry.Kind.SetPos;
-        e.vIdx      = idx.dup;
-        e.posBefore = before.dup;
-        e.posAfter  = after.dup;
+        e.vIdx      = idx;
+        e.posBefore = before;
+        e.posAfter  = after;
         log_ ~= e;
     }
 

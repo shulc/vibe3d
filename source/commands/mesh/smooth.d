@@ -1,5 +1,6 @@
 module commands.mesh.smooth;
 
+import std.array : uninitializedArray;
 import command;
 import mesh;
 import view;
@@ -416,9 +417,11 @@ class MeshSmooth : Command, Operator, IFalloffAware {
         // `touchedIdx` is repeat-free by its own construction loop above (one
         // append per masked index), so the single entry carries no duplicated
         // index and its reverse is unambiguous.
-        Vec3[] finalPos;
-        finalPos.reserve(touchedIdx.length);
-        foreach (vi; touchedIdx) finalPos ~= prev[vi];
+        // PRE-SIZED, NOT `reserve` + append (task 2160): `reserve` removes
+        // the reallocation, not the per-element runtime call, and this is an
+        // exact-length map — one output per `touchedIdx` entry.
+        auto finalPos = uninitializedArray!(Vec3[])(touchedIdx.length);
+        foreach (k, vi; touchedIdx) finalPos[k] = prev[vi];
         ed.setVertexPositions(touchedIdx, finalPos);
 
         ed.commitChange(MeshEditScope.Position);

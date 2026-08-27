@@ -1,5 +1,6 @@
 module commands.mesh.quantize;
 
+import std.array : uninitializedArray;
 import command;
 import mesh;
 import view;
@@ -134,7 +135,15 @@ class MeshQuantize : Command, Operator, IFalloffAware {
         // Task 1903 L0-d4 — local accumulate + ONE `ed.setVertexPositions`.
         // Byte-identical: every read of vertex `i` below already happened
         // before the write to `i`, and no vertex is visited twice.
-        Vec3[] newPos;
+        // PRE-SIZED, NOT APPEND-GROWN (task 2160). `~=` is a runtime call per
+        // element that looks the block's used-length up in the GC; over a
+        // hundred thousand vertices that is ~0.85 ms of pure bookkeeping, and
+        // this array exists only to be handed to `setVertexPositions` and
+        // dropped. The ceiling is exact — the loop writes at most one entry per
+        // visited vertex — and `Vec3` holds no pointer, so the unwritten tail
+        // is nothing the collector can misread; it is sliced off at the call.
+        auto newPos = uninitializedArray!(Vec3[])(mesh.vertices.length);
+        size_t nNew = 0;
         // Task 0619: cursorless — see jitter.d. No viewport, by design.
         foreach (i; 0 .. mesh.vertices.length) {
             if (!vmask[i]) continue;
@@ -164,10 +173,10 @@ class MeshQuantize : Command, Operator, IFalloffAware {
             nv.x = orig.x + (qx - orig.x) * fw;
             nv.y = orig.y + (qy - orig.y) * fw;
             nv.z = orig.z + (qz - orig.z) * fw;
-            newPos ~= nv;
+            newPos[nNew++] = nv;
         }
 
-        ed.setVertexPositions(touchedIdx, newPos);
+        ed.setVertexPositions(touchedIdx, newPos[0 .. nNew]);
         ed.commitChange(MeshEditScope.Position);
         return true;
     }

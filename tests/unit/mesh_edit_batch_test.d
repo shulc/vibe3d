@@ -494,6 +494,143 @@ unittest // setVertexPositions is the bulk form, and drops the no-op writes
 }
 
 // ===========================================================================
+// M-SP1 / M-SP2 — THE BULK SETTER'S BOOKKEEPING (task 2160).
+//
+// WHY THESE ARE ALLOCATION CELLS AND NOT TIMINGS. Task 1903 §L0-d put nine
+// position commands on a recorded `Kind.SetPos` delta and made their forward
+// 104-155 % dearer on the perf lane's `/whole` cases. A result assertion is
+// blind to that: the mesh ends in the same place either way, so every geometry
+// test in the tree is green on both the cheap and the dear version. What
+// separates them is what the setter ALLOCATES, and that is exact, thread-local
+// and reproducible to the byte — unlike a wall time on a shared host.
+//
+// M-SP1: an UNRECORDED batch has no op-log, so nothing can ever read the
+//        hit/before/after arrays. Building them anyway is what the first shape
+//        of `setVertexPositions` did on the redo arm, the legacy arm and every
+//        interactive preview. MEASURED before the fix: 286 720 B for 10 201
+//        vertices (28.11 B/vertex); after: ZERO.
+//
+// M-SP2: a RECORDING batch builds them once and the entry TAKES them.
+//        `recordSetPos` copied all three, so the edit was allocated twice.
+//        MEASURED before: 574 464 B (56.31 B/vertex); after: 287 744 B
+//        (28.21 B/vertex), which is 4 + 12 + 12 per vertex plus block rounding
+//        — the floor an invertible position record cannot go under.
+//
+// WHAT THESE CELLS CANNOT SEE, said here rather than discovered later. The
+// other half of the same fix — `~=` per element replaced by an indexed write
+// into a pre-sized array, in this setter and in the nine kernels that feed it
+// — is INVISIBLE to this instrument, and the instrument points the WRONG WAY
+// on it: druntime extends a page-backed block in place, so an append-grown
+// array charges `allocatedInCurrentThread` about 8 KB while the pre-sized one
+// charges its full payload. That half is a TIME property (measured 2.39-3.27 ms
+// against 0.12-1.08 ms per 100 489 elements, same 2.691 MB either way) and it
+// is deliberately left unwitnessed here rather than pinned with a wall clock.
+//
+// Mutations, and DRUNTIME STOPS A MODULE AT ITS FIRST FAILING ASSERT, so run
+// them one at a time:
+//   M-SP1: delete the `if (!recording)` arm in
+//          `MeshEditBatch.setVertexPositions` (`source/mesh.d`) so both paths
+//          build the arrays → "an unrecorded bulk write allocated 286720 B of
+//          bookkeeping no op-log can read".
+//   M-SP2: `f.rec.recordSetPosOwned(...)` → `f.rec.recordSetPos(...)`, i.e.
+//          copy instead of take → "a recorded bulk write allocated 56.3 B per
+//          vertex; the entry's own three arrays are 28".
+// Both were seen red on the UNMODIFIED pre-fix tree, not on a planted
+// mutation: that tree IS the M-SP1 and M-SP2 failure, and the two numbers
+// quoted above are its readings.
+// ===========================================================================
+
+private enum size_t kGridN = 100;          // 10 201 verts — big enough that the
+                                           // per-vertex term dwarfs rounding
+private enum size_t kUnrecordedCeilingB = 4096;   // fixed: 0
+private enum size_t kRecordedBytesPerVert = 40;   // fixed: 28.21, pre-fix: 56.31
+
+unittest // M-SP1 — an unrecorded bulk write builds no bookkeeping
+{
+    import core.memory : GC;
+
+    auto m = makeGridPlane(cast(int) kGridN);
+    m.syncSelection();
+    const size_t V = m.vertices.length;
+    assert(V > 10_000, format("the stand collapsed to %d vertices — the "
+        ~ "per-vertex term has to dominate block rounding for the ceiling "
+        ~ "below to mean anything", V));
+
+    auto idx = new uint[](V);
+    auto pos = new Vec3[](V);
+    foreach (i; 0 .. V) {
+        idx[i] = cast(uint) i;
+        pos[i] = Vec3(m.vertices[i].x + 1.0f, m.vertices[i].y, m.vertices[i].z);
+    }
+
+    long spent;
+    {
+        auto ed = MeshEditBatch.unrecorded(m, MeshEditScope.Position);
+        const long a0 = cast(long) GC.allocatedInCurrentThread;
+        ed.setVertexPositions(idx, pos);
+        spent = cast(long) GC.allocatedInCurrentThread - a0;
+        cast(void) ed.close();
+    }
+
+    // ANTI-VACUITY FIRST: a setter that wrote nothing would also allocate
+    // nothing, and would satisfy the ceiling for the wrong reason.
+    assert(m.vertices[0] == pos[0] && m.vertices[V - 1] == pos[V - 1],
+        "the unrecorded bulk write moved nothing, so the allocation ceiling "
+      ~ "below is satisfied by a setter that did no work");
+
+    assert(spent >= 0 && spent <= cast(long) kUnrecordedCeilingB,
+        format("an unrecorded bulk write allocated %d B of bookkeeping no "
+             ~ "op-log can read (%d vertices, %.2f B/vertex). An unrecorded "
+             ~ "batch has no recorder, so the hit/before/after arrays have no "
+             ~ "reader at all — building them is pure waste on the redo arm, "
+             ~ "the legacy arm and every interactive preview.",
+               spent, V, cast(double) spent / V));
+}
+
+unittest // M-SP2 — a recorded bulk write allocates the entry's arrays ONCE
+{
+    import core.memory : GC;
+
+    auto m = makeGridPlane(cast(int) kGridN);
+    m.syncSelection();
+    const size_t V = m.vertices.length;
+
+    auto idx = new uint[](V);
+    auto pos = new Vec3[](V);
+    foreach (i; 0 .. V) {
+        idx[i] = cast(uint) i;
+        pos[i] = Vec3(m.vertices[i].x + 1.0f, m.vertices[i].y, m.vertices[i].z);
+    }
+
+    long spent;
+    MeshEditDelta d;
+    {
+        auto ed = MeshEditBatch(m, MeshEditScope.Position);
+        const long a0 = cast(long) GC.allocatedInCurrentThread;
+        ed.setVertexPositions(idx, pos);
+        spent = cast(long) GC.allocatedInCurrentThread - a0;
+        d = ed.close();
+    }
+
+    // ANTI-VACUITY: the ceiling is only meaningful over an entry that actually
+    // holds every vertex. A setter that recorded a SHORTER entry would come in
+    // under it and lose the undo.
+    assert(d.log.length == 1 && d.log[0].vIdx.length == V,
+        format("expected ONE SetPos entry over all %d vertices, got %d "
+             ~ "entries covering %d — the byte ceiling below is measured per "
+             ~ "vertex and a truncated entry would pass it",
+               V, d.log.length, d.log.length ? d.log[0].vIdx.length : 0));
+
+    assert(spent <= cast(long)(kRecordedBytesPerVert * V),
+        format("a recorded bulk write allocated %.2f B per vertex (%d B over "
+             ~ "%d vertices); the entry's own three arrays are 4 + 12 + 12 = "
+             ~ "28. Anything near twice that is the edit being allocated a "
+             ~ "second time — a publisher that COPIES the arrays the setter "
+             ~ "built for it and then drops the originals.",
+               cast(double) spent / V, spent, V));
+}
+
+// ===========================================================================
 // M-SP0 — THE NO-OP SKIP IS BIT IDENTITY, NOT `==` (task 1903 Stage D2 review,
 // MAJOR-1).
 //

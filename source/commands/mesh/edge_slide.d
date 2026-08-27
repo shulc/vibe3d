@@ -1,5 +1,6 @@
 module commands.mesh.edge_slide;
 
+import std.array : uninitializedArray;
 import command;
 import mesh;
 import view;
@@ -121,17 +122,23 @@ class MeshEdgeSlide : Command, Operator {
         // predicate spelled ONCE rather than exported twice.
         touchedIdx.length  = 0;
         touchedPrev.length = 0;
-        Vec3[] moved;
+        // PRE-SIZED, NOT APPEND-GROWN (task 2160) — see the note in
+        // `MeshEditBatch.setVertexPositions`: `~=` is a runtime call per
+        // element, and this array exists only to be handed to that setter and
+        // dropped. The ceiling is exact (at most one entry per visited
+        // vertex) and the unwritten tail is sliced off at the call.
+        auto moved = uninitializedArray!(Vec3[])(mesh.vertices.length);
+        size_t nMoved = 0;
         foreach (i; 0 .. mesh.vertices.length) {
             Vec3 np = newPos[i];
             Vec3 op = mesh.vertices[i];
             if (np.x == op.x && np.y == op.y && np.z == op.z) continue;
             touchedIdx  ~= cast(uint)i;
             touchedPrev ~= op;
-            moved       ~= np;
+            moved[nMoved++] = np;
         }
 
-        ed.setVertexPositions(touchedIdx, moved);
+        ed.setVertexPositions(touchedIdx, moved[0 .. nMoved]);
         ed.commitChange(MeshEditScope.Position);
         // Always true for a non-empty edge selection — even if no rail existed
         // on the requested side (touchedIdx is empty, undo is a no-op).
