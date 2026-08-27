@@ -8,6 +8,10 @@ import editmode;
 import snapshot : MeshSnapshot;
 import params : Param;
 import selection_product : repointToFaces;
+import mesh_edit_delta : MeshEditScope;
+import commands.mesh.position_undo  : RecordedUndo;
+import commands.mesh.map_edit_undo  : runMapEdit, revertMapEditEmptyOk;
+import commands.mesh.selection_undo : DenseSelectionUndo;
 
 /// `mesh.makePolygon` — build one face from the current (ordered) vertex
 /// selection. Winding follows the vertex SELECTION ORDER (the order in which
@@ -36,11 +40,32 @@ import selection_product : repointToFaces;
 ///   - fewer than 2 selected vertices. Not a gate that was left in place: a
 ///     one-corner polygon is a shape nobody has measured on either engine, and
 ///     the smallest ring the reference was actually seen to build has two.
+/// TASK 1903 STAGE L2-g — UNDO IS THE OPERATION-LOG DELTA. Like `mesh.addVertex`
+/// this needed no new publisher (`Mesh.addFace` is hooked), and like it the
+/// migration's content is the SELECTION half: `repointToFaces` opens with
+/// `repointToNothing`, which clears all three domains, and no op-log kind
+/// carries a selection-order stamp.
+///
+/// WHAT NEITHER PATH RESTORES, recorded rather than fixed here: the selection
+/// TYPE. `promoteType(EditMode.Polygons)` writes `SelType`, not the mesh, and
+/// `MeshSnapshot` never carried it either — so an undo of this command leaves
+/// the editor in Polygons mode on BOTH paths. That is unchanged behaviour, not
+/// a regression of the migration, and fixing it is a SelType question rather
+/// than an undo one.
 class MeshMakePolygon : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;
+    private MeshSnapshot     snap;      // the hatch's arm only
+    private RecordedUndo     undo_;
+    private DenseSelectionUndo preSel_;
+    /// The forward SUCCEEDED — see `commands/mesh/flip.d`.
+    private bool             applied_;
 
     private bool flip_ = false;
+
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded undo (see `MeshFlip`).
+        public ref const(RecordedUndo) recordedUndo() const return { return undo_; }
+    }
 
     // Task 1180: the app's geometry-type funnel (`promoteGeometryType`), taken
     // exactly as `select.convert` takes it. Re-pointing at the new FACE is a
@@ -61,6 +86,11 @@ class MeshMakePolygon : Command, Operator {
 
     override string name()  const { return "mesh.makePolygon"; }
     override string label() const { return "Make Polygon"; }
+
+    override MeshEditScope editScope() const { return MeshEditScope.Geometry; }
+
+    /// See `MeshFlip.isOperationInverse` — a cheap tell, not the observable.
+    override bool isOperationInverse() const { return undo_.armed(); }
 
     override Param[] params() {
         return [
@@ -92,20 +122,30 @@ class MeshMakePolygon : Command, Operator {
         // so this command and vert.join read one ordering (task 1210).
         if (ordered.length < 2) return false;
 
-        // Snapshot before mutation (mirrors vert_join.d / split_edge.d pattern).
-        snap = MeshSnapshot.capture(*mesh);
+        // THE REFUSAL IS PRE-FLIGHT AND ATOMIC — VERIFIED, NOT ASSUMED. Plan
+        // §L2.4 listed this command among the four whose kernel refusal might
+        // only be discoverable AFTER a mutation, and predicted it would need
+        // an explicit `delta.revert` before returning false. Measured on the
+        // kernel: every one of `makePolygonFromVerts`' return paths — the ring
+        // floor, the bounds check, the duplicate collapse, and the three
+        // gates — answers -1 BEFORE its single `addFace`, so the
+        // `snap.restore(*mesh)` this replaces was rolling back a mutation that
+        // cannot happen. The kernel below may simply answer false from inside
+        // the batch.
+        applied_ = runMapEdit(mesh, undo_, snap, MeshEditScope.Geometry,
+                              (ref MeshEditBatch ed) => runKernel(ed, ordered));
+        return applied_;
+    }
 
-        int fi = mesh.makePolygonFromVerts(ordered, flip_, /*autoOrient*/true,
-                                           Mesh.MakePolyGates.none);
-        if (fi < 0) {
-            // With every gate off the only remaining refusals are structural
-            // (an out-of-range index, or a ring that collapses below two
-            // corners once consecutive duplicates are removed) — restore the
-            // snapshot so the undo stack is left untouched.
-            snap.restore(*mesh);
-            snap = MeshSnapshot.init;
-            return false;
-        }
+    /// The one mutating body, under whichever arm `runMapEdit` chose.
+    private bool runKernel(ref MeshEditBatch ed, uint[] ordered) {
+        // Recording arm only — the redo arm keeps the first capture, the hatch
+        // has the snapshot.
+        if (ed.recording() && !preSel_.filled()) preSel_.capture(ed.mesh);
+
+        immutable int fi = ed.mesh.makePolygonFromVerts(
+            ordered, flip_, /*autoOrient*/true, Mesh.MakePolyGates.none);
+        if (fi < 0) return false;
 
         // Post-success (task 1180): re-point at the PRODUCT — the new face —
         // and drop the vertices it consumed. This is the one command in the
@@ -116,14 +156,19 @@ class MeshMakePolygon : Command, Operator {
         // (not a direct `editMode` write) is what keeps EditMode in lockstep
         // with the SelType ordering, and it promotes WITHOUT dropping the
         // active tool — a selection is not a mode switch.
-        repointToFaces(mesh, [cast(uint) fi]);
+        repointToFaces(&ed.mesh(), [cast(uint) fi]);
         if (promoteType !is null) promoteType(EditMode.Polygons);
         return true;
     }
 
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
+        // `…EmptyOk`, and the `if (!snap.filled) return false;` this replaces
+        // was DELETED rather than translated (regression 0099).
+        if (!revertMapEditEmptyOk(mesh, undo_, snap, applied_)) return false;
+        // ONLY on the delta arm — the hatch's snapshot already restored every
+        // selection plane. The selection TYPE comes back on NEITHER, as the
+        // class note says.
+        if (undo_.armed()) preSel_.restore(*mesh);
         return true;
     }
 }

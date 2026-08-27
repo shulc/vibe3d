@@ -162,6 +162,32 @@ void assertUnrecorded(JSONValue before, JSONValue after, string what, string who
       ~ "(task 1903 Stage F2).");
 }
 
+/// The other half of `assertUnrecorded`, for a command whose L stage has
+/// LANDED: its batch is RECORDING and its `close()` hands back a delta the
+/// command keeps.
+///
+/// WHY THE EXACT COUNT AND NOT `> 0`. A `> 0` is satisfied by any one of the
+/// three entries a migrated spike records, and the entry this stage ADDED is
+/// the third — `AddVerts` and `AddFaces` were already hooked before it and
+/// would have made a `> 0` green on the broken code. The number is what makes
+/// the row discriminate.
+///
+/// AND THIS ROW IS THE ONLY THING IN EITHER LANE THAT SEES THE COMMAND'S OWN
+/// CONSTRUCTOR. `tests/unit/mesh_ops/poly_bevel_test.d`'s spike cell drives
+/// the KERNEL under a recording batch it opens itself, so it is green with
+/// `commands/mesh/spikey.d` still `unrecorded`; only a run of the real command
+/// can tell those apart, and it is in the OTHER lane.
+void assertRecorded(JSONValue before, JSONValue after, string what,
+                    long want, string shape) {
+    immutable long opLog = after["opLogEntriesRecorded"].integer
+                         - before["opLogEntriesRecorded"].integer;
+    assert(opLog == want,
+        what ~ " recorded " ~ opLog.to!string ~ " op-log entr(ies), expected "
+      ~ want.to!string ~ ". ZERO means the command still opens the UNRECORDED "
+      ~ "constructor — its undo would be the whole-mesh MeshSnapshot the "
+      ~ "migration deleted, i.e. no undo at all. " ~ shape);
+}
+
 // ---------------------------------------------------------------------------
 // 1. `mesh.poly_inset` — the simplest caller.
 // ---------------------------------------------------------------------------
@@ -284,9 +310,20 @@ unittest {
         "Measured with the deferral disabled: +6 for ONE face and +34 for "
       ~ "eight, i.e. 4n+2 — a DIFFERENT slope from inset and bevel, which is "
       ~ "why the unit lane runs all three entries as separate cells.");
-    assertUnrecorded(b, a, "mesh.spikey", "Stage L2 (`create + index-stable "
-        ~ "topo-misc`) — NOT L7: the L table is keyed by COMMAND, and this "
-        ~ "kernel ships in the bevel family's file but the command is L2's");
+    // STAGE L2-f FLIPPED THIS (2026-08-28). It read `assertUnrecorded` until
+    // then, with Stage L2 named in its own message as what would flip it —
+    // `mesh.spikey` is an L2 command (the L table is keyed by COMMAND, and
+    // this kernel merely ships in the bevel family's FILE), while
+    // `mesh.poly_inset` and `mesh.bevel` above are L7's and still read
+    // `assertUnrecorded`.
+    assertRecorded(b, a, "mesh.spikey", 3,
+        "The three are [AddVerts] for the apex, [AddFaces] for the three "
+      ~ "appended fan triangles (the tracker coalesces a contiguous run into "
+      ~ "ONE entry) and [ReshapeFaces] for the parent slot the fan replaced — "
+      ~ "the third being the one publisher P7 added at Stage L2-f. There is no "
+      ~ "[MeshMapDelta] beside it here because this stand is a bare cube with "
+      ~ "no per-corner map, so the payload declines; the unit lane's stand "
+      ~ "carries one and sees four.");
 }
 
 // ---------------------------------------------------------------------------

@@ -245,9 +245,18 @@ unittest // one batch, an ARMED rewrite and a RemoveFaces-recording op: no doubl
 ///     face-rewrite entry could carry them. Subpatch and Hide, which sit in
 ///     the same word, DO come back — which is how we know this is the Select
 ///     bit and not "faceMarks is lost".
-///   * **array LENGTHS** — `vertexSetMask` and friends left grown to the
+///   * **array LENGTHS** — `faceSelectionOrder` and friends left grown to the
 ///     post-op length with every value intact, from `finalizeTopologyEdit`'s
 ///     resize.
+///
+/// `vertexSetMask` WAS ON SIX OF THE SEVEN LISTS AND IS ON NONE OF THEM NOW
+/// (2026-08-28, task 1903 Stage L2-c). It was a LENGTH residual of exactly the
+/// kind above — `finalize`'s blanket length sync simply did not name that
+/// plane, the same hole task 1060's review had closed for `faceSetMask`. The
+/// frozen parity oracle caught it on `mesh.split_edge` and the line was added,
+/// so the plane now comes back exactly and naming it here would be asserting a
+/// difference that no longer exists. A SHORTER list is what a closed gap looks
+/// like, which is what the shape assertion's own message says.
 ///
 /// A family that loses a VALUE is NOT armed by this stage — see the census in
 /// block 3 and the three refusals it names.
@@ -270,8 +279,10 @@ private struct ArmedFamily
 //
 // immediately before its rewrite, `dub test --config=tests` answered
 // `290 modules passed unittests`, EXIT=0 — fully green — because
-// `vertexSetMask` is already on six of the seven lists, so "this plane
-// differs" was true before the damage and true after it. The rule the whole
+// `vertexSetMask` was on six of the seven lists at the time, so "this plane
+// differs" was true before the damage and true after it. (Stage L2-c has since
+// taken it off all seven by fixing the length sync, but the HOLE the review
+// found is about any plane a list names, not about that one.) The rule the whole
 // stage rests on ("armed families lose Select bits and array LENGTHS; a family
 // that loses a VALUE is not armed") had no machine check for any plane it had
 // already named.
@@ -592,6 +603,43 @@ unittest // armed: Mesh.triangulateFacesByMask
     assertNonSelectMarksSurvive("triangulateFacesByMask", m);
 }
 
+unittest // armed: mesh.rebuildFacesWithChordSplits — the Stage L2-d site
+{
+    // `splitFaceByVertices` is the one production caller that reaches this
+    // kernel with a single-face mask; `mesh_ops/cut.d`'s plane cut and
+    // `edgeSliceEx` are the others and belong to L4.
+    //
+    // Face 4 of the tagged grid is the interior quad [5, 6, 10, 9]; 5 and 10
+    // are its diagonal, i.e. a NON-ADJACENT pair, which is the whole
+    // precondition — an adjacent pair is refused and the cell would be vacuous.
+    Mesh m = makeTaggedGridFull();
+    auto pre = capturePre(m);
+    size_t n;
+    MeshEditDelta d;
+    {
+        auto ed = MeshEditBatch(m, MeshEditScope.Geometry);
+        n = ed.mesh.splitFaceByVertices(4, 5, 10);
+        d = ed.close();
+    }
+    assert(n == 1 && m.faces.length == 10,
+        format("the stand split %d face(s) to F=%d, expected 1 and 10 — every "
+             ~ "assertion below is vacuous on a no-op", n, m.faces.length));
+    // MEASURED, and it is the SHORTEST residual of the eight armed families:
+    // the Select bit of `edgeMarks` (dropped by the kernel's own
+    // `clearEdgeSelectionResize` tail, after the rewrite) and the
+    // `faceSelectionOrder` stamps. `faceMarks` is NOT here — the kernel
+    // re-applies each parent's Select bit onto its emitted slots through
+    // `setFacesSelectedFrom`, so the face layer round-trips — and neither are
+    // `faceMaterial`, `facePart` or `faceSetMask`, which is the whole point of
+    // routing through `rewriteFaces`: the primitive carries all five per-face
+    // planes through the correspondence and `Kind.FaceReindex` restores them.
+    // Under the cheaper `AddFaces` + `ReshapeFaces` route those three would
+    // come back SHIFTED BY ONE and would each need naming here.
+    assertRevertShape("rebuildFacesWithChordSplits", m, d, pre,
+                      ["edgeMarks", "faceSelectionOrder"]);
+    assertNonSelectMarksSurvive("rebuildFacesWithChordSplits", m);
+}
+
 unittest // armed: mesh_ops.extrude.extrudeVerticesByMask
 {
     Mesh m = makeTaggedGridFull();
@@ -607,7 +655,7 @@ unittest // armed: mesh_ops.extrude.extrudeVerticesByMask
         format("the stand extruded %d vertex/vertices to F=%d, expected 1 and "
              ~ "17", n, m.faces.length));
     assertRevertShape("extrudeVerticesByMask", m, d, pre,
-                      ["edgeMarks", "faceMarks", "vertexSetMask"]);
+                      ["edgeMarks", "faceMarks"]);
     assertNonSelectMarksSurvive("extrudeVerticesByMask", m);
 }
 
@@ -640,8 +688,8 @@ unittest // armed: mesh_ops.extrude.extrudeFacesByMask — the `&rw` site Stage 
 
     assertRevertShape("extrudeFacesByMask", m, d, pre,
                       ["edgeMarks", "faceMarks", "faceSelectionOrder",
-                       "orderCounters", "vertexMarks", "vertexSelectionOrder",
-                       "vertexSetMask"]);
+                       "orderCounters", "vertexMarks",
+                       "vertexSelectionOrder"]);
     assertNonSelectMarksSurvive("extrudeFacesByMask", m);
 }
 
@@ -661,8 +709,8 @@ unittest // armed: mesh_ops.extrude.smoothShiftFacesByMask
                n, m.faces.length));
     assertRevertShape("smoothShiftFacesByMask", m, d, pre,
                       ["edgeMarks", "faceMarks", "faceSelectionOrder",
-                       "orderCounters", "vertexMarks", "vertexSelectionOrder",
-                       "vertexSetMask"]);
+                       "orderCounters", "vertexMarks",
+                       "vertexSelectionOrder"]);
     assertNonSelectMarksSurvive("smoothShiftFacesByMask", m);
 }
 
@@ -689,7 +737,7 @@ unittest // armed: mesh_ops.loop_slice.insertEdgeLoopsMulti — the second `&rw`
     assertRevertShape("insertEdgeLoopsMulti", m, d, pre,
                       ["edgeMarks", "edgeSelectionOrder", "faceMarks",
                        "faceSelectionOrder", "orderCounters", "vertexMarks",
-                       "vertexSelectionOrder", "vertexSetMask"]);
+                       "vertexSelectionOrder"]);
     assertNonSelectMarksSurvive("insertEdgeLoopsMulti", m);
 }
 
@@ -745,8 +793,8 @@ unittest // armed: mesh_ops.revolve.extrudePathStep_, through extrudeAlongPath
 
     assertRevertShape("extrudeAlongPath", m, d, pre,
                       ["edgeMarks", "faceMarks", "faceSelectionOrder",
-                       "orderCounters", "vertexMarks", "vertexSelectionOrder",
-                       "vertexSetMask"]);
+                       "orderCounters", "vertexMarks",
+                       "vertexSelectionOrder"]);
     assertNonSelectMarksSurvive("extrudeAlongPath", m);
 }
 
@@ -895,11 +943,22 @@ unittest // the resolver itself, on hand-written text — it is the census's onl
              ~ "the census below is comparing noise", got));
 }
 
-/// The set this stage MEASURED and armed, 2026-08-27. Every entry earned its
-/// place by a full-state revert diff on a `makeTaggedGridFull` stand (block 2);
-/// every kernel that reaches `mesh_planes.rewriteFaces` and is NOT here was
-/// measured too, and its refusal is written at its own call site.
+/// The set this stage MEASURED and armed, 2026-08-27, plus the one stage L2-d
+/// added on 2026-08-28. Every entry earned its place by a full-state revert
+/// diff on a `makeTaggedGridFull` stand (block 2); every kernel that reaches
+/// `mesh_planes.rewriteFaces` and is NOT here was measured too, and its refusal
+/// is written at its own call site.
+///
+/// `rebuildFacesWithChordSplits` IS THE L2-d ENTRY, and it did not merely gain
+/// an arm — it gained the `rewriteFaces` CALL. Until then it installed its
+/// result with a raw `faces._store = newFacesArr;` plus five hand-rebuilt plane
+/// assignments, so a recording batch came back with an EMPTY op-log and
+/// `revert()` answered `true` with the chord split still in. Three of those
+/// five planes (`faceMaterial`, `facePart`, `faceSetMask`) have no restorer
+/// outside `Kind.RemoveFaces`, which is why the route is `FaceReindex` and not
+/// the cheaper `AddFaces` + `ReshapeFaces`.
 private static immutable string[] kArmedSites = [
+    "source/mesh.d:rebuildFacesWithChordSplits",
     "source/mesh.d:triangulateFacesByMask",
     "source/mesh_ops/cleanup.d:cleanDegenerateFaces",
     "source/mesh_ops/extrude.d:extrudeFacesByMask",

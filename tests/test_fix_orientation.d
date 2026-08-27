@@ -158,33 +158,47 @@ unittest { // mesh.fixOrientation runs its kernel inside ONE edit batch
     // Corrupt one face's winding so fixOrientation has something to heal.
     postCommand(`{"id":"mesh.flip"}`);
 
-    // POSITIVE CONTROL. Every assertion below is "this counter did not move",
-    // and a dead counter satisfies that for free, so one command that DOES
-    // move it has to run in the same process first.
+    // POSITIVE CONTROL, RUN ON ITS OWN MESH AND THEN THROWN AWAY. Every
+    // assertion below is "this counter did not move", and a dead counter
+    // satisfies that for free, so one command that DOES move it has to run in
+    // the same process.
     //
-    // IT USED TO BE `mesh.flip`, WHICH WAS BOTH THE CORRUPTION AND THE
-    // CONTROL, AND TASK 1903 STAGE L2-a TOOK THAT AWAY: `mesh.flip` now opens
-    // a recording `MeshEditBatch` at the command boundary, so it commits
-    // INSIDE a frame and ticks nothing. Re-based on `mesh.addVertex`, which is
-    // still batchless and needs no parameters (its `pos` defaults to the
-    // origin) — `Mesh.addVertex` publishes `MeshEditScope.Points`, a Geometry
-    // bit, with no frame open.
+    // IT HAS NOW BEEN RE-BASED TWICE, WHICH IS WHY IT IS SHAPED LIKE THIS.
+    // First it was `mesh.flip`, which was both the corruption and the control,
+    // until stage L2-a gave `mesh.flip` a batch. Then `mesh.addVertex`, until
+    // stage L2-g gave that one a batch too. EVERY batchless mesh command is on
+    // task 1903's migration list, so the control will keep going quiet — and
+    // the fix is always to name another still-batchless command, NEVER to
+    // delete the control, which is the only thing standing between the three
+    // assertions below and a dead counter.
     //
-    // EXPECT TO RE-BASE THIS LINE AGAIN. Every batchless mesh command is on
-    // task 1903's migration list, `mesh.addVertex` included (stage L2-g), so
-    // when this control stops ticking the fix is to name another still-
-    // batchless command — NOT to delete the control, which is the only thing
-    // standing between the three assertions below and a dead counter.
+    // WHAT CHANGED THE SECOND TIME is the ORDER, so the next re-base is a
+    // one-word edit instead of a re-think: the control now runs on a FRESH
+    // reset, BEFORE the corruption, and the mesh it leaves is discarded by the
+    // `postReset()` under it. Its only requirement is therefore "ticks the
+    // counter in this process" — it no longer has to be a command whose effect
+    // on the mesh leaves `mesh.fixOrientation` something to heal, which is
+    // what made `mesh.addVertex` (append-only, harmless) the previous pick and
+    // what would have excluded most of the remaining batchless commands.
+    postReset();
+    selectFaces([0]);
     auto c0 = getChanges();
-    postCommand(`{"id":"mesh.addVertex"}`);
+    postCommand(`{"id":"mesh.subdivide"}`);
     auto c1 = getChanges();
     const long ctrl = c1["unbatchedGeometryCommits"].integer
                     - c0["unbatchedGeometryCommits"].integer;
     assert(ctrl > 0,
         format("positive control: an UNBATCHED command must tick "
-             ~ "unbatchedGeometryCommits, and mesh.addVertex ticked %d. A dead "
-             ~ "counter passes the assertions below for free "
+             ~ "unbatchedGeometryCommits, and mesh.subdivide ticked %d. Either "
+             ~ "the counter is dead — in which case the three assertions below "
+             ~ "pass for free — or mesh.subdivide has been migrated and this "
+             ~ "line needs re-basing onto another still-batchless command "
              ~ "(task 1903 §3.2 L2, M-DM).", ctrl));
+
+    // The real measurement, on a clean mesh.
+    postReset();
+    selectFaces([0]);
+    postCommand(`{"id":"mesh.flip"}`);
 
     auto before = getChanges();
     postCommand(`{"id":"mesh.fixOrientation"}`);

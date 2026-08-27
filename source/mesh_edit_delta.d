@@ -4180,6 +4180,26 @@ private void finalize(ref Mesh m, MeshEditScope scope_,
     // the actual bits, so this only fixes lengths after a count change.
     m.vertexMarks.length          = m.vertices.length;
     m.vertexSelectionOrder.length = m.vertices.length;
+    // TASK 1903 STAGE L2-c — `vertexSetMask` was missing from this length sync,
+    // the SAME hole task 1060's review closed for `faceSetMask` two lines below
+    // and for the same reason. `AddVerts`'s forward/reverse (`m.vertices ~= …` /
+    // `m.vertices.length = v0`) carry no parallel-array payload of their own, so
+    // they rely entirely on this blanket resize to stay aligned; `RemoveVerts`'s
+    // reverse splices its own entry in and this line is a no-op for it.
+    //
+    // FOUND BY THE FROZEN PARITY ORACLE, not by review: `mesh.split_edge`'s
+    // `resetSelection()` grows `vertexSetMask` to V+1 on the forward, and the
+    // delta revert put `vertices` back to V and left the mask at V+1 —
+    // `create_stable.json [mesh.split_edge/postUndo]: plane 'vertexSetMask'
+    // differs`. The snapshot path restored the array whole and did not.
+    //
+    // THE USER-VISIBLE HALF, which is why this is a fix and not hygiene:
+    // `mesh_selsets.selSetMembersVertex` walks the MASK, not `m.vertices`, so a
+    // stale out-of-range entry reaches `/api/model` and the `.v3d` writer, and
+    // the loader's own bounds guard then drops the WHOLE named set on reload
+    // rather than the one bad entry — the exact incident `faceSetMask`'s line
+    // records.
+    m.vertexSetMask.length        = m.vertices.length;
     m.edgeMarks.length            = m.edges.length;
     m.edgeSelectionOrder.length   = m.edges.length;
     m.faceMarks.length            = m.faces.length;

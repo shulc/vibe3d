@@ -6,11 +6,12 @@ import mesh;
 import view;
 import editmode;
 import shader;
-import snapshot : MeshSnapshot, SelectionSnapshot;
+import snapshot : MeshSnapshot;
 import selection_product : repointToEdgeKeys;
 import mesh_edit_delta : MeshEditScope;
 import commands.mesh.position_undo : RecordedUndo;
 import commands.mesh.map_edit_undo : runMapEdit, revertMapEditEmptyOk;
+import commands.mesh.selection_undo : DenseSelectionUndo;
 
 /// Spin (rotate) the shared edge of two adjacent faces to the next diagonal of
 /// the combined boundary polygon.
@@ -61,45 +62,19 @@ class MeshSpinEdge : Command, Operator {
     /// not derivable from the two images.
     private bool             applied_;
 
-    /// THE PRE-OP EDGE SELECTION PLANE, HELD DENSELY BY THE COMMAND, endpoint-
-    /// keyed: flat `[a, b, order]` triples for every selected edge, plus the
-    /// counter. Captured on the recording arm only.
+    /// THE PRE-OP SELECTION, HELD DENSELY BY THE COMMAND.
     ///
     /// WHY THE COMMAND HOLDS IT AT ALL — the migration would otherwise restore
     /// LESS than the snapshot did, and the parity fixture is what said so
     /// rather than a review. `repointToEdgeKeys` DESTROYS the pre-op edge
     /// selection (that is its job: it points the selection at the spin's
-    /// product), and the op-log has nothing that puts it back. Measured
-    /// against `undo_parity/create_stable.json`, frozen on the snapshot path:
-    /// with `Kind.EdgeSelByEnds` alone the Select BIT came back and the
-    /// `edgeSelectionOrder` STAMP came back as 1 where the snapshot had 3,
-    /// because that kind's restore re-selects through `selectEdge`, which mints
-    /// a FRESH stamp off the counter. No kind carries a selection-order stamp —
-    /// `patchSelection` deliberately does not, and a unit gate in
-    /// `l1_declined_census_test.d` asserts it does not — so this is the
-    /// third `path` value, `dense-inline`, for ONE plane, next to a delta that
-    /// owns the rest.
-    ///
-    /// AND IT IS THE WHOLE SELECTION, NOT ONLY THE EDGES, for a reason the
-    /// fixture also supplied: `repointToEdgeKeys` opens with
-    /// `repointToNothing`, which clears ALL THREE domains
-    /// (`selection_product.d`) — so a spin over an edge selection silently
-    /// destroys the FACE selection too, and the second run of the oracle caught
-    /// `faceMarks[7]`'s Select bit missing after the undo. `SelectionSnapshot`
-    /// is the instrument that already carries all three domains, both order
-    /// arrays and all three counters, and re-zeroes a stamp whose element the
-    /// bulk setter refused as hidden.
-    ///
-    /// THE EDGE HALF IS THEN OVERRIDDEN BY ENDPOINTS, `delete.d`'s established
-    /// shape: `SelectionSnapshot` is INDEX-keyed and `finalize`'s
-    /// `rebuildEdges` gives the reverted mesh a fresh edge index space, so its
-    /// edge half can name the wrong edges. Unlike `delete.d`'s
-    /// `restoreSelectedEdgeEnds` — a `selectEdge` loop, which mints a FRESH
-    /// order stamp per edge and so restores the bit but not the rank — this
-    /// override carries the stamp, because the frozen oracle compares it.
-    private SelectionSnapshot preSel_;
-    private uint[]            preEdgeSel_;   // [a, b, order] triples
-    private int               preEdgeCounter_;
+    /// product), it opens with `repointToNothing` which clears ALL THREE
+    /// domains, and the op-log has nothing that puts any of it back. The three
+    /// measured losses, the reason `Kind.SelectionDelta` cannot carry them and
+    /// the endpoint re-keying all live at `commands/mesh/selection_undo.d` —
+    /// this file was where they were found, and Stage L2-c moved the mechanism
+    /// there when seven more commands turned out to need it.
+    private DenseSelectionUndo preSel_;
 
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo (see `MeshFlip`).
@@ -282,18 +257,12 @@ class MeshSpinEdge : Command, Operator {
 
     /// The one mutating body, under whichever arm `runMapEdit` chose.
     private bool runKernel(ref MeshEditBatch ed, ulong[] keys, bool edgeBranch) {
-        // The pre-op EDGE selection plane, ENDPOINT-keyed and only on the
-        // recording arm (the redo arm keeps the first capture; the hatch has
-        // the snapshot). Endpoint-keyed rather than index-keyed because
-        // `finalize`'s `rebuildEdges` gives the reverted mesh a fresh edge
-        // index space, so an index-keyed restore would name the wrong edges —
-        // the same reason `mesh_ops/extrude.d` records `EdgeSelByEnds` by ends.
-        // See the field's own note for why the command holds this densely.
-        const bool rec = ed.recording();
-        if (rec) {
-            preSel_ = SelectionSnapshot.capture(ed.mesh);
-            captureEdgeSelection(ed.mesh);
-        }
+        // The pre-op selection, on the RECORDING arm only: the redo arm must
+        // keep the first capture (a second would image the POST-spin
+        // selection) and the hatch has the whole-mesh snapshot. See
+        // `commands/mesh/selection_undo.d` for why it is dense, why it is all
+        // three domains, and why the edge half is re-keyed by endpoints.
+        if (ed.recording() && !preSel_.filled()) preSel_.capture(ed.mesh);
 
         ulong[] productKeys;
         immutable size_t affected = ed.mesh.spinEdgesByKeys(keys, productKeys);
@@ -312,91 +281,6 @@ class MeshSpinEdge : Command, Operator {
         return true;
     }
 
-    /// Snapshot the edge selection plane as `[a, b, order]` triples.
-    ///
-    /// PRE-SIZED in one pass with a counting pass in front of it, not grown by
-    /// `~=`: an element-wise append is a runtime call per element that
-    /// `reserve` does not remove (task 2160). A whole-mesh edge selection on a
-    /// lane-sized mesh is hundreds of thousands of triples.
-    private void captureEdgeSelection(ref Mesh m) {
-        import std.array : uninitializedArray;
-        size_t n = 0;
-        foreach (ei; 0 .. m.edges.length) if (m.isEdgeSelected(ei)) ++n;
-        preEdgeCounter_ = m.edgeSelectionOrderCounter;
-        preEdgeSel_     = uninitializedArray!(uint[])(n * 3);
-        size_t w = 0;
-        foreach (ei; 0 .. m.edges.length) {
-            if (!m.isEdgeSelected(ei)) continue;
-            preEdgeSel_[w++] = m.edges[ei][0];
-            preEdgeSel_[w++] = m.edges[ei][1];
-            preEdgeSel_[w++] = ei < m.edgeSelectionOrder.length
-                             ? cast(uint) m.edgeSelectionOrder[ei] : 0u;
-        }
-        assert(w == preEdgeSel_.length,
-            "MeshSpinEdge.captureEdgeSelection: the counting pass and the "
-          ~ "write pass disagree");
-    }
-
-    /// Put the whole plane back, AFTER the delta replay has re-derived `edges`.
-    ///
-    /// ONE bulk `selectEdgesFrom` and then the stamps written directly: the
-    /// per-edge `selectEdge` loop would publish a change per element, which is
-    /// the task 1330 shape that makes a bulk path quadratic, and it would mint
-    /// fresh stamps that this method then has to overwrite anyway.
-    private void restoreSelection() {
-        if (!preSel_.filled) return;
-        // All three domains, their stamps and their counters, index-keyed.
-        preSel_.restore(*mesh);
-
-        // …and then the ORDER ARRAYS WHOLESALE, because `SelectionSnapshot`
-        // restores LESS of them than `MeshSnapshot` did and the frozen oracle
-        // measures the difference. Its tail re-zeroes the stamp of every
-        // element that is not selected; a stamp on an UNSELECTED element is a
-        // state the mesh's own setters do not produce, but `MeshSnapshot`
-        // copied the arrays whole and so put it back, and this command's
-        // parity cell froze `faceSelectionOrder [0,0,11,0,0,0,23,1,0]` against
-        // the `[0,0,0,0,0,0,0,1,0]` the re-zero produces.
-        //
-        // The guard that tail exists for is KEPT, narrowed to the case it was
-        // written for: an element the capture says was selected and the bulk
-        // setter REFUSED (the Select ∧ Hide = ∅ invariant) must not keep a
-        // stale rank. Everything else is restored verbatim, which is what
-        // "no less than the snapshot" means here.
-        mesh.vertexSelectionOrder = preSel_.vertexSelectionOrder.dup;
-        mesh.edgeSelectionOrder   = preSel_.edgeSelectionOrder.dup;
-        mesh.faceSelectionOrder   = preSel_.faceSelectionOrder.dup;
-        mesh.vertexSelectionOrder.length = mesh.vertices.length;
-        mesh.edgeSelectionOrder.length   = mesh.edges.length;
-        mesh.faceSelectionOrder.length   = mesh.faces.length;
-        foreach (i; 0 .. mesh.vertexSelectionOrder.length)
-            if (i < preSel_.selectedVertices.length && preSel_.selectedVertices[i]
-                && !mesh.isVertexSelected(i)) mesh.vertexSelectionOrder[i] = 0;
-        foreach (i; 0 .. mesh.faceSelectionOrder.length)
-            if (i < preSel_.selectedFaces.length && preSel_.selectedFaces[i]
-                && !mesh.isFaceSelected(i)) mesh.faceSelectionOrder[i] = 0;
-        // …then the EDGE half again, by endpoints, because the index-keyed one
-        // above may have named the wrong edges after `rebuildEdges`.
-        bool[] want = new bool[](mesh.edges.length);
-        uint[] slot = new uint[](mesh.edges.length);
-        for (size_t k = 0; k + 2 < preEdgeSel_.length; k += 3) {
-            immutable uint ei = mesh.edgeIndexByKey(
-                edgeKey(preEdgeSel_[k], preEdgeSel_[k + 1]));
-            // A pre-op edge that the reverted mesh does not have is SKIPPED,
-            // not asserted on: `revert()` is also reached on the empty-delta
-            // arm, where nothing was replayed and the mesh is whatever the
-            // forward left. Losing one edge's bit there is strictly better
-            // than aborting the process out of an undo.
-            if (ei == ~0u || ei >= want.length) continue;
-            want[ei] = true;
-            slot[ei] = preEdgeSel_[k + 2];
-        }
-        mesh.selectEdgesFrom(want);
-        foreach (ei; 0 .. want.length)
-            if (want[ei] && ei < mesh.edgeSelectionOrder.length)
-                mesh.edgeSelectionOrder[ei] = cast(int) slot[ei];
-        mesh.edgeSelectionOrderCounter = preEdgeCounter_;
-    }
-
     override bool revert() {
         // `…EmptyOk` rather than `revertMapEdit`, for the reason spelled out in
         // `commands/mesh/flip.d`: a `false` from a Model entry's `revert()`
@@ -408,7 +292,7 @@ class MeshSpinEdge : Command, Operator {
         // the whole `edgeMarks` word and both order arrays back, and re-running
         // the overlay over it would be a second writer for a plane that is
         // already correct.
-        if (undo_.armed()) restoreSelection();
+        if (undo_.armed()) preSel_.restore(*mesh);
         return true;
     }
 }

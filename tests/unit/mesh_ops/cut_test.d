@@ -8,6 +8,7 @@ import math;
 import std.math : abs;
 import mesh_ops.cut;
 import mesh_edit_delta : MeshEditDelta, MeshEditScope, MeshOpEntry;
+import http_json : meshPlanesJson;   // task 1903 L2: the plane-cut round-trip
 
 // Task 1903 Stage E3: every entry point of this family is a free function over
 // `ref MeshEditBatch` now, so a test cannot call one on a bare `Mesh` — that is
@@ -786,6 +787,15 @@ unittest { // ONE batch over a ladder DEFERS what a batch-per-cut stamps, and la
 // stage's sharpest finding, invisible to every behavioural test there is.
 // ===========================================================================
 
+/// The op-log's KIND SEQUENCE, as text — never the LENGTH (task 1903 §L2.7's
+/// W-2-SHAPE: a length is satisfied by a log with an entry interposed).
+private string kindsOf(in MeshEditDelta d) {
+    import std.conv : to;
+    string r;
+    foreach (i, ref e; d.log) r ~= (i ? " " : "") ~ e.kind.to!string;
+    return r;
+}
+
 private size_t countKind(ref MeshEditDelta d, MeshOpEntry.Kind k) {
     size_t n;
     foreach (ref e; d.log) if (e.kind == k) ++n;
@@ -852,7 +862,7 @@ private Mesh recCutStand() {
     return m;
 }
 
-unittest { // the plane-cut op-log NAMES NO FACE CHANGE, and its revert FAULTS
+unittest { // the plane-cut op-log NAMES ITS FACE CHANGE, and its revert WORKS
     import std.format : format;
     import std.conv   : to;
 
@@ -885,43 +895,55 @@ unittest { // the plane-cut op-log NAMES NO FACE CHANGE, and its revert FAULTS
 
     assertDeclaredScope("cutByPlane", d);
 
-    // THE FINDING, MEASURED — and it is why this block exists.
+    // THE FINDING, MEASURED — and stage L2 turned it over.
     //
-    // Three faces became six, nine face slots became twelve, and the op-log is
-    // ONE entry:
+    // WHAT IT SAID AT STAGE E3 (2026-08-25). Three faces became six, nine face
+    // slots became twelve, and the op-log was ONE entry, `[AddVerts]`:
+    // `Mesh.rebuildFacesWithChordSplits` built a whole new face array and
+    // installed it with `faces._store = newFacesArr;`, a DIRECT store reaching
+    // no mutation hook, and `Mesh.insertEdgePoint` spliced the crossing corner
+    // into every incident winding with a raw `face = face[0 .. k+1] ~ …`. So
+    // the delta named the four crossing vertices and NOTHING about the faces,
+    // and `revert()` un-added those vertices while twelve rebuilt faces still
+    // referenced them: `ArrayIndexError: index [16] is out of bounds for array
+    // of length 16` out of `finalize`→`buildLoops`, leaving the mesh HALF
+    // REVERTED at V=16 with F=12.
     //
-    //     entries=1 kinds=[AddVerts]
+    // WHAT CHANGED (2026-08-28, task 1903 Stage L2-c and L2-d), and the block's
+    // own instruction was to become this comparison once it did. BOTH of those
+    // sites got a publisher, and both landed in stage L2 rather than L4 because
+    // L2's own commands reach them: `insertEdgePoint` now installs its splices
+    // through `Mesh.setFaceWindings` (for `mesh.addPoint` / `mesh.split_edge`)
+    // and `rebuildFacesWithChordSplits` now installs its result through
+    // `mesh_planes.rewriteFaces` under an explicit `faceReindexScope()` (for
+    // `mesh.splitFace`). §5.5's L4 note lists "record the Pass-1 winding splice
+    // as well" and "route the chord rebuild through the primitive" as L4's own
+    // open choices #1 and #2; L4 now arrives with both MADE AND MEASURED HERE.
     //
-    // `Mesh.rebuildFacesWithChordSplits` (mesh.d) builds a whole new face array
-    // and installs it with `faces._store = newFacesArr;` — a DIRECT store that
-    // reaches no mutation hook at all. So the delta names the four crossing
-    // vertices it spliced in and says NOTHING about the faces.
-    //
-    // THIS IS A HARDER GAP THAN THE ONE E2 FOUND, and the difference decides
-    // which stage can fix it. `mesh_ops/revolve.d`'s `extrudePathStep_` at
-    // least hands its new face array to `mesh_planes.rewriteFaces`, whose
-    // `Kind.FaceReindex` publisher merely sits DISARMED
-    // (`MeshEditTracker.wantsFaceReindex == false`) — so Stage K's per-rewrite
-    // arming reaches it. `rebuildFacesWithChordSplits` never calls the
-    // primitive, so arming the primitive changes nothing here: **L4 must route
-    // the chord rebuild through `mesh_planes.rewriteFaces` first, or
-    // `mesh.cut` / `mesh.axisSlice` / `mesh.screenSlice` must refuse to write a
-    // delta at all.**
+    // So this block is now a full pre/post comparison across a real `revert()`,
+    // and what it measures is that the plane cut ROUND-TRIPS.
+    immutable string preDump = meshPlanesJson(m);
     immutable size_t addV = countKind(d, MeshOpEntry.Kind.AddVerts);
-    assert(d.log.length == 1 && addV == 1,
-        format("STAGE K/L4 FLIPS THIS. The op-log carries %d entr(ies) "
-             ~ "[%s] of which %d are AddVerts; at Stage E3 it carries exactly "
-             ~ "ONE, an AddVerts, for an op that also turned %d face slots into "
-             ~ "%d. If a face entry has appeared, say which mechanism put it "
-             ~ "there: routing rebuildFacesWithChordSplits through "
-             ~ "mesh_planes.rewriteFaces (the fix L4 needs) is the intended "
-             ~ "one, and this block should then become a full pre/post state "
-             ~ "comparison across a real `revert()`. If nothing routed it and "
-             ~ "the entry appeared anyway, something is recording faces without "
-             ~ "the corner carry and this family's undo is now dropping "
-             ~ "per-corner UV provenance (task 1903 §5.3, plan §12 J/K/L4).",
-               d.log.length, d.log.length ? d.log[0].kind.to!string : "",
-               addV, preF, m.faces.length));
+    assert(kindsOf(d) == "AddVerts ReshapeFaces AddVerts ReshapeFaces AddVerts "
+                       ~ "ReshapeFaces AddVerts ReshapeFaces FaceReindex",
+        format("the plane cut's op-log is [%s].\n"
+             ~ "  ONE entry, `[AddVerts]`, is the pre-L2 state: the four "
+             ~ "crossing vertices named and the faces not, in which `revert()` "
+             ~ "THROWS out of finalize->buildLoops and half-reverts the mesh.\n"
+             ~ "  Expected is four `[AddVerts, ReshapeFaces]` pairs — one per "
+             ~ "straddling edge, `insertEdgePoint`'s vertex and its winding "
+             ~ "splices — followed by ONE `FaceReindex` for the chord rebuild. "
+             ~ "There is no `MeshMapDelta` beside any of them because "
+             ~ "`recCutStand` carries no per-corner map; a stand that did would "
+             ~ "show the payload paired with each face entry.\n"
+             ~ "  The SEQUENCE and not the length: since Stage J the "
+             ~ "`[MeshMapDelta, <face entry>]` adjacency is contractual "
+             ~ "(`CornerCarry.payloadForCount`), so an interposed entry zeroes "
+             ~ "a UV map silently while the geometry round-trips.",
+               kindsOf(d)));
+    assert(addV == 4,
+        format("the op-log names %d AddVerts entr(ies), expected the 4 "
+             ~ "straddling edges' crossing vertices", addV));
 
     // NO POSITION WRITE on the plain cut — the behavioural twin of the §5.7
     // census row, from the other side. `cutByPlane` moves no existing vertex;
@@ -943,32 +965,59 @@ unittest { // the plane-cut op-log NAMES NO FACE CHANGE, and its revert FAULTS
              ~ "every mark plane onto the emitted slots (task 1903 Stage E3).",
                countKind(d, MeshOpEntry.Kind.SelectionDelta)));
 
-    // `revert()` IS NOT CALLED, AND THAT IS MEASURED, NOT CAUTION. Run on this
-    // exact delta it un-adds the four crossing vertices while twelve rebuilt
-    // faces still reference them, and throws out of `finalize`:
+    // `revert()` IS CALLED NOW, AND CALLING IT IS THE CHECK. Until stage L2 it
+    // was deliberately not called because it aborted the module; a block that
+    // still declined to call it would not have tested the fix.
+    assert(d.revert(m), "the plane cut's revert refused the delta outright");
+    assert(m.vertices.length == preV && m.faces.length == preF,
+        format("the revert left V=%d F=%d, expected the pre-cut %d/%d — a "
+             ~ "HALF-reverted mesh (V back, F not) is the pre-L2 shape",
+               m.vertices.length, m.faces.length, preV, preF));
+
+    // THE WHOLE PLANE DUMP, and the ONE named exception.
     //
-    //     core.exception.ArrayIndexError@source/mesh.d(...):
-    //     index [16] is out of bounds for array of length 16
-    //             (mesh_edit_delta.finalize -> Mesh.buildLoops)
+    // `faceSelectionOrder[2]` is the stand's synthetic stamp 11 on a face that
+    // is NOT selected. `MeshSnapshot.restore` copied the array whole and put it
+    // back; the delta path re-derives the Select layer and re-zeroes the stamp
+    // of every unselected element, which is `SelectionSnapshot.restore`'s own
+    // rule (task 0613 S3, against resurrecting a stale rank). The delta is
+    // CORRECTER here, so this is a recorded NORMALISATION and not a loss — the
+    // same ruling `undo_parity_l3_test.d` takes on the same plane.
     //
-    // and — the part that matters for the design — it leaves the mesh HALF
-    // REVERTED: measured after catching, V=16 (back to pre-cut) with F=12 (the
-    // post-cut count), i.e. twelve face windings pointing at vertices 16..19
-    // that no longer exist. `MeshEditDelta` has no pre-image of the face array,
-    // so nothing downstream can detect the mismatch at revert time and nothing
-    // can undo a partial revert.
-    //
-    // Unreachable in production today — every caller of this family opens an
-    // UNRECORDED batch (`commands/mesh/axis_slice.d`,
-    // `commands/mesh/screen_slice.d`, the five sites in
-    // `tools/slice/slice_tool.d`) and undoes through a whole-mesh MeshSnapshot.
-    // It is exactly the trap **L4** walks into if it turns this family's undo
-    // into a delta before the face side is recorded, and §5.5's L8 note states
-    // the same requirement for `mesh.strokeExtrude`: the refusal, if that is
-    // the branch taken, must be PRE-FLIGHT and ATOMIC, because a
-    // `revert() == false` bolted on at the end is both too late and, per §6.5,
-    // a behaviour change of its own (a Model entry answering `false` TRUNCATES
-    // the undo stack).
+    // IT IS A PIN AND NOT A SKIP: the SHAPE is still asserted, so both a new
+    // regression on this plane and a FIX of the divergence redden — the second
+    // telling whoever fixed it to retire this exception.
+    immutable string post = meshPlanesJson(m);
+    if (post != preDump) {
+        foreach (fi; 0 .. m.faces.length) {
+            if (m.isFaceSelected(cast(uint) fi)) continue;
+            assert(m.faceSelectionOrder[fi] == 0,
+                format("the plane cut's revert left selection-order stamp %d "
+                     ~ "on UNSELECTED face %d. The standing exception on this "
+                     ~ "plane says the delta path re-zeroes such a stamp; a "
+                     ~ "nonzero one is a different divergence and needs its own "
+                     ~ "reading", m.faceSelectionOrder[fi], fi));
+        }
+        // …and nothing ELSE may differ. Re-dump with the exception neutralised
+        // on BOTH sides: if the two still disagree, the difference is real.
+        Mesh probe = recCutStand();
+        probe.faceSelectionOrder[2] = 0;
+        assert(meshPlanesJson(probe) == post,
+            format("the plane cut's revert differs from the pre-cut state in "
+                 ~ "more than the ONE recorded normalisation "
+                 ~ "(faceSelectionOrder on unselected faces).\n  pre : %s\n"
+                 ~ "  post: %s", meshPlanesJson(probe), post));
+    } else {
+        assert(false,
+            "the plane cut's revert now reproduces the pre-cut dump EXACTLY, "
+          ~ "including the synthetic selection-order stamp on unselected face "
+          ~ "2. That divergence was recorded as a deliberate normalisation "
+          ~ "(the delta path re-zeroes a stamp whose element is not selected, "
+          ~ "task 0613 S3). If it is gone, either the normalisation was "
+          ~ "reverted — which resurrects the stale-rank corruption that review "
+          ~ "removed — or the stand stopped setting the stamp. RETIRE THIS "
+          ~ "EXCEPTION in the same commit that closed it.");
+    }
 }
 
 unittest { // the Gap option's seam separation IS recorded — Kind.SetPos, once
@@ -982,6 +1031,7 @@ unittest { // the Gap option's seam separation IS recorded — Kind.SetPos, once
     // differential is what covers that third case.
     Mesh m = recCutStand();
     immutable size_t preV = m.vertices.length;
+    auto prePos = m.vertices.dup;   // task 1903 L2: the Gap's SetPos must return
 
     MeshEditDelta d;
     size_t n;
@@ -1023,16 +1073,32 @@ unittest { // the Gap option's seam separation IS recorded — Kind.SetPos, once
              ~ "different (and noisier) declaration (task 1903 §2.5, §5.7).",
                setPos));
 
-    // The face side is missing here too, for the same reason as the block
-    // above — same mechanism, same removing stage.
-    assert(countKind(d, MeshOpEntry.Kind.AddVerts) == 1 && d.log.length == 2,
-        format("STAGE K/L4 FLIPS THIS. The split+gap op-log carries %d "
-             ~ "entr(ies); at Stage E3 it carries exactly two — AddVerts (the "
-             ~ "crossing verts and their duplicates, coalesced) and SetPos (the "
-             ~ "seam separation) — and NOTHING about the faces, because "
-             ~ "rebuildFacesWithChordSplits stores the new face array directly. "
-             ~ "See the cutByPlane block above for what L4 has to do about it.",
-               d.log.length));
-    // `revert()` is not called here either — see the block above for the
-    // measured fault and the half-reverted state it leaves.
+    // The face side IS here now — task 1903 stage L2-c/L2-d, same mechanism as
+    // the block above. Asserted as a KIND SEQUENCE rather than a length: the
+    // per-straddling-edge `[AddVerts, ReshapeFaces]` pairs, the chord rebuild's
+    // `FaceReindex`, and the Gap's own `SetPos` on the seam.
+    assert(countKind(d, MeshOpEntry.Kind.FaceReindex) == 1
+        && countKind(d, MeshOpEntry.Kind.ReshapeFaces) > 0,
+        format("the split+gap op-log is [%s]. Two entries — AddVerts and "
+             ~ "SetPos, and nothing about the faces — is the pre-L2 state, in "
+             ~ "which `revert()` throws out of finalize->buildLoops. Expected "
+             ~ "is the crossing-vertex splices as `ReshapeFaces` plus ONE "
+             ~ "`FaceReindex` for the chord rebuild. See the `cutByPlane` block "
+             ~ "above for the full round-trip.", kindsOf(d)));
+
+    // `revert()` IS CALLED, and this cell adds what the block above cannot: the
+    // Gap's `SetPos` has to come back too, which is a POSITION claim on top of
+    // a topology one. Asserted by index against the pre-op positions.
+    assert(d.revert(m),
+        "the split+gap revert refused the delta outright");
+    assert(m.vertices.length == preV,
+        format("the split+gap revert left V=%d, expected the pre-cut %d",
+               m.vertices.length, preV));
+    foreach (i; 0 .. preV)
+        assert(m.vertices[i] == prePos[i],
+            format("the split+gap revert left vertex %d at (%g, %g, %g), "
+                 ~ "expected its pre-cut (%g, %g, %g) — the topology came back "
+                 ~ "and the seam separation did not", i, m.vertices[i].x,
+                   m.vertices[i].y, m.vertices[i].z, prePos[i].x, prePos[i].y,
+                   prePos[i].z));
 }

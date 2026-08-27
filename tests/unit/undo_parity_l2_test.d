@@ -116,13 +116,31 @@ private void selectOnlyInteriorEdge(Mesh* m)
 
 /// Every L2 cell, in a fixed order.
 ///
-/// `path` is `"snapshot"` for all twelve, and that is a MEASUREMENT rather
-/// than a default: all twelve declare `private MeshSnapshot snap;` and all
-/// twelve open `revert()` with the identical
-/// `if (!snap.filled) return false; snap.restore(*mesh); return true;`. L0's
-/// family needed the third value `"dense-inline"` because fourteen of its
-/// sixteen restored from a hand-rolled per-plane image; L2 has NO such
-/// command, and recording that is the point of writing the field per cell.
+/// `path` WAS `"snapshot"` for all twelve when the fixture was frozen at
+/// `2f7ef302`, and that was a measurement rather than a default: all twelve
+/// declared `private MeshSnapshot snap;` and all twelve opened `revert()` with
+/// the identical `if (!snap.filled) return false; snap.restore(*mesh); return
+/// true;`. Stages L2-a…L2-h moved every one of them, so the value below is now
+/// what each command's `revert()` actually does.
+///
+/// `"dense-inline"` FOR EIGHT AND `"delta"` FOR FOUR, and the split is the
+/// stage's finding rather than book-keeping. Eight of the twelve destroy
+/// selection state on their forward — `resetSelection`, `repointToNothing`,
+/// `repointToFaces`, `dropConsumedFaces`, `clearVertexSelection`, the appended
+/// fan's `selectFace`, `syncSelection` — so they restore their TOPOLOGY from
+/// the op-log and their SELECTION from a dense image the command holds beside
+/// it (`commands/mesh/selection_undo.d`). No delta kind carries a
+/// selection-order stamp, and L2-b measured against this very fixture that
+/// adopting `Kind.SelectionDelta` restores LESS than the snapshot did. The four
+/// that are pure `"delta"` touch no selection plane at all: `mesh.flip` and
+/// `mesh.fixOrientation` only reverse windings, `mesh.align` only moves
+/// vertices, and `mesh.addPoint` leaves the selection alone by contract.
+///
+/// THE FIELD IS RECORDED, NOT COMPARED: `meshPlanesJson` puts it in
+/// `provenance`, and `comparePlanes` skips that object precisely so a capture
+/// SHA does not redden every cell. So this value is documentation the reader
+/// carries, and the frozen JSON still says `"snapshot"` — which is the point,
+/// since the fixture must predate every migration commit.
 ParityCell[] l2Cells(string sha)
 {
     ParityCell[] out_;
@@ -138,18 +156,18 @@ ParityCell[] l2Cells(string sha)
     // AFTER-image instead of the BEFORE-image produces the same windings and
     // the cell cannot see the transposition. One face, and the mesh around it
     // unchanged, is what makes the dump discriminate.
-    cell("mesh.flip", "snapshot", (m, v) =>
+    cell("mesh.flip", "delta", (m, v) =>
         cast(Command) new MeshFlip(m, v, EditMode.Polygons));
-    cell("mesh.fixOrientation", "snapshot", (m, v) =>
+    cell("mesh.fixOrientation", "delta", (m, v) =>
         cast(Command) new MeshFixOrientation(m, v, EditMode.Polygons));
 
     // ---- L2-b -----------------------------------------------------------
-    cell("mesh.spinEdge", "snapshot", (m, v) {
+    cell("mesh.spinEdge", "dense-inline", (m, v) {
         selectOnlyInteriorEdge(m);
         return cast(Command) new MeshSpinEdge(m, v, EditMode.Edges); });
 
     // ---- L2-c -----------------------------------------------------------
-    cell("mesh.addPoint", "snapshot", (m, v) {
+    cell("mesh.addPoint", "delta", (m, v) {
         selectOnlyInteriorEdge(m);
         auto c = new MeshAddPoint(m, v, EditMode.Edges);
         // 0.35, not the 0.5 default: at the midpoint the new vertex is the
@@ -158,7 +176,7 @@ ParityCell[] l2Cells(string sha)
         // channel.
         setF(c, "t", 0.35f);
         return cast(Command)c; });
-    cell("mesh.split_edge", "snapshot", (m, v) {
+    cell("mesh.split_edge", "dense-inline", (m, v) {
         selectOnlyInteriorEdge(m);
         return cast(Command) new MeshSplitEdge(m, v, EditMode.Edges); });
 
@@ -168,7 +186,7 @@ ParityCell[] l2Cells(string sha)
     // dependency on which qualifying face `findQualifyingFace` happens to
     // pick. Face 4 is the interior quad [5, 6, 10, 9]; 5 and 10 are its
     // diagonal.
-    cell("mesh.splitFace", "snapshot", (m, v) {
+    cell("mesh.splitFace", "dense-inline", (m, v) {
         auto c = new MeshSplitFace(m, v, EditMode.Vertices);
         setI(c, "face", 4); setI(c, "a", 5); setI(c, "b", 10);
         return cast(Command)c; });
@@ -179,25 +197,25 @@ ParityCell[] l2Cells(string sha)
     // face. The stand's inherited vertex selection (2 and 9) is cleared first:
     // vertex 2 is on the boundary and would make the cell's operand a mix of
     // two shapes.
-    cell("mesh.vertexSplit", "snapshot", (m, v) {
+    cell("mesh.vertexSplit", "dense-inline", (m, v) {
         foreach (i; 0 .. m.vertices.length) m.deselectVertex(cast(uint) i);
         m.selectVertex(5);
         return cast(Command) new MeshVertexSplit(m, v, EditMode.Vertices); });
 
     // ---- L2-f -----------------------------------------------------------
-    cell("mesh.spikey", "snapshot", (m, v) {
+    cell("mesh.spikey", "dense-inline", (m, v) {
         auto c = new MeshSpikey(m, v, EditMode.Polygons);
         setF(c, "amount", 0.4f);
         return cast(Command)c; });
 
     // ---- L2-g -----------------------------------------------------------
-    cell("mesh.addVertex", "snapshot", (m, v) {
+    cell("mesh.addVertex", "dense-inline", (m, v) {
         auto c = new MeshVertexNew(m, v, EditMode.Vertices);
         // Off every existing vertex and off the sheet's plane, so the position
         // is a channel of its own rather than a coincidence with a grid node.
         setV(c, "pos", Vec3(0.73f, 0.91f, -0.37f));
         return cast(Command)c; });
-    cell("mesh.makePolygon", "snapshot", (m, v) {
+    cell("mesh.makePolygon", "dense-inline", (m, v) {
         // Four boundary vertices that do NOT already bound a face together, so
         // the new polygon is genuinely new. 0, 1, 2, 3 is the whole first row
         // of the vertex grid; the faces above it are quads 0/1/2, none of
@@ -213,12 +231,12 @@ ParityCell[] l2Cells(string sha)
     // records only the appends silently loses. On the default `false` that arm
     // never runs, so a fixture cell frozen there would be green under exactly
     // the bug L2-h has to avoid.
-    cell("mesh.thicken", "snapshot", (m, v) {
+    cell("mesh.thicken", "dense-inline", (m, v) {
         auto c = new MeshThicken(m, v, EditMode.Polygons);
         setF(c, "thickness", 0.25f); setB(c, "symmetric", true);
         return cast(Command)c; });
 
-    cell("mesh.align", "snapshot", (m, v) =>
+    cell("mesh.align", "delta", (m, v) =>
         cast(Command) new MeshAlign(m, v, EditMode.Polygons));
 
     return out_;

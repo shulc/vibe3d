@@ -9,6 +9,10 @@ import shader;
 import snapshot : MeshSnapshot;
 import params : Param;
 import selection_product : dropConsumedFaces;
+import mesh_edit_delta : MeshEditScope;
+import commands.mesh.position_undo  : RecordedUndo;
+import commands.mesh.map_edit_undo  : runMapEdit, revertMapEditEmptyOk;
+import commands.mesh.selection_undo : DenseSelectionUndo;
 
 /// `mesh.splitFace` — split a polygon into two faces along a chord connecting
 /// two of its existing, non-adjacent winding vertices.
@@ -46,9 +50,34 @@ import selection_product : dropConsumedFaces;
 ///     the target face winding.
 ///   - Verts are adjacent in the face winding (chord == existing edge).
 ///   - No qualifying face can be found.
+/// TASK 1903 STAGE L2-d — UNDO IS THE OPERATION-LOG DELTA, and this is the one
+/// row of stage L2 whose kind is `Kind.FaceReindex`. `rebuildFacesWithChordSplits`
+/// used to install its result with a raw `faces._store = …` plus five
+/// hand-rebuilt plane assignments; it now goes through `mesh_planes.rewriteFaces`
+/// under an explicit `faceReindexScope()`, so a recording batch comes back with
+/// exactly one `FaceReindex` entry (paired with its per-corner payload) instead
+/// of an EMPTY log whose `revert()` answered `true` with the split still in.
+///
+/// WHY NOT `AddFaces` + `ReshapeFaces`, the cheaper-looking route: three of the
+/// five per-face planes a chord split rewrites — `faceMaterial`, `facePart`,
+/// `faceSetMask` — have no restorer anywhere outside `Kind.RemoveFaces`, and a
+/// split renumbers every face after the parent. They would come back shifted by
+/// one and no count, no geometry compare and no `opInverse` bit could see it.
 class MeshSplitFace : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;
+    private MeshSnapshot     snap;      // the hatch's arm only
+    private RecordedUndo     undo_;
+    /// The pre-op selection — `dropConsumedFaces` clears the two halves' Select
+    /// bits and the op-log has nothing that puts them back. See
+    /// `commands/mesh/selection_undo.d`.
+    private DenseSelectionUndo preSel_;
+    /// The forward SUCCEEDED — see `commands/mesh/flip.d`.
+    private bool             applied_;
+
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded undo (see `MeshFlip`).
+        public ref const(RecordedUndo) recordedUndo() const return { return undo_; }
+    }
 
     private int face_ = -1;
     private int a_    = -1;
@@ -60,6 +89,11 @@ class MeshSplitFace : Command, Operator {
 
     override string name()  const { return "mesh.splitFace"; }
     override string label() const { return "Split Face"; }
+
+    override MeshEditScope editScope() const { return MeshEditScope.Geometry; }
+
+    /// See `MeshFlip.isOperationInverse` — a cheap tell, not the observable.
+    override bool isOperationInverse() const { return undo_.armed(); }
 
     override Param[] params() {
         return [
@@ -129,15 +163,48 @@ class MeshSplitFace : Command, Operator {
         if (faceIdx == uint.max) return false;
         if (vA == uint.max || vB == uint.max) return false;
 
-        // Snapshot before mutation (caller-owned, discarded on kernel no-op).
-        snap = MeshSnapshot.capture(*mesh);
+        // THE REFUSAL IS PRE-FLIGHT AND ATOMIC — VERIFIED, NOT ASSUMED, which is
+        // what the L8 rule asks of the four commands that used to
+        // `snap.restore` on a kernel refusal (plan §L2.4). Every one of
+        // `splitFaceByVertices`' seven refusal conditions is answered before
+        // its first write, and `rebuildFacesWithChordSplits` returns 0 on
+        // `nSplit == 0` BEFORE it installs anything. So the `snap.restore` this
+        // replaces was rolling back a mutation that could not have happened,
+        // and the kernel below may simply answer false from inside the batch:
+        // `runMapEdit` closes it, disarms the empty delta, and `applyImpl`
+        // lands no history entry. Under a delta the old shape would be
+        // unavailable anyway — `MeshEditDelta` carries no pre-image of the face
+        // array, so nothing downstream could detect a half-revert.
+        // Task 1180: the split face's own selection does not survive it. The
+        // kernel (`rebuildFacesWithChordSplits`) copies the Select bit onto
+        // BOTH halves, and the reference selects neither — so the two children,
+        // and only they, are dropped. `rebuildFacesWithChordSplits` emits faces
+        // in index order and splits exactly one face here, so the halves are
+        // `faceIdx` and `faceIdx + 1`; everything before keeps its index and
+        // everything after shifts by one, carrying its own selection with it.
+        //
+        // Until 1180 this never showed: nothing upstream left a polygon
+        // selected, so the split's target was never selected in the first
+        // place. `mesh.mergeFaces` now re-points at the merged face, and a
+        // merge-then-split carried that face's selection into both halves.
+        //
+        // The narrowness is measured, not cautious — `dropConsumedFaces` names
+        // the two frozen cases that kill the two wider rules (carry the bit
+        // down; clear the whole polygon layer). The second of them also says
+        // the reference does NOT clear the polygon layer on a vertex-mode
+        // select, which is why this lives here and not in the select path.
+        applied_ = runMapEdit(mesh, undo_, snap, MeshEditScope.Geometry,
+                              (ref MeshEditBatch ed) => runKernel(ed, faceIdx, vA, vB));
+        return applied_;
+    }
 
-        size_t n = mesh.splitFaceByVertices(faceIdx, vA, vB);
-        if (n == 0) {
-            snap.restore(*mesh);
-            snap = MeshSnapshot.init;
-            return false;
-        }
+    /// The one mutating body, under whichever arm `runMapEdit` chose.
+    private bool runKernel(ref MeshEditBatch ed, uint faceIdx, uint vA, uint vB) {
+        // Recording arm only — the redo arm keeps the first capture, the hatch
+        // has the snapshot.
+        if (ed.recording() && !preSel_.filled()) preSel_.capture(ed.mesh);
+
+        if (ed.mesh.splitFaceByVertices(faceIdx, vA, vB) == 0) return false;
 
         // Task 1180: the split face's own selection does not survive it. The
         // kernel (`rebuildFacesWithChordSplits`) copies the Select bit onto
@@ -157,14 +224,18 @@ class MeshSplitFace : Command, Operator {
         // down; clear the whole polygon layer). The second of them also says
         // the reference does NOT clear the polygon layer on a vertex-mode
         // select, which is why this lives here and not in the select path.
-        dropConsumedFaces(mesh, [faceIdx, faceIdx + 1]);
-
+        dropConsumedFaces(&ed.mesh(), [faceIdx, faceIdx + 1]);
         return true;
     }
 
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
+        // `…EmptyOk`, and the `if (!snap.filled) return false;` this replaces
+        // was DELETED rather than translated — a `false` from a Model entry's
+        // `revert()` truncates the undo stack (regression 0099).
+        if (!revertMapEditEmptyOk(mesh, undo_, snap, applied_)) return false;
+        // ONLY on the delta arm — the hatch's snapshot already restored every
+        // selection plane.
+        if (undo_.armed()) preSel_.restore(*mesh);
         return true;
     }
 }

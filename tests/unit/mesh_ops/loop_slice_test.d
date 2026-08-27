@@ -2558,12 +2558,23 @@ unittest { // the loop slice is ARMED at Stage K — geometry, planes and UV com
         && m.faceSelectionOrderCounter == 0,
         "a selection-order counter came back that Stage K measured as still "
       ~ "lost (row 7). Same instruction as the line above");
-    assert(m.vertexSetMask.length == preV + 4,
-        format("vertexSetMask is %d long, expected %d — the post-op length, "
-             ~ "left grown by `finalizeTopologyEdit`'s resize with every VALUE "
-             ~ "intact (row 8). This is the residual that is a LENGTH and not "
-             ~ "a value, and it is the reason this stage's rule is stated in "
-             ~ "terms of values", m.vertexSetMask.length, preV + 4));
+    // ROW 8 CAME BACK, AND THAT IS THE GOOD NEWS THIS BLOCK'S OWN HEADER ASKS
+    // FOR. `vertexSetMask` used to be left grown to the post-op length by
+    // `finalizeTopologyEdit`'s resize, with every VALUE intact — the residual
+    // that was a LENGTH and not a value. Task 1903 Stage L2-c added the plane
+    // to `MeshEditDelta.finalize`'s blanket length sync, the same hole task
+    // 1060's review had closed for `faceSetMask`, so it now truncates with the
+    // vertices. The row stays, inverted, because a regression that grew it
+    // again is exactly what it was written to catch.
+    assert(m.vertexSetMask.length == preV,
+        format("vertexSetMask is %d long, expected the PRE-op %d. %d is the "
+             ~ "post-op length, i.e. the plane was left grown — "
+             ~ "`MeshEditDelta.finalize`'s length sync lost this plane again, "
+             ~ "and a stale out-of-range entry then reaches `/api/model` and "
+             ~ "the `.v3d` writer, whose loader drops the WHOLE named vertex "
+             ~ "set on reload (task 1903 Stage L2-c; the `faceSetMask` incident "
+             ~ "of task 1060 is the precedent)",
+               m.vertexSetMask.length, preV, preV + 4));
 }
 
 unittest { // the Gap and the Profile writes are RECORDED, one SetPos entry each

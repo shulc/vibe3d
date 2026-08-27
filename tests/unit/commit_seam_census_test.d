@@ -2122,14 +2122,24 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
                    rawWritesPb, firstHitPb));
     }
 
-    // THE FOUR INDEXED `ed.faces[fi] = …` INSTALLS, plan §5.3's OTHER audit.
-    // `insetFacesByMask` replaces the source face's winding with the inset
-    // ring in its own slot; `bevelFacesByMask` does the same with the cap and
-    // ALSO rewrites an UNSELECTED neighbour's winding on the `square` splice;
-    // `spikeFacesByMask` replaces the source face with the first fan triangle.
-    // NONE of them calls `rewriteFaces` — MEASURED comment-stripped, the row
-    // below — so K's audit needle cannot see any of it, and arming
+    // THE THREE REMAINING INDEXED `ed.faces[fi] = …` INSTALLS, plan §5.3's
+    // OTHER audit. `insetFacesByMask` replaces the source face's winding with
+    // the inset ring in its own slot; `bevelFacesByMask` does the same with the
+    // cap and ALSO rewrites an UNSELECTED neighbour's winding on the `square`
+    // splice. NEITHER calls `rewriteFaces` — MEASURED comment-stripped, the row
+    // below — so K's audit needle cannot see either, and arming
     // `wantsFaceReindex` was measured to leave the op-log BYTE-IDENTICAL.
+    //
+    // FOUR BECAME THREE AT STAGE L2-f (2026-08-28), AND THAT IS THE ROW'S
+    // POINT. `spikeFacesByMask`'s install — the source face replaced by the
+    // first fan triangle — went through `Mesh.setFaceWindings`, so it is no
+    // longer a silent reshape and no longer counted here. It was ALWAYS a
+    // separate owner: §5.3's other-audit row reads "one file, two owners" and
+    // attributes all four jointly to L7 and L2 because `mesh.spikey` is in the
+    // caller list, but measured over `spikeFacesByMask`'s OWN line range it
+    // reaches exactly ONE of the four and calls no `compactUnreferenced`.
+    // Attribute by the callee's line range, not by the file's caller list. The
+    // three left are L7's alone.
     assert(countOccurrences(pb, "rewriteFaces") == 0
         && countOccurrences(pb, "rewriteVertices") == 0,
         "source/mesh_ops/poly_bevel.d now calls `rewriteFaces`/"
@@ -2140,16 +2150,20 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
       ~ "DOES reach this family and the recording block's "
       ~ "\"STAGE K/L7/L2 FLIPS THIS\" comment has to be re-measured "
       ~ "(task 1903 §5.3, Stage F2).");
-    assert(countOccurrences(pb, "ed.faces[fi] = ") == 4,
+    assert(countOccurrences(pb, "ed.faces[fi] = ") == 3,
         format("source/mesh_ops/poly_bevel.d makes %d indexed `ed.faces[fi] = "
-             ~ "…` installs; Stage F2 measured exactly 4 (the inset ring, the "
-             ~ "bevel cap, the square splice into the UNSELECTED neighbour, "
-             ~ "and the spike's first fan triangle). Every one of them is a "
-             ~ "face reshape no mutation hook sees — plan §5.3's OTHER audit, "
-             ~ "the class whose needle is NOT `rewriteFaces`. A fifth install "
-             ~ "is a fifth silent reshape and the owning L stage (L7 for "
-             ~ "bevel/inset, L2 for spikey) has to know about it "
-             ~ "(task 1903 §5.3, Stage F2).",
+             ~ "…` installs; expected 3 — the inset ring, the bevel cap and "
+             ~ "the square splice into the UNSELECTED neighbour, all three "
+             ~ "L7's. Stage F2 measured FOUR; Stage L2-f closed the fourth "
+             ~ "(the spike's first fan triangle) by routing it through "
+             ~ "`Mesh.setFaceWindings`.\n"
+             ~ "  FOUR means the spike's install came back as a raw write and "
+             ~ "`mesh.spikey`'s undo throws `index out of bounds` out of the "
+             ~ "LIFO replay again. FIVE means a new silent reshape, and the "
+             ~ "owning L stage (L7) has to know about it. Each is a face "
+             ~ "reshape no mutation hook sees — plan §5.3's OTHER audit, the "
+             ~ "class whose needle is NOT `rewriteFaces` "
+             ~ "(task 1903 §5.3, Stage F2 -> Stage L2-f).",
                countOccurrences(pb, "ed.faces[fi] = ")));
 
     // `Mesh.boundaryContourInset` IS GONE FROM THE WHOLE TREE — the MIRROR of

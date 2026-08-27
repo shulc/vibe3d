@@ -8,6 +8,10 @@ import editmode;
 import shader;
 import params : Param;
 import snapshot : MeshSnapshot;
+import mesh_edit_delta : MeshEditScope;
+import commands.mesh.position_undo  : RecordedUndo;
+import commands.mesh.map_edit_undo  : runMapEdit, revertMapEditEmptyOk;
+import commands.mesh.selection_undo : DenseSelectionUndo;
 
 /// Insert a vertex on the first selected edge at parameter t ∈ (0,1), splitting
 /// the edge and every incident face so the new vertex is index-shared (no
@@ -16,11 +20,34 @@ import snapshot : MeshSnapshot;
 /// Unlike mesh.addLoop, there is no quad/ring restriction — triangle edges work
 /// too.  Only the first selected edge is processed per invocation; multi-edge
 /// sweep is a deliberate non-goal (one point per command call, see plan §Scope).
+///
+/// TASK 1903 STAGE L2-c — UNDO IS THE OPERATION-LOG DELTA. `Mesh.addEdgePoint`
+/// reaches `insertEdgePoint`, whose corner splice now goes through
+/// `Mesh.setFaceWindings`, so a recording batch comes back with
+/// `[AddVerts, MeshMapDelta, ReshapeFaces]` instead of `[AddVerts]` alone.
+/// Before that publisher the delta path's `revert()` truncated the new vertex
+/// while every incident winding still named it and THREW out of
+/// `finalize`→`buildLoops` — the loud half of §5.3's two failure shapes.
 class MeshAddPoint : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;
+    private MeshSnapshot     snap;      // the hatch's arm only
+    private RecordedUndo     undo_;
+    /// The pre-op selection, restored on the delta arm — see
+    /// `commands/mesh/selection_undo.d`. This command does not TOUCH the
+    /// selection itself, but `addEdgePoint`'s `rebuildEdges` re-lays the edge
+    /// index space around the split, and the `MeshSnapshot` it replaces put
+    /// every selection plane back verbatim.
+    private DenseSelectionUndo preSel_;
+    /// The forward SUCCEEDED — see `commands/mesh/flip.d` for why this bit is
+    /// not derivable from the two images.
+    private bool             applied_;
 
     private float t_ = 0.5f;
+
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded undo (see `MeshFlip`).
+        public ref const(RecordedUndo) recordedUndo() const return { return undo_; }
+    }
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -28,6 +55,11 @@ class MeshAddPoint : Command, Operator {
 
     override string name()  const { return "mesh.addPoint"; }
     override string label() const { return "Add Point"; }
+
+    override MeshEditScope editScope() const { return MeshEditScope.Geometry; }
+
+    /// See `MeshFlip.isOperationInverse` — a cheap tell, not the observable.
+    override bool isOperationInverse() const { return undo_.armed(); }
 
     override Param[] params() {
         return [
@@ -56,22 +88,42 @@ class MeshAddPoint : Command, Operator {
         // reaches t_ verbatim and only this check stops it.
         if (t_ <= 0.0f || t_ >= 1.0f) return false;
 
-        snap = MeshSnapshot.capture(*mesh);
+        // EVERY REFUSAL IS ALREADY PRE-FLIGHT, which is why nothing is hoisted
+        // here (the L8 rule, plan §L2.4's refusal ruling). `addEdgePoint`
+        // answers `uint.max` for exactly two conditions — an out-of-range edge
+        // index and a `t` outside (0, 1) — and both are checked ABOVE, before
+        // the batch opens, and both refuse before the primitive's first
+        // mutation. So the kernel below cannot refuse after mutating, and this
+        // command is not one of the four that `snap.restore` on a kernel
+        // refusal.
+        applied_ = runMapEdit(mesh, undo_, snap, MeshEditScope.Geometry,
+                              (ref MeshEditBatch ed) => runKernel(ed, cast(uint)ei));
+        return applied_;
+    }
 
-        uint vi = mesh.addEdgePoint(cast(uint)ei, t_);
-        if (vi == uint.max) {
-            snap = MeshSnapshot.init;
-            return false;
-        }
+    /// The one mutating body, under whichever arm `runMapEdit` chose.
+    private bool runKernel(ref MeshEditBatch ed, uint ei) {
+        // Recording arm only: the redo arm must keep the first capture (a
+        // second would image the POST-op selection) and the hatch has the
+        // whole-mesh snapshot.
+        if (ed.recording() && !preSel_.filled()) preSel_.capture(ed.mesh);
 
         // Leave selection as-is — consistent with the loop-insert family
         // (mesh.addLoop / mesh.loopSlice do not reset selection either).
-        return true;
+        return ed.mesh.addEdgePoint(ei, t_) != uint.max;
     }
 
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
+        // `…EmptyOk`, not `revertMapEdit`, and the `if (!snap.filled) return
+        // false;` this replaces was DELETED rather than translated: a `false`
+        // from a Model entry's `revert()` makes `CommandHistory.undo` discard
+        // that entry AND its whole trailing suffix (regression 0099), so it
+        // does not decline one step — it destroys every older one.
+        if (!revertMapEditEmptyOk(mesh, undo_, snap, applied_)) return false;
+        // ONLY on the delta arm: the hatch's `MeshSnapshot.restore` already put
+        // every selection plane back, and a second writer over a correct plane
+        // is how a restore starts disagreeing with itself.
+        if (undo_.armed()) preSel_.restore(*mesh);
         return true;
     }
 }

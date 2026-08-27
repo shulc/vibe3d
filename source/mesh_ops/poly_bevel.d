@@ -2,7 +2,8 @@ module mesh_ops.poly_bevel;
 
 import mesh;
 import math;
-import std.math : sqrt;
+import std.math  : sqrt;
+import std.array : uninitializedArray;
 import mesh_edit_delta : MeshEditScope;
 
 // ---------------------------------------------------------------------------
@@ -1556,6 +1557,49 @@ size_t spikeFacesByMask(ref MeshEditBatch ed, const bool[] maskIn, float amount)
     uint[] appendedFi;
     uint[] fanSrc;
 
+    // --- TASK 1903 STAGE L2-f: THE PARENT SLOT'S REPLACEMENT IS RECORDED ---
+    //
+    // `ed.faces[fi] = [v0, v1, apex]` below used to be a raw indexed write, and
+    // `alias mesh this` means it COMPILES inside a recording batch and produces
+    // no op-log entry at all. With the fan triangles hooked (`addVertex` /
+    // `addFace`) and the parent's replacement not, the reverse dropped the
+    // appended faces and left the parent as a triangle — and then THREW
+    // (`index [16] out of bounds`), which is why `poly_bevel_test.d`'s spike
+    // block deliberately declined to call `revert()` at all. Publisher P7 of
+    // plan §L2.2, and it is `spikey`'s ALONE: measured over this kernel's own
+    // line range, it reaches ONE of this file's four indexed installs and calls
+    // no `compactUnreferenced`, so L7 keeps the other three and their
+    // `[RemoveVerts Reindex]` tails.
+    //
+    // ONE BULK CALL AFTER THE LOOP, AND THE DEFERRAL IS CORRECTNESS, NOT SPEED.
+    // `Mesh.setFaceWindings` pairs its entry with a per-corner payload, and
+    // `recordPolyVertexPayload` DECLINES when the PolyVertex maps are not in
+    // step with `faces` (`polyVertexMapsInStepWithFaces`). Installing a spike
+    // in place shrinks an N-gon to a triangle while the map still holds N
+    // corners for it, so a per-face install would put the maps out of step and
+    // every later payload in the same call would silently decline. Deferring
+    // every install to after the fan appends — which grow the maps in
+    // lock-step — keeps every read in a consistent space. The per-element door
+    // is also QUADRATIC (task 2260).
+    //
+    // THE COUNTING PASS ALSO MOVES THE REFUSAL AHEAD OF THE FIRST MUTATION:
+    // `processed == 0` is now decided before any `addVertex`, so
+    // `commands/mesh/spikey.d` no longer needs a snapshot to roll back a
+    // refusal (plan §L2.4's refusal ruling).
+    size_t nSpike = 0;
+    foreach (fi; 0 .. nFaces) {
+        if (fi >= mask.length || !mask[fi]) continue;
+        if (ed.faces[fi].length < 3) continue;
+        ++nSpike;
+    }
+    if (nSpike == 0) return 0;
+    auto spikeBack = uninitializedArray!(uint[])(nSpike * 3);
+    auto spikeWind = uninitializedArray!(uint[][])(nSpike);
+    // `uninitializedArray` and not `new FaceIdx[](n)`: `FaceIdx` `@disable`s
+    // default construction (a defaulted face index would be face 0).
+    auto spikeIdx  = uninitializedArray!(FaceIdx[])(nSpike);
+    size_t sw = 0;
+
     foreach (fi; 0 .. nFaces) {
         if (fi >= mask.length || !mask[fi]) continue;
         const uint[] origFaceVerts = ed.faces[fi].dup;
@@ -1581,10 +1625,26 @@ size_t spikeFacesByMask(ref MeshEditBatch ed, const bool[] maskIn, float amount)
 
         // In-place replace: first fan tri [v0, v1, apex] stays in slot fi,
         // automatically preserving faceMarks[fi] (Select + Subpatch bits)
-        // and faceMaterial[fi].
-        ed.faces[fi] = [origFaceVerts[0], origFaceVerts[1], apex];
+        // and faceMaterial[fi]. COLLECTED here, INSTALLED in one bulk call
+        // after the loop — see the note above the counting pass for why the
+        // deferral is a correctness requirement and not a micro-optimisation.
+        auto sdst = spikeBack[sw * 3 .. sw * 3 + 3];
+        sdst[0] = origFaceVerts[0];
+        sdst[1] = origFaceVerts[1];
+        sdst[2] = apex;
+        spikeIdx[sw]  = ed.faceIndexAt(fi);
+        spikeWind[sw] = sdst;
+        ++sw;
 
         // Append the remaining N-1 fan tris [vi, vi+1, apex] for i=1..N-1.
+        //
+        // A FORWARD-ONLY GAP, NAMED (task 1903 §L2, revision 2). `recordAddFace`
+        // carries the WINDING and nothing else, so the material, part, set mask
+        // and subpatch bit the tail below copies onto each fan triangle are in
+        // no op-log entry. UNDO IS SAFE — `AddFaces`' inverse TRUNCATES, so the
+        // planes go with the faces — and the loss is only visible to a FORWARD
+        // replay of a recorded delta, which ships in the generic session
+        // carrier. Stage M inherits it.
         foreach (i; 1 .. N) {
             uint newFi = cast(uint)ed.faces.length; // capture BEFORE addFace grows
             ed.addFace([origFaceVerts[i], origFaceVerts[(i + 1) % N], apex]);
@@ -1595,7 +1655,17 @@ size_t spikeFacesByMask(ref MeshEditBatch ed, const bool[] maskIn, float amount)
         ++processed;
     }
 
+    assert(processed == nSpike && sw == nSpike,
+        "spikeFacesByMask: the counting pass and the spike loop disagree "
+      ~ "about how many faces are eligible");
     if (processed == 0) return 0;
+
+    // The parent slots, all of them, in ONE entry. `spikeIdx` is ascending by
+    // construction (the loop walks `0 .. nFaces`), which `setFaceWindings`
+    // requires: its corner-payload walk is a single ordered sweep and DECLINES
+    // on an unordered list, which would leave the entry unpaired and the
+    // per-corner plane re-derived slot-for-slot instead of restored verbatim.
+    cast(void) ed.setFaceWindings(spikeIdx, spikeWind);
 
     // Attribute carry-over for appended fan tris.
     // addFace grows PolyVertex maps but NOT faceMaterial/facePart/faceMarks.

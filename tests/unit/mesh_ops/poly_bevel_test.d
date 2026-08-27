@@ -145,8 +145,23 @@ unittest { // the declared SCOPE, written out independently of the enum
     }
 }
 
-unittest { // WHAT THE OP-LOG SAYS — and it says nothing about four face
-           // reshapes. STAGE K/L7/L2 FLIPS THIS.
+unittest { // WHAT THE OP-LOG SAYS — and it now says something about ONE of the
+           // four face reshapes. STAGE L2-f FLIPPED THE SPIKE ROW (2026-08-28);
+           // STAGE L7 STILL OWES THE OTHER THREE.
+    //
+    // WHAT CHANGED, AND WHAT DID NOT. `mesh.spikey` is an L2 command (the L
+    // table is keyed by COMMAND, памятка E1 №3), so Stage L2-f gave ITS install
+    // — `ed.faces[fi] = [v0, v1, apex]` — a publisher: the kernel now collects
+    // the parent windings and hands them to `Mesh.setFaceWindings` in ONE bulk
+    // call after the fan loop. So the spike cell below expects a `ReshapeFaces`
+    // and CALLS `revert()`; the four inset/bevel cells still expect none and
+    // still do not, because `insetFacesByMask` and `bevelFacesByMask` install
+    // their other three windings by index and are L7's.
+    //
+    // The paragraphs below are the Stage F2 measurement as it stood; they are
+    // kept because the DIAGNOSIS they record (absent publisher, not disarmed —
+    // established by ARMING and re-measuring) is what the three remaining rows
+    // still rest on. Read "four" as "four, of which one is now closed".
     // Measured at Stage F2 on the stand above, under a RECORDING batch:
     //
     //   inset  0.1, 1 face   -> [AddVerts AddFaces]        revert() THROWS
@@ -217,14 +232,22 @@ unittest { // WHAT THE OP-LOG SAYS — and it says nothing about four face
     // this family is inside the 0682/0830 corner-carry census on the forward
     // side — and, exactly as the F1 review measured for Loop Slice, A FORWARD
     // CARRY SAYS NOTHING ABOUT THE REVERSE.
-    static struct Cell { string name; int kind; size_t nsel; size_t faces; }
+    // `reshapes` is 0 for the rows L7 still owns and 1 for the spike, whose
+    // publisher landed at L2-f. A single shared `== 0` would have to be
+    // weakened to `>= 0` to let the spike through, which is the shape that
+    // cannot come out differently.
+    static struct Cell { string name; int kind; size_t nsel; size_t faces;
+                         size_t reshapes; }
     static immutable Cell[5] cells = [
-        Cell("inset, 1 face",  0, 1, 1), Cell("inset, 8 faces", 0, 9, 8),
-        Cell("bevel, 1 face",  1, 1, 1), Cell("bevel, 4 faces", 1, 4, 4),
-        Cell("spike, 1 face",  2, 1, 1),
+        Cell("inset, 1 face",  0, 1, 1, 0), Cell("inset, 8 faces", 0, 9, 8, 0),
+        Cell("bevel, 1 face",  1, 1, 1, 0), Cell("bevel, 4 faces", 1, 4, 4, 0),
+        Cell("spike, 1 face",  2, 1, 1, 1),
     ];
     foreach (c; cells) {
         Mesh m = recPolyBevelStand();
+        auto preWind = new uint[][](m.faces.length);
+        foreach (fi; 0 .. m.faces.length) preWind[fi] = m.faces[fi].dup;
+        immutable size_t preV = m.vertices.length, preF = m.faces.length;
         auto mk = faceMask(m, c.nsel);
         MeshEditDelta d;
         size_t n;
@@ -245,20 +268,47 @@ unittest { // WHAT THE OP-LOG SAYS — and it says nothing about four face
             format("%s: the op-log is %s — expected exactly %d AddVerts and %d "
                  ~ "AddFaces, one pair per PROCESSED FACE (task 1903 Stage F2).",
                    c.name, kindsOf(d), c.faces, c.faces));
-        assert(countKind(d, MeshOpEntry.Kind.ReshapeFaces) == 0
+        assert(countKind(d, MeshOpEntry.Kind.ReshapeFaces) == c.reshapes
             && countKind(d, MeshOpEntry.Kind.FaceReindex)  == 0
             && countKind(d, MeshOpEntry.Kind.RemoveFaces)  == 0,
-            format("%s: the op-log now names a face RESHAPE (%s) — read this "
-                 ~ "block's comment before calling it fixed. Stage F2 measured "
-                 ~ "the publisher ABSENT, not disarmed: arming "
-                 ~ "`wantsFaceReindex` left the log byte-identical because "
-                 ~ "this family reaches no `rewriteFaces` at all and installs "
-                 ~ "its four windings by index. If an entry has appeared, "
-                 ~ "somebody gave one of those four installs a publisher — "
-                 ~ "good news, and plan §5.3's OTHER-audit rows plus §5.5's L7 "
-                 ~ "and L2 rows move with it, including the still-unmeasured "
-                 ~ "reverse of the PolyVertex map (task 1903 Stage F2, §5.3).",
-                   c.name, kindsOf(d)));
+            format("%s: the op-log is %s — expected exactly %d ReshapeFaces, "
+                 ~ "no FaceReindex and no RemoveFaces.\n"
+                 ~ "  For the three INSET/BEVEL rows the expectation is 0 and "
+                 ~ "an entry appearing is GOOD NEWS: Stage F2 measured the "
+                 ~ "publisher ABSENT, not disarmed (arming `wantsFaceReindex` "
+                 ~ "left the log byte-identical, because those kernels reach "
+                 ~ "no `rewriteFaces` at all and install their windings by "
+                 ~ "index), so somebody has given one of them a publisher and "
+                 ~ "plan §5.3's OTHER-audit rows plus §5.5's L7 row move with "
+                 ~ "it.\n"
+                 ~ "  For the SPIKE row the expectation is 1 and a 0 is a "
+                 ~ "REGRESSION: Stage L2-f routed `ed.faces[fi] = [v0, v1, "
+                 ~ "apex]` through `Mesh.setFaceWindings`, and without it the "
+                 ~ "revert below throws `index out of bounds` out of the LIFO "
+                 ~ "replay.", c.name, kindsOf(d), c.reshapes));
+
+        // THE REVERT, CALLED — for the spike row only, and calling it IS the
+        // check. Before L2-f this block deliberately did not call `revert()`
+        // on any cell because it aborted the module (`index [16] is out of
+        // bounds for array of length 16`, leaving V back at 16 with F still 9
+        // and windings pointing at vertices that no longer exist). A cell that
+        // still declined to call it after L2-f would not have tested the
+        // migration. The three L7 rows still decline, for the reason above.
+        if (c.reshapes > 0) {
+            assert(d.revert(m),
+                format("%s: revert() refused the delta outright", c.name));
+            assert(m.vertices.length == preV && m.faces.length == preF,
+                format("%s: revert left V=%d F=%d, expected the pre-op V=%d "
+                     ~ "F=%d", c.name, m.vertices.length, m.faces.length,
+                       preV, preF));
+            foreach (fi; 0 .. m.faces.length)
+                assert(m.faces[fi] == preWind[fi],
+                    format("%s: face %d came back as %s, expected its pre-op "
+                         ~ "winding %s — the fan's parent slot is the one the "
+                         ~ "L2-f publisher restores, and a count-only "
+                         ~ "assertion is green on this failure", c.name, fi,
+                           m.faces[fi].to!string, preWind[fi].to!string));
+        }
     }
     {   // GROUP, grid, FULL mask — the review's cell (round 1, MAJOR-1): the
         // five cells above never pass `group=true`, so the header's revised

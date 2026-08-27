@@ -157,6 +157,15 @@ size_t bridgeLoopsPaired(ref MeshEditBatch ed, const(uint)[] loopA, const(uint)[
         return ((*p)[0] >= 0 && ed.isFaceSubpatch((*p)[0]))
             || ((*p)[1] >= 0 && ed.isFaceSubpatch((*p)[1]));
     }
+    // A FORWARD-ONLY GAP, NAMED (task 1903 §L2, revision 2). `recordAddFace`
+    // carries the WINDING alone, so the subpatch bit computed and set per rim
+    // quad below is in no op-log entry. UNDO IS SAFE — `AddFaces`' inverse
+    // TRUNCATES, so the bit goes with the face it was set on — and the loss is
+    // visible only to a FORWARD replay of a recorded delta, which ships in the
+    // generic session carrier. Reachable from `Mesh.thickenSurface`, whose
+    // batch became RECORDING at stage L2-h. Stage M inherits it, along with
+    // the same shape at `mesh.d`'s inner-skin `addFace` and
+    // `mesh_ops/poly_bevel.d`'s spike fan.
     foreach (i; 0 .. N) {
         uint a0 = cast(uint)loopA[i],    a1 = cast(uint)loopA[(i + 1) % N];
         uint b0 = cast(uint)pairedB[i],  b1 = cast(uint)pairedB[(i + 1) % N];

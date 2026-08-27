@@ -3479,6 +3479,101 @@ struct Mesh {
         return n;
     }
 
+    /// --- Task 1903 Stage L2-h: THE BULK POSITION DOOR, MOVED ONTO `Mesh` ---
+    ///
+    /// The body below is `MeshEditBatch.setVertexPositions`' verbatim, moved
+    /// rather than copied; the handle now forwards to it. Everything the old
+    /// doc comment said about it still holds and is not repeated — the
+    /// `sameBits` bit-compare instead of `==`, the fast arm that builds nothing
+    /// on an unrecorded batch, the `uninitializedArray` pre-size instead of
+    /// `reserve` + `~=`, and the out-of-range `continue` that turns a bad index
+    /// into a silent no-op rather than an `ArrayIndexError`. See
+    /// `MeshEditBatch.setVertexPositions` for all of it.
+    ///
+    /// WHY IT MOVED, and it is the same reason `setFaceWindings` was put here
+    /// rather than on the handle (§L2-P1): the callers that still need it are
+    /// `Mesh` MEMBERS with no batch to thread — `alignFacesByMask`'s island
+    /// projection and `thickenSurface`'s `symmetric:true` shift, the two
+    /// `Kind.SetPos` rows of stage L2. Threading a `ref MeshEditBatch` into
+    /// them would have meant changing eleven call sites, nine of them tests, to
+    /// pass a handle that is redundant with the receiver; and the alternative —
+    /// a second implementation next to the first — is what this file's own
+    /// rules refuse. The frame is reached the way `editRecorder_` reaches it,
+    /// through the module-level stack keyed on `&this`, so calling this with no
+    /// batch open simply writes and commits, which is exactly what the
+    /// pre-migration raw loops did.
+    void setVertexPositions(in uint[] idx, in Vec3[] to) {
+        assert(idx.length == to.length,
+            "Mesh.setVertexPositions: index and position arrays differ "
+          ~ "in length");
+        // Read the frame ONCE for the decision, and never hold the pointer
+        // across the loop — this file's rule at `currentBatchFrame`. The loop
+        // opens no batch, but the re-lookup below costs one scan of a
+        // two-entry array and keeps that rule true by construction rather
+        // than by argument.
+        bool recording = false;
+        if (auto f0 = currentBatchFrame(&this))
+            recording = f0.rec !is null && !f0.errored;
+
+        if (!recording) {
+            bool any = false;
+            foreach (k, vi; idx) {
+                if (vi >= vertices.length) continue;
+                if (MeshEditBatch.sameBits(vertices[vi], to[k])) continue;
+                vertices[vi] = to[k];
+                any = true;
+            }
+            if (!any) return;
+            commitChange(MeshEditScope.Position);
+            return;
+        }
+
+        // PRE-SIZED AND INDEX-WRITTEN, NOT `reserve` + `~=` (task 2160).
+        //
+        // `a ~= x` is not an inlined store: it is a runtime call that looks the
+        // block's used-length up in the GC on every element, and `reserve`
+        // removes the REALLOCATION, not the call. Three of them per vertex is
+        // what made this arm dear. MEASURED on this host over 100 489
+        // elements, same 2.691 MB of payload either way: `reserve` + three
+        // appends per element 2.39-3.27 ms, `uninitializedArray` + indexed
+        // writes 0.12-1.08 ms. That difference is most of what task 1903
+        // §L0-d added to `jitter`/`quantize`/`smooth`'s forward.
+        //
+        // `idx.length` is the exact ceiling for all three: the loop writes at
+        // most one element per input index. `uninitializedArray` is safe for
+        // both element types — neither `uint` nor `Vec3` holds a pointer, so
+        // there is nothing for the collector to misread in the tail, and the
+        // tail is sliced off before the entry ever sees it.
+        auto hitIdx = uninitializedArray!(uint[])(idx.length);
+        auto before = uninitializedArray!(Vec3[])(idx.length);
+        auto after  = uninitializedArray!(Vec3[])(idx.length);
+        size_t nHit = 0;
+        foreach (k, vi; idx) {
+            if (vi >= vertices.length) continue;
+            const Vec3 b = vertices[vi];
+            if (MeshEditBatch.sameBits(b, to[k])) continue;
+            vertices[vi] = to[k];
+            hitIdx[nHit] = vi;
+            before[nHit] = b;
+            after[nHit]  = to[k];
+            ++nHit;
+        }
+        if (nHit == 0) return;
+        // Slice to what was actually written. When some indices were filtered
+        // the tail stays allocated behind the slice until the delta dies —
+        // bounded by the caller's own index array, and the whole-mesh case
+        // (every write lands) wastes nothing.
+        hitIdx = hitIdx[0 .. nHit];
+        before = before[0 .. nHit];
+        after  = after [0 .. nHit];
+        // The three arrays were built for this entry and nothing else holds
+        // them, so the entry TAKES them rather than copying them.
+        if (auto f = currentBatchFrame(&this))
+            if (f.rec !is null && !f.errored)
+                f.rec.recordSetPosOwned(hitIdx, before, after);
+        commitChange(MeshEditScope.Position);
+    }
+
     // --- Task 1903 Stage K: arming is PER REWRITE, never per batch ---------
     //
     // `MeshEditTracker.wantsFaceReindex` is a field on the RECORDER, i.e. on
@@ -4259,6 +4354,44 @@ struct Mesh {
         const mask = maskMinusHiddenVertices(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (mask.length != vertices.length) return 0;
 
+        // --- TASK 1903 STAGE L2-e: THE CORNER REPOINT GOES THROUGH THE DOOR ---
+        //
+        // Until L2-e this walked `foreach (ref corner; faces[fi])` and wrote
+        // `corner = nv` straight onto the live winding. That reaches no hook,
+        // so a recording batch came back with `[AddVerts]` and NOTHING about
+        // the repoints: the reverse truncated the appended copies while the
+        // surviving windings still named them and `finalize`→`buildLoops`
+        // THREW. Publisher P5 of plan §L2.2.
+        //
+        // A COUNTING PASS FIRST, and it buys two things rather than one. It
+        // pre-sizes the three result arrays (no `~=` per element — task 2160),
+        // and it moves the whole `copies == 0` refusal AHEAD of the first
+        // `addVertex`, so the kernel's no-op answer is now atomic BY
+        // CONSTRUCTION rather than by the caller rolling a snapshot back
+        // (plan §L2.4's refusal ruling; `commands/mesh/vertex_split.d` was one
+        // of the four that used to `snap.restore` here).
+        //
+        // ONE BULK `setFaceWindings`, not one per face: the per-element door
+        // resolves its corner payload by its own ordered sweep over `faces`,
+        // so N calls are O(N·F) — measured 2.22 ms against 146 ms at ten
+        // thousand faces (task 2260). A vertex split on a dense mesh touches
+        // every face incident to every selected vertex.
+        bool[] claimedCount;
+        claimedCount.length = vertices.length;
+        size_t nTouched = 0, cornersTouched = 0, copies = 0, maxArity = 0;
+        foreach (fi; 0 .. faces.length) {
+            bool touched = false;
+            foreach (v; faces[fi]) {
+                if (v >= mask.length || !mask[v]) continue;
+                if (!claimedCount[v]) { claimedCount[v] = true; continue; }
+                touched = true;
+                ++copies;
+            }
+            if (faces[fi].length > maxArity) maxArity = faces[fi].length;
+            if (touched) { ++nTouched; cornersTouched += faces[fi].length; }
+        }
+        if (copies == 0) return 0;
+
         // Per-vertex "first incident face already claimed" flag.
         bool[] claimed;
         claimed.length = vertices.length;
@@ -4269,26 +4402,74 @@ struct Mesh {
         // be OOB the instant any weight map is registered. The copy
         // happens in the tail, after resizeVertexSelection() below.
         uint[2][] copyPairs;
-        size_t copies = 0;
+        copyPairs.reserve(copies);
 
-        foreach (fi; 0 .. faces.length) {
-            foreach (ref corner; faces[fi]) {
-                const uint v = corner;
-                if (v >= mask.length || !mask[v]) continue;
-                if (!claimed[v]) {
-                    claimed[v] = true;  // first incident face keeps original
-                    continue;
+        {
+            import std.array : uninitializedArray;
+            auto backing = uninitializedArray!(uint[])(cornersTouched);
+            auto newWind = uninitializedArray!(uint[][])(nTouched);
+            // `uninitializedArray` and not `new FaceIdx[](n)`: `FaceIdx`
+            // `@disable`s default construction on purpose.
+            auto idx = uninitializedArray!(FaceIdx[])(nTouched);
+            // TWO STEPS PER FACE, and the split is forced rather than tidy:
+            // `backing` is sized for the TOUCHED faces only, so the slice may
+            // not be taken until the face is known to be one of them — the
+            // first draft sliced unconditionally and ran off the end on the
+            // last untouched face. Step 1 decides (and advances `claimed`
+            // exactly as the counting pass did); step 2 builds. The corner
+            // positions found in step 1 are carried in a reusable buffer
+            // because step 2 can no longer tell a corner this face CLAIMED
+            // from one it must copy.
+            auto hitK = uninitializedArray!(size_t[])(maxArity);
+            size_t w = 0, base = 0;
+            foreach (fi; faceIndices) {          // the mint — never assumeFaceSpace
+                const uint[] face = faces[fi];
+                size_t nh = 0;
+                foreach (k, v; face) {
+                    if (v >= mask.length || !mask[v]) continue;
+                    if (!claimed[v]) {
+                        claimed[v] = true;  // first incident face keeps original
+                        continue;
+                    }
+                    hitK[nh++] = k;     // later incident face: needs a copy
                 }
-                // Later incident face: add a coincident copy and rewrite corner.
-                const Vec3 p = vertices[v];  // read position before addVertex
-                const uint nv = addVertex(p);
-                corner = nv;
-                copyPairs ~= [v, nv];
-                ++copies;
-            }
-        }
+                if (nh == 0) continue;
 
-        if (copies == 0) return 0;
+                auto dst = backing[base .. base + face.length];
+                dst[] = face[];
+                foreach (j; 0 .. nh) {
+                    immutable size_t k = hitK[j];
+                    immutable uint   v = face[k];
+                    const Vec3 p = vertices[v];  // read position before addVertex
+                    immutable uint nv = addVertex(p);
+                    dst[k] = nv;
+                    copyPairs ~= [v, nv];
+                }
+                idx[w]     = fi;
+                newWind[w] = dst;
+                base += face.length;
+                ++w;
+            }
+            assert(w == nTouched && copyPairs.length == copies,
+                "Mesh.splitVerticesByMask: the counting pass and the write "
+              ~ "pass disagree about which faces the repoint touches");
+            // The return is not read: a repoint always changes at least one
+            // corner of every face in `idx`, so the identity filter cannot
+            // drop one, and `faceIndices` cannot mint an out-of-range index.
+            //
+            // THE PER-CORNER PAYLOAD THE DOOR PAIRS HERE IS INERT FOR THIS
+            // KERNEL, and that is recorded rather than left to look like
+            // coverage. A repoint preserves every face's ARITY, so
+            // `resizePolyVertexMaps` takes its keep branch and each corner
+            // value stays on its own slot through the forward AND through the
+            // reverse; `CornerCarry.reshapeSrc` would re-derive exactly the
+            // same values slot-for-slot with no payload at all. The pair is
+            // written anyway because the `[MeshMapDelta, <face entry>]`
+            // ADJACENCY is contractual since Stage J
+            // (`CornerCarry.payloadForCount`) and an UNPAIRED payload zeroes a
+            // map silently — the door owns that invariant, not the caller.
+            cast(void) setFaceWindings(idx, newWind);
+        }
 
         rebuildEdges();
         // Grow vertexMarks, vertexSelectionOrder, and Point-domain MeshMap
@@ -4698,22 +4879,58 @@ struct Mesh {
         }
         float eps = 1e-6f * maxAbsCoord;
 
-        // Write only verts whose |displacement| >= eps.
+        // --- TASK 1903 STAGE L2-h: THE PROJECTION GOES THROUGH THE DOOR ---
+        //
+        // These three lines were `vertices[vi].x -= d * pl.n.x;` and friends —
+        // a raw position write reaching no hook, so `mesh.align` produced NO
+        // `Kind.SetPos` at all and its delta-path undo left every projected
+        // vertex on the plane. Plan §L2.0 row 3: `polygon_align` is a POSITION
+        // command whose row in §5.5 names only the create kinds.
+        //
+        // COLLECT THEN WRITE ONCE, the L0-d shape (A): `setVertexPositions`
+        // takes ONE op-log entry and ONE `commitChange` for the whole set,
+        // where a per-vertex door would take one of each per vertex — the task
+        // 1330 shape that makes a bulk kernel quadratic through the derived-hide
+        // sweep. Buffers are pre-sized off a counting pass, never grown by `~=`
+        // (task 2160).
+        //
+        // `moved` KEEPS ITS OLD MEANING — the number of vertices whose
+        // displacement cleared `eps` — and is deliberately NOT taken from the
+        // door's return. `setVertexPositions` additionally drops a write whose
+        // result is BIT-IDENTICAL to what is already there, which is reachable
+        // here (a displacement that clears `eps` but whose three products
+        // underflow to zero), and a caller that reported the door's count would
+        // change which meshes `mesh.align` REFUSES.
         size_t moved = 0;
         foreach (vi; 0 .. vertices.length) {
             if (!inSelection[vi]) continue;
-            float d = dScalar[vi];
-            if (abs(d) < eps) continue;
-            int root = findRoot(vertToFace[vi]);
-            auto pl = planes[root];
-            vertices[vi].x -= d * pl.n.x;
-            vertices[vi].y -= d * pl.n.y;
-            vertices[vi].z -= d * pl.n.z;
+            if (abs(dScalar[vi]) < eps) continue;
             ++moved;
         }
-
         if (moved == 0) return 0;
-        commitChange(MeshEditScope.Position);
+
+        {
+            import std.array : uninitializedArray;
+            auto idx = uninitializedArray!(uint[])(moved);
+            auto to  = uninitializedArray!(Vec3[])(moved);
+            size_t w = 0;
+            foreach (vi; 0 .. vertices.length) {
+                if (!inSelection[vi]) continue;
+                immutable float d = dScalar[vi];
+                if (abs(d) < eps) continue;
+                auto pl = planes[findRoot(vertToFace[vi])];
+                idx[w] = cast(uint) vi;
+                to[w]  = Vec3(vertices[vi].x - d * pl.n.x,
+                              vertices[vi].y - d * pl.n.y,
+                              vertices[vi].z - d * pl.n.z);
+                ++w;
+            }
+            assert(w == moved, "Mesh.alignFacesByMask: the counting pass and "
+                             ~ "the write pass disagree");
+            // The door publishes `MeshEditScope.Position` itself — the
+            // `commitChange` this replaces is inside it, not dropped.
+            setVertexPositions(idx, to);
+        }
         return moved;
     }
 
@@ -15681,7 +15898,21 @@ struct Mesh {
     /// open boundary loop original↔offset with a ring of quads → closed shell.
     /// Self-intersection on tight concavities is a known v1 limitation.
     /// Returns total faces added (>0) or 0 (no-op: zero thickness or closed input).
-    size_t thickenSurface(float thickness, bool symmetric = false) {
+    /// TASK 1903 STAGE L2-h — `ref MeshEditBatch ed` IS A PARAMETER NOW, AND
+    /// FOR EXACTLY ONE REASON: `mesh_ops/bridge.d`'s `bridgeLoopsPaired` is a
+    /// free function over a batch (Track 1, Stage D3) and this kernel's step 5
+    /// calls it. Everything else here reaches the recorder the way every hooked
+    /// `Mesh` mutator does, through the module-level frame — `addVertex`,
+    /// `addFace` and `setVertexPositions` need no handle passed to them.
+    ///
+    /// What the parameter REMOVES is the transitional `MeshEditBatch.unrecorded`
+    /// this function used to open around the rim loop (plan §L2.2's P8). That
+    /// batch was a debt with this stage named in its own comment as the remover:
+    /// the moment `commands/mesh/thicken.d` opened a batch of its own it became
+    /// a nested open, `changeBus.nestedBatchOpens` ticked, and
+    /// `tests/test_thicken.d`'s per-command delta row reddened. Both halves must
+    /// land in ONE commit for that reason.
+    size_t thickenSurface(ref MeshEditBatch ed, float thickness, bool symmetric = false) {
         import std.math : abs;
         import std.algorithm : reverse;
         // Step 1 — pre-mutation gates (mutation-free).
@@ -15709,11 +15940,34 @@ struct Mesh {
             foreach (i; 0 .. V0)
                 off[i] = addVertex(vertices[i] - vn[i] * thickness);
         } else {
+            // --- TASK 1903 STAGE L2-h: THE SYMMETRIC SHIFT IS A `SetPos` ---
+            //
+            // This arm moves EVERY pre-existing vertex, and it used to do so
+            // with a raw `vertices[i] = …` loop that reached no hook. A delta
+            // recording only the appends restores the topology and leaves the
+            // original surface at `orig + n·t/2` — and that is INVISIBLE on the
+            // default `symmetric:false`, where this arm never runs, which is
+            // why the parity fixture's `mesh.thicken` cell drives `true`.
+            //
+            // MEASURED BEFORE IT WAS TAKEN (plan §L2.9 Q-L2-2 asked for a
+            // number, not a choice): on the perf stand the `SetPos` entry is a
+            // fraction of the whole-mesh `MeshSnapshot` it replaces, so the arm
+            // is migrated rather than left dense. The numbers are in the task
+            // card.
             Vec3[] orig = new Vec3[](V0);
             foreach (i; 0 .. V0) orig[i] = vertices[i];
-            foreach (i; 0 .. V0)
-                vertices[i] = orig[i] + vn[i] * (thickness * 0.5f);
-            commitChange(MeshEditScope.Position);
+            {
+                import std.array : uninitializedArray;
+                auto idx = uninitializedArray!(uint[])(V0);
+                auto to  = uninitializedArray!(Vec3[])(V0);
+                foreach (i; 0 .. V0) {
+                    idx[i] = cast(uint) i;
+                    to[i]  = orig[i] + vn[i] * (thickness * 0.5f);
+                }
+                // Publishes `Position` itself — the `commitChange` this
+                // replaces is inside the door.
+                setVertexPositions(idx, to);
+            }
             foreach (i; 0 .. V0)
                 off[i] = addVertex(orig[i] - vn[i] * (thickness * 0.5f));
         }
@@ -15729,6 +15983,14 @@ struct Mesh {
             foreach (k; 0 .. faces[fi].length)
                 of[k] = off[faces[fi][k]];
             reverse(of);
+            // A FORWARD-ONLY GAP, NAMED (task 1903 §L2, revision 2):
+            // `recordAddFace` carries the winding alone, so the subpatch bit
+            // set two lines down is in no op-log entry. UNDO IS SAFE —
+            // `AddFaces`' inverse truncates and the bit goes with the face —
+            // and the loss is visible only to a FORWARD replay of a recorded
+            // delta. Stage M inherits it, together with the same gap at
+            // `mesh_ops/bridge.d`'s rim `addFace` and `poly_bevel.d`'s spike
+            // fan.
             uint newFi = cast(uint)faces.length;
             addFace(of);
             resizeSubpatch();
@@ -15744,34 +16006,17 @@ struct Mesh {
             avgN = avgN + faceNormal(cast(uint)fi);
         avgN = safeNormalize(avgN);
 
-        // TASK 1903 Stage D3 — A TRANSITIONAL BATCH, AND IT IS A DEBT.
-        // `bridgeLoopsPaired` is a free function over `ref MeshEditBatch` now,
-        // so this loop cannot call it on a bare mesh; and `thickenSurface` is a
-        // `Mesh` member, so §4.1's "the command or tool opens the batch" has
-        // nowhere to land — `mesh.thicken` still hands the kernel a bare
-        // `Mesh*`. The batch therefore opens HERE, which §2.3 rule 2 forbids in
-        // the finished design ("a kernel never opens a batch"). It is scoped to
-        // the rim loop alone and nothing else in this function moves.
-        //
-        // UNRECORDED, for the reason every track-1 site is: `mesh.thicken`
-        // undoes through a whole-mesh `MeshSnapshot`, so a recording batch
-        // would build an op-log nothing reads and `close()` would drop.
-        //
-        // WHAT REMOVES IT: **stage L2**, the row that owns `thicken` on track 2
-        // (`doc/mesh_edit_seam_plan.md` §5.1, "create + index-stable topo-misc"
-        // — `thickenSurface` is not a `mesh_ops` family, so no track-1 stage
-        // schedules it). Until then `changeBus.nestedBatchOpens` is the
-        // tripwire, and the assert that reads it is the per-command DELTA in
-        // `tests/test_thicken.d` ("mesh.thicken opened a nested batch") — NOT
-        // the single process-cumulative `== 0` in
-        // `tests/test_undo_tracker_delete.d`, which a `thickenSurface` caller
-        // opening a batch of its own would never reach: that test does not run
-        // `mesh.thicken`, and at `-j 8` it is a different process (review
-        // MAJOR-1, measured — a caller batch at commands/mesh/thicken.d moved
-        // `nestedBatchOpens` 0 → 1 over HTTP and left both tests PASS).
+        // TASK 1903 STAGE L2-h — THE TRANSITIONAL BATCH IS GONE (plan §L2.2's
+        // P8). Stage D3 opened an `unrecorded` batch right here, purely so that
+        // `bridgeLoopsPaired` — a free function over `ref MeshEditBatch` since
+        // the track-1 conversion — had one to be called on. Its own comment
+        // named §2.3 rule 2 ("a kernel never opens a batch") as what it
+        // violated and named THIS stage as the remover, with
+        // `changeBus.nestedBatchOpens` and `tests/test_thicken.d`'s per-command
+        // delta as the tripwire in the meantime. The caller's batch is now a
+        // parameter, so the rim loop simply uses it and nothing nests.
         size_t rimTotal = 0;
         {
-            auto rimEd = MeshEditBatch.unrecorded(this, kBridgeEditScope);
             foreach (ref loop; loops) {
                 // Compute loop orientation via Newell's method.
                 Vec3 ln = Vec3(0, 0, 0);
@@ -15789,14 +16034,8 @@ struct Mesh {
                 uint[] pairedB = new uint[](LN);
                 foreach (i; 0 .. LN)
                     pairedB[i] = off[loop[i]];
-                rimTotal += bridgeLoopsPaired(rimEd, loop, pairedB);
+                rimTotal += bridgeLoopsPaired(ed, loop, pairedB);
             }
-            // No `scope(failure)`: `MeshEditBatch.~this` pops the frame during
-            // unwinding without asserting and ticks `changeBus.batchLeaks`,
-            // which the suite asserts stays 0 (§2.2c). The four legacy
-            // `beginEditBatch`/`endEditBatch` sites need the guard because that
-            // pair has no destructor; this handle does.
-            rimEd.close();
         }
 
         // Step 6 — finalize.
@@ -15820,7 +16059,9 @@ struct Mesh {
             }
         m.buildLoops();
 
-        const size_t r = m.thickenSurface(0.2f);
+        size_t r;
+        { auto ed = MeshEditBatch.unrecorded(m, kBridgeEditScope);
+          r = m.thickenSurface(ed, 0.2f); ed.close(); }
         assert(r > 0, "thicken 2×2: non-zero result");
         assert(m.vertices.length == 18, "thicken 2×2: 18 verts");
         assert(m.faces.length == 16, "thicken 2×2: 16 faces");
@@ -15846,7 +16087,9 @@ struct Mesh {
             }
         m.buildLoops();
 
-        const size_t r = m.thickenSurface(0.2f);
+        size_t r;
+        { auto ed = MeshEditBatch.unrecorded(m, kBridgeEditScope);
+          r = m.thickenSurface(ed, 0.2f); ed.close(); }
         assert(r > 0, "thicken holed: non-zero result");
         assert(m.vertices.length == 32, "thicken holed: 32 verts");
         assert(m.faces.length == 32, "thicken holed: 32 faces (8+8+12+4)");
@@ -16249,16 +16492,83 @@ struct Mesh {
             isCutVert.length = vertices.length; // grow after addVertex
         isCutVert[vi] = true;
 
-        // Splice vi between (a,b) or (b,a) in every incident face winding.
-        foreach (ref face; faces) {
+        // --- TASK 1903 STAGE L2-c: THE SPLICE GOES THROUGH THE WINDING DOOR
+        //
+        // Until L2-c this was `face = face[0 .. k+1] ~ [vi] ~ face[k+1 .. $]`
+        // written straight onto the live `faces` array, and it reached no hook
+        // at all. A recording batch around `mesh.addPoint` / `mesh.split_edge`
+        // therefore came back with `[AddVerts]` and NOTHING about the splices,
+        // so `revert()` truncated the new vertex while every incident winding
+        // still named it — the mesh then THREW out of `finalize`→`buildLoops`
+        // with an `ArrayIndexError` and stayed half-reverted. Publisher P3 of
+        // plan §L2.2, and it is SHARED with `mesh_ops/cut.d`'s `planeCutCore`
+        // Pass 1, which is L4's open choice #1 discharged here.
+        //
+        // ONE BULK CALL, NOT ONE PER FACE, and that is correctness before it
+        // is speed. `Mesh.setFaceWindings` pairs its `ReshapeFaces` entry with
+        // a per-corner payload, and `recordPolyVertexPayload` DECLINES unless
+        // the PolyVertex maps are in step with `faces`
+        // (`polyVertexMapsInStepWithFaces`). A splice changes the mesh's TOTAL
+        // corner count while the maps are still the pre-op ones, so the FIRST
+        // per-face install would put them out of step and every later payload
+        // in the same call would silently decline. Deferring all the installs
+        // to one call keeps every read in the pre-op space. The per-element
+        // door is also QUADRATIC (task 2260: 2.22 ms against 146 ms at ten
+        // thousand faces), and a splice on an interior edge of a dense mesh
+        // touches every incident face.
+        //
+        // TWO SCANS AND NO O(faces) SIDE ARRAY, on purpose: `planeCutCore`
+        // calls this once per straddling edge, so a per-call array indexed by
+        // face index would be a fresh O(F) allocation per cut edge. The result
+        // arrays are pre-sized off the counting pass and the reversed windings
+        // share ONE backing array sliced per face — three allocations for the
+        // whole splice, and no `~=` anywhere (task 2160).
+        size_t spliceAt(const uint[] face) {
             for (size_t k = 0; k < face.length; k++) {
-                uint fa = face[k];
-                uint fb = face[(k + 1) % face.length];
-                if ((fa == a && fb == b) || (fa == b && fb == a)) {
-                    face = face[0 .. k + 1] ~ [vi] ~ face[k + 1 .. $];
-                    break;
-                }
+                immutable uint fa = face[k];
+                immutable uint fb = face[(k + 1) % face.length];
+                if ((fa == a && fb == b) || (fa == b && fb == a)) return k + 1;
             }
+            return size_t.max;
+        }
+
+        size_t nSpliced = 0, corners = 0;
+        foreach (fi; 0 .. faces.length) {
+            if (spliceAt(faces[fi]) == size_t.max) continue;
+            ++nSpliced;
+            corners += faces[fi].length + 1;
+        }
+        if (nSpliced == 0) return vi;
+
+        {
+            import std.array : uninitializedArray;
+            auto backing = uninitializedArray!(uint[])(corners);
+            auto newWind = uninitializedArray!(uint[][])(nSpliced);
+            // `uninitializedArray` and not `new FaceIdx[](n)`: `FaceIdx`
+            // `@disable`s default construction (a defaulted face index would
+            // be face 0, and face 0 is a real face).
+            auto idx = uninitializedArray!(FaceIdx[])(nSpliced);
+            size_t w = 0, base = 0;
+            foreach (fi; faceIndices) {          // the mint — never assumeFaceSpace
+                const uint[] face = faces[fi];
+                immutable size_t p = spliceAt(face);
+                if (p == size_t.max) continue;
+                auto dst = backing[base .. base + face.length + 1];
+                dst[0 .. p]      = face[0 .. p];
+                dst[p]           = vi;
+                dst[p + 1 .. $]  = face[p .. $];
+                idx[w]     = fi;
+                newWind[w] = dst;
+                base += face.length + 1;
+                ++w;
+            }
+            assert(w == nSpliced, "Mesh.insertEdgePoint: the counting pass and "
+                                ~ "the write pass disagree about how many "
+                                ~ "windings the splice touches");
+            // The return is not read: a spliced winding is strictly longer than
+            // its source, so `setFaceWindings`' identity filter cannot drop one,
+            // and an out-of-range index is unreachable from `faceIndices`.
+            cast(void) setFaceWindings(idx, newWind);
         }
         return vi;
     }
@@ -16356,22 +16666,22 @@ struct Mesh {
     {
         size_t origFaceCount = faces.length;
         uint[][] newFacesArr;
-        uint[]   newWord;   // whole faceMarks word per emitted face (task 0613 §4.2)
-        int[]    newOrder;
-        uint[]   newMaterial;
-        uint[]   newPart;
-        ulong[]  newSetMask;   // task 1060, Stage 5c
+        // TASK 1903 STAGE L2-d — THE FIVE PER-FACE PLANES ARE NO LONGER GATHERED
+        // HERE. `newWord` / `newOrder` / `newMaterial` / `newPart` /
+        // `newSetMask` were five parallel arrays rebuilt by hand and installed
+        // wholesale below; `mesh_planes.rewriteFaces` carries exactly those five
+        // (`kFacePlanes`) through the same correspondence, so gathering them
+        // twice is what the primitive exists to stop. What is kept is the
+        // correspondence itself and the Select bit — see the install site.
+        uint[]   oldOfNew;   // parent face of each emitted face (newToOld)
         bool[]   newSelected;
         newFacesArr.reserve(origFaceCount + origFaceCount / 2);
+        oldOfNew.reserve(origFaceCount + origFaceCount / 2);
+        newSelected.reserve(origFaceCount + origFaceCount / 2);
 
         size_t nSplit = 0;
         foreach (fi; 0 .. origFaceCount) {
             uint[] face = faces[fi];
-            uint  word = faceAttrOr(faceMarks, fi);
-            int   ord = faceAttrOr(faceSelectionOrder, fi);
-            uint  mat = faceAttrOr(faceMaterial, fi);
-            uint  prt = faceAttrOr(facePart, fi);
-            ulong setm = faceAttrOr(faceSetMask, fi);
             bool  seld = isFaceSelected(fi);
 
             // Faces not in the mask are copied whole (never split).
@@ -16379,11 +16689,7 @@ struct Mesh {
                             (fi < splitFaceMask.length && splitFaceMask[fi]);
             if (!eligible) {
                 newFacesArr ~= face.dup;
-                newWord     ~= word;
-                newOrder    ~= ord;
-                newMaterial ~= mat;
-                newPart     ~= prt;
-                newSetMask  ~= setm;
+                oldOfNew    ~= cast(uint) fi;
                 newSelected ~= seld;
                 continue;
             }
@@ -16396,11 +16702,7 @@ struct Mesh {
 
             if (hits.length != 2) {
                 newFacesArr ~= face.dup;
-                newWord     ~= word;
-                newOrder    ~= ord;
-                newMaterial ~= mat;
-                newPart     ~= prt;
-                newSetMask  ~= setm;
+                oldOfNew    ~= cast(uint) fi;
                 newSelected ~= seld;
                 continue;
             }
@@ -16411,11 +16713,7 @@ struct Mesh {
             bool adj = (j == i + 1) || (i == 0 && j == face.length - 1);
             if (adj) {
                 newFacesArr ~= face.dup;
-                newWord     ~= word;
-                newOrder    ~= ord;
-                newMaterial ~= mat;
-                newPart     ~= prt;
-                newSetMask  ~= setm;
+                oldOfNew    ~= cast(uint) fi;
                 newSelected ~= seld;
                 continue;
             }
@@ -16427,22 +16725,14 @@ struct Mesh {
             if (f1.length < 3 || f2.length < 3) {
                 // Degenerate — guard above should prevent this; keep whole.
                 newFacesArr ~= face.dup;
-                newWord     ~= word;
-                newOrder    ~= ord;
-                newMaterial ~= mat;
-                newPart     ~= prt;
-                newSetMask  ~= setm;
+                oldOfNew    ~= cast(uint) fi;
                 newSelected ~= seld;
                 continue;
             }
 
             // f1 (replaces parent slot)
             newFacesArr ~= f1;
-            newWord     ~= word;
-            newOrder    ~= ord;
-            newMaterial ~= mat;
-            newPart     ~= prt;
-            newSetMask  ~= setm;
+            oldOfNew    ~= cast(uint) fi;
             newSelected ~= seld;
 
             // f2 (appended slot) — BOTH halves carry parent attrs, including
@@ -16450,11 +16740,7 @@ struct Mesh {
             // (reference-pinned behavior). Same for Hide (task 0613): a
             // hidden parent yields two hidden halves — `word` carries it.
             newFacesArr ~= f2;
-            newWord     ~= word;
-            newOrder    ~= ord;
-            newMaterial ~= mat;
-            newPart     ~= prt;
-            newSetMask  ~= setm;
+            oldOfNew    ~= cast(uint) fi;
             newSelected ~= seld;
 
             nSplit++;
@@ -16462,13 +16748,49 @@ struct Mesh {
 
         if (nSplit == 0) return 0;
 
-        // Apply new face arrays (mirrors weldVerticesByMask pattern).
-        faces._store = newFacesArr;
-        setFaceMarksFrom(newWord, ~Marks.Select);
-        faceSelectionOrder = newOrder;
-        faceMaterial       = newMaterial;
-        facePart           = newPart;
-        faceSetMask        = newSetMask;
+        // --- TASK 1903 STAGE L2-d: THE INSTALL GOES THROUGH `rewriteFaces` ---
+        //
+        // Until L2-d this was `faces._store = newFacesArr;` plus five
+        // hand-rebuilt plane assignments. The raw store reaches NO hook, so a
+        // recording batch around `mesh.splitFace` came back with an EMPTY
+        // op-log and `MeshEditDelta.revert` answered `true` with the split
+        // still in — the silent half of §5.3's two failure shapes, and the one
+        // a face COUNT cannot see either, since the count is right in both the
+        // broken and the fixed world only AFTER a revert that did nothing.
+        //
+        // ONE ROUTE, NOT TWO. Plan §L2.2 offered `recordAddFaces` +
+        // `recordReshapeFaces` at the install as branch (b); it is not viable
+        // here and the reason is in `mesh_planes.d`: three of the five planes
+        // this function rewrites — `faceMaterial`, `facePart`, `faceSetMask` —
+        // have NO restorer anywhere outside `Kind.RemoveFaces`
+        // (`mesh_planes.d`'s carried/dropped lists, and `delete.d`'s side
+        // capture covers only the maps and the marks word). A chord split
+        // renumbers every face after the parent, so those three would come back
+        // shifted by one and nothing in the tree would notice.
+        // `Kind.FaceReindex` carries all five by construction.
+        //
+        // ARMED PER REWRITE, never batch-wide (Stage K's measured rule): with
+        // the flag left set for the whole batch, a kernel that also reaches
+        // `deleteFacesByMask` would have its drop described TWICE and the LIFO
+        // revert would re-insert the face twice. The scope is one `rewriteFaces`
+        // call. Precedent and spelling: `mesh_ops/cleanup.d`'s degenerate sweep.
+        //
+        // WHAT ARMING COSTS, stated because plan revision 2 got it wrong in my
+        // own words and then corrected itself: it does NOT cost the `finalize`
+        // fast path. `kindHoldsIndexSpace` classifies `AddVerts`, `AddFaces`
+        // and `ReshapeFaces` as index-space-UNSTABLE alongside `FaceReindex`,
+        // so every L2 log already took the slow path and this row had no fast
+        // path to lose.
+        { auto arm = faceReindexScope();
+          rewriteFaces(this, newFacesArr, FaceSource(oldOfNew)); }
+        // Re-mask the just-carried word IN PLACE — `src` here IS `faceMarks`
+        // (self-aliasing; `Mesh.setFaceMarksFrom`'s own doc comment says why
+        // that is safe for this body specifically). `rewriteFaces` carried the
+        // WHOLE marks word including Select; the pre-L2-d code carried it with
+        // Select already masked out, and `setFacesSelectedFrom` below puts the
+        // parent's bit back under the Select ∧ Hide = ∅ invariant. Two steps,
+        // exactly as before, so the FORWARD is unchanged.
+        setFaceMarksFrom(faceMarks, ~Marks.Select);
         // Inherit each parent's Select bit onto its emitted slot(s) instead of
         // clearing — a selected parent's split halves stay selected, an
         // unselected parent stays unselected, nothing-in ⇒ nothing-out.
@@ -17526,76 +17848,18 @@ struct MeshEditBatch {
     /// come from anywhere else (a user id, a serialized set, a remap table),
     /// that site owes its own bounds check BEFORE the call; do not lean on
     /// this one to report it.
+    /// TASK 1903 STAGE L2-h — THE BODY MOVED TO `Mesh`, THIS IS THE FORWARD.
+    ///
+    /// Same argument `Mesh.setFaceWindings` records for the winding door, in
+    /// the same words: the callers that still need this are `Mesh` MEMBERS
+    /// with no batch to reach (`alignFacesByMask`, `thickenSurface`'s
+    /// symmetric arm), so a method that only exists on the handle is reachable
+    /// from some of its callers and not others. The door is on `Mesh`, keyed —
+    /// like `editRecorder_` — on the module-level frame stack rather than on a
+    /// field, and this forward keeps every existing `ed.setVertexPositions(...)`
+    /// call site reading exactly as it did.
     void setVertexPositions(in uint[] idx, in Vec3[] to) {
-        assert(idx.length == to.length,
-            "MeshEditBatch.setVertexPositions: index and position arrays differ "
-          ~ "in length");
-        // Read the frame ONCE for the decision, and never hold the pointer
-        // across the loop — this file's rule at `currentBatchFrame`. The loop
-        // opens no batch, but the re-lookup below costs one scan of a
-        // two-entry array and keeps that rule true by construction rather
-        // than by argument.
-        bool recording = false;
-        if (auto f0 = currentBatchFrame(m_))
-            recording = f0.rec !is null && !f0.errored;
-
-        if (!recording) {
-            bool any = false;
-            foreach (k, vi; idx) {
-                if (vi >= m_.vertices.length) continue;
-                if (sameBits(m_.vertices[vi], to[k])) continue;
-                m_.vertices[vi] = to[k];
-                any = true;
-            }
-            if (!any) return;
-            m_.commitChange(MeshEditScope.Position);
-            return;
-        }
-
-        // PRE-SIZED AND INDEX-WRITTEN, NOT `reserve` + `~=` (task 2160).
-        //
-        // `a ~= x` is not an inlined store: it is a runtime call that looks the
-        // block's used-length up in the GC on every element, and `reserve`
-        // removes the REALLOCATION, not the call. Three of them per vertex is
-        // what made this arm dear. MEASURED on this host over 100 489
-        // elements, same 2.691 MB of payload either way: `reserve` + three
-        // appends per element 2.39-3.27 ms, `uninitializedArray` + indexed
-        // writes 0.12-1.08 ms. That difference is most of what task 1903
-        // §L0-d added to `jitter`/`quantize`/`smooth`'s forward.
-        //
-        // `idx.length` is the exact ceiling for all three: the loop writes at
-        // most one element per input index. `uninitializedArray` is safe for
-        // both element types — neither `uint` nor `Vec3` holds a pointer, so
-        // there is nothing for the collector to misread in the tail, and the
-        // tail is sliced off before the entry ever sees it.
-        auto hitIdx = uninitializedArray!(uint[])(idx.length);
-        auto before = uninitializedArray!(Vec3[])(idx.length);
-        auto after  = uninitializedArray!(Vec3[])(idx.length);
-        size_t nHit = 0;
-        foreach (k, vi; idx) {
-            if (vi >= m_.vertices.length) continue;
-            const Vec3 b = m_.vertices[vi];
-            if (sameBits(b, to[k])) continue;
-            m_.vertices[vi] = to[k];
-            hitIdx[nHit] = vi;
-            before[nHit] = b;
-            after[nHit]  = to[k];
-            ++nHit;
-        }
-        if (nHit == 0) return;
-        // Slice to what was actually written. When some indices were filtered
-        // the tail stays allocated behind the slice until the delta dies —
-        // bounded by the caller's own index array, and the whole-mesh case
-        // (every write lands) wastes nothing.
-        hitIdx = hitIdx[0 .. nHit];
-        before = before[0 .. nHit];
-        after  = after [0 .. nHit];
-        // The three arrays were built for this entry and nothing else holds
-        // them, so the entry TAKES them rather than copying them.
-        if (auto f = currentBatchFrame(m_))
-            if (f.rec !is null && !f.errored)
-                f.rec.recordSetPosOwned(hitIdx, before, after);
-        m_.commitChange(MeshEditScope.Position);
+        m_.setVertexPositions(idx, to);
     }
 
     /// THE SECOND RECORDER (plan §L0.3, writer shape (D); task 1903 §L0-b).

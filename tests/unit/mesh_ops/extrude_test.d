@@ -1041,12 +1041,23 @@ unittest { // RECORDING: extrudeEdgesByMask op-log kinds + byteSize (cube, one e
     assert(ok, "extrudeEdgesByMask: revert() must succeed on a recording batch");
     import tests.unit.mesh_ops.seam_differential : meshPlaneDiffs;
     auto diffs = meshPlaneDiffs(pre, m);
-    assert(diffs.length == 1 && diffs[0].path == "vertexSetMask.length",
-        "extrudeEdgesByMask: revert() left a DIFFERENT residual than the "
-      ~ "measured one (vertexSetMask left grown to the post-op length) -- "
-      ~ "either the revert got MORE complete (update this pin down) or a "
-      ~ "regression grew a new lost plane. Got " ~ diffs.length.to!string
-      ~ " diff(s): " ~ diffs.to!string);
+    // PINNED DOWN TO ZERO at task 1903 Stage L2-c (2026-08-28), which is what
+    // this row's own message told whoever closed the gap to do. The single
+    // residual used to be `vertexSetMask.length`, left grown to the post-op
+    // length by `finalizeTopologyEdit`'s resize while
+    // `MeshEditDelta.finalize`'s blanket length sync simply did not name that
+    // plane — the same hole task 1060's review had closed for `faceSetMask`.
+    // The frozen parity oracle caught it on `mesh.split_edge` (a named
+    // selection SET silently lost its membership on Ctrl+Z, because
+    // `selSetMembersVertex` walks the MASK and an out-of-range entry makes the
+    // `.v3d` loader drop the whole set), the line was added, and this revert
+    // now round-trips every plane.
+    assert(diffs.length == 0,
+        "extrudeEdgesByMask: revert() left " ~ diffs.length.to!string
+      ~ " residual plane(s), expected NONE: " ~ diffs.to!string
+      ~ " -- a residual here is a regression, and `vertexSetMask.length` in "
+      ~ "particular means MeshEditDelta.finalize's length sync lost that plane "
+      ~ "again.");
 }
 
 unittest { // RECORDING: extendEdgesByMask op-log kinds (cube, one edge)
@@ -1089,12 +1100,14 @@ unittest { // RECORDING: extendEdgesByMask op-log kinds (cube, one edge)
     // recording block above measures (also `vertexSetMask.length`), so this
     // is a property of the set-mask resize path shared by the family, not
     // something `extendEdgesByMask` introduces on its own.
-    assert(diffs.length == 1 && diffs[0].path == "vertexSetMask.length",
-        "extendEdgesByMask: revert() left a DIFFERENT residual than the "
-      ~ "measured one (vertexSetMask left grown to the post-op length) -- "
-      ~ "either the revert got MORE complete (update this pin down) or a "
-      ~ "regression grew a new lost plane. Got " ~ diffs.length.to!string
-      ~ " diff(s): " ~ diffs.to!string);
+    // PINNED DOWN TO ZERO at task 1903 Stage L2-c — see the sibling
+    // `extrudeEdgesByMask` block above for the plane, the fix and the
+    // user-visible half.
+    assert(diffs.length == 0,
+        "extendEdgesByMask: revert() left " ~ diffs.length.to!string
+      ~ " residual plane(s), expected NONE: " ~ diffs.to!string
+      ~ " -- `vertexSetMask.length` in particular means "
+      ~ "MeshEditDelta.finalize's length sync lost that plane again.");
 }
 
 unittest { // RECORDING: the three extrude kernels Stage K ARMED, and what their revert restores
