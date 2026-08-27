@@ -1035,7 +1035,7 @@ unittest { // RECORDING: extrudeEdgesByMask op-log kinds + byteSize (cube, one e
     //
     // 4496 -> 4832 at task 1903 Stage L5-b, structural for the SAME reason a
     // second time: `Kind.RemoveVerts` gained the selection-set payload
-    // (`vertSetMaskBefore` + `edgeSetKeyDropped` + `edgeSetWordDropped`), three
+    // (`vertSetMaskBefore` + `edgeSetKeys` + `edgeSetWords`), three
     // dynamic arrays at 16 B of header apiece, so `MeshOpEntry.sizeof` went
     // 560 -> 608 B (MEASURED, both numbers). Seven entries: 7 x 48 = 336, and
     // 4496 + 336 = 4832 exactly. The PAYLOAD itself contributes 0 B here: this

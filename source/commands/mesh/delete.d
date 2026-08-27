@@ -77,7 +77,7 @@ class MeshDelete : Command, Operator {
     // every cell that compacts a vertex — a named selection set vanishing on
     // Ctrl+Z, on the shipped default path. That is now the STRUCTURAL payload
     // on `MeshOpEntry.Kind.RemoveVerts` (`vertSetMaskBefore` /
-    // `edgeSetKeyDropped` / `edgeSetWordDropped`, Stage L5-b), captured at the
+    // `edgeSetKeys` / `edgeSetWords`, Stage L5-b), captured at the
     // one publisher, `Mesh.compactUnreferenced`.
     //
     // WHY THE BELTS COULD NOT SIMPLY BE LEFT IN PLACE AS A SECOND LINE. A belt

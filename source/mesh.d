@@ -3978,6 +3978,55 @@ struct Mesh {
     /// ledger row 21b). `join.keepOrphanSurvivor` additionally pins
     /// `join.survivor` through the tail `compactUnreferenced`, so a weld that
     /// consumed every face still leaves the joined vertex behind.
+    // --- Task 2310: the weld's edge-set MERGE, recorded ---------------------
+    //
+    // `selSetRekeyEdges` is called at six sites; at exactly TWO of them — the
+    // weld remaps `applyVertexRemapAndRebuild` and `applyVertexRemap` below —
+    // the map is SAME-SPACE and NOT INJECTIVE, so two old endpoint pairs
+    // collapse onto one survivor key and their words are OR-merged. Nothing
+    // inverts that: `Kind.RemoveVerts`' edge half (Stage L5-b) mirrors
+    // `compactUnreferenced`'s DROP predicate, and by the time it runs the merge
+    // has already happened, so its key list comes back EMPTY for exactly the
+    // entries the weld moved. Undo then leaves the membership on the survivor
+    // edge (which was not a member) and off the restored edge (which was),
+    // while V, F, E and every other plane compare equal.
+    //
+    // THE OTHER FOUR SITES NEED NOTHING. `compactUnreferenced`'s remap is
+    // injective on survivors — two distinct keys cannot land on one — so its
+    // drop-only payload is complete; the four `mesh_edit_delta.d` replay sites
+    // ARE the inverse machinery and must not record.
+    //
+    // TAKEN AS A PAIR: capture the pre-image, run the re-key, then record only
+    // if the table actually moved. `capture` returns an empty array on a mesh
+    // with no edge sets and on a recorder-free (unbatched) call, and `record`
+    // does nothing for it — the common case pays one branch and zero bytes.
+    private void captureEdgeSetImage(out ulong[] keys, out ulong[] words) {
+        if (editRecorder_ is null || edgeSetMask.length == 0) return;
+        keys.reserve(edgeSetMask.length);
+        words.reserve(edgeSetMask.length);
+        foreach (key, msk; edgeSetMask) { keys ~= key; words ~= msk; }
+    }
+
+    private void recordEdgeSetMerge(in ulong[] keys, in ulong[] words,
+                                    in int[] remap) {
+        if (keys.length == 0 || editRecorder_ is null) return;
+        // A re-key that changed nothing records nothing. Not an optimisation
+        // alone: an entry whose reverse re-installs the state already present
+        // is indistinguishable from one that does real work, and the op-log
+        // shape is what the weld cells assert.
+        if (edgeSetMask.length == keys.length) {
+            bool same = true;
+            foreach (i, k; keys) {
+                auto pw = k in edgeSetMask;
+                if (pw is null || *pw != words[i]) { same = false; break; }
+            }
+            if (same) return;
+        }
+        auto perm = new uint[](remap.length);
+        foreach (i, r; remap) perm[i] = cast(uint) r;
+        editRecorder_.recordEdgeSetRekey(perm, keys, words);
+    }
+
     private void applyVertexRemapAndRebuild(in int[] remap,
                                             JoinWeldPolicy join = JoinWeldPolicy.init) {
         uint[][] newFaces;
@@ -4043,8 +4092,15 @@ struct Mesh {
         // by `mesh_planes.rewriteFaces`'s call above via `kFacePlanes`
         // (task 1902). Re-keying ONLY at compactUnreferenced would instead
         // read endpoint 9 as "gone" and drop the membership outright.
+        //
+        // TASK 2310 — and the pre-image is what makes the merge INVERTIBLE; see
+        // `captureEdgeSetImage`/`recordEdgeSetMerge` above for why the
+        // `Kind.RemoveVerts` payload cannot carry it.
+        ulong[] esKeys0, esWords0;
+        captureEdgeSetImage(esKeys0, esWords0);
         selSetRekeyEdges(this, (uint v) =>
             v < remap.length ? cast(uint) remap[v] : v);
+        recordEdgeSetMerge(esKeys0, esWords0, remap);
 
         rebuildEdges();
         clearEdgeSelectionResize();
@@ -5308,8 +5364,16 @@ struct Mesh {
         // target, never dropped) — an edge (5,9) whose endpoint 9 welds into 3
         // must follow to (5,3) or its set membership vanishes silently on the
         // very next `rebuildEdges()`/`edgeKey` renumbering.
+        //
+        // TASK 2310 — the merge record, the same pair as the sibling above. THIS
+        // is the funnel `mesh_ops/cleanup.cleanupMesh` runs (weld, then compact)
+        // inside `MeshCleanup`'s recording batch, so the loss it closes was live
+        // on a shipped delta path.
+        ulong[] esKeys0, esWords0;
+        captureEdgeSetImage(esKeys0, esWords0);
         selSetRekeyEdges(this, (uint v) =>
             v < remap.length ? cast(uint) remap[v] : v);
+        recordEdgeSetMerge(esKeys0, esWords0, remap);
 
         rebuildEdges();
 

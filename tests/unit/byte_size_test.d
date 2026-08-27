@@ -250,7 +250,7 @@ unittest // the RemoveVerts SELECTION-SET payload is charged for (Stage L5-b)
     // recovered.
     //
     // MUTATION: delete any one of the three `vertSetMaskBefore` /
-    // `edgeSetKeyDropped` / `edgeSetWordDropped` lines from
+    // `edgeSetKeys` / `edgeSetWords` lines from
     // `MeshEditDelta.byteSize` -> "delta byteSize N is below the hand-derived
     // floor M". The FieldNameTuple census below this file's fold reddens too,
     // by field NAME; both are kept, because the census cannot say the sum is
@@ -260,8 +260,8 @@ unittest // the RemoveVerts SELECTION-SET payload is charged for (Stage L5-b)
     e.vIdx               = [3u, 7u, 11u];
     e.pos                = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0)];
     e.vertSetMaskBefore  = [1UL, 0UL, 5UL];
-    e.edgeSetKeyDropped  = [(3UL << 32) | 7UL, (7UL << 32) | 11UL];
-    e.edgeSetWordDropped = [1UL, 3UL];
+    e.edgeSetKeys  = [(3UL << 32) | 7UL, (7UL << 32) | 11UL];
+    e.edgeSetWords = [1UL, 3UL];
 
     MeshEditDelta d;
     d.log = [e];
@@ -273,8 +273,8 @@ unittest // the RemoveVerts SELECTION-SET payload is charged for (Stage L5-b)
         + 3 * uint.sizeof                       // vIdx
         + 3 * Vec3.sizeof                       // pos
         + 3 * ulong.sizeof                      // vertSetMaskBefore
-        + 2 * ulong.sizeof                      // edgeSetKeyDropped
-        + 2 * ulong.sizeof;                     // edgeSetWordDropped
+        + 2 * ulong.sizeof                      // edgeSetKeys
+        + 2 * ulong.sizeof;                     // edgeSetWords
 
     assert(d.byteSize() >= floor,
         format("delta byteSize %s is below the hand-derived floor %s — an "

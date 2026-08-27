@@ -331,6 +331,46 @@ struct MeshOpEntry {
         /// entries in `tests/unit/map_value_delta_test.d`, exactly the way
         /// `HideDelta`'s three carve-out modules drive `patchHide`.
         MapValueDelta,
+
+        /// TASK 2310 — the edge-set registry's PRE-IMAGE across a same-space
+        /// MERGE re-key. Its payload is `perm` (forward) plus
+        /// `edgeSetKeys`/`edgeSetWords` (reverse); it adds no field.
+        ///
+        /// WHY A KIND OF ITS OWN, and it is not tidiness. Both weld remaps
+        /// (`Mesh.applyVertexRemapAndRebuild`, `Mesh.applyVertexRemap`) re-key
+        /// `Mesh.edgeSetMask` through a map that is SAME-SPACE and NOT
+        /// INJECTIVE: two old endpoint pairs collapse onto one survivor key and
+        /// `mesh_selsets.selSetRekeyEdges` OR-merges their words. `RemoveVerts`'
+        /// edge half (Stage L5-b, the two arrays below) mirrors
+        /// `compactUnreferenced`'s DROP predicate only, so a merge is recorded
+        /// by nothing and inverted by nothing: after undo the membership sits on
+        /// the survivor edge, which was not a member, and is off the edge that
+        /// was — with V, F, E, every mark word, `vertexSetMask`, `faceSetMask`
+        /// and every other plane comparing EQUAL. There is no count that can
+        /// see it, which is why it shipped.
+        ///
+        /// IT CANNOT RIDE `RemoveVerts`. That entry is recorded by
+        /// `compactUnreferenced`, a DIFFERENT function that runs after the weld
+        /// (and not at all when the weld leaves nothing unreferenced), and its
+        /// reverse INSERTS keys rather than assigning the plane — which restores
+        /// the lost half and leaves the spurious half in place.
+        ///
+        /// THE REVERSE ASSIGNS THE WHOLE PLANE, and that is the point: a merge
+        /// is not invertible entry-by-entry (the survivor's word is a union, and
+        /// "was this key here before?" is not derivable from the post-state), so
+        /// the pre-image is stored and written back verbatim. It is O(TAGGED
+        /// edges), not O(mesh edges), and it is recorded ONLY when the mesh has
+        /// edge sets AND the re-key actually changed the table — a mesh with no
+        /// selection sets, which is the common case, pays zero bytes.
+        ///
+        /// THE FORWARD IS NOT A NO-OP, and leaving it one would have traded an
+        /// undo defect for a redo defect: `MeshSessionEdit` replays a delta
+        /// FORWARD for redo, and without this arm the restored pre-weld keys
+        /// would then be dropped outright by the following `Reindex` (their
+        /// endpoint is gone in the compacted space). `perm` — the same field
+        /// `Reindex` uses, and the same meaning, old -> new vertex index — is
+        /// what lets the forward re-run the identical re-key.
+        EdgeSetRekey,
     }
     Kind kind;
 
@@ -404,7 +444,7 @@ struct MeshOpEntry {
     //       `removeVertsReverse` writes it back instead of the 0 it used to
     //       write on all three of its arms.
     //
-    //   `edgeSetKeyDropped` / `edgeSetWordDropped` — the EDGE half, parallel
+    //   `edgeSetKeys` / `edgeSetWords` — the EDGE half, parallel
     //       arrays. `Mesh.edgeSetMask` is an `ulong[ulong]` keyed by ENDPOINT
     //       PAIR, and `selSetRekeyEdges` DROPS an entry whose endpoint maps to
     //       `uint.max`. The keys here are in the PRE-compaction vertex space —
@@ -435,8 +475,8 @@ struct MeshOpEntry {
     // class — a comment that lumps four planes together while one of them is
     // restored is a trap for the next reader.
     ulong[]   vertSetMaskBefore;
-    ulong[]   edgeSetKeyDropped;
-    ulong[]   edgeSetWordDropped;
+    ulong[]   edgeSetKeys;
+    ulong[]   edgeSetWords;
 
     // --- FaceReindex-only payload (task 1902 Stage H) ----------------------
     uint[]    faceOldOfNew;            // forward newToOld correspondence, one entry
@@ -649,8 +689,8 @@ struct MeshEditDelta {
             // method does not read — which is exactly how the seven arrays
             // Stage B recovered went missing in the first place.
             n += planeBytes(e.vertSetMaskBefore);
-            n += planeBytes(e.edgeSetKeyDropped);
-            n += planeBytes(e.edgeSetWordDropped);
+            n += planeBytes(e.edgeSetKeys);
+            n += planeBytes(e.edgeSetWords);
             // Kind.FaceReindex's own payload — the six arrays whose absence
             // made this method under-report exactly the entries task 1903 adds.
             n += planeBytes(e.faceOldOfNew);
@@ -1637,6 +1677,14 @@ private bool kindHoldsIndexSpace(MeshOpEntry.Kind k) {
         // corner changes identity, so every structure `finalize` re-derives
         // from `faces`/`vertices` is already correct. Safe *because* of the
         // exclusion above, not because of the payload's own nature.
+        // TASK 2310. It rewrites ONE associative array keyed by ENDPOINT
+        // PAIR. No vertex, edge, face or corner changes identity, and none of
+        // the three spaces a `MeshMap` can be indexed in is re-laid, so it
+        // admits a `MapValueDelta` to the same log and lets `finalize` take the
+        // fast path. Its NEIGHBOURS in a weld log (`FaceReindex`, `Reindex`,
+        // `RemoveVerts`) all answer false, so in production the log is never
+        // fast because of this arm alone.
+        case EdgeSetRekey:
         case MapValueDelta:
             return true;                     // value-only: index space held
         case AddVerts: case RemoveVerts: case AddFaces: case RemoveFaces:
@@ -1697,7 +1745,7 @@ private bool owesTopologyBump(in MeshOpEntry[] log) {
                 mapArm = true;
                 break;
             case SetPos: case SelectionDelta: case MaterialDelta:
-            case EdgeSelByEnds:
+            case EdgeSelByEnds: case EdgeSetRekey:
             case AddVerts: case RemoveVerts: case AddFaces: case RemoveFaces:
             case ReshapeFaces: case Reindex: case FaceReindex: case MeshMapDelta:
                 owing = false; break;
@@ -1797,6 +1845,10 @@ private uint displayTermFor(in MeshOpEntry[] log) {
                 term |= MeshEditScope.Polygons; break;
             case SetPos: case SelectionDelta: case HideDelta:
             case MaterialDelta: case EdgeSelByEnds:
+            // A selection-SET membership is a registry plane; nothing draws it
+            // until a `select.set.apply` turns it into `Marks.Select`, which is
+            // a different entry with its own answer here.
+            case EdgeSetRekey:
             // A map batch declares `Maps` or `Material`, and BOTH are inside
             // `DisplayRefreshMask` — so nothing was lost and there is nothing
             // to re-issue. Returning `Polygons` here would invent a class and
@@ -1841,6 +1893,14 @@ private bool owesDisplayRefresh(in MeshOpEntry[] log) {
     foreach (ref e; log) {
         final switch (e.kind) with (MeshOpEntry.Kind) {
             case SelectionDelta: case EdgeSelByEnds:
+            // TASK 2310 — a THIRD member, and it widens this arm's sentence
+            // from "the highlight" to "nothing the viewport reads". The
+            // edge-set registry is drawn by nothing; it becomes visible only
+            // through a later `select.set.apply`, which records its own
+            // `EdgeSelByEnds`/`SelectionDelta`. In production this kind never
+            // appears alone anyway — its log always carries the weld's
+            // `FaceReindex`/`Reindex`, which answer true.
+            case EdgeSetRekey:
                 break;                       // the highlight, and only it
             case SetPos: case SubpatchDelta: case HideDelta: case MaterialDelta:
             // A map value change is DRAWN: `setMorphValue`'s own comment says
@@ -1955,13 +2015,13 @@ unittest // W3 — the classification census: every Kind, all four rulings
     // free (a new kind is a build error in all four); this is the RUN-time
     // half, which catches a kind added to the enum and to all four switches but
     // never argued here.
-    static assert(EnumMembers!K.length == 15,
+    static assert(EnumMembers!K.length == 16,
         "MeshOpEntry.Kind gained or lost a member. Add its row to the table "
       ~ "below — deciding indexSpaceStable / owesTopologyBump / displayTermFor "
       ~ "/ owesDisplayRefresh for it is the point of this cell, and the four "
       ~ "`final switch`es have already refused to compile until you answered "
       ~ "them there.");
-    static assert(K.max == K.MapValueDelta,
+    static assert(K.max == K.EdgeSetRekey,
         "the LAST member of MeshOpEntry.Kind changed — the table below is "
       ~ "ordered against EnumMembers and its tail row is now wrong.");
 
@@ -1995,6 +2055,13 @@ unittest // W3 — the classification census: every Kind, all four rulings
         // entry owes no bump, and the row would then be green under a deleted
         // crease arm).
         Ruling(K.MapValueDelta,  true,  true,  0,                      true ),
+        // TASK 2310. `stable` because it rewrites ONE endpoint-keyed AA and
+        // re-lays no vertex/edge/face/corner identity; no bump because nothing
+        // it touches is an input to the limit surface or the GPU layout; no
+        // display term and no display refresh because the selection-SET
+        // registry is drawn by nothing until a `select.set.apply` turns it into
+        // `Marks.Select` — which is a different entry with its own row here.
+        Ruling(K.EdgeSetRekey,   true,  false, 0,                      false),
     ];
     assert(table.length == EnumMembers!K.length,
         format("the ruling table lists %d kinds, the enum has %d",
@@ -2052,9 +2119,10 @@ unittest // W3 — the classification census: every Kind, all four rulings
                    r.kind, displayTermFor(log), r.displayTerm));
         assert(owesDisplayRefresh(log) == r.owesDisplay,
             format("owesDisplayRefresh(%s) answered %s, the table says %s. "
-                 ~ "Only SelectionDelta and EdgeSelByEnds owe nothing — their "
-                 ~ "whole payload is the highlight, which DisplayRefreshMask "
-                 ~ "deliberately excludes.",
+                 ~ "Only SelectionDelta, EdgeSelByEnds and EdgeSetRekey owe "
+                 ~ "nothing — the first two ARE the highlight, which "
+                 ~ "DisplayRefreshMask deliberately excludes, and the third is a "
+                 ~ "registry plane nothing draws.",
                    r.kind, owesDisplayRefresh(log), r.owesDisplay));
     }
 
@@ -2526,15 +2594,15 @@ struct MeshEditTracker {
     /// exactly what the pre-L5-b code did.
     void recordRemoveVerts(in uint[] idx, in Vec3[] pos,
                            in ulong[] vertSetMaskBefore,
-                           in ulong[] edgeSetKeyDropped,
-                           in ulong[] edgeSetWordDropped) {
+                           in ulong[] edgeSetKeys,
+                           in ulong[] edgeSetWords) {
         if (idx.length == 0) return;
         assert(vertSetMaskBefore.length == 0
             || vertSetMaskBefore.length == idx.length,
             "recordRemoveVerts: the vertex set-mask payload must be empty or "
           ~ "parallel to `idx` — a partial one would restore membership onto "
           ~ "whichever vertices happen to line up");
-        assert(edgeSetKeyDropped.length == edgeSetWordDropped.length,
+        assert(edgeSetKeys.length == edgeSetWords.length,
             "recordRemoveVerts: the dropped edge-set keys and words are not "
           ~ "parallel");
         MeshOpEntry e;
@@ -2542,8 +2610,38 @@ struct MeshEditTracker {
         e.vIdx = idx.dup;
         e.pos  = pos.dup;
         e.vertSetMaskBefore  = vertSetMaskBefore.dup;
-        e.edgeSetKeyDropped  = edgeSetKeyDropped.dup;
-        e.edgeSetWordDropped = edgeSetWordDropped.dup;
+        e.edgeSetKeys  = edgeSetKeys.dup;
+        e.edgeSetWords = edgeSetWords.dup;
+        append(e);
+    }
+
+    /// Record a same-space MERGE re-key of the edge-set registry (task 2310).
+    ///
+    /// `remap` is the weld's own map (`remap[old]` = the survivor's index, never
+    /// `uint.max` — a weld drops no vertex); `keysBefore`/`wordsBefore` are the
+    /// WHOLE pre-re-key `Mesh.edgeSetMask`, parallel, in the pre-weld vertex
+    /// space. See `MeshOpEntry.Kind.EdgeSetRekey` for why the pre-image is
+    /// stored whole rather than as a diff, and why the forward needs `remap`.
+    ///
+    /// THE EMPTY PRE-IMAGE IS REFUSED RATHER THAN STORED. A mesh with no edge
+    /// sets must produce NO entry at all — its caller is what decides that, and
+    /// this assert is what stops the decision drifting into an entry whose
+    /// reverse would then have to guess between "restore nothing" and "clear the
+    /// plane". Two answers, opposite consequences, no way to tell them apart
+    /// from the payload.
+    void recordEdgeSetRekey(in uint[] remap,
+                            in ulong[] keysBefore, in ulong[] wordsBefore) {
+        assert(keysBefore.length == wordsBefore.length,
+            "recordEdgeSetRekey: the pre-image keys and words are not parallel");
+        assert(keysBefore.length != 0,
+            "recordEdgeSetRekey: an EMPTY pre-image must not be recorded — a "
+          ~ "mesh with no edge sets records no entry at all, so an empty payload "
+          ~ "here is unrepresentable and its reverse would be ambiguous");
+        MeshOpEntry e;
+        e.kind          = MeshOpEntry.Kind.EdgeSetRekey;
+        e.perm          = remap.dup;
+        e.edgeSetKeys   = keysBefore.dup;
+        e.edgeSetWords  = wordsBefore.dup;
         append(e);
     }
 
@@ -2987,6 +3085,14 @@ private void applyForward(ref Mesh m, ref const MeshOpEntry e,
         case MeshOpEntry.Kind.MapValueDelta:
             patchMapValues(m, e, /*forward=*/true);
             break;
+        case MeshOpEntry.Kind.EdgeSetRekey:
+            // Re-run the weld's own re-key through the map it recorded. NOT a
+            // no-op and not derivable from the reverse payload: see the Kind
+            // doc — a forward that did nothing would leave the restored
+            // pre-weld keys for the following `Reindex` to drop outright.
+            selSetRekeyEdges(m, (uint v) =>
+                v < e.perm.length ? e.perm[v] : v);
+            break;
     }
 }
 
@@ -3003,7 +3109,7 @@ private void applyReverse(ref Mesh m, ref const MeshOpEntry e,
         case MeshOpEntry.Kind.RemoveVerts:
             // Inverse of drop = re-insert at the recorded (pre-removal) indices.
             removeVertsReverse(m, e.vIdx, e.pos, e.vertSetMaskBefore,
-                               e.edgeSetKeyDropped, e.edgeSetWordDropped);
+                               e.edgeSetKeys, e.edgeSetWords);
             break;
         case MeshOpEntry.Kind.SetPos:
             foreach (i, vi; e.vIdx)
@@ -3052,7 +3158,32 @@ private void applyReverse(ref Mesh m, ref const MeshOpEntry e,
         case MeshOpEntry.Kind.MapValueDelta:
             patchMapValues(m, e, /*forward=*/false);
             break;
+        case MeshOpEntry.Kind.EdgeSetRekey:
+            edgeSetRekeyReverse(m, e.edgeSetKeys, e.edgeSetWords);
+            break;
     }
+}
+
+// Inverse of a same-space MERGE re-key: install the recorded PRE-image whole.
+//
+// AN EMPTY PAYLOAD IS "NOTHING TO RESTORE", NOT "CLEAR THE PLANE", and the
+// recorder is what makes that true — it refuses to record an empty pre-image
+// (`recordEdgeSetRekey` asserts it), so an empty array here can only mean an
+// entry hand-built by a test. Clearing on empty would turn a malformed entry
+// into a silent whole-plane wipe.
+//
+// The keys are in the PRE-weld vertex space. By the time this runs, LIFO has
+// already put the mesh back into that space: the weld itself renumbers nothing
+// (its map is same-space), and the compaction that follows it is undone by the
+// `Reindex` / `RemoveVerts` entries recorded AFTER this one.
+private void edgeSetRekeyReverse(ref Mesh m, in ulong[] keys, in ulong[] words) {
+    if (keys.length == 0) return;
+    assert(keys.length == words.length,
+        "edgeSetRekeyReverse: the recorded edge-set keys and words are not "
+      ~ "parallel");
+    ulong[ulong] before;
+    foreach (i, k; keys) before[k] = words[i];
+    m.edgeSetMask = before;
 }
 
 // ---------------------------------------------------------------------------
@@ -3566,8 +3697,8 @@ private void removeVertsForward(ref Mesh m, in uint[] idx) {
 // adjacent lines were already being touched for the meshMaps fix.
 private void removeVertsReverse(ref Mesh m, in uint[] idx, in Vec3[] pos,
                                 in ulong[] vertSetMaskBefore,
-                                in ulong[] edgeSetKeyDropped,
-                                in ulong[] edgeSetWordDropped) {
+                                in ulong[] edgeSetKeys,
+                                in ulong[] edgeSetWords) {
     // Task 1903 Stage L5-b. EMPTY means "nothing to restore" — the honest
     // empty a mesh with no selection sets produces — and a payload of the
     // WRONG length is refused WHOLE rather than applied to the prefix that
@@ -3638,9 +3769,9 @@ private void removeVertsReverse(ref Mesh m, in uint[] idx, in Vec3[] pos,
     // `|=` rather than assigned, matching `selSetRekeyEdges`' own conservative
     // rule for two old keys landing on one new one: a restore may add
     // membership back, never take it away.
-    foreach (k, key; edgeSetKeyDropped) {
-        if (auto p = key in m.edgeSetMask) *p |= edgeSetWordDropped[k];
-        else                               m.edgeSetMask[key] = edgeSetWordDropped[k];
+    foreach (k, key; edgeSetKeys) {
+        if (auto p = key in m.edgeSetMask) *p |= edgeSetWords[k];
+        else                               m.edgeSetMask[key] = edgeSetWords[k];
     }
 }
 

@@ -332,6 +332,203 @@ unittest { // test 2b — the COINCIDENT-VERTEX weld funnel: weldCoincidentVerti
         "the surviving member must be the MERGED pair, not the old (dropped) one");
 }
 
+// ---------------------------------------------------------------------------
+// Task 2310 — THE MERGE HALF, THROUGH `revert()`.
+//
+// Tests 2 and 2b above stop one line short: both drive a MERGE weld and both
+// assert the FORWARD only. The file's undo cell (test 6) drives the compaction
+// alone, whose remap is injective on survivors, so it exercises the RENUMBER
+// and DROP halves of `selSetRekeyEdges` and never the MERGE half.
+//
+// WHY THE FIXTURE IS NOT `weldFixture()`. Under that fixture the survivor key
+// (0,5) names no edge at all before the weld, so a post-undo membership sitting
+// on it is a stale AA entry — real, but invisible to anything a user drives.
+// The face `[0,5,1]` below makes edge (0,5) EXIST and be a NON-member before
+// the op, so the wrong answer is a different, EXISTING edge wearing the set —
+// and `selSetApplyEdge` then selects exactly ONE edge either way. That is the
+// property that makes this class need a per-plane witness: the COUNT is equal
+// on both answers, and so are V, F, E and every other plane.
+//
+// v0 and v4 are COINCIDENT by construction (that is what makes them weld), so
+// edges (4,5) and (0,5) are geometrically identical and `pos()` cannot tell
+// them apart. These cells identify the edge by INDEX for that reason.
+private Mesh mergeWeldFixture() {
+    Vec3[] verts = [
+        Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0),   // A: 0-3
+        Vec3(0,0,0), Vec3(1,0,1), Vec3(1,1,1), Vec3(0,1,1),   // C: 4-7 (v4 dupes v0)
+        Vec3(0,-1,0), Vec3(1,-1,1),                           // D: 8-9, the survivor face
+    ];
+    Mesh m;
+    foreach (v; verts) m.addVertex(v);
+    m.addFace([0u,1u,2u,3u]);
+    m.addFace([4u,5u,6u,7u]);
+    // The survivor face, and its WINDING is `5,0,…` for a reason: post-weld it
+    // shares edge (0,5) with `[0,5,6,7]`, which traverses 0->5, so this one must
+    // traverse 5->0 or `buildLoops` reports an inconsistently-wound pair and the
+    // fixture's vertex fans stop being usable. It shares no edge with `[0,1,2,3]`
+    // (only vertex 0), so the pre-weld mesh is consistent too.
+    m.addFace([5u,0u,8u,9u]);
+    m.buildLoops();
+    m.syncSelection();
+    return m;
+}
+
+private bool edgeSetHasKey(ref Mesh m, uint a, uint b) {
+    if (auto p = edgeKey(a, b) in m.edgeSetMask) return *p != 0;
+    return false;
+}
+
+private string mergePlaneReport(ref Mesh m) {
+    return "plane `edgeSetMask`: edge (4,5) member=" ~ to!string(edgeSetHasKey(m, 4, 5))
+         ~ ", edge (0,5) member=" ~ to!string(edgeSetHasKey(m, 0, 5));
+}
+
+unittest { // test 2c — the MERGE weld through UNDO, funnel A: weldVerticesByMask -> applyVertexRemapAndRebuild
+    Mesh m = mergeWeldFixture();
+    const ei = m.edgeIndex(4, 5);
+    assert(ei != cast(uint)~0u, "setup: the tagged edge (4,5) must exist");
+    assert(m.edgeIndex(0, 5) != cast(uint)~0u,
+        "setup: the SURVIVOR edge (0,5) must EXIST before the weld — without it "
+      ~ "the spurious half of this loss is only a stale key and the cell is weaker "
+      ~ "than the defect");
+    m.selectEdge(ei);
+    selSetEditEdge(m, "E", SetEditMode.add, m.selectedEdges);
+    m.clearEdgeSelection();
+
+    // The pre-op image of the ONE plane this cell is about, both halves, so a
+    // post-undo red cannot be read as "the fixture never had it".
+    assert(edgeSetHasKey(m, 4, 5), "setup: " ~ mergePlaneReport(m));
+    assert(!edgeSetHasKey(m, 0, 5), "setup: " ~ mergePlaneReport(m));
+    const preV = m.vertices.length;
+    const preE = m.edges.length;
+    const preF = m.faces.length;
+
+    bool[] mask = new bool[](m.vertices.length);
+    mask[0] = true; mask[4] = true;
+
+    MeshEditTracker rec;
+    m.beginEditBatch(&rec, MeshEditScope.Geometry);
+    const welded = m.weldVerticesByMask(mask, 1e-12);
+    auto delta = m.endEditBatch();
+    assert(welded == 1, "setup: exactly v4 must weld into v0");
+    assert(m.vertices.length == preV - 1,
+        "setup: the forward must actually change the mesh — a cell whose forward "
+      ~ "is a no-op reverts nothing and passes for the wrong reason");
+    assert(!delta.isEmpty,
+        "setup: the batch recorded NOTHING, so `revert()` below would answer true "
+      ~ "over an empty log and this cell would be inert");
+
+    // `revert()` answers TRUE on a refusal and on a no-op alike, so its return
+    // is a precondition here, never the witness.
+    assert(delta.revert(m), "reverse replay must succeed");
+    assert(m.vertices.length == preV && m.faces.length == preF,
+        "the revert must restore V and F — and it ALREADY DID before this commit: "
+      ~ "every count that CAN round-trip on this funnel is equal across the defect, "
+      ~ "which is why the two rows below are the only ones that can see it");
+    // MEASURED ON THIS FUNNEL, 2026-08-28, and pinned rather than skipped:
+    // E does NOT round-trip here. `applyVertexRemapAndRebuild`'s `rewriteFaces`
+    // is the twin L5-a deliberately left UNARMED (its own note in mesh.d says so),
+    // so the pre-weld windings are never restored and `finalize`'s rebuildEdges
+    // re-derives 11 edges from the post-weld faces instead of 12. That is task
+    // 1903 §P-L10-1's gap, NOT this commit's, and arming it is L10's. When L10
+    // arms it this row reddens BY DESIGN and its expectation becomes `preE`.
+    assert(m.edges.length == preE - 1,
+        "E after revert is " ~ to!string(m.edges.length) ~ ", expected " ~ to!string(preE - 1)
+      ~ " (pre-op " ~ to!string(preE) ~ "). See the note above: this funnel's face "
+      ~ "rewrite is unarmed, so one edge does not come back. If P-L10-1 armed it, "
+      ~ "change this to `== preE` in the SAME commit.");
+
+    // THE WITNESS. Both directions, both values printed, because the failure is
+    // symmetric: the membership must come BACK to (4,5) and must be GONE from
+    // the survivor (0,5) it followed on the way forward.
+    assert(edgeSetHasKey(m, 4, 5),
+        "undo lost the edge-set membership of edge (4,5): the weld re-keyed it "
+      ~ "onto the survivor through a MERGE map and nothing recorded the merge, so "
+      ~ "the reverse had nothing to invert. " ~ mergePlaneReport(m));
+    assert(!edgeSetHasKey(m, 0, 5),
+        "undo left a SPURIOUS edge-set membership on the survivor edge (0,5), "
+      ~ "which was not a member before the weld. " ~ mergePlaneReport(m));
+
+    // NO user-visible `selSetApplyEdge` tail on THIS funnel: edge (4,5) does not
+    // exist after the revert (see the E row above), so a selection-based check
+    // here would be measuring P-L10-1's gap, not this commit's. Test 2d, on the
+    // funnel whose rewrite IS armed, carries that half.
+}
+
+unittest { // test 2d — the MERGE weld through UNDO, funnel B: weldCoincidentVertices -> applyVertexRemap
+    // The SHIPPED shape: `mesh_ops/cleanup.cleanupMesh` runs exactly this pair
+    // (weld, then compact) inside `MeshCleanup`'s recording batch, and reverts
+    // through the delta. Funnel A above is the OTHER remap (`weldVertexPairs`,
+    // `weldVerticesByMask`); the two sites are separate code and a green on one
+    // says nothing about the other.
+    Mesh m = mergeWeldFixture();
+    const ei = m.edgeIndex(4, 5);
+    assert(ei != cast(uint)~0u, "setup: the tagged edge (4,5) must exist");
+    m.selectEdge(ei);
+    selSetEditEdge(m, "E", SetEditMode.add, m.selectedEdges);
+    m.clearEdgeSelection();
+
+    assert(edgeSetHasKey(m, 4, 5), "setup: " ~ mergePlaneReport(m));
+    assert(!edgeSetHasKey(m, 0, 5), "setup: " ~ mergePlaneReport(m));
+    const preV = m.vertices.length;
+    const preE = m.edges.length;
+    const preF = m.faces.length;
+
+    MeshEditTracker rec;
+    m.beginEditBatch(&rec, MeshEditScope.Geometry);
+    const welded = m.weldCoincidentVertices(1e-12);
+    const removed = m.compactUnreferenced();
+    auto delta = m.endEditBatch();
+    assert(welded == 1, "setup: exactly v4 must weld into v0 through this funnel too");
+    assert(removed == 1, "setup: the compaction must drop the now-unreferenced v4");
+    assert(m.vertices.length == preV - 1, "setup: the forward must actually change the mesh");
+    assert(!delta.isEmpty, "setup: the batch recorded NOTHING — this cell would be inert");
+
+    assert(delta.revert(m), "reverse replay must succeed");
+    assert(m.vertices.length == preV && m.edges.length == preE && m.faces.length == preF,
+        "the revert must restore V/F/E");
+
+    assert(edgeSetHasKey(m, 4, 5),
+        "undo lost the edge-set membership of edge (4,5) on the `weldCoincidentVertices` "
+      ~ "funnel — the one `MeshCleanup` ships. " ~ mergePlaneReport(m));
+    assert(!edgeSetHasKey(m, 0, 5),
+        "undo left a SPURIOUS edge-set membership on the survivor edge (0,5) on the "
+      ~ "`weldCoincidentVertices` funnel. " ~ mergePlaneReport(m));
+
+    // The user-visible consequence of the same two rows, and it is why a count
+    // cannot see this: exactly one edge carries the set either way — a DIFFERENT
+    // one. This funnel's rewrite IS armed (L5-a), so edge (4,5) is back and the
+    // selection can be resolved.
+    m.clearEdgeSelection();
+    assert(selSetApplyEdge(m, "E", SetApplyMode.replace));
+    size_t nSel = 0; size_t foundAt = size_t.max;
+    foreach (i; 0 .. m.edges.length) if (m.isEdgeSelected(i)) { ++nSel; foundAt = i; }
+    assert(nSel == 1, "exactly one edge must carry the set after undo — got " ~ to!string(nSel));
+    const ea = m.edges[foundAt][0], eb = m.edges[foundAt][1];
+    assert((ea == 4 && eb == 5) || (ea == 5 && eb == 4),
+        "after undo the set names edge (" ~ to!string(ea) ~ "," ~ to!string(eb) ~ ") — "
+      ~ "the pre-op member was (4,5). v0 and v4 are COINCIDENT, so the wrong edge is "
+      ~ "geometrically identical to the right one and no position-based check can "
+      ~ "tell them apart.");
+
+    // REDO — the half that keeps `Kind.EdgeSetRekey`'s FORWARD arm from being
+    // dead code. `MeshSessionEdit` replays a delta forward for redo, and with a
+    // no-op forward the keys this cell just restored would be dropped OUTRIGHT
+    // by the following `Reindex` (endpoint 4 does not exist in the compacted
+    // space), i.e. the fix for undo would have bought a loss on redo.
+    // Post-compaction the survivor pair is (0,4): v4 is gone, so old v5 is new v4.
+    assert(delta.apply(m), "forward replay must succeed");
+    assert(m.vertices.length == preV - 1, "redo must re-apply the weld");
+    assert(edgeSetHasKey(m, 0, 4),
+        "redo lost the membership: the forward arm of Kind.EdgeSetRekey did not "
+      ~ "re-run the weld's merge, so `Reindex` forward dropped the pre-weld key "
+      ~ "whose endpoint no longer exists. plane `edgeSetMask`: edge (0,4) member="
+      ~ to!string(edgeSetHasKey(m, 0, 4)) ~ ", edge (4,5) member="
+      ~ to!string(edgeSetHasKey(m, 4, 5)));
+    assert(!edgeSetHasKey(m, 4, 5),
+        "redo left the PRE-weld key (4,5) live in the compacted space");
+}
+
 unittest { // test 3 — the COLLAPSE: both endpoints map to the same new vertex
     Mesh m;
     m.edgeSetMask[edgeKey(4, 12)] = 1UL;
