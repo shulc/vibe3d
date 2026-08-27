@@ -3233,19 +3233,38 @@ size_t extrudeFacesByMask(ref MeshEditBatch ed, in bool[] maskIn, float distance
             adj[cast(size_t)fp[1]] ~= cast(size_t)fp[0];
         }
         int nextIsland = 0;
+        // EXPLICIT STACK POINTER — the slice is NEVER shrunk (task 2130).
+        // `stack = stack[0 .. $ - 1]` breaks the GC's in-place-append
+        // invariant: `~=` extends a block in place only while `ptr + length`
+        // equals the used-length recorded in that block, so the first push
+        // after EVERY pop reallocated and copied the whole stack. `sp` is the
+        // live depth; the slice only ever grows, at the top, and is reused
+        // across islands instead of being rebuilt per island.
+        //
+        // ORDER IS UNCHANGED, and that is required, not incidental:
+        // `stack[--sp]` reads the element `stack[$ - 1]` read and `stack[sp]`
+        // writes the slot `~=` wrote, so this is the same LIFO sequence. (The
+        // island NUMBER a face receives is fixed regardless — it is claimed
+        // at PUSH time by whichever walk reaches it first, and the walks start
+        // in ascending face order — but the walk order is preserved anyway so
+        // that no consumer of any of these kernels can observe the change.)
+        size_t[] stack;
+        size_t sp = 0;
         foreach (fi; 0 .. ed.faces.length) {
             if (!mask[fi]) continue;
             if (fi in islandOf) continue;
-            size_t[] stack = [fi];
+            if (sp == stack.length) stack ~= fi; else stack[sp] = fi;
+            ++sp;
             islandOf[fi] = nextIsland;
-            while (stack.length) {
-                size_t cur = stack[$ - 1];
-                stack = stack[0 .. $ - 1];
+            while (sp) {
+                size_t cur = stack[--sp];
                 if (auto nbrs = cur in adj)
                     foreach (nb; *nbrs)
                         if (nb !in islandOf) {
                             islandOf[nb] = nextIsland;
-                            stack ~= nb;
+                            if (sp == stack.length) stack ~= nb;
+                            else stack[sp] = nb;
+                            ++sp;
                         }
             }
             ++nextIsland;
@@ -3634,19 +3653,38 @@ size_t smoothShiftFacesByMask(ref MeshEditBatch ed, in bool[] maskIn, float shif
             adj[cast(size_t)fp[1]] ~= cast(size_t)fp[0];
         }
         int nextIsland = 0;
+        // EXPLICIT STACK POINTER — the slice is NEVER shrunk (task 2130).
+        // `stack = stack[0 .. $ - 1]` breaks the GC's in-place-append
+        // invariant: `~=` extends a block in place only while `ptr + length`
+        // equals the used-length recorded in that block, so the first push
+        // after EVERY pop reallocated and copied the whole stack. `sp` is the
+        // live depth; the slice only ever grows, at the top, and is reused
+        // across islands instead of being rebuilt per island.
+        //
+        // ORDER IS UNCHANGED, and that is required, not incidental:
+        // `stack[--sp]` reads the element `stack[$ - 1]` read and `stack[sp]`
+        // writes the slot `~=` wrote, so this is the same LIFO sequence. (The
+        // island NUMBER a face receives is fixed regardless — it is claimed
+        // at PUSH time by whichever walk reaches it first, and the walks start
+        // in ascending face order — but the walk order is preserved anyway so
+        // that no consumer of any of these kernels can observe the change.)
+        size_t[] stack;
+        size_t sp = 0;
         foreach (fi; 0 .. ed.faces.length) {
             if (!mask[fi]) continue;
             if (fi in islandOf) continue;
-            size_t[] stack = [fi];
+            if (sp == stack.length) stack ~= fi; else stack[sp] = fi;
+            ++sp;
             islandOf[fi] = nextIsland;
-            while (stack.length) {
-                size_t cur = stack[$ - 1];
-                stack = stack[0 .. $ - 1];
+            while (sp) {
+                size_t cur = stack[--sp];
                 if (auto nbrs = cur in adj)
                     foreach (nb; *nbrs)
                         if (nb !in islandOf) {
                             islandOf[nb] = nextIsland;
-                            stack ~= nb;
+                            if (sp == stack.length) stack ~= nb;
+                            else stack[sp] = nb;
+                            ++sp;
                         }
             }
             ++nextIsland;

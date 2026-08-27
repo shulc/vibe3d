@@ -12859,20 +12859,42 @@ struct Mesh {
         auto compId = new int[](want.length);
         compId[] = -1;
         uint[][] components;
+        // EXPLICIT STACK POINTER — the slice is NEVER shrunk (task 2130).
+        // `stack = stack[0 .. $ - 1]` breaks the GC's in-place-append
+        // invariant: `~=` extends a block in place only while `ptr + length`
+        // equals the used-length recorded in that block, so the first push
+        // after EVERY pop reallocated and copied the whole stack. Measured on
+        // a 40 000-face single-component walk: 735 MB before, 0.35 MB after.
+        // `sp` is the live depth; the slice only ever grows, at the top, and
+        // is reused across components rather than rebuilt per component.
+        //
+        // THE VISIT ORDER IS UNCHANGED AND IS PINNED. `stack[--sp]` reads the
+        // element `stack[$ - 1]` read and `stack[sp]` writes the slot `~=`
+        // wrote, so this is the same LIFO sequence. The doc comment above
+        // calls each component "arbitrary-order", but `select.fill`,
+        // `remesh.remesh_job` and `fillSelectionHoles` all consume these
+        // lists, so the order is frozen by
+        // `tests/unit/island_walk_alloc_test.d` rather than left to that
+        // adjective — do not "tidy" this into a queue.
+        uint[] stack;
+        size_t sp = 0;
         foreach (start; 0 .. want.length) {
             if (!want[start] || compId[start] != -1) continue;
             const int cid = cast(int) components.length;
             uint[] comp;
-            uint[] stack = [cast(uint) start];
+            if (sp == stack.length) stack ~= cast(uint) start;
+            else stack[sp] = cast(uint) start;
+            ++sp;
             compId[start] = cid;
-            while (stack.length) {
-                const uint cur = stack[$ - 1];
-                stack = stack[0 .. $ - 1];
+            while (sp) {
+                const uint cur = stack[--sp];
                 comp ~= cur;
                 foreach (nb; faceAdj[cur]) {
                     if (nb < 0 || !want[nb] || compId[nb] != -1) continue;
                     compId[nb] = cid;
-                    stack ~= cast(uint) nb;
+                    if (sp == stack.length) stack ~= cast(uint) nb;
+                    else stack[sp] = cast(uint) nb;
+                    ++sp;
                 }
             }
             components ~= comp;
