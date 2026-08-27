@@ -6,10 +6,12 @@ import math : Vec3;
 import view;
 import editmode;
 import snapshot : MeshSnapshot;
-import mesh_edit_delta : MeshEditScope;
+import mesh_edit_delta : MeshEditScope, MeshOpEntry, undoTrackerEnabled;
 import mesh_morph : morphApply;
 import morph_target;
 import params : Param;
+import commands.mesh.position_undo : RecordedUndo, PositionUndo;
+import std.array : uninitializedArray;
 
 // ---------------------------------------------------------------------------
 // Morph-map lifecycle + authoring commands — task 1069.
@@ -33,11 +35,46 @@ import params : Param;
 //   mesh.morph.clear  {name}                — drop entries for the SELECTED verts
 //   mesh.morph.apply  {name, amount}        — bake into the base; map untouched
 //
-// Undo is `MeshSnapshot` throughout: every one of these is a ONE-SHOT command,
-// not a per-frame drag, and snapshot.d deep-dups `meshMaps` (presence channel
-// included), so a plain restore reverts create / remove / rename / set / clear
-// / apply alike. The per-gesture routed drag is a different mechanism entirely
-// and lives in `commands/mesh/morph_edit.d`.
+// UNDO IS A RECORDED DELTA SINCE TASK 1903 STAGE L1-a, and this file is the
+// kind's FIRST production caller. Five of the six mutating commands record
+// `MeshOpEntry.Kind.MapValueDelta`; `mesh.morph.apply` records `Kind.SetPos`,
+// because it writes POSITIONS and leaves the map alone. `MeshSnapshot` stays
+// as the escape hatch's arm (`VIBE3D_UNDO_TRACKER=0`) and dies with the hatch.
+//
+// WHY THIS FILE WENT FIRST OF THE FOUR L1 GROUPS. Five things are true here and
+// of no other group in the family, and each one is a failure the other three
+// cannot exhibit:
+//
+//   1. It is the only family whose PRESENCE channel changes. `mesh.morph.clear`
+//      drops entries — `present` goes to 0 — and `mesh.morph.set` raises one.
+//      An empty `present` MEANS "all present" (`MeshMap.present`), so a revert
+//      that puts `data` back and leaves `present` alone yields a legal, wrong
+//      map with every length still matching.
+//   2. It is the only place two `MapKind`s are SHAPE-IDENTICAL. `morphRelative`
+//      and `morphAbsolute` are both Point / dim 3 / no reserved name, and they
+//      differ in `absentIsZero` — so a kind-blind restore into the other one
+//      moves vertices. That is why `mapKind` is a bind term and not decoration.
+//   3. It is the only group that drives all FOUR `MapOp` arms in production:
+//      Create (create), Remove (remove), Rename (rename) and Values (set,
+//      clear).
+//   4. It is the only group with a POSITION write (`mesh.morph.apply`), so it
+//      is the group that pins that a map command and a position command in one
+//      file do not share a payload kind.
+//   5. It is the only group with a NON-MESH undo tail: the routing target in
+//      `morph_target`, which no plane dump can see and which every revert here
+//      still has to fix up by hand, exactly as it did under the snapshot.
+//
+// The per-gesture routed drag is a different mechanism entirely and lives in
+// `commands/mesh/morph_edit.d`; it is deliberately UNRECORDED (plan §9).
+//
+// SHAPE OF EVERY MIGRATED COMMAND BELOW, so the five bodies read the same:
+// `applyImpl` resolves every guard FIRST — a `throw` or a `return false` out
+// of an open batch would leave `~MeshEditBatch` to pop the frame and tick
+// `changeBus.batchLeaks`, which the suite asserts is 0 — and then hands one
+// kernel to `runMapEdit`, which owns the three arms (redo / recorded /
+// hatch). Each kernel does its own recording behind `ed.recording()`, so the
+// redo and hatch arms allocate NOTHING extra (§K.5 rule 2: L0-d made four
+// commands twice as slow by paying bookkeeping on an unrecorded path).
 //
 // REFUSAL POLICY, and it is decided by ONE question: can the args dialog
 // reach this command? (task 1073, review B3.)
@@ -99,10 +136,87 @@ private MeshMap* morphMapOrNull(Mesh* m, string name) {
     return mm;
 }
 
+/// The map's index in `Mesh.meshMaps`, or `uint.max`. Recorded by the REMOVE
+/// arm so its reverse puts the map back where it was: `removeMeshMap` splices
+/// and the delta's re-registration appends, and `meshPlanesJson` reads
+/// `meshMaps` in ARRAY ORDER (see `MeshOpEntry.mapSlot` for the measurement).
+private uint mapSlotOf(Mesh* m, string name) {
+    foreach (i, ref mm; m.meshMaps) if (mm.name == name) return cast(uint) i;
+    return uint.max;
+}
+
+// ---------------------------------------------------------------------------
+// runMapEdit — the three arms every migrated map command in this file shares.
+//
+// It exists so that the arm dispatch is spelled ONCE. What it deliberately
+// does NOT own is the empty-edit answer: each command's `revert()` keeps its
+// own arm, next to the guard that makes it reachable or not
+// (`commands/mesh/position_undo.d` states the same rule for L0-d, and the
+// reason there was measured: four position commands must answer TRUE on an
+// empty edit because a `false` makes `CommandHistory.undo` discard the entry
+// AND its trailing suffix — regression 0099).
+//
+// THE KERNEL RUNS INSIDE THE BATCH AND MAY ONLY `return false`, never throw:
+// an exception between the open and the close leaves the destructor to pop
+// the frame and tick `changeBus.batchLeaks`, which the suite asserts is 0.
+// Every guard that can refuse is therefore resolved by the caller BEFORE this
+// function is entered.
+// ---------------------------------------------------------------------------
+private bool runMapEdit(Mesh* mesh, ref RecordedUndo undo, ref MeshSnapshot snap,
+                        uint declared, scope bool delegate(ref MeshEditBatch) kernel)
+{
+    // REDO: `CommandHistory.redo` re-runs `apply()`, so a second `evaluate`
+    // on an armed command must re-run the kernel UNRECORDED and keep the
+    // FIRST delta rather than record a second one over it.
+    if (undo.armed()) {
+        auto ed = MeshEditBatch.unrecorded(*mesh, declared);
+        const ok = kernel(ed);
+        ed.close();
+        return ok;
+    }
+    if (undoTrackerEnabled()) {
+        auto ed = MeshEditBatch(*mesh, declared);
+        const ok = kernel(ed);
+        undo.arm(ed.close());
+        if (!ok) { undo.disarm(); return false; }
+        return true;
+    }
+    // THE HATCH (`VIBE3D_UNDO_TRACKER=0`). The same kernel through an
+    // UNRECORDED batch, so this file's commit seam is identical on both paths
+    // and only the undo IMAGE differs.
+    snap = MeshSnapshot.capture(*mesh);
+    auto ed = MeshEditBatch.unrecorded(*mesh, declared);
+    const ok = kernel(ed);
+    ed.close();
+    if (!ok) snap = MeshSnapshot.init;
+    return ok;
+}
+
+/// The mesh half of every migrated `revert()` in this file. The command's own
+/// non-mesh tail (the `morph_target` binding) stays at the call site, because
+/// three of the five have a different one and one has none.
+private bool revertMapEdit(Mesh* mesh, ref RecordedUndo undo, ref MeshSnapshot snap) {
+    if (undo.armed()) return undo.revert(*mesh);
+    if (!snap.filled) return false;
+    snap.restore(*mesh);
+    return true;
+}
+
 class MorphCreate : Command {
     private string       name_;
     private string       kind_ = "relative";
-    private MeshSnapshot snap;
+    private MeshSnapshot snap;      // the hatch's arm only
+    private RecordedUndo undo_;
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded undo (task 2230). The
+        /// op-log SHAPE is not derivable from the outside: a command that
+        /// recorded NOTHING falls back to its snapshot and restores the right
+        /// planes anyway, so every result-shaped assertion is green over a
+        /// deleted recorder. Only reading the log itself is not. `public` on
+        /// the declaration and NOT a `public:` section — a section marker here
+        /// would silently change the protection of every member below it.
+        public ref const(RecordedUndo) recordedUndo() const return { return undo_; }
+    }
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -132,10 +246,20 @@ class MorphCreate : Command {
                 "kind must be 'relative' or 'absolute', got '" ~ kind_ ~ "'";
             return false;
         }
-        snap = MeshSnapshot.capture(*mesh);
-        auto m = mesh.addMeshMapOfKind(kind, name_);
+        // The one rejection that cannot be resolved before the batch opens —
+        // `addMeshMapOfKind` refuses a duplicate name AND the MAX_MESH_MAPS
+        // ceiling, and re-implementing either test here would be a second,
+        // unnamed guard in front of the named one. The kernel therefore
+        // returns false and `runMapEdit` closes the batch; nothing was written.
+        if (!runMapEdit(mesh, undo_, snap, MeshEditScope.Maps,
+                        (ref MeshEditBatch ed) => createKernel(ed, kind)))
+            return false;
+        return true;
+    }
+
+    private bool createKernel(ref MeshEditBatch ed, MapKind kind) {
+        auto m = ed.mesh.addMeshMapOfKind(kind, name_);
         if (m is null) {
-            snap = MeshSnapshot.init;
             baseRefusal_ =
                 "map '" ~ name_ ~ "' already exists, or the per-mesh map cap "
               ~ "was reached";
@@ -148,24 +272,40 @@ class MorphCreate : Command {
         // displacement", it means "stay at the base", so a sparse creation
         // would be indistinguishable from every vertex being unmoved.
         if (kind == MapKind.morphAbsolute) {
-            foreach (i; 0 .. mesh.vertices.length)
-                m.setEntry(i, mesh.vertices[i]);
+            foreach (i; 0 .. ed.mesh.vertices.length)
+                m.setEntry(i, ed.mesh.vertices[i]);
         }
         // ...and the RELATIVE kind is created EMPTY, which is what
         // addMeshMapOfKind already left it as. Stated so the asymmetry reads
         // as deliberate rather than as a missing branch.
 
+        // TWO CREATE SPELLINGS, AND THE CHOICE IS THE DENSE/EMPTY SPLIT ABOVE
+        // read a second time. `Create`'s forward is FAITHFUL — `MeshSessionEdit`
+        // replays a delta FORWARD for redo — so an absolute map, which was
+        // created FILLED, must carry its content or a redo would bring it back
+        // with every vertex "at the base". A relative map is created empty, so
+        // `DefaultInit` reproduces it exactly and carries no array at all.
+        // Recording is behind `recording()`: the redo and hatch arms must not
+        // pay for the two `.dup`s.
+        if (ed.recording()) {
+            if (kind == MapKind.morphAbsolute)
+                ed.rec.recordMapCreateFilledOwned(name_, m.dim, m.domain, m.kind,
+                                                  m.data.dup, m.present.dup);
+            else
+                ed.rec.recordMapCreate(name_, m.dim, m.domain, m.kind);
+        }
         // Creating a map STEALS the routing target: the next edit lands in the
         // new map, measured (`new_map_steals_the_selection`).
         setMorphTarget(name_, kind);
-        mesh.commitChange(MeshEditScope.Maps);
+        ed.commitChange(MeshEditScope.Maps);
         return true;
     }
 
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
-        // The target named a map that no longer exists after the restore.
+        if (!revertMapEdit(mesh, undo_, snap)) return false;
+        // The NON-MESH tail, and no plane dump can see it: the target named a
+        // map that no longer exists after the restore. Unchanged by the
+        // migration, and it runs AFTER the mesh half in both paths.
         forgetMorphTargetIfNamed(name_);
         return true;
     }
@@ -173,7 +313,12 @@ class MorphCreate : Command {
 
 class MorphRemove : Command {
     private string       name_;
-    private MeshSnapshot snap;
+    private MeshSnapshot snap;      // the hatch's arm only
+    private RecordedUndo undo_;
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded undo — see MorphCreate.
+        public ref const(RecordedUndo) recordedUndo() const return { return undo_; }
+    }
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -192,27 +337,66 @@ class MorphRemove : Command {
         if (morphMapOrNull(mesh, name_) is null)
             throw new Exception(
                 "mesh.morph.remove: morph map '" ~ name_ ~ "' not found");
-        snap = MeshSnapshot.capture(*mesh);
-        if (!mesh.removeMeshMap(name_)) {
-            snap = MeshSnapshot.init;
-            return false;
+        return runMapEdit(mesh, undo_, snap, MeshEditScope.Maps, &removeKernel);
+    }
+
+    private bool removeKernel(ref MeshEditBatch ed) {
+        // THE WHOLE PRE-IMAGE, READ BEFORE THE SPLICE, and behind
+        // `recording()` so the redo and hatch arms copy nothing. The reverse
+        // has to RE-REGISTER this map, so its payload is the map itself: name,
+        // shape, both channels — and the registry SLOT, because
+        // `removeMeshMap` splices and the re-registration appends (see
+        // `MeshOpEntry.mapSlot`; measured on the parity stand, where MA sits
+        // between `crease` and `MR`).
+        ubyte     dim;
+        MapDomain dom;
+        MapKind   kind;
+        float[]   data;
+        ubyte[]   pres;
+        uint      slot = uint.max;
+        const bool rec = ed.recording();
+        if (rec) {
+            auto live = ed.mesh.meshMap(name_);
+            // Cannot be null: `applyImpl` already resolved it and nothing has
+            // run since. Asserted rather than assumed, because a silent null
+            // here would record a shapeless entry that the replay refuses.
+            assert(live !is null,
+                "mesh.morph.remove: the map resolved in applyImpl vanished "
+              ~ "before the kernel ran");
+            dim  = live.dim;
+            dom  = live.domain;
+            kind = live.kind;
+            data = live.data.dup;      // one block memcpy, never a gather
+            pres = live.present.dup;
+            slot = mapSlotOf(&ed.mesh(), name_);
         }
+        if (!ed.mesh.removeMeshMap(name_)) return false;
+        if (rec)
+            ed.rec.recordMapRemoveOwned(name_, dim, dom, kind, slot, data, pres);
         forgetMorphTargetIfNamed(name_);
-        mesh.commitChange(MeshEditScope.Maps);
+        ed.commitChange(MeshEditScope.Maps);
         return true;
     }
 
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
-        return true;
+        // NO non-mesh tail, deliberately and unchanged: the forward DROPS the
+        // routing target when it named this map and the undo has never put it
+        // back. Recorded here so the asymmetry with `create` and `rename`
+        // reads as pre-existing behaviour rather than as something this
+        // migration lost.
+        return revertMapEdit(mesh, undo_, snap);
     }
 }
 
 class MorphRename : Command {
     private string       from_;
     private string       to_;
-    private MeshSnapshot snap;
+    private MeshSnapshot snap;      // the hatch's arm only
+    private RecordedUndo undo_;
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded undo — see MorphCreate.
+        public ref const(RecordedUndo) recordedUndo() const return { return undo_; }
+    }
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -238,20 +422,34 @@ class MorphRename : Command {
         if (mesh.meshMap(to_) !is null)
             throw new Exception(
                 "mesh.morph.rename: target name '" ~ to_ ~ "' already exists");
-        snap = MeshSnapshot.capture(*mesh);
+        return runMapEdit(mesh, undo_, snap, MeshEditScope.Maps, &renameKernel);
+    }
+
+    private bool renameKernel(ref MeshEditBatch ed) {
+        auto m = morphMapOrNull(&ed.mesh(), from_);
+        assert(m !is null, "mesh.morph.rename: the map resolved in applyImpl "
+                         ~ "vanished before the kernel ran");
         const bool wasTarget = (morphTargetName() == from_);
-        const MapKind kind = m.kind;
+        const MapKind   kind = m.kind;
+        const ubyte     dim  = m.dim;
+        const MapDomain dom  = m.domain;
         m.name = to_;
+        // TWO STRINGS — the whole reason `MapOp.Rename` exists. Spelled as
+        // Remove+Create the payload would be the entire map (task 2210
+        // measured "two strings" against 3.05 MB), which for four classes in
+        // this family is the difference between mode A and mode B.
+        if (ed.recording()) ed.rec.recordMapRename(from_, to_, dim, dom, kind);
         // Retarget rather than drop: the map the user is editing did not go
         // away, it changed name.
         if (wasTarget) setMorphTarget(to_, kind);
-        mesh.commitChange(MeshEditScope.Maps);
+        ed.commitChange(MeshEditScope.Maps);
         return true;
     }
 
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
+        if (!revertMapEdit(mesh, undo_, snap)) return false;
+        // The NON-MESH tail, and it reads the mesh AFTER the restore — so the
+        // order of these two statements is load-bearing on both paths.
         if (morphTargetName() == to_) setMorphTarget(from_, mesh.mapKind(from_));
         return true;
     }
@@ -260,6 +458,18 @@ class MorphRename : Command {
 /// Bind the routing target. An empty name clears it, which is the "edit the
 /// base again" state. NOT undoable through a snapshot — it mutates no mesh
 /// data — so `revert` restores the previous binding directly.
+///
+/// UI-ONLY, AND THEREFORE NOT MIGRATED (task 1903 Stage L1-a). It is the one
+/// class in this file that records neither a `MapValueDelta` nor a `SetPos`,
+/// and the reason is not "not yet": it writes NOTHING on the mesh. `applyImpl`
+/// moves a name and a kind in `morph_target`, which is app state, and its
+/// only `Mesh` call is the `commitChange(MapsDisplay)` below that tells the
+/// viewport to redraw. There is no before-image to record and no plane to
+/// restore, so opening an edit batch here would produce an empty delta whose
+/// `revert` answers false — the regression-0099 shape — in exchange for
+/// nothing. Its `CmdFlags.UiState` says the same thing in the history's
+/// vocabulary. Counted in the L1 roster as one of the two non-mutating map
+/// classes (the other is `WeightmapSelect`).
 class MorphSelect : Command {
     private string  name_;
     private string  prevName_;
@@ -344,7 +554,12 @@ class MorphSet : Command {
     private string       name_;
     private int          vert_ = -1;
     private float        x_ = 0.0f, y_ = 0.0f, z_ = 0.0f;
-    private MeshSnapshot snap;
+    private MeshSnapshot snap;      // the hatch's arm only
+    private RecordedUndo undo_;
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded undo — see MorphCreate.
+        public ref const(RecordedUndo) recordedUndo() const return { return undo_; }
+    }
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -374,19 +589,54 @@ class MorphSet : Command {
         if (vert_ < 0 || cast(size_t) vert_ >= mesh.vertices.length)
             throw new Exception(
                 "mesh.morph.set: vert out of range");
-        snap = MeshSnapshot.capture(*mesh);
-        if (!mesh.setMorphValue(name_, cast(size_t) vert_, Vec3(x_, y_, z_))) {
-            snap.restore(*mesh);
-            snap = MeshSnapshot.init;
+        if (!runMapEdit(mesh, undo_, snap, MeshEditScope.Maps, &setKernel))
+            // UNREACHABLE, and named as such: `setMorphValue` refuses on a
+            // missing map, a non-morph kind or an out-of-range vertex, and all
+            // three are pre-checked above. The pre-2230 code restored its
+            // snapshot before throwing here; nothing has been written when
+            // this arm is taken, so the restore was a no-op carrying a pair of
+            // version bumps, and dropping it changes nothing a reader can see.
+            // The throw itself is kept verbatim — it is an HTTP contract.
             throw new Exception("mesh.morph.set: write refused");
+        return true;
+    }
+
+    private bool setKernel(ref MeshEditBatch ed) {
+        auto mm = ed.mesh.meshMap(name_);
+        assert(mm !is null, "mesh.morph.set: the map resolved in applyImpl "
+                          ~ "vanished before the kernel ran");
+        const size_t vi = cast(size_t) vert_;
+        const bool rec = ed.recording();
+
+        // (γ) THE INDEX SET IS ALREADY KNOWN — record it directly, never diff
+        // (§K.5 rule 4). One element, so `Listed` is 4 + 12 + 1 bytes against
+        // the whole map; nothing here is pre-sized because nothing here is a
+        // loop.
+        float[3] before = 0;
+        ubyte    presBefore = 0;
+        if (rec) {
+            before[]   = mm.data[vi * 3 .. vi * 3 + 3];
+            presBefore = vi < mm.present.length ? mm.present[vi] : 0;
+        }
+        if (!ed.mesh.setMorphValue(name_, vi, Vec3(x_, y_, z_))) return false;
+        if (rec) {
+            // The AFTER image is READ BACK FROM THE LIVE MAP rather than
+            // reconstructed from the parameters. `setMorphValue` raises the
+            // presence bit only `if (vi < present.length)`, so a map whose
+            // channel is short would make a reconstructed `1` a lie — and the
+            // presence half is the plane this family loses most easily.
+            float[3] after = 0;
+            after[] = mm.data[vi * 3 .. vi * 3 + 3];
+            const ubyte presAfter = vi < mm.present.length ? mm.present[vi] : 0;
+            ed.rec.recordMapValuesOwned(name_, mm.dim, mm.domain, mm.kind,
+                MeshOpEntry.MapAddressing.Listed, [cast(uint) vi],
+                before.dup, after.dup, [presBefore], [presAfter]);
         }
         return true;
     }
 
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
-        return true;
+        return revertMapEdit(mesh, undo_, snap);
     }
 }
 
@@ -397,7 +647,12 @@ class MorphSet : Command {
 /// kind they are different states on the wire.
 class MorphClear : Command {
     private string       name_;
-    private MeshSnapshot snap;
+    private MeshSnapshot snap;      // the hatch's arm only
+    private RecordedUndo undo_;
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded undo — see MorphCreate.
+        public ref const(RecordedUndo) recordedUndo() const return { return undo_; }
+    }
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -422,16 +677,69 @@ class MorphClear : Command {
         // selection — clearing a whole map is a coherent, reversible request,
         // and `selectedVertexIndicesVertices` is the same operand set every
         // other vertex-domain command uses.
+        return runMapEdit(mesh, undo_, snap, MeshEditScope.Maps, &clearKernel);
+    }
+
+    private bool clearKernel(ref MeshEditBatch ed) {
         auto sel = mesh.selectedVertexIndicesVertices();
-        snap = MeshSnapshot.capture(*mesh);
-        foreach (vi; sel) mesh.clearMorphValue(name_, cast(size_t) vi);
+        auto mm  = ed.mesh.meshMap(name_);
+        assert(mm !is null, "mesh.morph.clear: the map resolved in applyImpl "
+                          ~ "vanished before the kernel ran");
+        const bool rec = ed.recording();
+
+        // (γ) again, and this is THE cell for the presence channel: a clear is
+        // a PRESENCE operation, not a "write zero". `clearMorphValue` zeroes
+        // the three components AND drops the bit, and for `morphAbsolute` the
+        // two are different vertex positions.
+        //
+        // PRE-SIZED, NOT APPEND-GROWN (§K.5 rule 3, task 2160): the ceiling is
+        // exact — one entry per selected vertex — and `~=` is a runtime call
+        // per element, which is what made four L0 commands twice as slow.
+        uint[]  idx;
+        float[] before, after;
+        ubyte[] pb, pa;
+        if (rec) {
+            idx    = uninitializedArray!(uint[])(sel.length);
+            before = uninitializedArray!(float[])(sel.length * 3);
+            pb     = uninitializedArray!(ubyte[])(sel.length);
+            foreach (k, vi; sel) {
+                const size_t v = cast(size_t) vi;
+                idx[k] = cast(uint) v;
+                before[k * 3 .. k * 3 + 3] = mm.data[v * 3 .. v * 3 + 3];
+                pb[k] = v < mm.present.length ? mm.present[v] : 0;
+            }
+        }
+
+        // The house whole-mesh fallback lives in
+        // `selectedVertexIndicesVertices`: no selection means every VISIBLE
+        // vertex. Unlike `mesh.edgeCrease.set` this is NOT refused on an empty
+        // selection — clearing a whole map is a coherent, reversible request.
+        foreach (vi; sel) ed.mesh.clearMorphValue(name_, cast(size_t) vi);
+
+        if (rec) {
+            // The AFTER image is read from the LIVE map, not assumed to be
+            // zeros-and-absent: `clearMorphValue` refuses an out-of-range
+            // vertex, and an entry whose after-image disagrees with the mesh
+            // is an undo that writes the wrong thing on redo.
+            after = uninitializedArray!(float[])(sel.length * 3);
+            pa    = uninitializedArray!(ubyte[])(sel.length);
+            foreach (k, vi; sel) {
+                const size_t v = cast(size_t) vi;
+                after[k * 3 .. k * 3 + 3] = mm.data[v * 3 .. v * 3 + 3];
+                pa[k] = v < mm.present.length ? mm.present[v] : 0;
+            }
+            ed.rec.recordMapValuesOwned(name_, mm.dim, mm.domain, mm.kind,
+                MeshOpEntry.MapAddressing.Listed, idx, before, after, pb, pa);
+        }
+        // NO `commitChange` HERE, deliberately: `clearMorphValue` publishes
+        // `Maps` itself, per element, and the batch DEFERS those into one
+        // stamp at `close()`. Adding one would publish on an empty selection,
+        // where the pre-2230 command published nothing at all.
         return true;
     }
 
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
-        return true;
+        return revertMapEdit(mesh, undo_, snap);
     }
 }
 
@@ -441,7 +749,17 @@ class MorphClear : Command {
 class MorphApplyCmd : Command {
     private string       name_;
     private float        amount_ = 1.0f;
-    private MeshSnapshot snap;
+    private MeshSnapshot snap;      // the hatch's arm only
+    // `PositionUndo`, NOT the map holder the five siblings use — and it is the
+    // same TYPE under a different alias (`commands/mesh/position_undo.d`). The
+    // spelling is the point: this command's payload is `Kind.SetPos`, not
+    // `Kind.MapValueDelta`, because it writes `mesh.vertices` and leaves the
+    // map exactly as it was.
+    private PositionUndo undo_;
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded undo — see MorphCreate.
+        public ref const(PositionUndo) recordedUndo() const return { return undo_; }
+    }
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -479,27 +797,67 @@ class MorphApplyCmd : Command {
             return false;
         }
         const MapKind kind = m.kind;
+
+        // REDO: re-run the kernel UNRECORDED and keep the first delta.
+        if (undo_.armed()) {
+            auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+            applyKernel(ed, kind);
+            ed.close();
+            return true;
+        }
+        if (undoTrackerEnabled()) {
+            auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
+            applyKernel(ed, kind);
+            undo_.arm(ed.close());
+            return true;
+        }
         snap = MeshSnapshot.capture(*mesh);
+        auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+        applyKernel(ed, kind);
+        ed.close();
+        return true;
+    }
+
+    /// THE ONLY POSITION WRITE IN THE FAMILY, and the reason it goes through
+    /// `ed.setVertexPositions` rather than `mesh.vertices[i] = …`: a raw
+    /// coordinate write records NOTHING under an open batch, so a delta undo
+    /// would restore the map planes (there are none here) and leave the
+    /// coordinates at their post-op values.
+    ///
+    /// Byte-identical to the loop it replaces: `setVertexPositions` skips only
+    /// writes whose new value is BIT-identical to the current one, and writing
+    /// identical bits back is what the loop did there. Bit identity, not `==`
+    /// — `meshPlanesJson` prints `%.9g`, so a `-0.0` the kernel produced is
+    /// visible in the parity dump and must still be written.
+    private void applyKernel(ref MeshEditBatch ed, MapKind kind) {
+        auto m = ed.mesh.meshMap(name_);
+        assert(m !is null, "mesh.morph.apply: the map resolved in applyImpl "
+                         ~ "vanished before the kernel ran");
+        // PRE-SIZED, NOT APPEND-GROWN (§K.5 rule 3): at most one entry per
+        // vertex, and the unwritten tail is sliced off at the call.
+        auto idxs   = uninitializedArray!(uint[])(ed.mesh.vertices.length);
+        auto newPos = uninitializedArray!(Vec3[])(ed.mesh.vertices.length);
+        size_t n = 0;
         // Only PRESENT entries move a vertex. For the relative kind an absent
         // entry would be a no-op anyway; for the absolute kind it is the
         // difference between "stay at the base" and "teleport to the origin",
         // so the presence test is load-bearing, not an optimisation.
-        foreach (i; 0 .. mesh.vertices.length) {
+        foreach (i; 0 .. ed.mesh.vertices.length) {
             if (!m.isPresent(i)) continue;
-            mesh.vertices[i] = morphApply(mesh.vertices[i],
-                                          m.entryOr(i, Vec3(0, 0, 0)),
-                                          kind, amount_);
+            idxs[n]   = cast(uint) i;
+            newPos[n] = morphApply(ed.mesh.vertices[i],
+                                   m.entryOr(i, Vec3(0, 0, 0)),
+                                   kind, amount_);
+            ++n;
         }
+        ed.setVertexPositions(idxs[0 .. n], newPos[0 .. n]);
         // Positions moved, so this is a Geometry-class change, not a Maps one:
         // the MAP is deliberately untouched.
-        mesh.commitChange(MeshEditScope.Position);
-        return true;
+        ed.commitChange(MeshEditScope.Position);
     }
 
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
-        return true;
+        return revertMapEdit(mesh, undo_, snap);
     }
 }
 

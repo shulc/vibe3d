@@ -29,11 +29,22 @@ import mesh_edit_delta : MeshEditDelta;
 
 /// The `delta_` / `armed_` pair plus its inverse.
 ///
+/// NAMED `RecordedUndo`, NOT `PositionUndo`, SINCE TASK 2230 — and the alias
+/// below is why the eleven L0-d call sites did not move. Nothing in this type
+/// is about positions: it holds a `MeshEditDelta` and a bit saying whether one
+/// was installed, and Stage L1-a's five migrated map commands
+/// (`commands/mesh/morph.d`) need exactly that with a `Kind.MapValueDelta`
+/// log inside. Copying thirty lines under a second name so that the word
+/// "position" could stay in it would have been two implementations of one
+/// mechanism; renaming the eleven `recordedUndo()` accessors in one commit
+/// would have been churn in files three concurrent lanes were building. The
+/// alias costs one line and no diff.
+///
 /// `armed_` is NOT `delta_.isEmpty` spelled twice: `arm` refuses an empty
 /// delta, and a command reads `armed()` to decide between the delta revert and
 /// its own legacy loop. An empty delta reverting to `false` would look exactly
 /// like a failed restoration to the history, which is the 0099 shape.
-struct PositionUndo {
+struct RecordedUndo {
     private MeshEditDelta delta_;
     private bool          armed_;
 
@@ -63,3 +74,8 @@ struct PositionUndo {
     /// caller loud rather than silently successful.
     bool revert(ref Mesh m) { return armed_ ? delta_.revert(m) : false; }
 }
+
+/// The L0-d spelling, kept so that the nine plain position commands and their
+/// `version (unittest)` accessors read unchanged. Not deprecated: for a
+/// position command it is the more informative of the two names.
+alias PositionUndo = RecordedUndo;

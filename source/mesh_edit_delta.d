@@ -477,6 +477,32 @@ struct MeshOpEntry {
     MapDomain mapDomain;
     MapKind   mapKind;
 
+    /// `MapOp.Remove` ONLY — the map's POSITION in `Mesh.meshMaps` at record
+    /// time, so the REVERSE puts it back where it was. `uint.max` means
+    /// "append", which is what `Create`'s forward wants and what every
+    /// hand-built entry gets by default.
+    ///
+    /// MEASURED, task 2230, and it is a finding of Stage L1-a rather than a
+    /// design: `Mesh.removeMeshMap` SPLICES, and the reverse re-registers
+    /// through `addMeshMap`, which APPENDS. On the frozen L1 parity stand the
+    /// registry is `uv W uv2 crease MA MR`; removing `MA` and re-adding it
+    /// yields `uv W uv2 crease MR MA`. `meshPlanesJson` emits `meshMaps` in
+    /// ARRAY ORDER and `MeshSnapshot.restore` puts the whole array back, so
+    /// without this field `mesh.morph.remove`'s undo produced a different
+    /// registry from the snapshot it replaces — a plane the oracle reads.
+    ///
+    /// This is NOT an identity term and must never become one: it is not
+    /// stable (every splice moves it) and it is not compared at bind time. It
+    /// is a placement HINT applied after the content is restored, and a stale
+    /// one clamps to the end rather than refusing — the entry's job is to
+    /// bring the map back, and refusing the whole restore because the registry
+    /// grew in between would trade a wrong ORDER for a missing MAP.
+    ///
+    /// Costs nothing per entry: it lands in the 4-byte padding hole after
+    /// `mapKind`, so `MeshOpEntry.sizeof` is unchanged at 560 (measured before
+    /// and after) and no pinned `byteSize` moves.
+    uint      mapSlot = uint.max;
+
     /// `MapAddressing.Listed`: the element indices, in the MAP'S OWN element
     /// space (Point => vertex, Edge => edge, PolyVertex => loop), which is the
     /// space `MeshMap.data`'s own invariant is written in
@@ -2757,8 +2783,13 @@ struct MeshEditTracker {
     /// accounted for (`name`/`dim`/`domain`/`kind` as scalars here, `data` and
     /// `present` as the two arrays; `MeshMap.dup`'s `tupleof.length == 6`
     /// tripwire is the one that fires if a seventh appears).
+    /// `slot` is the map's index in `Mesh.meshMaps` BEFORE the splice — see
+    /// `MeshOpEntry.mapSlot`. Pass `uint.max` to accept an append; a caller
+    /// that has the index and passes `uint.max` anyway restores the map's
+    /// CONTENT and loses its position in the registry, which the plane dump
+    /// reads and `MeshSnapshot` preserved.
     void recordMapRemoveOwned(string name, ubyte dim, MapDomain dom, MapKind kind,
-                              float[] data, ubyte[] present) {
+                              uint slot, float[] data, ubyte[] present) {
         if (name.length == 0 || dim == 0) return;
         MeshOpEntry e;
         e.kind          = MeshOpEntry.Kind.MapValueDelta;
@@ -2768,6 +2799,7 @@ struct MeshEditTracker {
         e.mapDim        = dim;
         e.mapDomain     = dom;
         e.mapKind       = kind;
+        e.mapSlot       = slot;
         e.mapValsBefore = data;
         e.presentBefore = present;
         append(e);
@@ -3779,12 +3811,17 @@ private void patchMapValues(ref Mesh m, ref const MeshOpEntry e, bool forward) {
             // "redo re-runs the kernel" is false for every factory built on
             // that carrier; a create that replayed empty would silently lose a
             // morphAbsolute's dense base or a copied UV channel.
-            if (forward) mapRegister(m, e, e.mapValsAfter, e.presentAfter);
+            // `uint.max` — a Create's forward APPENDS, which is what the
+            // kernel it replays did; only a Remove's reverse has a position
+            // to restore.
+            if (forward) mapRegister(m, e, e.mapValsAfter, e.presentAfter,
+                                     uint.max);
             else         mapUnregister(m, e);
             break;
         case Remove:
             if (forward) mapUnregister(m, e);
-            else         mapRegister(m, e, e.mapValsBefore, e.presentBefore);
+            else         mapRegister(m, e, e.mapValsBefore, e.presentBefore,
+                                     e.mapSlot);
             break;
         case Rename:
             if (forward) mapRename(m, e, e.mapName, e.mapNameTo);
@@ -3898,7 +3935,7 @@ private void patchMapValuesWrite(ref Mesh m, ref const MeshOpEntry e, bool forwa
 // from the supplied image. Used by `Create` FORWARD and `Remove` REVERSE —
 // the same operation, reached from the two arms whose payload class differs.
 private void mapRegister(ref Mesh m, ref const MeshOpEntry e,
-                         const(float)[] vals, const(ubyte)[] pres) {
+                         const(float)[] vals, const(ubyte)[] pres, uint slot) {
     if (e.mapName.length == 0)          { ++changeBus.mapDeltaBindRefused; return; }
     if (m.meshMap(e.mapName) !is null)  { ++changeBus.mapDeltaBindRefused; return; }
 
@@ -3925,8 +3962,11 @@ private void mapRegister(ref Mesh m, ref const MeshOpEntry e,
         return;
     }
 
-    if (e.mapAddr == MeshOpEntry.MapAddressing.DefaultInit)
-        return;   // "the content addMeshMapOfKind produces" — already there.
+    if (e.mapAddr == MeshOpEntry.MapAddressing.DefaultInit) {
+        // "the content addMeshMapOfKind produces" — already there.
+        mapMoveLastTo(m, slot);
+        return;
+    }
 
     const bool tracks = kindInfo(live.kind).tracksPresence;
     if (vals.length != live.data.length
@@ -3940,6 +3980,28 @@ private void mapRegister(ref Mesh m, ref const MeshOpEntry e,
     }
     live.data[] = vals[];
     if (tracks) live.present[] = pres[];
+    // LAST, and it must be last: `live` points into `meshMaps` and the move
+    // below rewrites that array. Fill through the pointer, then place.
+    mapMoveLastTo(m, slot);
+}
+
+// Rotate the just-appended map from the end of `meshMaps` into `slot`,
+// shifting the maps in between right by one — the inverse of the splice
+// `removeMeshMap` performed. A no-op for `uint.max` and for any slot at or
+// past the end.
+//
+// CLAMPS RATHER THAN REFUSES, and the reason is in `MeshOpEntry.mapSlot`: the
+// registry may legitimately have shrunk between record and replay, and a map
+// restored at the wrong index is a smaller error than a map not restored at
+// all. Every pointer into `meshMaps` is invalid after this call.
+private void mapMoveLastTo(ref Mesh m, uint slot) {
+    if (slot == uint.max || m.meshMaps.length == 0) return;
+    const size_t last = m.meshMaps.length - 1;
+    if (cast(size_t)slot >= last) return;
+    auto moved = m.meshMaps[last];
+    foreach_reverse (i; cast(size_t)slot .. last)
+        m.meshMaps[i + 1] = m.meshMaps[i];
+    m.meshMaps[cast(size_t)slot] = moved;
 }
 
 // Drop the entry's map — `Create` REVERSE and `Remove` FORWARD. Binds first,

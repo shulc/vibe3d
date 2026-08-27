@@ -15,14 +15,21 @@
 //     count row alone stays green when the ARGUMENT changes (L0-b's M-b4 /
 //     M-b6 lesson), so the argument TEXT is a separate row.
 //
-// THE HONEST STATE OF W-K12 AT THIS COMMIT, and it is a DEBT, not a green:
-// the kind has ZERO production recorder callers, so the caller sets below are
-// EMPTY and no mutation of a call site can redden them. The rows that ARE
-// live today are the two that do not depend on a caller existing: the
-// declaration counts (a first caller cannot be added while this file still
-// says there is none — the `l0_declined_census_test.d` shape) and the
-// EXTRACTOR's own probe cells, which run the scanner over synthetic source so
-// the machinery is proven before L1-a and L1-e have anything for it to read.
+// THE STATE OF W-K12'S ARGUMENT-TEXT HALF, updated at Stage L1-a (task 2230).
+// It shipped VACUOUS at L1-P1 — the kind had zero production recorder callers,
+// so there was no call site whose argument could be substituted. `morph.d` is
+// the first, and the argument table below is now DRIVEN: it pins the before /
+// after / presence arguments of all six of its calls, and a mutation that
+// swaps one for another keeps every count row green and reddens only here.
+// (`recordMapValueDiff`'s own set is still empty and still owed by L1-e; that
+// row is labelled where it stands.)
+//
+// WHY AN ARGUMENT ROW AND NOT JUST A COUNT — L0-b's M-b4/M-b6 lesson, and this
+// family gives it its sharpest form: the presence channel's before-image and
+// after-image are two arrays of the same type, the same length, at adjacent
+// argument positions. Passing the after-image where the before-image belongs
+// compiles, keeps the count at one call, restores every float correctly, and
+// silently drops the presence half of the undo.
 // ===========================================================================
 module tests.unit.map_delta_census_test;
 
@@ -179,19 +186,25 @@ private struct SymRow { string sym; string file; size_t n; string why; }
 
 unittest
 {
-    // THE SET IS CLOSED AND ENUMERATED. Six symbols, five call sites, and four
-    // of the five are declarations. `recordMapValuesOwned`'s two calls in
-    // `mesh.d` are `recordMapValueDiff`'s own two arms — the sparse one and
-    // the dense one — and they are the reason that method reports WHICH
-    // spelling won.
+    // THE SET IS CLOSED AND ENUMERATED. Six symbols; `mesh_edit_delta.d`'s row
+    // for each is its DECLARATION, `mesh.d`'s two `recordMapValuesOwned` calls
+    // are `recordMapValueDiff`'s own arms (the sparse one and the dense one,
+    // which is why that method reports WHICH spelling won), and `morph.d` is
+    // the kind's FIRST PRODUCTION CALLER — Stage L1-a, six calls across five
+    // command classes.
     static immutable SymRow[] rows = [
         SymRow("recordMapValueDiff(",         "mesh.d",             1, "its declaration on MeshEditBatch"),
         SymRow("recordMapValuesOwned(",       "mesh_edit_delta.d",  1, "its declaration on MeshEditTracker"),
         SymRow("recordMapValuesOwned(",       "mesh.d",             2, "recordMapValueDiff's WholeArray and Listed arms"),
+        SymRow("recordMapValuesOwned(",       "morph.d",            2, "mesh.morph.set (one element) and mesh.morph.clear (the selected set) — both `Listed`, both recorded from a KNOWN index set rather than diffed"),
         SymRow("recordMapCreate(",            "mesh_edit_delta.d",  1, "its declaration"),
+        SymRow("recordMapCreate(",            "morph.d",            1, "mesh.morph.create's RELATIVE branch — created empty, so DefaultInit is faithful in both directions"),
         SymRow("recordMapCreateFilledOwned(", "mesh_edit_delta.d",  1, "its declaration"),
+        SymRow("recordMapCreateFilledOwned(", "morph.d",            1, "mesh.morph.create's ABSOLUTE branch — created DENSE, so the content must ride or a forward replay loses the base snapshot"),
         SymRow("recordMapRemoveOwned(",       "mesh_edit_delta.d",  1, "its declaration"),
+        SymRow("recordMapRemoveOwned(",       "morph.d",            1, "mesh.morph.remove"),
         SymRow("recordMapRename(",            "mesh_edit_delta.d",  1, "its declaration"),
+        SymRow("recordMapRename(",            "morph.d",            1, "mesh.morph.rename — two strings, which is the whole reason the arm exists"),
     ];
 
     // The symbols, DEDUPED — `recordMapValuesOwned` is listed under two
@@ -236,13 +249,121 @@ unittest
     assert(extras.length == 0, format(
         "census: a map recorder is called from a file the table does not name: "
       ~ "%s.\n"
-      ~ "AT THIS COMMIT Kind.MapValueDelta has ZERO production recorder "
-      ~ "callers; the first is Stage L1-a (commands/mesh/morph.d), and L1-e "
-      ~ "fills `recordMapValueDiff`'s set. If you are that commit: add your "
-      ~ "call sites to the table TOGETHER WITH the exact TEXT of each one's "
-      ~ "before-image / content argument, because a count row stays green when "
-      ~ "the ARGUMENT changes (L0-b, M-b4) and the two create spellings differ "
-      ~ "by exactly that argument.", extras));
+      ~ "The recorder callers of Kind.MapValueDelta are ENUMERATED, not merely "
+      ~ "counted: `commands/mesh/morph.d` (Stage L1-a, six calls) and "
+      ~ "`recordMapValueDiff`'s own two arms in mesh.d. L1-c (weightmap.d), "
+      ~ "L1-d (uv_map_util.d) and L1-e (the six UV value files) each owe their "
+      ~ "own rows. If you are one of them: add your call sites to the table "
+      ~ "TOGETHER WITH the exact TEXT of each one's before-image / content "
+      ~ "argument in the block below, because a count row stays green when the "
+      ~ "ARGUMENT changes (L0-b, M-b4) and the two create spellings differ by "
+      ~ "exactly that argument.", extras));
+}
+
+// ===========================================================================
+// W-K12's ARGUMENT-TEXT half, DRIVEN from Stage L1-a onwards.
+//
+// The count row above says WHO records; this one says WITH WHAT. The two
+// failures it exists for are both invisible to a count:
+//
+//   * the before-image and the after-image are swapped, or one is passed
+//     twice. For the presence channel that is a legal-looking undo that
+//     restores every float and silently loses the presence plane — the
+//     family's headline failure, measured at Stage F1 in its zero-fill form.
+//   * a pre-op image is replaced by the LIVE array. The call still compiles,
+//     still records one entry, and the entry's before-image is then equal to
+//     its after-image, so the undo restores nothing and reports success.
+//
+// The arguments are pinned by INDEX into the call, which is what makes the row
+// specific: a reordering of the recorder's parameters moves the expectations
+// here and is meant to.
+// ===========================================================================
+private struct ArgRow {
+    string file;    // basename under source/
+    string sym;     // recorder name, no paren
+    size_t call;    // which call in file order
+    size_t arg;     // 0-based argument index
+    string want;    // exact stripped text
+    string why;
+}
+
+unittest
+{
+    static immutable ArgRow[] args = [
+        // mesh.morph.set — one element, both channels, images read from the
+        // LIVE map on both sides of the write.
+        ArgRow("morph.d", "recordMapValuesOwned", 0, 6, "before.dup",
+            "the pre-op components, captured BEFORE setMorphValue runs"),
+        ArgRow("morph.d", "recordMapValuesOwned", 0, 7, "after.dup",
+            "the post-op components, READ BACK from the live map rather than "
+          ~ "reconstructed from the command's parameters"),
+        ArgRow("morph.d", "recordMapValuesOwned", 0, 8, "[presBefore]",
+            "the presence bit as it was. Swap this for [presAfter] and every "
+          ~ "float still restores while the presence half is lost"),
+        ArgRow("morph.d", "recordMapValuesOwned", 0, 9, "[presAfter]",
+            "the presence bit as it now is"),
+        // mesh.morph.clear — the selected set, four pre-sized arrays.
+        ArgRow("morph.d", "recordMapValuesOwned", 1, 6, "before",
+            "the pre-op values of the cleared elements"),
+        ArgRow("morph.d", "recordMapValuesOwned", 1, 7, "after",
+            "the post-clear values, gathered from the live map so a refused "
+          ~ "element is recorded as it really is"),
+        ArgRow("morph.d", "recordMapValuesOwned", 1, 8, "pb",
+            "the presence bits as they were. THIS is the argument mutation M1 "
+          ~ "substitutes; the count row stays green under it"),
+        ArgRow("morph.d", "recordMapValuesOwned", 1, 9, "pa",
+            "the presence bits after the clear — all zero for every element "
+          ~ "the kernel actually reached"),
+        // mesh.morph.create, absolute — the forward-faithful content.
+        ArgRow("morph.d", "recordMapCreateFilledOwned", 0, 4, "m.data.dup",
+            "the created content, carried so a FORWARD replay (redo through "
+          ~ "MeshSessionEdit) reproduces the dense base snapshot"),
+        ArgRow("morph.d", "recordMapCreateFilledOwned", 0, 5, "m.present.dup",
+            "…and its presence channel, for the same reason"),
+        // mesh.morph.remove — the whole map, plus the registry slot.
+        ArgRow("morph.d", "recordMapRemoveOwned", 0, 4, "slot",
+            "the map's index in meshMaps BEFORE the splice. Pass uint.max "
+          ~ "here and the undo restores the map's CONTENT at the wrong "
+          ~ "position, which meshPlanesJson reads and the frozen oracle sees"),
+        ArgRow("morph.d", "recordMapRemoveOwned", 0, 5, "data",
+            "the pre-op values, dup'd before removeMeshMap splices them away"),
+        ArgRow("morph.d", "recordMapRemoveOwned", 0, 6, "pres",
+            "…and the presence channel"),
+        // mesh.morph.rename — two strings and nothing else.
+        ArgRow("morph.d", "recordMapRename", 0, 0, "from_", "the old name"),
+        ArgRow("morph.d", "recordMapRename", 0, 1, "to_",   "the new name"),
+    ];
+
+    // NON-VACUITY FIRST: the table must name at least one file, and the
+    // extractor must find the calls it claims. A table that resolved to zero
+    // calls would pass every row below by never entering the loop.
+    assert(args.length > 0, "the argument table is empty");
+
+    size_t checked = 0;
+    foreach (ref r; args) {
+        const string path = buildPath(repoRoot, "source", "commands", "mesh", r.file);
+        assert(exists(path), format(
+            "census: %s is missing — the argument scan would report nothing", path));
+        auto calls = callArgs(codeView(readText(path)), r.sym);
+        assert(r.call < calls.length, format(
+            "census: %s holds %d call(s) to `%s`; the table names call #%d. A "
+          ~ "call that MOVED is a call whose arguments nobody is checking any "
+          ~ "more.", r.file, calls.length, r.sym, r.call));
+        auto a = calls[r.call];
+        assert(r.arg < a.length, format(
+            "census: call #%d to `%s` in %s takes %d argument(s); the table "
+          ~ "names #%d.", r.call, r.sym, r.file, a.length, r.arg));
+        assert(a[r.arg] == r.want, format(
+            "census: argument %d of call #%d to `%s` in %s reads `%s`, the "
+          ~ "table says `%s` (%s).\n"
+          ~ "This row exists because the COUNT row above stays green through "
+          ~ "exactly this edit: same caller, same number of calls, different "
+          ~ "array handed over. If the change is deliberate, move this row "
+          ~ "with it — and check that a witness covers the new behaviour.",
+            r.arg, r.call, r.sym, r.file, a[r.arg], r.want, r.why));
+        ++checked;
+    }
+    assert(checked == args.length, "the argument scan skipped a row");
 }
 
 unittest // the extractor's OWN probe — the half that is live before L1-a

@@ -3538,10 +3538,18 @@ unittest // L0-d — the zone total equals the nine plus the recorded remainder
 
     // The remainder, enumerated. These are NOT L0-d's: `move_vertex.d` is L0-e
     // (owner Q4 — its forward is deliberately version-silent via
-    // `publishChange`); `edge_join.d`, `morph.d`, `remesh.d` and
-    // `vertex_edit.d` are later families. Listing them by NAME is what stops a
-    // tenth file's new raw write from hiding inside a total that merely "did
-    // not change".
+    // `publishChange`); `edge_join.d`, `remesh.d` and `vertex_edit.d` are
+    // later families. Listing them by NAME is what stops a tenth file's new
+    // raw write from hiding inside a total that merely "did not change".
+    //
+    // `morph.d:1` LEFT this list at task 1903 §L1-a. Its one raw write was
+    // `mesh.morph.apply`'s bake loop (`mesh.vertices[i] = morphApply(…)`), the
+    // only POSITION write in the whole map family, and it is now an
+    // `ed.setVertexPositions` recording `Kind.SetPos`. That single write is
+    // the whole of the drop from 8 to 7, and — per this row's own warning —
+    // a green here is the TEXT half only: the behavioural half is
+    // `tests/unit/morph_delta_test.d`'s M5 cell, which asserts the recorded
+    // log is exactly [SetPos] and that its revert lands on the pre-op planes.
     //
     // `transform.d:6` and `symmetrize.d:1` LEFT this list at task 1903 §L0-b
     // and are now `== 0` rows of their own, in the L0-b block below. Their
@@ -3550,7 +3558,7 @@ unittest // L0-d — the zone total equals the nine plus the recorded remainder
     // `source/symmetry.d`, which neither census zone scans, so the L0-b block
     // brings that file in by name (the `deform_magnet.d` shape).
     static immutable string[] kRemainder = [
-        "edge_join.d:2", "morph.d:1", "move_vertex.d:2", "remesh.d:1",
+        "edge_join.d:2", "move_vertex.d:2", "remesh.d:1",
         "vertex_edit.d:2",
     ];
     import std.algorithm : sort;
@@ -3563,12 +3571,13 @@ unittest // L0-d — the zone total equals the nine plus the recorded remainder
              ~ "commit — otherwise the zone-total row below goes on adding up "
              ~ "to the same number over a different set of files.",
                got, kRemainder));
-    assert(zoneTotal == 8,
+    assert(zoneTotal == 7,
         format("source/commands/mesh holds %d raw position write(s) in total, "
-             ~ "expected 8 = 0 (the nine L0-d files) + 0 (the two L0-b files) "
-             ~ "+ 8 (the enumerated remainder above). It was 15 before task "
-             ~ "1903 §L0-b took transform.d's six and symmetrize.d's one. "
-             ~ "%d file(s) scanned.", zoneTotal, scanned));
+             ~ "expected 7 = 0 (the nine L0-d files) + 0 (the two L0-b files) "
+             ~ "+ 7 (the enumerated remainder above). It was 15 before task "
+             ~ "1903 §L0-b took transform.d's six and symmetrize.d's one, and "
+             ~ "8 before §L1-a took morph.d's one. %d file(s) scanned.",
+               zoneTotal, scanned));
 }
 
 unittest // L0-d — the hole a zone boundary leaves: deform_magnet.d

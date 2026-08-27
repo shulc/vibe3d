@@ -13,22 +13,29 @@
 // runs many tests, so a `== 0` on the absolute measures whatever ran before.
 //
 // -------------------------------------------------------------------------
-// THIS FILE IS A DEBT ROW, NOT A GREEN. READ THIS BEFORE TRUSTING ITS ZEROS.
+// BLOCK 1 WAS A DEBT ROW AT L1-P1 AND IS DISCHARGED AT L1-a (task 2230).
 // -------------------------------------------------------------------------
-// At the commit that introduced the kind, NO SHIPPED RECORDER EMITS IT: all 21
-// map command classes still record whole-mesh `MeshSnapshot` pairs, and the
-// kind's first production caller is Stage L1-a (`commands/mesh/morph.d`). So
-// the three counters below CANNOT MOVE in this lane however broken the
-// dispatch is — no mutation of the guard, the latch or the bind terms reddens
-// block 1, and its zeros are dead cells.
+// At the commit that introduced the kind, NO SHIPPED RECORDER EMITTED IT, so
+// the three counters could not move in this lane however broken the dispatch
+// was: no mutation of the guard, the latch or the bind terms reddened block 1
+// and its zeros were dead cells. It shipped anyway with that sentence
+// attached, because block 2 was live from the start (it pins that the three
+// fields are SERIALISED, and a counter nobody can read is a counter nobody
+// will assert) and because block 1 became real at the commit that OWED it.
 //
-// It ships anyway, with this sentence attached, for two reasons. Block 2 is
-// live TODAY: it pins that the three fields are actually SERIALISED, which a
-// mutation of `http_server.d`'s format string reddens immediately — and a
-// counter nobody can read is a counter nobody will assert. And block 1 becomes
-// a real check the moment L1-a lands, which is the commit that OWES it: the
-// migrated morph group exercises all four `MapOp` arms in production, and from
-// then on a mixed log or a bind refusal shows up here.
+// THAT COMMIT IS STAGE L1-a. `commands/mesh/morph.d` now records
+// `Kind.MapValueDelta` from five classes across all four `MapOp` arms, and
+// `mesh.morph.apply` records `Kind.SetPos`, so every `mesh.morph.*` line below
+// drives the kind's recorder, its replay guard and its bind terms for real.
+// The mutation that shows it: make `bindMapForEntry` refuse unconditionally in
+// `source/mesh_edit_delta.d` -> `mapDeltaBindRefused` moves on the undo pass
+// and this block reddens naming it. Verified in this lane, task 2230.
+//
+// STILL PARTLY OWED, and named so nobody reads the green as total: the
+// `mesh.weightmap.*` and `uv.*` lines are exercising commands that are STILL
+// DENSE (their groups are L1-c and L1-d), so those four commands contribute
+// nothing to these counters yet and their zeros remain dead cells. Only the
+// five morph lines and their undo/redo are live.
 //
 // The witnesses that ARE potent at this commit all live in the OTHER lane —
 // `dub test --config=tests`, over `tests/unit/map_value_delta_test.d`,
@@ -59,6 +66,41 @@ void cmdJ(string id, string paramsJson = "{}") {
     assert(j["status"].str == "ok", "cmdJ `" ~ id ~ "` failed: " ~ j.toString);
 }
 
+// UNDO IS `/api/undo`, NOT a command id — and the return value is ASSERTED.
+//
+// THIS IS A DEFECT THIS FILE SHIPPED WITH (found at Stage L1-a, task 2230).
+// Block 1 used to post `{"id":"undo"}` to `/api/command` ten times and read
+// nothing back. There is no command registered under that id, so every one of
+// those posts answered a non-ok status and performed NO UNDO — which means
+// block 1 was vacuous for a SECOND, independent reason nobody had named: even
+// after a recorder for the kind existed, the replay guard and the bind terms
+// still would not have run, because the replay never happened. Measured: with
+// `bindMapForEntry` mutated to refuse UNCONDITIONALLY, the old block stayed
+// green.
+//
+// The lesson is the general one, and it is why the asserts are here: a request
+// whose response nobody reads is not an exercise of anything. `n` is returned
+// so a caller can say how many steps actually ran.
+size_t undoN(size_t n) {
+    size_t did = 0;
+    foreach (_; 0 .. n) {
+        auto j = postJson("/api/undo", "");
+        if (j["status"].str != "ok") break;
+        ++did;
+    }
+    return did;
+}
+
+size_t redoN(size_t n) {
+    size_t did = 0;
+    foreach (_; 0 .. n) {
+        auto j = postJson("/api/redo", "");
+        if (j["status"].str != "ok") break;
+        ++did;
+    }
+    return did;
+}
+
 void selectAllVerts(int n) {
     import std.conv : to;
     string idx;
@@ -67,7 +109,7 @@ void selectAllVerts(int n) {
     assert(j["status"].str == "ok", "select failed: " ~ j.toString);
 }
 
-unittest { // block 1 — the family moves none of the three. VACUOUS AT L1-P1.
+unittest { // block 1 — the family moves none of the three. LIVE for morph.*
     postJson("/api/reset", "");
     selectAllVerts(8);
 
@@ -91,7 +133,30 @@ unittest { // block 1 — the family moves none of the three. VACUOUS AT L1-P1.
     // …and their UNDOs, because the replay guard and the bind terms only run
     // on `apply`/`revert`. A forward-only exercise cannot move `mapDeltaMix`-
     // `Refused` or `mapDeltaBindRefused` at all.
-    foreach (_; 0 .. 10) postJson("/api/command", `{"id":"undo"}`);
+    //
+    // THE COUNT IS ASSERTED. Ten commands were dispatched above and every one
+    // of them lands a history entry, so ten undos must succeed; anything less
+    // means the replay this block is measuring did not run and its three zeros
+    // are dead cells again.
+    const size_t undone = undoN(10);
+    assert(undone == 10, format(
+        "only %d of 10 undos succeeded — the replay that moves these counters "
+      ~ "did not run, so the zeros below would be measuring nothing. (This is "
+      ~ "the exact shape the file shipped with: ten posts to a command id that "
+      ~ "does not exist, none of them checked.)", undone));
+
+    // …and their REDOs, and then the undos again. `applyForward` is a separate
+    // dispatch from `applyReverse` and has its own bind path: the `Create`
+    // arm's forward REGISTERS a map and refuses on a taken name, which only a
+    // redo can reach. Without this pass the whole forward half of
+    // `patchMapValues` is unexercised in this lane.
+    const size_t redone = redoN(10);
+    assert(redone == 10, format(
+        "only %d of 10 redos succeeded — the FORWARD half of the map dispatch "
+      ~ "is then unexercised in this lane.", redone));
+    const size_t undone2 = undoN(10);
+    assert(undone2 == 10, format(
+        "only %d of 10 second-pass undos succeeded", undone2));
 
     const after = changes();
 

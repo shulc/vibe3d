@@ -43,6 +43,46 @@ import mesh_selsets;
 // `store`/`edit`/`rename`/`delete` mutate mesh METADATA (the registry) ⇒
 // `MeshSnapshot` + `MeshEditScope.Material`. `apply` mutates SELECTION only,
 // across possibly several meshes ⇒ one `SelectionSnapshot` per touched layer.
+//
+// ALL FIVE OF THOSE CAPTURES ARE PERMANENT. Each class below says so at its
+// own declaration and gives its own reason; what they share, and what is
+// therefore written here once rather than five times, is the ARITHMETIC of the
+// alternative. A new `MeshOpEntry.Kind` is not a local addition: the enum is
+// consumed by SIX exhaustive `final switch`es in `source/mesh_edit_delta.d`
+// (`kindHoldsIndexSpace`, `owesTopologyBump`, `displayTermFor`,
+// `owesDisplayRefresh`, `applyForward`, `applyReverse`) plus a seventh in
+// `tests/test_mesh_edit_delta.d`, and every one of them is `final` ON PURPOSE
+// so that a new kind is a compile error rather than a silent `default:`. A
+// sixteenth kind therefore owes seven branches for good — against a dense side
+// which, for a set edit, is one `MeshSnapshot` and has never been anything
+// else. That is the same sum that declined `PartDelta` (owner's Q2 ruling,
+// 2026-08-27), reached here on a different plane.
+//
+// The registry is SIX fields (`mesh.d`, "Selection sets"): three `*SetNames`
+// slot arrays, `vertexSetMask` and `faceSetMask` (one `ulong` of membership
+// bits per element) and `edgeSetMask` — an `ulong[ulong]` keyed by the
+// canonical vertex PAIR, which has no length and no index space at all. No
+// `MeshOpEntry.Kind` carries any of those as a PAYLOAD, and the map-value kind
+// added at Stage L1-P1 does not either: it carries "which MAP, which elements,
+// what was, what is". A set registry is a DIFFERENT PLANE, not a
+// differently-sized one, which is precisely the line the owner's L1 ruling
+// (2026-08-27) drew when it gave the twenty-odd map-value classes one kind and
+// gave these five none.
+//
+// AND SAY WHAT THAT IS NOT SAYING, because the delta machinery does touch
+// these planes and reading the paragraph above backwards is easy:
+// `faceSetMask` rides as a PASSENGER through face renumbering and
+// `edgeSetMask` is re-keyed at four replay sites in `mesh_edit_delta.d`
+// (`selSetRekeyEdges`), precisely so that a topology delta cannot silently
+// reattach a set to the wrong element. Sets are CARRIED ACROSS a delta today.
+// What does not exist — and is not going to — is a kind whose payload is
+// "this set's membership changed".
+//
+// The gate that keeps these five declarations honest is
+// `tests/unit/l1_declined_census_test.d`: it counts the dense capture in this
+// file and refuses any `record*` call appearing in it, because those are the
+// two things a migration would have to change. It deliberately does not count
+// the words below.
 // `cmdFlags()` is left at the default `Model` class (matches `select.byTag`
 // / `select.invert` — deliberately NOT `mesh.select`'s `UiState`, since a
 // selection SET, unlike a bare selection, is data the user would mind losing).
@@ -160,6 +200,20 @@ private string parseApplyMode(string s, out SetApplyMode mode) {
 // ---------------------------------------------------------------------------
 // select.set.store — create from the current selection; unions into an
 // existing name. Literally `edit mode:add` behind a second id.
+//
+// PERMANENTLY DENSE (owner's L1 ruling, 2026-08-27). The `MeshSnapshot` below
+// is this command's undo for good; it is not an unfinished migration.
+//
+// ITS OWN REASON: `store` writes membership. `domainEdit(…, SetEditMode.add)`
+// may ALLOCATE A SLOT in `vertexSetNames` / `edgeSetNames` / `polygonSetNames`
+// (reusing a free one, which is an empty name string, before growing) and then
+// ORs one bit into every selected element's mask word — or, in the edge
+// domain, inserts keys into an associative array. A recorded undo for that
+// would have to carry a slot index that is NOT stable (slot indices are
+// assignment order and are not preserved across save/load, which is why every
+// reference outside a mesh is by NAME), plus a per-element bit plane in two
+// different shapes. Nothing in `MeshOpEntry` expresses either half; see the
+// module header for the price of a kind that would.
 // ---------------------------------------------------------------------------
 class SelectSetStore : Command {
     private string       name_ = "";
@@ -198,6 +252,19 @@ class SelectSetStore : Command {
 // ---------------------------------------------------------------------------
 // select.set.edit — add/remove/replace a set's membership from the live
 // selection. A missing name CREATES the set (measured).
+//
+// PERMANENTLY DENSE (owner's L1 ruling, 2026-08-27).
+//
+// ITS OWN REASON, and it is the sharpest of the four: this command's THREE
+// modes are three different registry edits behind one id. `add` ORs bits;
+// `remove` clears them, and in the edge domain DELETES the associative-array
+// key once its mask word reaches zero, so the undo has to distinguish "this
+// pair was absent" from "this pair was present with other sets' bits";
+// `replace` overwrites the whole membership plane of that set. A delta kind
+// would need all three shapes, and the one that deletes a key has no length
+// to compare against — the failure would be a set that comes back with a
+// missing element and no assertion anywhere to trip. The dense capture gets
+// all three right by construction, and it is one `MeshSnapshot` per set edit.
 // ---------------------------------------------------------------------------
 class SelectSetEdit : Command {
     private string       name_ = "";
@@ -250,6 +317,37 @@ class SelectSetEdit : Command {
 // `Document*`-binding pattern instead of a single `Mesh*` — it is genuinely
 // not a single-mesh operation (measured: an owner selected while NOT primary
 // still fires, `cap/fin3.json` `f3_set_scope_primary`).
+//
+// PERMANENTLY DENSE, and for TWO INDEPENDENT REASONS (owner's L1 ruling,
+// 2026-08-27). Both are written out because FIXING EITHER ONE LEAVES THE OTHER
+// STANDING — a reader who removes one and reads the decision as settled has
+// re-opened nothing.
+//
+// BLOCKER 1 — the payload is the selection OBJECT, not a set, and that object
+// was declined at Q6. `domainApply` writes the Select bit of a mark array AND
+// stamps that domain's `*SelectionOrder` AND moves its `*SelectionOrderCounter`
+// (three planes × three domains, which is why `SelectionSnapshot` captures all
+// nine and not the one domain the command was invoked in). `Kind.SelectionDelta`
+// — the nearest existing kind — carries mark WORDS ONLY: no order array, no
+// counter. Routed onto it, an undo would restore membership, lose the ORDER,
+// and answer `true`; the sibling family has that failure MEASURED, not
+// supposed (the `hide` capture of 2026-08-27, cell `D2_CROSS`: one undo
+// restores the selection, its position in the order, and a domain the command
+// never worked in). A Marks publisher that could carry the object is the
+// object the owner declined to own at Q6, and it is still nobody's.
+//
+// BLOCKER 2 — N MESHES, AND A `MeshEditDelta` BINDS ONE. `applyImpl` walks
+// every FOREGROUND layer, selects inside every owner it finds, and keeps one
+// `SelectionSnapshot` per touched mesh; a `MeshEditDelta` is produced by a
+// batch over a single `Mesh` and replayed into a single `Mesh`. No decision
+// about Q6 and no new kind changes that — it is a property of the delta's
+// BINDING, not of its payload, and it is the half that cannot be argued away.
+//
+// The visible consequence, named rather than hidden: the frozen L1 parity
+// oracle (`tests/fixtures/undo_parity/uv_maps_sets.json`) has 26 cells and
+// none of them is this command, because `meshPlanesJson` reads ONE mesh. A
+// one-layer rig would let it construct and would then measure exactly the case
+// in which neither blocker arises, which is a decoy and not a cell.
 // ---------------------------------------------------------------------------
 class SelectSetApply : Command {
     private string   name_ = "";
@@ -329,6 +427,20 @@ class SelectSetApply : Command {
 // arguments). Split out as its own id rather than an `edit` mode, matching
 // `mesh.weightmap.rename`'s precedent and keeping `edit`'s mode enum closed
 // over membership verbs.
+//
+// PERMANENTLY DENSE (owner's L1 ruling, 2026-08-27).
+//
+// ITS OWN REASON, and it is the one that looks most like a false decline, so
+// it is spelled out: `Kind.MapValueDelta` HAS a `Rename` arm, carrying two
+// strings, added at Stage L1-P1 precisely because a rename expressed as
+// remove+create costs a whole map. This command's rename is NOT that arm.
+// It moves a name inside `vertexSetNames` / `edgeSetNames` /
+// `polygonSetNames` — a SLOT array whose index is the bit position in the
+// membership masks — while the map arm moves `MeshMap.name`, a field on an
+// entry in `meshMaps`. The two are the same English word over two different
+// registries, and the map arm's bind terms (`dim`, `domain`, `kind`, and a
+// uniqueness check over `meshMaps`) have no meaning here. Reusing it would be
+// a kind whose payload does not describe the thing it edits.
 // ---------------------------------------------------------------------------
 class SelectSetRename : Command {
     private string       from_ = "";
@@ -385,6 +497,20 @@ class SelectSetRename : Command {
 // select.set.delete — unconditional on selection. Purges the name AND every
 // element's membership (measured: `ptag 'A;B B;C'` -> delete A -> `'B B;C'`
 // — our vertex/polygon bitmask and edge AA are cleared the equivalent way).
+//
+// PERMANENTLY DENSE (owner's L1 ruling, 2026-08-27).
+//
+// ITS OWN REASON: this is the widest write of the five and the one whose undo
+// is least like a payload. `domainDelete` frees the NAME SLOT (the entry
+// becomes an empty string, which `ensureSlot` will later hand to an unrelated
+// set) and clears that slot's bit in EVERY element — `clearBitEverywhere` over
+// the whole vertex or face mask, and over every key of `edgeSetMask`, dropping
+// each key whose word reaches zero. So its undo has to restore a slot INDEX
+// (unstable by design), an element-count-wide bit plane, and a set of
+// associative-array keys that no longer exist to be diffed against. That is
+// three shapes, none of them in `MeshOpEntry`, to undo an operation whose
+// dense capture is one `MeshSnapshot` — the arithmetic in the module header,
+// at its worst ratio.
 // ---------------------------------------------------------------------------
 class SelectSetDelete : Command {
     private string       name_ = "";

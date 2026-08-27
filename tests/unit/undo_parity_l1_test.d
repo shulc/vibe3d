@@ -67,11 +67,21 @@ private Mesh* l1Stand()
 /// A one-layer document would let it construct and then measure the one case
 /// its two blockers do not arise in, which is a decoy, not a cell. It is named
 /// as a gap.
+/// `path` — WHICH UNDO PATH THE CELL RUNS TODAY, not which one produced the
+/// frozen file. The two diverge from Stage L1-a onwards and that is the whole
+/// point of the fixture: the JSON still records `"path": "snapshot"` because a
+/// snapshot really did produce it, at `17679d17`, while the six `mesh.morph.*`
+/// cells below now run `MeshEditDelta.revert` against it. The field travels in
+/// the dump's `provenance` block, which `comparePlanes` skips — so this is a
+/// statement for the reader and moves no comparison.
 ParityCell[] l1Cells(string sha)
 {
     ParityCell[] out_;
-    void cell(string name, Command delegate(Mesh*, View) mk) {
-        out_ ~= runCell(name, "snapshot", kL1Family, kL1Stand, sha, &l1Stand, mk);
+    void cell(string name, Command delegate(Mesh*, View) mk, string path = "snapshot") {
+        out_ ~= runCell(name, path, kL1Family, kL1Stand, sha, &l1Stand, mk);
+    }
+    void deltaCell(string name, Command delegate(Mesh*, View) mk) {
+        cell(name, mk, "delta");
     }
 
     // ---- uv_map_util.d — the map REGISTRY, (R) ---------------------------
@@ -145,20 +155,28 @@ ParityCell[] l1Cells(string sha)
         return cast(Command)c; });
 
     // ---- morph.d — the PRESENCE-tracked kinds ----------------------------
-    cell("mesh.morph.create", (m, v) {
+    //
+    // MIGRATED AT STAGE L1-a (task 2230): these six cells run the DELTA path
+    // against a fixture the SNAPSHOT path produced, which is what the frozen
+    // oracle exists for. One finding came out of it and was fixed in the code
+    // rather than re-frozen: `mesh.morph.remove`'s undo re-registered the map
+    // at the END of `meshMaps` (`removeMeshMap` splices, `addMeshMap` appends)
+    // while the snapshot restored the array whole, so the `meshMaps` plane
+    // differed in ORDER. `MeshOpEntry.mapSlot` carries the position now.
+    deltaCell("mesh.morph.create", (m, v) {
         auto c = new MorphCreate(m, v, EditMode.Vertices);
         setS(c, "name", "MB"); setS(c, "kind", "absolute");
         return cast(Command)c; });
-    cell("mesh.morph.remove", (m, v) {
+    deltaCell("mesh.morph.remove", (m, v) {
         auto c = new MorphRemove(m, v, EditMode.Vertices);
         setS(c, "name", "MA"); return cast(Command)c; });
-    cell("mesh.morph.rename", (m, v) {
+    deltaCell("mesh.morph.rename", (m, v) {
         auto c = new MorphRename(m, v, EditMode.Vertices);
         setS(c, "from", "MA"); setS(c, "to", "MZ"); return cast(Command)c; });
     // The cell that separates "restored the value" from "restored the
     // presence": vertex 3 is ABSENT on the stand, so this write flips a
     // presence bit as well as three floats.
-    cell("mesh.morph.set", (m, v) {
+    deltaCell("mesh.morph.set", (m, v) {
         auto c = new MorphSet(m, v, EditMode.Vertices);
         setS(c, "name", "MA"); setI(c, "vert", 3);
         setF(c, "x", 0.7f); setF(c, "y", -0.3f); setF(c, "z", 0.25f);
@@ -167,13 +185,13 @@ ParityCell[] l1Cells(string sha)
     // clear zeroes `data` AND drops `present`. A revert that restores only
     // `data` leaves them absent, which for `MA` (morphAbsolute) is a
     // GEOMETRIC difference and for `MR` is not.
-    cell("mesh.morph.clear", (m, v) {
+    deltaCell("mesh.morph.clear", (m, v) {
         m.selectVertex(1); m.selectVertex(4);
         auto c = new MorphClear(m, v, EditMode.Vertices);
         setS(c, "name", "MA"); return cast(Command)c; });
     // Writes POSITIONS, reads the map. The one class in the family whose
     // payload is (P) `Kind.SetPos` and not a map value at all.
-    cell("mesh.morph.apply", (m, v) {
+    deltaCell("mesh.morph.apply", (m, v) {
         auto c = new MorphApplyCmd(m, v, EditMode.Vertices);
         setS(c, "name", "MA"); setF(c, "amount", 1.0f);
         return cast(Command)c; });
