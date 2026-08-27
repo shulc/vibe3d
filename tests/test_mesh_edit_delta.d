@@ -196,6 +196,12 @@ unittest {
             // values in any case, so it cannot appear here either — added
             // only to satisfy the `final switch`.
             case MapValueDelta: break;
+            // task 2310: EdgeSetRekey is recorded only by the two WELD remaps,
+            // and only on a mesh that carries edge selection sets. This stand
+            // drives `deleteFacesByMask` on a mesh with no sets at all, so it
+            // cannot appear here either — added only to satisfy the
+            // `final switch`.
+            case EdgeSetRekey: break;
             case FaceReindex: break;
         }
     }
