@@ -314,6 +314,48 @@ struct ChangeBus {
     /// replaces the exception the command funnel is already handling.
     ulong batchLeaks;
 
+    /// A recording batch closed over an EMPTY op-log while its kernel had
+    /// reported `affected > 0`. Ticked by
+    /// `mesh_edit_delta.acceptRecordedEdit`, which is the one post-close
+    /// ruling both `mesh.delete` and `mesh.remove` go through (task 1903
+    /// stage L3-a, ruling Q-K6).
+    ///
+    /// THIS COUNTER DOES NOT FIX THE DEFECT AND MUST NOT BE READ AS EVIDENCE
+    /// THAT IT WAS FIXED. The branch it counts is a real contradiction: the
+    /// kernel mutated the mesh, nothing recorded it, nothing rolls it back
+    /// (`scope (failure)` does not fire on a plain `return`, and
+    /// `abortEditBatch` pops WITHOUT restoring), so the user gets a mutated
+    /// mesh, `status:error` and NO history entry — the previous entry now
+    /// describing a state that no longer exists. What changes is that the
+    /// event stops being silent and unattributable: it becomes a number,
+    /// asserted 0 in both lanes and driven to exactly 1 by a deliberate unit
+    /// cell.
+    ///
+    /// THREE REMEDIES WERE ANALYSED AND TWO ARE REFUTED BY WHAT THE CODE
+    /// DOES, recorded here so the one-liner is not re-derived:
+    ///
+    ///   * *"capture a `MeshSnapshot` up front and really fall back to it"* —
+    ///     it reintroduces a whole-mesh snapshot on the DEFAULT path, in the
+    ///     two files whose reason for existing at stage L3 is to delete
+    ///     theirs.
+    ///   * *"throw"* — the violation is detected AFTER `endEditBatch()`, so
+    ///     the mesh is already fully written and `abortEditBatch` restores
+    ///     nothing. A throw is the current defect PLUS an exception.
+    ///   * *"record the empty delta and return `true`"* — refuted on the
+    ///     tree, not by preference: `revert()` does not stop at
+    ///     `delta_.revert(*mesh)`. It continues into the map belt (pre-op
+    ///     sized planes onto a still-post-op mesh), the marks belt (whose
+    ///     `preMarksWord_.length == mesh.faces.length` assertion FIRES) and
+    ///     the selection restore; and the redo arm re-runs the kernel on the
+    ///     un-restored mesh. It corrupts BOTH directions. If `true` is ever
+    ///     wanted it must additionally null all four pre-images AND refuse
+    ///     the redo arm, each with its own witness.
+    ///
+    /// Its own counter and not folded into an existing one, for the reason
+    /// Q-K3 already ruled on the map counters: a different event summed into
+    /// an existing number makes that number unreadable.
+    ulong emptyDeltaOverMutation;
+
     // Per-class running totals — how many flushes carried each mesh class.
     ulong totalPosition;
     ulong totalPoints;

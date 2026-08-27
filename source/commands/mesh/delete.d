@@ -5,10 +5,10 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import snapshot : MeshSnapshot, SelectionSnapshot;
+import snapshot : SelectionSnapshot;
 import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope,
                         captureSelectedEdgeEnds, restoreSelectedEdgeEnds,
-                        undoTrackerEnabled;
+                        acceptRecordedEdit;
 
 /// Tier 1.1: delete the current selection. Dispatches by edit mode:
 ///   - Vertices: delete every face incident to a selected vert
@@ -17,21 +17,31 @@ import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope,
 /// In all cases this funnels through Mesh.deleteFacesByMask, which
 /// re-derives edges from the surviving faces and drops orphan verts.
 ///
-/// Revert: a full MeshSnapshot of the pre-delete cage by default
-/// (VIBE3D_UNDO_TRACKER unset/off). When the tracker is enabled the kernel
-/// run is wrapped in a Mesh edit batch and the resulting operation-log
-/// MeshEditDelta drives undo (O(Δ) — see doc/undo_change_tracker_plan.md
-/// Phase 3); redo re-runs the kernel batchless from the restored pre-op
-/// state (the bulk-op forward replay is not used for delete/dissolve, so
-/// the kernel is the forward authority and the delta inverts undo only).
+/// Revert: the kernel run is wrapped in a Mesh edit batch and the resulting
+/// operation-log MeshEditDelta drives undo (O(Δ) — see
+/// doc/undo_change_tracker_plan.md Phase 3); redo re-runs the kernel batchless
+/// from the restored pre-op state (the bulk-op forward replay is not used for
+/// delete/dissolve, so the kernel is the forward authority and the delta
+/// inverts undo only).
+///
+/// THE `VIBE3D_UNDO_TRACKER` FORK IS GONE (task 1903 stage L3-b). This class
+/// held a second, whole-mesh `MeshSnapshot` arm reachable by one env var; it
+/// was deleted together with `mesh.remove`'s, leaving fifteen
+/// `undoTrackerEnabled()` branch sites in the tree (the two edge tools plus
+/// thirteen commands whose fork is a DIFFERENT shape — it selects between a
+/// recording and an `unrecorded` batch and holds no snapshot at all). What the
+/// deleted arm was FOR is now a frozen fixture: `tests/fixtures/undo_parity/
+/// delete_remove.json`, captured under both arms while they still existed and
+/// read by `tests/unit/undo_parity_l3_test`, which compares the delta path's
+/// undo against the snapshot path's on every plane the burn-in class covers —
+/// materials, parts, mark words, selection order, set masks and mesh maps —
+/// none of which the geometry-only gate this replaced could see.
 class MeshDelete : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;
 
-    // Phase 3 delta path (env-gated). When `useDelta_` is set the undo entry
-    // is the operation-log delta + a lightweight pre-op selection capture (the
-    // kernel clears selection, so revert must re-overlay it). The snapshot path
-    // stays intact as the fallback.
+    // The undo entry is the operation-log delta + a lightweight pre-op
+    // selection capture (the kernel clears selection, so revert must re-overlay
+    // it).
     //
     // Vertex/face selection is captured by INDEX (the delta revert restores the
     // exact pre-op vertex/face index space, so the index-keyed SelectionSnapshot
@@ -59,7 +69,40 @@ class MeshDelete : Command, Operator {
     private uint[]             preEdgeEnds_; // flat [a,b, a,b, …] for edge mode
     private uint[]             preMarksWord_; // face Subpatch+Hide plane, by pre-op face index
     private MeshMap[]          preMaps_;      // whole mesh-map set, by value, pre-op
-    private bool               useDelta_;
+    // The three SELECTION-SET planes, by value, pre-op (task 2280, stage L3-0).
+    //
+    // FOUND BY THE FROZEN PARITY FIXTURE, which is what it was frozen for.
+    // `tests/unit/undo_parity_l3_test` captured this family's undo under BOTH
+    // arms while the fork still existed and the delta arm came back with
+    // `vertexSetMask` and `edgeSetMask` EMPTY where the snapshot arm restored
+    // them. The mechanism is in the replay and not here: the `AddVerts`
+    // inverse of a `RemoveVerts` re-adds each vertex with `vertexSetMask = 0`
+    // (`mesh_edit_delta.d`'s insert arm), because the removal never recorded
+    // the word it was dropping; and `selSetRekeyEdges` has by then already
+    // dropped every `edgeSetMask` entry whose endpoint went, keyed on
+    // `uint.max`. So a named selection set — user-visible, persisted in `.v3d`
+    // — silently vanished on Ctrl+Z, on the shipped default path, for every
+    // delete that compacts a vertex.
+    //
+    // THE STRUCTURAL FIX IS A PAYLOAD ON `MeshOpEntry.Kind.RemoveVerts` and it
+    // is NOT taken here: a new array on that struct moves `MeshOpEntry.sizeof`
+    // and therefore every pinned `byteSize` number in the task. This is the
+    // same shape of belt `preMaps_` above already is, for the same reason —
+    // the command holds the exact pre-op state for one dup of a plane the
+    // replay cannot carry — and it is what the user gets back meanwhile.
+    private ulong[]            preVertSetMask_;
+    private ulong[ulong]       preEdgeSetMask_;
+    private ulong[]            preFaceSetMask_;
+    // Set once `evaluate` has recorded a delta. It is NOT the old
+    // `useDelta_` under a new name doing the same job: with the fork gone
+    // there is no other path to select, and what this flag now discriminates
+    // is FIRST RUN from REDO — `evaluate` is called again on redo and must
+    // re-run the kernel BATCHLESS, or the second run records a second delta
+    // on top of the first. It is also `revert()`'s guard: an instance whose
+    // `evaluate` refused holds an empty delta and must not replay it, which
+    // is exactly what the deleted arm's `if (!snap.filled) return false;`
+    // did.
+    private bool               recorded_;
 
     // Stable label: captured once in runKernel() after effectiveDeleteMode
     // resolves the actual target type. Initialized to editMode at construction
@@ -80,9 +123,18 @@ class MeshDelete : Command, Operator {
     override MeshEditScope editScope() const {
         return MeshEditScope.Geometry | MeshEditScope.Marks;
     }
-    // True iff this instance actually stored an operation-log delta (tracker on);
-    // the snapshot escape hatch (VIBE3D_UNDO_TRACKER=off) reports false honestly.
-    override bool isOperationInverse() const { return useDelta_; }
+    // True iff this instance actually stored an operation-log delta.
+    //
+    // NOT spelled `return true;`, and that is a deviation from the stage plan
+    // taken deliberately. The plan expected `useDelta_` to collapse to a
+    // constant once the fork went; it does not, because the field is
+    // load-bearing for the redo arm (see `recorded_`). And a constant `true`
+    // would be a claim about instances the class can genuinely be in —
+    // constructed-but-not-applied, or refused — where no delta exists. The
+    // field is the honest value and it IS `true` for every instance that
+    // reaches the history stack, since `acceptRecordedEdit` guarantees a
+    // non-empty delta before it is set.
+    override bool isOperationInverse() const { return recorded_; }
 
     override string label() const {
         final switch (appliedMode_) {
@@ -139,7 +191,7 @@ class MeshDelete : Command, Operator {
         // Redo path: the delta already recorded the first run; re-run the
         // kernel BATCHLESS (no batch open ⇒ Ph1 hooks inert ⇒ no double
         // record) from the restored pre-op selection.
-        if (useDelta_) {
+        if (recorded_) {
             const affected = runKernel();
             if (affected == 0) return false;
             return true;
@@ -148,9 +200,9 @@ class MeshDelete : Command, Operator {
         // Empty selection ⇒ operate on the whole mesh (mesh.nothingSelected
         // is the single source of truth for the "everything is selected"
         // convention; runKernel feeds an all-true mask in that case).
-        if (undoTrackerEnabled()) {
-            // Delta path: capture the pre-op selection, run the kernel inside a
-            // Mesh edit batch so it self-records an operation-log delta.
+        {
+            // Capture the pre-op selection, then run the kernel inside a Mesh
+            // edit batch so it self-records an operation-log delta.
             preSel_       = SelectionSnapshot.capture(*mesh);
             preEdgeEnds_  = captureSelectedEdgeEnds(*mesh);
             preMarksWord_ = mesh.faceMarks.dup;   // full marks word, by face index
@@ -166,9 +218,18 @@ class MeshDelete : Command, Operator {
             // anyway. On the paths where both act, they agree; where the carry
             // declines, this is what the user gets back instead of a zeroed
             // map. Redo needs no "after" copy because it re-runs the kernel
-            // (see the useDelta_ branch above), which carries the map itself.
+            // (see the `recorded_` redo branch above), which carries the map itself.
             preMaps_ = new MeshMap[](mesh.meshMaps.length);
             foreach (i, ref m; mesh.meshMaps) preMaps_[i] = m.dup;
+            // The selection-set planes (see the field comment). `edgeSetMask`
+            // is an `ulong[ulong]` keyed by `mesh.edgeKey`, i.e. by ENDPOINT
+            // PAIR and not by edge index, so it survives the edge re-derive
+            // and needs no re-keying on the way back — which is exactly why
+            // restoring it wholesale is correct here and would not be for an
+            // index-keyed plane.
+            preVertSetMask_ = mesh.vertexSetMask.dup;
+            preEdgeSetMask_ = mesh.edgeSetMask.dup;
+            preFaceSetMask_ = mesh.faceSetMask.dup;
             auto rec = MeshEditTracker();
             mesh.beginEditBatch(&rec, MeshEditScope.Geometry | MeshEditScope.Marks);
             // TASK 1903 S1 — the unwind path for the handle-less spelling.
@@ -181,64 +242,51 @@ class MeshDelete : Command, Operator {
             scope(failure) mesh.abortEditBatch();
             const affected = runKernel();
             delta_ = mesh.endEditBatch();
-            if (affected == 0 || delta_.isEmpty) {
-                // WHAT THIS ACTUALLY DOES: it REFUSES. There is no snapshot
-                // fallback here and there never was — the comment that used to
-                // sit on this line promised one ("fall back to the snapshot
-                // path so a well-formed (but trivial) command is still
-                // recordable") and the body below only clears the images and
-                // returns false. Corrected at task 1903 Stage L1-P1, which
-                // read this branch while deciding where the map-value
-                // exclusion may refuse; the code is UNCHANGED.
-                //
-                // THE TWO HALVES ARE NOT THE SAME CASE, and only one of them
-                // is settled:
-                //
-                //   * `affected == 0` — the kernel mutated NOTHING, and
-                //     `return false` is the correct refusal. It is exactly
-                //     what the snapshot path a few lines below does for the
-                //     same condition, so the two paths agree.
-                //   * `affected > 0 && delta_.isEmpty` — a CONTRADICTION: the
-                //     kernel mutated and recorded nothing. Nothing rolls the
-                //     mesh back (`scope(failure)` does not fire on a plain
-                //     `return`, and no `MeshSnapshot` was captured on this
-                //     path), so the user gets a mutated mesh, `status:error`
-                //     and NO history entry — the previous entry now describing
-                //     a state that no longer exists. That half is a live
-                //     defect, independent of task 1903; it is carried as Q-K6
-                //     with two candidate fixes (capture a snapshot up front
-                //     and really fall back to it, or throw) and is NOT taken
-                //     here, because choosing between them is a behaviour
-                //     change to a shipped default-on command and owes its own
-                //     witness.
-                //
-                // It is not reachable from the map-value seam: that seam's
-                // record door DETECTS and appends, never withholds, precisely
-                // so it cannot manufacture an empty delta out of a mutating
-                // kernel (`MeshEditTracker.append`).
+            // THE POST-CLOSE RULING lives in `mesh_edit_delta` and is
+            // shared with `mesh.remove`, whose copy of these eight lines was
+            // byte-identical (task 1903 stage L3-a). What it does has not
+            // changed: BOTH arms refuse, the images below are still cleared,
+            // and the command still answers `false`. What is new is that the
+            // second arm — `affected > 0` with an EMPTY delta, a kernel that
+            // mutated and recorded nothing — now ticks
+            // `changeBus.emptyDeltaOverMutation` instead of passing silently.
+            //
+            // IT IS NOT A FIX. That arm is still a live defect: nothing rolls
+            // the mesh back (`scope (failure)` does not fire on a plain
+            // `return`, and no `MeshSnapshot` is captured on this path), so
+            // the user gets a mutated mesh, `status:error` and NO history
+            // entry, with the previous entry describing a state that no
+            // longer exists. The counter converts an unattributable event
+            // into a number; the ruling, and the two remedies refuted on the
+            // tree, are at that counter's declaration in `change_bus.d`.
+            //
+            // Not reachable from the map-value seam: that seam's record door
+            // DETECTS and appends, never withholds, precisely so it cannot
+            // manufacture an empty delta out of a mutating kernel
+            // (`MeshEditTracker.append`).
+            if (!acceptRecordedEdit(affected, delta_)) {
                 delta_        = MeshEditDelta.init;
                 preSel_       = SelectionSnapshot.init;
                 preEdgeEnds_  = null;
                 preMarksWord_ = null;
                 preMaps_      = null;
+                preVertSetMask_ = null;
+                preEdgeSetMask_ = null;
+                preFaceSetMask_ = null;
                 return false;
             }
-            useDelta_ = true;
+            recorded_ = true;
             return true;
         }
-
-        // Snapshot path (default / VIBE3D_UNDO_TRACKER=off).
-        snap = MeshSnapshot.capture(*mesh);
-        const affected = runKernel();
-        if (affected == 0) {
-            snap = MeshSnapshot.init;
-            return false;
-        }
-        return true;
     }
 
     override bool revert() {
-        if (useDelta_) {
+        // An instance whose `evaluate` refused holds an empty delta and every
+        // pre-image nulled; replaying it would run the belts below over a
+        // mesh they were never sized against. This refusal is what the
+        // deleted snapshot arm's `if (!snap.filled) return false;` did.
+        if (!recorded_) return false;
+        {
             delta_.revert(*mesh);     // LIFO inverse replay restores geometry
             // Re-overlay the Subpatch + Hide (task 0613) planes FIRST: the
             // delta revert restored the pre-op face index space, so the
@@ -262,6 +310,16 @@ class MeshDelete : Command, Operator {
                 mesh.meshMaps.length = preMaps_.length;
                 foreach (i, ref m; preMaps_) mesh.meshMaps[i] = m.dup;
             }
+            // The selection-set planes, wholesale, for the same reason and in
+            // the same position as the maps above: after the geometry replay
+            // (they are sized against it) and before the selection restore
+            // (which does not touch them). `preFaceSetMask_` is carried too —
+            // it is not currently observed to be lost, and capturing two of
+            // three planes would leave the third's loss looking like a
+            // deliberate decision rather than an oversight.
+            if (preVertSetMask_.length) mesh.vertexSetMask = preVertSetMask_.dup;
+            if (preFaceSetMask_.length) mesh.faceSetMask   = preFaceSetMask_.dup;
+            if (preEdgeSetMask_ !is null) mesh.edgeSetMask = preEdgeSetMask_.dup;
             if (preMarksWord_.length) {
                 assert(preMarksWord_.length == mesh.faces.length,
                     "MeshDelete.revert: preMarksWord_ length != restored face "
@@ -284,8 +342,5 @@ class MeshDelete : Command, Operator {
             restoreSelectedEdgeEnds(*mesh, preEdgeEnds_);
             return true;
         }
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
-        return true;
     }
 }

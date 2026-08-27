@@ -192,14 +192,19 @@ unittest // every history entry reports opInverse, and the bit is not a constant
       ~ "an inverse OPERATION`, and a selection entry does not — a field wired "
       ~ "to a constant `true` reads exactly like this");
 
-    // (b) mesh.delete — one of the four classes the undo tracker actually
-    // branches on, and the one whose delta path Stage L3 migrates.
-    // PRECONDITION, stated rather than inherited: the tracker toggle is
-    // per-instance and survives /api/reset, so a sibling test that left it
-    // off would turn this cell red for a reason that has nothing to do with
-    // the class under test (it did — test_undo_tracker_extrude, 2026-08-25,
-    // 701/702 on the first full gate). Set it here; do not assume it.
-    cmd("undo.tracker.on");
+    // (b) mesh.delete — a class that records an operation-log delta
+    // UNCONDITIONALLY since task 1903 stage L3-b deleted its
+    // `undoTrackerEnabled()` fork and its `MeshSnapshot` arm.
+    //
+    // THE `undo.tracker.on` PRECONDITION THAT USED TO SIT HERE IS GONE, and
+    // its removal STRENGTHENS this cell rather than weakening it. It was
+    // added because the toggle is per-instance and survives /api/reset, so a
+    // sibling test that left it off turned this cell red for a reason
+    // unrelated to the class under test (test_undo_tracker_extrude,
+    // 2026-08-25, 701/702 on the first full gate). With the fork gone the
+    // toggle cannot steer `mesh.delete` at all — and setting it here would
+    // now HIDE a regression: re-introducing a fork would leave this cell
+    // green under a flag it set for itself.
     postSelect("polygons", [4]);
     cmd("mesh.delete");
 
@@ -211,10 +216,11 @@ unittest // every history entry reports opInverse, and the bit is not a constant
       ~ "this cell is reading the wrong entry");
     assert("opInverse" in top, "mesh.delete's entry has no `opInverse` field");
     assert(top["opInverse"].boolean,
-        "mesh.delete recorded a snapshot entry, expected a delta "
-      ~ "(opInverse=false). Either the class stopped setting useDelta_, or the "
-      ~ "provider is wired to a constant `false` — which the selection cell "
-      ~ "above cannot tell apart on its own");
+        "mesh.delete reports opInverse=false, expected true. The class has no "
+      ~ "second path left, so either it stopped setting `recorded_` — i.e. it "
+      ~ "recorded no delta and refused — or the provider is wired to a "
+      ~ "constant `false`, which the selection cell above cannot tell apart "
+      ~ "on its own");
 
     // Redo entries carry it too — the same command, read from the other stack.
     // The two arms of the provider are two separate loops, so a green undo arm

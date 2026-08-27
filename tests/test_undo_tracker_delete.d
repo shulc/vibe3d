@@ -1,26 +1,50 @@
-// Phase 3 of doc/undo_change_tracker_plan.md — migrate the destructive topology
-// commands (mesh.delete / mesh.remove, dispatching dissolve for vert/edge modes)
-// from a whole-mesh MeshSnapshot to the operation-log MeshEditDelta, env-gated by
-// VIBE3D_UNDO_TRACKER.
+// The delta-backed destructive topology commands (mesh.delete / mesh.remove,
+// dispatching dissolve for vert/edge modes), driven over HTTP.
+//
+// WHAT THIS FILE USED TO BE, AND WHY THAT HALF IS GONE (task 1903 stage L3-b).
+// Until the fork deletion these commands had TWO undo paths — a whole-mesh
+// `MeshSnapshot` under `VIBE3D_UNDO_TRACKER=off` and an operation-log
+// `MeshEditDelta` by default — and `runScenario` below ran every op TWICE in
+// one instance, once per path, then asserted
+// `sameGeometry(undoneOn, undoneOff)` on a line labelled PARITY GATE.
+//
+// **That assertion had to go with the fork, not survive it.** With one path
+// left, `[off]` and `[on]` are the same code, so the gate would have compared
+// a path against itself: green before any regression, green after it, and
+// green again when someone reverts the fix. Leaving it in would have
+// MANUFACTURED a check that cannot come out differently — which is the exact
+// defect class this repository pays for most.
+//
+// WHERE THE PARITY COMPARISON WENT. It was frozen, on a tree that still had
+// both arms, as `tests/fixtures/undo_parity/delete_remove.json` — ten cells,
+// two dumps each, read by `tests/unit/undo_parity_l3_test`. The frozen oracle
+// is also STRICTLY WIDER than the assertion it replaces: `sameGeometry` here
+// compares vertex/face counts and coincident positions and nothing else, while
+// the fixture compares `faceMaterial`, `facePart`, every mark word,
+// `*SelectionOrder`, the selection-set masks and `meshMaps` as well — the
+// planes the task-0613 burn-in actually lost, none of which a geometry compare
+// can see. It runs in the `dub test --config=tests` lane, not this one.
+//
+// WHAT REMAINS HERE, and each of these compares against the PRE-OP capture,
+// not against a second run of the same code:
+//   1. ROUND-TRIP: op → undo == pre-op exactly; redo == post-op.
+//   2. SELECTION restored on undo (/api/selection), compared geometrically.
+//   3. jumpTo: back past the op, then forward.
+//   4. the mesh-edit seam counters, including
+//      `emptyDeltaOverMutation` — see the last block.
 //
 // These commands are COMMAND-PATH (no gizmo drag): select via /api/select, run
 // via /api/command, undo/redo via /api/undo /api/redo, history navigation via
-// /api/history/jump. Much simpler to drive than the interactive extrude.
+// /api/history/jump.
 //
 // Coverage per op (delete-faces, remove, dissolve-verts, dissolve-edges) on a
 // CUBE and a GRID (the grid selections orphan verts so compaction/Reindex
 // actually fires — the cube top-face delete also orphans nothing for some
-// selections, so the grid is the real Reindex witness):
-//   1. PARITY GATE: same op+undo under VIBE3D_UNDO_TRACKER off (snapshot) vs on
-//      (delta) → byte-identical post-undo geometry, == pre-op mesh.
-//   2. ROUND-TRIP: op → undo == pre-op exactly; redo == post-op.
-//   3. SELECTION restored on undo (/api/selection).
-//   4. jumpTo: back past the op, then forward.
-//   5. NEGATIVE CONTROL (documented, built under -version flags): a
-//      RemoveFaces^-1 / Reindex^-1 stub breaks the round-trip — see report.
+// selections, so the grid is the real Reindex witness).
 //
-// The toggle is flipped at runtime via undo.tracker.on / undo.tracker.off
-// (app.d test commands), so one running instance exercises both paths.
+// NO `undo.tracker.on` / `.off` APPEARS IN THIS FILE ANY MORE. The commands
+// still exist (fifteen other files branch on the toggle), but they no longer
+// select a path for these two, and a call left here would say they do.
 
 import std.net.curl;
 import std.json;
@@ -78,6 +102,12 @@ JSONValue postUndo() { return parseJSON(cast(string)post(BASE ~ "/api/undo", "")
 JSONValue postRedo() { return parseJSON(cast(string)post(BASE ~ "/api/redo", "")); }
 JSONValue getModel() { return parseJSON(cast(string)get(BASE ~ "/api/model")); }
 JSONValue getSelection() { return parseJSON(cast(string)get(BASE ~ "/api/selection")); }
+
+// How many entries the undo stack holds. `/api/history`'s arrays run OLDEST
+// FIRST; only the LENGTH is read here.
+size_t undoDepth() {
+    return parseJSON(cast(string)get(BASE ~ "/api/history"))["undo"].array.length;
+}
 
 JSONValue jumpTo(int target) {
     return parseJSON(cast(string)post(BASE ~ "/api/history/jump",
@@ -185,66 +215,67 @@ bool sameKeys(string[] a, string[] b) {
 // ===========================================================================
 void runScenario(string label, void delegate() reset, string mode,
                  int[] delegate(JSONValue) pick, string op) {
-    // --- snapshot path (tracker OFF): establish the reference post-undo mesh ---
-    cmd("undo.tracker.off");
-    reset();
-    setMode(mode);
-    auto preOff = getModel();
-    postSelect(mode, pick(preOff));
-    // Clear history AFTER selecting (select.typeFrom / /api/select are recorded
-    // as history entries), so the op below is the only undo-stack entry and
-    // jumpTo(0)/jumpTo(1) bracket exactly it.
-    cmd("history.clear");
-    cmd(op);
-    auto postOff = getModel();
-    assert(postOff["faceCount"].integer < preOff["faceCount"].integer
-        || postOff["vertexCount"].integer < preOff["vertexCount"].integer,
-        label ~ " [off]: op changed nothing");
-    auto uOff = postUndo();
-    assert(uOff["status"].str == "ok", label ~ " [off]: undo failed: " ~ uOff.toString);
-    auto undoneOff = getModel();
-    assert(sameGeometry(undoneOff, preOff),
-        label ~ " [off]: post-undo geometry != pre-op");
-
-    // --- delta path (tracker ON) ---
-    cmd("undo.tracker.on");
     reset();
     setMode(mode);
     auto preOn = getModel();
     postSelect(mode, pick(preOn));
     auto selPreKeys = selGeomKeys(preOn, getSelection(), mode);
+    // Clear history AFTER selecting (select.typeFrom / /api/select are recorded
+    // as history entries), so the op below is the only undo-stack entry and
+    // jumpTo(0)/jumpTo(1) bracket exactly it.
     cmd("history.clear");
+    // HOW MANY ENTRIES THE UNDO BELOW IS SUPPOSED TO MOVE, read rather than
+    // assumed. A witness two stages ago was inert twice because its undo
+    // named a command id that does not exist: /api/undo answered `ok`, the
+    // stack never moved, and every later assertion compared the mesh against
+    // itself. `history.clear` leaves an empty undo stack, so the op must take
+    // it to exactly 1.
+    immutable size_t depthAfterClear = undoDepth();
+    assert(depthAfterClear == 0,
+        label ~ ": history.clear left " ~ depthAfterClear.to!string
+        ~ " undo entries — the jumpTo targets below name the wrong revisions");
     cmd(op);
+    immutable size_t depthAfterOp = undoDepth();
+    assert(depthAfterOp == 1,
+        label ~ ": the op left " ~ depthAfterOp.to!string ~ " undo entries, "
+        ~ "expected exactly 1 — a command that recorded nothing makes every "
+        ~ "assertion below vacuous");
     auto postOn = getModel();
     assert(postOn["faceCount"].integer < preOn["faceCount"].integer
         || postOn["vertexCount"].integer < preOn["vertexCount"].integer,
-        label ~ " [on]: op changed nothing");
+        label ~ ": op changed nothing");
 
-    // (2) round-trip: undo == pre-op exactly.
+    // (1) round-trip: undo == pre-op exactly, and the undo ACTUALLY RAN —
+    // the stack depth must come back down by one.
     auto uOn = postUndo();
-    assert(uOn["status"].str == "ok", label ~ " [on]: undo failed: " ~ uOn.toString);
+    assert(uOn["status"].str == "ok", label ~ ": undo failed: " ~ uOn.toString);
+    immutable size_t depthAfterUndo = undoDepth();
+    assert(depthAfterUndo == depthAfterOp - 1,
+        label ~ ": /api/undo answered ok but the undo stack went from "
+        ~ depthAfterOp.to!string ~ " to " ~ depthAfterUndo.to!string
+        ~ " — nothing was undone and the geometry compare below is a mesh "
+        ~ "against itself");
     auto undoneOn = getModel();
     assert(sameGeometry(undoneOn, preOn),
-        label ~ " [on]: post-undo geometry != pre-op (delta revert wrong)");
+        label ~ ": post-undo geometry != pre-op (delta revert wrong)");
 
-    // (1) parity gate: delta-path post-undo == snapshot-path post-undo == pre-op.
-    assert(sameGeometry(undoneOn, undoneOff),
-        label ~ ": delta post-undo != snapshot post-undo (PARITY GATE)");
-
-    // (3) selection restored on undo (compared GEOMETRICALLY — see selGeomKeys:
+    // (2) selection restored on undo (compared GEOMETRICALLY — see selGeomKeys:
     // edge indices are re-derived and not stable, but the SAME elements must be
     // selected after undo).
     auto selAfterUndo = selGeomKeys(undoneOn, getSelection(), mode);
     assert(sameKeys(selAfterUndo, selPreKeys),
-        label ~ " [on]: selection not restored on undo "
+        label ~ ": selection not restored on undo "
         ~ selAfterUndo.to!string ~ " != " ~ selPreKeys.to!string);
 
-    // (2) redo == post-op.
+    // (3) redo == post-op, and the redo moved the stack back up.
     auto rOn = postRedo();
-    assert(rOn["status"].str == "ok", label ~ " [on]: redo failed: " ~ rOn.toString);
+    assert(rOn["status"].str == "ok", label ~ ": redo failed: " ~ rOn.toString);
+    assert(undoDepth() == depthAfterOp,
+        label ~ ": /api/redo answered ok but the undo stack did not return to "
+        ~ depthAfterOp.to!string);
     auto redoneOn = getModel();
     assert(sameGeometry(redoneOn, postOn),
-        label ~ " [on]: post-redo geometry != post-op (delta apply wrong)");
+        label ~ ": post-redo geometry != post-op (delta apply wrong)");
 
     // (4) jumpTo: back PAST the op (target 0 = empty history baseline), then
     // forward past it. After history.clear the op is the only entry, so
@@ -373,9 +404,9 @@ unittest {
 //
 // MUTATION: make `Mesh.endEditBatch()` pop without stamping →
 //   "mutationVersion did not advance across mesh.delete".
-// The tracker is forced ON for the cell, because with it OFF the command takes
-// the snapshot path, opens no batch at all, and the mutated line is never
-// executed — a tracker-off cell would be green either way.
+// The cell no longer forces the tracker on: after task 1903 stage L3-b the
+// command opens its batch unconditionally, so a toggle here would be inert —
+// and worse, it would imply the class still has a second path.
 // ===========================================================================
 
 ulong primaryMutationVersion() {
@@ -392,7 +423,6 @@ ulong primaryMutationVersion() {
 }
 
 unittest {
-    cmd("undo.tracker.on");
     resetCube();
     setMode("polygons");
     postSelect("polygons", [0]);
@@ -426,9 +456,33 @@ unittest {
         "changeBus.nestedBatchOpens is non-zero — a kernel opened a batch of "
       ~ "its own; the command or the tool opens it, never the kernel");
     assert(ch["opLogEntriesRecorded"].integer > 0,
-        "changeBus.opLogEntriesRecorded stayed 0 across a tracker-path "
+        "changeBus.opLogEntriesRecorded stayed 0 across a delta-path "
       ~ "mesh.delete — the batch recorded no op-log entry");
 
-    // Leave the instance on the default path for whatever runs next.
+    // W-3-a3 (task 1903 stage L3-a) — the field-side zero for the fifth
+    // invariant counter. THIS PROCESS's instance: each tests/test_*.d runs
+    // against its own vibe3d, so "across a full ./run_test.d run" is not a
+    // quantity that exists, and the message says which process it means.
+    //
+    // The counter is absolute here rather than a delta because a fresh
+    // instance starts it at 0 and NOTHING in this file's traffic — eight
+    // delete/remove scenarios in three modes on two stands, plus this cell —
+    // should ever reach the branch: every kernel on these paths has an
+    // explicit publisher. The key lookup is itself the check that the
+    // endpoint still reports the field.
+    assert("emptyDeltaOverMutation" in ch,
+        "/api/changes no longer reports `emptyDeltaOverMutation` — the "
+      ~ "counter has lost its only wire reader and its zero below would be "
+      ~ "a lookup failure, not a measurement");
+    assert(ch["emptyDeltaOverMutation"].integer == 0,
+        "changeBus.emptyDeltaOverMutation is "
+      ~ ch["emptyDeltaOverMutation"].integer.to!string
+      ~ " in THIS test's vibe3d instance — a recording batch closed EMPTY "
+      ~ "over a kernel that reported work done. The mesh was mutated, no "
+      ~ "history entry was recorded and nothing rolled it back. MUTATION "
+      ~ "that drives it: delete one `recordRemoveFaces` call in "
+      ~ "deleteFacesByMask — a delta-length assertion stays green (the log "
+      ~ "is still non-empty) and so does sameGeometry (the command errored)");
+
     postUndo();
 }

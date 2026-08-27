@@ -247,22 +247,37 @@ int main(string[] args) {
         }
     }
 
-    // Snapshot-fallback lane (anti-rot). As of Phase 4 the undo change-tracker
-    // (doc/undo_change_tracker_plan.md) is DEFAULT-ON, so the whole unit suite now
-    // exercises the operation-log delta path for every extrude/delete/remove/
-    // dissolve. The legacy whole-mesh MeshSnapshot path is RETAINED as the escape
-    // hatch (VIBE3D_UNDO_TRACKER=off) but would otherwise stop being tested. This
-    // lane re-runs the key undo tests with the env var forced OFF so the snapshot
-    // path keeps regression coverage. Cheap (six small tests, -j 1 for the drag-
-    // sensitive ones), included in the DEFAULT set; --skip snapshot / --only
-    // snapshot both work. Runs BEFORE the perf lane: the perf runner rebuilds
-    // ./vibe3d as the ldc-release perf buildType, and any run_test lane placed
-    // after it would silently reuse that binary instead of the modeling one.
+    // Snapshot-fallback lane (anti-rot). The undo change-tracker
+    // (doc/undo_change_tracker_plan.md) is DEFAULT-ON, so the whole unit suite
+    // exercises the operation-log delta path. Two files still keep a
+    // whole-mesh MeshSnapshot arm reachable only through the
+    // VIBE3D_UNDO_TRACKER=off escape hatch — `source/tools/edit/edge_extrude.d`
+    // and `source/tools/edit/edge_extend.d` — and this lane is what keeps that
+    // arm tested.
+    //
+    // THE ROSTER WAS SIX AND IS NOW TWO (task 1903 stage L3-b), and the four
+    // that left were measured, not guessed:
+    //
+    //   * `test_undo_tracker_delete` and `test_delete` drive `mesh.delete` /
+    //     `mesh.remove`, whose fork this stage DELETED. Under `=off` they now
+    //     run exactly the same code as under the default.
+    //   * `test_undo_redo` drives `mesh.subdivide`, `mesh.subdivide_faceted`
+    //     and `select.typeFrom`; `test_history_jump` drives `/api/transform`
+    //     translates and `history.clear`. NONE of those is one of the fifteen
+    //     files that branch on `undoTrackerEnabled()`, so neither test has EVER
+    //     selected a path here — they were spending lane time to re-run the
+    //     same code under a different environment variable. Recorded rather
+    //     than absorbed: a lane whose roster does not select what its comment
+    //     claims is a gate that cannot come out differently.
+    //
+    // Cheap (two small tests, -j 1 for the drag-sensitive ones), included in
+    // the DEFAULT set; --skip snapshot / --only snapshot both work. Runs BEFORE
+    // the perf lane: the perf runner rebuilds ./vibe3d as the ldc-release perf
+    // buildType, and any run_test lane placed after it would silently reuse
+    // that binary instead of the modeling one.
     if (include("snapshot")) {
         string[] cmd = ["./run_test.d", "-j", "1",
-                        "test_undo_redo", "test_delete", "test_edge_extrude_tool",
-                        "test_undo_tracker_extrude", "test_undo_tracker_delete",
-                        "test_history_jump"];
+                        "test_edge_extrude_tool", "test_undo_tracker_extrude"];
         if (noBuild) cmd ~= "--no-build";
         suites ~= Suite("snapshot",
                         "5/8 snapshot-fallback undo tests (VIBE3D_UNDO_TRACKER=off)",

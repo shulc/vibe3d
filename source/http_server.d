@@ -2623,7 +2623,7 @@ class HttpServer {
                 `"missedPublishers":%d,"confinedCloseImbalance":%d,` ~
                 `"nestedBatchOpens":%d,"unbatchedGeometryCommits":%d,` ~
                 `"batchUpgradeRefusals":%d,"opLogEntriesRecorded":%d,` ~
-                `"batchLeaks":%d,` ~
+                `"batchLeaks":%d,"emptyDeltaOverMutation":%d,` ~
                 `"mapDeltaMixRecorded":%d,"mapDeltaMixRefused":%d,` ~
                 `"mapDeltaBindRefused":%d,` ~
                 `"deliveryCount":%d,` ~
@@ -2656,6 +2656,13 @@ class HttpServer {
                 snap.nestedBatchOpens, snap.unbatchedGeometryCommits,
                 snap.batchUpgradeRefusals, snap.opLogEntriesRecorded,
                 snap.batchLeaks,
+                // Task 1903 Stage L3-a (ruling Q-K6) — a BACKSTOP, not a fix.
+                // A recording batch that closed empty over a kernel which
+                // reported work done. Asserted 0 by the suite; its natural
+                // reachability was measured (every kernel on the delete /
+                // remove paths has an explicit publisher) and its only known
+                // driver is a deliberate unit cell.
+                snap.emptyDeltaOverMutation,
                 // Task 1903 Stage L1-P1 — the map-value delta counters. All
                 // three are asserted 0 as a DELTA across a step (they are
                 // process-cumulative), and each is driven non-zero by its own

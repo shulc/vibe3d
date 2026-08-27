@@ -5,10 +5,10 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import snapshot : MeshSnapshot, SelectionSnapshot;
+import snapshot : SelectionSnapshot;
 import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope,
                         captureSelectedEdgeEnds, restoreSelectedEdgeEnds,
-                        undoTrackerEnabled;
+                        acceptRecordedEdit;
 
 /// Tier 1.1: "Remove" (`vert.remove` / `edge.remove false` /
 /// `poly.remove`, dispatched by edit mode). Remove and Delete are
@@ -23,16 +23,17 @@ import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope,
 /// The two commands stay separate so the menu structure, shortcut layout,
 /// and (for polygons) the keep-points semantic can distinguish them.
 ///
-/// Revert: a full MeshSnapshot of the pre-op cage by default; when the
-/// VIBE3D_UNDO_TRACKER env toggle is on the kernel run is wrapped in a
-/// Mesh edit batch and the resulting operation-log MeshEditDelta drives
-/// undo (O(Δ) — doc/undo_change_tracker_plan.md Phase 3). Redo re-runs the
-/// kernel batchless from the restored pre-op selection.
+/// Revert: the kernel run is wrapped in a Mesh edit batch and the resulting
+/// operation-log MeshEditDelta drives undo (O(Δ) —
+/// doc/undo_change_tracker_plan.md Phase 3). Redo re-runs the kernel batchless
+/// from the restored pre-op selection. The `VIBE3D_UNDO_TRACKER` fork and its
+/// whole-mesh `MeshSnapshot` arm are GONE (task 1903 stage L3-b) — see
+/// `MeshDelete`'s class comment for what replaced the parity gate they were
+/// the subject of.
 class MeshRemove : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;
 
-    // Phase 3 delta path — see MeshDelete for the rationale. Vertex/face
+    // See MeshDelete for the rationale. Vertex/face
     // selection is index-keyed (SelectionSnapshot); edge selection is endpoint-
     // keyed (re-derived edge order is not index-stable across rebuildEdges); the
     // Subpatch + Hide (task 0613) planes are index-keyed (re-overlaid on revert —
@@ -42,8 +43,33 @@ class MeshRemove : Command, Operator {
     private SelectionSnapshot  preSel_;
     private uint[]             preEdgeEnds_;
     private uint[]             preMarksWord_;
-    private MeshMap[]          preMaps_;   // whole mesh-map set, by value, pre-op
-    private bool               useDelta_;
+    private MeshMap[]          preMaps_;      // whole mesh-map set, by value, pre-op
+    // The three SELECTION-SET planes, by value, pre-op (task 2280, stage L3-0).
+    //
+    // FOUND BY THE FROZEN PARITY FIXTURE, which is what it was frozen for.
+    // `tests/unit/undo_parity_l3_test` captured this family's undo under BOTH
+    // arms while the fork still existed and the delta arm came back with
+    // `vertexSetMask` and `edgeSetMask` EMPTY where the snapshot arm restored
+    // them. The mechanism is in the replay and not here: the `AddVerts`
+    // inverse of a `RemoveVerts` re-adds each vertex with `vertexSetMask = 0`
+    // (`mesh_edit_delta.d`'s insert arm), because the removal never recorded
+    // the word it was dropping; and `selSetRekeyEdges` has by then already
+    // dropped every `edgeSetMask` entry whose endpoint went, keyed on
+    // `uint.max`. So a named selection set — user-visible, persisted in `.v3d`
+    // — silently vanished on Ctrl+Z, on the shipped default path, for every
+    // delete that compacts a vertex.
+    //
+    // THE STRUCTURAL FIX IS A PAYLOAD ON `MeshOpEntry.Kind.RemoveVerts` and it
+    // is NOT taken here: a new array on that struct moves `MeshOpEntry.sizeof`
+    // and therefore every pinned `byteSize` number in the task. This is the
+    // same shape of belt `preMaps_` above already is, for the same reason —
+    // the command holds the exact pre-op state for one dup of a plane the
+    // replay cannot carry — and it is what the user gets back meanwhile.
+    private ulong[]            preVertSetMask_;
+    private ulong[ulong]       preEdgeSetMask_;
+    private ulong[]            preFaceSetMask_;
+    // First run vs REDO, and `revert()`'s guard — see `MeshDelete.recorded_`.
+    private bool               recorded_;
 
     // Stable label: captured once in runKernel() — see MeshDelete.appliedMode_.
     private EditMode appliedMode_;
@@ -59,7 +85,9 @@ class MeshRemove : Command, Operator {
     override MeshEditScope editScope() const {
         return MeshEditScope.Geometry | MeshEditScope.Marks;
     }
-    override bool isOperationInverse() const { return useDelta_; }
+    // See `MeshDelete.isOperationInverse` for why this stays a field read
+    // rather than becoming a constant `true` after the fork deletion.
+    override bool isOperationInverse() const { return recorded_; }
 
     override string label() const {
         final switch (appliedMode_) {
@@ -119,13 +147,13 @@ class MeshRemove : Command, Operator {
         if (mesh.faces.length == 0) return false;
 
         // Redo: re-run the kernel BATCHLESS (no double record).
-        if (useDelta_) {
+        if (recorded_) {
             const affected = runKernel();
             if (affected == 0) return false;
             return true;
         }
 
-        if (undoTrackerEnabled()) {
+        {
             preSel_       = SelectionSnapshot.capture(*mesh);
             preEdgeEnds_  = captureSelectedEdgeEnds(*mesh);
             preMarksWord_ = mesh.faceMarks.dup;
@@ -141,9 +169,18 @@ class MeshRemove : Command, Operator {
             // anyway. On the paths where both act, they agree; where the carry
             // declines, this is what the user gets back instead of a zeroed
             // map. Redo needs no "after" copy because it re-runs the kernel
-            // (see the useDelta_ branch above), which carries the map itself.
+            // (see the `recorded_` redo branch above), which carries the map itself.
             preMaps_ = new MeshMap[](mesh.meshMaps.length);
             foreach (i, ref m; mesh.meshMaps) preMaps_[i] = m.dup;
+            // The selection-set planes (see the field comment). `edgeSetMask`
+            // is an `ulong[ulong]` keyed by `mesh.edgeKey`, i.e. by ENDPOINT
+            // PAIR and not by edge index, so it survives the edge re-derive
+            // and needs no re-keying on the way back — which is exactly why
+            // restoring it wholesale is correct here and would not be for an
+            // index-keyed plane.
+            preVertSetMask_ = mesh.vertexSetMask.dup;
+            preEdgeSetMask_ = mesh.edgeSetMask.dup;
+            preFaceSetMask_ = mesh.faceSetMask.dup;
             auto rec = MeshEditTracker();
             mesh.beginEditBatch(&rec, MeshEditScope.Geometry | MeshEditScope.Marks);
             // TASK 1903 S1 — the unwind path for the handle-less spelling.
@@ -156,29 +193,32 @@ class MeshRemove : Command, Operator {
             scope(failure) mesh.abortEditBatch();
             const affected = runKernel();
             delta_ = mesh.endEditBatch();
-            if (affected == 0 || delta_.isEmpty) {
+            // The shared post-close ruling — see `MeshDelete.evaluate` and
+            // `mesh_edit_delta.acceptRecordedEdit`. Both arms refuse; the
+            // second one (a kernel that mutated over an EMPTY delta) ticks
+            // `changeBus.emptyDeltaOverMutation`, which instruments the
+            // defect rather than fixing it.
+            if (!acceptRecordedEdit(affected, delta_)) {
                 delta_        = MeshEditDelta.init;
                 preSel_       = SelectionSnapshot.init;
                 preEdgeEnds_  = null;
                 preMarksWord_ = null;
                 preMaps_      = null;
+                preVertSetMask_ = null;
+                preEdgeSetMask_ = null;
+                preFaceSetMask_ = null;
                 return false;
             }
-            useDelta_ = true;
+            recorded_ = true;
             return true;
         }
-
-        snap = MeshSnapshot.capture(*mesh);
-        const affected = runKernel();
-        if (affected == 0) {
-            snap = MeshSnapshot.init;
-            return false;
-        }
-        return true;
     }
 
     override bool revert() {
-        if (useDelta_) {
+        // See `MeshDelete.revert` — the refusal the deleted snapshot arm's
+        // `if (!snap.filled) return false;` used to provide.
+        if (!recorded_) return false;
+        {
             delta_.revert(*mesh);
             // See MeshDelete.revert (code review BLOCKER, task 0613): this
             // full-word overwrite MUST run BEFORE preSel_.restore() below —
@@ -197,6 +237,16 @@ class MeshRemove : Command, Operator {
                 mesh.meshMaps.length = preMaps_.length;
                 foreach (i, ref m; preMaps_) mesh.meshMaps[i] = m.dup;
             }
+            // The selection-set planes, wholesale, for the same reason and in
+            // the same position as the maps above: after the geometry replay
+            // (they are sized against it) and before the selection restore
+            // (which does not touch them). `preFaceSetMask_` is carried too —
+            // it is not currently observed to be lost, and capturing two of
+            // three planes would leave the third's loss looking like a
+            // deliberate decision rather than an oversight.
+            if (preVertSetMask_.length) mesh.vertexSetMask = preVertSetMask_.dup;
+            if (preFaceSetMask_.length) mesh.faceSetMask   = preFaceSetMask_.dup;
+            if (preEdgeSetMask_ !is null) mesh.edgeSetMask = preEdgeSetMask_.dup;
             if (preMarksWord_.length) {
                 assert(preMarksWord_.length == mesh.faces.length,
                     "MeshRemove.revert: preMarksWord_ length != restored face "
@@ -213,9 +263,6 @@ class MeshRemove : Command, Operator {
             restoreSelectedEdgeEnds(*mesh, preEdgeEnds_);
             return true;
         }
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
-        return true;
     }
 }
 

@@ -4323,6 +4323,61 @@ private void applyEdgeSelByEnds(ref Mesh m, in uint[] ends) {
 }
 
 // ---------------------------------------------------------------------------
+// acceptRecordedEdit — the post-close ruling for a command that ran its kernel
+// inside a RECORDING batch (task 1903 stage L3-a, ruling Q-K6).
+//
+// Placed here rather than in either command because the eight lines it
+// replaces were BYTE-IDENTICAL in `commands/mesh/delete.d` and
+// `commands/mesh/remove.d`, and because this module is already the home of
+// "a helper both delete and remove import" (`captureSelectedEdgeEnds` /
+// `restoreSelectedEdgeEnds`, just below). It adds NO import edge: the module
+// already imports `change_bus : changeBus` for the seam counters.
+//
+// NO `cmdName` PARAMETER, and that is a decision. A `string` argument with no
+// reader is a presence bit with a signature. The counter is numeric only; in
+// the unit lane the cell that ticked it identifies the caller, and in the
+// field the command that answered `status:error` at that instant does. If
+// attribution is wanted later the smallest honest form is a companion `string`
+// field on the bus PLUS a witness that the endpoint reports it — not a
+// parameter that goes nowhere.
+// ---------------------------------------------------------------------------
+
+/// Should the command record `delta` as its undo entry?
+///
+///   `affected == 0`               -> `false`. A CORRECT REFUSAL: the kernel
+///                                    mutated nothing, and this is exactly
+///                                    what the snapshot arm does for the same
+///                                    condition, so the two paths agree. No
+///                                    counter moves.
+///   `affected > 0 && delta empty` -> `false`, AND
+///                                    `changeBus.emptyDeltaOverMutation` ticks.
+///                                    A CONTRADICTION: the kernel mutated and
+///                                    recorded nothing.
+///
+/// **THE COUNTER DOES NOT FIX THE SECOND CASE.** The command still answers
+/// `false`, the funnel still throws, the mesh is still left mutated with no
+/// history entry, and nothing rolls it back. What the tick buys is that the
+/// event stops being invisible: every instrument that exists today reads clean
+/// on it — a geometry compare sees an errored command, a plane dump sees no
+/// undo, `isOperationInverse()` answers `false` correctly and uselessly, and
+/// `batchLeaks` / `nestedBatchOpens` / `batchUpgradeRefusals` are all zero
+/// because the batch opened and closed cleanly. The full ruling, and the two
+/// refuted remedies, are at `changeBus.emptyDeltaOverMutation`'s declaration.
+///
+/// THE TWO ARMS ARE DELIBERATELY NOT ONE `||`. Folded together the counter
+/// would read 1 for an honest refusal and stop separating "the kernel did
+/// nothing" from "the kernel did something and nobody recorded it" — which is
+/// the only question the number is asked.
+bool acceptRecordedEdit(size_t affected, in MeshEditDelta delta) {
+    if (affected == 0) return false;
+    if (delta.isEmpty) {
+        ++changeBus.emptyDeltaOverMutation;
+        return false;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Endpoint-keyed edge-selection capture/restore helpers, used by the delta-
 // backed destructive commands (delete / remove) to round-trip the pre-op EDGE
 // selection across a kernel that re-derives edges (doc §1.3). Edge indices are

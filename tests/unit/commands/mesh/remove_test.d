@@ -9,9 +9,12 @@ import mesh;
 import view;
 import editmode;
 import snapshot : MeshSnapshot, SelectionSnapshot;
+// `undoTrackerEnabled` left this list at task 1903 stage L3-b, with the fork
+// it named: `mesh.delete` and `mesh.remove` are unconditionally on the delta
+// path now, so importing the toggle here would suggest these blocks select
+// between two of them.
 import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope,
-                        captureSelectedEdgeEnds, restoreSelectedEdgeEnds,
-                        undoTrackerEnabled;
+                        captureSelectedEdgeEnds, restoreSelectedEdgeEnds;
 import commands.mesh.delete_ : MeshDelete;
 import math : Vec3;
 import mesh : makeGridPlane;
