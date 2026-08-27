@@ -135,6 +135,45 @@ JSONValue perfRead() {
 }
 
 // ---------------------------------------------------------------------------
+// /api/gc/commands — what ONE command cost the collector (task 2070).
+//
+// The app brackets `GC.allocatedInCurrentThread` + `GC.profileStats()` around
+// the command bridge's dispatch, ON THE MAIN LOOP (the thread that actually
+// runs the command — `/api/command` only ARRIVES on the HTTP thread). So this
+// is a read of an already-computed delta, not a before/after subtraction the
+// harness has to do itself the way `processRssKb` forces.
+//
+// `commands` is the anti-vacuity term and the reason this struct carries it:
+// a command that genuinely allocates nothing and an instrument that is not
+// running both report zero bytes, and only a bracket COUNT tells them apart.
+// ---------------------------------------------------------------------------
+struct CommandGcCounters {
+    bool empty = true;
+    long commands;           // monotone: brackets closed since process start
+    long lastAllocBytes;     // the most recent command's own bytes
+    long lastCollections;
+    long lastMaxPauseNs;
+    long lastPauseNs;
+    long offMainThreadBrackets;  // must stay 0 — see the app-side comment
+}
+
+CommandGcCounters fetchCommandGc() {
+    CommandGcCounters c;
+    try {
+        auto j = parseJSON(cast(string)get(g_baseUrl ~ "/api/gc/commands"));
+        if ("commands" !in j) return c;
+        c.empty                 = false;
+        c.commands              = j["commands"].integer;
+        c.lastAllocBytes        = j["lastAllocBytes"].integer;
+        c.lastCollections       = j["lastCollections"].integer;
+        c.lastMaxPauseNs        = j["lastMaxPauseNs"].integer;
+        c.lastPauseNs           = j["lastPauseNs"].integer;
+        c.offMainThreadBrackets = j["offMainThreadBrackets"].integer;
+    } catch (Exception) { /* absent route / older binary — stays empty */ }
+    return c;
+}
+
+// ---------------------------------------------------------------------------
 // /api/frames — FrameProbe (task 0195). Mirrors the /api/perf helpers above.
 // ---------------------------------------------------------------------------
 
@@ -191,6 +230,11 @@ FrameStats fetchFrames() {
     s.meshCacheRebuilds = j["meshCacheRebuilds"].integer;
     s.gcAllocBytes  = j["gcAllocBytes"].integer;
     s.gcCollections = j["gcCollections"].integer;
+    if ("gcPauseNs" in j) {
+        s.gcPauseNs    = j["gcPauseNs"].integer;
+        s.gcMaxPauseNs = j["gcMaxPauseNs"].integer;
+        s.gcHitch16    = j["gcHitch_16ms"].integer;
+    }
     s.steadyMaxAllocBytes = j["steadyMaxAllocBytes"].integer;
     if ("sumCacheNs" in j) s.sumCacheNs = j["sumCacheNs"].integer;
     if (j["worst"].type != JSONType.null_) s.worst = parseFrameRec(j["worst"]);

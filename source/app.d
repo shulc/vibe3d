@@ -40,7 +40,8 @@ import toolpipe.pipeline : g_pipeCtx;
 import gizmo;
 import view;
 import shader;
-import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot, g_fc;
+import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot, g_fc,
+                    markMainLoopThread;
 import io.assimp_runtime : initAssimp, shutdownAssimp;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 import bvh_pick : BvhPick;
@@ -1108,6 +1109,16 @@ void main(string[] args) {
     // the app. Let SDL deliver that click as a normal mouse button event too.
     SDL_SetHint("SDL_MOUSE_FOCUS_CLICKTHROUGH", "1");
     if (SDL_Init(SDL_INIT_VIDEO) != 0) { writefln("SDL_Init: %s", SDL_GetError()); return; }
+
+    // Task 2070 — stamp THIS thread as the main loop's, before the HTTP
+    // server thread exists. Deliberately NOT recorded from
+    // `HttpServer.tickAll()`, which would be the obvious place: tickAll IS
+    // the thread that dispatches every bridge, so a check comparing the two
+    // would be true by construction and could never come out differently.
+    // Sourced here instead, so `CommandGcProbe.offMainThreadBrackets` is a
+    // real comparison between two independently-obtained identities and goes
+    // nonzero the moment a GC bracket is taken on the wrong thread.
+    markMainLoopThread();
 
     // Cycles' Metal device holds a *process-global* ShaderCache singleton
     // (g_shaderCache in device/metal/kernel.mm) whose ~ShaderCache fires

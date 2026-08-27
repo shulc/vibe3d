@@ -460,6 +460,31 @@ struct CaseResult {
     // this host (rather than printing a bogus 0 kB reading).
     bool       rssAvailable;
     double     rssBeforeKb, rssAfterKb, rssDeltaKb;
+    // The RSS column's own SPREAD across the repeats (max - min of the
+    // deltas). Recorded because it is the number that decides whether the
+    // column can ever be gated, and because it is the control the task-2070
+    // allocation column below is measured against — a claim that one is
+    // tighter than the other should not have to be re-derived from a report.
+    double     rssSpreadKb;
+    // Task 2070 — per-case GC cost, from /api/gc/commands. Same shape and
+    // the same NOT-GATED status as the RSS triple above (see checkVsLast's
+    // skip list, which names these suffixes explicitly).
+    //
+    // WHY THIS IS A DIFFERENT KIND OF NUMBER FROM RSS, and the reason it was
+    // worth adding beside it: allocated bytes is a COUNTER the command
+    // increments, not a SAMPLE of a process-wide quantity. RSS moves with
+    // the allocator's page reclaim, the GC's own heap growth and anything
+    // else in the process, so its per-repeat spread swamps the signal for
+    // every case but the cheapest. Bytes allocated does not.
+    //
+    // `gcAllocBytes`/`gcCollections` are MEDIANS across repeats (same
+    // treatment as kernelMedianUs). `gcMaxPauseNs` is a MAX, not a median:
+    // it already IS a worst-case, and medianing worst-cases away is exactly
+    // what hides the one frame that blew the budget.
+    bool       gcAvailable;
+    double     gcAllocBytes, gcCollections;
+    long       gcMaxPauseNs;
+    double     gcAllocSpreadBytes;
     // --- `tools` subcommand: one interactive-tool preview rebuild (task 1370)
     bool       isToolPreview;    // true for ToolCase rows
     long       toolPreviewCount;      // rebuildPreview() calls in the window
@@ -1300,6 +1325,13 @@ CaseResult runCommandCase(ref CmdCase c, int n, string meshType, int repeats) {
     double[] rssBeforeSamples, rssAfterSamples;
     bool rssReadable = true;
 
+    // Task 2070 — the GC twin. One /api/gc/commands read per repeat, AFTER
+    // the command; the app has already bracketed the delta on the main loop,
+    // so there is nothing to subtract here.
+    double[] gcAllocSamples, gcCollSamples;
+    long gcMaxPauseNs = 0;          // MAX across repeats, not a median
+    bool gcReadable = true;
+
     foreach (r; 0 .. repeats) {
         // Rebuild the cage every repeat — most of these are destructive.
         resetMesh(meshType, n);
@@ -1321,12 +1353,34 @@ CaseResult runCommandCase(ref CmdCase c, int n, string meshType, int repeats) {
         // window commandApply times, not the whole repeat (reset + select
         // also allocate, and are not what this column is about).
         long rssBefore = processRssKb(g_vibePid);
+        // The GC bracket COUNT before the command, so the read after it can
+        // prove a bracket actually fired. Without this the column reports
+        // the PREVIOUS command's figures whenever the bracket is broken —
+        // stale, plausible, and silent.
+        auto gcBefore = fetchCommandGc();
         if (!postCommand(c.commandId)) {
             res.status = CaseStatus.ERROR;
             res.detail = "command failed";
             return res;
         }
         long rssAfter = processRssKb(g_vibePid);
+        auto gcAfter = fetchCommandGc();
+        if (gcBefore.empty || gcAfter.empty
+            || gcAfter.commands != gcBefore.commands + 1
+            || gcAfter.offMainThreadBrackets != 0) {
+            // Any of: the route is absent (older binary), no bracket closed
+            // for this command, more than one did (a nested dispatch this
+            // lane does not model), or a bracket was taken off the main
+            // loop — in which case `GC.allocatedInCurrentThread` measured
+            // the wrong thread and the bytes mean nothing. Drop the column
+            // rather than print a number that cannot be trusted.
+            gcReadable = false;
+        } else {
+            gcAllocSamples ~= cast(double) gcAfter.lastAllocBytes;
+            gcCollSamples  ~= cast(double) gcAfter.lastCollections;
+            if (gcAfter.lastMaxPauseNs > gcMaxPauseNs)
+                gcMaxPauseNs = gcAfter.lastMaxPauseNs;
+        }
         if (rssBefore < 0 || rssAfter < 0) rssReadable = false;
         else { rssBeforeSamples ~= cast(double)rssBefore; rssAfterSamples ~= cast(double)rssAfter; }
         auto perf = perfRead();
@@ -1351,6 +1405,19 @@ CaseResult runCommandCase(ref CmdCase c, int n, string meshType, int repeats) {
         res.rssBeforeKb = medianOf(rssBeforeSamples);
         res.rssAfterKb  = medianOf(rssAfterSamples);
         res.rssDeltaKb  = res.rssAfterKb - res.rssBeforeKb;
+        res.rssSpreadKb = spreadOf(perRepeatDeltas(rssBeforeSamples,
+                                                   rssAfterSamples));
+    }
+
+    // Task 2070 — same all-or-nothing rule the RSS block uses: a median over
+    // fewer samples than the timing one, with nothing saying so, is worse
+    // than no column.
+    res.gcAvailable = gcReadable && gcAllocSamples.length == repeats;
+    if (res.gcAvailable) {
+        res.gcAllocBytes        = medianOf(gcAllocSamples);
+        res.gcCollections       = medianOf(gcCollSamples);
+        res.gcMaxPauseNs        = gcMaxPauseNs;
+        res.gcAllocSpreadBytes  = spreadOf(gcAllocSamples);
     }
 
     auto v = judgeWitness(c.witness, before, after,
@@ -3110,6 +3177,19 @@ void writeResultsJson(string path, string meshType, int n, long faceCount,
                 a.put(format(`      "rssBeforeKb": %s,` ~ "\n", jsonNum(r.rssBeforeKb)));
                 a.put(format(`      "rssAfterKb": %s,` ~ "\n", jsonNum(r.rssAfterKb)));
                 a.put(format(`      "rssDeltaKb": %s,` ~ "\n", jsonNum(r.rssDeltaKb)));
+                a.put(format(`      "rssSpreadKb": %s,` ~ "\n", jsonNum(r.rssSpreadKb)));
+            }
+            // Task 2070 — per-case GC cost, recorded but NOT gated (same
+            // status as the RSS block above; the exclusion is stated at
+            // checkVsLast, not left to be inferred from absence). Emitted
+            // only when a bracket was proven to fire on every repeat, so an
+            // absent block means "not measured", never "zero".
+            if (r.gcAvailable) {
+                a.put(format(`      "gcAllocBytes": %s,` ~ "\n", jsonNum(r.gcAllocBytes)));
+                a.put(format(`      "gcCollections": %s,` ~ "\n", jsonNum(r.gcCollections)));
+                a.put(format(`      "gcMaxPauseNs": %d,` ~ "\n", r.gcMaxPauseNs));
+                a.put(format(`      "gcAllocSpreadBytes": %s,` ~ "\n",
+                             jsonNum(r.gcAllocSpreadBytes)));
             }
             a.put(`      "breakdown": ` ~ r.lastBreakdown.toString() ~ "\n");
         } else {
@@ -5343,12 +5423,26 @@ int main(string[] args) {
             // Task 2030 — RSS delta printed inline (not only into
             // results.json/history): "record, print" per the task brief.
             // Recorded, not gated — see the CaseResult field comment.
-            case CaseStatus.OK:
+            case CaseStatus.OK: {
+                // Task 2070 — the GC figures print beside RSS on the same
+                // progress line. The allocation SPREAD is printed next to
+                // the value on purpose: it is the whole argument for this
+                // column existing beside the RSS one, and a reader who sees
+                // them together does not have to take it on trust.
+                string mem;
                 if (r.rssAvailable)
-                    writefln("OK  (rss %+.0f KB)", r.rssDeltaKb);
-                else
-                    writeln("OK");
+                    mem ~= format(" rss %+.0f KB (+-%.0f)",
+                                  r.rssDeltaKb, r.rssSpreadKb);
+                if (r.gcAvailable)
+                    mem ~= format(" gc %.0f KB (+-%.0f) %.0f coll pause %.2f ms",
+                                  r.gcAllocBytes / 1024.0,
+                                  r.gcAllocSpreadBytes / 1024.0,
+                                  r.gcCollections,
+                                  r.gcMaxPauseNs / 1_000_000.0);
+                if (mem.length) writefln("OK (%s )", mem);
+                else            writeln("OK");
                 break;
+            }
             case CaseStatus.SKIP:  writeln("SKIP (", r.detail, ")"); break;
             case CaseStatus.ERROR: writeln("ERROR (", r.detail, ")"); break;
         }
@@ -5551,6 +5645,15 @@ int main(string[] args) {
             // exists to set a threshold against.
             if (r.rssAvailable)
                 kernelMedianByCase[r.historyKey ~ "#rssDeltaKb"] = r.rssDeltaKb;
+            // Task 2070 — the GC twins ride the same metric-agnostic map.
+            // `checkVsLast` skips all three by name; see its skip list for
+            // why they are recorded and not gated.
+            if (r.gcAvailable) {
+                kernelMedianByCase[r.historyKey ~ "#gcAllocBytes"]  = r.gcAllocBytes;
+                kernelMedianByCase[r.historyKey ~ "#gcCollections"] = r.gcCollections;
+                kernelMedianByCase[r.historyKey ~ "#gcMaxPauseNs"]  =
+                    cast(double) r.gcMaxPauseNs;
+            }
         }
         lib.history.appendHistory(g_repoRoot, curHeader, kernelMedianByCase, "ops",
                                   lib.lifecycle.runWasContaminated());

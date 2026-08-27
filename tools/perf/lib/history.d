@@ -377,6 +377,35 @@ int checkVsLast(HistoryEntry[] entries, double threshold, double snapThreshold,
         // the floor check below, so the day someone sets a real memory
         // threshold, deleting this one line is the whole diff.
         if (name.endsWith("#rssDeltaKb")) continue;
+        // Task 2070 — THE GC COLUMNS ARE RECORDED AND DELIBERATELY NOT
+        // GATED, and this skip is written out rather than left implicit so
+        // the exclusion is a decision on the record instead of an oversight
+        // someone later reads as one.
+        //
+        // Two separate reasons, because they retire at different times:
+        //
+        //  * `#gcAllocBytes` is the one that could plausibly carry a gate
+        //    soonest — it is a COUNTER, not a sample, so it does not have
+        //    the run-to-run spread that makes `#rssDeltaKb` unusable (the
+        //    two spreads sit side by side in results.json for exactly this
+        //    comparison). What it still lacks is a baseline: one night's
+        //    numbers are not a threshold.
+        //  * `#gcCollections` and `#gcMaxPauseNs` are worse than un-baselined,
+        //    they are structurally wrong for THIS check. Both are legitimately
+        //    0 on most cases, and the comparison below is a RATIO against the
+        //    previous run: a case going 0 -> 1 collections is an infinite
+        //    regression, and a 2 ms pause landing in one run and not the next
+        //    would red the lane for the GC's scheduling rather than for any
+        //    change to our code. A pause gate wants an ABSOLUTE budget
+        //    (16.7 ms), not a ratio, and that is a different check.
+        //
+        // Also: `floorUs` below is a MICROSECOND floor. Bytes and nanoseconds
+        // are not commensurate with it, so falling through to it would not
+        // merely gate these too eagerly, it would compare them against a
+        // number in the wrong unit.
+        if (name.endsWith("#gcAllocBytes")
+         || name.endsWith("#gcCollections")
+         || name.endsWith("#gcMaxPauseNs")) continue;
         if (cur < floorUs && prv < floorUs) continue;   // µs-jitter band
         compared++;
         // The `#snapQuery` keys get their OWN threshold, resolved by the

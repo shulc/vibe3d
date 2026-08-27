@@ -17,7 +17,7 @@ import mesh : Mesh, Surface;
 public import http_json : jsonEsc, meshToJsonDetailed, meshPlanesJson,
     PlaneDumpMeta;
 import core.atomic;
-import perf_probe : g_perf, g_frames, g_fc;
+import perf_probe : g_perf, g_frames, g_fc, g_commandGc;
 
 // For event player functionality
 import bindbc.sdl;
@@ -990,6 +990,31 @@ class HttpServer {
                 if (commandHandler is null) {
                     resp.error = "command handler not set";
                 } else {
+                    // ---- Task 2070: the per-command GC bracket ----------
+                    //
+                    // WHY HERE AND NOT AT THE ROUTE. `GC.allocatedInCurrentThread`
+                    // is PER-THREAD, and `/api/command` arrives on the HTTP
+                    // background thread but does NOT run there: the route is
+                    // `Answered.mainThread`, so `route_apiCommand` only fills
+                    // `commandBridge.req`, bumps the submit epoch and SPINS
+                    // (`submitAndWait`), while THIS service body is invoked by
+                    // `MainThreadBridge.tick()` from the main loop. A bracket
+                    // taken at the route would read the HTTP thread's own
+                    // allocation — the request parse and the response buffer,
+                    // a few kB, stable across cases and completely unrelated
+                    // to the command. It would look entirely plausible while
+                    // measuring nothing, which is the failure this comment
+                    // exists to prevent someone re-introducing.
+                    //
+                    // Outermost in the scope so the window covers the latch
+                    // hook too (scope(exit) unwinds in reverse declaration
+                    // order, so this `end()` runs after the latch is dropped).
+                    // `end()` runs on a throw as well — the catch below is
+                    // INSIDE it — so a failing command still publishes its
+                    // cost instead of leaving the previous command's figures
+                    // standing as if they were this one's.
+                    g_commandGc.begin();
+                    scope(exit) g_commandGc.end();
                     // Continuous-scrub simulation (test only): raise the app
                     // latch so this tool.pipe.attr shares the live tweak
                     // generation (REPLACE-coalesce) instead of bumping a new
@@ -1944,6 +1969,7 @@ class HttpServer {
                        "<li>/api/model - Get current model state</li>" ~
                        "<li>/api/mesh/planes - GET (--test only) every parallel plane of the active mesh, edge planes keyed by endpoint pair</li>" ~
                        "<li>/api/command - Execute one command (JSON {\"id\":...\"params\":...} OR argstring \"name arg:val ...\")</li>" ~
+                       "<li>/api/gc/commands - GC bytes/collections/max pause for the last command (--test only)</li>" ~
                        "<li>/api/script - Execute multi-line script (line-by-line argstring)</li>" ~
                        "<li>tool.set &lt;toolId&gt; [off] [name:val ...] - activate/deactivate a tool</li>" ~
                        "<li>tool.attr &lt;toolId&gt; &lt;name&gt; &lt;value&gt; - set parameter on active tool</li>" ~
@@ -2481,6 +2507,41 @@ class HttpServer {
             `"acenClusterRebuilds":%d,"falloffSelWeightRebuilds":%d}`,
             g_snapGridBuilds, g_symPairingRebuilds,
             g_acenClusterRebuilds, g_falloffSelWeightRebuilds);
+    }
+
+    private void route_apiGcCommands(HttpRequest request, HttpResponse response) {
+        // WHAT ONE COMMAND COST THE COLLECTOR (task 2070).
+        //
+        // Bytes allocated, collections triggered, and the worst single
+        // stop-the-world pause, bracketed around the command bridge's
+        // dispatch ON THE MAIN LOOP (see the bracket's own comment in the
+        // ctor for why the thread matters and why the route is the wrong
+        // place to sample).
+        //
+        // NOT `/api/perf`, for the same reason `/api/cache/rebuilds` is not:
+        // `PerfProbe` is compiled out of every build but `perf`, so the suite
+        // lane would read `{}`. `CommandGcProbe` is always compiled, so the
+        // default gate can witness it.
+        //
+        // The running totals are monotone and NEVER RESET — read as a DELTA
+        // across a step, exactly like `/api/changes` and
+        // `/api/cache/rebuilds`. The `last*` fields are the MOST RECENT
+        // command's own figures, which is what a per-case harness column
+        // wants; `commands` is the anti-vacuity check that a bracket fired
+        // at all, because a dead instrument and a genuinely free command
+        // both read zero bytes.
+        //
+        // `Answered.httpThread` and unsynchronised on the same diagnostic
+        // contract as `/api/perf`: plain scalars, single main-thread writer.
+        response.headers["Content-Type"] = "application/json";
+        if (!testMode) {
+            response.statusCode = 403;
+            response.body = `{"error":"gc/commands is only available in --test mode"}`;
+            return;
+        }
+        import perf_probe : g_commandGc;
+        response.statusCode = 200;
+        response.body = g_commandGc.toJson();
     }
 
     private void route_apiChanges(HttpRequest request, HttpResponse response) {
@@ -4038,6 +4099,7 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/frames",               "GET",  Match.exact,  Answered.httpThread, "route_apiFrames"),
     RouteSpec("/api/changes",              "GET",  Match.exact,  Answered.httpThread, "route_apiChanges"),
     RouteSpec("/api/cache/rebuilds",       "GET",  Match.exact,  Answered.httpThread, "route_apiCacheRebuilds"),
+    RouteSpec("/api/gc/commands",          "GET",  Match.exact,  Answered.httpThread, "route_apiGcCommands"),
     // Match.prefix: the provenance rides the query string (plan §6.3 rule 2),
     // and Match.exact compares the whole path. No other route is a prefix of
     // this one and none sits below it.

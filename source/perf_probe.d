@@ -425,6 +425,36 @@ struct FrameRec {
     long uiNs;
     long gcAllocBytes;
     long gcCollections;
+    // ---- Task 2070: WHAT THE COLLECTIONS COST ------------------------
+    //
+    // `gcCollections` above counts collections; it has never said what one
+    // COST. For an interactive editor that is the wrong half of the fact:
+    // the 60 fps budget is 16.7 ms per frame, so what decides the question
+    // is not how many collections ran but whether ONE of them stopped the
+    // world for longer than the frame had left. Four collections of 200 us
+    // are invisible to a user; one of 40 ms is a visible stutter, and both
+    // shapes read the same on `gcCollections`.
+    //
+    // All three come from the SAME `GC.profileStats()` call the collection
+    // count already makes (one call per beginFrame/endFrame, not one per
+    // field), so they are free.
+    //
+    // PROCESS-GLOBAL, NOT PER-THREAD — and unlike `gcAllocBytes` beside
+    // them there is no per-thread variant to choose instead. druntime keeps
+    // ONE set of pause figures for the whole process, so an allocation on a
+    // render worker (`--config=with-render`'s IPR thread) or on the HTTP
+    // thread that triggers a collection lands in THIS frame's pause figure.
+    // That is the right answer for the question being asked — a
+    // stop-the-world pause stops the main loop no matter who triggered it,
+    // exactly the asymmetry `gcCollections` was already documented to want
+    // below — but it is the WRONG number to attribute to main-loop code:
+    // a frame whose own work allocated nothing can still show a pause here.
+    // Where it matters: reading these off a `with-render` build during a
+    // live IPR render attributes the renderer's collections to the frame
+    // that happened to be in flight.
+    long gcMaxPauseNs;      // worst SINGLE pause in this frame (see gcWindowMaxPauseNs)
+    long gcPauseNs;         // this frame's stop-the-world total
+    long gcCollectNs;       // this frame's total collection time (>= gcPauseNs)
     // ---- Task 1800: WHICH PHASE ALLOCATED ----------------------------
     //
     // `gcAllocBytes` above says a frame allocated; it has never said WHERE.
@@ -466,7 +496,226 @@ struct FrameStatsSnapshot {
     long sumAllocBytes;
     long sumCollections;
     long meshCacheRebuilds;
+    // Task 2070. `sumPauseNs` is summable across frames (it is a delta of a
+    // counter); `maxPauseNs` is NOT — it is the running worst over the
+    // window, which is the figure a 16.7 ms budget question actually wants.
+    long sumPauseNs;
+    long maxPauseNs;
 }
+
+// ===========================================================================
+// Task 2070 — GC PAUSE / ALLOCATION SAMPLING, always compiled.
+//
+// `GC.profileStats()` hands back FIVE fields and this module used to keep
+// exactly one of them (`numCollections`). The four it dropped are the ones
+// that answer the only GC question an interactive editor has: not "did the
+// collector run" but "did it stop the world for longer than a frame".
+//
+// Everything in this section is OUTSIDE `version (PerfProbe)` on purpose.
+// `FrameProbe` and `PerfProbe` are compiled out of every build but `perf`,
+// so a witness written against them can only run in a build the two default
+// gates never make. The pure derivation below and `CommandGcProbe` are
+// therefore always present, and are testable in the DEFAULT build.
+// ===========================================================================
+
+/// One reading of the process's GC counters. `allocBytes` is the only
+/// PER-THREAD field; the other four are process-global (see FrameRec).
+struct GcSample {
+    long allocBytes;      // GC.allocatedInCurrentThread — THIS thread only
+    long collections;     // process-global, monotone counter
+    long totalPauseNs;    // process-global, monotone counter
+    long maxPauseNs;      // process-global RUNNING MAX — see gcWindowMaxPauseNs
+    long totalCollectNs;  // process-global, monotone counter
+}
+
+/// Read all five counters in ONE `GC.profileStats()` call. Not `@nogc`:
+/// `GC.allocatedInCurrentThread` is documented `nothrow` only.
+GcSample gcSampleNow() nothrow {
+    import core.memory : GC;
+    auto p = GC.profileStats();
+    GcSample s;
+    s.allocBytes     = cast(long) GC.allocatedInCurrentThread;
+    s.collections    = cast(long) p.numCollections;
+    s.totalPauseNs   = p.totalPauseTime.total!"nsecs";
+    s.maxPauseNs     = p.maxPauseTime.total!"nsecs";
+    s.totalCollectNs = p.totalCollectionTime.total!"nsecs";
+    return s;
+}
+
+/// The worst SINGLE stop-the-world pause inside a bracketed window, in ns,
+/// derived from the two `GcSample`s that bracket it.
+///
+/// THE TRAP THIS FUNCTION EXISTS FOR: `maxPauseTime` is a process-wide
+/// RUNNING MAX, not a counter, so subtracting two samples of it is
+/// meaningless. A window containing a 5 ms pause reads a delta of ZERO
+/// whenever some earlier window already saw 6 ms — i.e. the naive
+/// `after - before` under-reports exactly the frames a 16.7 ms budget cares
+/// about most, and does it silently. The three honest cases:
+///
+///   * `collDelta <= 0` — no collection ran, so no pause happened: 0.
+///   * the running max GREW — the pause that grew it is by definition the
+///     largest the process has seen AND it happened inside this window, so
+///     the window's worst pause is EXACTLY the new max.
+///   * the running max stood still — every pause here was <= the standing
+///     max, and the only exact figure this window owns is its pause TOTAL.
+///     With k collections the worst lies in [total/k, total]; we report the
+///     TOTAL, which is EXACT for k == 1 (overwhelmingly the common case)
+///     and an OVER-estimate for k > 1. Over, never under: this number
+///     answers "did anything here blow the frame budget", where a false
+///     alarm costs a second look and a miss costs the whole instrument.
+///
+/// HOW LOOSE THAT THIRD CASE GETS, measured rather than guessed (task 2070):
+/// `mesh.duplicate` over half a 316x316 grid ran 59 collections in ONE
+/// command and this function reported 391 ms, while the same command in a
+/// window where the running max DID grow reported its true single worst
+/// pause as 7.2 ms over 234 collections — a 54x over-estimate in the k >> 1
+/// case. That is the safe direction, but it is not a small correction, so:
+///
+///   * For a FRAME this is effectively exact. k is 0 or 1 for virtually
+///     every frame, which is the case this field was added to answer.
+///   * For a whole COMMAND, read `gcMaxPauseNs` WITH the collection count
+///     beside it. Both are published (`gcCollections` / `lastCollections`)
+///     and the ops lane prints them on the same line for this reason. At
+///     k > 1 treat it as a bound, not a measurement.
+///
+/// druntime publishes no per-collection histogram, so a tighter answer for
+/// k > 1 is not available from `ProfileStats` at all — this is the limit of
+/// the data, not a shortcut.
+long gcWindowMaxPauseNs(long maxBeforeNs, long maxAfterNs,
+                        long pauseDeltaNs, long collDelta)
+        pure nothrow @nogc @safe {
+    if (collDelta <= 0) return 0;
+    if (maxAfterNs > maxBeforeNs) return maxAfterNs;
+    return pauseDeltaNs;
+}
+
+/// The main loop's thread, recorded once at startup by `app.d`. Read by
+/// `CommandGcProbe` to answer "was this bracket taken on the thread that
+/// actually ran the work" — see `offMainThreadBrackets`.
+__gshared size_t g_mainLoopThreadId;
+
+/// Record the calling thread as the main loop's. Called once from app.d.
+void markMainLoopThread() nothrow {
+    g_mainLoopThreadId = currentThreadId();
+}
+
+/// A stable per-thread identity. The `Thread` object's address is unique
+/// and constant for the life of the thread on every platform we ship, and
+/// reading it is a TLS load — no allocation, no syscall.
+size_t currentThreadId() nothrow {
+    import core.thread.osthread : Thread;
+    try {
+        return cast(size_t) cast(void*) Thread.getThis();
+    } catch (Throwable) {
+        return 0;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CommandGcProbe — what ONE command cost the collector.
+//
+// WHY THE BRACKET IS WHERE IT IS, and this is the whole correctness story
+// for the allocation column: `GC.allocatedInCurrentThread` is PER-THREAD.
+// `/api/command` ARRIVES on the HTTP background thread, but it does NOT RUN
+// there — the route is `Answered.mainThread`, so the HTTP thread only fills
+// a request slot, bumps a submit epoch and spins, and the command body is
+// executed by `MainThreadBridge.tick()` from the main loop. Sampling on the
+// HTTP thread would therefore read that thread's own allocation (the request
+// parse, the response buffer) and NOTHING of the command — a small, stable,
+// entirely plausible-looking number unrelated to the work. The bracket
+// consequently lives inside the bridge's SERVICE body, which runs on the
+// main loop, and `lastThreadId` / `offMainThreadBrackets` below keep that
+// claim checkable at runtime instead of resting on this comment.
+//
+// The counters are monotone and never reset, like `/api/cache/rebuilds`'s.
+// The `last*` fields are the most recent command's OWN figures, which is
+// what a per-case harness column wants: the ops lane fires exactly one
+// command per repeat and reads them straight, with `commands` as the
+// anti-vacuity check that a bracket fired at all.
+// ---------------------------------------------------------------------------
+struct CommandGcProbe {
+    // Running totals over every command since process start.
+    ulong commands;
+    long  sumAllocBytes;
+    long  sumCollections;
+    long  sumPauseNs;
+    long  runMaxPauseNs;      // running max — NOT summable, NOT delta-able
+
+    // The most recent command's own figures.
+    long  lastAllocBytes;
+    long  lastCollections;
+    long  lastPauseNs;
+    long  lastMaxPauseNs;
+    long  lastCollectNs;
+
+    // Bracketing provenance — the runtime half of the thread argument above.
+    size_t lastThreadId;
+    ulong  offMainThreadBrackets;
+
+    private GcSample base_;
+    private int      depth_;
+
+    /// Open the bracket. Nested dispatches (a command that fires another)
+    /// do NOT re-arm: the OUTERMOST bracket owns the window, or an inner
+    /// command would reset the base and the outer one would report only its
+    /// own tail.
+    void begin() nothrow {
+        if (depth_++ != 0) return;
+        base_ = gcSampleNow();
+    }
+
+    /// Close the bracket and publish. Safe to call unbalanced-ly (a throw
+    /// inside the dispatch is caught by the bridge, but `end()` is called
+    /// from a `scope(exit)` so the depth cannot leak).
+    void end() nothrow {
+        if (--depth_ != 0) {
+            if (depth_ < 0) depth_ = 0;   // never let an unbalanced end wedge it
+            return;
+        }
+        auto now = gcSampleNow();
+        immutable long dAlloc = now.allocBytes    - base_.allocBytes;
+        immutable long dColl  = now.collections   - base_.collections;
+        immutable long dPause = now.totalPauseNs  - base_.totalPauseNs;
+        immutable long dCollNs= now.totalCollectNs - base_.totalCollectNs;
+        immutable long mx     = gcWindowMaxPauseNs(base_.maxPauseNs,
+                                                   now.maxPauseNs, dPause, dColl);
+        lastAllocBytes  = dAlloc;
+        lastCollections = dColl;
+        lastPauseNs     = dPause;
+        lastMaxPauseNs  = mx;
+        lastCollectNs   = dCollNs;
+
+        commands++;
+        sumAllocBytes  += dAlloc;
+        sumCollections += dColl;
+        sumPauseNs     += dPause;
+        if (mx > runMaxPauseNs) runMaxPauseNs = mx;
+
+        lastThreadId = currentThreadId();
+        if (g_mainLoopThreadId != 0 && lastThreadId != g_mainLoopThreadId)
+            offMainThreadBrackets++;
+    }
+
+    /// JSON for `GET /api/gc/commands`.
+    string toJson() const {
+        import std.format : format;
+        return format(
+            `{"commands":%d,"sumAllocBytes":%d,"sumCollections":%d,` ~
+            `"sumPauseNs":%d,"runMaxPauseNs":%d,"lastAllocBytes":%d,` ~
+            `"lastCollections":%d,"lastPauseNs":%d,"lastMaxPauseNs":%d,` ~
+            `"lastCollectNs":%d,"lastThreadId":%d,"mainLoopThreadId":%d,` ~
+            `"offMainThreadBrackets":%d}`,
+            commands, sumAllocBytes, sumCollections, sumPauseNs,
+            runMaxPauseNs, lastAllocBytes, lastCollections, lastPauseNs,
+            lastMaxPauseNs, lastCollectNs, lastThreadId,
+            g_mainLoopThreadId, offMainThreadBrackets);
+    }
+}
+
+/// Process-wide per-command GC probe. Written on the main loop from the
+/// HTTP command bridge's service body, read from the HTTP thread
+/// (GET /api/gc/commands) — same no-lock diagnostic contract as `g_perf`.
+__gshared CommandGcProbe g_commandGc;
 
 version (PerfProbe) {
 
@@ -688,6 +937,13 @@ version (PerfProbe) {
         private long hitch33;      // frames with totalNs > 33ms
         private long sumAllocBytes;
         private long sumCollections;
+        // Task 2070 — the pause twins. `sumPauseNs` accumulates (a delta of
+        // a counter); `maxPauseNs` is the running WORST over the window, and
+        // is deliberately NOT a sum: "one frame paused for 40 ms" is the
+        // fact, and summing it away into a window total hides it.
+        private long sumPauseNs;
+        private long maxPauseNs;
+        private long hitchGc16;    // frames whose OWN GC pause blew 16.6 ms
         private long meshCacheRebuilds;
         // Task 1540 — the `cache` PHASE summed over the window, so the
         // window-wide `Cat.*` sums off /api/perf (which is the only
@@ -702,6 +958,11 @@ version (PerfProbe) {
         private MonoTime  frameStart_;
         private ulong     allocBase_;
         private size_t    collBase_;
+        // Task 2070 — the other three counters from the SAME profileStats()
+        // call `collBase_` already comes from. No extra GC call.
+        private long      pauseBase_;
+        private long      maxPauseBase_;
+        private long      collectNsBase_;
 
         /// Start a new frame. Call as the FIRST statement inside
         /// `while (running)` in app.d.
@@ -709,7 +970,14 @@ version (PerfProbe) {
             cur_ = FrameRec.init;
             frameStart_ = MonoTime.currTime;
             allocBase_  = GC.allocatedInCurrentThread;
-            collBase_   = GC.profileStats().numCollections;
+            // ONE profileStats() call for all four process-global bases —
+            // it used to be called here for `numCollections` alone and the
+            // other four fields were discarded (task 2070).
+            auto pb = GC.profileStats();
+            collBase_      = pb.numCollections;
+            pauseBase_     = pb.totalPauseTime.total!"nsecs";
+            maxPauseBase_  = pb.maxPauseTime.total!"nsecs";
+            collectNsBase_ = pb.totalCollectionTime.total!"nsecs";
         }
 
         /// Open a scope timer for phase `p`. Records into `cur_` on
@@ -789,7 +1057,8 @@ version (PerfProbe) {
         /// No allocation.
         FrameStatsSnapshot stats() const {
             return FrameStatsSnapshot(frameCount, hitch16, hitch33,
-                sumAllocBytes, sumCollections, meshCacheRebuilds);
+                sumAllocBytes, sumCollections, meshCacheRebuilds,
+                sumPauseNs, maxPauseNs);
         }
 
         /// Close the frame: stamp totalNs + GC deltas, then commit `cur_`
@@ -814,7 +1083,17 @@ version (PerfProbe) {
             // @nogc/@safe) but reads a running per-thread counter without
             // allocating, so it is safe on this hot path.
             cur_.gcAllocBytes  = cast(long)(GC.allocatedInCurrentThread - allocBase_);
-            cur_.gcCollections = cast(long)(GC.profileStats().numCollections - collBase_);
+            // Task 2070 — one call, four fields, matching beginFrame's base.
+            auto pe = GC.profileStats();
+            cur_.gcCollections = cast(long)(pe.numCollections - collBase_);
+            cur_.gcPauseNs     = pe.totalPauseTime.total!"nsecs" - pauseBase_;
+            cur_.gcCollectNs   = pe.totalCollectionTime.total!"nsecs" - collectNsBase_;
+            // NOT `maxAfter - maxBefore`: maxPauseTime is a running max, and
+            // that subtraction reads 0 for any frame whose pause failed to
+            // beat the process record. See gcWindowMaxPauseNs.
+            cur_.gcMaxPauseNs  = gcWindowMaxPauseNs(
+                maxPauseBase_, pe.maxPauseTime.total!"nsecs",
+                cur_.gcPauseNs, cur_.gcCollections);
 
             ring[ringPos] = cur_;                 // write FIRST
             ringPos = (ringPos + 1) % Ring;        // then advance
@@ -825,6 +1104,9 @@ version (PerfProbe) {
             if (cur_.totalNs > 33_000_000) hitch33++;
             sumAllocBytes  += cur_.gcAllocBytes;
             sumCollections += cur_.gcCollections;
+            sumPauseNs     += cur_.gcPauseNs;
+            if (cur_.gcMaxPauseNs > maxPauseNs) maxPauseNs = cur_.gcMaxPauseNs;
+            if (cur_.gcMaxPauseNs > 16_600_000) hitchGc16++;
             sumCacheNs     += cur_.cacheNs;
         }
 
@@ -850,6 +1132,9 @@ version (PerfProbe) {
             hitch33 = 0;
             sumAllocBytes = 0;
             sumCollections = 0;
+            sumPauseNs = 0;
+            maxPauseNs = 0;
+            hitchGc16 = 0;
             meshCacheRebuilds = 0;
             sumCacheNs = 0;
         }
@@ -859,10 +1144,12 @@ version (PerfProbe) {
             return format(
                 `{"totalNs":%d,"eventNs":%d,"toolNs":%d,"cacheNs":%d,` ~
                 `"drawNs":%d,"uploadNs":%d,"uiNs":%d,"gcAllocBytes":%d,` ~
-                `"gcCollections":%d,"eventAlloc":%d,"toolAlloc":%d,` ~
+                `"gcCollections":%d,"gcMaxPauseNs":%d,"gcPauseNs":%d,` ~
+                `"gcCollectNs":%d,"eventAlloc":%d,"toolAlloc":%d,` ~
                 `"cacheAlloc":%d,"drawAlloc":%d,"uploadAlloc":%d,"uiAlloc":%d}`,
                 r.totalNs, r.eventNs, r.toolNs, r.cacheNs, r.drawNs,
                 r.uploadNs, r.uiNs, r.gcAllocBytes, r.gcCollections,
+                r.gcMaxPauseNs, r.gcPauseNs, r.gcCollectNs,
                 r.eventAlloc, r.toolAlloc, r.cacheAlloc, r.drawAlloc,
                 r.uploadAlloc, r.uiAlloc);
         }
@@ -928,9 +1215,11 @@ version (PerfProbe) {
 
             app.formattedWrite(
                 `,"hitch_16ms":%d,"hitch_33ms":%d,"meshCacheRebuilds":%d,` ~
-                `"gcAllocBytes":%d,"gcCollections":%d`,
+                `"gcAllocBytes":%d,"gcCollections":%d,"gcPauseNs":%d,` ~
+                `"gcMaxPauseNs":%d,"gcHitch_16ms":%d`,
                 hitch16, hitch33, meshCacheRebuilds,
-                sumAllocBytes, sumCollections);
+                sumAllocBytes, sumCollections, sumPauseNs,
+                maxPauseNs, hitchGc16);
 
             // F-I2 (RECORDED, NON-GATING): steady-state alloc/frame after a
             // K-frame warmup skip (lazy inits, first-frame ImGui layout).
