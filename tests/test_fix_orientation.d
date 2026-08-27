@@ -163,14 +163,22 @@ unittest { // mesh.fixOrientation runs its kernel inside ONE edit batch
     // satisfies that for free, so one command that DOES move it has to run in
     // the same process.
     //
-    // IT HAS NOW BEEN RE-BASED TWICE, WHICH IS WHY IT IS SHAPED LIKE THIS.
-    // First it was `mesh.flip`, which was both the corruption and the control,
-    // until stage L2-a gave `mesh.flip` a batch. Then `mesh.addVertex`, until
-    // stage L2-g gave that one a batch too. EVERY batchless mesh command is on
-    // task 1903's migration list, so the control will keep going quiet — and
-    // the fix is always to name another still-batchless command, NEVER to
-    // delete the control, which is the only thing standing between the three
-    // assertions below and a dead counter.
+    // IT HAS NOW BEEN RE-BASED THREE TIMES, WHICH IS WHY IT IS SHAPED LIKE
+    // THIS. First it was `mesh.flip`, which was both the corruption and the
+    // control, until stage L2-a gave `mesh.flip` a batch. Then
+    // `mesh.addVertex`, until stage L2-g gave that one a batch too. Then
+    // `mesh.subdivide`, until the L5 stage's own commit gave it an
+    // `unrecorded` batch — which is what this control is FOR: that commit went
+    // in green on its own lane and this line is the only thing in the tree that
+    // noticed. EVERY batchless mesh command is on task 1903's migration list,
+    // so the control will keep going quiet — and the fix is always to name
+    // another still-batchless command, NEVER to delete the control, which is
+    // the only thing standing between the three assertions below and a dead
+    // counter.
+    //
+    // `mesh.triple` is the fourth pick and it is one of the nine commands the
+    // topo-misc stage has not reached yet, so it will keep ticking until that
+    // stage lands — at which point this line moves again.
     //
     // WHAT CHANGED THE SECOND TIME is the ORDER, so the next re-base is a
     // one-word edit instead of a re-think: the control now runs on a FRESH
@@ -183,15 +191,15 @@ unittest { // mesh.fixOrientation runs its kernel inside ONE edit batch
     postReset();
     selectFaces([0]);
     auto c0 = getChanges();
-    postCommand(`{"id":"mesh.subdivide"}`);
+    postCommand(`{"id":"mesh.triple"}`);
     auto c1 = getChanges();
     const long ctrl = c1["unbatchedGeometryCommits"].integer
                     - c0["unbatchedGeometryCommits"].integer;
     assert(ctrl > 0,
         format("positive control: an UNBATCHED command must tick "
-             ~ "unbatchedGeometryCommits, and mesh.subdivide ticked %d. Either "
+             ~ "unbatchedGeometryCommits, and mesh.triple ticked %d. Either "
              ~ "the counter is dead — in which case the three assertions below "
-             ~ "pass for free — or mesh.subdivide has been migrated and this "
+             ~ "pass for free — or mesh.triple has been migrated and this "
              ~ "line needs re-basing onto another still-batchless command "
              ~ "(task 1903 §3.2 L2, M-DM).", ctrl));
 
