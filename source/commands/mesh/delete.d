@@ -182,8 +182,40 @@ class MeshDelete : Command, Operator {
             const affected = runKernel();
             delta_ = mesh.endEditBatch();
             if (affected == 0 || delta_.isEmpty) {
-                // No-op / degenerate delta — fall back to the snapshot path so
-                // a well-formed (but trivial) command is still recordable.
+                // WHAT THIS ACTUALLY DOES: it REFUSES. There is no snapshot
+                // fallback here and there never was — the comment that used to
+                // sit on this line promised one ("fall back to the snapshot
+                // path so a well-formed (but trivial) command is still
+                // recordable") and the body below only clears the images and
+                // returns false. Corrected at task 1903 Stage L1-P1, which
+                // read this branch while deciding where the map-value
+                // exclusion may refuse; the code is UNCHANGED.
+                //
+                // THE TWO HALVES ARE NOT THE SAME CASE, and only one of them
+                // is settled:
+                //
+                //   * `affected == 0` — the kernel mutated NOTHING, and
+                //     `return false` is the correct refusal. It is exactly
+                //     what the snapshot path a few lines below does for the
+                //     same condition, so the two paths agree.
+                //   * `affected > 0 && delta_.isEmpty` — a CONTRADICTION: the
+                //     kernel mutated and recorded nothing. Nothing rolls the
+                //     mesh back (`scope(failure)` does not fire on a plain
+                //     `return`, and no `MeshSnapshot` was captured on this
+                //     path), so the user gets a mutated mesh, `status:error`
+                //     and NO history entry — the previous entry now describing
+                //     a state that no longer exists. That half is a live
+                //     defect, independent of task 1903; it is carried as Q-K6
+                //     with two candidate fixes (capture a snapshot up front
+                //     and really fall back to it, or throw) and is NOT taken
+                //     here, because choosing between them is a behaviour
+                //     change to a shipped default-on command and owes its own
+                //     witness.
+                //
+                // It is not reachable from the map-value seam: that seam's
+                // record door DETECTS and appends, never withholds, precisely
+                // so it cannot manufacture an empty delta out of a mutating
+                // kernel (`MeshEditTracker.append`).
                 delta_        = MeshEditDelta.init;
                 preSel_       = SelectionSnapshot.init;
                 preEdgeEnds_  = null;

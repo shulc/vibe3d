@@ -1024,9 +1024,17 @@ unittest { // RECORDING: extrudeEdgesByMask op-log kinds + byteSize (cube, one e
         "extrudeEdgesByMask (cube, one interior edge): expected exactly 7 "
       ~ "op-log entries (AddVerts, ReshapeFaces x2, AddFaces, RemoveVerts, "
       ~ "Reindex, EdgeSelByEnds); got " ~ delta.log.length.to!string);
-    assert(delta.byteSize == 3600,
+    // 3600 -> 4496 at task 1903 Stage L1-P1, and the whole difference is
+    // structural: `Kind.MapValueDelta`'s payload added ten fields to
+    // `MeshOpEntry`, whose `sizeof` went 432 -> 560 B (MEASURED, both numbers).
+    // `byteSize` charges that struct once per entry (accounting rule 5), and
+    // this log has seven entries: 7 x 128 = 896, and 3600 + 896 = 4496 exactly.
+    // NOT a payload change — this delta carries no map entry and none of its
+    // arrays moved. The cost is the one the plan priced: every entry of every
+    // OTHER kind grows by the same amount.
+    assert(delta.byteSize == 4496,
         "extrudeEdgesByMask (cube, one interior edge): op-log byteSize "
-      ~ "changed from the measured 3600 -- got " ~ delta.byteSize.to!string);
+      ~ "changed from the measured 4496 -- got " ~ delta.byteSize.to!string);
 
     Mesh pre = cubeStandL_();
     immutable ok = delta.revert(m);
@@ -1060,9 +1068,13 @@ unittest { // RECORDING: extendEdgesByMask op-log kinds (cube, one edge)
         "extendEdgesByMask (cube, one edge): expected exactly 3 op-log "
       ~ "entries (AddVerts, AddFaces, EdgeSelByEnds); got "
       ~ delta.log.length.to!string);
-    assert(delta.byteSize == 1368,
+    // 1368 -> 1752 at task 1903 Stage L1-P1, structural for the same reason as
+    // the sibling pin above: `MeshOpEntry.sizeof` went 432 -> 560 B and this
+    // log has three entries -- 3 x 128 = 384, and 1368 + 384 = 1752 exactly.
+    // No array on this delta moved.
+    assert(delta.byteSize == 1752,
         "extendEdgesByMask (cube, one edge): op-log byteSize changed from "
-      ~ "the measured 1368 -- got " ~ delta.byteSize.to!string);
+      ~ "the measured 1752 -- got " ~ delta.byteSize.to!string);
 
     Mesh pre = cubeStandL_();
     immutable ok = delta.revert(m);

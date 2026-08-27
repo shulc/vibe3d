@@ -2624,6 +2624,8 @@ class HttpServer {
                 `"nestedBatchOpens":%d,"unbatchedGeometryCommits":%d,` ~
                 `"batchUpgradeRefusals":%d,"opLogEntriesRecorded":%d,` ~
                 `"batchLeaks":%d,` ~
+                `"mapDeltaMixRecorded":%d,"mapDeltaMixRefused":%d,` ~
+                `"mapDeltaBindRefused":%d,` ~
                 `"deliveryCount":%d,` ~
                 `"lastDeliveryFlags":%d,"lastDeliverySelDomains":%d,` ~
                 `"regradeCensusChecks":%d,` ~
@@ -2654,6 +2656,13 @@ class HttpServer {
                 snap.nestedBatchOpens, snap.unbatchedGeometryCommits,
                 snap.batchUpgradeRefusals, snap.opLogEntriesRecorded,
                 snap.batchLeaks,
+                // Task 1903 Stage L1-P1 — the map-value delta counters. All
+                // three are asserted 0 as a DELTA across a step (they are
+                // process-cumulative), and each is driven non-zero by its own
+                // unit cell so the zero can tell "never refused" from "never
+                // ran".
+                snap.mapDeltaMixRecorded, snap.mapDeltaMixRefused,
+                snap.mapDeltaBindRefused,
                 // Task 1906 stage 0 — the SYNCHRONOUS delivery boundary, as a
                 // counter. `deliveryCount` is what the per-command census and
                 // the delivery-granularity test read. `flushCount` beside it

@@ -262,6 +262,47 @@ struct ChangeBus {
     /// which a `debug assert` could not be.
     ulong batchUpgradeRefusals;
 
+    // --- The map-value delta counters (task 1903 Stage L1-P1) -------------
+    // Three, not one, because they answer three different questions and a
+    // cell that cannot tell a log-shape bug from history drift cannot name
+    // the bug. All three are asserted `== 0` as a suite delta AND driven
+    // non-zero by a deliberate unit cell — a counter only ever asserted zero
+    // cannot tell "never refused" from "never ran".
+
+    /// The RECORDER saw a `Kind.MapValueDelta` entry adjacent (in one log) to
+    /// an entry that MOVES an index space — or the reverse order. NOTHING was
+    /// dropped: the entry is appended anyway, deliberately. A non-zero value
+    /// means the command being written is building a log this seam cannot
+    /// replay, and it points at the developer who is writing it right now.
+    /// It is always a bug, and it is the one of the three that fires during
+    /// development rather than in the field.
+    ///
+    /// The door DETECTS and does not refuse because refusing costs data:
+    /// withholding the entry makes the delta come back EMPTY from a kernel
+    /// that already mutated, and `commands/mesh/delete.d`'s
+    /// `affected == 0 || delta_.isEmpty` branch then clears every pre-image
+    /// and returns false with nothing rolling the mesh back. A throw is no
+    /// better — `abortEditBatch` pops the frame without restoring.
+    ulong mapDeltaMixRecorded;
+
+    /// The REPLAY skipped one or more `MapValueDelta` entries because the log
+    /// they sit in is NOT index-space stable. This is the enforcement: a map
+    /// value is addressed in its map's own element space, and some other
+    /// entry in that log is re-laying that space, so writing would land the
+    /// values on the wrong elements — silently, since for a `morphAbsolute`
+    /// map a wrong entry is a LEGAL one. A non-zero value means an undo or
+    /// redo restored the geometry and NOT the map plane. It is also the only
+    /// one of the three a hand-built log can trip.
+    ulong mapDeltaMixRefused;
+
+    /// A `MapValueDelta` entry could not BIND its map at replay: the map is
+    /// gone, was renamed, or came back with a different dim / domain / kind,
+    /// or the entry's own payload planes are out of step with each other.
+    /// The entry then applies NOTHING — never partially, never zero-filled —
+    /// and `revert` still returns true. A non-zero value means history drift,
+    /// not a log-shape bug.
+    ulong mapDeltaBindRefused;
+
     /// Op-log entries the closed batches recorded, summed. Read as a delta
     /// across a step: zero across the frames of an interactive drag (the
     /// preview path must be unrecorded), non-zero at the drop.

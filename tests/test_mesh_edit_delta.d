@@ -191,6 +191,11 @@ unittest {
             // (MeshEditTracker.wantsFaceReindex == false) and this test's
             // `MeshEditTracker()` never opts in, so it cannot appear in
             // `delta.log` here — added only to satisfy the `final switch`.
+            // task 1903 Stage L1-P1: MapValueDelta has no production
+            // recorder at this commit and `deleteFacesByMask` records no map
+            // values in any case, so it cannot appear here either — added
+            // only to satisfy the `final switch`.
+            case MapValueDelta: break;
             case FaceReindex: break;
         }
     }

@@ -23,6 +23,8 @@ module mesh_edit_delta;
 
 import std.array : insertInPlace;
 
+import change_bus : changeBus;   // the seam counters (task 1903 §5.8 / L1-P1)
+
 import mesh;            // Mesh, Marks, edgeKey (mutual import — see note below)
 import math : Vec3;
 import mesh_selsets : selSetRekeyEdges, selSetGatherVertexMaskForward,
@@ -279,6 +281,56 @@ struct MeshOpEntry {
                         //   cannot be written mid-replay, because `loops` is
                         //   only rebuilt in finalize. It is READ by
                         //   `CornerCarry`, which is the thing that places it.
+                        //   ITS NEIGHBOUR BELOW, `MapValueDelta`, carries map
+                        //   floats too and APPLIES them — the one-line
+                        //   difference is which of the two writes its own
+                        //   values. Read both before picking one by name.
+
+        /// A MAP-VALUE edit: `MeshMap.data` / `MeshMap.present`, or the map
+        /// REGISTRY itself (create / remove / rename). Task 1903 Stage L1.
+        ///
+        /// THIS ONE APPLIES. Read the two `case`s, not the field list: the
+        /// neighbour immediately above, `MeshMapDelta`, carries map floats
+        /// too and its dispatch arms are both `break;` — it is a carry
+        /// PASSENGER that `CornerCarry` places in a second pass. This kind
+        /// writes its own values, in `patchMapValues`.
+        ///
+        /// IT MAY NEVER SHARE A LOG WITH AN INDEX-SPACE-MOVING KIND, and that
+        /// is not advice — it is enforced twice: at `MeshEditTracker.append`
+        /// (the recorder funnel, which DETECTS and counts, see
+        /// `changeBus.mapDeltaMixRecorded`) and in the replay loops of
+        /// `apply`/`revert` (which REFUSE, see `mapDeltaMixRefused`). A map
+        /// value is addressed in its map's OWN element space — Point =>
+        /// vertex, Edge => edge, PolyVertex => loop — and every kind
+        /// `kindHoldsIndexSpace` answers false for re-lays at least one of
+        /// those three. The corruption is silent: for a `morphAbsolute` map a
+        /// wrong answer is a LEGAL one (an absent entry means "stay at the
+        /// base", not "zero").
+        ///
+        /// `MapOp.Create` is FORWARD-FAITHFUL, and the reason is a shipped
+        /// caller: `commands/mesh/session_edit.d` replays a delta FORWARD for
+        /// redo (`if (useDelta_) delta_.apply(*mesh);`), and `MeshSessionEdit`
+        /// is the generic carrier many factories are built on — so "redo
+        /// re-runs the kernel" is true of individual commands and FALSE of the
+        /// carrier. A create that replayed empty would silently lose a
+        /// `morphAbsolute` map's dense base snapshot or a copied UV channel.
+        /// The empty case is carried EXPLICITLY, as
+        /// `MapAddressing.DefaultInit`, never inferred from empty value
+        /// arrays.
+        ///
+        /// NOT ITS CALLERS: `source/commands/select/sets.d`'s five classes.
+        /// They write the SET registry (`vertexSetNames`/`vertexSetMask`,
+        /// `edgeSetNames`/`edgeSetMask`, `polygonSetNames`/`faceSetMask`),
+        /// which is a different plane, and `SelectSetApply` additionally binds
+        /// several meshes at once. Owner's ruling of 2026-08-27.
+        ///
+        /// AT THE COMMIT THAT INTRODUCED IT this kind has ZERO recorder
+        /// callers in production — its first is task 1903 Stage L1-a
+        /// (`source/commands/mesh/morph.d`). That is NOT the same fact as
+        /// "the branch never executes": the dispatch is driven by hand-built
+        /// entries in `tests/unit/map_value_delta_test.d`, exactly the way
+        /// `HideDelta`'s three carve-out modules drive `patchHide`.
+        MapValueDelta,
     }
     Kind kind;
 
@@ -286,6 +338,30 @@ struct MeshOpEntry {
     // element type; the delta names which array to patch).
     enum SelDomain : ubyte { Vertex, Edge, Face }
     SelDomain selDomain;
+
+    /// What a `MapValueDelta` entry DOES. FOUR arms, not four kinds: together
+    /// they owe a branch in ONE `final switch` in this module
+    /// (`patchMapValues`) and in NONE of the six over `Kind`. The precedent is
+    /// `SelDomain` directly above, which `patchSelection` switches on the same
+    /// way.
+    ///
+    /// `Rename` is a REQUIRED arm and the reason is a measurement, not
+    /// tidiness: expressed as Remove+Create its payload is the WHOLE map —
+    /// task 2210 measured that as the difference between "two strings" and
+    /// 3.05 MB, on four command classes.
+    enum MapOp : ubyte { Values, Create, Remove, Rename }
+
+    /// How a `MapValueDelta` entry ADDRESSES its elements. EXPLICIT, never
+    /// inferred from `mapElemIdx.length == 0`: an empty-means-all channel
+    /// turns a DROPPED index list into a silent whole-map rewrite, which is a
+    /// legal wrong answer on every plane. `DefaultInit` is the `Create` arm's
+    /// "whatever content `addMeshMapOfKind` produces" — also explicit, for the
+    /// same reason: a `WholeArray` create whose value arrays were dropped must
+    /// be a refusal, not an empty map that looks correct.
+    enum MapAddressing : ubyte { Listed, WholeArray, DefaultInit }
+
+    MapOp         mapOp;
+    MapAddressing mapAddr;
 
     uint[]    vIdx;
     // Task 0831 — `fIdx` is a `FaceIdx[]`, not a `uint[]`, so the space the
@@ -374,6 +450,59 @@ struct MeshOpEntry {
     ubyte[]   mapDims;
     uint[]    mapArity;
     float[]   mapVals;
+
+    // --- MapValueDelta payload (task 1903 Stage L1) ------------------------
+    // NOT shared with the three fields directly above. `mapVals` belongs to
+    // `MeshMapDelta`, which is a carry PASSENGER; these belong to the kind
+    // that applies. Two kinds, one plane, different jobs — see both Kind docs.
+
+    /// THE IDENTITY of the map this entry addresses. A name, never a registry
+    /// index and never a `MeshMap*`: `Mesh.removeMeshMap` SPLICES `meshMaps`,
+    /// so every index after the removed one shifts and every outstanding
+    /// pointer is invalid. `mesh.d` states that law twice at its own sites.
+    string    mapName;
+    /// `MapOp.Rename` only — the name the map takes on FORWARD replay. The
+    /// reverse assigns `mapName` back.
+    string    mapNameTo;
+
+    /// REFUSAL terms, not identity. The replay binds `meshMap(mapName)` and
+    /// then refuses the entry WHOLE unless the live map still presents this
+    /// dim, this domain and this kind. `MapKind` is load-bearing beyond a
+    /// sanity check: `morphRelative` and `morphAbsolute` are both Point/dim 3
+    /// with no reserved name, so neither of the two mechanisms that exist
+    /// (reserved name, declared shape) can tell them apart — and they differ
+    /// in `absentIsZero`, so a kind-blind restore into the other one is a
+    /// GEOMETRIC error, not a cosmetic one.
+    ubyte     mapDim;
+    MapDomain mapDomain;
+    MapKind   mapKind;
+
+    /// `MapAddressing.Listed`: the element indices, in the MAP'S OWN element
+    /// space (Point => vertex, Edge => edge, PolyVertex => loop), which is the
+    /// space `MeshMap.data`'s own invariant is written in
+    /// (`data.length == elementCount(domain) * dim`).
+    ///
+    /// DELIBERATELY NOT `markIdx`. Sharing it would save 16 bytes and cost a
+    /// correctness property: `owesTopologyBump` walks
+    /// `markIdx`/`markBefore`/`markAfter` for every owing kind, so a kind that
+    /// put its indices there and its values elsewhere would read empty value
+    /// arrays and answer "no flip" — a check satisfied by the broken code.
+    uint[]    mapElemIdx;
+    /// dim-major values, `mapElemIdx.length * mapDim` under `Listed` and the
+    /// map's whole `data` under `WholeArray`. Forward writes `After`, reverse
+    /// writes `Before`.
+    float[]   mapValsBefore;
+    float[]   mapValsAfter;
+    /// Per ELEMENT, with NO `* mapDim` — an element is present or absent as a
+    /// whole (the `MeshMap.present` invariant).
+    ///
+    /// THE MAP'S "empty means all present" CONVENTION DOES NOT APPLY INSIDE AN
+    /// ENTRY, and inverting it here is deliberate: these must have the
+    /// addressed element count iff `kindInfo(mapKind).tracksPresence`, and
+    /// length zero otherwise — derived from the KIND, never from the array. A
+    /// recorder that violates it is a refused bind, not a zero-fill.
+    ubyte[]   presentBefore;
+    ubyte[]   presentAfter;
 }
 
 // ---------------------------------------------------------------------------
@@ -445,6 +574,17 @@ struct MeshEditDelta {
             n += planeBytes(e.mapDims);
             n += planeBytes(e.mapArity);
             n += planeBytes(e.mapVals);
+            // Kind.MapValueDelta's own payload (task 1903 Stage L1). The
+            // two `string`s are heap arrays too — `isDynamicArray!string` is
+            // true, so `byte_size_test.d`'s FieldNameTuple walk covers them
+            // and omitting either would redden by name.
+            n += planeBytes(e.mapName);
+            n += planeBytes(e.mapNameTo);
+            n += planeBytes(e.mapElemIdx);
+            n += planeBytes(e.mapValsBefore);
+            n += planeBytes(e.mapValsAfter);
+            n += planeBytes(e.presentBefore);
+            n += planeBytes(e.presentAfter);
         }
         return n;
     }
@@ -483,7 +623,13 @@ struct MeshEditDelta {
         // the suite lane does not compile it. So: an invalid map with an
         // `EdgeSelByEnds` entry takes the SLOW path, which is exactly today's
         // behaviour.
-        const bool fast = indexSpaceStable(log)
+        //
+        // L1-P1 — `stable` is now NAMED rather than folded straight into
+        // `fast`, because the replay loop needs the LOG-ONLY half on its own:
+        // a `MapValueDelta` is refused when some other entry re-lays an index
+        // space, and that question has nothing to do with `edgeMapUsable`.
+        const bool stable = indexSpaceStable(log);
+        const bool fast = stable
                        && (!haveEdgeSel || m.edgeMapUsable());
         const StableEntry e0 = captureStableEntry(m);
         CornerCarry carry;
@@ -493,6 +639,23 @@ struct MeshEditDelta {
         // The skip removes an O(F) allocation and an O(corners x maps) gather.
         if (!fast) carry.begin(m, log);
         foreach (i, ref e; log) {
+            // THE MAP-VALUE EXCLUSION, REPLAY HALF (task 1903 L1-P1). The
+            // SAME rule in both directions, deliberately spelled twice rather
+            // than hoisted: a map value is addressed in its map's own element
+            // space, and an unstable log means some OTHER entry is re-laying
+            // that space, so writing here would land the values on the wrong
+            // elements — silently, since for a `morphAbsolute` map a wrong
+            // entry is a legal one. The geometry half of the log still
+            // reverts; the map half is refused, counted and visible in the
+            // plane dump as a plane that did not come back.
+            //
+            // This is the layer a caller cannot bypass: the recorder door can
+            // be sidestepped with a hand-built entry (that is how every kind
+            // with no production recorder is tested), `apply`/`revert` cannot.
+            if (e.kind == MeshOpEntry.Kind.MapValueDelta && !stable) {
+                ++changeBus.mapDeltaMixRefused;
+                continue;
+            }
             // Compaction pair (RemoveVerts immediately followed by Reindex): the
             // Reindex's perm carries the FULL old->new map INCLUDING the dropped
             // (~0u) slots, so applyReindexForward both drops AND repacks. The
@@ -550,12 +713,35 @@ struct MeshEditDelta {
         // the suite lane does not compile it. So: an invalid map with an
         // `EdgeSelByEnds` entry takes the SLOW path, which is exactly today's
         // behaviour.
-        const bool fast = indexSpaceStable(log)
+        //
+        // L1-P1 — `stable` is now NAMED rather than folded straight into
+        // `fast`, because the replay loop needs the LOG-ONLY half on its own:
+        // a `MapValueDelta` is refused when some other entry re-lays an index
+        // space, and that question has nothing to do with `edgeMapUsable`.
+        const bool stable = indexSpaceStable(log);
+        const bool fast = stable
                        && (!haveEdgeSel || m.edgeMapUsable());
         const StableEntry e0 = captureStableEntry(m);
         CornerCarry carry;
         if (!fast) carry.begin(m, log);   // identity on a stable log — see apply
         foreach_reverse (i, ref e; log) {
+            // THE MAP-VALUE EXCLUSION, REPLAY HALF (task 1903 L1-P1). The
+            // SAME rule in both directions, deliberately spelled twice rather
+            // than hoisted: a map value is addressed in its map's own element
+            // space, and an unstable log means some OTHER entry is re-laying
+            // that space, so writing here would land the values on the wrong
+            // elements — silently, since for a `morphAbsolute` map a wrong
+            // entry is a legal one. The geometry half of the log still
+            // reverts; the map half is refused, counted and visible in the
+            // plane dump as a plane that did not come back.
+            //
+            // This is the layer a caller cannot bypass: the recorder door can
+            // be sidestepped with a hand-built entry (that is how every kind
+            // with no production recorder is tested), `apply`/`revert` cannot.
+            if (e.kind == MeshOpEntry.Kind.MapValueDelta && !stable) {
+                ++changeBus.mapDeltaMixRefused;
+                continue;
+            }
             carry.step(m, i, e, /*forward=*/false);
             applyReverse(m, e, carry.active);
         }
@@ -1302,6 +1488,14 @@ private bool renumbersCorners(in MeshOpEntry[] log) {
 // silent `default:` into whichever answer happened to be cheapest. That is the
 // whole reason they are switches and not `canFind` over a spelling list.
 //
+// TASK 1903 L1-P1 — the first of them is now SPLIT into a per-KIND half
+// (`kindHoldsIndexSpace`) and a per-LOG loop, because that one answer decides
+// TWO things: whether the log may take `finalize`'s fast path, and whether a
+// `Kind.MapValueDelta` entry in it may be replayed at all. Same predicate, so
+// ONE spelling — two would drift, and the drift would be silent in the
+// direction that corrupts a map plane. The `final switch` count over `Kind` is
+// unchanged at six; `tests/unit/map_delta_census_test.d` pins the inventory.
+//
 // `renumbersCorners` directly above is the OLDER shape (a plain `switch` with
 // a `default: break;`) and is deliberately left alone — converting it is a
 // separate behaviour question (its `default` currently answers "does not
@@ -1329,17 +1523,40 @@ private bool renumbersCorners(in MeshOpEntry[] log) {
 // per-corner plane is in play and `CornerCarry` has a payload to place, and
 // `CornerCarry.payloadForCount` makes its adjacency to the next entry
 // contractual. Conservative by construction.
-private bool indexSpaceStable(in MeshOpEntry[] log) {
-    foreach (ref e; log) {
-        final switch (e.kind) with (MeshOpEntry.Kind) {
-            case SetPos: case SelectionDelta: case SubpatchDelta:
-            case HideDelta: case MaterialDelta: case EdgeSelByEnds:
-                break;                       // value-only: index space held
-            case AddVerts: case RemoveVerts: case AddFaces: case RemoveFaces:
-            case ReshapeFaces: case Reindex: case FaceReindex: case MeshMapDelta:
-                return false;                // moves verts, faces, or corners
-        }
+//
+// SPLIT INTO TWO (task 1903 Stage L1-P1), and the split is the point. The
+// per-KIND half below answers TWO questions with ONE spelling:
+//
+//   1. may this log take `finalize`'s fast path? (the L0.P1 carve-out), and
+//   2. may a `MapValueDelta` entry in this log be REPLAYED at all? (the L1
+//      exclusion — a map value is addressed in its map's own element space,
+//      and a kind that answers false here is re-laying one of the three
+//      spaces a map can be indexed in).
+//
+// They are the same predicate, so they are one function; two spellings would
+// drift and the drift would be silent in the direction that corrupts. Still a
+// `final switch`: a fifteenth kind is a compile error here, and the single
+// answer whoever adds it writes is what admits or excludes it from BOTH.
+private bool kindHoldsIndexSpace(MeshOpEntry.Kind k) {
+    final switch (k) with (MeshOpEntry.Kind) {
+        case SetPos: case SelectionDelta: case SubpatchDelta:
+        case HideDelta: case MaterialDelta: case EdgeSelByEnds:
+        // Writes only `MeshMap.data` / `MeshMap.present` and — for
+        // Create/Remove — the `meshMaps` MEMBERSHIP. No vertex, edge, face or
+        // corner changes identity, so every structure `finalize` re-derives
+        // from `faces`/`vertices` is already correct. Safe *because* of the
+        // exclusion above, not because of the payload's own nature.
+        case MapValueDelta:
+            return true;                     // value-only: index space held
+        case AddVerts: case RemoveVerts: case AddFaces: case RemoveFaces:
+        case ReshapeFaces: case Reindex: case FaceReindex: case MeshMapDelta:
+            return false;                    // moves verts, faces, or corners
     }
+}
+
+private bool indexSpaceStable(in MeshOpEntry[] log) {
+    foreach (ref e; log)
+        if (!kindHoldsIndexSpace(e.kind)) return false;
     return true;
 }
 
@@ -1367,12 +1584,27 @@ private bool indexSpaceStable(in MeshOpEntry[] log) {
 // re-upload. The RECORDERS above guard only `idx.length == 0`, so a
 // `before == after` entry IS representable. Bumping on a non-empty index list
 // would therefore over-bump exactly where those guards were put to prevent it.
+//
+// L1-P1 adds a THIRD owing member, and it is a member of the same family for
+// the same reason: `Mesh.setCreaseWeight` publishes `Material` and bumps
+// `topologyVersion` explicitly, because a crease weight is an INPUT TO THE
+// LIMIT SURFACE and `topologyVersion` is the subpatch-preview + GPU layout
+// key. The comment above named that writer as the one to read the ruling off;
+// this is it. The map arm carries no mark arrays, so it brings its own flip
+// guard — `mapEntryChangesValues` — and the two halves (which entries are in
+// the family, and whether this one really changed) are kept SEPARABLE so a
+// witness can mutate one without the other.
 private bool owesTopologyBump(in MeshOpEntry[] log) {
     foreach (ref e; log) {
-        bool owing = false;
+        bool owing  = false;
+        bool mapArm = false;
         final switch (e.kind) with (MeshOpEntry.Kind) {
             case SubpatchDelta: case HideDelta:
                 owing = true;  break;
+            case MapValueDelta:
+                owing  = mapEntryIsCreaseChannel(e);
+                mapArm = true;
+                break;
             case SetPos: case SelectionDelta: case MaterialDelta:
             case EdgeSelByEnds:
             case AddVerts: case RemoveVerts: case AddFaces: case RemoveFaces:
@@ -1380,6 +1612,10 @@ private bool owesTopologyBump(in MeshOpEntry[] log) {
                 owing = false; break;
         }
         if (!owing) continue;
+        if (mapArm) {
+            if (mapEntryChangesValues(e)) return true;
+            continue;
+        }
         const size_t n = e.markIdx.length;
         foreach (i; 0 .. n)
             if (i < e.markBefore.length && i < e.markAfter.length
@@ -1387,6 +1623,58 @@ private bool owesTopologyBump(in MeshOpEntry[] log) {
                 return true;
     }
     return false;
+}
+
+// Is this map entry addressing the CREASE-WEIGHT channel?
+//
+// THE FILTER IS NAME-**OR**-KIND, AND A POSITIVE KIND TEST ALONE IS A BUG
+// `mesh.d` NAMES IN ADVANCE. `MapKind.unclassified`'s own declaration says a
+// pre-1069 `.v3d`'s maps and everything created through the raw `addMeshMap`
+// read back `unclassified`, and that "every filter that excludes a kind must
+// be written NEGATIVELY, or it drops every legacy map"; `creaseWeightMap()`
+// resolves the channel BY NAME. A legacy crease map — Edge, dim 1, named
+// `crease`, kind `unclassified` — would therefore skip the topology bump on
+// undo and leave the subpatch preview holding a stale layout key, which is the
+// exact failure this ruling exists to prevent.
+//
+// `mapNameTo` counts too: a rename INTO the reserved name makes a map the
+// crease channel and a rename AWAY from it stops one being it, and the limit
+// surface changes either way.
+private bool mapEntryIsCreaseChannel(ref const MeshOpEntry e) {
+    return e.mapName   == kCreaseWeightMapName
+        || e.mapNameTo == kCreaseWeightMapName
+        || e.mapKind   == MapKind.creaseWeight;
+}
+
+// Did this map entry actually CHANGE anything? The flip guard, re-spelled for
+// a kind that carries no mark arrays.
+//
+// `Create` / `Remove` / `Rename` always did — the registry moved. `Values` is
+// compared BITWISE per component, never with `==`: `==` says `-0.0 == +0.0`,
+// and a sign flip in a crease weight is a real write. Spelled as a 32-bit
+// compare rather than `std.math.isIdentical`, which takes `real` and so pays
+// an x87 round trip per operand (0.94 ms vs 0.08 ms per 100 489, measured at
+// task 2160).
+private bool mapEntryChangesValues(ref const MeshOpEntry e) {
+    final switch (e.mapOp) with (MeshOpEntry.MapOp) {
+        case Create: case Remove: case Rename:
+            return true;
+        case Values:
+            if (e.mapValsBefore.length != e.mapValsAfter.length) return true;
+            foreach (i, v; e.mapValsBefore)
+                if (!sameFloatBits(v, e.mapValsAfter[i])) return true;
+            if (e.presentBefore.length != e.presentAfter.length) return true;
+            foreach (i, v; e.presentBefore)
+                if (v != e.presentAfter[i]) return true;
+            return false;
+    }
+}
+
+// Bit identity for one float — `MeshEditBatch.sameBits`'s spelling, per
+// component. Local because that one is `private static` inside a struct in
+// `mesh.d`; the predicate is the same and its reasoning is stated there.
+private bool sameFloatBits(float a, float b) {
+    return *cast(const(uint)*)&a == *cast(const(uint)*)&b;
 }
 
 // The display class the SKIPPED `rebuildEdges` was publishing incidentally, and
@@ -1418,6 +1706,11 @@ private uint displayTermFor(in MeshOpEntry[] log) {
                 term |= MeshEditScope.Polygons; break;
             case SetPos: case SelectionDelta: case HideDelta:
             case MaterialDelta: case EdgeSelByEnds:
+            // A map batch declares `Maps` or `Material`, and BOTH are inside
+            // `DisplayRefreshMask` — so nothing was lost and there is nothing
+            // to re-issue. Returning `Polygons` here would invent a class and
+            // would force a topology bump on every UV undo.
+            case MapValueDelta:
             case AddVerts: case RemoveVerts: case AddFaces: case RemoveFaces:
             case ReshapeFaces: case Reindex: case FaceReindex: case MeshMapDelta:
                 break;
@@ -1459,6 +1752,12 @@ private bool owesDisplayRefresh(in MeshOpEntry[] log) {
             case SelectionDelta: case EdgeSelByEnds:
                 break;                       // the highlight, and only it
             case SetPos: case SubpatchDelta: case HideDelta: case MaterialDelta:
+            // A map value change is DRAWN: `setMorphValue`'s own comment says
+            // the viewport draws base+delta (Phase 0, measured), a UV write
+            // changes the textured display and a crease write changes the
+            // limit surface. Only the two kinds whose entire payload IS the
+            // highlight owe nothing.
+            case MapValueDelta:
             case AddVerts: case RemoveVerts: case AddFaces: case RemoveFaces:
             case ReshapeFaces: case Reindex: case FaceReindex: case MeshMapDelta:
                 return true;
@@ -1565,13 +1864,13 @@ unittest // W3 — the classification census: every Kind, all four rulings
     // free (a new kind is a build error in all four); this is the RUN-time
     // half, which catches a kind added to the enum and to all four switches but
     // never argued here.
-    static assert(EnumMembers!K.length == 14,
+    static assert(EnumMembers!K.length == 15,
         "MeshOpEntry.Kind gained or lost a member. Add its row to the table "
       ~ "below — deciding indexSpaceStable / owesTopologyBump / displayTermFor "
       ~ "/ owesDisplayRefresh for it is the point of this cell, and the four "
       ~ "`final switch`es have already refused to compile until you answered "
       ~ "them there.");
-    static assert(K.max == K.MeshMapDelta,
+    static assert(K.max == K.MapValueDelta,
         "the LAST member of MeshOpEntry.Kind changed — the table below is "
       ~ "ordered against EnumMembers and its tail row is now wrong.");
 
@@ -1598,6 +1897,13 @@ unittest // W3 — the classification census: every Kind, all four rulings
         Ruling(K.MaterialDelta,  true,  false, 0,                      true ),
         Ruling(K.EdgeSelByEnds,  true,  false, 0,                      false),
         Ruling(K.MeshMapDelta,   false, false, 0,                      true ),
+        // `owesBump` is `true` GIVEN AN ENTRY THAT REALLY OWES ONE, which for
+        // this kind means a CREASE-channel entry with a real value change —
+        // not a mark flip. The loop below builds that shape for this row
+        // specially; without it the row would assert the wrong thing (a uv
+        // entry owes no bump, and the row would then be green under a deleted
+        // crease arm).
+        Ruling(K.MapValueDelta,  true,  true,  0,                      true ),
     ];
     assert(table.length == EnumMembers!K.length,
         format("the ruling table lists %d kinds, the enum has %d",
@@ -1618,6 +1924,20 @@ unittest // W3 — the classification census: every Kind, all four rulings
         e.markIdx    = [0u];
         e.markBefore = [0u];
         e.markAfter  = [1u];
+        // `MapValueDelta` carries NO mark arrays — its flip guard reads its
+        // own values, and its kind test is the crease channel. So this row
+        // gets the shape that OWES: the reserved crease name, a real change.
+        if (r.kind == K.MapValueDelta) {
+            e.mapOp         = MeshOpEntry.MapOp.Values;
+            e.mapAddr       = MeshOpEntry.MapAddressing.Listed;
+            e.mapName       = kCreaseWeightMapName;
+            e.mapDim        = 1;
+            e.mapDomain     = MapDomain.Edge;
+            e.mapKind       = MapKind.creaseWeight;
+            e.mapElemIdx    = [0u];
+            e.mapValsBefore = [0.0f];
+            e.mapValsAfter  = [1.0f];
+        }
         const MeshOpEntry[] log = [e];
 
         assert(indexSpaceStable(log) == r.stable,
@@ -1773,6 +2093,240 @@ version (unittest) private bool canFindSub(string hay, string needle) {
 }
 
 // ---------------------------------------------------------------------------
+// W-K1 / W-K2 — task 1903 Stage L1-P1's two IN-MODULE witnesses.
+//
+// They live here for the same reason W3 does: they call module-private things a
+// `tests/unit/` cell cannot reach — `MeshEditTracker`'s private `append` funnel
+// (through its public recorders, but asserting on the private latches' EFFECT)
+// and the replay guard's counter around a hand-built log. Everything that can
+// be driven from outside the module is in
+// `tests/unit/map_value_delta_test.d` instead.
+//
+// The stand is built here rather than imported: `tests/unit/fixtures.d` is
+// compiled only by the `tests` configuration, and a `source/**` module that
+// imported it would not build under `modeling`.
+// ---------------------------------------------------------------------------
+
+version (unittest) private enum float kWK1Sentinel = 999.0f;
+
+version (unittest) private Mesh wk1Stand() {
+    Mesh m = makeGridPlane(3);
+    m.resetSelection();
+    m.buildLoops();
+    auto uv = m.addMeshMap(kUvMapName, 2, MapDomain.PolyVertex);
+    assert(uv !is null, "W-K1 stand: the UV map must register");
+    assert(uv.data.length == m.loops.length * 2,
+        "W-K1 stand: the UV map must be sized to the corner space, or the "
+      ~ "entry below addresses nothing");
+    foreach (i; 0 .. uv.data.length) uv.data[i] = 1.0f + 0.5f * cast(float)i;
+    return m;
+}
+
+version (unittest) private float[] uvPlane(ref Mesh m) {
+    auto uv = m.meshMap(kUvMapName);
+    assert(uv !is null, "W-K1: the UV map vanished");
+    return uv.data.dup;
+}
+
+// One hand-built map entry over the first three corners, carrying a value that
+// appears NOWHERE in the stand. That is the anti-vacuity device: if the write
+// lands, the sentinel is in the plane, and no amount of corner relocation can
+// invent it.
+version (unittest) private MeshOpEntry wk1MapEntry() {
+    MeshOpEntry e;
+    e.kind          = MeshOpEntry.Kind.MapValueDelta;
+    e.mapOp         = MeshOpEntry.MapOp.Values;
+    e.mapAddr       = MeshOpEntry.MapAddressing.Listed;
+    e.mapName       = kUvMapName;
+    e.mapDim        = 2;
+    e.mapDomain     = MapDomain.PolyVertex;
+    e.mapKind       = MapKind.unclassified;   // the raw addMeshMap door
+    e.mapElemIdx    = [0u, 1u, 2u];
+    e.mapValsBefore = [kWK1Sentinel, kWK1Sentinel, kWK1Sentinel,
+                       kWK1Sentinel, kWK1Sentinel, kWK1Sentinel];
+    e.mapValsAfter  = [-kWK1Sentinel, -kWK1Sentinel, -kWK1Sentinel,
+                       -kWK1Sentinel, -kWK1Sentinel, -kWK1Sentinel];
+    return e;
+}
+
+// Delete face 0 under a recording batch and hand back the mesh in its POST-op
+// state plus the real, recorded log. Two calls give two independent meshes in
+// the same state — which is what makes the differential below a control and
+// not a re-read of one buffer (a `Mesh` copy SHARES its array buffers).
+version (unittest) private Mesh wk1Deleted(out MeshEditDelta delta) {
+    Mesh m = wk1Stand();
+    // `MeshEditBatch`, not the older `beginEditBatch`/`endEditBatch` pair: its
+    // destructor pops the frame if anything escapes, which is what lets a
+    // helper in this module open a batch without the
+    // `scope(failure) mesh.abortEditBatch();` that
+    // `tests/unit/commit_seam_census_test.d` requires of every raw opener in
+    // `source/**` — and a `version (unittest)` FUNCTION body is not blanked by
+    // that census the way a `unittest` block's is.
+    size_t removed;
+    {
+        auto ed = MeshEditBatch(m, MeshEditScope.Geometry | MeshEditScope.Marks);
+        bool[] mask = new bool[](m.faces.length);
+        mask[0] = true;
+        removed = ed.deleteFacesByMask(mask);
+        delta = ed.close();
+    }
+    assert(removed == 1, "W-K1 stand: face 0 must actually be deleted");
+    assert(!indexSpaceStable(delta.log),
+        "W-K1 stand: the delete's log must be index-space UNSTABLE, or the "
+      ~ "guard under test is never reached and this cell measures nothing");
+    return m;
+}
+
+unittest // W-K1 — the exclusion is enforced at REPLAY, and it is what refuses
+{
+    import std.algorithm.searching : canFind;
+    import std.format : format;
+
+    // --- the CONTROL: the recorded log, reverted with no map entry in it ----
+    MeshEditDelta ctlDelta;
+    Mesh ctl = wk1Deleted(ctlDelta);
+    const float[] preOp = uvPlane(ctl);          // post-DELETE, pre-revert
+    ctlDelta.revert(ctl);
+    const float[] ctlPlane = uvPlane(ctl);
+
+    assert(!ctlPlane.canFind(kWK1Sentinel) && !ctlPlane.canFind(-kWK1Sentinel),
+        "W-K1 non-vacuity: the sentinel is already in the control plane, so "
+      ~ "its presence in the mixed plane below would prove nothing");
+    bool ctlNonZero = false;
+    foreach (v; ctlPlane) if (v != 0.0f) { ctlNonZero = true; break; }
+    assert(ctlNonZero, format(
+        "W-K1 non-vacuity: the control revert left the UV plane ALL ZEROS "
+      ~ "(%d values). Two all-zero planes compare equal whatever the guard "
+      ~ "does, so the differential below would be a dead cell.",
+        ctlPlane.length));
+    assert(preOp.length > 0);
+
+    // --- the SUBJECT: the same log with a map entry spliced in front --------
+    const ulong refusedBefore = changeBus.mapDeltaMixRefused;
+    MeshEditDelta mixDelta;
+    Mesh mix = wk1Deleted(mixDelta);
+    mixDelta.log = [wk1MapEntry()] ~ mixDelta.log;
+    mixDelta.revert(mix);
+    const float[] mixPlane = uvPlane(mix);
+    const ulong refusedDelta = changeBus.mapDeltaMixRefused - refusedBefore;
+
+    assert(refusedDelta == 1, format(
+        "W-K1: the replay guard refused %d map entries, expected exactly 1. "
+      ~ "A MapValueDelta sharing a log with an index-space-moving kind must "
+      ~ "be SKIPPED and COUNTED: its element indices are in a space another "
+      ~ "entry in the same log is re-laying, so writing lands the values on "
+      ~ "the wrong elements — silently, since for a morphAbsolute map a wrong "
+      ~ "entry is a legal one.", refusedDelta));
+
+    assert(mixPlane.length == ctlPlane.length, format(
+        "W-K1: the mixed replay left a UV plane of %d values against the "
+      ~ "control's %d", mixPlane.length, ctlPlane.length));
+    foreach (i, v; mixPlane)
+        assert(*cast(const(uint)*)&v == *cast(const(uint)*)&ctlPlane[i], format(
+            "W-K1: corner value %d is %s after reverting the MIXED log and %s "
+          ~ "after reverting the SAME log without the map entry. The refused "
+          ~ "entry wrote anyway — that is the whole failure, and the sentinel "
+          ~ "%s is how you can tell it apart from a relocation.",
+            i, v, ctlPlane[i], kWK1Sentinel));
+
+    // --- POTENCY: the same entry ALONE is not inert -------------------------
+    // Without this the two assertions above are satisfied by a gate that
+    // refuses EVERYTHING, which is the "second, unnamed guard refuses first"
+    // shape.
+    MeshEditDelta soloDelta;
+    Mesh solo = wk1Deleted(soloDelta);
+    MeshEditDelta only;
+    only.scope_ = MeshEditScope.Maps;
+    only.log    = [wk1MapEntry()];
+    assert(indexSpaceStable(only.log),
+        "W-K1 potency: a map-only log must be index-space STABLE");
+    const ulong refusedBefore2 = changeBus.mapDeltaMixRefused;
+    only.revert(solo);
+    assert(changeBus.mapDeltaMixRefused == refusedBefore2,
+        "W-K1 potency: a map-ONLY log must not be refused");
+    const float[] soloPlane = uvPlane(solo);
+    assert(soloPlane.canFind(kWK1Sentinel), format(
+        "W-K1 POTENCY FAILED: the same entry replayed alone wrote nothing "
+      ~ "(the sentinel %s is absent from %d values). Then the cell above is "
+      ~ "not measuring a refusal — it is measuring an entry that never "
+      ~ "applies, and it would stay green with the guard deleted.",
+        kWK1Sentinel, soloPlane.length));
+}
+
+unittest // W-K2 — the recorder door DETECTS the forbidden adjacency, and APPENDS
+{
+    import std.format : format;
+
+    // --- the subject: a map entry, then an index-space move -----------------
+    const ulong before = changeBus.mapDeltaMixRecorded;
+    MeshEditTracker t;
+    t.recordMapValuesOwned(kUvMapName, 2, MapDomain.PolyVertex,
+                           MapKind.unclassified,
+                           MeshOpEntry.MapAddressing.Listed,
+                           [0u], [1.0f, 2.0f], [3.0f, 4.0f], null, null);
+    t.recordRemoveFaces([FaceIdx.assumeFaceSpace(0)], [[0u, 1u, 2u, 3u]],
+                        [0u], [0u], [0u]);
+    const ulong ticked = changeBus.mapDeltaMixRecorded - before;
+    auto d = t.finish();
+
+    assert(ticked == 1, format(
+        "W-K2: the recorder door ticked %d times, expected exactly 1. This is "
+      ~ "the door where the mistake is MADE, so it is the door that names it "
+      ~ "while the developer is still writing the command.", ticked));
+    assert(d.log.length == 2, format(
+        "W-K2: finish() returned a %d-entry log, expected 2. THE ENTRY IS "
+      ~ "ALWAYS APPENDED — withholding it makes the delta come back EMPTY "
+      ~ "from a kernel that already mutated, and commands/mesh/delete.d's "
+      ~ "`affected == 0 || delta_.isEmpty` branch then clears every pre-image "
+      ~ "and returns false with NOTHING rolling the mesh back. A loud partial "
+      ~ "undo beats a lost mesh.", d.log.length));
+
+    // --- the CONTROL: two map entries in a row tick NOTHING -----------------
+    // Without this row the latch could be "tick on every append" and the
+    // assertion above would still read 1.
+    const ulong before2 = changeBus.mapDeltaMixRecorded;
+    MeshEditTracker t2;
+    t2.recordMapValuesOwned("a", 1, MapDomain.Point, MapKind.unclassified,
+                            MeshOpEntry.MapAddressing.Listed,
+                            [0u], [1.0f], [2.0f], null, null);
+    t2.recordMapValuesOwned("b", 1, MapDomain.Point, MapKind.unclassified,
+                            MeshOpEntry.MapAddressing.Listed,
+                            [1u], [3.0f], [4.0f], null, null);
+    auto d2 = t2.finish();
+    assert(changeBus.mapDeltaMixRecorded == before2, format(
+        "W-K2 control: two MAP entries in one log ticked the counter. The "
+      ~ "latch fires on the ADJACENCY of a map entry and an index-space move, "
+      ~ "not on every append — otherwise every L1 command reports a bug."));
+    assert(d2.log.length == 2, "W-K2 control: both map entries must be logged");
+
+    // --- the OTHER ORDER, because the latch is two-sided --------------------
+    const ulong before3 = changeBus.mapDeltaMixRecorded;
+    MeshEditTracker t3;
+    t3.recordRemoveFaces([FaceIdx.assumeFaceSpace(0)], [[0u, 1u, 2u, 3u]],
+                         [0u], [0u], [0u]);
+    t3.recordMapValuesOwned(kUvMapName, 2, MapDomain.PolyVertex,
+                            MapKind.unclassified,
+                            MeshOpEntry.MapAddressing.Listed,
+                            [0u], [1.0f, 2.0f], [3.0f, 4.0f], null, null);
+    auto d3 = t3.finish();
+    assert(changeBus.mapDeltaMixRecorded - before3 == 1,
+        "W-K2: move-then-map must tick too — the exclusion is symmetric and a "
+      ~ "one-sided latch misses every kernel that edits geometry first");
+    assert(d3.log.length == 2, "W-K2: move-then-map must still log both");
+
+    // --- the latch is per-LOG: `finish()` clears it -------------------------
+    const ulong before4 = changeBus.mapDeltaMixRecorded;
+    t3.recordMapValuesOwned(kUvMapName, 2, MapDomain.PolyVertex,
+                            MapKind.unclassified,
+                            MeshOpEntry.MapAddressing.Listed,
+                            [0u], [1.0f, 2.0f], [3.0f, 4.0f], null, null);
+    assert(changeBus.mapDeltaMixRecorded == before4,
+        "W-K2: the adjacency latches survived finish(). They describe ONE "
+      ~ "log; carrying them into the next one reports a bug in a batch that "
+      ~ "does not have it.");
+}
+
+// ---------------------------------------------------------------------------
 // MeshEditTracker — the recorder. Installed on a Mesh while a batch is open
 // (via Mesh.beginEditBatch); the hooked mutation primitives append entries to
 // its log. finish() moves the log into a MeshEditDelta.
@@ -1780,6 +2334,51 @@ version (unittest) private bool canFindSub(string hay, string needle) {
 struct MeshEditTracker {
     private MeshOpEntry[] log_;
     private MeshEditScope declared_ = MeshEditScope.None;
+
+    // --- The map-value exclusion's RECORD-time half (task 1903 L1-P1) -----
+    //
+    // A `MapValueDelta` may never share a log with an index-space-moving kind
+    // (see that Kind's declaration). This is the door where the mistake is
+    // made, so it is the door where the developer is told — but it is a
+    // DETECTOR, not a filter.
+    private bool sawMapValues_;   // a MapValueDelta is in this log
+    private bool sawIndexMove_;   // an index-space-moving entry is in this log
+
+    /// THE ONLY `log_ ~=` IN THIS MODULE. Sixteen recorder methods append
+    /// through here, because a rule spelled sixteen times is a rule that
+    /// drifts; `tests/unit/map_delta_census_test.d` pins that count at one.
+    ///
+    /// THE ENTRY IS ALWAYS APPENDED. Not withheld, and not thrown over —
+    /// both alternatives LOSE DATA, and the evidence is shipped code:
+    ///
+    ///   * withholding makes `finish()` return an EMPTY delta from a kernel
+    ///     that already mutated. `commands/mesh/delete.d`'s
+    ///     `affected == 0 || delta_.isEmpty` branch then clears every
+    ///     pre-image and returns `false` with NOTHING rolling the mesh back —
+    ///     `scope(failure)` does not fire on a plain `return`. The result is
+    ///     "answers error, changed everything", which is strictly worse than a
+    ///     partial undo.
+    ///   * throwing runs `scope(failure) mesh.abortEditBatch()`, and
+    ///     `popLeakedEditFrame` pops the frame WITHOUT restoring anything. The
+    ///     violation is detected mid-kernel, so that is the same half-mutated
+    ///     mesh with, additionally, no delta at all.
+    ///
+    /// So the door's only action is a counter, and the REPLAY door is the only
+    /// place anything is refused. A loud partial undo beats a lost mesh.
+    ///
+    /// No `assert` either: an assert cannot be driven by a cell without
+    /// catching an `Error`, a `debug assert` is invisible to both gate lanes
+    /// (measured), and a counter survives `-release` — which is where the
+    /// corruption would actually happen.
+    private void append(MeshOpEntry e) {
+        const bool moves = !kindHoldsIndexSpace(e.kind);
+        const bool maps  =  e.kind == MeshOpEntry.Kind.MapValueDelta;
+        if ((maps && sawIndexMove_) || (moves && sawMapValues_))
+            ++changeBus.mapDeltaMixRecorded;   // DETECT ONLY — see above
+        sawMapValues_ |= maps;
+        sawIndexMove_ |= moves;
+        log_ ~= e;
+    }
 
     /// Does this recorder want `FaceReindex` entries? Default FALSE. 1903
     /// turns it on per-op as it retires the redundant Add/Remove/Reshape
@@ -1810,7 +2409,7 @@ struct MeshEditTracker {
         e.kind = MeshOpEntry.Kind.AddVerts;
         e.vIdx = [idx];
         e.pos  = [p];
-        log_ ~= e;
+        append(e);
     }
 
     void recordAddVerts(uint v0, uint v1, in Vec3[] pos) {
@@ -1819,7 +2418,7 @@ struct MeshEditTracker {
         e.kind = MeshOpEntry.Kind.AddVerts;
         e.vIdx = [v0];
         e.pos  = pos.dup;
-        log_ ~= e;
+        append(e);
     }
 
     void recordRemoveVerts(in uint[] idx, in Vec3[] pos) {
@@ -1828,7 +2427,7 @@ struct MeshEditTracker {
         e.kind = MeshOpEntry.Kind.RemoveVerts;
         e.vIdx = idx.dup;
         e.pos  = pos.dup;
-        log_ ~= e;
+        append(e);
     }
 
     void recordSetPos(in uint[] idx, in Vec3[] before, in Vec3[] after) {
@@ -1866,7 +2465,7 @@ struct MeshEditTracker {
         e.vIdx      = idx;
         e.posBefore = before;
         e.posAfter  = after;
-        log_ ~= e;
+        append(e);
     }
 
     // addFace / addFaceFast append one face; consecutive AddFaces coalesce.
@@ -1884,7 +2483,7 @@ struct MeshEditTracker {
         e.kind      = MeshOpEntry.Kind.AddFaces;
         e.fIdx      = [idx];
         e.faceLists = [list.dup];
-        log_ ~= e;
+        append(e);
     }
 
     void recordAddFaces(FaceIdx f0, uint f1, in uint[][] lists) {
@@ -1893,7 +2492,7 @@ struct MeshEditTracker {
         e.kind      = MeshOpEntry.Kind.AddFaces;
         e.fIdx      = [f0];
         e.faceLists = dupLists(lists);
-        log_ ~= e;
+        append(e);
     }
 
     // --- Class B: coarse bulk-op deltas -----------------------------------
@@ -1924,7 +2523,7 @@ struct MeshEditTracker {
         e.faceSub    = sub;
         e.faceSetMsk = setm;
         e.faceOrd    = ord;   // task 1902 Stage H — see MeshOpEntry.faceOrd's own doc
-        log_ ~= e;
+        append(e);
     }
 
     void recordReshapeFaces(in FaceIdx[] idx, in uint[][] before, in uint[][] after) {
@@ -1934,7 +2533,7 @@ struct MeshEditTracker {
         e.fIdx            = idx.dup;
         e.faceListsBefore = dupLists(before);
         e.faceListsAfter  = dupLists(after);
-        log_ ~= e;
+        append(e);
     }
 
     // --- Class R: reindex permutation -------------------------------------
@@ -1943,7 +2542,7 @@ struct MeshEditTracker {
         MeshOpEntry e;
         e.kind = MeshOpEntry.Kind.Reindex;
         e.perm = perm.dup;
-        log_ ~= e;
+        append(e);
     }
 
     // Task 1902 Stage H — the face analogue, called from
@@ -1984,7 +2583,7 @@ struct MeshEditTracker {
         e.faceOrd           = dropOrd;
         e.faceSurvivorIdx   = survIdx;      // review finding B2
         e.faceSurvivorLists = survLists;    // review finding B2
-        log_ ~= e;
+        append(e);
     }
 
     // --- HP3: sparse selection / subpatch / material deltas ---------------
@@ -1997,7 +2596,7 @@ struct MeshEditTracker {
         e.markIdx    = idx.dup;
         e.markBefore = before.dup;
         e.markAfter  = after.dup;
-        log_ ~= e;
+        append(e);
     }
 
     void recordSubpatchDelta(in uint[] idx, in uint[] before, in uint[] after) {
@@ -2007,7 +2606,7 @@ struct MeshEditTracker {
         e.markIdx    = idx.dup;
         e.markBefore = before.dup;
         e.markAfter  = after.dup;
-        log_ ~= e;
+        append(e);
     }
 
     // Mirrors recordSubpatchDelta exactly (task 0613 §4.2/S1) — same sparse
@@ -2022,7 +2621,7 @@ struct MeshEditTracker {
         e.markIdx    = idx.dup;
         e.markBefore = before.dup;
         e.markAfter  = after.dup;
-        log_ ~= e;
+        append(e);
     }
 
     void recordMaterialDelta(in uint[] idx, in uint[] before, in uint[] after) {
@@ -2032,7 +2631,7 @@ struct MeshEditTracker {
         e.markIdx    = idx.dup;
         e.markBefore = before.dup;
         e.markAfter  = after.dup;
-        log_ ~= e;
+        append(e);
     }
 
     // Edge selection delta keyed by VERTEX-INDEX endpoint pairs (flat arrays
@@ -2047,7 +2646,7 @@ struct MeshEditTracker {
         e.kind           = MeshOpEntry.Kind.EdgeSelByEnds;
         e.edgeEndsBefore = before.dup;
         e.edgeEndsAfter  = after.dup;
-        log_ ~= e;
+        append(e);
     }
 
     // --- Task 0689: the per-corner (PolyVertex) map channel ----------------
@@ -2067,7 +2666,128 @@ struct MeshEditTracker {
         e.mapDims  = dims;
         e.mapArity = arity;
         e.mapVals  = vals;
-        log_ ~= e;
+        append(e);
+    }
+
+    // --- Class M: the map-value recorders (task 1903 Stage L1-P1) ---------
+    //
+    // ALL FOUR TAKE OWNERSHIP of the arrays handed to them — the
+    // `recordSetPosOwned` / `recordPolyVertexValues` convention: the slices are
+    // stored AS-IS, not copied, because a recorder that `dup`s pays the whole
+    // payload twice and this family's payload IS the win. A caller that keeps
+    // a reference and then writes through it is mutating the undo record: the
+    // revert restores whatever the array says at REPLAY time, which is a
+    // silent wrong answer on the plane this family is worst at seeing. Hand
+    // over a fresh `.dup` (or an array nobody else holds) and forget it.
+    //
+    // AT THIS COMMIT ALL FOUR HAVE ZERO PRODUCTION CALLERS. The first is Stage
+    // L1-a (`source/commands/mesh/morph.d`), which is the only group that
+    // exercises all four arms.
+
+    /// A per-element value write on one map. `addr` says how `elemIdx`
+    /// addresses the map — never inferred from the arrays.
+    void recordMapValuesOwned(string name, ubyte dim, MapDomain dom, MapKind kind,
+                              MeshOpEntry.MapAddressing addr, uint[] elemIdx,
+                              float[] before, float[] after,
+                              ubyte[] presBefore, ubyte[] presAfter) {
+        if (name.length == 0 || dim == 0) return;
+        // A `Listed` entry with no indices addresses nothing; recording it
+        // would put a shape into the log that the replay can only refuse.
+        if (addr == MeshOpEntry.MapAddressing.Listed && elemIdx.length == 0) return;
+        MeshOpEntry e;
+        e.kind          = MeshOpEntry.Kind.MapValueDelta;
+        e.mapOp         = MeshOpEntry.MapOp.Values;
+        e.mapAddr       = addr;
+        e.mapName       = name;
+        e.mapDim        = dim;
+        e.mapDomain     = dom;
+        e.mapKind       = kind;
+        e.mapElemIdx    = elemIdx;
+        e.mapValsBefore = before;
+        e.mapValsAfter  = after;
+        e.presentBefore = presBefore;
+        e.presentAfter  = presAfter;
+        append(e);
+    }
+
+    /// A map CREATED with the content `addMeshMapOfKind` produces — zeroed
+    /// data, everything absent. Faithful in BOTH directions for a command that
+    /// creates and does not fill (`morphRelative`, `WeightmapCreate`), and it
+    /// keeps those rows carrying no array at all.
+    ///
+    /// The two create spellings are separate methods on purpose: which one a
+    /// call site uses is the difference between a redo that restores a
+    /// morphAbsolute's dense base and one that silently replaces it with
+    /// zeros, so it must be visible at the call site and countable by a
+    /// census, not hidden in a defaulted argument.
+    void recordMapCreate(string name, ubyte dim, MapDomain dom, MapKind kind) {
+        if (name.length == 0 || dim == 0) return;
+        MeshOpEntry e;
+        e.kind      = MeshOpEntry.Kind.MapValueDelta;
+        e.mapOp     = MeshOpEntry.MapOp.Create;
+        e.mapAddr   = MeshOpEntry.MapAddressing.DefaultInit;
+        e.mapName   = name;
+        e.mapDim    = dim;
+        e.mapDomain = dom;
+        e.mapKind   = kind;
+        append(e);
+    }
+
+    /// A map created and FILLED — the content is carried, so a forward replay
+    /// (redo through `MeshSessionEdit`, which replays the delta rather than
+    /// re-running the kernel) reproduces it.
+    void recordMapCreateFilledOwned(string name, ubyte dim, MapDomain dom,
+                                    MapKind kind, float[] data, ubyte[] present) {
+        if (name.length == 0 || dim == 0) return;
+        MeshOpEntry e;
+        e.kind          = MeshOpEntry.Kind.MapValueDelta;
+        e.mapOp         = MeshOpEntry.MapOp.Create;
+        e.mapAddr       = MeshOpEntry.MapAddressing.WholeArray;
+        e.mapName       = name;
+        e.mapDim        = dim;
+        e.mapDomain     = dom;
+        e.mapKind       = kind;
+        e.mapValsAfter  = data;
+        e.presentAfter  = present;
+        append(e);
+    }
+
+    /// A map REMOVED. The reverse re-registers it and refills both channels,
+    /// so the whole content is the payload — all six `MeshMap` fields
+    /// accounted for (`name`/`dim`/`domain`/`kind` as scalars here, `data` and
+    /// `present` as the two arrays; `MeshMap.dup`'s `tupleof.length == 6`
+    /// tripwire is the one that fires if a seventh appears).
+    void recordMapRemoveOwned(string name, ubyte dim, MapDomain dom, MapKind kind,
+                              float[] data, ubyte[] present) {
+        if (name.length == 0 || dim == 0) return;
+        MeshOpEntry e;
+        e.kind          = MeshOpEntry.Kind.MapValueDelta;
+        e.mapOp         = MeshOpEntry.MapOp.Remove;
+        e.mapAddr       = MeshOpEntry.MapAddressing.WholeArray;
+        e.mapName       = name;
+        e.mapDim        = dim;
+        e.mapDomain     = dom;
+        e.mapKind       = kind;
+        e.mapValsBefore = data;
+        e.presentBefore = present;
+        append(e);
+    }
+
+    /// A map RENAMED. Two strings, and that is the whole reason the arm exists
+    /// — spelled as Remove+Create the payload is the entire map (task 2210
+    /// measured "two strings" against 3.05 MB on four command classes).
+    void recordMapRename(string from, string to, ubyte dim, MapDomain dom, MapKind kind) {
+        if (from.length == 0 || to.length == 0 || from == to) return;
+        MeshOpEntry e;
+        e.kind      = MeshOpEntry.Kind.MapValueDelta;
+        e.mapOp     = MeshOpEntry.MapOp.Rename;
+        e.mapAddr   = MeshOpEntry.MapAddressing.DefaultInit;
+        e.mapName   = from;
+        e.mapNameTo = to;
+        e.mapDim    = dim;
+        e.mapDomain = dom;
+        e.mapKind   = kind;
+        append(e);
     }
 
     bool isEmpty() const { return log_.length == 0; }
@@ -2078,6 +2798,9 @@ struct MeshEditTracker {
         d.scope_ = declared_;
         d.log    = log_;
         log_     = null;
+        // The two adjacency latches are per-LOG, so they are cleared with it.
+        sawMapValues_ = false;
+        sawIndexMove_ = false;
         return d;
     }
 }
@@ -2138,6 +2861,9 @@ private void applyForward(ref Mesh m, ref const MeshOpEntry e,
             break; // handled in finalize (post-rebuildEdges, endpoint-keyed)
         case MeshOpEntry.Kind.MeshMapDelta:
             break; // deferred (Q4)
+        case MeshOpEntry.Kind.MapValueDelta:
+            patchMapValues(m, e, /*forward=*/true);
+            break;
     }
 }
 
@@ -2199,6 +2925,9 @@ private void applyReverse(ref Mesh m, ref const MeshOpEntry e,
             break; // handled in finalize (post-rebuildEdges, endpoint-keyed)
         case MeshOpEntry.Kind.MeshMapDelta:
             break; // deferred (Q4)
+        case MeshOpEntry.Kind.MapValueDelta:
+            patchMapValues(m, e, /*forward=*/false);
+            break;
     }
 }
 
@@ -3014,6 +3743,229 @@ private void patchMaterial(ref Mesh m, in uint[] idx, in uint[] vals) {
     foreach (i, e; idx)
         if (e < m.faceMaterial.length)
             m.faceMaterial[e] = vals[i];
+}
+
+// ---------------------------------------------------------------------------
+// patchMapValues — `Kind.MapValueDelta`'s dispatch (task 1903 Stage L1-P1).
+//
+// BIND FIRST, THEN WRITE, AND REFUSE THE ENTRY **WHOLE**. Never partially,
+// never truncated to `min(dim_rec, dim_live)`, never zero-filled. The
+// neighbouring `MeshMapDelta`'s doc offers "degrade to a zero-fill" as its
+// precedent; it is right about not shuffling floats between maps and WRONG as
+// a default here — Stage F1 MEASURED a revert that restored a map's length,
+// zeroed all 48 of its values (36 of them non-zero) and answered `true`. A
+// zero-fill IS that failure. Leaving the live values untouched is a visible
+// divergence in the parity dump; zero-filling looks like a clean restore.
+//
+// WHAT THE BINDING DELIBERATELY IS NOT. It is not the face-rewrite gate — the
+// dangerous rewrites are exactly the count-preserving ones (an equal-arity
+// `ReshapeFaces` keeps `loops.length`, a drop-free `Reindex` keeps
+// `vertices.length`, a `FaceReindex` keeps `faces.length`), so every length
+// term below passes on precisely the logs the exclusion exists to refuse. The
+// two mechanisms answer two different questions and neither substitutes for
+// the other.
+//
+// NO `commitChange` HERE. Same convention as `patchSubpatch` / `patchHide` /
+// `patchMaterial`: `finalize` publishes ONCE for the whole replay.
+// ---------------------------------------------------------------------------
+private void patchMapValues(ref Mesh m, ref const MeshOpEntry e, bool forward) {
+    final switch (e.mapOp) with (MeshOpEntry.MapOp) {
+        case Values:
+            patchMapValuesWrite(m, e, forward);
+            break;
+        case Create:
+            // FORWARD-FAITHFUL. `session_edit.d`'s `if (useDelta_)
+            // delta_.apply(*mesh);` is a shipped forward-replay consumer, so
+            // "redo re-runs the kernel" is false for every factory built on
+            // that carrier; a create that replayed empty would silently lose a
+            // morphAbsolute's dense base or a copied UV channel.
+            if (forward) mapRegister(m, e, e.mapValsAfter, e.presentAfter);
+            else         mapUnregister(m, e);
+            break;
+        case Remove:
+            if (forward) mapUnregister(m, e);
+            else         mapRegister(m, e, e.mapValsBefore, e.presentBefore);
+            break;
+        case Rename:
+            if (forward) mapRename(m, e, e.mapName, e.mapNameTo);
+            else         mapRename(m, e, e.mapNameTo, e.mapName);
+            break;
+    }
+}
+
+// Resolve the entry's map and check every REFUSAL term the payload carries.
+// Returns null (having ticked the counter) on any mismatch.
+private MeshMap* bindMapForEntry(ref Mesh m, ref const MeshOpEntry e, string name) {
+    auto live = m.meshMap(name);
+    if (live is null)          { ++changeBus.mapDeltaBindRefused; return null; }
+    if (live.dim    != e.mapDim
+     || live.domain != e.mapDomain
+     || live.kind   != e.mapKind) { ++changeBus.mapDeltaBindRefused; return null; }
+    return live;
+}
+
+private void patchMapValuesWrite(ref Mesh m, ref const MeshOpEntry e, bool forward) {
+    auto live = bindMapForEntry(m, e, e.mapName);
+    if (live is null) return;
+
+    const bool tracks = kindInfo(live.kind).tracksPresence;
+    const(float)[] vals = forward ? e.mapValsAfter  : e.mapValsBefore;
+    const(ubyte)[] pres = forward ? e.presentAfter : e.presentBefore;
+
+    final switch (e.mapAddr) with (MeshOpEntry.MapAddressing) {
+        case Listed:
+            // A `Listed` entry with NO indices is a DROPPED plane, not "all
+            // elements" — refuse it rather than rewriting the whole map with
+            // whatever the value arrays hold. That inference is the
+            // empty-means-all trap this addressing enum exists to close.
+            if (e.mapElemIdx.length == 0) { ++changeBus.mapDeltaBindRefused; return; }
+            const size_t want = e.mapElemIdx.length * live.dim;
+            if (e.mapValsBefore.length != want || e.mapValsAfter.length != want) {
+                ++changeBus.mapDeltaBindRefused; return;
+            }
+            if (tracks) {
+                if (e.presentBefore.length != e.mapElemIdx.length
+                 || e.presentAfter.length  != e.mapElemIdx.length) {
+                    ++changeBus.mapDeltaBindRefused; return;
+                }
+                // THE LIVE CHANNEL'S OWN LENGTH, and this term is not
+                // decoration. `present.length == 0` LEGALLY means "every
+                // element is present", and every writer in `mesh.d` guards on
+                // `i < present.length` — so without this compare a Listed
+                // restore writes `data`, silently drops the presence half, and
+                // every other length term still passes with no counter moving.
+                // `data` then compares equal to the recorded values, so a
+                // value-plane assertion does not see it either.
+                if (live.present.length != m.elementCount(live.domain)) {
+                    ++changeBus.mapDeltaBindRefused; return;
+                }
+            } else if (e.presentBefore.length != 0 || e.presentAfter.length != 0) {
+                ++changeBus.mapDeltaBindRefused; return;
+            }
+            foreach (idx; e.mapElemIdx) {
+                const size_t b = cast(size_t)idx * live.dim;
+                if (idx >= m.elementCount(live.domain) || b + live.dim > live.data.length) {
+                    ++changeBus.mapDeltaBindRefused; return;
+                }
+            }
+            // Bound. From here every write lands, and DELIBERATELY WITHOUT a
+            // second `idx < live.present.length` guard: the bind terms above
+            // are the single authority, and a belt-and-braces guard here would
+            // be an unnamed second refusal standing in front of the named one —
+            // the shape that makes a witness green on the broken code. If the
+            // live-presence bind term is ever removed, this line is a
+            // bounds-checked abort in `-debug` and an out-of-bounds WRITE in
+            // `-release`; that is a feature of the arrangement, not an
+            // oversight. (The plan predicted a silent drop here, on the
+            // assumption that this loop would guard the way `mesh.d`'s own
+            // setters do. It does not, so the term protects more than the
+            // plan said. Recorded rather than "fixed" by adding the guard.)
+            foreach (k, idx; e.mapElemIdx) {
+                const size_t b = cast(size_t)idx * live.dim;
+                live.data[b .. b + live.dim] = vals[k * live.dim .. (k + 1) * live.dim];
+                if (tracks) live.present[idx] = pres[k];
+            }
+            break;
+
+        case WholeArray:
+            if (e.mapValsBefore.length != live.data.length
+             || e.mapValsAfter.length  != live.data.length) {
+                ++changeBus.mapDeltaBindRefused; return;
+            }
+            if (tracks) {
+                if (e.presentBefore.length != live.present.length
+                 || e.presentAfter.length  != live.present.length) {
+                    ++changeBus.mapDeltaBindRefused; return;
+                }
+            } else if (e.presentBefore.length != 0 || e.presentAfter.length != 0) {
+                ++changeBus.mapDeltaBindRefused; return;
+            }
+            live.data[] = vals[];
+            if (tracks) live.present[] = pres[];
+            break;
+
+        case DefaultInit:
+            // Meaningless for a value write — it is the `Create` arm's "the
+            // content `addMeshMapOfKind` produces". A `Values` entry that
+            // carries it is malformed, and saying so is cheaper than guessing
+            // which of the two shapes the recorder meant.
+            ++changeBus.mapDeltaBindRefused;
+            break;
+    }
+}
+
+// Register the entry's map and, unless the entry says DefaultInit, fill it
+// from the supplied image. Used by `Create` FORWARD and `Remove` REVERSE —
+// the same operation, reached from the two arms whose payload class differs.
+private void mapRegister(ref Mesh m, ref const MeshOpEntry e,
+                         const(float)[] vals, const(ubyte)[] pres) {
+    if (e.mapName.length == 0)          { ++changeBus.mapDeltaBindRefused; return; }
+    if (m.meshMap(e.mapName) !is null)  { ++changeBus.mapDeltaBindRefused; return; }
+
+    // Through the CLASSIFIED door when the kind declares a shape, so dim and
+    // domain come from `kindInfo` and cannot drift from the shape table; the
+    // raw door otherwise (`unclassified` has no declarable shape — `kindInfo`
+    // gives it dim 0, which `addMeshMap` rejects outright).
+    MeshMap* live;
+    if (e.mapKind == MapKind.unclassified)
+        live = m.addMeshMap(e.mapName, e.mapDim, e.mapDomain);
+    else
+        live = m.addMeshMapOfKind(e.mapKind, e.mapName);
+
+    // `addMeshMap` returns NULL at the MAX_MESH_MAPS ceiling as well as on a
+    // duplicate name. A reverse that dereferenced it would crash; a reverse
+    // that ignored it would restore nothing and answer `true`.
+    if (live is null) { ++changeBus.mapDeltaBindRefused; return; }
+
+    // The shape the classified door produced must be the shape recorded, or
+    // the fill below writes into the wrong layout.
+    if (live.dim != e.mapDim || live.domain != e.mapDomain) {
+        m.removeMeshMap(e.mapName);
+        ++changeBus.mapDeltaBindRefused;
+        return;
+    }
+
+    if (e.mapAddr == MeshOpEntry.MapAddressing.DefaultInit)
+        return;   // "the content addMeshMapOfKind produces" — already there.
+
+    const bool tracks = kindInfo(live.kind).tracksPresence;
+    if (vals.length != live.data.length
+     || (tracks && pres.length != live.present.length)
+     || (!tracks && pres.length != 0)) {
+        // Refuse the entry WHOLE — including the registration it just made,
+        // so a half-restored map never reaches the document.
+        m.removeMeshMap(e.mapName);
+        ++changeBus.mapDeltaBindRefused;
+        return;
+    }
+    live.data[] = vals[];
+    if (tracks) live.present[] = pres[];
+}
+
+// Drop the entry's map — `Create` REVERSE and `Remove` FORWARD. Binds first,
+// with the same refusal terms, so a map that came back reshaped between record
+// and replay is not deleted on this entry's word.
+private void mapUnregister(ref Mesh m, ref const MeshOpEntry e) {
+    auto live = bindMapForEntry(m, e, e.mapName);
+    if (live is null) return;
+    m.removeMeshMap(e.mapName);
+}
+
+// Rename `from` -> `to`, in whichever direction the caller asked for.
+//
+// BOTH ENDS BIND. `Mesh.meshMap()` and `Mesh.removeMeshMap()` each take the
+// FIRST name match, so a DUPLICATE source name would rename the wrong map and
+// leave the other permanently unreachable; and the shipped rename command
+// throws on a taken target, which this arm must not quietly undercut.
+private void mapRename(ref Mesh m, ref const MeshOpEntry e, string from, string to) {
+    if (from.length == 0 || to.length == 0) { ++changeBus.mapDeltaBindRefused; return; }
+    auto live = bindMapForEntry(m, e, from);
+    if (live is null) return;
+    size_t matches = 0;
+    foreach (ref mm; m.meshMaps) if (mm.name == from) ++matches;
+    if (matches != 1)                { ++changeBus.mapDeltaBindRefused; return; }
+    if (m.meshMap(to) !is null)      { ++changeBus.mapDeltaBindRefused; return; }
+    live.name = to;
 }
 
 // ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@ import std.parallelism : parallel;
 import std.range : iota;
 import math;
 import editmode : EditMode;
-import mesh_edit_delta : MeshEditTracker, MeshEditScope, MeshEditDelta;
+import mesh_edit_delta : MeshEditTracker, MeshEditScope, MeshEditDelta, MeshOpEntry;
 import change_bus : SelDomain, changeBus;
 // task 1903 Stage E3: the plane-cut family is module-level free functions —
 // the six entry points plus `planeCutCore` / `splitAlongCutLoop` over
@@ -17222,6 +17222,128 @@ struct MeshEditBatch {
         if (hitIdx.length == 0) return;
         f.rec.recordSetPos(hitIdx, bef, aft);
         m_.commitChange(MeshEditScope.Position);
+    }
+
+    /// Record the map-value writes some OTHER writer already made, by diffing
+    /// the live map against a pre-op image. ONE op-log entry, no write of its
+    /// own — `recordPositionDiff` directly above, for the map plane.
+    ///
+    /// WHY A SECOND RECORDER EXISTS AT ALL. The map setters on `Mesh` are
+    /// hooked for their own bookkeeping, but a kernel that has ALREADY written
+    /// `data[]` cannot be made to re-announce it: calling
+    /// `setMeshMapValue(name, i, alreadyWritten)` after the fact records
+    /// nothing useful and re-publishes a change class per element. So the
+    /// vouching primitive reads the live map and the caller's image, and the
+    /// diff is the record.
+    ///
+    /// THE WRITERS IT WAS BUILT FOR: `source/uv_transform.d`'s `applyUvAffine`,
+    /// `source/uv_relax.d`'s `uvRelax` and `source/uv_unwrap.d`'s `uvUnwrap` —
+    /// all of which take a `const ref Mesh` and live in a zone no axis-1 stage
+    /// owns. They ship UNCHANGED; this is the door their commands will use at
+    /// Stage L1-e.
+    ///
+    /// NOT RECORDING IS FREE — the early-out precedes every allocation and the
+    /// O(N) compare, so the redo and tracker-off arms pay nothing. The `.dup`
+    /// that builds `dataBefore` is the CALLER's, though, so a caller that does
+    /// not otherwise need the image must guard the snapshot with
+    /// `ed.recording()`.
+    ///
+    /// THE SPARSE/DENSE CHOICE IS MEASURED, NOT ASSUMED, and it is REPORTED:
+    /// one COUNT pass decides `Listed` vs `WholeArray` by which payload is
+    /// smaller, and the winner comes back in `outWholeArray` so a harness can
+    /// print it — task 2210's numbers are checkable precisely because its
+    /// harness printed which branch won. Never sparsify a whole-map rewrite
+    /// (the sparse form is strictly larger there), and never `~=` the payload:
+    /// `uninitializedArray` + indexed writes, because `~=` is a runtime call
+    /// per element (2.39–3.27 ms against 0.12–1.08 ms per 100 489, measured at
+    /// task 2160).
+    ///
+    /// Bit identity, not `==`, for the same reason `setVertexPos` uses it: an
+    /// `==` no-op filter treats `-0.0` and `+0.0` as one value, and
+    /// `meshPlanesJson` prints `%.9g`, so a plane fixture sees the sign.
+    ///
+    /// Returns true iff an entry was recorded.
+    bool recordMapValueDiff(string mapName, in float[] dataBefore,
+                            in ubyte[] presentBefore,
+                            bool* outWholeArray = null) {
+        auto f = currentBatchFrame(m_);
+        if (f is null || f.rec is null || f.errored) return false;   // FREE
+        auto live = m_.meshMap(mapName);
+        if (live is null) return false;
+        if (dataBefore.length != live.data.length) return false;
+        const bool tracks = kindInfo(live.kind).tracksPresence;
+        if (tracks && presentBefore.length != live.present.length) return false;
+
+        import std.array : uninitializedArray;
+
+        // Pass 1: COUNT. Nothing is allocated until the shape is known.
+        const size_t elems = live.dim ? live.data.length / live.dim : 0;
+        size_t hits = 0;
+        foreach (i; 0 .. elems) {
+            if (mapElementDiffers(live, dataBefore, presentBefore, tracks, i))
+                ++hits;
+        }
+        if (hits == 0) return false;
+
+        // `Listed` costs one index + dim floats (+1 presence byte) per hit;
+        // `WholeArray` costs the two full images. Compare the payload, not the
+        // hit count — a dim-3 presence-tracked map is a different trade from a
+        // dim-1 one.
+        const size_t listedBytes = hits * (uint.sizeof + live.dim * float.sizeof
+                                           + (tracks ? 2 * ubyte.sizeof : 0));
+        const size_t wholeBytes  = 2 * (live.data.length * float.sizeof
+                                        + (tracks ? live.present.length : 0));
+        const bool whole = wholeBytes <= listedBytes;
+        if (outWholeArray !is null) *outWholeArray = whole;
+
+        if (whole) {
+            f.rec.recordMapValuesOwned(live.name, live.dim, live.domain, live.kind,
+                MeshOpEntry.MapAddressing.WholeArray, null,
+                dataBefore.dup, live.data.dup,
+                tracks ? presentBefore.dup : null,
+                tracks ? live.present.dup  : null);
+        } else {
+            auto idx  = uninitializedArray!(uint[])(hits);
+            auto bef  = uninitializedArray!(float[])(hits * live.dim);
+            auto aft  = uninitializedArray!(float[])(hits * live.dim);
+            ubyte[] pb, pa;
+            if (tracks) {
+                pb = uninitializedArray!(ubyte[])(hits);
+                pa = uninitializedArray!(ubyte[])(hits);
+            }
+            size_t k = 0;
+            foreach (i; 0 .. elems) {
+                if (!mapElementDiffers(live, dataBefore, presentBefore, tracks, i))
+                    continue;
+                idx[k] = cast(uint)i;
+                const size_t b = i * live.dim;
+                bef[k * live.dim .. (k + 1) * live.dim] = dataBefore[b .. b + live.dim];
+                aft[k * live.dim .. (k + 1) * live.dim] = live.data[b .. b + live.dim];
+                if (tracks) { pb[k] = presentBefore[i]; pa[k] = live.present[i]; }
+                ++k;
+            }
+            assert(k == hits, "recordMapValueDiff: the count pass and the "
+                            ~ "gather pass disagree about how many elements "
+                            ~ "moved — the arrays are out of step with each "
+                            ~ "other and the entry would be refused at replay");
+            f.rec.recordMapValuesOwned(live.name, live.dim, live.domain, live.kind,
+                MeshOpEntry.MapAddressing.Listed, idx, bef, aft, pb, pa);
+        }
+        m_.commitChange(MeshEditScope.Maps);
+        return true;
+    }
+
+    // One element's compare, bitwise per component plus the presence byte.
+    private static bool mapElementDiffers(const(MeshMap)* live,
+                                          in float[] dataBefore,
+                                          in ubyte[] presentBefore,
+                                          bool tracks, size_t i) {
+        const size_t b = i * live.dim;
+        foreach (c; 0 .. live.dim) {
+            const float x = dataBefore[b + c], y = live.data[b + c];
+            if (*cast(const(uint)*)&x != *cast(const(uint)*)&y) return true;
+        }
+        return tracks && presentBefore[i] != live.present[i];
     }
 }
 
