@@ -80,10 +80,14 @@ class MeshEdgeJoin : Command, Operator {
 
         // Mode 1 (averaged): shift each sub-edge endpoint to its own midpoint.
         //   a → midpoint(a, m),  b → midpoint(b, m)
+        // TASK 2310 — through the recorded door. This command is snapshot-backed
+        // today, so its own undo does not depend on the entry; the raw pair was
+        // nevertheless a live-mesh write invisible to any op-log, which is the
+        // shape that bites the moment the family moves to a delta.
         if (mode_ == 1) {
             Vec3 vm = mesh.vertices[m];
-            mesh.vertices[a] = (mesh.vertices[a] + vm) * 0.5f;
-            mesh.vertices[b] = (mesh.vertices[b] + vm) * 0.5f;
+            mesh.setVertexPositions([a, b],
+                [(mesh.vertices[a] + vm) * 0.5f, (mesh.vertices[b] + vm) * 0.5f]);
         }
 
         // Dissolve the middle vertex: drops m from every incident face boundary,

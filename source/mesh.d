@@ -3942,14 +3942,24 @@ struct Mesh {
                 clusterSum[s] = clusterSum[s] + vertices[i];
                 ++clusterCount[s];
             }
+            // TASK 2310 — through the recorded door, BULK, once per round.
+            // A raw `vertices[i] = …` on the LIVE subject mesh compiles inside a
+            // recording batch and produces no op-log entry, so a delta-backed
+            // undo of this weld restored the topology and left every survivor at
+            // its post-average coordinate. Gathered first and written in one
+            // call because the door records one `Kind.SetPos` per call.
+            uint[] avgIdx;
+            Vec3[] avgTo;
             foreach (i; 0 .. vertices.length) {
                 if (remap[i] != cast(int)i) continue;   // survivors only
                 if (clusterCount[i] < 2)     continue;   // singletons unchanged
                 double c = cast(double)clusterCount[i];
-                vertices[i] = Vec3(cast(float)(clusterSum[i].x / c),
-                                   cast(float)(clusterSum[i].y / c),
-                                   cast(float)(clusterSum[i].z / c));
+                avgIdx ~= cast(uint) i;
+                avgTo  ~= Vec3(cast(float)(clusterSum[i].x / c),
+                               cast(float)(clusterSum[i].y / c),
+                               cast(float)(clusterSum[i].z / c));
             }
+            setVertexPositions(avgIdx, avgTo);
         }
 
         applyVertexRemapAndRebuild(remap, join);
@@ -4174,7 +4184,12 @@ struct Mesh {
         // Snap drop to keep's position so weldVerticesByMask treats them as
         // coincident. The surviving index is min(keep,drop); the surviving
         // position is keep's (both positions are identical at this point).
-        vertices[drop] = vertices[keep];
+        //
+        // TASK 2310 — through the recorded door. `drop` is removed a few lines
+        // below, so the reverse re-inserts it from the `Kind.RemoveVerts`
+        // payload at the position it had AFTER this snap, and only the
+        // `Kind.SetPos` this records carries the one it had BEFORE.
+        setVertexPositions([drop], [vertices[keep]]);
         bool[] mask;
         mask.length = vertices.length;
         mask[keep] = true;
@@ -4575,12 +4590,21 @@ struct Mesh {
     void collapseVerticesByMask(in bool[] maskIn, Vec3 target) {
         const mask = maskMinusHiddenVertices(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (mask.length != vertices.length) return;
+        // TASK 2310 — through the recorded door, BULK. `any` still reads the
+        // MASK rather than the door's own "did any coordinate change" answer,
+        // because the trailing commit below owes its Geometry bit whenever the
+        // mask named something — see its comment; a vertex already sitting on
+        // `target` used to bump the counters and must go on doing so.
         bool any = false;
+        uint[] collapseIdx;
+        Vec3[] collapseTo;
         foreach (i; 0 .. mask.length) {
             if (!mask[i]) continue;
-            vertices[i] = target;
+            collapseIdx ~= cast(uint) i;
+            collapseTo  ~= target;
             any = true;
         }
+        setVertexPositions(collapseIdx, collapseTo);
         // Positions only move here, but the original double-bumped BOTH
         // counters; preserve that EXACTLY by carrying a Geometry bit so
         // commitChange still advances topologyVersion. (Semantic class is

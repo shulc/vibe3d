@@ -3571,9 +3571,15 @@ unittest // L0-d — the zone total equals the nine plus the recorded remainder
     // matters for them is NOT this one: their forward writer moved into
     // `source/symmetry.d`, which neither census zone scans, so the L0-b block
     // brings that file in by name (the `deform_magnet.d` shape).
+    //
+    // `edge_join.d:2` LEFT this list at task 2310. Its two writes were the
+    // averaged mode's midpoint pair (`mesh.vertices[a] = …; mesh.vertices[b] =
+    // …;`) and they are now one `mesh.setVertexPositions([a, b], …)` — the whole
+    // of the drop from 7 to 5. That file gets its own two-sided row at the
+    // bottom of this module (the command is snapshot-backed today, so the row
+    // that matters for it is the TEXT one, not an op-log cell).
     static immutable string[] kRemainder = [
-        "edge_join.d:2", "move_vertex.d:2", "remesh.d:1",
-        "vertex_edit.d:2",
+        "move_vertex.d:2", "remesh.d:1", "vertex_edit.d:2",
     ];
     import std.algorithm : sort;
     auto got = offenders.dup;
@@ -3585,12 +3591,13 @@ unittest // L0-d — the zone total equals the nine plus the recorded remainder
              ~ "commit — otherwise the zone-total row below goes on adding up "
              ~ "to the same number over a different set of files.",
                got, kRemainder));
-    assert(zoneTotal == 7,
+    assert(zoneTotal == 5,
         format("source/commands/mesh holds %d raw position write(s) in total, "
-             ~ "expected 7 = 0 (the nine L0-d files) + 0 (the two L0-b files) "
-             ~ "+ 7 (the enumerated remainder above). It was 15 before task "
-             ~ "1903 §L0-b took transform.d's six and symmetrize.d's one, and "
-             ~ "8 before §L1-a took morph.d's one. %d file(s) scanned.",
+             ~ "expected 5 = 0 (the nine L0-d files) + 0 (the two L0-b files) "
+             ~ "+ 5 (the enumerated remainder above). It was 15 before task "
+             ~ "1903 §L0-b took transform.d's six and symmetrize.d's one, "
+             ~ "8 before §L1-a took morph.d's one, and 7 before task 2310 took "
+             ~ "edge_join.d's two. %d file(s) scanned.",
                zoneTotal, scanned));
 }
 
@@ -3919,4 +3926,152 @@ unittest // L0-b — `recordPositionDiff`'s caller set is CLOSED
              ~ "W-b1 — and it owes a row here in the SAME commit. A caller "
              ~ "that merely appears is a delta nothing measures.",
                sites, kExpected));
+}
+
+// ---------------------------------------------------------------------------
+// TASK 2310 — THE FIFTH ZONE: `source/mesh.d` ITSELF
+//
+// WHY IT IS HERE AT ALL. `countRawPositionWrites` scans `source/mesh_ops/*.d`,
+// `source/commands/mesh/*.d`, `source/symmetry.d` and `source/deform_magnet.d`
+// — never `source/mesh.d`. Four raw position writes on the LIVE subject mesh
+// were sitting in that hole: `collapseVerticesByMask`'s `vertices[i] = target`,
+// `weldVerticesByMask`'s average arm, `weldVertexPair`'s snap, and (in the
+// scanned command zone, but unclassified) `edge_join.d`'s averaged pair. All
+// four now go through `Mesh.setVertexPositions`, which records `Kind.SetPos`;
+// before that, a delta-backed undo of any of them restored the topology and
+// left the coordinates at their post-collapse values.
+//
+// AND THE ROW IS A `kAllow` TOTAL, NOT A ZERO, which is the honest shape for
+// this file and has to be said plainly. `source/mesh.d` is the mesh's own
+// module: it holds the position DOORS themselves (`setVertexPositions`,
+// `addVertex`), the whole-array installs that follow a rebuild
+// (`vertices = newVerts`), every factory and duplicator that fills a mesh it
+// has just constructed, and ~20 writes inside its own `unittest` fixtures. A
+// `== 0` row here is unreachable and a stage that claimed one would be lying.
+// What the count buys is that a NEW raw write anywhere in the file moves it and
+// has to be classified in the same commit — the property the zone hole denied.
+//
+// THE TWO-SIDED HALF is the `deform_magnet.d` idiom inverted, because what this
+// stage did was RETIRE writes rather than allow one: each of the three
+// retired spellings is pinned ABSENT, and each replacement call is pinned
+// PRESENT. Put a raw write back and the count row and its spelling row both
+// redden; delete a replacement call and only the replacement row does. A count
+// row alone would read 46 for any 46 writes over a different set of sites.
+// ---------------------------------------------------------------------------
+
+private enum string[3] kL10RetiredRawWrites = [
+    "vertices[i] = target;",                        // collapseVerticesByMask
+    "vertices[drop] = vertices[keep];",             // weldVertexPair
+    "vertices[i] = Vec3(cast(float)(clusterSum",    // weldVerticesByMask, average arm
+];
+private enum string[3] kL10Replacements = [
+    "setVertexPositions(collapseIdx, collapseTo);",     // collapseVerticesByMask
+    "setVertexPositions([drop], [vertices[keep]]);",    // weldVertexPair
+    "setVertexPositions(avgIdx, avgTo);",               // weldVerticesByMask, average arm
+];
+
+unittest // task 2310 — source/mesh.d, the zone the write census never scanned
+{
+    import std.algorithm : sort, uniq;
+    import std.array     : array;
+
+    immutable path = buildPath(repoRoot, "source", "mesh.d");
+    assert(exists(path), "cannot find source/mesh.d at " ~ path);
+    immutable src = stripCommentsAndStrings(readText(path));
+
+    // Non-vacuity floor, per the `deform_magnet.d` row: a stripper that ate the
+    // file reports 0 raw writes and passes by saying nothing.
+    assert(countOccurrences(src, "void setVertexPositions(") == 2,
+        format("source/mesh.d declares `setVertexPositions` %d time(s), expected "
+             ~ "2 — `Mesh`'s bulk position door and `MeshEditBatch`'s one-line "
+             ~ "forwarder onto it. This is the non-vacuity floor: a stripper that "
+             ~ "ate the file reports 0 raw writes below and passes by saying "
+             ~ "nothing. Note the count is 2 and NOT the number of CALLS — three "
+             ~ "of the calls in this file predate task 2310.",
+               countOccurrences(src, "void setVertexPositions(")));
+
+    // TERM 1 — the anti-duplication term, over BOTH literal rosters. A typo
+    // throws loudly (the count comes back 0 and names the literal); a DUPLICATE
+    // is silent — it leaves one of the three sites unpinned while the loop
+    // still reports "three rows asserted".
+    auto retired = kL10RetiredRawWrites.dup;  sort(retired);
+    auto repl    = kL10Replacements.dup;      sort(repl);
+    assert(retired.uniq.array.length == 3,
+        format("the retired-write roster names only %d DISTINCT literals: %s. "
+             ~ "The count of ROWS is not the count of SITES.",
+               retired.uniq.array.length, retired));
+    assert(repl.uniq.array.length == 3,
+        format("the replacement roster names only %d DISTINCT literals: %s. A "
+             ~ "duplicated literal leaves one migrated site with no pin at all.",
+               repl.uniq.array.length, repl));
+
+    // TERM 2 — the two-sided half. Retired ABSENT, replacement PRESENT.
+    foreach (lit; kL10RetiredRawWrites)
+        assert(countOccurrences(src, lit) == 0,
+            format("source/mesh.d spells the retired raw position write `%s` "
+                 ~ "again (%d occurrence(s)). It writes the LIVE subject mesh, "
+                 ~ "so inside a recording batch it produces no op-log entry and "
+                 ~ "a delta-backed undo of the weld family restores the topology "
+                 ~ "with the coordinates left where the collapse put them. Route "
+                 ~ "it through `setVertexPositions`.",
+                   lit, countOccurrences(src, lit)));
+    foreach (lit; kL10Replacements)
+        assert(countOccurrences(src, lit) == 1,
+            format("source/mesh.d no longer spells `%s` exactly once (%d). This "
+                 ~ "is the half that stops `retire the row by deleting the line` "
+                 ~ "being a way to go green: with the call gone the three rows "
+                 ~ "above are all still 0 and the weld silently stops recording "
+                 ~ "its positions.",
+                   lit, countOccurrences(src, lit)));
+
+    // TERM 3 — the zone total, a kAllow. Enumerated by CATEGORY in the message
+    // so a new write cannot hide inside a number that merely did not change.
+    string firstHit;
+    immutable size_t raw = countRawPositionWrites(src, firstHit);
+    assert(raw == 46,
+        format("source/mesh.d holds %d raw position write(s) under §5.7's "
+             ~ "predicate, expected 46. First hit: `%s`.\n"
+             ~ "  THIS IS A `kAllow` TOTAL, NOT A CLEAN ZERO, and the file is "
+             ~ "the one place where that is right: the 46 are the position "
+             ~ "DOORS themselves (`setVertexPositions` ×2, `addVertex`), the "
+             ~ "whole-array installs a rebuild ends with (`vertices = newVerts` "
+             ~ "and friends), the factories and duplicators filling a mesh they "
+             ~ "just built (`facetedSubdivide`'s `result`, the grid/cube/preview "
+             ~ "builders), and this module's own `unittest` fixtures. It was 49 "
+             ~ "before task 2310 took the three LIVE-SUBJECT writes named in the "
+             ~ "roster above.\n"
+             ~ "  A NEW raw write here must be classified in the SAME commit: if "
+             ~ "it is on a mesh the caller has just constructed, say so and move "
+             ~ "this number; if it is on the live subject, it belongs behind "
+             ~ "`setVertexPositions` and this number must not move.",
+               raw, firstHit));
+}
+
+unittest // task 2310 — edge_join.d's zero, and the pin that makes it worth having
+{
+    immutable path = buildPath(repoRoot, "source", "commands", "mesh", "edge_join.d");
+    assert(exists(path), "cannot find source/commands/mesh/edge_join.d at " ~ path);
+    immutable src = stripCommentsAndStrings(readText(path));
+
+    assert(countOccurrences(src, "override bool revert()") == 1,
+        "source/commands/mesh/edge_join.d: the comment stripper ate the file (or "
+      ~ "the command lost its `revert` override) — the count below would be 0 "
+      ~ "for the wrong reason.");
+
+    string firstHit;
+    immutable size_t raw = countRawPositionWrites(src, firstHit);
+    assert(raw == 0,
+        format("source/commands/mesh/edge_join.d: %d raw position write(s), "
+             ~ "expected 0 since task 2310. First hit: `%s`. It was 2 — the "
+             ~ "averaged mode's `mesh.vertices[a]`/`[b]` midpoint pair — and "
+             ~ "those two are the whole of this file's drop out of the zone "
+             ~ "remainder below.", raw, firstHit));
+    // The two-sided half: the zero above reads 0 for a file that lost the write
+    // AND for one that lost the whole mode. This says the write is still there,
+    // behind the door.
+    assert(countOccurrences(src, "mesh.setVertexPositions([a, b],") == 1,
+        "source/commands/mesh/edge_join.d no longer routes its averaged-mode "
+      ~ "midpoint pair through `mesh.setVertexPositions([a, b], …)`. The `== 0` "
+      ~ "row above is green whether the write moved behind the door or simply "
+      ~ "vanished, and only this row tells the two apart.");
 }
