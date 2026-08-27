@@ -346,7 +346,7 @@ class MeshSmooth : Command, Operator, IFalloffAware {
     }
 
     override bool revert() {
-        if (touchedIdx.length == 0) return false;
+        if (touchedIdx.length == 0) return true;   // no-op smooth: positions unchanged, revert succeeds
         foreach (i, vi; touchedIdx)
             if (vi < mesh.vertices.length) mesh.vertices[vi] = touchedPrev[i];
         mesh.commitChange(MeshEditScope.Position);

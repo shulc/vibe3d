@@ -552,3 +552,72 @@ unittest {
         }
     }
 }
+
+long undoDepth() { return getJson("/api/history")["undo"].array.length; }
+
+unittest { // no-op smooth undo must not truncate the undo stack (task 2110,
+           // same shape as edge_slide's 0099 regression). `applyKernel`
+           // short-circuits at `iter<=0` with `return true;` BEFORE
+           // touchedIdx is ever populated for a fresh command instance —
+           // the simplest reachable route to a Model-class history entry
+           // whose revert() sees touchedIdx.length == 0.
+           //
+           // With the bug (revert() returned false on empty touchedIdx):
+           //   history.undo() reverts the top (Model) entry, gets false,
+           //   drops it from undoStack WITHOUT pushing it to redoStack, and
+           //   returns false → HTTP {"status":"error"}.
+           // With the fix (revert() returns true on empty — no-op success):
+           //   the no-op undo succeeds; the real smooth's entry is still
+           //   underneath and its own undo succeeds next.
+    postJson("/api/reset", "");
+    auto before = dumpVerts();
+    // `/api/reset` pushes scene.reset onto the SAME undo stack as an
+    // UndoBoundary entry rather than clearing it — but `CommandHistory`
+    // caps the stack at `maxDepth = 50` (command_history.d:243) and evicts
+    // the OLDEST entry on every push once full. This worker's `--test`
+    // instance is shared across its whole slice of test files, so by the
+    // time this block runs the stack is already saturated — PUSHING an
+    // entry leaves `undoDepth()` unchanged (one evicted, one added), so a
+    // push cannot be asserted by count. POPPING (undo) never evicts, so a
+    // pop-count delta IS reliable and is what's asserted below.
+
+    // (1) Real edit — touchedIdx non-empty (strn=1, iter=3 on the default
+    //     whole-mesh operand), Model history entry pushed.
+    cmd("mesh.smooth strn:1 iter:3");
+
+    // (2) No-op edit — iter:0 short-circuits before touchedIdx is built.
+    //     apply() still returns true and records a SECOND Model entry.
+    cmd("mesh.smooth strn:1 iter:0");
+    auto depthBeforeUndos = undoDepth();
+
+    // (3) Undo the no-op. With the bug this returns {"status":"error"} and
+    //     drops the entry without a redo counterpart; with the fix it must
+    //     return {"status":"ok"}.
+    auto j1 = postJson("/api/command", `{"id":"history.undo"}`);
+    assert(j1["status"].str == "ok",
+        "undo of no-op smooth must return ok (task 2110 stack-truncation regression): "
+        ~ j1.toString);
+    assert(undoDepth() == depthBeforeUndos - 1,
+        "undoing the no-op entry must remove exactly one entry from the stack — "
+        ~ "a bulk suffix loss would drop more than one even when the call above reports ok");
+
+    // (4) Undo the real smooth. If the no-op's failure had also destroyed
+    //     this entry (the 0099-shaped total-suffix loss), this call would
+    //     return noop/error instead of ok.
+    auto j2 = postJson("/api/command", `{"id":"history.undo"}`);
+    assert(j2["status"].str == "ok",
+        "undo of real smooth must return ok after the no-op undo: "
+        ~ j2.toString);
+    assert(undoDepth() == depthBeforeUndos - 2,
+        "undoing the real smooth must remove exactly one MORE entry — a "
+        ~ "silent no-op undo that reports ok without popping would leave "
+        ~ "this at depthBeforeUndos - 1");
+
+    // (5) Positions must be fully restored to the pre-smooth cube.
+    auto after = dumpVerts();
+    foreach (i; 0 .. before.length)
+        foreach (c; 0 .. 3)
+            assert(approxEq(before[i][c], after[i][c]),
+                "vert " ~ i.to!string ~ " axis " ~ c.to!string
+                ~ " not restored after two undos (task 2110 regression)");
+}

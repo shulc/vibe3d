@@ -181,3 +181,96 @@ unittest {
         }
     }
 }
+
+double[3][] dumpVerts() {
+    double[3][] out_;
+    foreach (v; getJson("/api/model")["vertices"].array) {
+        auto a = v.array;
+        out_ ~= [a[0].floating, a[1].floating, a[2].floating];
+    }
+    return out_;
+}
+
+long undoDepth() { return getJson("/api/history")["undo"].array.length; }
+
+unittest { // no-op quantize undo must not truncate the undo stack (task 2110).
+           // Same shape as mesh.jitter's regression: quantize has no
+           // identity-param short-circuit either (a step<=0 makes apply()
+           // return FALSE, not a true-with-empty-touchedIdx no-op), so the
+           // only reachable route is the EMPTY OPERAND — nothing selected AND
+           // every vertex hidden.
+    postJson("/api/reset", "");
+    cmd("select.typeFrom vertex");
+    auto selAll = postJson("/api/select",
+        `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    assert(selAll["status"].str == "ok", selAll.toString);
+    // `CommandHistory` caps the undo stack at `maxDepth = 50`
+    // (command_history.d:243) and evicts the OLDEST entry on every push once
+    // full. This worker's `--test` instance is shared across its whole slice
+    // of test files, so by the time this block runs the stack is already
+    // saturated — PUSHING an entry (mesh.hide, a real edit, a no-op edit)
+    // leaves `undoDepth()` unchanged (one evicted, one added), so a push
+    // cannot be asserted by count. POPPING (undo) never evicts, so the
+    // pop-count deltas below ARE reliable.
+    cmd("mesh.hide");   // all 8 verts selected ⇒ hides every face
+
+    // (1) Real edit — all 8 verts still explicitly selected (hidden or not,
+    //     selection wins over hidden state in the Vertices-mode mask),
+    //     touchedIdx non-empty.
+    auto before = dumpVerts();
+    cmd("mesh.quantize X:0.3 Y:0.3 Z:0.3");
+
+    // (2) No-op edit — clear the selection; everything is still hidden, so
+    //     operandVertexMask's fallback (visibleVertexMask) is all-false.
+    //     NOTE: `/api/select` itself records its own "mesh.select" UiState
+    //     history entry (measured — see the twin comment in
+    //     test_mesh_jitter.d), so the stack between the real edit and the
+    //     no-op edit is [... real quantize, mesh.select, no-op quantize].
+    //     A Model undo carries any UiUndo suffix directly above it to redo
+    //     as ONE unit (command_history.d's Case A), so undoing "real
+    //     quantize" below also sweeps up that "mesh.select" — the per-call
+    //     pop count is reliably >= 1 but not reliably == 1, hence "<" rather
+    //     than "==" in the second check below.
+    auto clearSel = postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+    assert(clearSel["status"].str == "ok", clearSel.toString);
+    cmd("mesh.quantize X:0.3 Y:0.3 Z:0.3");
+    auto depthBeforeUndos = undoDepth();
+
+    // (3) Undo the no-op. With the bug this returns {"status":"error"} and
+    //     the entry is dropped without a redo counterpart; with the fix it
+    //     returns {"status":"ok"} (a genuine no-op revert). Nothing was
+    //     pushed after the no-op edit, so this pop is exactly one entry
+    //     either way.
+    auto j1 = postJson("/api/command", `{"id":"history.undo"}`);
+    assert(j1["status"].str == "ok",
+        "undo of no-op quantize must return ok (task 2110 stack-truncation regression): "
+        ~ j1.toString);
+    auto depthAfterUndo1 = undoDepth();
+    assert(depthAfterUndo1 == depthBeforeUndos - 1,
+        "undoing the no-op entry must remove exactly one entry from the "
+        ~ "stack — a bulk suffix loss would drop more than one even when "
+        ~ "the call above reports ok");
+
+    // (4) Undo the real quantize (and, per the Case-A carry-along noted
+    //     above, the mesh.select entry directly above it) — a strict
+    //     decrease, not an exact one, so this doesn't hard-code the
+    //     carry-along count.
+    auto j2 = postJson("/api/command", `{"id":"history.undo"}`);
+    assert(j2["status"].str == "ok",
+        "undo of real quantize must return ok after the no-op undo: "
+        ~ j2.toString);
+    assert(undoDepth() < depthAfterUndo1,
+        "undoing the real quantize must remove at least one MORE entry — a "
+        ~ "silent no-op undo that reports ok without popping anything would "
+        ~ "leave this unchanged at depthAfterUndo1");
+
+    // (5) Positions must be fully restored (mesh.hide never moves a vertex,
+    //     so `before` — captured right after the hide — is exactly the
+    //     state two undos must reach).
+    auto after = dumpVerts();
+    foreach (i; 0 .. before.length)
+        foreach (c; 0 .. 3)
+            assert(approxEq(before[i][c], after[i][c]),
+                "vert " ~ i.to!string ~ " axis " ~ c.to!string
+                ~ " not restored after two undos (task 2110 regression)");
+}

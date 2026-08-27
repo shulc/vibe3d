@@ -256,3 +256,94 @@ unittest {
         }
     }
 }
+
+long undoDepth() { return getJson("/api/history")["undo"].array.length; }
+
+unittest { // no-op jitter undo must not truncate the undo stack (task 2110).
+           // jitter has no identity-param short-circuit (unlike mesh.smooth's
+           // iter<=0), so the only reachable route to touchedIdx.length == 0
+           // with apply() still returning true is an EMPTY OPERAND: nothing
+           // selected AND every vertex hidden (operandVertexMask's L1 funnel
+           // falls back to visibleVertexMask(), which is all-false once the
+           // whole mesh is hidden).
+           //
+           // Sequence: hide everything (its own UiState undo entry, unrelated
+           // to the bug) → real jitter with the WHOLE mesh explicitly selected
+           // (selection wins over hidden state in the Vertices-mode mask, so
+           // this still moves all 8 verts even though they're hidden) → no-op
+           // jitter with the selection cleared (now nothing selected AND
+           // everything hidden ⇒ empty operand).
+    postJson("/api/reset", "");
+    cmd("select.typeFrom vertex");
+    auto selAll = postJson("/api/select",
+        `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    assert(selAll["status"].str == "ok", selAll.toString);
+    // `CommandHistory` caps the undo stack at `maxDepth = 50`
+    // (command_history.d:243) and evicts the OLDEST entry on every push once
+    // full. This worker's `--test` instance is shared across its whole slice
+    // of test files, so by the time this block runs the stack is already
+    // saturated — PUSHING an entry (mesh.hide, a real edit, a no-op edit)
+    // leaves `undoDepth()` unchanged (one evicted, one added), so a push
+    // cannot be asserted by count. POPPING (undo) never evicts, so the
+    // pop-count deltas below ARE reliable.
+    cmd("mesh.hide");   // all 8 verts selected ⇒ hides every face
+
+    // (1) Real edit — all 8 verts still explicitly selected (hidden or not),
+    //     touchedIdx non-empty. Model history entry pushed on top of hide's.
+    auto before = dumpVerts();
+    cmd("mesh.jitter rangeX:0.1 rangeY:0.1 rangeZ:0.1 seed:1");
+
+    // (2) No-op edit — clear the selection; everything is still hidden from
+    //     step (1)'s setup, so operandVertexMask's fallback is all-false.
+    //     NOTE: `/api/select` itself records its own "mesh.select" UiState
+    //     history entry (measured — it is NOT the bare selection-only bridge
+    //     it appears to be from the route code alone), so the stack between
+    //     the real edit and the no-op edit is [... real jitter, mesh.select,
+    //     no-op jitter] rather than the two edits being adjacent. A Model
+    //     undo carries any UiUndo suffix directly above it to redo as ONE
+    //     unit (command_history.d's Case A), so undoing "real jitter" below
+    //     also sweeps up that "mesh.select" — the per-call pop count is
+    //     reliably >= 1 but not reliably == 1, hence "<" rather than "=="
+    //     in the second check below.
+    auto clearSel = postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+    assert(clearSel["status"].str == "ok", clearSel.toString);
+    cmd("mesh.jitter rangeX:0.1 rangeY:0.1 rangeZ:0.1 seed:2");
+    auto depthBeforeUndos = undoDepth();
+
+    // (3) Undo the no-op. With the bug (revert() returned false on empty
+    //     touchedIdx) this returns {"status":"error"} and the entry is
+    //     dropped without a redo counterpart; with the fix it returns
+    //     {"status":"ok"} (a genuine no-op revert). Nothing was pushed after
+    //     the no-op edit, so this pop is exactly one entry either way.
+    auto j1 = postJson("/api/command", `{"id":"history.undo"}`);
+    assert(j1["status"].str == "ok",
+        "undo of no-op jitter must return ok (task 2110 stack-truncation regression): "
+        ~ j1.toString);
+    auto depthAfterUndo1 = undoDepth();
+    assert(depthAfterUndo1 == depthBeforeUndos - 1,
+        "undoing the no-op entry must remove exactly one entry from the "
+        ~ "stack — a bulk suffix loss would drop more than one even when "
+        ~ "the call above reports ok");
+
+    // (4) Undo the real jitter (and, per the Case-A carry-along noted above,
+    //     the mesh.select entry directly above it) — a strict decrease,
+    //     not an exact one, so this doesn't hard-code the carry-along count.
+    auto j2 = postJson("/api/command", `{"id":"history.undo"}`);
+    assert(j2["status"].str == "ok",
+        "undo of real jitter must return ok after the no-op undo: "
+        ~ j2.toString);
+    assert(undoDepth() < depthAfterUndo1,
+        "undoing the real jitter must remove at least one MORE entry — a "
+        ~ "silent no-op undo that reports ok without popping anything would "
+        ~ "leave this unchanged at depthAfterUndo1");
+
+    // (5) Positions must be fully restored to the pre-jitter cube (mesh.hide
+    //     never moves a vertex, so `before` — captured right after the hide —
+    //     is exactly the state two undos must reach).
+    auto after = dumpVerts();
+    foreach (i; 0 .. before.length)
+        foreach (c; 0 .. 3)
+            assert(approxEq(before[i][c], after[i][c]),
+                "vert " ~ i.to!string ~ " axis " ~ c.to!string
+                ~ " not restored after two undos (task 2110 regression)");
+}
