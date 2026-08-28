@@ -1,5 +1,221 @@
 {
   "family": "position_marks",
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "mesh.smooth",
+        "drove": [
+          {
+            "op": "mesh.smooth",
+            "values": {
+              "iter": 2,
+              "strn": 0.8
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.jitter",
+        "drove": [
+          {
+            "op": "mesh.jitter",
+            "values": {
+              "rangeX": 0.2,
+              "rangeY": 0.2,
+              "rangeZ": 0.2,
+              "seed": 7
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.quantize",
+        "drove": [
+          {
+            "op": "mesh.quantize",
+            "values": {
+              "X": 0.3,
+              "Y": 0.3,
+              "Z": 0.3
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.magnet",
+        "drove": [
+          {
+            "op": "mesh.magnet",
+            "values": {
+              "target.x": 6.0,
+              "target.y": 0.0,
+              "target.z": 0.0,
+              "strength": 0.5,
+              "dist": 100.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.linear_align",
+        "drove": [
+          {
+            "op": "mesh.linear_align",
+            "values": {
+              "weight": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.radial_align",
+        "drove": [
+          {
+            "op": "mesh.radial_align",
+            "values": {
+              "weight": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.centerVertices",
+        "drove": [
+          {
+            "op": "mesh.centerVertices",
+            "values": {
+              "axis": "y"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.setPosition",
+        "drove": [
+          {
+            "op": "mesh.setPosition",
+            "values": {
+              "axis": "z",
+              "value": 0.25
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.edge_slide",
+        "drove": [
+          {
+            "op": "mesh.edge_slide",
+            "values": {
+              "t": 0.6
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.hide",
+        "drove": [
+          {
+            "op": "mesh.hide",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.hideUnselected",
+        "drove": [
+          {
+            "op": "mesh.hideUnselected",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.hideInvert",
+        "drove": [
+          {
+            "op": "mesh.hideInvert",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.unhideAll",
+        "drove": [
+          {
+            "op": "mesh.unhideAll",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.setMaterial",
+        "drove": [
+          {
+            "op": "mesh.setMaterial",
+            "values": {
+              "materialId": 0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.setPart",
+        "drove": [
+          {
+            "op": "mesh.setPart",
+            "values": {
+              "partId": 3
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.subpatch_toggle",
+        "drove": [
+          {
+            "op": "mesh.subpatch_toggle",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.move_vertex",
+        "drove": [
+          {
+            "op": "mesh.move_vertex",
+            "values": {
+              "from.x": -0.333333313,
+              "from.y": 0.370000005,
+              "from.z": -0.333333313,
+              "to.x": 0.066666687,
+              "to.y": 0.570000005,
+              "to.z": -0.483333313
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.symmetrize",
+        "drove": [
+          {
+            "op": "mesh.symmetrize",
+            "values": {
+              "axis": "X",
+              "side": "positive",
+              "topology": false,
+              "offset": 0.0,
+              "epsilon": 0.001
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/unit/undo_parity_l0_test.d:468-559; Drive record = the setI/setF/setS/setV/setB calls in l0Cells (tests/unit/undo_parity_l0_test.d:477-557). Stand, selection (selectRow, selectVertex, selectEdge) and the three vertex perturbations at :457-459 are excluded. mesh.hide/hideUnselected/hideInvert/unhideAll (source/commands/mesh/hide.d) and mesh.subpatch_toggle (source/commands/mesh/subpatch_toggle.d) declare no params() override, so they inherit source/command.d:877 `Param[] params() { return []; }` -- their empty values map is a statement. mesh.move_vertex: from/to are NOT literals; from = stand vertex 5 (undo_parity_l0_test.d:547), whose value (-0.333333313, 0.370000005, -0.333333313) is read off this fixture's own mesh.move_vertex postUndo vertices[5]; to = from + the literal offsets (+0.4, +0.2, -0.15) at :548-549."
+  },
   "producedBy": "a8cdb05d269365a2d466257498f3f49da7aa680a",
   "stand": "makeTaggedGridFull(3)+perturbed",
   "recipe": "reset -> stand -> op -> undo",

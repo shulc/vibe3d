@@ -92,6 +92,27 @@ unittest { // ACEN-Select, asymmetric L-shape: bbox center (0,0,−0.5), SY=2.
         "task": null,
         "notes": "analytic golden -- selection bbox center pivot, vertex mode; source-grounded against actcenter.d/mesh.d and the oriented selection frame in toolpipe/obbox.d (see file header derivation)."
       },
+      "parameters": {
+            "schema": 1,
+            "state": "recorded",
+            "derived_from": "replay-steps",
+            "cells": [
+                  {
+                        "cell": "acen.select L-shape SY=2 (bbox pivot discriminates avg)",
+                        "drove": [
+                              {
+                                    "op": "acen_transform",
+                                    "values": {
+                                          "tool": "scale",
+                                          "attr": "SY",
+                                          "value": 2.0,
+                                          "acen": "select"
+                                    }
+                              }
+                        ]
+                  }
+            ]
+      },
       "tolerance": 1e-4,
       "cases": [{
         "name": "acen.select L-shape SY=2 (bbox pivot discriminates avg)",
@@ -143,6 +164,27 @@ unittest { // ACEN-SelectAuto, same L-shape: center path is lockstep with Select
         "harness": null,
         "task": null,
         "notes": "SelectAuto center lockstep with Select -- same derivation chain as :63 (selectionCentroid(SelectSubMode.Center), actcenter.d:737)."
+      },
+      "parameters": {
+            "schema": 1,
+            "state": "recorded",
+            "derived_from": "replay-steps",
+            "cells": [
+                  {
+                        "cell": "acen.selectauto L-shape SX=2 (same center as select)",
+                        "drove": [
+                              {
+                                    "op": "acen_transform",
+                                    "values": {
+                                          "tool": "scale",
+                                          "attr": "SX",
+                                          "value": 2.0,
+                                          "acen": "selectauto"
+                                    }
+                              }
+                        ]
+                  }
+            ]
       },
       "tolerance": 1e-4,
       "cases": [{

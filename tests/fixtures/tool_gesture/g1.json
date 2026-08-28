@@ -1,5 +1,315 @@
 {
   "family": "tool_gesture_g1",
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "prim.sphere/create-drop",
+        "drove": [
+          {
+            "op": "tool.set prim.sphere",
+            "values": {}
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": 140,
+              "dy_px": 130,
+              "steps": 16,
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": 0,
+              "dy_px": -90,
+              "steps": 16,
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "tool.set prim.sphere",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "prim.cube/base-drop",
+        "drove": [
+          {
+            "op": "tool.set prim.cube",
+            "values": {}
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": 150,
+              "dy_px": 140,
+              "steps": 16,
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "tool.set prim.cube",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "prim.cube/live-drop",
+        "drove": [
+          {
+            "op": "tool.set prim.cube",
+            "values": {}
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": 150,
+              "dy_px": 140,
+              "steps": 16,
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": 0,
+              "dy_px": -100,
+              "steps": 16,
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "tool.set prim.cube",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "prim.arc/mouseup",
+        "drove": [
+          {
+            "op": "tool.set prim.arc",
+            "values": {}
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": 150,
+              "dy_px": 120,
+              "steps": 16,
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "tool.set prim.arc",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "prim.vertex/click",
+        "drove": [
+          {
+            "op": "tool.set prim.vertex",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.click",
+            "values": {
+              "x_px": 350,
+              "y_px": 280,
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "tool.set prim.vertex",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "pen/triangle",
+        "drove": [
+          {
+            "op": "tool.set pen",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.click",
+            "values": {
+              "x_px": 350,
+              "y_px": 280,
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "gesture.click",
+            "values": {
+              "x_px": 430,
+              "y_px": 280,
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "gesture.click",
+            "values": {
+              "x_px": 390,
+              "y_px": 340,
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "gesture.key",
+            "values": {
+              "sym": 13,
+              "mod": 0
+            }
+          },
+          {
+            "op": "tool.set pen",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "xfrm.magnet/drag",
+        "drove": [
+          {
+            "op": "tool.set xfrm.magnet",
+            "values": {}
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": 100,
+              "dy_px": 0,
+              "steps": 20,
+              "button": 1,
+              "mod": 0,
+              "hover": true
+            }
+          },
+          {
+            "op": "tool.set xfrm.magnet",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "edge.extend/drag",
+        "drove": [
+          {
+            "op": "tool.set edge.extend",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "drag_px": 80,
+              "dy_px": 0,
+              "steps": 16,
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "tool.set edge.extend",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "edge.extrude/drag",
+        "drove": [
+          {
+            "op": "tool.set edge.extrude",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": -40,
+              "dy_px": 0,
+              "steps": 12,
+              "button": 1,
+              "mod": 0,
+              "hover": false,
+              "handle_part": 1
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": 70,
+              "dy_px": 0,
+              "steps": 12,
+              "button": 1,
+              "mod": 0,
+              "hover": false,
+              "handle_part": 0
+            }
+          },
+          {
+            "op": "tool.set edge.extrude",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/test_tool_gesture_g1.d:565-745; PRODUCER: the D reader IS the writer -- tests/test_tool_gesture_g1.d, capture arm `freezeOrCompare` (:355) writing when VIBE3D_TOOL_GESTURE_CAPTURE_G1 names a path (:361). The fixture's `stand` string points at each cell's `drive`, which is the per-cell (stand, gesture, drop) delegate triple passed to runCell (:185). Values transcribed from those literals. SPLIT: resetEmpty/resetCube, history.clear, setOrbitCamera, /api/select, findEdgeXPosZNeg and the projected press pixels are STAND and are excluded; the drag/click quantities and the tool.set argstrings are the drive. `steps` defaults to 16 in dragPixels (:419) and 20 in hoverDrag (:428); button/mod default to 1/0 in buildDragLog (tests/drag_helpers.d:171). `handle_part` is the /api/tool/handles part index the press resolved through (handlePx, :468). `drag_px` is used where the sign/direction is derived from the projected axis at run time and only the magnitude is a literal. HAZARD: fixtureJson (:247) does not emit a `parameters` block, so a re-capture would drop any block added to this fixture unless the producer is taught to write it. The prim.vertex and pen cells arm with `tool.set \"prim.vertex\" on 0` / `tool.set \"pen\" on 0`; per source/commands/tool/set.d's wire format only positional[1]==\"off\" is read, so the trailing `0` is an inert extra positional and is not recorded as a parameter."
+  },
   "writtenBy": "tests/test_tool_gesture_g1.d",
   "producedBy": "de261be9",
   "stand": "per-cell; see each cell's `drive`",

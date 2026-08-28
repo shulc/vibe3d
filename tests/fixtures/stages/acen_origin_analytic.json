@@ -14,6 +14,32 @@
     "task": null,
     "notes": "Mode.Origin is a hard-coded constant; no formula to derive, no reference measurement needed."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "origin_no_selection",
+        "drove": [
+          {
+            "op": "actr.origin",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "origin_with_offcenter_selection",
+        "drove": [
+          {
+            "op": "actr.origin",
+            "values": {}
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/fixtures/stages/acen_origin_analytic.json:22; Same shape as acen_local_analytic: each case's only non-stand step is the bare action-centre mode command in `pipe_setup` (lines 22 and 32), which takes no arguments. `reset` and the second case's vertex `selection` are stand — and the second case exists precisely to show the answer is selection-independent. THE JUDGMENT: the golden is a hard-coded constant in the stage under test, so nothing was captured; the drive record is the fixture's own replay."
+  },
   "tolerance": 0.0001,
   "cases": [
     {

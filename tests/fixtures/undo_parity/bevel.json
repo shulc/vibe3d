@@ -1,5 +1,77 @@
 {
   "family": "bevel",
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "mesh.poly_inset/one",
+        "drove": [
+          {
+            "op": "mesh.poly_inset",
+            "values": {
+              "inset": 0.1
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.poly_inset/many",
+        "drove": [
+          {
+            "op": "mesh.poly_inset",
+            "values": {
+              "inset": 0.1
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.bevel/polyOne",
+        "drove": [
+          {
+            "op": "mesh.bevel",
+            "values": {
+              "inset": 0.1,
+              "shift": 0.05,
+              "group": false,
+              "square": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.bevel/polySquare",
+        "drove": [
+          {
+            "op": "mesh.bevel",
+            "values": {
+              "inset": 0.1,
+              "shift": 0.05,
+              "group": true,
+              "square": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.bevel/polyGroup",
+        "drove": [
+          {
+            "op": "mesh.bevel",
+            "values": {
+              "inset": 0.1,
+              "shift": 0.05,
+              "group": true,
+              "square": false
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/unit/undo_parity_l7_test.d:241-322; inset/shift come from the setF calls at :312-317; group/square come from the kL7Specs rows (:241-264) through the field order at :231-239 (name, which, select, group, square) and the setB calls at :318-319. `select` is a face selection applied by arrange (:300-305) and is stand."
+  },
   "producedBy": "d1cfe53b+L7-P2",
   "stand": "makeTaggedGridFull(3)",
   "recipe": "reset -> stand -> op -> undo",

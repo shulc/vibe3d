@@ -1,5 +1,115 @@
 {
   "family": "slice_cut",
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "mesh.axisSlice/x1",
+        "drove": [
+          {
+            "op": "mesh.axisSlice",
+            "values": {
+              "axis": 0,
+              "count": 1
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.axisSlice/x3",
+        "drove": [
+          {
+            "op": "mesh.axisSlice",
+            "values": {
+              "axis": 0,
+              "count": 3
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.julienne/xz",
+        "drove": [
+          {
+            "op": "mesh.julienne",
+            "values": {
+              "axisA": 0,
+              "countA": 1,
+              "axisB": 2,
+              "countB": 1
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.screenSlice",
+        "drove": [
+          {
+            "op": "mesh.screenSlice",
+            "values": {
+              "ax": 200.0,
+              "ay": 100.0,
+              "bx": 600.0,
+              "by": 500.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.edgeSlice/split",
+        "drove": [
+          {
+            "op": "mesh.edgeSlice",
+            "values": {
+              "edges": [
+                0,
+                2
+              ],
+              "tA": 0.5,
+              "tB": 0.5
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.edgeSlice/keepFinalize",
+        "drove": [
+          {
+            "op": "mesh.edgeSlice",
+            "values": {
+              "edges": [
+                0,
+                1
+              ],
+              "tA": 0.5,
+              "tB": 0.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.cut/selected",
+        "drove": [
+          {
+            "op": "mesh.cut",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.cut/orphan",
+        "drove": [
+          {
+            "op": "mesh.cut",
+            "values": {}
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/unit/undo_parity_l4_test.d:320-416; Values read off the kL4Specs rows (:330-376) through the field order declared at :320-328 (name, which, axisA, countA, axisB, countB, edgeA, edgeB, tA, tB, cutFace, ax, ay, bx, by) and the makeCommand switch (:385-416). `edges` is MeshEdgeSlice's own IntArray param, set by setEdges (:424-428), so it is recorded as a parameter even though it names the operand. cutFace is NOT a parameter: it is a face SELECTION applied at :439-440. mesh.cut drives MeshCut, which does not override params() (source/commands/mesh/cut.d:71) and inherits source/command.d:877 `return []`."
+  },
   "producedBy": "4e778f3a",
   "stand": "makeTaggedGridFull(3)",
   "recipe": "reset -> stand -> op -> undo",

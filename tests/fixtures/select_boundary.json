@@ -12,6 +12,59 @@
   "task": "1050",
   "notes": "Commands only -- no viewport gesture and no pointer injection, so the drag-transport artifact does not apply. 11 cases were captured in all; the five here are the ones whose setup is expressible in vibe3d through the fixture step vocabulary. The other six (open meshes made by deleting a face, a T-junction built by stacking and welding two boxes, a coincident-duplicate polygon) drove the RULE and are pinned by the module unittest instead. The full scoreboard of candidate rules against all 11 is in the task file."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "one_face",
+    "drove": [
+     {
+      "op": "select.boundary",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "two_adjacent",
+    "drove": [
+     {
+      "op": "select.boundary",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "three_corner",
+    "drove": [
+     {
+      "op": "select.boundary",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "two_opposite",
+    "drove": [
+     {
+      "op": "select.boundary",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "none_closed",
+    "drove": [
+     {
+      "op": "select.boundary",
+      "values": {}
+     }
+    ]
+   }
+  ],
+  "notes": "drive record read from tests/fixtures/select_boundary.json:56 (`input[].body.id`, once per case); `select.boundary` is issued with NO arguments in all five cases -- the empty `values` map is the record, not an omission. What varies per case is the polygon SEED (one face, two adjacent, three at a corner, two opposite, none at all), which is the stand and is already fully recorded by each case's own `select` step. Ruled `recorded` rather than `none` because an operation WAS driven; see the rule in scratch/overrides.py."
+ },
  "tolerance": 0.0001,
  "cases": [
   {

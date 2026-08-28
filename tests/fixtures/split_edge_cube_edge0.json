@@ -12,6 +12,23 @@
     "task": null,
     "notes": "Grounded in source/mesh.d facts (makeCube +/-0.5, edge0 ordering, no-dedup addVertex) and empirically confirmed against vibe3d's own /api/model \u2014 not reference-editor-derived."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "split_edge_cube_edge0",
+        "drove": [
+          {
+            "op": "mesh.split_edge",
+            "values": {}
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/fixtures/split_edge_cube_edge0.json:19; The `setup[2]` command body is `{\"id\": \"mesh.split_edge\"}` with NO `params` key: the empty values map is a MEASUREMENT (this command takes no arguments), not an omission. `reset` and the edge `select` are stand. Out of reach of the generic extractor because the step sits in `setup` as an endpoint body and only argstrings are scanned there. The golden itself is hand/analytic (grounded in source/mesh.d facts and confirmed against vibe3d's own /api/model), so the drive record is what the fixture REPLAYS, not a reference capture — `provenance.method: hand` is where a reader learns that."
+  },
   "tolerance": 1e-4,
   "setup": [
     { "endpoint": "reset" },

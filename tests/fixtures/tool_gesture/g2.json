@@ -1,5 +1,150 @@
 {
   "family": "tool_gesture_g2",
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "mirror/centre-box-haul",
+        "drove": [
+          {
+            "op": "tool.set mesh.mirrorTool",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "drag_px": 60,
+              "steps": 16,
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "tool.set mesh.mirrorTool",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "radial.sweep/start-angle-haul",
+        "drove": [
+          {
+            "op": "tool.set mesh.radialSweepTool",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "drag_px": 80,
+              "steps": 16,
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "tool.set mesh.radialSweepTool",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "radial.array/offset-arrow-haul",
+        "drove": [
+          {
+            "op": "tool.set mesh.radialArrayTool",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "drag_px": 80,
+              "steps": 16,
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "tool.set mesh.radialArrayTool",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "array/centre-haul",
+        "drove": [
+          {
+            "op": "tool.set mesh.arrayTool",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": 70,
+              "dy_px": -40,
+              "steps": 12,
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "tool.set mesh.arrayTool",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "clone/centre-haul",
+        "drove": [
+          {
+            "op": "tool.set mesh.clone",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": 70,
+              "dy_px": -40,
+              "steps": 12,
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "tool.set mesh.clone",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/test_tool_gesture_g2.d:687-815; PRODUCER: tests/test_tool_gesture_g2.d (its own capture arm, VIBE3D_TOOL_GESTURE_CAPTURE_G2). `drag_px` is dragAlongProjectedAxis's `pixels` argument (:570) -- the drag LENGTH along the screen projection of a world axis, so only the magnitude is a literal and dx/dy are resolved at run time. dragPixels steps default 16 (:560). The `tool.attr mesh.mirrorTool center ?` in the mirror cell is a READ (trailing `?`), not a write, and is not recorded. resetCube, selectMode, setOrbitCamera and history.clear are STAND."
+  },
   "writtenBy": "tests/test_tool_gesture_g2.d",
   "producedBy": "fb626df7",
   "stand": "per-cell; see each cell's drive in the producer",

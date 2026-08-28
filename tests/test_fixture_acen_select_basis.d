@@ -42,6 +42,27 @@ unittest { // Top face (+Y, face 4): SY=1.5 → local-Y = world−Z → Z stretc
         "task": null,
         "notes": "analytic golden from the measured selection local frame (axis.d) -- top face (+Y) case."
       },
+      "parameters": {
+            "schema": 1,
+            "state": "recorded",
+            "derived_from": "replay-steps",
+            "cells": [
+                  {
+                        "cell": "top face SY=1.5",
+                        "drove": [
+                              {
+                                    "op": "acen_transform",
+                                    "values": {
+                                          "tool": "scale",
+                                          "attr": "SY",
+                                          "value": 1.5,
+                                          "acen": "select"
+                                    }
+                              }
+                        ]
+                  }
+            ]
+      },
       "tolerance": 1e-4,
       "cases": [{
         "name": "top face SY=1.5",
@@ -90,6 +111,27 @@ unittest { // Right face (+X, face 3): SY=1.5 → local-Y = world−Y → Y stre
         "harness": null,
         "task": null,
         "notes": "analytic golden from the measured selection local frame (axis.d) -- right face (+X) case."
+      },
+      "parameters": {
+            "schema": 1,
+            "state": "recorded",
+            "derived_from": "replay-steps",
+            "cells": [
+                  {
+                        "cell": "right face SY=1.5",
+                        "drove": [
+                              {
+                                    "op": "acen_transform",
+                                    "values": {
+                                          "tool": "scale",
+                                          "attr": "SY",
+                                          "value": 1.5,
+                                          "acen": "select"
+                                    }
+                              }
+                        ]
+                  }
+            ]
       },
       "tolerance": 1e-4,
       "cases": [{
@@ -140,6 +182,27 @@ unittest { // Bottom face (−Y, face 5): SY=1.5 → local-Y = world−Z → Z s
         "harness": null,
         "task": null,
         "notes": "analytic golden from the measured selection local frame (axis.d) -- bottom face (-Y) case."
+      },
+      "parameters": {
+            "schema": 1,
+            "state": "recorded",
+            "derived_from": "replay-steps",
+            "cells": [
+                  {
+                        "cell": "bottom face SY=1.5",
+                        "drove": [
+                              {
+                                    "op": "acen_transform",
+                                    "values": {
+                                          "tool": "scale",
+                                          "attr": "SY",
+                                          "value": 1.5,
+                                          "acen": "select"
+                                    }
+                              }
+                        ]
+                  }
+            ]
       },
       "tolerance": 1e-4,
       "cases": [{

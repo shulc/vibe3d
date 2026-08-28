@@ -14,6 +14,23 @@
     "task": null,
     "notes": "Mode.Local formula derivation; cross-checked against a live vibe3d run at authoring time (not a reference-editor capture). UPDATED, task 0649: the golden was (-0.083333, 0.5, -0.083333), the cluster's AVERAGE of face centroids. A reference measurement on a stand built to separate the mean from the bounding-box mid (task 0648, divergence D8, at the IDENTITY item transform) reads the bounding-box mid, and this arm was changed to match; the golden is its recomputation on this rig. CONSEQUENCE for this fixture's original claim: it was chosen so that Local's average formula DIVERGED numerically from Select's bbox-centre formula on the same selection, 'proving the two modes are wired to distinct code paths'. That discriminator is now retired -- on a SINGLE cluster the two modes genuinely agree, which is also what the 0648 capture read on the reference. What still separates them is the PARTITION, and that is covered by the 2-cluster reference-parity fixture tests/fixtures/acen_local.json. This case is not vacuous on its own terms: an implementation that ignored the cluster partition and boxed the whole mesh would answer (0,0,0), not (0,0.5,0)."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "local_cluster_l_shape_top_quadrant",
+        "drove": [
+          {
+            "op": "actr.local",
+            "values": {}
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/fixtures/stages/acen_local_analytic.json:101-103; The one thing this cell drives beyond the stand is its `pipe_setup` entry, a bare action-centre MODE command with no arguments; tests/stage_helpers.d:82-84 POSTs it as a command, and `actr.local` is vibe3d's own public token, already in this public fixture. The `prim.cube ... segments*` build and the polygon `selection` are stand. THE JUDGMENT: the GOLDEN here is analytic — hand-derived from vibe3d's own ActionCenterStage formula, no engine and no reference measurement produced it — so this block records what the fixture REPLAYS, not what a capture was driven with; `provenance.method: hand` is the field that keeps the two apart. Recorded rather than 'none' because the mode genuinely is the parameter of the stage under test and a domain query about it should find this cell."
+  },
   "tolerance": 0.0001,
   "cases": [
     {

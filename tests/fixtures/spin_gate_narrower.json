@@ -14,6 +14,40 @@
   "task": "1130",
   "notes": "The reference half is a HEADLESS COMMAND capture \u2014 no display, no pointer injection, no gesture \u2014 so it carries none of the drag-transport caveats. The vibe3d half is measured live from this tree at generation time, so `vibe3d_current` is a regression pin on our own behaviour, not a transcription. Every base here is OPEN and none is a cube: on a closed solid the mixed and equal-valence cases are not separable. The fold-over cell is the one that shows what our guard buys \u2014 the reference's result is non-manifold."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "mixed_tri_and_quad",
+    "drove": [
+     {
+      "op": "mesh.spinEdge",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "two_pentagons",
+    "drove": [
+     {
+      "op": "mesh.spinEdge",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "foldover_makes_third_face",
+    "drove": [
+     {
+      "op": "mesh.spinEdge",
+      "values": {}
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

@@ -12,6 +12,12 @@
     "task": "0612 / 0614 side-question",
     "notes": "A ONE-mesh scene cannot answer this — the edit target would have only one possible non-empty value, so 'it never changed' would be equally consistent with latched and with constant. Two earlier runs were exactly that and are not evidence on their own; only the two-mesh run below is. An independent second line of evidence was obtained in the same session: with ONLY the non-mesh item selected, an auto-fit operation on it fitted to the UNSELECTED mesh's bounds."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "none",
+    "why": "All six rows are item-SELECTION steps and nothing else -- five exclusive sets and one add, over a stand of two meshes plus one non-mesh item -- with the edit target's identity read back after each. Selection is the stand by construction, so no cell of this fixture sits anywhere in any parameter domain. The two other legs carry no parameter either: the corroboration is an auto-fit invoked on the non-mesh item (a fit takes no parameters; its (3,3,1) / (5,0,1.5) figures are its RESULT), and the `not_answered` leg is a viewport click that reached nothing. Checked at: doc/tasks/done/0670-edit-target-independent-of-item-selection.md:26.",
+    "notes": "The 2026-08-08 case script and per-case result JSON for this side-question are not in a retained evidence directory; the checkable record is the fixture's own `rows` (each row states its own selection action) plus the 0670 read, whose confirmation cells re-measure the same territory with the same selection-only drives (doc/tasks/0670-evidence/raw/E1.json .. E7.json)."
+  },
   "rig": {
     "meshes": 2,
     "non_mesh_items": 1,

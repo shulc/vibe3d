@@ -12,6 +12,113 @@
     "task": 2990,
     "notes": "Driven by tool.setAttr + tool.doApply from the reference's command field, never by a pointer drag \u2014 `method` said \"capture-drag\" until task 2990. `captured_utc` is established rather than inferred: this fixture's expected_pairs regenerate byte-identically from the 2026-06-21 raw captures. Measured values untouched."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "softrotate",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "xfrm.softRotate",
+              "attr": "RZ",
+              "value": 30.0,
+              "falloff.type": "radial",
+              "falloff.shape": "linear",
+              "falloff.center": [
+                0,
+                0,
+                0
+              ],
+              "falloff.size": [
+                1,
+                1,
+                1
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "rot_lin_45",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "xfrm.softRotate",
+              "attr": "RZ",
+              "value": 45.0,
+              "falloff.type": "radial",
+              "falloff.shape": "linear",
+              "falloff.center": [
+                0,
+                0,
+                0
+              ],
+              "falloff.size": [
+                1,
+                1,
+                1
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "rot_lin_90",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "xfrm.softRotate",
+              "attr": "RZ",
+              "value": 90.0,
+              "falloff.type": "radial",
+              "falloff.shape": "linear",
+              "falloff.center": [
+                0,
+                0,
+                0
+              ],
+              "falloff.size": [
+                1,
+                1,
+                1
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "rot_smooth_60",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "xfrm.softRotate",
+              "attr": "RZ",
+              "value": 60.0,
+              "falloff.type": "radial",
+              "falloff.shape": "smooth",
+              "falloff.center": [
+                0,
+                0,
+                0
+              ],
+              "falloff.size": [
+                1,
+                1,
+                1
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

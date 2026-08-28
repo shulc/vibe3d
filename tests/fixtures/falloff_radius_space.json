@@ -853,5 +853,250 @@
   "harness": "private capture harness (task 0644)",
   "task": "0644",
   "notes": "Block back-filled 2026-08-17 (task 1063) from the fixture's OWN `capturedBy` field, not from a guess: \"committed translate under a falloff, weight recovered from the per-vertex displacement as w = d . T / |T|^2 with T taken from the falloff-free control of the same item transform; every displacement was verified parallel to T (largest off-axis residual 4.0e-8)\". `captured_utc` stays unknown because the record does not carry a date."
+ },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "capture",
+  "cells": [
+   {
+    "cell": "ctrl_identity_radial",
+    "drove": [
+     {
+      "op": "falloff_transform",
+      "values": {
+       "move": [
+        0.7,
+        0.5,
+        0.3
+       ],
+       "falloff.kind": "radial",
+       "falloff.shape": "linear",
+       "falloff.center": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "falloff.size": [
+        1.0,
+        1.0,
+        1.0
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "cell": "ctrl_identity_linear",
+    "drove": [
+     {
+      "op": "falloff_transform",
+      "values": {
+       "move": [
+        0.7,
+        0.5,
+        0.3
+       ],
+       "falloff.kind": "linear",
+       "falloff.shape": "linear",
+       "falloff.start": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "falloff.end": [
+        0.0,
+        1.0,
+        0.0
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "cell": "scaled_nofalloff",
+    "drove": [
+     {
+      "op": "falloff_transform",
+      "values": {
+       "move": [
+        0.7,
+        0.5,
+        0.3
+       ],
+       "falloff.kind": null
+      }
+     }
+    ]
+   },
+   {
+    "cell": "moved_nofalloff",
+    "drove": [
+     {
+      "op": "falloff_transform",
+      "values": {
+       "move": [
+        0.7,
+        0.5,
+        0.3
+       ],
+       "falloff.kind": null
+      }
+     }
+    ]
+   },
+   {
+    "cell": "rot_nofalloff",
+    "drove": [
+     {
+      "op": "falloff_transform",
+      "values": {
+       "move": [
+        0.7,
+        0.5,
+        0.3
+       ],
+       "falloff.kind": null
+      }
+     }
+    ]
+   },
+   {
+    "cell": "scaled_radial",
+    "drove": [
+     {
+      "op": "falloff_transform",
+      "values": {
+       "move": [
+        0.7,
+        0.5,
+        0.3
+       ],
+       "falloff.kind": "radial",
+       "falloff.shape": "linear",
+       "falloff.center": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "falloff.size": [
+        1.0,
+        1.0,
+        1.0
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "cell": "scaled_radial_cenoff",
+    "drove": [
+     {
+      "op": "falloff_transform",
+      "values": {
+       "move": [
+        0.7,
+        0.5,
+        0.3
+       ],
+       "falloff.kind": "radial",
+       "falloff.shape": "linear",
+       "falloff.center": [
+        0.5,
+        0.0,
+        0.0
+       ],
+       "falloff.size": [
+        1.0,
+        1.0,
+        1.0
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "cell": "scaled_linear",
+    "drove": [
+     {
+      "op": "falloff_transform",
+      "values": {
+       "move": [
+        0.7,
+        0.5,
+        0.3
+       ],
+       "falloff.kind": "linear",
+       "falloff.shape": "linear",
+       "falloff.start": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "falloff.end": [
+        0.0,
+        1.0,
+        0.0
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "cell": "moved_radial",
+    "drove": [
+     {
+      "op": "falloff_transform",
+      "values": {
+       "move": [
+        0.7,
+        0.5,
+        0.3
+       ],
+       "falloff.kind": "radial",
+       "falloff.shape": "linear",
+       "falloff.center": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "falloff.size": [
+        1.0,
+        1.0,
+        1.0
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "cell": "rot_radial_aniso",
+    "drove": [
+     {
+      "op": "falloff_transform",
+      "values": {
+       "move": [
+        0.7,
+        0.5,
+        0.3
+       ],
+       "falloff.kind": "radial",
+       "falloff.shape": "linear",
+       "falloff.center": [
+        0.0,
+        0.0,
+        0.0
+       ],
+       "falloff.size": [
+        0.5,
+        2.0,
+        2.0
+       ]
+      }
+     }
+    ]
+   }
+  ],
+  "notes": "drive record read from /home/ashagarov/Code/wt/fixture-parameters-recapture/vibe3d_private/doc/tasks/0644-evidence/raw/cfg_scaled_radial.json:1-20 (one cfg_<cell>.json per cell); tests/fixtures/falloff_radius_space.json:113; Two halves, both literal. The falloff handles are re-projected from each case's OWN `falloff` object (kind / shape / center / size / start / end -- the fixture's `units` block says these are 'the values as typed into the falloff's own fields'). The translate is read from the capture's per-cell config record, which drove the SAME world offset (0.7, 0.5, 0.3) in all ten cells; the fixture's own `localOffset` is that same drive expressed in the layer's coordinates AFTER the item matrix, i.e. a measured readout, so the driven world value is recorded instead. SPLIT: the per-case `item` pos/rot/scl (and its `matrix`) is LAYER setup -- the stand -- and is excluded; it is already recorded in the fixture's own `item` key. The three `nofalloff` controls carry `falloff.kind: null`, which is a statement that no falloff was armed, not a missing value."
  }
 }

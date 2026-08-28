@@ -1,5 +1,324 @@
 {
   "family": "tool_gesture_g4",
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "poly.bevel/shift-drag",
+        "drove": [
+          {
+            "op": "tool.set poly.bevel",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": 70,
+              "dy_px": -40,
+              "steps": 16,
+              "button": 1,
+              "mod": 0,
+              "hover": false,
+              "handle_part": 0
+            }
+          },
+          {
+            "op": "tool.set poly.bevel",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "poly.inset/centroid-haul",
+        "drove": [
+          {
+            "op": "tool.set mesh.polyInsetTool",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": 0,
+              "dy_px": -60,
+              "steps": 12,
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "tool.set mesh.polyInsetTool",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "poly.extrude/axis-drag",
+        "drove": [
+          {
+            "op": "tool.set poly.extrude",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "drag_px": 80,
+              "steps": 16,
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "tool.set poly.extrude",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "edge.bevel/width-drag",
+        "drove": [
+          {
+            "op": "tool.set edge.bevel",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": 70,
+              "dy_px": -50,
+              "steps": 16,
+              "button": 1,
+              "mod": 0,
+              "hover": true,
+              "handle_part": 0
+            }
+          },
+          {
+            "op": "tool.set edge.bevel",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "vertex.bevel/inset-drag",
+        "drove": [
+          {
+            "op": "tool.set mesh.vertexBevel",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "drag_px": 80,
+              "steps": 16,
+              "button": 1,
+              "mod": 0,
+              "hover": true
+            }
+          },
+          {
+            "op": "tool.set mesh.vertexBevel",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "vertex.extrude/width-then-shift",
+        "drove": [
+          {
+            "op": "tool.set mesh.vertexExtrude",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": 70,
+              "dy_px": -50,
+              "steps": 16,
+              "button": 1,
+              "mod": 0,
+              "hover": true,
+              "handle_part": 1
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": 70,
+              "dy_px": -50,
+              "steps": 16,
+              "button": 1,
+              "mod": 0,
+              "hover": true,
+              "handle_part": 0
+            }
+          },
+          {
+            "op": "tool.set mesh.vertexExtrude",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "vert.merge/far-haul",
+        "drove": [
+          {
+            "op": "tool.set vert.merge",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": 0,
+              "dy_px": -400,
+              "steps": 16,
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "tool.set vert.merge",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "reduce/panel-attr",
+        "drove": [
+          {
+            "op": "tool.set mesh.reduceTool",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "tool.attr mesh.reduceTool",
+            "values": {
+              "ratio": 0.5
+            }
+          },
+          {
+            "op": "tool.set mesh.reduceTool",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "drag.weld/vertex-onto-vertex",
+        "drove": [
+          {
+            "op": "tool.set mesh.dragWeld",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "steps": 20,
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "tool.set mesh.dragWeld",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "tack/click",
+        "drove": [
+          {
+            "op": "tool.set mesh.tack",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.click",
+            "values": {
+              "button": 1,
+              "mod": 0,
+              "hover": true
+            }
+          },
+          {
+            "op": "tool.set mesh.tack",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "bridge/segments-drag",
+        "drove": [
+          {
+            "op": "tool.set mesh.bridgeTool",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": 60,
+              "dy_px": 0,
+              "steps": 12,
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "tool.set mesh.bridgeTool",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/test_tool_gesture_g4.d:674-913; PRODUCER: tests/test_tool_gesture_g4.d (own capture arm). dragPixels steps default 16 (:487); axisDrag (:543) passes 16 explicitly and takes `pixels` as the projected drag LENGTH, recorded as `drag_px`, plus a literal `hoverFirst` recorded as `hover`. `handle_part` is the /api/tool/handles part index (:524). STAND (excluded): resetEmpty/resetCube, loadMesh with kTwoTriangles/kTwoCaps/kTackScene, selectMode, setCamera/setOrbitCamera, history.clear, and the `select.typeFrom polygon` + `mesh.subdivide` x2 + `mesh.triple` chain that builds the reduce cell's operand. The reduce cell is the only one whose drive is a panel attribute rather than a pointer gesture; it goes through /api/script?interactive=true (interactiveAttr, :149) because /api/command hard-codes interactiveParamEdit false. drag.weld and tack press pixels are projections of stand vertices, so only steps/button/mod are literals there."
+  },
   "writtenBy": "tests/test_tool_gesture_g4.d",
   "producedBy": "b8fc218f",
   "stand": "per-cell; see each cell's `drive`",

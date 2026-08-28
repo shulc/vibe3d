@@ -12,6 +12,12 @@
   "task": "0670",
   "notes": "These cells were written to CHECK a model that had already been read out of the reference's own declarations and shipped code, not to discover one. Each cell recorded its prediction before the run. All four agreed. The read, with quotes and addresses, lives in the private tree; only the measured behaviour is frozen here."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "none",
+  "why": "No tool was driven at all. Every step of all four cells is a selection or a scene lifecycle action -- select, exclusive re-select, add, drop the whole item selection, delete a layer, hide a layer, add a non-mesh item -- and the reading after each step is a query of the layer lists, not of any geometry a tool produced. Selection and layer lifecycle are the stand by construction, so no cell here sits in any parameter domain. The fixture's own record is upstream of even that: its cells were written to CHECK a model already read out of the reference's declarations and shipped code. Checked at: doc/tasks/0670-evidence/README.md:350.",
+  "notes": "The retained per-case results (doc/tasks/0670-evidence/raw/E1.json .. E7.json) hold only predictions and query reads -- every recorded `q` is a layer-service query -- which is the checkable form of the claim above."
+ },
  "cells": [
   {
    "id": "flush_is_per_item_kind",

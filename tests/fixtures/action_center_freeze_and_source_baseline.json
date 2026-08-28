@@ -18,6 +18,77 @@
     "task": "2920",
     "notes": "INSTRUMENT, two channels, and the first one carries the law. (1) STATIC: the routine that supplies the action centre on every pipe evaluation in element mode was disassembled at its own compute site. It dereferences three stored double channels straight into the outgoing packet and publishes; there is no mesh position accessor anywhere on that path, so the centre is a stored value REPLAYED, not a centroid recomputed and then frozen. The writer is a separate event handler reached only through a gate this read names exactly: a button-DOWN whose handle part is -1, i.e. a press that hit no tool handle. No motion event can reach it. Zero processes were started for this half. (2) LIVE: the numbers below were then read from breakpoints in a RUNNING instance, in an isolated home on a private virtual display, torn down by the PIDs the run itself spawned, with the gestures delivered by pointer injection. Each gesture's window is bracketed at two QUIET moments of the debugger's own output stream, so a cell cannot borrow another cell's events -- an earlier pass that segmented the stream by event DENSITY instead was discarded, because a plain click fires the same events a drag does and the threshold separating them was a number nobody had measured. The routine names, libraries, addresses and the full breakpoint inventory are recorded in the private capture card, not here. TRANSPORT CAVEAT, stated because it applies: the pointer path is injected and acknowledged 80-95% of the time, so the DRAG LENGTH is approximate. Nothing asserted here depends on it -- the claims are 'how many distinct values' and 'which of two predicted values', and a short drag makes the discriminator harder, never easier."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "element_centre_under_translate",
+        "drove": [
+          {
+            "op": "move",
+            "values": {
+              "translation": [
+                0.360000014,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "element_centre_under_translate_second_pick",
+        "drove": [
+          {
+            "op": "move",
+            "values": {
+              "translation": null
+            }
+          }
+        ]
+      },
+      {
+        "cell": "element_centre_under_rotate",
+        "drove": [
+          {
+            "op": "rotate",
+            "values": {
+              "angle": null
+            }
+          }
+        ]
+      },
+      {
+        "cell": "element_centre_under_scale",
+        "drove": [
+          {
+            "op": "scale",
+            "values": {
+              "factor": 1.935
+            }
+          }
+        ]
+      },
+      {
+        "cell": "source_positions_under_translate",
+        "drove": [
+          {
+            "op": "move",
+            "values": {
+              "translation": [
+                0.625,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/fixtures/action_center_freeze_and_source_baseline.json:`cases[].gesture` / `translation_applied` / `scale_recovered_from_geometry` / `selection_centroid_{before,after}`, cross-read against tools/local/fixture_gen/acen_freeze/gen.py:83-190; OUTSIDE this task's 55: task 3010 left this one to lane 2920, whose card is still in work/ though its commit is merged. Added because it is the LAST absent entry in the corpus and the strict rule cannot be judged with it open; nothing but the new key changed. REGENERATION IS NOT AVAILABLE, and that is a finding: gen.py needs a run directory holding acen2920_result.json and acen2920_windows.json, and no such file exists anywhere under $HOME any more -- 'a generator names this fixture' and 'this fixture can be re-emitted' are different claims, and the census currently prints the first. Amounts, per cell: the translate cell's is the fixture's own `translation_applied`; the scale cell's is its own `scale_recovered_from_geometry` (a factor recovered from geometry, which is what `derived_from` calls the RECOVERED equivalent for a gui-gesture capture); the source-positions cell's is `selection_centroid_after` minus `selection_centroid_before` = exactly 0.625 in x, one subtraction a reader can repeat on the two frozen numbers above it. The second-pick and rotate cells drove a gesture whose amount the generator never emitted and whose raw per-vertex dump is gone: their amount is written as an explicit `null`, which reads as 'this parameter exists and its value is NOT recorded' -- deliberately not an empty map, which in every other block in this corpus means 'this operation takes no arguments'. The placing click, the rig and the selection are stand."
+  },
   "what_this_pins": [
     "An action centre placed by clicking an element is a value CAPTURED at that click, not a quantity recomputed from the element's live vertices. It cannot move while a transform gesture runs.",
     "The capture happens on the button-DOWN of a press that hits no tool handle. It is not scoped to a gesture: the captured point stays in force across later gestures until the next such click.",

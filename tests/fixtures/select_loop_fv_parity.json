@@ -11,6 +11,352 @@
   "task": "0390",
   "notes": "Command-port-driven capture: each case selects a seed (2 adjacent vertices / 1-2 polygons) then evaluates the bare select.loop command once. Golden expected is postLoop.selected verbatim from the frozen dump."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "capture",
+  "cells": [
+   {
+    "cell": "ploop_cube_band",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "ploop_grid_cross_horizontal",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "ploop_grid_cross_vertical",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "ploop_grid_single_polygon",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "ploop_pole5_ring",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "ploop_strip_triloop_from_left",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "ploop_strip_triloop_from_right",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "ploop_tube_rail",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "ploop_tube_rail_through_ngon",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "ploop_tube_rail_through_triangle",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "ploop_tube_ring",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "ploop_tube_ring_seed_on_ngon",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "ploop_tube_ring_through_ngon",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vloop_cube_corner_edge0",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vloop_grid_cross_horizontal",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vloop_grid_cross_vertical",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vloop_grid_single_vertex",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vloop_pole5_rim",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vloop_pole5_spoke",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vloop_strip_triloop_from_left",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vloop_strip_triloop_from_right",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vloop_tube_rail",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vloop_tube_rail_through_ngon",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vloop_tube_rail_through_triangle",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vloop_tube_ring",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vloop_tube_ring_through_ngon",
+    "drove": [
+     {
+      "op": "select.loop",
+      "values": {
+       "direction": "base",
+       "additive": false,
+       "space": "3D"
+      }
+     }
+    ]
+   }
+  ],
+  "notes": "drive record read from toolcards/select.loop/findings_fv.md:12-14; The findings card states the captured scope literally: the bare loop command at direction:base additive:false space:3D, one invocation over a seed of 2 adjacent vertices (vertex mode) or 1-2 polygons (polygon mode) — 'exactly what the 26 captures exercise'. So all 26 cells sit at the same domain point. The per-case `mode` key (polygon / vertex) is NOT recorded as a parameter: it is the selection component type the seed was built in, which the schema's stand rule and parameters_extract's `_STAND_ARG_HEADS` (`select.typeFrom`) both classify as stand. The three parameter names do not appear in THIS fixture's own body, but they are already public in the sibling tests/fixtures/select_loop_parity.json:3, so recording them here exposes nothing new."
+ },
  "cases": [
   {
    "name": "ploop_cube_band",

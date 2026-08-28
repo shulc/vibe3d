@@ -10,6 +10,355 @@
     "task": "1090",
     "notes": "`reference` corrected 2026-08-28 (task 3140/2860's population widening) from free prose ('a third-party polygon modelling application, driven headlessly by our own capture harness and read back from its own framebuffer') to the schema's neutral vocabulary -- the prose did not name the product, but it was not a valid enum value either, and `provenance_check.py`'s two flat globs never reached this file (it lives under a subdirectory) to catch that. The relocated wording is preserved here verbatim as the capture method: driven headlessly by our own harness, read back from the reference's own framebuffer. No measured value in this file (rgb8, model, quantiser, near_tie_divergence, cases) was touched."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "ramp w=-2.0",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": -2.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "ramp w=-1.0",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": -1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "ramp w=-0.5",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": -0.5
+            }
+          }
+        ]
+      },
+      {
+        "cell": "ramp w=-0.3333333",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": -0.3333333
+            }
+          }
+        ]
+      },
+      {
+        "cell": "ramp w=-0.2",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": -0.2
+            }
+          }
+        ]
+      },
+      {
+        "cell": "ramp w=-0.1",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": -0.1
+            }
+          }
+        ]
+      },
+      {
+        "cell": "ramp w=0.0",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": 0.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "ramp w=0.05",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": 0.05
+            }
+          }
+        ]
+      },
+      {
+        "cell": "ramp w=0.1",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": 0.1
+            }
+          }
+        ]
+      },
+      {
+        "cell": "ramp w=0.2",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": 0.2
+            }
+          }
+        ]
+      },
+      {
+        "cell": "ramp w=0.3333333",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": 0.3333333
+            }
+          }
+        ]
+      },
+      {
+        "cell": "ramp w=0.5",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": 0.5
+            }
+          }
+        ]
+      },
+      {
+        "cell": "ramp w=0.75",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": 0.75
+            }
+          }
+        ]
+      },
+      {
+        "cell": "ramp w=1.0",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "ramp w=1.5",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": 1.5
+            }
+          }
+        ]
+      },
+      {
+        "cell": "ramp w=2.0",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": 2.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uniform w=0.0",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": 0.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uniform w=0.14000000059604645",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": 0.14000000059604645
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uniform w=0.21142859756946564",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": 0.21142859756946564
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uniform w=0.28285709023475647",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": 0.28285709023475647
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uniform w=0.35428568720817566",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": 0.35428568720817566
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uniform w=0.42571431398391724",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": 0.42571431398391724
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uniform w=0.004459999967366457",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": 0.004459999967366457
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uniform w=0.040139999240636826",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": 0.040139999240636826
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uniform w=0.07582999765872955",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": 0.07582999765872955
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uniform w=0.11151000112295151",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": 0.11151000112295151
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uniform w=0.18287000060081482",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": 0.18287000060081482
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uniform w=-0.14000000059604645",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": -0.14000000059604645
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uniform w=-0.28285709023475647",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": -0.28285709023475647
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uniform w=0.3333333134651184",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": 0.3333333134651184
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uniform w=-0.3333333134651184",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "weight": -0.3333333134651184
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/fixtures/weightmap_display/ramp.json:`cases[].weight` (31 cells, -2.0 .. +2.0); Each cell writes one UNIFORM per-vertex weight onto the quad and reads a colour back out of the framebuffer; `weight` is the swept independent variable of the law, so it is recorded even though the read itself is a pixel measurement. The cell name carries the case SET (`ramp` / `uniform`), which labels the two frozen runs and is not a parameter. The viewport style, camera and the quad are stand."
+  },
   "model": {
     "neutral_rgb": [
       0.5,

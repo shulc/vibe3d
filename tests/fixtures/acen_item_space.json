@@ -10,6 +10,450 @@
   "task": "0648",
   "notes": "The centre column is a WORLD point on the reference side. The indirect column is in the LAYER's own coordinates, which is the only column the two engines must agree on for the geometry to land in the same place: 'origin' prints (0,0,0) on both sides and means two different points, so the published triple alone cannot decide it.\nCapture method, verbatim from the original `method` field, which carried prose where the schema wants an enumerated value: \"published action-centre point + axis frame, one cell per (item transform x mode); plus an indirect leg where a numeric uniform scale is applied and the pivot it actually used is solved back out of the moved LAYER-SPACE vertices\". `from-trace` is the lane that reads a published packet rather than inferring from output geometry."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "capture",
+  "cells": [
+   {
+    "cell": "E_identity/select",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "select"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "E_identity/border",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "border"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "E_identity/selectauto",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "selectauto"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "E_identity/local",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "local"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "E_identity/origin",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "origin"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "E_identity/pivot",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "pivot"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "E_identity/parent",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "parent"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "T_translate/select",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "select"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "T_translate/border",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "border"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "T_translate/selectauto",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "selectauto"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "T_translate/local",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "local"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "T_translate/origin",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "origin"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "T_translate/pivot",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "pivot"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "T_translate/parent",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "parent"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "R_rotate/select",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "select"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "R_rotate/border",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "border"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "R_rotate/selectauto",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "selectauto"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "R_rotate/local",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "local"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "R_rotate/origin",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "origin"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "R_rotate/pivot",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "pivot"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "R_rotate/parent",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "parent"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "S_scale/select",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "select"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "S_scale/border",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "border"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "S_scale/selectauto",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "selectauto"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "S_scale/local",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "local"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "S_scale/origin",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "origin"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "S_scale/pivot",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "pivot"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "S_scale/parent",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "parent"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "A_all/select",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "select"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "A_all/border",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "border"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "A_all/selectauto",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "selectauto"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "A_all/local",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "local"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "A_all/origin",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "origin"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "A_all/pivot",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "pivot"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "A_all/parent",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "parent"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "indirect/T_translate/select",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "select"
+      }
+     },
+     {
+      "op": "scale",
+      "values": {
+       "factor": 2.0
+      }
+     }
+    ]
+   },
+   {
+    "cell": "indirect/T_translate/origin",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "origin"
+      }
+     },
+     {
+      "op": "scale",
+      "values": {
+       "factor": 2.0
+      }
+     }
+    ]
+   },
+   {
+    "cell": "indirect/T_translate/pivot",
+    "drove": [
+     {
+      "op": "tool.pipe.attr actionCenter",
+      "values": {
+       "mode": "pivot"
+      }
+     },
+     {
+      "op": "scale",
+      "values": {
+       "factor": 2.0
+      }
+     }
+    ]
+   }
+  ],
+  "notes": "drive record read from doc/tasks/0648-evidence/raw/A_all.json:5; Two driven parameters. (1) The action-centre MODE, one cell per (item transform x mode): the driver arms a mode, truncates the trace and drives one viewport drag so the pipe evaluates, then reads the published packet -- the mode list is at t0648_orch.py:28 (a retained driver) and the five retained per-case results are keyed by that same mode name (doc/tasks/0648-evidence/raw/A_all.json:5 and its four siblings E_identity / T_translate / R_rotate / S_scale). The driver sweeps twelve modes; the fixture froze seven, and only those seven are cells here. (2) The indirect leg's numeric uniform scale, factor 2.0 (t0648_indirect.py:32, a retained driver, and `indirect.effectiveFactor` in the fixture), applied under three modes whose pivots are three different points. Both are recorded under vibe3d's own forms -- `tool.pipe.attr actionCenter mode <tag>` (source/toolpipe/stages/actcenter.d:654) and `scale` -- never the reference's command or tool ids. The five item transforms, the eight-vertex stand and the selected face are the stand; the 90 px drag that makes the pipe evaluate is a gesture, not a parameter."
+ },
  "units": {
   "center": "world-space point",
   "rot": "degrees (see rotationNote)",

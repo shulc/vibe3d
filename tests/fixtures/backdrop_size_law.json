@@ -11,6 +11,462 @@
     "harness": "live GUI on an isolated Xvfb, private HOME, software GL, PID-only teardown; the drawn plane is the largest connected component of a saturated-colour mask inside the 3D viewport rect",
     "notes": "28 cases. The rows below are transcribed from the retained evidence file doc/tasks/0612-evidence/phase0_size_law.txt (private tree) and every one was re-checked against the law while writing this fixture. World metres per pixel was MEASURED, not assumed: a 1 m quad moved a known 10 m gave 320.00 px = 32 px/m, with a zero-changed-pixel null control."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "capture",
+    "cells": [
+      {
+        "cell": "V",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 0,
+              "uniform": 0,
+              "scale.x": 1.0,
+              "scale.y": 1.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "A",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.02,
+              "aspect": 0,
+              "uniform": 0,
+              "scale.x": 1.0,
+              "scale.y": 1.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "E",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.005,
+              "aspect": 0,
+              "uniform": 0,
+              "scale.x": 1.0,
+              "scale.y": 1.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "F1",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 0,
+              "uniform": 0,
+              "scale.x": 1.0,
+              "scale.y": 1.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "B",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 0,
+              "uniform": 0,
+              "scale.x": 1.0,
+              "scale.y": 2.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "C",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 0,
+              "uniform": 0,
+              "scale.x": 3.0,
+              "scale.y": 2.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "D",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 1,
+              "uniform": 0,
+              "scale.x": 3.0,
+              "scale.y": 2.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "R",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 0,
+              "uniform": 1,
+              "scale.x": 3.0,
+              "scale.y": 2.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "R0",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 0,
+              "uniform": 1,
+              "scale.x": 1.0,
+              "scale.y": 1.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "A2pre",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.02,
+              "aspect": 0,
+              "uniform": 0,
+              "scale.x": 1.0,
+              "scale.y": 1.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "W1",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 1,
+              "uniform": 0,
+              "scale.x": 1.0,
+              "scale.y": 1.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "W2",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 1,
+              "uniform": 0,
+              "scale.x": 3.0,
+              "scale.y": 1.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "W3",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 1,
+              "uniform": 0,
+              "scale.x": 1.0,
+              "scale.y": 3.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "W4",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 1,
+              "uniform": 0,
+              "scale.x": 2.0,
+              "scale.y": 3.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "W5",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 1,
+              "uniform": 0,
+              "scale.x": 1.0,
+              "scale.y": 1.0,
+              "scale.z": 3.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "W6",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 1,
+              "uniform": 1,
+              "scale.x": 3.0,
+              "scale.y": 2.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "W7",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.02,
+              "aspect": 1,
+              "uniform": 0,
+              "scale.x": 1.0,
+              "scale.y": 1.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "W8",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 0,
+              "uniform": 0,
+              "scale.x": 1.0,
+              "scale.y": 1.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "T1",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 1,
+              "uniform": 0,
+              "scale.x": 1.0,
+              "scale.y": 1.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "T2",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 0,
+              "uniform": 0,
+              "scale.x": 1.0,
+              "scale.y": 1.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "T3",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 1,
+              "uniform": 0,
+              "scale.x": 3.0,
+              "scale.y": 1.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "T4",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 1,
+              "uniform": 0,
+              "scale.x": 1.0,
+              "scale.y": 3.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "Y0",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 1,
+              "uniform": 0,
+              "scale.x": 1.0,
+              "scale.y": 1.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "X1",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 1,
+              "uniform": 0,
+              "scale.x": 0.5,
+              "scale.y": 4.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "X2",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 1,
+              "uniform": 0,
+              "scale.x": 4.0,
+              "scale.y": 0.5,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "X3",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 1,
+              "uniform": 0,
+              "scale.x": 1.5,
+              "scale.y": 2.5,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "X4",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 1,
+              "uniform": 0,
+              "scale.x": 2.0,
+              "scale.y": 2.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "X5",
+        "drove": [
+          {
+            "op": "backdrop",
+            "values": {
+              "pixel_size": 0.01,
+              "aspect": 0,
+              "uniform": 0,
+              "scale.x": 0.5,
+              "scale.y": 4.0,
+              "scale.z": 1.0
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from doc/tasks/0612-evidence/phase0_size_law.txt:52; The 28 rows of the retained capture table (columns `pixelSize`, `scale`, `asp`, `uni`) are the same 28 rows the fixture already carries as per-case columns, so this block is a re-projection and was cross-read against both. EXCLUDED as the stand: `image` / `clip_px` (512x256 and 256x512), which is the loaded image asset the backdrop points at, in the same class as a load-mesh step. EXCLUDED as instrument calibration, and mentioned here rather than dropped silently: the front-orthographic view at 32 px per world metre (`instrument.px_per_metre` = 32.0, `pixel_size_meaning` = 1/32) -- it is the ruler, not a parameter of the operation, and every measured_px column is denominated in it. Case A2pre carries the same values as case A and differs only in ORDER (the size channel was written BEFORE the clip was linked instead of after), which the values map cannot express."
+  },
   "why_this_fixture_exists": "Until 2026-08-20 this law had no toolcard, no fixture and no test -- it existed as one evidence .txt and a paragraph in an agent's memory. It is the size law for an entire item type we ship, and it overturned three separate candidates in the design plan that produced it, so re-deriving it from scratch would be expensive.",
   "instrument": {
     "view": "front orthographic, ortho scale 32",

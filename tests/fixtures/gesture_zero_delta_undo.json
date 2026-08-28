@@ -11,6 +11,110 @@
     "task": "2640",
     "notes": "Five live captures, one FRESH editor process per capture, driven through an isolated virtual display with the pointer injected over the remote-framebuffer channel and each undo typed into the reference's command field. Every run's undo was independently confirmed to have executed (it appears in the reference's own executed-command history) before its effect was read, so a silently dropped undo cannot be read here as a no-op. All geometry readback is read-only and issues no state-changing command."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "capture",
+    "cells": [
+      {
+        "cell": "control_no_press",
+        "drove": [
+          {
+            "op": "transform_handle_gesture",
+            "values": {
+              "gesture": "none",
+              "handle": "x",
+              "dx_px": 50,
+              "dy_px": 0,
+              "press": false,
+              "mod": 0,
+              "acen": "select",
+              "flags.T": true
+            }
+          },
+          {
+            "op": "undo",
+            "values": {
+              "steps": 10
+            }
+          },
+          {
+            "op": "redo",
+            "values": {
+              "steps": 6
+            }
+          }
+        ]
+      },
+      {
+        "cell": "positive_control_real_drag",
+        "drove": [
+          {
+            "op": "transform_handle_gesture",
+            "values": {
+              "gesture": "linear",
+              "handle": "x",
+              "dx_px": 50,
+              "dy_px": 0,
+              "press": true,
+              "button": 1,
+              "motion_steps": 16,
+              "mod": 0,
+              "acen": "select",
+              "net_world_displacement": 1.145,
+              "flags.T": true
+            }
+          },
+          {
+            "op": "undo",
+            "values": {
+              "steps": 10
+            }
+          },
+          {
+            "op": "redo",
+            "values": {
+              "steps": 6
+            }
+          }
+        ]
+      },
+      {
+        "cell": "zero_distance_gesture",
+        "drove": [
+          {
+            "op": "transform_handle_gesture",
+            "values": {
+              "gesture": "zero",
+              "handle": "x",
+              "dx_px": 50,
+              "dy_px": 0,
+              "press": true,
+              "button": 1,
+              "motion_steps": 16,
+              "mod": 0,
+              "acen": "select",
+              "net_world_displacement": 0.0,
+              "flags.T": true
+            }
+          },
+          {
+            "op": "undo",
+            "values": {
+              "steps": 10
+            }
+          },
+          {
+            "op": "redo",
+            "values": {
+              "steps": 6
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/fixtures/gesture_zero_delta_undo.json:47; 2640's DRIVE RECORD IS RETAINED, machine-readable. The five capture specs survive in the private tree as the atlas harness's `specs/zd_{ctrl_none,pos_linear,zero_distance,zero_distance_r2,out_and_back}.json`, listed by toolcard `undo_zero_delta_gesture/status.yaml`; findings.md and capture/summary.txt hold the per-run readings. A programmatic diff confirms the five specs are identical except the `gesture` key of the third (N) haul step. NEUTRALITY: the specs name a reference-editor tool id and the reference's own command ids; NONE of those are copied here. Values are recorded under the public fixture's own logical vocabulary -- op `transform_handle_gesture` from its `law`/`question` wording ('a press-move-release on a transform handle'), the gesture-shape names from its own `cases[].gesture` prose, and `undo`/`redo` which are vibe3d's own endpoints. `flags.T` is the transform tool's own T/R/S flag, which vibe3d also has. LITERALS: handle 'x', dx_px 50, dy_px 0 come from every spec's haul steps; `motion_steps` 16 is the transport's step count (atlas rfb_transport.drag / drag_legs, and handles._rfb_drag_legs steps=16), button 1 is press(c, 1, ...) in the same transport; the `none` branch does no press at all (handles.py gesture=='none' -> pass). `undo_steps` 10 / `redo_steps` 6 are the spec's op counts and match the fixture's own 10-entry `trajectory`. `net_world_displacement` is the measured world delta (fixture `net_displacement` 1.145 for the positive control; 0 for the zero-distance run per the toolcard's table; the control run has NO value -- the table records a dash -- so that key is omitted there rather than guessed. STAND (excluded): setup primitive cube / segments 2, the three disjoint four-vertex selections, and handles_scale 2.5 (a gizmo display scale the screenshot localiser needs). The fixture's two out-of-corpus runs -- the zero-distance REPEAT and the out-and-back flavour -- are not separate cells here because the fixture does not carry them as cases; the repeat is folded into `zero_distance_gesture` as `repeats: 2` and out-and-back appears only under `not_measured`."
+  },
 
   "question": "A tool gesture is committed and its resulting delta is EMPTY -- the mesh after the gesture is byte-identical to the mesh before it. What does the next undo do?",
 

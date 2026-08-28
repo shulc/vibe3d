@@ -13,6 +13,12 @@
     "notes": "Seven consecutive evaluated frames, all identical, under two different transform configurations. Selection order is load-bearing: set on one outer item, then ADD the other outer item, then ADD the middle one, so the distinguished item is the LAST one added while sitting geometrically in the middle AND in the middle of the scene order.",
     "post_capture_rig_change": "The captured scene created the three items in the order 0, 6, 2 (distinguished LAST). That made the distinguished item indistinguishable from 'the last item in the scene list', so an implementation reading the last layer passed unchanged — verified, not suspected. The scene order was therefore permuted to 0, 2, 6 and the ADD order to 0, 2, 1. The three item POSITIONS and the distinguished item's identity (the one at x = 2) are unchanged, so the measured centre (2, 0, 0) is unchanged; only which list slot holds which item moved, and the captured law reads the item, not the slot. Recorded here rather than silently: the permutation is a rig edit made AFTER the capture and re-derives nothing from the reference."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "none",
+    "why": "Nothing with a parameter was driven. The capture is a READ of the published action-centre packet -- seven evaluated frames, identical, under two transform configurations -- and everything the run set is the stand: three items at x = 0, 2, 6, each carrying a unit cube, and the selection order set 0 / add 2 / add 1 that makes the distinguished item the middle one. No action-centre mode, no tool attribute and no numeric amount appears anywhere in this leg; unlike its companion item_acen_pivot there is not even a mode-forcing control here. The commit leg of the same session, which DID drive an amount, is frozen in item_move_whole_set and its value is recorded there, not here. Checked at: doc/tasks/done/0614-item-mode-transform.md:822.",
+    "notes": "Ph0c's per-case result JSONs were not retained (the 0614-evidence dir holds the EARLIER Phase 0 rigs, dated 2026-08-06, which this fixture's rebuilt rig replaced); the reading above rests on the task card's Ph0c section and a retained capture note that repeats it; the two agree."
+  },
   "tolerance": 1e-6,
 
   "rig": {

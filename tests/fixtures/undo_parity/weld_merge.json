@@ -1,5 +1,145 @@
 {
   "family": "weld_merge",
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "vert.merge",
+        "drove": [
+          {
+            "op": "vert.merge",
+            "values": {
+              "range": "auto",
+              "dist": 0.001,
+              "keep": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.collapse/vertex",
+        "drove": [
+          {
+            "op": "mesh.collapse",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.collapse/edge",
+        "drove": [
+          {
+            "op": "mesh.collapse",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.collapse/polygon",
+        "drove": [
+          {
+            "op": "mesh.collapse",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "vert.join",
+        "drove": [
+          {
+            "op": "vert.join",
+            "values": {
+              "average": true,
+              "keep": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.weldVertexPair",
+        "drove": [
+          {
+            "op": "mesh.weldVertexPair",
+            "values": {
+              "source": 16,
+              "target": 1
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.edgeJoin",
+        "drove": [
+          {
+            "op": "mesh.edgeJoin",
+            "values": {
+              "mode": 0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.mergeFaces",
+        "drove": [
+          {
+            "op": "mesh.mergeFaces",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.triple",
+        "drove": [
+          {
+            "op": "mesh.triple",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.quadruple",
+        "drove": [
+          {
+            "op": "mesh.quadruple",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.detriangulate",
+        "drove": [
+          {
+            "op": "mesh.detriangulate",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.unify",
+        "drove": [
+          {
+            "op": "mesh.unify",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.reduce",
+        "drove": [
+          {
+            "op": "mesh.reduce",
+            "values": {
+              "ratio": 0.5,
+              "preserveBoundary": false
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/unit/undo_parity_l10_test.d:412-501; Only two cells carry explicit set* literals: mesh.weldVertexPair (source/target at :474-475) and mesh.reduce (ratio/preserveBoundary at :492,:497). mesh.weldVertexPair's `source` is vCoinOf(m) = vertices.length - 3 (:137); the stand is asserted V=19 at :147, so source = 16. mesh.collapse (source/commands/mesh/collapse.d:45), mesh.mergeFaces (merge.d:47), mesh.triple (triple.d:43), mesh.quadruple (quadruple.d:44), mesh.detriangulate (detriangulate.d:46) and mesh.unify (unify.d:29) override no params() and inherit source/command.d:877 `return []` -- their empty maps are statements. Three cells DO have params left at their defaults, recorded here as 'default, not explicitly set': vert.merge range='auto'/dist=0.001/keep=false (source/commands/mesh/vert_merge.d:86-91, field inits :69-71); vert.join average=true/keep=false (vert_join.d:86-87, inits :69-70); mesh.edgeJoin mode=0 (edge_join.d:56, init :45). MeshReduce's `count` default 0 (reduce.d:79) is NOT recorded -- that cell's map is already non-empty. The kNopTopology delegate (:439-440) is a callback, not a parameter."
+  },
   "producedBy": "3e68adcb+L10-P0+L10-P2",
   "stand": "makeTaggedGridWeldSets(3)",
   "recipe": "reset -> stand -> op -> undo",

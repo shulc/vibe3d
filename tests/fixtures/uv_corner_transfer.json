@@ -12,6 +12,185 @@
   "task": "0682",
   "notes": "vibe3d's loop-slice / bevel / extrude do not touch the UV plane at all today, so this fixture is NEW target behaviour, not a regression lock. The `edge_bevel_uv_seam` case records reference behaviour that looks like a defect (the new strip collapses a seam onto one island, and the corner caps get values from neither island) -- it is frozen as MEASURED, and a port should decide deliberately whether to copy it.\nThe `method` field previously read \"headless-numeric\", a name predating the vocabulary; the lane it describes is the headless command capture the enum now calls `command`."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "loop_slice_pos025",
+    "drove": [
+     {
+      "op": "loop_slice",
+      "values": {
+       "count": 1,
+       "position": 0.25
+      }
+     }
+    ]
+   },
+   {
+    "cell": "loop_slice_pos050",
+    "drove": [
+     {
+      "op": "loop_slice",
+      "values": {
+       "count": 1,
+       "position": 0.5
+      }
+     }
+    ]
+   },
+   {
+    "cell": "loop_slice_pos075",
+    "drove": [
+     {
+      "op": "loop_slice",
+      "values": {
+       "count": 1,
+       "position": 0.75
+      }
+     }
+    ]
+   },
+   {
+    "cell": "loop_slice_count3",
+    "drove": [
+     {
+      "op": "loop_slice",
+      "values": {
+       "count": 3
+      }
+     }
+    ]
+   },
+   {
+    "cell": "loop_slice_uv_seam",
+    "drove": [
+     {
+      "op": "loop_slice",
+      "values": {
+       "count": 1,
+       "position": 0.25
+      }
+     }
+    ]
+   },
+   {
+    "cell": "edge_bevel_offset02",
+    "drove": [
+     {
+      "op": "edge_bevel",
+      "values": {
+       "offset": 0.2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "edge_bevel_offset04",
+    "drove": [
+     {
+      "op": "edge_bevel",
+      "values": {
+       "offset": 0.4
+      }
+     }
+    ]
+   },
+   {
+    "cell": "edge_bevel_nonuniform",
+    "drove": [
+     {
+      "op": "edge_bevel",
+      "values": {
+       "offset": 0.2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "edge_bevel_uv_seam",
+    "drove": [
+     {
+      "op": "edge_bevel",
+      "values": {
+       "offset": 0.2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "face_extrude_no_uv_sweep",
+    "drove": [
+     {
+      "op": "face_extrude",
+      "values": {
+       "shift": [
+        0,
+        0,
+        0.5
+       ],
+       "uv_sweep": "none"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "face_extrude_uv_sweep_u",
+    "drove": [
+     {
+      "op": "face_extrude",
+      "values": {
+       "shift": [
+        0,
+        0,
+        0.5
+       ],
+       "uv_sweep": "u"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "face_bevel_connected",
+    "drove": [
+     {
+      "op": "face_bevel",
+      "values": {
+       "inset": 0.2,
+       "shift": 0.3
+      }
+     }
+    ]
+   },
+   {
+    "cell": "face_bevel_connected_nonuniform",
+    "drove": [
+     {
+      "op": "face_bevel",
+      "values": {
+       "inset": 0.2,
+       "shift": 0.0
+      }
+     }
+    ]
+   },
+   {
+    "cell": "face_bevel_connected_inset04",
+    "drove": [
+     {
+      "op": "face_bevel",
+      "values": {
+       "inset": 0.4,
+       "shift": 0.0
+      }
+     }
+    ]
+   }
+  ],
+  "notes": "drive record read from tests/fixtures/uv_corner_transfer.json:39,599,1159; Re-projection of each case's OWN `op` object; the generic extractor misses it only because `op` here is a single object, not a list of steps. The op name is the fixture's own `kind` word. SPLIT: `seed_edges` / `edges` / `faces` are the STAND (which elements the operation is pointed at, as coordinates) and are excluded; the flat grid and its quadratic UV authoring are the stand too and live in each case's `before`. `loop_slice_count3` has no `position` key -- transcribed as it stands, not back-filled with a default."
+ },
  "classification": {
   "_comment": "vibe3d-side annotation (task 0697), NOT part of the capture above. One entry per behaviour we deliberately do not reproduce; `status` is one of open (a gap we intend to close), closed (already closed, entry retired), permanent (we diverge on purpose and will not converge). tests/test_uv_carry_bevel_extrude.d reads these and refuses to run an open/closed branch for a permanent entry.",
   "divergences": {

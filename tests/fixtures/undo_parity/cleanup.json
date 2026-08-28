@@ -1,5 +1,93 @@
 {
   "family": "cleanup",
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "mesh.cleanup/weld",
+        "drove": [
+          {
+            "op": "mesh.cleanup",
+            "values": {
+              "mergeVerts": true,
+              "dropDegenerate": false,
+              "unify": false,
+              "removeOrphans": false,
+              "dissolve2Valent": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.cleanup/degenerate",
+        "drove": [
+          {
+            "op": "mesh.cleanup",
+            "values": {
+              "mergeVerts": false,
+              "dropDegenerate": true,
+              "unify": false,
+              "removeOrphans": false,
+              "dissolve2Valent": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.cleanup/full",
+        "drove": [
+          {
+            "op": "mesh.cleanup",
+            "values": {
+              "mergeVerts": true,
+              "dropDegenerate": true,
+              "unify": true,
+              "removeOrphans": true,
+              "dissolve2Valent": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.cleanup/dissolve",
+        "drove": [
+          {
+            "op": "mesh.cleanup",
+            "values": {
+              "mergeVerts": true,
+              "dropDegenerate": true,
+              "unify": true,
+              "removeOrphans": true,
+              "dissolve2Valent": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.edgeCrease.set",
+        "drove": [
+          {
+            "op": "mesh.edgeCrease.set",
+            "values": {
+              "weight": 0.375
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.edgeCrease.clear",
+        "drove": [
+          {
+            "op": "mesh.edgeCrease.clear",
+            "values": {}
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/unit/undo_parity_l5_test.d:256-352; The five cleanup booleans are read off kL5Specs (:289-310) in the field order declared at :256-266 and passed by makeCommand (:339-344). mesh.edgeCrease.set's weight=0.375 is at :348. mesh.edgeCrease.clear drives EdgeCreaseClear, whose own params() is `return []` at source/commands/mesh/edge_crease.d:359 -- empty map is a statement. arrPreCrease's setCreaseWeight(ei, 0.625f) at :278 is a STAND write made outside the command under test (the file says so at :270-272) and is excluded."
+  },
   "producedBy": "ed0e1ed7+L5-P0",
   "stand": "makeTaggedGridDirty(3)",
   "recipe": "reset -> stand -> op -> undo",

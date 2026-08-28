@@ -12,6 +12,30 @@
     "task": null,
     "notes": "Golden numbers reproduced from a private RFB-capture doc (RFB/VNC injection drives a real reference-editor haul); the capture provenance chain itself lives in that private doc, not restated here."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "tack_two_cubes",
+        "drove": [
+          {
+            "op": "mesh.tack",
+            "values": {
+              "targetFace": 10,
+              "targetPoint": [
+                2.9793753623962402,
+                0.6579021662473679,
+                -0.30262226052582264
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/fixtures/tack.json:52; Recovered from the fixture's OWN body: `setup[2]` is an `endpoint: command` step whose `body.params` carries both values. The generic extractor misses it because it scans `setup` for argstrings only. `load-mesh` and the source-face `select` (indices [4]) are stand; targetFace/targetPoint are the operation's own parameters. Both are RECOVERED values, not panel entries: the reference gesture was an RFB press-drag-release pick on the target face (doc/tack_tool_plan.md:131-175 records the Phase-0 capture and that the anchor IS the clicked/snapped point), so these are the `capture-drag` recovered equivalent that `derived_from: replay-steps` is defined to cover. `mesh.tack` is vibe3d's own public id (source/registration.d:526)."
+  },
   "tolerance": 1e-4,
   "setup": [
     { "endpoint": "load-mesh", "body": {

@@ -12,6 +12,88 @@
     "task": 2990,
     "notes": "Single axis, yet matrix-lerp -- which is what the axis-count rival cannot produce. The arc twin is softrotate.json's rot_lin_90 (same angle, same falloff, same mesh, different tool); it is referenced rather than copied so one measurement keeps one home."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "rot_xform_single_30",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "TransformRotate",
+              "attr": "RY",
+              "value": 30.0,
+              "falloff.type": "radial",
+              "falloff.shape": "linear",
+              "falloff.center": [
+                0,
+                0,
+                0
+              ],
+              "falloff.size": [
+                1,
+                1,
+                1
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "rot_xform_single_90",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "TransformRotate",
+              "attr": "RY",
+              "value": 90.0,
+              "falloff.type": "radial",
+              "falloff.shape": "linear",
+              "falloff.center": [
+                0,
+                0,
+                0
+              ],
+              "falloff.size": [
+                1,
+                1,
+                1
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "edge_xform_180",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "TransformRotate",
+              "attr": "RY",
+              "value": 180.0,
+              "falloff.type": "radial",
+              "falloff.shape": "linear",
+              "falloff.center": [
+                0,
+                0,
+                0
+              ],
+              "falloff.size": [
+                1,
+                1,
+                1
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

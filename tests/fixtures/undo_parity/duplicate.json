@@ -1,5 +1,127 @@
 {
   "family": "duplicate",
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "mesh.duplicate",
+        "drove": [
+          {
+            "op": "mesh.duplicate",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.clone",
+        "drove": [
+          {
+            "op": "mesh.clone",
+            "values": {
+              "offset.x": 1.0,
+              "offset.y": 0.0,
+              "offset.z": 0.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.array/weld",
+        "drove": [
+          {
+            "op": "mesh.array",
+            "values": {
+              "count": 2,
+              "offset.x": 0.6666667,
+              "offset.y": 0.0,
+              "offset.z": 0.0,
+              "weld": 0.001
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.array/noweld",
+        "drove": [
+          {
+            "op": "mesh.array",
+            "values": {
+              "count": 2,
+              "offset.x": 0.6666667,
+              "offset.y": 0.0,
+              "offset.z": 0.0,
+              "weld": 0.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.mirror/weld",
+        "drove": [
+          {
+            "op": "mesh.mirror",
+            "values": {
+              "axis": "X",
+              "center.x": 0.33333334,
+              "center.y": 0.0,
+              "center.z": 0.0,
+              "weld": 0.001
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.mirror/noweld",
+        "drove": [
+          {
+            "op": "mesh.mirror",
+            "values": {
+              "axis": "X",
+              "center.x": 5.0,
+              "center.y": 0.0,
+              "center.z": 0.0,
+              "weld": 0.001
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.radialArray/weld",
+        "drove": [
+          {
+            "op": "mesh.radialArray",
+            "values": {
+              "count": 4,
+              "axis": "Y",
+              "center.x": 1.0,
+              "center.y": 0.0,
+              "center.z": 1.0,
+              "weld": 0.001
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.radialArray/noweld",
+        "drove": [
+          {
+            "op": "mesh.radialArray",
+            "values": {
+              "count": 3,
+              "axis": "Y",
+              "center.x": 3.0,
+              "center.y": 0.0,
+              "center.z": 0.0,
+              "weld": 0.001
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/unit/undo_parity_l6_test.d:188-308; Values read off kL6Specs (:202-244) through the field order at :188-200 (name, which, select, weld, vec, count, weldMustFire) and the makeCommand switch (:274-308); `vec` is `offset` for clone/array and `center` for mirror/radial. kPitch = 2.0f/3.0f at :167, so array offset.x = 0.6666667 and mirror/weld center.x = kPitch/2 = 0.33333334. weldMustFire is the test's own bracket expectation, not a command param. mesh.duplicate drives MeshDuplicate, which does not override params() (source/commands/mesh/duplicate.d:45) and inherits source/command.d:877 `return []`. MeshClone's weld is PINNED inside the class and is not a param (:212-215), so it is not recorded."
+  },
   "producedBy": "b1c98ccb+L6-P1",
   "stand": "makeTaggedGridFull(3)",
   "recipe": "reset -> stand -> op -> undo",

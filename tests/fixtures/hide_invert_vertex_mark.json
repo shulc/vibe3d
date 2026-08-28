@@ -12,6 +12,190 @@
     "task": "0628 Ph0",
     "notes": "Every case re-runs the whole prefix from an empty scene and asserts the anomaly reproduced before applying its trigger; it reproduced in all seven. The rig's premise — that the probed vertex has valence ONE — is asserted BY the case, because a vertex sharing a still-visible polygon is hidden under neither reading and would make the entire experiment vacuous."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "capture",
+    "cells": [
+      {
+        "cell": "none",
+        "drove": [
+          {
+            "op": "mesh.hide",
+            "values": {
+              "selection_type": "polygon"
+            }
+          },
+          {
+            "op": "mesh.hideInvert",
+            "values": {
+              "selection_type": "vertex"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "hide_unrelated",
+        "drove": [
+          {
+            "op": "mesh.hide",
+            "values": {
+              "selection_type": "polygon"
+            }
+          },
+          {
+            "op": "mesh.hideInvert",
+            "values": {
+              "selection_type": "vertex"
+            }
+          },
+          {
+            "op": "mesh.hide",
+            "values": {
+              "selection_type": "polygon"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "hide_already_hidden_other",
+        "drove": [
+          {
+            "op": "mesh.hide",
+            "values": {
+              "selection_type": "polygon"
+            }
+          },
+          {
+            "op": "mesh.hideInvert",
+            "values": {
+              "selection_type": "vertex"
+            }
+          },
+          {
+            "op": "mesh.hide",
+            "values": {
+              "selection_type": "polygon"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "selection_type_roundtrip",
+        "drove": [
+          {
+            "op": "mesh.hide",
+            "values": {
+              "selection_type": "polygon"
+            }
+          },
+          {
+            "op": "mesh.hideInvert",
+            "values": {
+              "selection_type": "vertex"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "hide_already_hidden_own",
+        "drove": [
+          {
+            "op": "mesh.hide",
+            "values": {
+              "selection_type": "polygon"
+            }
+          },
+          {
+            "op": "mesh.hideInvert",
+            "values": {
+              "selection_type": "vertex"
+            }
+          },
+          {
+            "op": "mesh.hide",
+            "values": {
+              "selection_type": "polygon"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "vertex_mode_hide_probe_selected",
+        "drove": [
+          {
+            "op": "mesh.hide",
+            "values": {
+              "selection_type": "polygon"
+            }
+          },
+          {
+            "op": "mesh.hideInvert",
+            "values": {
+              "selection_type": "vertex"
+            }
+          },
+          {
+            "op": "mesh.hide",
+            "values": {
+              "selection_type": "vertex"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "clear_then_rehide",
+        "drove": [
+          {
+            "op": "mesh.hide",
+            "values": {
+              "selection_type": "polygon"
+            }
+          },
+          {
+            "op": "mesh.hideInvert",
+            "values": {
+              "selection_type": "vertex"
+            }
+          },
+          {
+            "op": "unhide",
+            "values": {
+              "all": true
+            }
+          },
+          {
+            "op": "mesh.hide",
+            "values": {
+              "selection_type": "polygon"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "unhide_with_spare_selected",
+        "drove": [
+          {
+            "op": "mesh.hide",
+            "values": {
+              "selection_type": "polygon"
+            }
+          },
+          {
+            "op": "mesh.hideInvert",
+            "values": {
+              "selection_type": "vertex"
+            }
+          },
+          {
+            "op": "unhide",
+            "values": {}
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from the private capture harness, hide_semantics/vertmark_case.py:162-183; The private case script is the drive record and EVERY command in it is bare — no arguments anywhere — so all values maps are empty except the one thing that is a real mode argument: the SELECTION TYPE the hide and the invert are issued under. That is not inferred from prose; the fixture carries it in two machine-readable keys (prefix.selection_type_before_hide / _before_invert, lines 48-49) and says in its own words that they exist so a driver can execute and read them back. The common prefix (hide, then the vertex-mode invert) is the operation under test and is repeated on every cell; the rig build and the polygon selections are stand. Two cells drive nothing beyond that prefix and carry only it: `none` is the control (a bare re-read) and `selection_type_roundtrip`'s trigger is a selection-type switch, i.e. stand. Op names are vibe3d's public ids (source/commands/mesh/hide.d:368,535,623). ONE mapping to flag: the capture fired two DIFFERENT unhide commands — a bare selection-scoped one for `unhide_with_spare_selected` (vertmark_case.py:242) and an unhide-ALL for `clear_then_rehide` (vertmark_case.py:288) — recorded here as the same logical op separated by an `all` flag, following parameters_extract._parse_argstring's own convention that a lone positional becomes {token: true}. vibe3d has a public counterpart for the all-arm only (`mesh.unhideAll`); the selection-scoped arm has none, which is why the neutral logical name is used for both. An 8th cell is included beyond `rows`: the fixture's `non_discriminating` block is a real recorded case (it just carries no information about the law) and dropping it would hide a driven cell."
+  },
 
   "rig": {
     "comment": "A 3x3 quad grid PLUS a disconnected spare quad parked far away on +X, sharing no vertices with the grid. The spare exists so there is a genuinely unrelated polygon available as a trigger.",

@@ -1,5 +1,98 @@
 {
   "family": "tool_gesture_g5",
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "edge.slice/two-click-chain",
+        "drove": [
+          {
+            "op": "tool.set mesh.edgeSliceTool",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.click",
+            "values": {
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "gesture.click",
+            "values": {
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "tool.set mesh.edgeSliceTool",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "loop.slice/seeded-arm",
+        "drove": [
+          {
+            "op": "tool.set mesh.loopSliceTool",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.click",
+            "values": {
+              "button": 1,
+              "mod": 0,
+              "hover": false
+            }
+          },
+          {
+            "op": "tool.set mesh.loopSliceTool",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "slice/line-drag",
+        "drove": [
+          {
+            "op": "tool.set mesh.sliceTool",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "steps": 20,
+              "button": 1,
+              "mod": 0,
+              "hover": false,
+              "endpoint_offset_world": 0.6
+            }
+          },
+          {
+            "op": "tool.set mesh.sliceTool",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/test_tool_gesture_g5.d:658-753; PRODUCER: tests/test_tool_gesture_g5.d (own capture arm). click() (:519) is a fixed two-settle/down/held-move/up shape at one pixel -- button 1, mod 0, and no literal offset. The click pixels are projections of stand geometry (edge midpoints; the viewport centre for loop.slice), so they are not recorded as parameters. For slice/line-drag the drag endpoints are the projections of u*-0.6 and u*+0.6 along the viewport's in-plane axis; `endpoint_offset_world` 0.6 is that literal (:742-744) and `steps` 20 is the explicit argument. resetCube, select.typeFrom/selectMode, setOrbitCamera and history.clear are STAND."
+  },
   "writtenBy": "tests/test_tool_gesture_g5.d",
   "producedBy": "fb626df7",
   "stand": "per-cell; see each cell's `drive`",

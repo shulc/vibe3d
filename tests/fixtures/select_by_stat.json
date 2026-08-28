@@ -12,6 +12,310 @@
   "task": "1061",
   "notes": "Commands only, same transport-free lane as select_boundary.json/select_by_tag.json (task 1050/1051). vibe3d evaluates every row over the PRIMARY layer only; the reference measured law is every FOREGROUND layer (plus_minus.scope) -- a declared divergence pinned by a module unittest in by_stat.d, not by this fixture. The reference's polygon 'less' comparator was measured to behave as 'more' (two sampled values, never emitted by its own UI); vibe3d ships strictly-less and does not reproduce the anomaly -- pinned by a module unittest, never asserted here. equal_3 (the cylinder's 4 cap triangles) is held back: its centroids depend on mesh.triple's own fan-triangulation pattern, which this fixture does not claim parity for."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "vertex_by_edge_count_eq3",
+    "drove": [
+     {
+      "op": "select.byStat.vertex",
+      "values": {
+       "test": "edgeCount",
+       "compare": "equal",
+       "value": 3
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vertex_by_edge_count_eq2",
+    "drove": [
+     {
+      "op": "select.byStat.vertex",
+      "values": {
+       "test": "edgeCount",
+       "compare": "equal",
+       "value": 2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vertex_by_edge_count_eq4",
+    "drove": [
+     {
+      "op": "select.byStat.vertex",
+      "values": {
+       "test": "edgeCount",
+       "compare": "equal",
+       "value": 4
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vertex_by_polygon_count_eq2",
+    "drove": [
+     {
+      "op": "select.byStat.vertex",
+      "values": {
+       "test": "polygonCount",
+       "compare": "equal",
+       "value": 2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vertex_by_polygon_count_eq3",
+    "drove": [
+     {
+      "op": "select.byStat.vertex",
+      "values": {
+       "test": "polygonCount",
+       "compare": "equal",
+       "value": 3
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vertex_by_polygon_count_eq4",
+    "drove": [
+     {
+      "op": "select.byStat.vertex",
+      "values": {
+       "test": "polygonCount",
+       "compare": "equal",
+       "value": 4
+      }
+     }
+    ]
+   },
+   {
+    "cell": "edge_open_border",
+    "drove": [
+     {
+      "op": "select.byStat.edge",
+      "values": {
+       "test": "polygonCount",
+       "compare": "equal",
+       "value": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "edge_material_border",
+    "drove": [
+     {
+      "op": "select.byStat.edge",
+      "values": {
+       "test": "materialBoundary"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "edge_part_border",
+    "drove": [
+     {
+      "op": "select.byStat.edge",
+      "values": {
+       "test": "partBoundary"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vertex_more_strict_eq3",
+    "drove": [
+     {
+      "op": "select.byStat.vertex",
+      "values": {
+       "test": "edgeCount",
+       "compare": "equal",
+       "value": 3
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vertex_more_strict_eq4",
+    "drove": [
+     {
+      "op": "select.byStat.vertex",
+      "values": {
+       "test": "edgeCount",
+       "compare": "equal",
+       "value": 4
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vertex_more_strict_more3",
+    "drove": [
+     {
+      "op": "select.byStat.vertex",
+      "values": {
+       "test": "edgeCount",
+       "compare": "more",
+       "value": 3
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vertex_more_strict_less4",
+    "drove": [
+     {
+      "op": "select.byStat.vertex",
+      "values": {
+       "test": "edgeCount",
+       "compare": "less",
+       "value": 4
+      }
+     }
+    ]
+   },
+   {
+    "cell": "plus_minus_union",
+    "drove": [
+     {
+      "op": "select.byStat.polygon",
+      "values": {
+       "test": "vertexCount",
+       "compare": "equal",
+       "value": 4,
+       "mode": "add"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "plus_minus_difference",
+    "drove": [
+     {
+      "op": "select.byStat.polygon",
+      "values": {
+       "test": "vertexCount",
+       "compare": "equal",
+       "value": 4,
+       "mode": "remove"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "plus_minus_difference_noop",
+    "drove": [
+     {
+      "op": "select.byStat.polygon",
+      "values": {
+       "test": "vertexCount",
+       "compare": "equal",
+       "value": 4,
+       "mode": "remove"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "polygon_by_vertex_count_eq4",
+    "drove": [
+     {
+      "op": "select.byStat.polygon",
+      "values": {
+       "test": "vertexCount",
+       "compare": "equal",
+       "value": 4
+      }
+     }
+    ]
+   },
+   {
+    "cell": "polygon_by_vertex_count_eq5",
+    "drove": [
+     {
+      "op": "select.byStat.polygon",
+      "values": {
+       "test": "vertexCount",
+       "compare": "equal",
+       "value": 5
+      }
+     }
+    ]
+   },
+   {
+    "cell": "polygon_by_vertex_count_eq6",
+    "drove": [
+     {
+      "op": "select.byStat.polygon",
+      "values": {
+       "test": "vertexCount",
+       "compare": "equal",
+       "value": 6
+      }
+     }
+    ]
+   },
+   {
+    "cell": "polygon_by_vertex_count_more4",
+    "drove": [
+     {
+      "op": "select.byStat.polygon",
+      "values": {
+       "test": "vertexCount",
+       "compare": "more",
+       "value": 4
+      }
+     }
+    ]
+   },
+   {
+    "cell": "polygon_by_vertex_count_more3",
+    "drove": [
+     {
+      "op": "select.byStat.polygon",
+      "values": {
+       "test": "vertexCount",
+       "compare": "more",
+       "value": 3
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vertex_by_weight_map_all_set",
+    "drove": [
+     {
+      "op": "select.byStat.vertex",
+      "values": {
+       "test": "weightMap",
+       "map": "W"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "vertex_by_weight_map_all_zero",
+    "drove": [
+     {
+      "op": "select.byStat.vertex",
+      "values": {
+       "test": "weightMap",
+       "map": "W"
+      }
+     }
+    ]
+   }
+  ],
+  "notes": "drive record read from tests/fixtures/select_by_stat.json:62,162; Re-projection of the fixture's OWN `input` steps. SPLIT, and this fixture is where it matters most: the operation under test is `select.byStat.{vertex,edge,polygon}` and its `test` / `compare` / `value` / `map` / `mode` arguments are the parameters (the statistic, its comparator, its threshold and the add/remove combine mode). Everything that builds the mesh the row is evaluated over is the STAND and is excluded: `prim.cylinder` (sides / segments / sizes), `mesh.delete`, `mesh.splitFace`, `mesh.triple`, the `mesh.setMaterial` / `mesh.setPart` tagging, the `mesh.weightmap.create` / `mesh.weightmap.set` authoring, and every `select` step that picks the seed or drops it."
+ },
  "tolerance": 0.0001,
  "cases": [
   {

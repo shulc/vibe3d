@@ -12,6 +12,73 @@
     "task": null,
     "notes": null
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "falloff_rotXY_segY4",
+        "drove": [
+          {
+            "op": "falloff_rotate_matrix",
+            "values": {
+              "pivot": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "euler_deg.rx": 23.499986,
+              "euler_deg.ry": -37.499994,
+              "euler_deg.rz": 0.0,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                0.0,
+                0.0,
+                -0.5
+              ],
+              "falloff.end": [
+                -0.0,
+                -0.0,
+                0.5
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "falloff_rotYZ_segX4",
+        "drove": [
+          {
+            "op": "falloff_rotate_matrix",
+            "values": {
+              "pivot": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "euler_deg.rx": 0.0,
+              "euler_deg.ry": -33.499996,
+              "euler_deg.rz": -28.000003,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                0.0,
+                0.0,
+                -0.5
+              ],
+              "falloff.end": [
+                -0.0,
+                -0.0,
+                0.5
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.001,
   "cases": [
     {

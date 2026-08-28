@@ -1,5 +1,205 @@
 {
   "family": "tool_gesture_g7",
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "topoPen/place-on-background",
+        "drove": [
+          {
+            "op": "tool.set mesh.topoPen",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "tool.attr mesh.topoPen",
+            "values": {
+              "mode": "point"
+            }
+          },
+          {
+            "op": "gesture.press",
+            "values": {
+              "button": 1,
+              "mod": 0
+            }
+          },
+          {
+            "op": "tool.set mesh.topoPen",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "topoPen/build-edge-from-vertex",
+        "drove": [
+          {
+            "op": "tool.set mesh.topoPen",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "tool.attr mesh.topoPen",
+            "values": {
+              "mode": "point"
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": 80,
+              "dy_px": 40,
+              "steps": 16,
+              "button": 1,
+              "mod": 1
+            }
+          },
+          {
+            "op": "tool.set mesh.topoPen",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "topoPen/dup-edge-shift-lmb",
+        "drove": [
+          {
+            "op": "tool.set mesh.topoPen",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "tool.attr mesh.topoPen",
+            "values": {
+              "mode": "move"
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": 45,
+              "dy_px": 30,
+              "steps": 16,
+              "button": 1,
+              "mod": 1
+            }
+          },
+          {
+            "op": "tool.set mesh.topoPen",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "topoPen/dup-loop-shift-rmb",
+        "drove": [
+          {
+            "op": "tool.set mesh.topoPen",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "tool.attr mesh.topoPen",
+            "values": {
+              "mode": "move"
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": 45,
+              "dy_px": 30,
+              "steps": 16,
+              "button": 3,
+              "mod": 1
+            }
+          },
+          {
+            "op": "tool.set mesh.topoPen",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "topoPen/move-vertex",
+        "drove": [
+          {
+            "op": "tool.set mesh.topoPen",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "tool.attr mesh.topoPen",
+            "values": {
+              "mode": "move"
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": -40,
+              "dy_px": 30,
+              "steps": 16,
+              "button": 1,
+              "mod": 0
+            }
+          },
+          {
+            "op": "tool.set mesh.topoPen",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "topoPen/remove-face-ctrl-mmb",
+        "drove": [
+          {
+            "op": "tool.set mesh.topoPen",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "tool.attr mesh.topoPen",
+            "values": {
+              "mode": "move"
+            }
+          },
+          {
+            "op": "gesture.press",
+            "values": {
+              "button": 2,
+              "mod": 64
+            }
+          },
+          {
+            "op": "tool.set mesh.topoPen",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/test_tool_gesture_g7.d:754-896; PRODUCER: tests/test_tool_gesture_g7.d (own capture arm). penOn(mode) (:575) is BOTH the arm and a real attribute write, so each cell carries `tool.set mesh.topoPen on` and `tool.attr mesh.topoPen mode <point|move>`. dragLog (:616) passes steps 16 explicitly plus an explicit mod and btn; pressReleaseLog (:603) is a single down+up at one pixel with no motion, recorded as gesture.press. `mod` is the numeric SDL modifier mask: kLShift = 0x0001 = 1, kLCtrl = 0x0040 = 64 (:184-185). STAND (excluded): the background sphere (setupSphereBg, kBgR 2.0 / kBgLon 96 / kBgLat 72, :175-176), the primary quad (kQuadHalf 0.75, :181), setStandCamera, history.clear, and the hub-placing click inside the build cell's stand delegate -- that click builds the operand, not the measured gesture. Press pixels come from vertexPx / quadEdge01Px / quadFacePx, i.e. projections of stand geometry, and are not recorded."
+  },
   "writtenBy": "tests/test_tool_gesture_g7.d",
   "producedBy": "fddb5a3b",
   "stand": "per-cell; see each cell's `drive`",

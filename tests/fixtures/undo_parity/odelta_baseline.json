@@ -1,5 +1,64 @@
 {
   "what": "task 1903 plan section 8 — the O(Delta) measurement",
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "A",
+        "drove": [
+          {
+            "op": "mesh.deleteFacesByMask",
+            "values": {
+              "keepOrphans": false,
+              "keepFloatingEdges": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "B-now",
+        "drove": [
+          {
+            "op": "mesh.extrudeFacesByMask",
+            "values": {
+              "distance": 0.25,
+              "smooth": false,
+              "uvWall": "SweepU"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "B-armed",
+        "drove": [
+          {
+            "op": "mesh.extrudeFacesByMask",
+            "values": {
+              "distance": 0.25,
+              "smooth": false,
+              "uvWall": "SweepU"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "C",
+        "drove": [
+          {
+            "op": "mesh.extrudeFacesByMask",
+            "values": {
+              "distance": 0.25,
+              "smooth": false,
+              "uvWall": "SweepU"
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tools/odelta/run.d:451-536; Producer is tools/odelta/run.d (NOT a tests/unit/undo_parity_l*_test.d file); the fixture's cells carry a `cell` key, not a `name`, so the cell names A / B-now / B-armed / C are used verbatim. These cells drive raw mesh KERNELS, not commands, so the op ids are the kernel names. Excluded as stand: the grid sizes nA=316 (:463) and nB=100 (:482), and the face masks (:466-468, :485, :523-525), which are the operand. Excluded as instrument config, not operation parameters: the MeshEditScope flags, the wantsFaceReindex arm/disarm bool that is the ONLY difference between B-now and B-armed (:501-510), and Revert.attempt/refuse. Defaults recorded and marked here: deleteFacesByMask keepOrphans=false / keepFloatingEdges=false (source/mesh.d:5779-5780), extrudeFacesByMask smooth=false and uvWall=SweepU (source/mesh_ops/extrude.d:3161-3162) -- default, not explicitly set. extrudeFacesByMask's `distance` = 0.25f IS an explicit literal (:486, :526)."
+  },
   "build": "dmd -i, BOUNDS-CHECKED. -release is FORBIDDEN for this instrument: it compiles out the array bounds check that found the B-now out-of-bounds write. See tools/odelta/run.d.",
   "pinned": "the byte and alloc columns and deltaRoundTrip; the ms and collection columns are NOT — see fieldNotes",
   "fieldNotes": {

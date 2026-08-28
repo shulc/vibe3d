@@ -12,6 +12,54 @@
     "task": "0632 Ph0",
     "notes": "Four subdivision types were tried on a clean cage first; all four take 6 quads to 24, so the 21 below is not a type artefact. The undo leg had to be driven at the TOP level rather than from inside the case script, because an undo issued inside a script consumes the whole script — so it is the one row here with no per-case result JSON, only a transcript. Recorded as such."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "capture",
+    "cells": [
+      {
+        "cell": "control_no_bake",
+        "drove": []
+      },
+      {
+        "cell": "nothing_selected",
+        "drove": [
+          {
+            "op": "mesh.subdivide",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "all_selected",
+        "drove": [
+          {
+            "op": "mesh.subdivide",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "only_the_hidden_face_selected",
+        "drove": [
+          {
+            "op": "mesh.subdivide",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "one_visible_face_selected",
+        "drove": [
+          {
+            "op": "mesh.subdivide",
+            "values": {}
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from the private capture harness, hide_semantics/subdiv_case.py:168-183; The private case script is the drive record: the four bake rows map to its SNONE / SALL / SIN / SOUT cases and `control_no_bake` to SCTRL, which fires no bake at all — hence its EMPTY `drove` list, a statement rather than an omission. The bake was fired with exactly ONE argument, a subdivision-TYPE selector, held at the SAME single value on all four recorded rows (subdiv_case.py:30 default, line 182 use; confirmed in every result file's `notes.subtype`, out_subdiv/{SNONE,SALL,SIN,SOUT}.json). THAT VALUE IS DELIBERATELY NOT TRANSCRIBED: it is a reference-side enum token and the neutrality rule outranks the completeness of a values map, so the map is empty and this note is the honest record of what is missing. The four ALTERNATIVE type values were exercised only on a clean-cage control (out_subdiv/S0T_*.json, all four giving 6 -> 24), which is not a fixture cell — the public fixture's own provenance note already says as much. Cube build, hide of face 0 and the per-row selections are stand. The fixture's `undo` block is not a row and is not enumerated; the undo leg was driven at the top level with no parameters and the fixture marks its evidence `transcript_only`."
+  },
 
   "rig": {
     "comment": "A one-segment cube: six quads, eight vertices. Every face is a quad, so a subdivision gives each face exactly four children and the branch counts separate cleanly.",

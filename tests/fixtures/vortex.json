@@ -12,6 +12,63 @@
     "task": 2990,
     "notes": "Driven by tool.setAttr + tool.doApply, never by a pointer drag \u2014 `method` said \"capture-drag\" until task 2990, and `source` said \"radial falloff\" though this fixture is CYLINDER (its own description and its own op block both say so). `captured_utc` stays \"unknown\" for the same reason as twist.json: committed 2026-06-20, before the 2026-06-21 captures now in the capture directory, and regenerating from those reproduces NEITHER blend arm (1.35e-1 against both, vs 5.4e-8 for the values here). DO NOT regenerate this fixture; the generator now refuses to overwrite it. Measured values untouched."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "vortex_30",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "xfrm.vortex",
+              "attr": "RZ",
+              "value": 30.0,
+              "falloff.type": "cylinder",
+              "falloff.shape": "linear",
+              "falloff.size": [
+                1,
+                1,
+                1
+              ],
+              "falloff.axis": [
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "vortex_90",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "xfrm.vortex",
+              "attr": "RZ",
+              "value": 90.0,
+              "falloff.type": "cylinder",
+              "falloff.shape": "linear",
+              "falloff.size": [
+                1,
+                1,
+                1
+              ],
+              "falloff.axis": [
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

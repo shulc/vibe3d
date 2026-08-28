@@ -1,5 +1,70 @@
 {
   "family": "tool_gesture_g3",
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "smooth.shift/offset-drag",
+        "drove": [
+          {
+            "op": "tool.set mesh.smoothShiftTool",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": 0,
+              "dy_px": -80,
+              "steps": 16,
+              "button": 1,
+              "mod": 0,
+              "hover": true,
+              "handle_part": 0
+            }
+          },
+          {
+            "op": "tool.set mesh.smoothShiftTool",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "stroke.extrude/straight-stroke",
+        "drove": [
+          {
+            "op": "tool.set tool.strokeExtrude",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "gesture.drag",
+            "values": {
+              "dx_px": 0,
+              "dy_px": -180,
+              "steps": 16,
+              "button": 1,
+              "mod": 0,
+              "hover": true
+            }
+          },
+          {
+            "op": "tool.set tool.strokeExtrude",
+            "values": {
+              "off": true
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/test_tool_gesture_g3.d:590-640; PRODUCER: tests/test_tool_gesture_g3.d (own capture arm). dragPixels steps default 16 (:475); `hover` is the standalone hover() settle (:485) driven before the press. `handle_part` is the /api/tool/handles part index (handlePx, :502). The stroke.extrude press pixel is the projection of the +Y face centroid -- STAND geometry, not a literal parameter."
+  },
   "writtenBy": "tests/test_tool_gesture_g3.d",
   "producedBy": "fb626df7",
   "stand": "per-cell; see each cell's `drive`",

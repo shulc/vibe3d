@@ -1,5 +1,46 @@
 {
   "family": "vertex_bevel",
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "mesh.vertexBevel/setMember",
+        "drove": [
+          {
+            "op": "mesh.vertexBevel",
+            "values": {
+              "amount": 0.2
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.vertexBevel/standPair",
+        "drove": [
+          {
+            "op": "mesh.vertexBevel",
+            "values": {
+              "amount": 0.2
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.vertexBevel/whole",
+        "drove": [
+          {
+            "op": "mesh.vertexBevel",
+            "values": {
+              "amount": 0.15
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/unit/undo_parity_l7d_test.d:124-174; `amount` is the only parameter; values from kL7dSpecs (:133-147) through the field order at :124-131 (name, select, amount), passed by setF at :174. `select` is a vertex selection applied by arrange (:155-161) and is stand."
+  },
   "producedBy": "b1c98ccb+L7-d-arm",
   "stand": "makeTaggedGridFull(3)",
   "recipe": "reset -> stand -> op -> undo",

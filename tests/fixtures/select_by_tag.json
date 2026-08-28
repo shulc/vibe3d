@@ -12,6 +12,36 @@
   "task": "1051",
   "notes": "The tag IDENTITY differs by construction and is not part of the claim: the reference names surfaces ('Red'), we index them (materialId 1). The claim is the SET of polygons. Also measured and deliberately NOT adopted: the reference's poly.setMaterial retags the WHOLE MESH when nothing is selected, where mesh.setMaterial is a no-op -- see the task file."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "region_round_trip",
+    "drove": [
+     {
+      "op": "select.byTag",
+      "values": {
+       "id": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "default_region_is_the_complement",
+    "drove": [
+     {
+      "op": "select.byTag",
+      "values": {
+       "id": 0
+      }
+     }
+    ]
+   }
+  ],
+  "notes": "drive record read from tests/fixtures/select_by_tag.json:93,192; Re-projection of the fixture's OWN `input` steps; the generic extractor misses them only because they sit under `input` as `{endpoint: command, body:{id,params}}` rather than under `op`. SPLIT: the `select` steps (the two seed faces and the deliberate drop before the read-back) and `mesh.setMaterial materialId:1` are the STAND -- they build the tagged region the query is pointed at; the only operation under test is `select.byTag`, whose `id` argument IS a parameter and is recorded at both 1 and 0."
+ },
  "tolerance": 0.0001,
  "cases": [
   {

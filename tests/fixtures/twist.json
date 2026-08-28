@@ -12,6 +12,63 @@
     "task": 2990,
     "notes": "Driven by tool.setAttr + tool.doApply, never by a pointer drag \u2014 `method` said \"capture-drag\" until task 2990, and `source` said \"radial falloff\" though this fixture is LINEAR (its own description and its own op block both say so). `captured_utc` stays \"unknown\" on purpose: this fixture was committed 2026-06-20, before the 2026-06-21 captures now in the capture directory, and regenerating from those reproduces NEITHER blend arm (1.35e-1 against both, vs 5.4e-8 for the values here) \u2014 the stem was re-shot under a different falloff configuration, so the originating capture no longer exists to date. DO NOT regenerate this fixture; the generator now refuses to overwrite it. Measured values untouched."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "twist_30",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "xfrm.twist",
+              "attr": "RZ",
+              "value": 30.0,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                0,
+                0,
+                0.5
+              ],
+              "falloff.end": [
+                0,
+                0,
+                -0.5
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "twist_90",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "xfrm.twist",
+              "attr": "RZ",
+              "value": 90.0,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                0,
+                0,
+                0.5
+              ],
+              "falloff.end": [
+                0,
+                0,
+                -0.5
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

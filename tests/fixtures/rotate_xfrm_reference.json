@@ -12,6 +12,28 @@
     "task": null,
     "notes": "Same generator/capture as rotate_drag.json (fixture's own `source` prose points at the rotate_drag harness)."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "rotate_xfrm_reference",
+        "drove": [
+          {
+            "op": "rotate",
+            "values": {
+              "value": [
+                0.0,
+                60.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.001,
   "input": [
     {

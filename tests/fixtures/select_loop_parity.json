@@ -11,6 +11,170 @@
     "task": "0457",
     "notes": "Command-port-driven capture (no drag gesture): each case selects a single seed edge then evaluates the bare select.loop command once. Golden expected_edges is postLoop.selectedEdges verbatim from the frozen dump."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "capture",
+    "cells": [
+      {
+        "cell": "tube_ring_baseline",
+        "drove": [
+          {
+            "op": "select.loop",
+            "values": {
+              "direction": "base",
+              "additive": false,
+              "space": "3D"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "tube_rail_boundary",
+        "drove": [
+          {
+            "op": "select.loop",
+            "values": {
+              "direction": "base",
+              "additive": false,
+              "space": "3D"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "tube_ring_through_ngon",
+        "drove": [
+          {
+            "op": "select.loop",
+            "values": {
+              "direction": "base",
+              "additive": false,
+              "space": "3D"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "tube_rail_through_ngon",
+        "drove": [
+          {
+            "op": "select.loop",
+            "values": {
+              "direction": "base",
+              "additive": false,
+              "space": "3D"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "tube_rail_through_triangle",
+        "drove": [
+          {
+            "op": "select.loop",
+            "values": {
+              "direction": "base",
+              "additive": false,
+              "space": "3D"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "pole5_spoke_seed",
+        "drove": [
+          {
+            "op": "select.loop",
+            "values": {
+              "direction": "base",
+              "additive": false,
+              "space": "3D"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "pole5_rim_seed",
+        "drove": [
+          {
+            "op": "select.loop",
+            "values": {
+              "direction": "base",
+              "additive": false,
+              "space": "3D"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "strip_triloop_from_left",
+        "drove": [
+          {
+            "op": "select.loop",
+            "values": {
+              "direction": "base",
+              "additive": false,
+              "space": "3D"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "strip_triloop_from_right",
+        "drove": [
+          {
+            "op": "select.loop",
+            "values": {
+              "direction": "base",
+              "additive": false,
+              "space": "3D"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "grid_cross_horizontal",
+        "drove": [
+          {
+            "op": "select.loop",
+            "values": {
+              "direction": "base",
+              "additive": false,
+              "space": "3D"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "grid_cross_vertical",
+        "drove": [
+          {
+            "op": "select.loop",
+            "values": {
+              "direction": "base",
+              "additive": false,
+              "space": "3D"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "cube_corner_edge0",
+        "drove": [
+          {
+            "op": "select.loop",
+            "values": {
+              "direction": "base",
+              "additive": false,
+              "space": "3D"
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from toolcards/select.loop/capture/manifest.json:3; The capture manifest states the driven command in one line: the loop command BARE, with direction=base, additive=false, space=3D, one invocation per case over a single selected seed edge. All twelve cells sit at the same point of the domain; the per-case difference is the mesh and the seed, both stand. 'Bare' means the arguments were not typed — these are the defaults that were in effect, which is what a domain query needs to know. The three parameter names are ALREADY PUBLIC in this very fixture's own description (tests/fixtures/select_loop_parity.json:3), so nothing new is exposed."
+  },
   "cases": [
     {
       "name": "tube_ring_baseline",

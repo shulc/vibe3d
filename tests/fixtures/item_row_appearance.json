@@ -756,5 +756,11 @@
   "harness": "screen capture of the item list (task 0670-era panel work)",
   "task": "unknown",
   "notes": "Block back-filled 2026-08-17 (task 1063) from the fixture's own `source` field: \"reference editor, stock colour scheme, item list in its full (tree) view, 1920x1080, two independent boots\". Method is `hand` because this is a READ OF PIXELS, not a driven command or gesture \u2014 the distinction matters: nothing here can be re-derived by a script."
+ },
+ "parameters": {
+  "schema": 1,
+  "state": "none",
+  "why": "A pixel read of a panel, driven by selection alone. Each observation's own `ops` column spells its entire drive as a semicolon-separated selection list (set:M1, set:M2;add:M1, set:M1;drop, ...), and the retained capture scripts confirm the vocabulary is closed: the probe's selection routine issues only an item select in set/add form or a drop of the whole item selection. The other two levers are a pointer parked or hovered over a row and a screenshot; neither carries a parameter. The panel being in its full tree view at 1920x1080 under the stock colour scheme is the stand. Checked at: tests/fixtures/item_row_appearance.json:231.",
+  "notes": "The `ops` column is the fixture's own record, one per observation, from line 231. The two retained capture drivers agree with it: capture_item_rows2.py:91 lists the cells as selection op-strings and atlas_itemrows_probe.py:149 is the probe routine that executes them, where the closed vocabulary is visible. The fixture's `provenance.task` is \"unknown\" and its method is `hand`, so the mapping to these scripts is by capture date (2026-08-10) and by the cell tags themselves, not by a task number. Unlike item_hover_highlight, this capture drove NO colour-scheme lever: the recorded RGB values are the stock scheme's, which is why the fixture says only the partition must port, not the colours."
  }
 }

@@ -14,6 +14,31 @@
     "task": "0341",
     "notes": "Packet-before-geometry: golden is the reference pipeline's OWN published stage packet, read directly during a live haul via a passive probe."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "capture",
+    "cells": [
+      {
+        "cell": "phase1_jsonl_full_haul",
+        "drove": [
+          {
+            "op": "actr.select",
+            "values": {}
+          },
+          {
+            "op": "xfrm.move",
+            "values": {
+              "drag.handle": "x",
+              "drag.dx": 50,
+              "drag.dy": 0
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from the private capture harness (atlas), specs/probe_effr_move_poly_select.json:8-12; SOMETHING DID RUN, and the capture spec names it step by step: select the polygon (stand), activate the BARE move tool, set the action centre to its selection mode, then a single committed haul on the X handle of +50 px, with the passive pipe probe on. The golden is the reference pipeline's own published stage packet read during that haul, so the ACEN mode is the parameter of the stage under test and the drag is what made the pipe evaluate — it is not stand under the schema's rule (which excludes mesh build, seed selection, reset, camera and layer setup, none of which a haul is). `actr.select` is transcribed from the fixture's own `pipe_setup` (line 57-59) and is corroborated by the per-case `provenance.acen_mode: \"select\"` (line 73); `xfrm.move` is vibe3d's OWN public factory-id namespace (the neutrality dictionary says so in its own words: 'Do NOT add xfrm. here'), and it already appears in the public tree at tests/test_constrain_projection.d:243. The drag deltas are the harness spec's own keys, recorded under neutral dotted names; the cube's segment count and the gizmo handle scale in `setup` are stand."
+  },
   "tolerance": 0.0001,
   "cases": [
     {

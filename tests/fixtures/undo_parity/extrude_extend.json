@@ -1,5 +1,111 @@
 {
   "family": "extrude_extend",
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "poly.extrude/island",
+        "drove": [
+          {
+            "op": "poly.extrude",
+            "values": {
+              "distance": 0.5
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.smooth_shift/island",
+        "drove": [
+          {
+            "op": "mesh.smooth_shift",
+            "values": {
+              "shift": 0.5
+            }
+          }
+        ]
+      },
+      {
+        "cell": "poly.extrude/wholeMesh",
+        "drove": [
+          {
+            "op": "poly.extrude",
+            "values": {
+              "distance": 0.5
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.smooth_shift/wholeMesh",
+        "drove": [
+          {
+            "op": "mesh.smooth_shift",
+            "values": {
+              "shift": 0.4
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.vertexExtrude/ring",
+        "drove": [
+          {
+            "op": "mesh.vertexExtrude",
+            "values": {
+              "shift": 0.5,
+              "width": 0.25
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.strokeExtrude/1span",
+        "drove": [
+          {
+            "op": "mesh.strokeExtrude",
+            "values": {
+              "path": [
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.5,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.strokeExtrude/3span",
+        "drove": [
+          {
+            "op": "mesh.strokeExtrude",
+            "values": {
+              "path": [
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.4,
+                0.0,
+                0.2,
+                0.8,
+                0.0,
+                0.5,
+                1.0,
+                0.2
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/unit/undo_parity_l8_test.d:190-313; Values read off kL8Specs (:223-263) through the field order at :190-204 (name, which, wholeMesh, select, amount, width, path) and the makeCommand switch (:288-314): `amount` becomes `distance` for poly.extrude and `shift` for smooth_shift / vertexExtrude. `path` is MeshStrokeExtrude's Vec3[] param, set at :309-310 from kPath1 (:206) / kPath3 (:207-208); it is FLATTENED here into a list of x,y,z triples in order, since the schema takes only scalars or flat scalar lists. wholeMesh/select are selection (arrange, :280-286) and are stand."
+  },
   "producedBy": "2c2b89e8+L8-0",
   "stand": "makeTaggedGridBent(3)",
   "recipe": "reset -> stand -> op -> undo",

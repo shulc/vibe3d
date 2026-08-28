@@ -12,6 +12,265 @@
     "task": null,
     "notes": null
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "rotate_none_adj1",
+        "drove": [
+          {
+            "op": "rotate_about",
+            "values": {
+              "axis": [
+                0.7255188,
+                0.68806749,
+                -0.01362357
+              ],
+              "angle_deg": 175.55969758,
+              "pivot": [
+                -0.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "rotate_none_adj2",
+        "drove": [
+          {
+            "op": "rotate_about",
+            "values": {
+              "axis": [
+                0.72031999,
+                0.69357368,
+                -0.00972943
+              ],
+              "angle_deg": 176.82812575,
+              "pivot": [
+                -0.0,
+                0.0,
+                -0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "rotate_none_asym1",
+        "drove": [
+          {
+            "op": "rotate_about",
+            "values": {
+              "axis": [
+                -0.75781055,
+                -0.36370078,
+                -0.54170556
+              ],
+              "angle_deg": 5.69999992,
+              "pivot": [
+                1e-08,
+                1e-08,
+                -1e-08
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "rotate_none_asym2",
+        "drove": [
+          {
+            "op": "rotate_about",
+            "values": {
+              "axis": [
+                -0.61469197,
+                0.2191382,
+                0.75771514
+              ],
+              "angle_deg": 90.10516672,
+              "pivot": [
+                0.23951205,
+                0.30961376,
+                0.1047596
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "rotate_none_isl1",
+        "drove": [
+          {
+            "op": "rotate_about",
+            "values": {
+              "axis": [
+                0.71884558,
+                -0.04488914,
+                -0.69371896
+              ],
+              "angle_deg": 179.14460111,
+              "pivot": [
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "rotate_none_isl2",
+        "drove": [
+          {
+            "op": "rotate_about",
+            "values": {
+              "axis": [
+                -0.7578104,
+                -0.36370114,
+                -0.54170552
+              ],
+              "angle_deg": 3.99999988,
+              "pivot": [
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "rotate_none_m2",
+        "drove": [
+          {
+            "op": "rotate_about",
+            "values": {
+              "axis": [
+                -0.14962929,
+                0.91041711,
+                -0.38568349
+              ],
+              "angle_deg": 44.04645403,
+              "pivot": [
+                0.00652876,
+                -0.16972408,
+                -0.40317153
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "rotate_none_m3",
+        "drove": [
+          {
+            "op": "rotate_about",
+            "values": {
+              "axis": [
+                -0.14939392,
+                0.91020285,
+                -0.38627999
+              ],
+              "angle_deg": 89.95076679,
+              "pivot": [
+                0.00656006,
+                -0.16996812,
+                -0.40303796
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "rotate_none_s2",
+        "drove": [
+          {
+            "op": "rotate_about",
+            "values": {
+              "axis": [
+                -0.14967871,
+                0.91044722,
+                -0.38559324
+              ],
+              "angle_deg": 36.88220094,
+              "pivot": [
+                0.00652463,
+                -0.16968734,
+                -0.40319163
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "rotate_none_sds2",
+        "drove": [
+          {
+            "op": "rotate_about",
+            "values": {
+              "axis": [
+                -0.14967874,
+                0.91044722,
+                -0.38559322
+              ],
+              "angle_deg": 36.88220356,
+              "pivot": [
+                0.00652017,
+                -0.16968513,
+                -0.4031847
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "rotate_none_top1",
+        "drove": [
+          {
+            "op": "rotate_about",
+            "values": {
+              "axis": [
+                -0.14931932,
+                0.91033807,
+                -0.38599007
+              ],
+              "angle_deg": 89.95080632,
+              "pivot": [
+                0.00653599,
+                -0.1698472,
+                -0.40310447
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "rotate_none_top2",
+        "drove": [
+          {
+            "op": "rotate_about",
+            "values": {
+              "axis": [
+                -0.15526137,
+                0.90904479,
+                -0.386693
+              ],
+              "angle_deg": 90.24602447,
+              "pivot": [
+                0.04956122,
+                0.30982247,
+                0.70843683
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.001,
   "cases": [
     {

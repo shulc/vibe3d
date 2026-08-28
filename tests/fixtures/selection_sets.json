@@ -11,6 +11,281 @@
   "task": "1060",
   "notes": "Numbers are the reference's MEASURED apply/edit/store/rename/delete laws (union/difference/replace; edit-of-a-missing-name creates; store-of-an-existing-name unions; delete purges the tag string) applied to a unit cube's own face centroids — the same 'claim is the LAW, not a byte-identical capture' shape select_by_tag.json documents, since vibe3d indexes faces differently from the reference. The `drop; apply replace` idiom before every readback is load-bearing: without it a case could pass by doing nothing (select_by_tag.json's own discriminator)."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "apply_select",
+    "drove": [
+     {
+      "op": "select.set.store",
+      "values": {
+       "name": "S"
+      }
+     },
+     {
+      "op": "select.set.apply",
+      "values": {
+       "name": "S",
+       "mode": "select"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "apply_deselect",
+    "drove": [
+     {
+      "op": "select.set.store",
+      "values": {
+       "name": "S"
+      }
+     },
+     {
+      "op": "select.set.apply",
+      "values": {
+       "name": "S",
+       "mode": "deselect"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "apply_replace",
+    "drove": [
+     {
+      "op": "select.set.store",
+      "values": {
+       "name": "S"
+      }
+     },
+     {
+      "op": "select.set.apply",
+      "values": {
+       "name": "S",
+       "mode": "replace"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "edit_add",
+    "drove": [
+     {
+      "op": "select.set.store",
+      "values": {
+       "name": "S"
+      }
+     },
+     {
+      "op": "select.set.edit",
+      "values": {
+       "name": "S",
+       "mode": "add"
+      }
+     },
+     {
+      "op": "select.set.apply",
+      "values": {
+       "name": "S",
+       "mode": "replace"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "edit_remove",
+    "drove": [
+     {
+      "op": "select.set.store",
+      "values": {
+       "name": "S"
+      }
+     },
+     {
+      "op": "select.set.edit",
+      "values": {
+       "name": "S",
+       "mode": "add"
+      }
+     },
+     {
+      "op": "select.set.edit",
+      "values": {
+       "name": "S",
+       "mode": "remove"
+      }
+     },
+     {
+      "op": "select.set.apply",
+      "values": {
+       "name": "S",
+       "mode": "replace"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "edit_replace",
+    "drove": [
+     {
+      "op": "select.set.store",
+      "values": {
+       "name": "S"
+      }
+     },
+     {
+      "op": "select.set.edit",
+      "values": {
+       "name": "S",
+       "mode": "add"
+      }
+     },
+     {
+      "op": "select.set.edit",
+      "values": {
+       "name": "S",
+       "mode": "replace"
+      }
+     },
+     {
+      "op": "select.set.apply",
+      "values": {
+       "name": "S",
+       "mode": "replace"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "rename_keeps_members",
+    "drove": [
+     {
+      "op": "select.set.store",
+      "values": {
+       "name": "S"
+      }
+     },
+     {
+      "op": "select.set.edit",
+      "values": {
+       "name": "S",
+       "mode": "add"
+      }
+     },
+     {
+      "op": "select.set.edit",
+      "values": {
+       "name": "S",
+       "mode": "replace"
+      }
+     },
+     {
+      "op": "select.set.rename",
+      "values": {
+       "from": "S",
+       "to": "R"
+      }
+     },
+     {
+      "op": "select.set.apply",
+      "values": {
+       "name": "R",
+       "mode": "replace"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "edit_missing_creates",
+    "drove": [
+     {
+      "op": "select.set.edit",
+      "values": {
+       "name": "BRANDNEW",
+       "mode": "add"
+      }
+     },
+     {
+      "op": "select.set.apply",
+      "values": {
+       "name": "BRANDNEW",
+       "mode": "replace"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "store_existing_unions",
+    "drove": [
+     {
+      "op": "select.set.store",
+      "values": {
+       "name": "A"
+      }
+     },
+     {
+      "op": "select.set.store",
+      "values": {
+       "name": "A"
+      }
+     },
+     {
+      "op": "select.set.apply",
+      "values": {
+       "name": "A",
+       "mode": "replace"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "delete_purges",
+    "drove": [
+     {
+      "op": "select.set.store",
+      "values": {
+       "name": "A"
+      }
+     },
+     {
+      "op": "select.set.store",
+      "values": {
+       "name": "B B"
+      }
+     },
+     {
+      "op": "select.set.store",
+      "values": {
+       "name": "C"
+      }
+     },
+     {
+      "op": "select.set.delete",
+      "values": {
+       "name": "A"
+      }
+     },
+     {
+      "op": "select.set.store",
+      "values": {
+       "name": "A"
+      }
+     },
+     {
+      "op": "select.set.apply",
+      "values": {
+       "name": "A",
+       "mode": "replace"
+      }
+     }
+    ]
+   }
+  ],
+  "notes": "drive record read from tests/fixtures/selection_sets.json:30,51; Re-projection of the fixture's OWN `input` steps (they sit under `input`, so the generic extractor does not see them). SPLIT: every `select` step (the seed faces and the `drop` that makes each read-back non-inert) is the STAND; the `select.set.*` commands are the operations under test and their `name` / `mode` / `from` / `to` arguments are the parameters."
+ },
  "tolerance": 0.0001,
  "cases": [
   {

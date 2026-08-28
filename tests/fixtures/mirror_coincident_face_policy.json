@@ -611,6 +611,282 @@
     "harness": "headless scripted capture, one process, private isolated profile; scripts and raw per-case results live in the private tree",
     "notes": "The capture had TWO arms and both are load-bearing: a static read of the shipped binary enumerated the candidate mechanisms (which layer owns a collapse at all, and that the equivalence predicate returns +1/-1 while its caller tests only != 0), and four headless boots selected among them and produced these numbers. `source` records the arm the NUMBERS came from -- the enum has no 'static-read' value, and inventing one made provenance_check.py reject the whole file, which is worse than recording the static arm here in prose. The ownership and winding answers were read out of the shipped binary first (the duplicate-polygon predicate and its complete caller set) and then confirmed by 19 + 24 + 20 live cells. The reference's own help text disagrees with both the binary and the measurement on the winding question; the measurement is what this fixture records."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "capture",
+    "cells": [
+      {
+        "cell": "self_coincident_merge_on",
+        "drove": [
+          {
+            "op": "mesh.mirror",
+            "values": {
+              "axis": "x",
+              "center": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "merge": true,
+              "weld.mode": "auto",
+              "weld.distance": 0.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "self_coincident_merge_off",
+        "drove": [
+          {
+            "op": "mesh.mirror",
+            "values": {
+              "axis": "x",
+              "center": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "merge": false,
+              "weld.mode": "auto",
+              "weld.distance": 0.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "self_coincident_then_explicit_collapse",
+        "drove": [
+          {
+            "op": "mesh.mirror",
+            "values": {
+              "axis": "x",
+              "center": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "merge": true,
+              "weld.mode": "auto",
+              "weld.distance": 0.0
+            }
+          },
+          {
+            "op": "poly.unify",
+            "values": {
+              "force": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "seam_plane_touches_geometry",
+        "drove": [
+          {
+            "op": "mesh.mirror",
+            "values": {
+              "axis": "x",
+              "center": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "merge": true,
+              "weld.mode": "auto",
+              "weld.distance": 0.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "face_lying_in_the_mirror_plane",
+        "drove": [
+          {
+            "op": "mesh.mirror",
+            "values": {
+              "axis": "z",
+              "center": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "merge": true,
+              "weld.mode": "auto",
+              "weld.distance": 0.0
+            }
+          },
+          {
+            "op": "poly.unify",
+            "values": {
+              "force": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "plane_cuts_through_at_no_symmetry",
+        "drove": [
+          {
+            "op": "mesh.mirror",
+            "values": {
+              "axis": "x",
+              "center": [
+                0.25,
+                0.0,
+                0.0
+              ],
+              "merge": true,
+              "weld.mode": "auto",
+              "weld.distance": 0.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "no_selection",
+        "drove": [
+          {
+            "op": "mesh.mirror",
+            "values": {
+              "axis": "x",
+              "center": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "merge": true,
+              "weld.mode": "auto",
+              "weld.distance": 0.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "reversed_duplicates",
+        "drove": [
+          {
+            "op": "poly.unify",
+            "values": {
+              "force": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "same_winding_duplicates",
+        "drove": [
+          {
+            "op": "poly.unify",
+            "values": {
+              "force": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "rotated_ring_duplicates",
+        "drove": [
+          {
+            "op": "poly.unify",
+            "values": {
+              "force": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "same_vertex_set_different_ring",
+        "drove": [
+          {
+            "op": "poly.unify",
+            "values": {
+              "force": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "coincident_but_unwelded",
+        "drove": [
+          {
+            "op": "poly.unify",
+            "values": {
+              "force": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "weld_then_collapse",
+        "drove": [
+          {
+            "op": "vertex_weld",
+            "values": {
+              "mode": "auto",
+              "distance": 0.0
+            }
+          },
+          {
+            "op": "poly.unify",
+            "values": {
+              "force": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "partial_overlap",
+        "drove": [
+          {
+            "op": "poly.unify",
+            "values": {
+              "force": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "different_material_tags",
+        "drove": [
+          {
+            "op": "poly.unify",
+            "values": {
+              "force": false
+            }
+          },
+          {
+            "op": "poly.unify",
+            "values": {
+              "force": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "only_one_of_the_pair_selected",
+        "drove": [
+          {
+            "op": "poly.unify",
+            "values": {
+              "force": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "no_selection",
+        "drove": [
+          {
+            "op": "poly.unify",
+            "values": {
+              "force": false
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from toolcards/mirror_coincident_faces/capture/cases_cmd.py:83-85,160-221; The private case script holds every literal: one mirror template with axis / centre / a vertex-merge flag / a weld-tolerance mode and distance (cases_cmd.py:160-163, default axis='x', centre=(0,0,0), merge on, mode auto, distance 0.0), one collapse command with a single `force` flag (lines 83-84), and one vertex weld (line 85). The seven mirror rows map to m_self_coincident / _nomerge / _then_unify / m_seam / m_plane_face_only / m_cut_through_offplane / m_no_selection (lines 165-221) — only two rows move a value off the default: axis z for the in-plane quad and centre x=0.25 for the off-symmetry cut. `same_vertex_set_different_ring` comes from a different script and is the ONE collapse row driven with force ON (cases_tol3.py:66-80); `different_material_tags` fires the collapse twice, default then forced (cases_cmd.py:145-147). Every rig build and `select` is stand. NEUTRALITY: the private driver names the reference's own command ids for mirror, collapse and vertex merge; those are NOT copied. Values are recorded under vibe3d's public ops `mesh.mirror` (source/commands/mesh/mirror.d:67) and `poly.unify` (source/commands/mesh/unify.d:38 — vibe3d's own id, which happens to read the same), and under a neutral `vertex_weld` for the third, which has no public single-command counterpart. Parameter names are the public command's where one exists (`axis`, `center`) and this fixture's own public vocabulary otherwise (`merge` from its `op` prose, `weld.mode`/`weld.distance` from its `weld_tolerance.automatic_mode`/`fixed_mode` block, `force` from its `after_default`/`after_forced` keys). Public `mesh.mirror` has no `merge` bool and no mode/distance pair — it exposes a single `weld` distance — so these are the capture's parameters, not our command's signature. NOT ENUMERATED AS CELLS: the `weld_tolerance` block is a law with brackets rather than named cases, and it is where the fixed-mode far side lives — its cells were driven at mode fixed with distance 0.001 on the unit cube and at mode auto over four magnitudes (cases_tol3.py:60-64, cases_cmd.py:203-217). If the audit wants that domain it must read `weld_tolerance` directly. One driven flag on the vertex weld (a keep-original toggle, off) is recorded in the driver at cases_cmd.py:85 but is NOT transcribed as a value: unlike `mode` and `distance` it has no name anywhere in the public fixture or in public vibe3d source, so naming it would be the one thing the neutrality rule forbids."
+  },
   "_classification_note": "Everything ABOVE this line is the capture, promoted byte-identical from the private toolcard. Everything BELOW is vibe3d's own reading of it, added when the fixture was promoted (task 1560) and maintained on our side.",
   "classification": {
     "verdict": "the mirror agrees in full; the explicit collapse agrees on every row our kernel can express except its coincidence KEY",

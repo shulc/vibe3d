@@ -1,5 +1,68 @@
 {
   "family": "loop_slice",
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "mesh.loopSlice/N1",
+        "drove": [
+          {
+            "op": "mesh.loopSlice",
+            "values": {
+              "count": 1
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.loopSlice/N3",
+        "drove": [
+          {
+            "op": "mesh.loopSlice",
+            "values": {
+              "count": 3
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.loopSlice/boundarySeed",
+        "drove": [
+          {
+            "op": "mesh.loopSlice",
+            "values": {
+              "count": 3
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.addLoop/interior",
+        "drove": [
+          {
+            "op": "mesh.addLoop",
+            "values": {
+              "position": 0.5
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.addLoop/boundary",
+        "drove": [
+          {
+            "op": "mesh.addLoop",
+            "values": {
+              "position": 0.25
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/unit/undo_parity_l9_test.d:242-297; Values read off kL9Specs (:250-264) through the field order at :242-248 (name, which, seed, count, position) and the makeCommand switch (:286-298). `seed` is an edge SELECTION applied by seedOnly (:277-284) and is stand; the unused field of the other arm (count on addLoop, position on loopSlice) is never passed to a command and is not recorded."
+  },
   "producedBy": "d1cfe53b",
   "stand": "makeTaggedGridFull(3)+selectFace(0)",
   "recipe": "reset -> stand -> op -> undo",

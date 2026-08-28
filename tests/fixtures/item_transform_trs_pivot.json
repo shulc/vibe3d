@@ -22,5 +22,11 @@
     "harness": "hand-authored independent numpy formula",
     "task": null,
     "notes": "M = T(pos)*T(pivot)*Rz*Ry*Rx*S*T(-pivot); expected_matrix computed independently in numpy, NOT via vibe3d's own composedMatrix() \u2014 a cross-check, not a reference-editor capture."
+  },
+  "parameters": {
+    "schema": 1,
+    "state": "none",
+    "why": "Nothing was driven and no engine produced the golden: `expected_matrix` was computed by an INDEPENDENT numpy formula, explicitly not by vibe3d's own composedMatrix() (tests/fixtures/item_transform_trs_pivot.json:15,22-24). There is no operation with parameters anywhere in this fixture. Checked at: tests/fixtures/item_transform_trs_pivot.json:15.",
+    "notes": "THE JUDGMENT: the `item` block (pos, rot_deg, scl, pivot) is a set of chosen evaluation points of the stated formula M = T(pos)*T(pivot)*Rz*Ry*Rx*S*T(-pivot), not tool parameters. Its reader authors them through `layer.attr` writes (tests/test_fixture_item_transform.d:128-131) — layer setup, which tools/local/fixture_gen/parameters.py's stand rule and parameters_extract's `_STAND_ARG_HEADS` both classify as STAND. The rotation channel does sit at a far side (90 deg, with a non-uniform scale and an off-origin pivot); if that coverage is wanted it must be read from `item` as analytic coverage, not claimed as a drive record."
   }
 }

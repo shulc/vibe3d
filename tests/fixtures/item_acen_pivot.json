@@ -12,6 +12,33 @@
     "task": "0614 Ph0c",
     "notes": "Seven consecutive evaluated frames, all identical, under two different transform configurations. A sensitivity control was run in the same session: forcing the action centre to an explicit world-origin mode moved the measured point to (0,0,0), so the channel is live and the agreement is not an insensitive read. A second control candidate was attempted first and turned out to name a command that does not exist \u2014 a DEAD control, not an insensitive channel; it was re-run with a valid one."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "expected",
+        "drove": []
+      },
+      {
+        "cell": "control",
+        "drove": [
+          {
+            "op": "tool.pipe.attr actionCenter",
+            "values": {
+              "mode": "origin"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "vibe3d_sensitivity",
+        "drove": []
+      }
+    ],
+    "notes": "drive record read from tests/fixtures/item_acen_pivot.json:169 (`control.action_center_mode` = \"origin\"); One driven parameter in the whole fixture, and it is the sensitivity control: the action-centre mode forced to origin (fixture `control.action_center_mode` = \"origin\"), corroborated by the capture card, which records the same re-run moving the packet (0,2,3) -> (0,0,0) after a first control that named a command which does not exist and was therefore DEAD, not an insensitive channel. Recorded under vibe3d's own form, `tool.pipe.attr actionCenter mode <tag>` (source/toolpipe/stages/actcenter.d:654); the reference's own action-centre command id is not reproduced. The `expected` cell drove NOTHING with a parameter: a transform tool was engaged so the pipe would evaluate and the published packet could be read over seven frames, with no mode issued anywhere -- the unset default IS the condition under measurement. The item pos/pivot/rot/scl, the displaced cube and the item-mode selection are the stand. `vibe3d_sensitivity` is a vibe3d-side vacuity guard whose only lever is the selection subject, also the stand. Ph0c's per-case result JSONs were not retained. corroborated by a retained capture note in the private tree"
+  },
   "tolerance": 1e-06,
   "rig": {
     "comment": "One item. Its mesh is a unit cube whose LOCAL centre is (3,0,0) \u2014 displaced on purpose so the geometry-derived candidate cannot coincide with the pivot-derived one.",

@@ -15,6 +15,102 @@
   "task": "0493",
   "notes": "Keyed on (mesh, seed edge, scalar), never on a click pixel: the rig's aim was measured delivering the press at the highlighted element's screen centroid, so a click-keyed fixture would freeze the aim, not the law. 5 of 8 cases are open spans (dV=N+1, dE=2N+1, dF=N); 3 are closed rings (N, 2N, N)."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "cube_edge_mid_click_0063",
+    "drove": [
+     {
+      "op": "mesh.addLoop",
+      "values": {
+       "scalar": 0.568096504
+      }
+     }
+    ]
+   },
+   {
+    "cell": "fin3_edge_mid_click_0651",
+    "drove": [
+     {
+      "op": "mesh.addLoop",
+      "values": {
+       "scalar": 0.444697803
+      }
+     }
+    ]
+   },
+   {
+    "cell": "grid3x2_edge_third_click_0149",
+    "drove": [
+     {
+      "op": "mesh.addLoop",
+      "values": {
+       "scalar": 0.498288683
+      }
+     }
+    ]
+   },
+   {
+    "cell": "gridwarp_edge_third_click_0233",
+    "drove": [
+     {
+      "op": "mesh.addLoop",
+      "values": {
+       "scalar": 0.514065048
+      }
+     }
+    ]
+   },
+   {
+    "cell": "cc1_edge_third_click_0176",
+    "drove": [
+     {
+      "op": "mesh.addLoop",
+      "values": {
+       "scalar": 0.54482659
+      }
+     }
+    ]
+   },
+   {
+    "cell": "fold_edge_mid_click_0309",
+    "drove": [
+     {
+      "op": "mesh.addLoop",
+      "values": {
+       "scalar": 0.459407393
+      }
+     }
+    ]
+   },
+   {
+    "cell": "qball2_edge_mid_drag_0218",
+    "drove": [
+     {
+      "op": "mesh.addLoop",
+      "values": {
+       "scalar": 0.376086856
+      }
+     }
+    ]
+   },
+   {
+    "cell": "sliver_edge_mid_click_0735",
+    "drove": [
+     {
+      "op": "mesh.addLoop",
+      "values": {
+       "scalar": 0.532794679
+      }
+     }
+    ]
+   }
+  ],
+  "notes": "drive record read from tests/fixtures/topopen_addloop.json:110; Every cell carries its own `input.scalar` (lines 110, 408, 674, 1063, 1677, 2377, 3585, 5805) — one cut fraction per case, the tool's single parameter. `input.seed_edge` is the seed and stays out as stand, and `input.scalar_orientation` is a prose statement of the measurement convention, not a value. These scalars are the RECOVERED equivalent of the capture's press position: the fixture's own `why_not_keyed_on_a_click` says the pointer-to-scalar mapping was deliberately NOT frozen because the rig's aim was measured landing at the highlighted element's screen centroid. Recorded under the fixture's own key `scalar` rather than the public `mesh.addLoop` parameter `position` (source/commands/mesh/loop_slice.d:116,144) on purpose: the conformance test converts one to the other with a per-face orientation flip (t = flip ? 1 - scalar : scalar, tests/test_topopen_addloop_conformance.d:145-147), so per cell they are not the same number and equating them would be a claim, not a transcription."
+ },
  "tolerance": 1e-06,
  "units": "world units",
  "cases": [

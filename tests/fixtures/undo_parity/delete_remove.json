@@ -1,5 +1,103 @@
 {
   "family": "delete_remove",
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "mesh.delete/vertices",
+        "drove": [
+          {
+            "op": "mesh.delete",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.delete/edges",
+        "drove": [
+          {
+            "op": "mesh.delete",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.delete/polygons",
+        "drove": [
+          {
+            "op": "mesh.delete",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.remove/vertices",
+        "drove": [
+          {
+            "op": "mesh.remove",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.remove/edges",
+        "drove": [
+          {
+            "op": "mesh.remove",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.remove/polygons",
+        "drove": [
+          {
+            "op": "mesh.remove",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.delete/whole",
+        "drove": [
+          {
+            "op": "mesh.delete",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.remove/whole",
+        "drove": [
+          {
+            "op": "mesh.remove",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.delete/corner",
+        "drove": [
+          {
+            "op": "mesh.delete",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.remove/corner",
+        "drove": [
+          {
+            "op": "mesh.remove",
+            "values": {}
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/unit/undo_parity_l3_test.d:343-381; Every cell drives MeshDelete or MeshRemove with NO parameters: neither source/commands/mesh/delete.d (class at :38) nor source/commands/mesh/remove.d (class at :33) overrides params(), so both inherit source/command.d:877 `Param[] params() { return []; }`. The cells differ only by EditMode and by the arrange function (selection), both of which are stand. The empty values maps are therefore a positive statement, not an omission."
+  },
   "producedBy": "2f7ef302",
   "stand": "makeTaggedGridFull(3)",
   "recipe": "reset -> stand -> op -> undo",

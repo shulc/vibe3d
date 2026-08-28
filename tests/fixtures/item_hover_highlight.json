@@ -12,6 +12,98 @@
     "task": "0647",
     "notes": "Colours are single exact modal values over 956 of 956 painted pixels — no anti-aliasing and no alpha, so there is nothing averaged here. The colour SOURCE was established by a preference lever, not by matching against a shipped table: each candidate scheme colour was driven onto its own RGB axis and the capture re-run, so the paint names its own source. The default-scheme numbers and the lever numbers are both recorded below and must agree with each other."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "capture",
+    "cells": [
+      {
+        "cell": "hover_unselected_item",
+        "drove": []
+      },
+      {
+        "cell": "hover_a_second_polygon_of_the_same_item",
+        "drove": []
+      },
+      {
+        "cell": "hover_the_item_that_is_already_selected",
+        "drove": []
+      },
+      {
+        "cell": "hover_a_background_visible_unselected_layer",
+        "drove": []
+      },
+      {
+        "cell": "hover_one_of_several_selected_items",
+        "drove": []
+      },
+      {
+        "cell": "cursor_over_empty_space",
+        "drove": []
+      },
+      {
+        "cell": "several_items_along_the_ray",
+        "drove": []
+      },
+      {
+        "cell": "image_plane_item_with_no_mesh",
+        "drove": []
+      },
+      {
+        "cell": "color_source_lever:selection_color",
+        "drove": [
+          {
+            "op": "color_scheme",
+            "values": {
+              "selection_color.r": 1,
+              "selection_color.g": 0,
+              "selection_color.b": 0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "color_source_lever:prehighlight_color",
+        "drove": [
+          {
+            "op": "color_scheme",
+            "values": {
+              "prehighlight_color.r": 0,
+              "prehighlight_color.g": 0,
+              "prehighlight_color.b": 1
+            }
+          }
+        ]
+      },
+      {
+        "cell": "color_source_lever:face_prehighlight_color",
+        "drove": [
+          {
+            "op": "color_scheme",
+            "values": {
+              "face_prehighlight_color.r": 1,
+              "face_prehighlight_color.g": 0,
+              "face_prehighlight_color.b": 1
+            }
+          }
+        ]
+      },
+      {
+        "cell": "color_source_lever:selection_fill_color",
+        "drove": [
+          {
+            "op": "color_scheme",
+            "values": {
+              "selection_fill_color.r": 0,
+              "selection_fill_color.g": 1,
+              "selection_fill_color.b": 0
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from doc/tasks/0647-evidence/README.md:87; The driven parameter is the colour-scheme lever: the capture's probe carries a SPECTRAL table (atlas_itemhover_probe.py:69) driving each candidate scheme colour onto its own RGB axis, and a DEFAULTS table (:81) restoring it; the fixture's own `color_source_lever.observations` carries the same four (driven, to) pairs and the two were cross-read. The reference's preference KEYS are not reproduced -- each value is recorded under the logical name the public fixture already uses (selection_color / prehighlight_color / face_prehighlight_color / selection_fill_color), one dotted leaf per channel -- a flat list would be read back as three DISTINCT driven values of one parameter rather than as one colour. TWO THINGS A READER SHOULD KNOW: (a) the four lever observations are ONE re-run that drove all four simultaneously, split here so each cell names the colour whose paint it attributes; (b) the probe's spectral table also drove a fifth colour, the idle wireframe, to (1,1,0) purely as a lever-liveness gate -- it has no observation row in the fixture and no logical name there, so it is named here instead of being invented as a cell. The eight `cases` cells drove nothing: they are cursor placements and selections under the shipped default scheme, read as pixels. `selected_and_hovered_law.checks[1]`'s red base is the same driven value already recorded in the selection_color cell; checks[0]'s base is the shipped default, not driven."
+  },
 
   "conditions": {
     "comment": "Ambient state for every figure below.",

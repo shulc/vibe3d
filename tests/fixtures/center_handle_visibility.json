@@ -12,6 +12,84 @@
     "task": "0614 Ph0c",
     "notes": "The pixel figures below were RE-DERIVED from the retained screenshots while writing this fixture, not copied from the capture's prose — and the re-derivation corrected it: the capture reported ONE changed viewport cluster, there are two (see drawn.clusters). The centre-handle-off hover leg is the one figure here that could not be re-derived: its screenshots were not retained, so it is marked reported_only."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "attribute",
+        "drove": [
+          {
+            "op": "transform",
+            "values": {
+              "center_handle": [
+                1,
+                0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "drawn",
+        "drove": [
+          {
+            "op": "transform",
+            "values": {
+              "center_handle": [
+                1,
+                0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "interactive",
+        "drove": [
+          {
+            "op": "transform",
+            "values": {
+              "center_handle": [
+                1,
+                0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "vacuous_probe",
+        "drove": [
+          {
+            "op": "transform",
+            "values": {
+              "center_handle": [
+                1,
+                0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "does_not_disturb",
+        "drove": [
+          {
+            "op": "transform",
+            "values": {
+              "center_handle": [
+                1,
+                0
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from doc/tasks/done/0614-item-mode-transform.md:839; The driven parameter is the centre-handle boolean: default 1, the item-move configuration 0 (fixture `attribute.default` / `attribute.item_move_configuration`; the same pair is repeated in a retained capture note). Every block below is an A/B over that one flag, so each cell carries both values: the attribute cell ran both orders (1,0,1 and 0,1,0 -- fixture `attribute.order_independence_evidence`), the drawn/interactive/does_not_disturb cells each measured at both, and the vacuous drag probe is four cells = flag x press position. The reference names this attribute on its own tool; that name is NOT reproduced -- `center_handle` is the fixture's own wording and a vibe3d source name (source/falloff_handles.d). NOT recorded: the 375 px press offset of the vacuous probe (a gesture geometry, not a tool parameter) and the Ph0c per-case result JSONs, which were not retained -- the values above come from the task card and the fixture body, which agree."
+  },
 
   "attribute": {
     "comment": "The centre handle is a boolean the tool configuration can carry. Read headless off the live tool.",

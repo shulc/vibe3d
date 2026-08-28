@@ -13,6 +13,26 @@
     "notes": "Driven as a numeric attribute + apply rather than a viewport drag, so the amount is exact rather than pixel-derived. The X column is asserted UNCHANGED as well as the Y column moved: an implementation that moved the set along the wrong axis, or that rebased every item onto the shared centre, would disturb X.",
     "post_capture_rig_change": "The scene ORDER of the three items was permuted (0, 6, 2 -> 0, 2, 6) and the ADD order with it, to close a defect in the companion fixture item_acen_primary_of_three: there the distinguished item was also the last item created, so an implementation reading the last layer passed by construction. The permutation reorders the rows of `expected.before` / `expected.after` / `rejected[].after` and changes nothing else — the same three items get the same delta, and the frozen law ('every selected item translates by the same world delta') is order-blind. Recorded rather than silently applied: this is a rig edit made AFTER the capture."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "item_move_whole_set",
+        "drove": [
+          {
+            "op": "move",
+            "values": {
+              "axis": "y",
+              "amount": -1.2
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/fixtures/item_move_whole_set.json:37 (`gesture`: axis \"y\", amount -1.2); The amount is a literal in three independent places and they agree: the fixture's own `gesture` block (tests/fixtures/item_move_whole_set.json:37 -- axis \"y\", amount -1.2), the capture card's commit leg (all three items moved by exactly (0,-1.2,0), X untouched), and a retained capture note that spells the drive as a numeric transform-attribute write plus an apply -- exactly what the fixture's `source` calls \"a numeric translate attribute followed by an apply\". The reference's attribute name is NOT reproduced; the pair is recorded under the fixture's own logical axis/amount naming and vibe3d's `move`. The three items, their positions and the set/add order are the stand; the before/after tables are the result, not a parameter. corroborated by a retained capture note in the private tree, which spells the same drive as a numeric transform-attribute write plus an apply"
+  },
   "tolerance": 1e-6,
 
   "rig": {

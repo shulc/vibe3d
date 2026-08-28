@@ -1,5 +1,317 @@
 {
   "family": "uv_maps_sets",
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "uv.delete",
+        "drove": [
+          {
+            "op": "uv.delete",
+            "values": {
+              "name": "uv2"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uv.rename",
+        "drove": [
+          {
+            "op": "uv.rename",
+            "values": {
+              "from": "uv2",
+              "to": "uv3"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uv.copy",
+        "drove": [
+          {
+            "op": "uv.copy",
+            "values": {
+              "from": "uv",
+              "to": "uvC"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uv.clear",
+        "drove": [
+          {
+            "op": "uv.clear",
+            "values": {
+              "name": "uv"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uv.flip",
+        "drove": [
+          {
+            "op": "uv.flip",
+            "values": {
+              "axis": "u",
+              "pivot": "unit"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uv.mirror",
+        "drove": [
+          {
+            "op": "uv.mirror",
+            "values": {
+              "axis": "v",
+              "pivot": "centroid"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uv.rotate",
+        "drove": [
+          {
+            "op": "uv.rotate",
+            "values": {
+              "angle": 37.0,
+              "pivot": "centroid"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uv.fit",
+        "drove": [
+          {
+            "op": "uv.fit",
+            "values": {
+              "keepAspect": "stretch"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uv.pack",
+        "drove": [
+          {
+            "op": "uv.pack",
+            "values": {
+              "gutter": 0.02
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uv.project",
+        "drove": [
+          {
+            "op": "uv.project",
+            "values": {
+              "size": 2.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uv.unwrap",
+        "drove": [
+          {
+            "op": "uv.unwrap",
+            "values": {
+              "iter": 3
+            }
+          }
+        ]
+      },
+      {
+        "cell": "uv.relax",
+        "drove": [
+          {
+            "op": "uv.relax",
+            "values": {
+              "iter": 3,
+              "strn": 0.7
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.weightmap.create",
+        "drove": [
+          {
+            "op": "mesh.weightmap.create",
+            "values": {
+              "name": "W2"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.weightmap.remove",
+        "drove": [
+          {
+            "op": "mesh.weightmap.remove",
+            "values": {
+              "name": "W"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.weightmap.rename",
+        "drove": [
+          {
+            "op": "mesh.weightmap.rename",
+            "values": {
+              "from": "W",
+              "to": "W9"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.weightmap.set",
+        "drove": [
+          {
+            "op": "mesh.weightmap.set",
+            "values": {
+              "name": "W",
+              "vert": 6,
+              "weight": 0.875
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.morph.create",
+        "drove": [
+          {
+            "op": "mesh.morph.create",
+            "values": {
+              "name": "MB",
+              "kind": "absolute"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.morph.remove",
+        "drove": [
+          {
+            "op": "mesh.morph.remove",
+            "values": {
+              "name": "MA"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.morph.rename",
+        "drove": [
+          {
+            "op": "mesh.morph.rename",
+            "values": {
+              "from": "MA",
+              "to": "MZ"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.morph.set",
+        "drove": [
+          {
+            "op": "mesh.morph.set",
+            "values": {
+              "name": "MA",
+              "vert": 3,
+              "x": 0.7,
+              "y": -0.3,
+              "z": 0.25
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.morph.clear",
+        "drove": [
+          {
+            "op": "mesh.morph.clear",
+            "values": {
+              "name": "MA"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.morph.apply",
+        "drove": [
+          {
+            "op": "mesh.morph.apply",
+            "values": {
+              "name": "MA",
+              "amount": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "select.set.store",
+        "drove": [
+          {
+            "op": "select.set.store",
+            "values": {
+              "name": "V3"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "select.set.edit",
+        "drove": [
+          {
+            "op": "select.set.edit",
+            "values": {
+              "name": "V",
+              "mode": "add"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "select.set.rename",
+        "drove": [
+          {
+            "op": "select.set.rename",
+            "values": {
+              "from": "V",
+              "to": "VV"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "select.set.delete",
+        "drove": [
+          {
+            "op": "select.set.delete",
+            "values": {
+              "name": "V2"
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/unit/undo_parity_l1_test.d:80-229; Every cell carries explicit set* literals; no defaults were needed. uv.relax's m.deselectFace(7) at :154 is stand, not a parameter."
+  },
   "producedBy": "17679d17c923ccd40cf3c414c98bed5eadb55da5",
   "stand": "makeTaggedGridMaps(3)",
   "recipe": "reset -> stand -> op -> undo",

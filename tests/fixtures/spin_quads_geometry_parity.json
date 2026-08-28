@@ -14,6 +14,89 @@
   "task": "1160",
   "notes": "Includes the two spokes of a valence-6 and a valence-8 pole, two disjoint edges spun in one command, and the same edge spun twice with a re-selection between -- the cell that showed the operation is repeatable at all. CHANNELS: the sweep's comparison was never vertex-only -- it compared the vertex multiset, the edge multiset, faces BOTH as ordered rings (winding shows) and as unordered position sets, the material partition, the per-face 'did this face's own tag change', and the post-command selection. Re-checked independently over all 215 frozen cases: ZERO agree on vertices while differing on ordered face rings, so nothing frozen here is a vertex-channel-only agreement. PRECISION: the sweep compared at 1e-4 and this fixture's tolerance matches it. The actual reproduction is far tighter -- 208 of the 215 cases are bit-identical at the dumps' 6 decimals and the remaining 7 agree to 3e-6 or better, that being the worst deviation anywhere in the set. The tolerance is the MEASUREMENT's bound, not the data's."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "spin_plate_shared",
+    "drove": [
+     {
+      "op": "mesh.spinEdge",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "spin_twotri_diag",
+    "drove": [
+     {
+      "op": "mesh.spinEdge",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "spin_grid_interior",
+    "drove": [
+     {
+      "op": "mesh.spinEdge",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "spin_fan_spoke",
+    "drove": [
+     {
+      "op": "mesh.spinEdge",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "spin_fan8_spoke",
+    "drove": [
+     {
+      "op": "mesh.spinEdge",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "spin_fan_two_spokes",
+    "drove": [
+     {
+      "op": "mesh.spinEdge",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "spin_two_disjoint",
+    "drove": [
+     {
+      "op": "mesh.spinEdge",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "spin_then_spin_reselect",
+    "drove": [
+     {
+      "op": "mesh.spinEdge",
+      "values": {}
+     },
+     {
+      "op": "mesh.spinEdge",
+      "values": {}
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

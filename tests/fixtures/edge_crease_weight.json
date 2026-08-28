@@ -9,6 +9,980 @@
   "task": "1062",
   "notes": "Headless command capture of the reference engine; one fresh engine instance per case (gap G10, edge weight for subdivision surfaces). Original provenance carried this same source/method pair with prose in extra fields (\"gap\", \"notes\") where the house schema (tools/local/fixture_gen/provenance.py) wants a fixed {schema, source, reference, method, captured_utc} shape -- reference/schema/captured_utc added here to satisfy provenance_check.py; source and method are verbatim from the original capture."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "capture",
+  "cells": [
+   {
+    "cell": "single creased edge w=0.0 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.0
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=0.02 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.02
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=0.05 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.05
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=0.08 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.08
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=0.1 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.1
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=0.3 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.3
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=1.0 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 1.0
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=0.0 L=2",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.0
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=0.05 L=2",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.05
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=0.1 L=2",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.1
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=0.12 L=2",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.12
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=0.15 L=2",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.15
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=0.18 L=2",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.18
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=0.2 L=2",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.2
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=0.22 L=2",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.22
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=0.25 L=2",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.25
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=0.3 L=2",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.3
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=0.5 L=2",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.5
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=1.0 L=2",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 1.0
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=0.2 L=3",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.2
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 3
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=0.22 L=3",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.22
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 3
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=0.25 L=3",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.25
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 3
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=0.28 L=3",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.28
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 3
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=0.3 L=3",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.3
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 3
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=0.35 L=3",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.35
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 3
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge w=1.0 L=3",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 1.0
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 3
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge, out-of-range weight w=-1.0 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": -1.0
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge, out-of-range weight w=-0.5 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": -0.5
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge, out-of-range weight w=-0.1 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": -0.1
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge, out-of-range weight w=1.5 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 1.5
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge, out-of-range weight w=2.0 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 2.0
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "single creased edge, out-of-range weight w=5.0 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 5.0
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "creased loop w=0.0 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.0
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "creased loop w=0.02 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.02
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "creased loop w=0.05 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.05
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "creased loop w=0.08 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.08
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "creased loop w=0.1 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.1
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "creased loop w=0.12 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.12
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "creased loop w=0.15 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.15
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "creased loop w=0.18 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.18
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "creased loop w=0.2 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.2
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "creased loop w=0.5 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.5
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "creased loop w=1.0 L=1",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 1.0
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "creased loop w=0.1 L=2",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.1
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "creased loop w=0.12 L=2",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.12
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "creased loop w=0.15 L=2",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.15
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "creased loop w=0.18 L=2",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.18
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "creased loop w=0.2 L=2",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.2
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "creased loop w=1.0 L=2",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 1.0
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "open box, default boundary rule",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "open box, boundary rule 'smooth'",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "boundary_rule": "smooth"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "open box, boundary rule 'crease'",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "boundary_rule": "crease"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "open box, boundary rule (4th variant)",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "boundary_rule": "4th variant"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "open box, weight 0.05 on a BOUNDARY edge",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.05
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "open box, weight 0.05 on a boundary edge, rule 'crease'",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.05
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "boundary_rule": "crease"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "lone quad, boundary rule 'smooth'",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "boundary_rule": "smooth"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "lone quad, boundary rule 'crease'",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "boundary_rule": "crease"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "lone quad, boundary rule (4th variant)",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "boundary_rule": "4th variant"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "lone quad, default",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "open box, weight 0.05 on an INTERIOR edge with only ONE end on a boundary vertex",
+    "drove": [
+     {
+      "op": "mesh.edgeCrease.set",
+      "values": {
+       "weight": 0.05
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "level": 1
+      }
+     }
+    ]
+   }
+  ],
+  "notes": "drive record read from tests/fixtures/edge_crease_weight.json:565 (`cases`, each with its own `weight` and `level`) and :26605 (`boundary_cases`); the boundary rule values from /home/ashagarov/Code/wt/fixture-parameters-recapture/vibe3d_private/toolcards/edge_weight/cases_wave9.py:17-35, cases_wave8.py:18-42 and cases_wave3.py:86-92; The 49 sweep cells are a pure re-projection: each case carries its own `weight` and `level`, and the module unittest drives exactly those two (`setCreaseWeight(ei, weight)` then `buildPreview(cage, level)`). They are recorded under the vibe3d command ids that own those two parameters; `level` is the fixture's own key for the number of uniform refinement rounds. The sweep covers both far sides of `weight`: -1.0 / -0.5 / -0.1 below zero and 1.5 / 2.0 / 5.0 above one. The 11 boundary cells needed the capture record for their boundary-rule argument, which the public fixture keeps only inside its `case` prose; the fourth rule's own word is scrubbed in the public fixture and is recorded here by the public fixture's own placeholder, '4th variant'. `lone quad, default` and `open box, default boundary rule` were driven with NO boundary-rule argument and carry an empty values map. SPLIT: the cage (unit cube, the +Y face deleted for the open box, a lone quad), the choice of the creased edge vs the +Y face loop, and the selection are the STAND -- the fixture's own `rig` block. The 49 cells have no name of their own in the fixture; each is named by its own `note`, `weight` and `level`."
+ },
  "rig": {
   "cage": "unit cube, 1 segment per axis, corners at (+/-0.5, +/-0.5, +/-0.5)",
   "creased_edge": [

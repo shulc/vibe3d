@@ -1,5 +1,138 @@
 {
   "family": "create_stable",
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "hand",
+    "cells": [
+      {
+        "cell": "mesh.flip",
+        "drove": [
+          {
+            "op": "mesh.flip",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.fixOrientation",
+        "drove": [
+          {
+            "op": "mesh.fixOrientation",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.spinEdge",
+        "drove": [
+          {
+            "op": "mesh.spinEdge",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.addPoint",
+        "drove": [
+          {
+            "op": "mesh.addPoint",
+            "values": {
+              "t": 0.35
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.split_edge",
+        "drove": [
+          {
+            "op": "mesh.split_edge",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.splitFace",
+        "drove": [
+          {
+            "op": "mesh.splitFace",
+            "values": {
+              "face": 4,
+              "a": 5,
+              "b": 10
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.vertexSplit",
+        "drove": [
+          {
+            "op": "mesh.vertexSplit",
+            "values": {}
+          }
+        ]
+      },
+      {
+        "cell": "mesh.spikey",
+        "drove": [
+          {
+            "op": "mesh.spikey",
+            "values": {
+              "amount": 0.4
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.addVertex",
+        "drove": [
+          {
+            "op": "mesh.addVertex",
+            "values": {
+              "pos.x": 0.73,
+              "pos.y": 0.91,
+              "pos.z": -0.37
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.makePolygon",
+        "drove": [
+          {
+            "op": "mesh.makePolygon",
+            "values": {
+              "flip": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.thicken",
+        "drove": [
+          {
+            "op": "mesh.thicken",
+            "values": {
+              "thickness": 0.25,
+              "symmetric": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "mesh.align",
+        "drove": [
+          {
+            "op": "mesh.align",
+            "values": {}
+          }
+        ]
+      }
+    ],
+    "notes": "drive record read from tests/unit/undo_parity_l2_test.d:144-243; Drive record = the set* calls in l2Cells. Selection arrangement (selectOnlyInteriorEdge, selectVertex, deselectVertex) is stand. mesh.flip, mesh.fixOrientation, mesh.spinEdge, mesh.split_edge, mesh.vertexSplit and mesh.align declare no params() override (source/commands/mesh/{flip,fix_orientation,spin_edge,split_edge,vertex_split,polygon_align}.d) and inherit source/command.d:877 `return []` -- empty map is a statement. mesh.makePolygon DOES have one param left at its default: flip=false, source/commands/mesh/make_polygon.d:93 (field init :59) -- recorded as default, not explicitly set."
+  },
   "producedBy": "2f7ef302a957e4216814312a321625971eb54f85",
   "stand": "makeTaggedGridBent(3)",
   "recipe": "reset -> stand -> op -> undo",

@@ -9,6 +9,1120 @@
   "task": "1069",
   "notes": "60 cells at ~2.7 s each, no display and no GUI. TWO map kinds were found where the audit assumed one: a RELATIVE kind storing deltas (created empty) and an ABSOLUTE kind storing positions (created dense). The delta-vs-absolute question was decided by editing the base AFTER the map -- and by a SCALE as well as a translate, since a translate alone cannot separate the candidates. The viewport question (does it draw base+delta while a map is selected) had no headless proxy here and was settled separately by a GUI capture; see the task's Phase 0."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "capture",
+  "cells": [
+   {
+    "cell": "edit_routes_into_selected_morph",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "cell": "edit_moves_base_when_no_morph_selected",
+    "drove": [
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "cell": "base_translate_leaves_delta",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.4,
+        0.3,
+        -0.2
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "cell": "base_scale_leaves_delta",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "scale",
+      "values": {
+       "factor": 2.0,
+       "acen": "origin"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "absolute_stores_position",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "S",
+       "kind": "absolute"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "cell": "zero_delta_entry_survives",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        -0.25,
+        0.1,
+        -0.05
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "cell": "zero_move_creates_entries",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "cell": "entries_follow_the_selection",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "cell": "absolute_dense_at_creation",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "S",
+       "kind": "absolute"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "relative_empty_at_creation",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "clear_is_selection_scoped",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "mesh.morph.clear",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "subdivide_interpolates_the_map",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "bevel_duplicates_the_entry",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "mesh.bevel",
+      "values": {
+       "inset": 0.1,
+       "shift": 0.0
+      }
+     }
+    ]
+   },
+   {
+    "cell": "reference_native_roundtrip",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "native_roundtrip",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "apply_half",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "mesh.morph.apply",
+      "values": {
+       "name": "M",
+       "amount": 0.5
+      }
+     }
+    ]
+   },
+   {
+    "cell": "apply_full",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "mesh.morph.apply",
+      "values": {
+       "name": "M",
+       "amount": 1.0
+      }
+     }
+    ]
+   },
+   {
+    "cell": "apply_over",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "mesh.morph.apply",
+      "values": {
+       "name": "M",
+       "amount": 1.5
+      }
+     }
+    ]
+   },
+   {
+    "cell": "apply_negative",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "mesh.morph.apply",
+      "values": {
+       "name": "M",
+       "amount": -0.5
+      }
+     }
+    ]
+   },
+   {
+    "cell": "apply_x100",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "mesh.morph.apply",
+      "values": {
+       "name": "M",
+       "amount": 100.0
+      }
+     }
+    ]
+   },
+   {
+    "cell": "deformer_two_morphs_add",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "N",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.0,
+        0.0,
+        0.4
+       ]
+      }
+     },
+     {
+      "op": "morph_deform",
+      "values": {
+       "strength": 1.0
+      }
+     },
+     {
+      "op": "morph_deform",
+      "values": {
+       "strength": 1.0
+      }
+     },
+     {
+      "op": "freeze_deform",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "deformer_strength_half",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "N",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.0,
+        0.0,
+        0.4
+       ]
+      }
+     },
+     {
+      "op": "morph_deform",
+      "values": {
+       "strength": 0.5
+      }
+     },
+     {
+      "op": "freeze_deform",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "deformer_strength_2",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "morph_deform",
+      "values": {
+       "strength": 2.0
+      }
+     },
+     {
+      "op": "freeze_deform",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "deformer_strength_neg",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "morph_deform",
+      "values": {
+       "strength": -1.0
+      }
+     },
+     {
+      "op": "freeze_deform",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "deformer_strength_0",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "morph_deform",
+      "values": {
+       "strength": 0.0
+      }
+     },
+     {
+      "op": "freeze_deform",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "absolute_apply_half_keeps_target",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "S",
+       "kind": "absolute"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "mesh.morph.apply",
+      "values": {
+       "name": "S",
+       "amount": 0.5
+      }
+     }
+    ]
+   },
+   {
+    "cell": "absolute_base_translate_keeps_target",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "S",
+       "kind": "absolute"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.4,
+        0.3,
+        -0.2
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "cell": "delta_is_item_local",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        0.0,
+        0.0
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "cell": "delta_is_item_local_control",
+    "drove": [
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        0.0,
+        0.0
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "cell": "edits_accumulate",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.1,
+        0.2,
+        0.3
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "cell": "background_to_morph_is_dense",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "BGM",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "background_to_morph",
+      "values": {
+       "source": "background"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "new_map_steals_the_selection",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M2",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.1,
+        0.2,
+        0.3
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "cell": "topology_edit_still_hits_the_base",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "freeze_deform_keeps_the_map",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "morph_deform",
+      "values": {
+       "strength": 1.0
+      }
+     },
+     {
+      "op": "freeze_deform",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "golden_three_entries",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        -0.3,
+        0.4,
+        0.2
+       ]
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.0,
+        0.5,
+        0.0
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "cell": "golden_apply_05",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        -0.3,
+        0.4,
+        0.2
+       ]
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.0,
+        0.5,
+        0.0
+       ]
+      }
+     },
+     {
+      "op": "mesh.morph.apply",
+      "values": {
+       "name": "M",
+       "amount": 0.5
+      }
+     }
+    ]
+   },
+   {
+    "cell": "golden_subdivide",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        -0.3,
+        0.4,
+        0.2
+       ]
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.0,
+        0.5,
+        0.0
+       ]
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "golden_deformer_025",
+    "drove": [
+     {
+      "op": "mesh.morph.create",
+      "values": {
+       "name": "M",
+       "kind": "relative"
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.25,
+        -0.1,
+        0.05
+       ]
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        -0.3,
+        0.4,
+        0.2
+       ]
+      }
+     },
+     {
+      "op": "move",
+      "values": {
+       "translate": [
+        0.0,
+        0.5,
+        0.0
+       ]
+      }
+     },
+     {
+      "op": "morph_deform",
+      "values": {
+       "strength": 0.25
+      }
+     },
+     {
+      "op": "freeze_deform",
+      "values": {}
+     }
+    ]
+   }
+  ],
+  "notes": "drive record read from /home/ashagarov/Code/wt/fixture-parameters-recapture/vibe3d_private/toolcards/morph_maps/cases_w2.py:24-96, cases_w3.py:24-140, cases_w4.py:96-127, cases_w6.py:24-115, cases_w7.py:36-80, cases_gold.py:26-62, cases_probe.py:24-44 (the per-case drive scripts, keyed to each fixture case by its own `_case` field); Read out of the capture's own per-case drive scripts, not from the fixture's `_desc` prose (the two agree). NEUTRALITY: the capture drives the reference's own command ids; every value here is recorded under vibe3d's public equivalents -- `mesh.morph.create` (kind `relative` / `absolute`, the fixture's own two kind words), `mesh.morph.apply` (name, amount), `mesh.morph.clear`, `mesh.subdivide`, `mesh.bevel`, and the transform factory ids `move` / `scale` -- plus three logical names for operations vibe3d has no command for: `morph_deform` (the deformer mechanism's strength channel), `freeze_deform` (baking the deformed positions into the base) and `native_roundtrip` / `background_to_morph`. SPLIT: the box build, the vertex selection, the map SELECTION and de-selection (which decides where an edit is routed, but is state rather than an argument), the item's +90 degree Y rotation in the two `delta_is_item_local` cells and the two-mesh background setup are all STAND. Far sides recorded: apply at -0.5 and at 100.0, deformer strength at -1.0 and 0.0, a move of exactly (0,0,0). The subdivision cells carry an EMPTY values map on purpose: the capture passed a subdivision-variant argument whose word has no established public-vocabulary equivalent here, so it is not transcribed rather than guessed. The weight map created alongside the morph map in `relative_empty_at_creation` is not part of the operation under test and is left out."
+ },
  "_about": "Reference-editor morph-map behaviour, captured through a headless command lane (one fresh engine per case). Keyed on GEOMETRY (vertex positions), never on index. SCRUBBED for neutrality (task 1069): every number is verbatim from the capture; the reference's command ids and its two four-character map-type tags were replaced with neutral prose and with the kind names 'relative' / 'absolute'. Seven case keys and seven cell ids carried a tag fragment and were renamed with it: bgmorph_is_dense -> background_to_morph_is_dense, lxo_roundtrip -> reference_native_roundtrip, morf_empty_at_creation -> relative_empty_at_creation, spot_apply_half_keeps_target -> absolute_apply_half_keeps_target, spot_base_translate_keeps_target -> absolute_base_translate_keeps_target, spot_dense_at_creation -> absolute_dense_at_creation, spot_stores_absolute -> absolute_stores_position",
  "_base_mesh": {
   "vertices": [
