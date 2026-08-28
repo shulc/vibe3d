@@ -78,6 +78,17 @@ class MeshLoadRaw : Command {
                         " out of range (vertexCount=" ~ itoa(vcount) ~ ")");
         }
 
+        // ---- Disarm the active tool BEFORE anything reads or writes the mesh
+        // (task 3130). Identical shape and identical reason to
+        // `SceneReset.applyImpl`: `*mesh = m` below replaces the geometry in
+        // place and `onResetTool()` — the tool drop, i.e. the session commit
+        // point — only fires afterwards, so an armed gesture used to run its
+        // kernel against the just-loaded mesh. Validation above deliberately
+        // stays first: a load that REFUSES must not disarm the user's tool.
+        {
+            import tool_disarm : disarmActiveToolBeforeDocumentReplace;
+            disarmActiveToolBeforeDocumentReplace();
+        }
         // ---- Snapshot for undo, then swap geometry in ----
         snap         = MeshSnapshot.capture(*mesh);
         noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart

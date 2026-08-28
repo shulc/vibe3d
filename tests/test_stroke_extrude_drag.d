@@ -93,14 +93,14 @@ string[] planeDiff(string aText, string bText) {
 /// operand — the tool's own precondition is that at least one polygon is
 /// already selected, and a press without one is a plain unconsumed no-op.
 ///
-/// DISARM FIRST, and it is not defensive decoration (task 2900). `/api/reset`
-/// does NOT drop the active tool, and `toolHost.activate()` deactivates the
-/// outgoing one — which for a session tool means COMMITTING it. A previous
-/// test, or a previous RED run of this one, that left a tool armed would
-/// otherwise push a stray commit into the freshly reset mesh and shift every
-/// count read after it.
+/// NO PRE-DISARM, DELIBERATELY (task 3130). `/api/reset` cancels and DROPS the
+/// active tool BEFORE it replaces the geometry, so a gesture left standing by
+/// an earlier stand — or by an earlier RED run of this one — cannot commit
+/// into the scene this stand is about to read. The explicit
+/// `tool.set <tool> off` that used to stand here (task 2900) was a workaround
+/// for the opposite order. Removing it is not tidying: it makes this stand a
+/// WITNESS for that guarantee instead of a file that hides its loss.
 void armStand(bool select) {
-    cmd("tool.set " ~ TOOL ~ " off");
     auto r = postJson("/api/reset", "");
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     if (select) {

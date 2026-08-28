@@ -151,6 +151,33 @@ class SceneReset : Command {
             document.setPrimary(rehomed);
             mesh = document.activeMesh();
         }
+        // TASK 3130 — DISARM AND DROP THE ACTIVE TOOL, HERE, BEFORE ANYTHING
+        // ELSE READS OR WRITES THE MESH.
+        //
+        // The reset used to leave this to `onResetTool()` at the bottom of
+        // this function, which is 24 lines AFTER `*mesh = makeCube()` — so the
+        // tool's `deactivate()`, which for a session tool is its commit point,
+        // ran its kernel against the fresh document. Measured: a reset with an
+        // engaged `mesh.mirrorTool` handed back a cube of 12 faces instead of
+        // 6, plus a "Mirror" undo entry for an edit nobody confirmed. See
+        // `source/tool_disarm.d` for the full measurement and the two layers.
+        //
+        // AND IT IS BEFORE THE SNAPSHOT ON PURPOSE. `snap` is what undoing
+        // this reset restores. An uncommitted gesture is, by definition, not
+        // part of what the user has: capturing AFTER the cancel means undo
+        // brings back the last COMMITTED state, where before it brought back
+        // whatever a live-writing tool (topology pen's live move, a transform
+        // drag) happened to have on the mesh mid-gesture.
+        //
+        // Placed after the `prevSelectionEmpty` rehome above only so `mesh`
+        // already points at a real edit target; a tool cannot in fact be armed
+        // with no edit target (`tool.set` refuses — TASK 0654 above), so the
+        // two orderings are equivalent today and this one stays true if that
+        // refusal is ever relaxed.
+        {
+            import tool_disarm : disarmActiveToolBeforeDocumentReplace;
+            disarmActiveToolBeforeDocumentReplace();
+        }
         snap         = MeshSnapshot.capture(*mesh);
         noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         prevEditMode = *editModePtr;

@@ -76,11 +76,13 @@ string lastUndoCommand() {
 }
 
 unittest { // Shift+Ctrl+RMB on an edge relaxes its loop and records one entry
-    // DISARM FIRST, and it is not defensive decoration: `/api/reset` does NOT
-    // drop the active tool, and `toolHost.activate()` deactivates the outgoing
-    // one — which for a session tool means COMMITTING it. The runner shares one
-    // app across a worker's whole slice of tests.
-    cmd("tool.set mesh.topoPen off");
+    // NO PRE-DISARM, DELIBERATELY (task 3130). `/api/reset` cancels and DROPS the
+    // active tool BEFORE it replaces the geometry, so a gesture left standing by
+    // an earlier stand — or by an earlier RED run of this one — cannot commit
+    // into the scene this stand is about to read. The explicit
+    // `tool.set <tool> off` that used to stand here (task 2900) was a workaround
+    // for the opposite order. Removing it is not tidying: it makes this stand a
+    // WITNESS for that guarantee instead of a file that hides its loss.
     postJson("/api/reset", "");
     postJson("/api/camera", format(
         `{"azimuth":%.6f,"elevation":%.6f,"distance":%.6f,"focus":{"x":%.6f,"y":%.6f,"z":%.6f}}`,

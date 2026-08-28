@@ -4002,6 +4002,46 @@ void main(string[] args) {
         setActiveTool(null);
         activeToolId = "";
     };
+
+    // TASK 3130 — the DOCUMENT-REPLACE disarm seam (source/tool_disarm.d).
+    //
+    // Installed here because it needs `activeTool` + `setActiveTool`, exactly
+    // like `toolHost.deactivate` above; a document-replacing command calls it
+    // through the module-level hook so no command has to reach into app.d.
+    // The two layers and the measurement that forced them are documented at
+    // the module; this is only the app-side body.
+    //
+    // ORDER IS THE WHOLE POINT: both halves run BEFORE the caller writes the
+    // new geometry, so `deactivate()` — which for a session tool IS the commit
+    // point — can only ever see the mesh the gesture was armed on.
+    {
+        import tool_disarm : DisarmOutcome, g_disarmActiveTool, kMaxDisarmSteps;
+        g_disarmActiveTool = () {
+            DisarmOutcome o;
+            if (activeTool is null) return o;
+            o.hadTool = true;
+            // LAYER 2 — cancel the live gesture so the drop below is silent.
+            // Bounded, and re-read every step: `cancelUncommittedEdit()` is
+            // documented as NOT one-shot (the primitive live-run family peels
+            // one recorded step per call), and equally documented as having no
+            // assertable postcondition — so this loop may neither stop after
+            // one call nor trust that it ever finishes.
+            while (activeTool.hasUncommittedEdit()
+                   && o.cancelSteps < kMaxDisarmSteps) {
+                activeTool.cancelUncommittedEdit();
+                ++o.cancelSteps;
+            }
+            o.stillArmed = activeTool.hasUncommittedEdit();
+            // LAYER 1 — drop the tool outright, still ahead of the replace.
+            // This is what makes the guarantee hold for a tool whose cancel
+            // did not clear its commit guard: its `deactivate()` runs here,
+            // against the mesh it was actually built against, rather than 24
+            // lines later against a document that replaced it.
+            setActiveTool(null);
+            activeToolId = "";
+            return o;
+        };
+    }
     // EditSession wiring (task 0428): construct the session-protocol driver
     // now that history + setActiveTool + toolHost are all in scope (the
     // variable itself is declared next to setActiveTool above so the nested

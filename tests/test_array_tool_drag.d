@@ -92,14 +92,13 @@ string[] planeDiff(string aText, string bText) {
 }
 
 unittest { // a free centre haul arrays face 4 and records exactly one entry
-    // DISARM FIRST, and it is not defensive decoration (task 2900). `/api/reset`
-    // does NOT drop the active tool, and `toolHost.activate()` deactivates the
-    // outgoing one — which for a session tool means COMMITTING it. So a
-    // previous test (or a previous, RED run of this one) that left a tool armed
-    // makes `tool.set ... on` push a stray commit into the freshly reset mesh,
-    // and every count read after it is off by that tool's edit. Measured here:
-    // a run following a red one started this block at 16 vertices instead of 8.
-    cmd("tool.set " ~ TOOL ~ " off");
+    // NO PRE-DISARM, DELIBERATELY (task 3130). `/api/reset` cancels and DROPS the
+    // active tool BEFORE it replaces the geometry, so a gesture left standing by
+    // an earlier stand — or by an earlier RED run of this one — cannot commit
+    // into the scene this stand is about to read. The explicit
+    // `tool.set <tool> off` that used to stand here (task 2900) was a workaround
+    // for the opposite order. Removing it is not tidying: it makes this stand a
+    // WITNESS for that guarantee instead of a file that hides its loss.
     auto r = postJson("/api/reset", "");
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
 
