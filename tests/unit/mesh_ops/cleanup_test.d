@@ -430,6 +430,85 @@ unittest { // selection-restricted: with an active face selection, only the
     assert(bStillCorrupt, "component B (not selected) must be left untouched -- still corrupted");
 }
 
+// Task 1909 (review of 1903 Stage E1, NC-4): `fixFaceOrientation`'s opening
+// `ed.buildLoops()` (source/mesh_ops/cleanup.d) was witnessed by NOTHING --
+// deleting it left 278/278 unit modules green, because every stand in this
+// file (including all the ones above) builds `faces`, THEN calls
+// `buildLoops()`, THEN corrupts winding through `flipFacesByMask` -- and
+// `flipFacesByMask` itself ends with a `buildLoops()` call (see its own doc
+// comment / mesh.d), so `loops` is never actually stale by the time any
+// existing test reaches the kernel. This is a check that could not come out
+// differently: a fixture that always arrives synchronized cannot exercise a
+// precondition that exists to RE-synchronize.
+//
+// The discriminating rig: corrupt `faces[1]`'s winding through the SAME raw
+// indexed write real kernels use (`ed.faces[fi] = …` -- `mesh_ops/extrude.d`,
+// `commands/mesh/bevel.d`), which is `structVersion`-INDIFFERENT (mesh.d's
+// `structVersion` doc comment: bumped only by addEdge/addFace/addFaceFast/
+// rebuildEdges*, never by an in-place `faces[]` element write) -- so
+// `loopsValid()` would still read true even though `loops` no longer matches
+// `faces`. Two independently-built meshes (a fresh call to the helper
+// allocates its own arrays -- a struct COPY would alias the same backing
+// storage and corrupt both sides at once) get the IDENTICAL corruption:
+// `control` has its loops resynced BY THE CALLER before the kernel runs (the
+// ground truth); `subject` does not, and relies on `fixFaceOrientation`'s
+// own internal `ed.buildLoops()` to reach the same answer WITHOUT caller
+// help. If that call is missing, `subject` analyzes the STALE pre-corruption
+// loops (still describing consistent winding) and reports nothing to heal,
+// diverging from `control`.
+private Mesh openTriPairStand_() {
+    Mesh m;
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0)];
+    // Two triangles sharing edge (0,2), consistently wound: face 0 traverses
+    // the shared edge 2->0, face 1 traverses it 0->2 -- opposite directions.
+    m.faces = [[0u,1u,2u], [0u,2u,3u]];
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.resetSelection();
+    return m;
+}
+
+unittest { // desynchronized loops: `ed.buildLoops()` must make the kernel
+           // analyze the CURRENT faces[], not whatever loops the caller
+           // last built
+    import std.format : format;
+
+    // Control: corrupt face 1's winding (reverse [0,2,3] -> [3,2,0], which
+    // makes both faces traverse the shared edge (0,2) in the SAME direction
+    // -- the corruption signature), then resync loops BEFORE the kernel
+    // runs. This is the ground truth for "faces == [[0,1,2],[3,2,0]]"
+    // regardless of who rebuilds the loops.
+    Mesh control = openTriPairStand_();
+    control.faces[1] = [3u, 2u, 0u];
+    control.buildLoops();
+    size_t nControl = fixOrientationOnce(control);
+    assert(nControl > 0, "sanity: reversing face 1 must create a healable "
+        ~ "same-direction shared edge with face 0 -- the rig does not "
+        ~ "discriminate anything otherwise");
+
+    // Subject: the IDENTICAL corruption, but the caller does NOT resync --
+    // `subject.loops` still reflects face 1's ORIGINAL, consistent winding.
+    // `structVersion` did not move either (a raw `faces[fi] = …` element
+    // write bumps neither it nor `loopsStamp`), so `loopsValid()` would
+    // still read true even though `loops` no longer matches `faces`.
+    Mesh subject = openTriPairStand_();
+    subject.faces[1] = [3u, 2u, 0u]; // same corruption, no buildLoops() after
+
+    size_t nSubject = fixOrientationOnce(subject);
+    assert(nSubject == nControl,
+        format("fixFaceOrientation must re-derive loops from the CURRENT "
+            ~ "faces[] via its own ed.buildLoops() precondition, not "
+            ~ "whatever loops the caller last built -- desynced-loops stand "
+            ~ "flipped %d face(s), the freshly-resynced control flipped %d",
+            nSubject, nControl));
+    foreach (fi; 0 .. subject.faces.length)
+        assert(subject.faces[fi][] == control.faces[fi][],
+            "fixFaceOrientation's ed.buildLoops() precondition: desynced-loops "
+            ~ "stand's face " ~ uintToStr(cast(uint)fi) ~ " diverged from the "
+            ~ "freshly-resynced control -- the kernel analyzed STALE loops "
+            ~ "instead of the faces[] actually passed to it");
+}
+
 // Site 11 (task 1902 Stage E) — cleanDegenerateFaces's single rewrite pass:
 // every surviving face's SOLE plane source is its OWN old index, carried by
 // `mesh_planes.rewriteFaces` (`FaceSource(oldOfNew)`, identity over the
