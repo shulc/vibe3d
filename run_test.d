@@ -41,12 +41,12 @@ import std.math      : isNaN;
 // Import std.file fully so the per-worker scratch source-write can call
 // `std.file.write` without colliding with the `write` from std.stdio.
 static import std.file;
-import std.file : exists, isFile, mkdirRecurse, rmdirRecurse,
+import std.file : exists, isFile, isDir, mkdirRecurse, rmdirRecurse,
                   dirEntries, SpanMode, tempDir, readText, getcwd;
 import std.format    : format;
 import std.getopt    : getopt, config;
 import std.parallelism : parallel, totalCPUs;
-import std.path      : baseName, buildPath, stripExtension;
+import std.path      : baseName, buildPath, stripExtension, dirName;
 import std.process   : spawnProcess, spawnShell, wait, tryWait, executeShell,
                        Config, Pid, ProcessException, environment;
 import std.range     : empty;
@@ -260,6 +260,125 @@ string prepareScratchDir(string path) {
 
     mkdirRecurse(path);
     return path;
+}
+
+// ---------------------------------------------------------------------------
+// Disk-space preflight (task 2080)
+// ---------------------------------------------------------------------------
+//
+// THE INCIDENT. A sanitizer night died mid-link:
+//
+//     Error: error writing file '.../worker_N/<test>.o'
+//     /usr/bin/ld: final link failed: No space left on device
+//
+// `worker_N/<test>.o` is exactly this runner's own per-worker scratch
+// (`w.scratch = buildPath(scratchDir, "worker_%d")`, written by
+// `compileTests` below) — under `tempDir()`, which on the affected host is a
+// 32 GiB tmpfs, i.e. RAM. SIX unrelated fixture tests failed identically in
+// the same run, which reads as a code regression and is one exhausted
+// filesystem. This check does not move the scratch root or make lanes clean
+// up after themselves (see `orphanScratchDirs` / `--sweep-scratch` below for
+// the second half) — it removes the DISGUISE: a run that starts against an
+// exhausted filesystem says so, once, with the word "space" in it, before a
+// single test compiles, instead of failing 40 minutes in as red tests.
+//
+// THE FLOOR IS A DECIDED THRESHOLD, NOT A DERIVED ONE, and that distinction
+// is the point: CLAUDE.md's dead-check catalogue is about a threshold
+// DERIVED FROM THE RUN IT JUDGES (I1's `radial <= K1 * baseline` in task
+// 1840, which rotted the moment its own baseline moved). 256 MiB is a flat,
+// host- and run-independent constant — it does not drift when a test suite
+// grows or a host gets faster, and it is not tuned against any run this
+// check has ever measured. It is deliberately far below "enough for a full
+// run" (that depends on -j and which tests) and just above "the filesystem
+// cannot be treated as writable at all": one dmd link for a source-backed
+// test already needs tens of MiB, and every worker shares this filesystem.
+// A run that clears the floor can still exhaust space mid-flight; that
+// failure mode is unchanged by this check — see the task card for what
+// (deliberately) was not decided here.
+enum ulong kMinPreflightFreeBytes = 256UL * 1024 * 1024;
+
+/// Free bytes on the filesystem containing `path`. `path` need not exist —
+/// this climbs to the nearest existing ancestor first, so it works against a
+/// cold checkout's not-yet-created scratch dir. Returns `ulong.max` (never
+/// blocks a run) when the query itself cannot be answered — a permission
+/// error or a path with no existing ancestor is a different problem, and one
+/// this check is not the place to raise.
+ulong freeBytes(string path) {
+    import core.sys.posix.sys.statvfs : statvfs, statvfs_t;
+    import std.string : toStringz;
+
+    string p = path;
+    while (p.length && !exists(p)) {
+        const parent = dirName(p);
+        if (parent == p) break;
+        p = parent;
+    }
+    if (!p.length || !exists(p)) return ulong.max;
+
+    statvfs_t st;
+    if (statvfs(p.toStringz, &st) != 0) return ulong.max;
+    return cast(ulong) st.f_bavail * cast(ulong) st.f_frsize;
+}
+
+string humanBytes(ulong b) {
+    enum double Ki = 1024.0, Mi = Ki * 1024, Gi = Mi * 1024;
+    if (b == ulong.max)   return "unknown";
+    if (b >= cast(ulong)Gi) return format("%.1f GiB", b / Gi);
+    if (b >= cast(ulong)Mi) return format("%.1f MiB", b / Mi);
+    if (b >= cast(ulong)Ki) return format("%.1f KiB", b / Ki);
+    return format("%d B", b);
+}
+
+/// The whole decision, as one pure function: `null` means "proceed", a
+/// non-null string is the refusal message and always contains the word
+/// "space" (the witness this check exists to satisfy — a preflight that only
+/// prints free space is green when there is none). `free == ulong.max` (the
+/// query could not be answered) never refuses: this check must not turn an
+/// unrelated errno into a false "no space" report.
+string spacePreflightMessage(ulong free, ulong floor, string path) {
+    if (free == ulong.max || free >= floor) return null;
+    return format(
+        "no space left: %s has %s free, below the %s floor -- refusing to "
+        ~ "start rather than fail mid-run and disguise it as red tests "
+        ~ "(task 2080)", path, humanBytes(free), humanBytes(floor));
+}
+
+// ---------------------------------------------------------------------------
+// Scratch sweep (task 2080)
+// ---------------------------------------------------------------------------
+//
+// The property this closes: `scratchDirFor` keys a tree by its owning
+// checkout's absolute path (task 1282, above), and `prepareScratchDir` only
+// ever adopts/wipes a LEFTOVER tree the next time something runs from that
+// SAME checkout. Once a lane's worktree is torn down (`task-wt-rm.sh`),
+// nothing ever runs from that path again — so its tree is orphaned
+// permanently, not just until the next run. `task-wt-rm.sh` calls
+// `--sweep-scratch` right after removing a lane's worktree pair, passing the
+// CURRENT `git worktree list` as the live set (which correctly excludes the
+// worktree just removed).
+//
+// The rule is pure and asymmetric on purpose: an entry is swept only if it
+// does NOT match `scratchDirFor(root)` for any given live root. A live
+// worktree's tree can therefore never be swept by construction, not by a
+// runtime check — `--sweep-plan` below proves exactly this, in-memory, with
+// no real filesystem or `--sweep-scratch` invocation involved.
+string[] orphanScratchDirs(string[] tmpEntries, string[] liveRoots) {
+    bool[string] keep;
+    foreach (r; liveRoots) keep[scratchDirFor(r)] = true;
+    string[] orphans;
+    foreach (e; tmpEntries) if (e !in keep) orphans ~= e;
+    return orphans;
+}
+
+/// Best-effort recursive byte total; never throws, never blocks a sweep on a
+/// file that vanishes mid-walk (a live writer racing the scan).
+ulong treeSize(string path) {
+    ulong total;
+    try {
+        foreach (e; dirEntries(path, SpanMode.depth))
+            if (e.isFile) total += e.size;
+    } catch (Exception) {}
+    return total;
 }
 
 // ---------------------------------------------------------------------------
@@ -1528,6 +1647,13 @@ void printSummary(TestResult[] results) {
 
 int main(string[] args) {
     bool verbose, noBuild, keep, staleOk, writeStampOnly, printScratch, checkGate;
+    // task 2080 — see the "Disk-space preflight" / "Scratch sweep" sections
+    // above for what each of these drives.
+    string checkSpacePath;
+    long   spaceFloorMiB = -1;   // -1 = use kMinPreflightFreeBytes
+    bool   sweepScratch;
+    bool   sweepPlan;
+    string[] sweepEntry, sweepLive;
     ushort port = 8080;
     int timeoutSec = -1;   // -1 = not given → per-mode default, resolved below
     // Machine-aware default worker count: scale with the host but stay sane.
@@ -1552,6 +1678,23 @@ int main(string[] args) {
         "check-gate", "run the test-liveness barrier over a directory "
                     ~ "(default tests/) and exit 0/2, building nothing and "
                     ~ "starting no vibe3d",                                     &checkGate,
+        "check-space","(task 2080) check free space at PATH against the "
+                    ~ "preflight floor and exit 0/1, doing nothing else",       &checkSpacePath,
+        "space-floor-mib", "override the space-preflight floor in MiB, for "
+                    ~ "--check-space against a real constrained mount "
+                    ~ "(default: 256)",                                        &spaceFloorMiB,
+        "sweep-scratch", "(task 2080) delete this host's orphaned "
+                    ~ "`vibe3d-tests-*` scratch trees under tempDir() -- "
+                    ~ "positional args are the LIVE worktree roots (e.g. from "
+                    ~ "`git worktree list`); a tree matching one is refused",   &sweepScratch,
+        "sweep-plan", "(task 2080, diagnostic) print, one per line, which of "
+                    ~ "the given --sweep-entry values --sweep-scratch would "
+                    ~ "remove given --sweep-live -- pure, touches no "
+                    ~ "filesystem", &sweepPlan,
+        "sweep-entry","(task 2080, diagnostic) one simulated tempDir() entry "
+                    ~ "for --sweep-plan (repeatable)",                         &sweepEntry,
+        "sweep-live", "(task 2080, diagnostic) one simulated live worktree "
+                    ~ "root for --sweep-plan (repeatable)",                    &sweepLive,
         "p|port",     "HTTP port for vibe3d (default 8080)",                  &port,
         "j|jobs",     "parallel workers — each runs its own vibe3d on a "
                     ~ "private port (default = clamp(cpus/4, 4, 12))",        &j,
@@ -1618,10 +1761,83 @@ int main(string[] args) {
         return 0;
     }
 
+    // --check-space: the real freeBytes()/statvfs query against a real path,
+    // with an overridable floor — the surface a constrained-mount witness
+    // drives (see tests/unit/run_test_space_preflight_test.d). Not the
+    // preflight gate itself (below); a standalone diagnostic.
+    if (checkSpacePath.length) {
+        const floor = spaceFloorMiB >= 0
+            ? cast(ulong) spaceFloorMiB * 1024 * 1024
+            : kMinPreflightFreeBytes;
+        const free = freeBytes(checkSpacePath);
+        if (auto msg = spacePreflightMessage(free, floor, checkSpacePath)) {
+            stderr.writeln(red(msg));
+            return 1;
+        }
+        writefln("--check-space: %s has %s free (floor %s) -- ok",
+                 checkSpacePath, humanBytes(free), humanBytes(floor));
+        return 0;
+    }
+
+    // --sweep-plan: the orphan RULE alone, over caller-supplied strings, no
+    // filesystem touched. This is what proves --sweep-scratch below refuses
+    // a live worktree's tree, without needing a real /tmp scan to prove it.
+    if (sweepPlan) {
+        foreach (o; orphanScratchDirs(sweepEntry, sweepLive)) writeln(o);
+        return 0;
+    }
+
+    // --sweep-scratch: the real thing, run by `task-wt-rm.sh` right after it
+    // removes a lane's worktree pair. Positional args are the live roots.
+    if (sweepScratch) {
+        string[] liveRoots = args[1 .. $];
+        const root = tempDir();
+        string[] entries;
+        try {
+            foreach (e; dirEntries(root, SpanMode.shallow))
+                if (e.isDir && baseName(e.name).startsWith(kScratchPrefix))
+                    entries ~= e.name;
+        } catch (Exception ex) {
+            stderr.writeln(red("--sweep-scratch: could not list " ~ root ~ ": " ~ ex.msg));
+            return 1;
+        }
+        auto orphans = orphanScratchDirs(entries, liveRoots);
+        ulong freed;
+        int removed;
+        foreach (o; orphans) {
+            const sz = treeSize(o);
+            if (tryRemoveTree(o)) {
+                removed++;
+                freed += sz;
+                writeln("  removed ", o, " (~", humanBytes(sz), ")");
+            } else {
+                stderr.writeln(yellow("  could not remove (busy?): " ~ o));
+            }
+        }
+        writefln("--sweep-scratch: %d live root(s), %d orphaned tree(s) found, "
+                ~ "%d removed, ~%s freed",
+                liveRoots.length, orphans.length, removed, humanBytes(freed));
+        return 0;
+    }
+
     if (j < 1) {
         stderr.writeln(red("-j must be >= 1"));
         return 2;
     }
+
+    // Disk-space preflight (task 2080), MANDATORY on every real run — before
+    // the build, before the run lock, before anything expensive. See the
+    // "Disk-space preflight" section above for the incident this guards
+    // against: this is the same tempDir() that `prepareScratchDir` and every
+    // worker's `dmd` compile below write into.
+    {
+        const root = tempDir();
+        if (auto msg = spacePreflightMessage(freeBytes(root), kMinPreflightFreeBytes, root)) {
+            stderr.writeln(red(msg));
+            return 1;
+        }
+    }
+
     keepVibe = keep;
     useColor = isatty(STDOUT_FILENO) != 0;
 

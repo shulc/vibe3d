@@ -188,6 +188,63 @@ void fail(string msg) {
 }
 void ok(string msg) { writeln("lane.d: ok: ", msg); }
 
+// ---------------------------------------------------------------------------
+// Disk-space preflight (task 2080) — mirrors run_test.d's check of the same
+// name; kept as a separate small copy here (this file is a standalone rdmd
+// script like run_test.d, with no shared module between them, matching how
+// every other helper in this file — fail/ok/run/runStdout — is its own copy
+// rather than an import). See run_test.d's "Disk-space preflight" comment for
+// the incident and why 256 MiB is a flat, run-independent floor rather than
+// a threshold derived from anything this lane measures.
+// ---------------------------------------------------------------------------
+enum ulong kMinPreflightFreeBytes = 256UL * 1024 * 1024;
+
+ulong freeBytes(string path) {
+    import core.sys.posix.sys.statvfs : statvfs, statvfs_t;
+    string p = path;
+    while (p.length && !exists(p)) {
+        const parent = dirName(p);
+        if (parent == p) break;
+        p = parent;
+    }
+    if (!p.length || !exists(p)) return ulong.max;
+    statvfs_t st;
+    if (statvfs(p.toStringz, &st) != 0) return ulong.max;
+    return cast(ulong) st.f_bavail * cast(ulong) st.f_frsize;
+}
+
+string humanBytes(ulong b) {
+    enum double Ki = 1024.0, Mi = Ki * 1024, Gi = Mi * 1024;
+    if (b == ulong.max)     return "unknown";
+    if (b >= cast(ulong)Gi) return format("%.1f GiB", b / Gi);
+    if (b >= cast(ulong)Mi) return format("%.1f MiB", b / Mi);
+    if (b >= cast(ulong)Ki) return format("%.1f KiB", b / Ki);
+    return format("%d B", b);
+}
+
+/// `null` => proceed; else the refusal message, always containing "space".
+string spacePreflightMessage(ulong free, ulong floor, string path) {
+    if (free == ulong.max || free >= floor) return null;
+    return format(
+        "no space left: %s has %s free, below the %s floor -- refusing to "
+        ~ "start rather than fail mid-run and disguise it as red tests "
+        ~ "(task 2080)", path, humanBytes(free), humanBytes(floor));
+}
+
+/// `check-space <path> [floorMiB]` — the same real, un-mocked surface
+/// run_test.d exposes, for a constrained-mount witness to drive against this
+/// lane's own binary.
+void cmdCheckSpace(string[] args) {
+    if (args.length < 1) fail("check-space <path> [floor-mib]");
+    const path  = args[0];
+    const floor = args.length > 1
+        ? cast(ulong) args[1].to!ulong * 1024 * 1024
+        : kMinPreflightFreeBytes;
+    const free = freeBytes(path);
+    if (auto msg = spacePreflightMessage(free, floor, path)) fail(msg);
+    ok(format("%s free at %s (floor %s)", humanBytes(free), path, humanBytes(floor)));
+}
+
 string run(string[] argv, string[string] env = null, bool mustSucceed = true) {
     auto r = execute(argv, env);
     if (mustSucceed && r.status != 0)
@@ -269,6 +326,19 @@ void cmdPreflight(string[] args = null) {
     // flag has to be passed EXPLICITLY by a caller that has no fuzz step; it
     // is not a default.
     const skipFuzzer = args.canFind("--no-fuzzer");
+    // (0) Disk space, tempDir() (task 2080). This is `run_test.d`'s own
+    // scratch tree — the incident this guards was a sanitizer night that
+    // died mid-link writing INTO it (`worker_N/<test>.o`, ENOSPC), with six
+    // unrelated fixture tests failing identically in the same run. Checked
+    // first, before any LDC build, so a starved host says so in one line
+    // instead of forty minutes into the "full test suite" step below.
+    {
+        const root = tempDir();
+        if (auto msg = spacePreflightMessage(freeBytes(root), kMinPreflightFreeBytes, root))
+            fail(msg);
+        ok(format("%s free at %s (tempDir, floor %s)",
+                  humanBytes(freeBytes(root)), root, humanBytes(kMinPreflightFreeBytes)));
+    }
     // (1) The compiler exists and is new enough.
     auto ldc = ldcPath();
     if (!exists(ldc))
@@ -327,6 +397,19 @@ void cmdPreflight(string[] args = null) {
     // configuration, and read the STRUCTURED buildSettings rather than
     // grepping the raw text.
     auto env = laneEnv();
+    // Disk space, VIBE3D_SAN_DUB_HOME (task 2080) — every `dub build`/`dub
+    // test` this lane runs below writes here (laneEnv() above already
+    // refused to proceed if it were unset), so it is checked alongside
+    // tempDir() rather than left to surface as a build failure later.
+    {
+        const dubHome = environment.get("VIBE3D_SAN_DUB_HOME", "");
+        if (dubHome.length) {
+            if (auto msg = spacePreflightMessage(freeBytes(dubHome), kMinPreflightFreeBytes, dubHome))
+                fail(msg);
+            ok(format("%s free at VIBE3D_SAN_DUB_HOME=%s (floor %s)",
+                      humanBytes(freeBytes(dubHome)), dubHome, humanBytes(kMinPreflightFreeBytes)));
+        }
+    }
     auto desc = runStdout([ "dub", "describe", "--build=release",
                             "--compiler=" ~ ldc, "--config=modeling" ], env);
     auto j = parseJSON(desc);
@@ -2383,6 +2466,7 @@ int main(string[] args) {
                      ~ "  1410: preflight | preflight-release | build | stage |\n"
                      ~ "        verify | boot | restore-dmd-archives | teardown |\n"
                      ~ "        fuzzer-path\n"
+                     ~ "  2080: check-space <path> [floor-mib]\n"
                      ~ "  1411: preflight-tsan | window-guard <event> [force] |\n"
                      ~ "        tsan-selfcheck | tsan-shutdown | tsan-sweep |\n"
                      ~ "        tsan-bridge | tsan-verdict <scenario...> |\n"
@@ -2398,6 +2482,7 @@ int main(string[] args) {
                 writeln(f);
             }                                                        break;
         case "preflight":         cmdPreflight(args[2 .. $]);        break;
+        case "check-space":       cmdCheckSpace(args[2 .. $]);       break;
         case "preflight-release": cmdPreflightRelease();             break;
         case "build":             cmdBuild(args[2]);                 break;
         case "stage":             cmdStage(args[2]);                 break;

@@ -131,6 +131,12 @@ jobs:
         ls -ld tools/local || true
 
     - name: 'Preflight (fails the job, by design)'
+      # As of task 2080 this ALSO checks free space on tempDir() and on
+      # VIBE3D_SAN_DUB_HOME, first, before the LDC/DISPLAY/fuzzer checks: an
+      # exhausted `/tmp` (32 GiB tmpfs = RAM on the host this was measured on)
+      # is what turned into six unrelated red fixture tests instead of an
+      # obvious "no space" refusal. `./run_test.d` carries the matching check
+      # for the ordinary suite runs below.
       run: rdmd tools/sanitizer/lane.d preflight
 
     - name: 'Preflight: the RELEASE binary does not contain the fault injector'
