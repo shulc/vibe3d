@@ -1006,7 +1006,11 @@ string[2][] choicesOf(const ref Param p)
 //   import params : injectParamsInto;
 //   injectParamsInto(cmd.params(), pj);
 //
-// Throws on malformed JSON (wrong type, bad Vec3 array, unknown enum tag).
+// Throws on malformed JSON (wrong type, bad Vec3 array, unknown enum tag), and
+// on a numeric value the gate refuses — unless the caller asked for
+// `injectParamsTolerant`, which drops that one param instead. Which of the two
+// a route should use is a trust-boundary question, answered in the
+// `InjectPolicy` header further down.
 //
 // Opt-in bound enforcement (task 0314): an Int/Float Param marked
 // `.enforceBounds()` has its JSON-injected value clamped to the declared
@@ -1049,8 +1053,83 @@ string[2][] choicesOf(const ref Param p)
 // bound anyway (radius's limit depends on sizeX/Y/Z).
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// A FILE AND A COMMAND PARAMETER ARE NOT THE SAME TRUST BOUNDARY (task 3150).
+//
+// The numeric gate above refuses a value with no legal number to land on, and
+// that is right for a value a CALLER just typed: `tool.attr <id> SX zzz` is a
+// typo, refusing it costs the caller one retry, and substituting a number for
+// it silently sets the scale to something nobody asked for.
+//
+// It is wrong for a value read out of a STORED DOCUMENT. The same refusal on
+// that route throws away the user's whole file over one corrupt scalar — and
+// `.v3d` is the native format, so it is the likeliest carrier of a poisoned
+// value in the tree (a file from a build that predates a guard, a hand edit,
+// an exporter that never saw the band; `io/native.d`'s own R7 note says so).
+// A loader that answers "this document is unreadable" because one of twelve
+// item-transform channels says `"nope"` is the second kind of undiscriminating
+// check this project pays for: it goes red on input that is very nearly
+// correct, and the user loses the ninety-nine values that were fine.
+//
+// So the policy is chosen BY THE CALLER, and the default is the strict one, so
+// that a route added later is born refusing rather than born permissive:
+//
+//   * `injectParamsInto`      — REFUSE. Every wire route (six live call sites:
+//     `/api/command`, `tool.attr`, `tool.set`, `layer.attr`'s two writes, the
+//     keymap argstring) plus the in-tree YAML presets, whose own contract is
+//     to fail loudly at startup rather than activate with wrong defaults.
+//   * `injectParamsTolerant`  — KEEP THE PRIOR VALUE and report the name. One
+//     live call site, `io/native.d`'s `.v3d` channel block.
+//
+// The tolerant arm covers exactly the NUMERIC gate — the four kinds that route
+// through `paramGateFloat`/`paramGateInt`. It writes NOTHING for the offending
+// param, so the field keeps whatever the loader already put there, which for a
+// fresh item is its identity (`pos` 0, `scl` 1) — never a substituted 0, which
+// is what made an unreadable `scl` land on a SINGULAR item transform before.
+// A wrong JSON TYPE for a String / Vec3 / enum tag still rejects the document
+// on both routes: a channel whose shape is wrong says the file was written
+// against a different schema, which is a different claim from one bad number,
+// and `io/native.d` decision 6 already settled it. Widening tolerance to those
+// is a separate decision with its own witness.
+// ---------------------------------------------------------------------------
+
+/// See the section header above. `Refuse` is the default everywhere.
+enum InjectPolicy {
+    /// Throw, writing nothing — the caller typed this value and must hear so.
+    Refuse,
+    /// Skip that one param, leaving the field at the value it already holds,
+    /// and record its name for the caller to report.
+    KeepPriorValue,
+}
+
 void injectParamsInto(Param[] params, ref JSONValue pj)
 {
+    injectParamsImpl(params, pj, InjectPolicy.Refuse, null);
+}
+
+/// The stored-document form of `injectParamsInto`: a numeric channel with no
+/// legal number to land on is DROPPED rather than refused, and its name is
+/// returned so the loader can warn about exactly what it could not read.
+/// Returns the dropped names in encounter order; empty means a clean read.
+string[] injectParamsTolerant(Param[] params, ref JSONValue pj)
+{
+    string[] dropped;
+    injectParamsImpl(params, pj, InjectPolicy.KeepPriorValue, &dropped);
+    return dropped;
+}
+
+private void injectParamsImpl(Param[] params, ref JSONValue pj,
+                              InjectPolicy policy, string[]* dropped)
+{
+    // Record a value the gate refused and answer whether the caller should
+    // carry on to the next param instead of throwing.
+    bool tolerate(string what)
+    {
+        if (policy != InjectPolicy.KeepPriorValue) return false;
+        if (dropped !is null) *dropped ~= what;
+        return true;
+    }
+
     foreach (ref p; params) {
         auto jp = p.name in pj.object;
         if (jp is null) continue;
@@ -1071,17 +1150,21 @@ void injectParamsInto(Param[] params, ref JSONValue pj)
                 break;
             case Param.Kind.Int: {
                 int iv;
-                if (!paramGateInt(p, _jsonNum(*jp), iv))
+                if (!paramGateInt(p, _jsonNum(*jp), iv)) {
+                    if (tolerate(p.name)) break;
                     throw new Exception(
                         "param '" ~ p.name ~ "' is not a representable integer");
+                }
                 *p.iptr = iv;
                 break;
             }
             case Param.Kind.Float: {
                 float fv;
-                if (!paramGateFloat(p, _jsonNum(*jp), fv))
+                if (!paramGateFloat(p, _jsonNum(*jp), fv)) {
+                    if (tolerate(p.name)) break;
                     throw new Exception(
                         "param '" ~ p.name ~ "' must be a finite number");
+                }
                 *p.fptr = fv;
                 break;
             }
@@ -1114,9 +1197,11 @@ void injectParamsInto(Param[] params, ref JSONValue pj)
                 float vx, vy, vz;
                 if (!paramGateFloat(p, _jsonNum(a[0]), vx)
                  || !paramGateFloat(p, _jsonNum(a[1]), vy)
-                 || !paramGateFloat(p, _jsonNum(a[2]), vz))
+                 || !paramGateFloat(p, _jsonNum(a[2]), vz)) {
+                    if (tolerate(p.name)) break;
                     throw new Exception(
                         "param '" ~ p.name ~ "' must be a finite number");
+                }
                 *p.vptr = Vec3(vx, vy, vz);
                 break;
             case Param.Kind.IntEnum:
@@ -1178,6 +1263,10 @@ void injectParamsInto(Param[] params, ref JSONValue pj)
                 import std.conv : to;
                 Vec3[] result;
                 result.length = jp.array.length;
+                // `dropWhole` rather than a bare `break`: this `break` would
+                // leave the INNER foreach, not the switch case, and the write
+                // below would then publish a half-filled array.
+                bool dropWhole = false;
                 foreach (i, ref vJson; jp.array) {
                     if (vJson.type != JSONType.array || vJson.array.length != 3)
                         throw new Exception(
@@ -1188,12 +1277,18 @@ void injectParamsInto(Param[] params, ref JSONValue pj)
                     float ax, ay, az;
                     if (!paramGateFloat(p, _jsonNum(vJson.array[0]), ax)
                      || !paramGateFloat(p, _jsonNum(vJson.array[1]), ay)
-                     || !paramGateFloat(p, _jsonNum(vJson.array[2]), az))
+                     || !paramGateFloat(p, _jsonNum(vJson.array[2]), az)) {
+                        if (tolerate(p.name ~ "[" ~ i.to!string ~ "]")) {
+                            dropWhole = true;
+                            break;
+                        }
                         throw new Exception(
                             "param '" ~ p.name ~ "[" ~ i.to!string
                             ~ "]' must be a finite number");
+                    }
                     result[i] = Vec3(ax, ay, az);
                 }
+                if (dropWhole) break;
                 *p.v3aPtr = result;
                 break;
             }
@@ -1221,7 +1316,9 @@ void injectParamsInto(Param[] params, ref JSONValue pj)
 // representable integer" — the exact refusal a hand-typed `nan` token gets on
 // the same route. A non-numeric token is just another value with no legal
 // number to land on; REFUSE, never substitute (the policy `paramGateFloat`
-// itself and `document.sanitizeItemXform` already apply).
+// itself and `document.sanitizeItemXform` already apply). What a refusal MEANS
+// then depends on the route: a throw at the wire edge, a dropped channel on the
+// `.v3d` read — see the `InjectPolicy` header below (task 3150).
 private double _jsonNum(ref JSONValue v)
 {
     if (v.type == JSONType.integer)  return cast(double)v.integer;

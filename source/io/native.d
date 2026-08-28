@@ -13,7 +13,7 @@ import document : Document, Layer, ItemXform, sanitizeItemXform,
                   ItemKind, ImageData, ImagePlaneData,
                   kindInfo, kindFromToken, tokenOf;
 import layer_params : LayerPropsProvider;
-import params   : Param, paramToJson, injectParamsInto;
+import params   : Param, paramToJson, injectParamsTolerant;
 import io.image_path : storePathFor, resolveStoredPath, refreshImageMeta;
 import seltype  : SelMode;
 import log : logWarn, logInfo;
@@ -750,9 +750,12 @@ private JSONValue channelsToJson(const(Layer) layer)
 ///   * `Kind.IntEnum` has an explicit documented fallback — an unmatched live
 ///     value is written as a RAW INTEGER.
 ///
-/// `injectParamsInto` — the reader's only channel writer — THROWS on both, and
-/// that throw is caught by `readV3d`'s outer backstop, which rejects the WHOLE
-/// DOCUMENT. So a value that never went through a validating write path (a
+/// `injectParamsTolerant` — the reader's only channel writer — THROWS on both,
+/// and that throw is caught by `readV3d`'s outer backstop, which rejects the
+/// WHOLE DOCUMENT. Its tolerance (task 3150) covers the NUMERIC gate only and
+/// deliberately stops short of the two enum kinds, for the reason the next
+/// paragraph gives: dropping an unreadable NUMBER costs one channel, while
+/// dropping an undeclared TAG would silently rewrite a foreign document. So a value that never went through a validating write path (a
 /// direct field assignment, a D enum member with no table entry) would produce
 /// a file that saves without complaint and then cannot be opened. Task 0616
 /// Ph6's own N5 fixture (1) is precisely such a file, hand-written; nothing
@@ -1224,7 +1227,24 @@ bool readV3d(string path, ref Document document)
                     // this runs BEFORE the atomic swap, which is what makes a
                     // bad channel value a clean reject instead of a
                     // half-committed document (decision 6).
-                    injectParamsInto(writable, *cp);
+                    //
+                    // The TOLERANT form (task 3150), because decision 6 was
+                    // about the document's SHAPE and this is a route into it
+                    // for one scalar. A numeric channel with no legal number
+                    // to land on — `"pos.x":"nope"`, a NaN, `1e39` (finite
+                    // JSON, infinite float) — is DROPPED and named, and the
+                    // component keeps the identity written a few lines above.
+                    // The strict `injectParamsInto` throws there instead, and
+                    // that refusal is right at the wire edge and wrong here:
+                    // it loses a whole document over one corrupt scalar.
+                    // Dropping is also strictly better than the `0.0` this
+                    // route substituted before task 3021 — that 0 is a
+                    // SINGULAR `scl`, which the band repair below then had to
+                    // rescue. See params.d's InjectPolicy header.
+                    foreach (badName; injectParamsTolerant(writable, *cp))
+                        v3dWarn(format("layer %d channel \"%s\": value is not "
+                            ~ "a number this channel can hold; the channel "
+                            ~ "keeps its default", li, badName));
                 } else {
                     v3dWarn(format("ignoring layer %d \"channels\": not an object", li));
                 }
@@ -3238,7 +3258,8 @@ unittest {
     doc.setActive(0);
 
     // The only unvalidated route to the field. `layer.attr` rejects an
-    // undeclared tag and `injectParamsInto` throws on one, which is precisely
+    // undeclared tag and both injector forms throw on one (task 3150 widened
+    // the reader's tolerance to unreadable NUMBERS only), which is precisely
     // why this state is not reachable through them.
     clip.imageOrNull().colorspace = "not-a-real-tag";
     {

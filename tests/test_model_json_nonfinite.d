@@ -11,8 +11,10 @@
 // WHY THE TESTS POISON THE MESH THEMSELVES. The biggest risk in this file is
 // a test that is green because nothing broke. No existing test puts a
 // non-number into the geometry, so the parse that every existing test already
-// performs is never exercised against this failure. T1 and T6 therefore START
-// by creating the corruption; run against the unfixed tree they fail.
+// performs is never exercised against this failure. Every cell below except
+// T0, T5 and T4' therefore STARTS by creating the corruption; run against the
+// unfixed tree they fail. T0 is the mirror image — it starts by trying to
+// create it and asserts that it cannot.
 //
 // WHY THERE ARE TWO POISON PATHS. The card asked whether a non-number can
 // reach `mesh.vertices` other than through a command parameter, because if it
@@ -23,6 +25,22 @@
 // face indices and the item transform. `1e39` is legal JSON and
 // `cast(float)1e39` is infinity. T6 drives exactly that path, and it is the
 // case that stays red if someone "fixes" this by clamping `prim.cube`.
+//
+// THE PARAMETER PATH IS NOW CLOSED, AND THAT PREDICTION IS WHY (task 3150).
+// Task 3020's parameter gate refuses a value the target type cannot hold —
+// `sizeX:1e39` is a finite JSON double and an infinite `float`, so
+// `paramGateFloat` narrows, sees the infinity and refuses. `prim.cube` answers
+// `status:error` and builds nothing. Every cell below that opened with
+// `poisonViaParam` was therefore asserting against a defect that no longer
+// exists: T1 failed on its own `must still answer ok`, and T2/T3/T7 were
+// invisible behind it (druntime stops a module at the first failed assert)
+// while being just as vacuous — they would have read a healthy cube.
+//
+// So the poison moved to the path that is still open, exactly the one this
+// file predicted would survive a `prim.cube` clamp, and the closed one became
+// T0: the refusal is now ASSERTED, so the defect cannot quietly reopen. A file
+// full of cells that can no longer fail is a checkpoint nobody can fail; the
+// repair is to re-aim them at a live poison, not to delete the claims.
 //
 // TRANSPORT NOTE. The poison must be delivered as a JSON params object, NOT as
 // an argstring: the argstring number grammar (source/argstring.d) has no
@@ -73,21 +91,108 @@ private void reset() {
     post(kBase ~ "/api/reset", "");
 }
 
-/// Drive `prim.cube` with an out-of-float-range size, as JSON params.
+/// Drive `prim.cube` with an out-of-float-range size, as JSON params. Since
+/// task 3020's parameter gate this REFUSES — T0 is the cell that says so.
 private JSONValue poisonViaParam() {
     return postCmd(`{"id":"prim.cube","params":{"sizeX":1e39}}`);
 }
 
+/// Put an infinite coordinate into the LOADED DOCUMENT, through the `.v3d`
+/// reader — the poison path that is still open, and the only one left.
+///
+/// Save a healthy cube, substitute exactly ONE coordinate in its `vertices`
+/// block, load it back. Built from a file that is KNOWN to load because a
+/// rejected fixture leaves a healthy mesh, and a red cell on a healthy mesh is
+/// indistinguishable from the serialiser being broken. The fixture is verified
+/// off disk before it is used, so a caller's failure cannot be this helper's.
+///
+/// Returns the fixture's own vertex count, so callers assert against the mesh
+/// that actually loaded rather than a hard-coded 8.
+private size_t poisonViaFile(string path) {
+    if (exists(path)) remove(path);
+    reset();
+
+    auto sv = postCmd(format(`{"id":"file.save","params":{"path":"%s"}}`, path));
+    assert(sv["status"].str == "ok", "poison fixture, file.save: " ~ sv.toString);
+    assert(exists(path), "file.save answered ok but wrote no file at " ~ path);
+
+    string txt = readText(path);
+    const mi = txt.indexOf(`"mesh"`);
+    assert(mi >= 0, "the saved document has no mesh block");
+    const vi = txt.indexOf(`"vertices"`, mi);
+    assert(vi >= 0, "the saved mesh has no vertices block");
+    const ci = txt.indexOf("-0.5", vi);
+    assert(ci >= 0, "expected the unit cube's first vertex to read -0.5");
+    write(path, txt[0 .. ci] ~ "1e39" ~ txt[ci + 4 .. $]);
+
+    // The substitution is exactly what we think it is, checked against the
+    // file rather than assumed: vertex 0 x poisoned, y untouched.
+    auto onDisk    = parseJSON(readText(path));
+    auto fixVerts  = onDisk["layers"][0]["mesh"]["vertices"].array;
+    auto dv        = fixVerts[0].array;
+    assert(dv[0].floating == 1e39, "the fixture's x was not substituted");
+    assert(dv[1].floating == -0.5, "the fixture's y must be untouched");
+    assert(fixVerts.length >= 8,
+        format("the fixture must be a real mesh, it has %d vertices",
+               fixVerts.length));
+
+    reset();
+    auto ld = postCmd(format(`{"id":"file.load","params":{"path":"%s"}}`, path));
+    assert(ld["status"].str == "ok",
+        "the fixture must LOAD; a rejected fixture leaves a healthy mesh and "
+      ~ "a red cell for the wrong reason: " ~ ld.toString);
+    return fixVerts.length;
+}
+
 // ---------------------------------------------------------------------------
-// T1 — parseability. THE defect.
+// T0 — the INVERTED cell: the parameter route no longer poisons anything.
+//
+// This cell used to read `prim.cube with sizeX:1e39 must still answer ok (it
+// does — that is half of what makes this defect invisible)`. It was written to
+// DOCUMENT a defect: a size no `float` can hold was accepted, answered ok in
+// 6 ms, and put an infinity into the mesh. Task 3020's parameter gate closed
+// it — `paramGateFloat` narrows the finite JSON double `1e39` to a `float`,
+// sees an infinity, and refuses before anything is built — so the assertion
+// failed BECAUSE THE BUG WAS GONE, which is the one way a test failure is good
+// news.
+//
+// It is inverted rather than deleted. The claim it made is still the thing
+// worth watching; only its sign changed, and an inverted cell is the guard
+// that keeps the defect closed. Three assertions, because "it answered error"
+// alone would also be satisfied by `prim.cube` being broken outright: the
+// refusal must NAME the parameter, and the mesh must be the untouched cube.
 // ---------------------------------------------------------------------------
 unittest {
     reset();
     auto cmd = poisonViaParam();
-    assert(cmd["status"].str == "ok",
-        format("prim.cube with sizeX:1e39 must still answer ok (it does — "
-             ~ "that is half of what makes this defect invisible): %s",
-               cmd.toString));
+    assert(cmd["status"].str == "error",
+        format("prim.cube with sizeX:1e39 must be REFUSED at the parameter "
+             ~ "gate — 1e39 is a finite double and an infinite float, and "
+             ~ "there is no legal size for it to land on: %s", cmd.toString));
+    assert(cmd["message"].str.indexOf("sizeX") >= 0,
+        format("the refusal must name the offending parameter, or the caller "
+             ~ "cannot act on it: %s", cmd.toString));
+
+    // Nothing was built and nothing was poisoned — a refusal that half-applied
+    // would be worse than the defect it replaced.
+    auto body_ = parseJSON(rawGet("/api/model"));
+    assert(body_["vertexCount"].integer == 8,
+        format("the refused command must leave the reset cube alone, got %s",
+               body_["vertexCount"].toString));
+    assert(body_["nonFinite"]["count"].integer == 0,
+        "a refused command must poison nothing: "
+      ~ body_["nonFinite"].toString);
+
+    reset();
+}
+
+// ---------------------------------------------------------------------------
+// T1 — parseability. THE defect, driven by the poison path that is still open.
+// ---------------------------------------------------------------------------
+unittest {
+    const path = "/tmp/vibe3d-1550-parse-" ~ portTag() ~ ".v3d";
+    scope(exit) { if (exists(path)) remove(path); reset(); }
+    poisonViaFile(path);
 
     const raw = rawGet("/api/model");
 
@@ -109,8 +214,9 @@ unittest {
 // T2 — honesty. Valid JSON is not the same thing as truthful JSON.
 // ---------------------------------------------------------------------------
 unittest {
-    reset();
-    poisonViaParam();
+    const path = "/tmp/vibe3d-1550-honesty-" ~ portTag() ~ ".v3d";
+    scope(exit) { if (exists(path)) remove(path); reset(); }
+    poisonViaFile(path);
 
     auto body_ = parseJSON(rawGet("/api/model"));
     auto verts = body_["vertices"].array;
@@ -132,9 +238,9 @@ unittest {
 
     // THIS is trap 1 of the card, and the reason T1 alone is not enough: a
     // serialiser that printed `0` would make T1 pass and would make the mesh
-    // read as plausible-but-wrong. `prim.cube` with an infinite sizeX builds
-    // its walls at `cen ± sizeX/2`, so a `0`-substituting serialiser would
-    // report a degenerate cube sitting at the origin rather than a hole.
+    // read as plausible-but-wrong — a cube whose corner sits at the origin
+    // instead of a hole where a coordinate should be. Exactly ONE component of
+    // the fixture is poisoned, so the count below is a wide margin by design.
     assert(zeros < verts.length * 3,
         "every component read as 0 — a serialiser that substitutes 0 for a "
       ~ "non-number produces valid JSON that LIES about where the geometry is");
@@ -146,8 +252,9 @@ unittest {
 // T3 — the signal, on a damaged mesh.
 // ---------------------------------------------------------------------------
 unittest {
-    reset();
-    poisonViaParam();
+    const path = "/tmp/vibe3d-1550-signal-" ~ portTag() ~ ".v3d";
+    scope(exit) { if (exists(path)) remove(path); reset(); }
+    poisonViaFile(path);
 
     auto body_ = parseJSON(rawGet("/api/model"));
     assert("nonFinite" in body_.object,
@@ -166,10 +273,12 @@ unittest {
     assert(first["component"].integer == 0,
         "the poisoned axis is X, i.e. component 0: " ~ first.toString);
 
-    // The SIGN is deliberately not pinned. `buildCuboidParametric` walls the
-    // box at `cen ± sizeX/2`, so which of ±inf is written first is a property
-    // of that builder's vertex order, not of this contract. Pinning a guessed
-    // sign is a test that goes red on correct code.
+    // The SIGN is deliberately not pinned. The fixture substitutes `1e39` for
+    // a `-0.5`, so today it reads `inf`; but which sign a poisoned coordinate
+    // carries is a property of the fixture, not of this contract, and pinning
+    // it would make a harmless change to the fixture read as a broken
+    // serialiser. Pinning a guessed sign is a test that goes red on correct
+    // code.
     const v = first["value"].str;
     assert(v == "inf" || v == "-inf",
         format("`first.value` must report the offending value as a string, "
@@ -216,63 +325,27 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     const path = tmpV3dPath();
-    if (exists(path)) remove(path);
     scope(exit) { if (exists(path)) remove(path); reset(); }
 
-    // The reset scene IS the healthy cube; do not add a second `prim.cube`
-    // on top of it. (An earlier draft did, and this test's own positive
-    // control 2 caught it: `prim.cube` APPENDS, so the fixture was a
-    // 16-vertex two-cube mesh while the check expected 8.)
-    reset();
-
-    auto sv = postCmd(format(`{"id":"file.save","params":{"path":"%s"}}`, path));
-    assert(sv["status"].str == "ok", "file.save: " ~ sv.toString);
-    assert(exists(path), "file.save answered ok but wrote no file at " ~ path);
-
-    // Exactly ONE substitution, anchored inside the mesh's own `vertices`
-    // block, so what distinguishes this file from a loadable one is a single
-    // coordinate and nothing else.
-    string txt = readText(path);
-    const mi = txt.indexOf(`"mesh"`);
-    assert(mi >= 0, "the saved document has no mesh block");
-    const vi = txt.indexOf(`"vertices"`, mi);
-    assert(vi >= 0, "the saved mesh has no vertices block");
-    const ci = txt.indexOf("-0.5", vi);
-    assert(ci >= 0, "expected the unit cube's first vertex to read -0.5");
-    write(path, txt[0 .. ci] ~ "1e39" ~ txt[ci + 4 .. $]);
-
-    // The substitution must be exactly what we think it is, checked against
-    // the file rather than assumed: vertex 0 x poisoned, y untouched.
-    auto onDisk = parseJSON(readText(path));
-    auto fixVerts = onDisk["layers"][0]["mesh"]["vertices"].array;
-    auto dv       = fixVerts[0].array;
-    assert(dv[0].floating == 1e39, "the fixture's x was not substituted");
-    assert(dv[1].floating == -0.5, "the fixture's y must be untouched");
-
-    // The expected vertex count is read OUT OF THE FIXTURE, not hard-coded:
-    // that is what "the mesh that loaded is the mesh we wrote" actually
-    // claims, and it survives a change to what `/api/reset` builds.
-    immutable size_t fixtureVerts = fixVerts.length;
-    assert(fixtureVerts >= 8,
-        format("the fixture must be a real mesh, it has %d vertices",
-               fixtureVerts));
-
-    // --- positive control 1: the document actually loads -------------------
-    reset();
-    auto ld = postCmd(format(`{"id":"file.load","params":{"path":"%s"}}`, path));
-    assert(ld["status"].str == "ok",
-        "the fixture must LOAD; a rejected fixture leaves a healthy mesh and "
-      ~ "a red T6 for the wrong reason: " ~ ld.toString);
+    // The fixture, its on-disk verification and the "it really loads"
+    // positive control all live in `poisonViaFile` now — T1/T2/T3/T7 need the
+    // same poison since the parameter route closed, and one copy is one place
+    // for it to be wrong. What stays here is what is specific to T6: the claim
+    // that this SECOND path raises the same signal as the first one did.
+    immutable size_t fixtureVerts = poisonViaFile(path);
 
     auto body_ = parseJSON(rawGet("/api/model"));
 
-    // --- positive control 2: it is the fixture's mesh, not a leftover ------
+    // --- positive control: it is the fixture's mesh, not a leftover -------
+    // The expected count is read OUT OF THE FIXTURE, not hard-coded: that is
+    // what "the mesh that loaded is the mesh we wrote" actually claims, and it
+    // survives a change to what `/api/reset` builds.
     assert(body_["vertexCount"].integer == cast(long) fixtureVerts,
         format("the loaded document must be the fixture's own mesh (%d "
              ~ "vertices), got %s", fixtureVerts,
                body_["vertexCount"].toString));
 
-    // --- positive control 3: a FINITE component of the same vertex still
+    // --- positive control: a FINITE component of the same vertex still
     //     reads as the number it was. Without this, an empty or all-null
     //     body would satisfy everything below.
     auto v0 = body_["vertices"][0].array;
@@ -317,9 +390,13 @@ unittest {
     if (exists(path)) remove(path);
     scope(exit) { if (exists(path)) remove(path); reset(); }
 
-    reset();
-    poisonViaParam();
+    const src = "/tmp/vibe3d-1550-savesrc-" ~ portTag() ~ ".v3d";
+    scope(exit) if (exists(src)) remove(src);
+    poisonViaFile(src);
 
+    // Deliberately a DIFFERENT path from the one just loaded: the refusal is a
+    // property of the geometry, not of the destination, and a save-over-source
+    // could refuse for a file-handling reason instead of the one under test.
     auto sv = postCmd(format(`{"id":"file.save","params":{"path":"%s"}}`, path));
     assert(sv["status"].str != "ok",
         "saving a mesh with a non-finite vertex must FAIL, loudly. A quiet "

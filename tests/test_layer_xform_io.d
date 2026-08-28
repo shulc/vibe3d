@@ -28,9 +28,12 @@
 //   4. version gate: the previous format version (v7) is rejected cleanly;
 //   5. multi-layer: two items carry distinct transforms that round-trip
 //      independently (no cross-item aliasing);
-//   6. a channel value that is not a number degrades that ONE component and
-//      still loads — and a degenerate `scl` is repaired to the band floor
-//      rather than left singular.
+//   6. a channel value with no legal number to land on degrades that ONE
+//      component and still loads;
+//   7. a READABLE but degenerate `scl` is repaired to the band floor rather
+//      than left singular — the other half of 6, and a different mechanism;
+//   8. the WIRE edge on the very same channel still REFUSES, so the tolerance
+//      in 6 is scoped to the file and has not leaked into `layer.attr`.
 
 import std.net.curl;
 import std.json;
@@ -255,25 +258,39 @@ unittest { // 5. multi-layer: two items carry distinct transforms, no bleed
     assertChannelTriple(xb, "pivot", [5.0, 6.0, 7.0], "B.pivot");
 }
 
-unittest { // 6. a non-numeric channel value degrades ONE component, still loads
-    // `pos.x` is a string and `scl.y` is `null`. Both are numbers the param
-    // codec cannot read, so both fall to 0 — and 0 is a legal position but a
-    // SINGULAR scale, which the reader's band repair must lift to the floor.
+unittest { // 6. an unreadable channel value drops THAT component, still loads
+    // Three channels the numeric gate cannot accept, one per reason:
+    //   `pos.x` is a JSON string — no number at all;
+    //   `rot.y` is 1e39 — legal JSON, a finite double, and an INFINITE float;
+    //   `scl.y` is null — no number at all, on the one channel where the
+    //   identity is 1 rather than 0.
+    // Each is DROPPED: the component keeps the identity the reader wrote
+    // before injecting, and the document loads.
     //
-    // Discriminating in three directions: the file still loads (a reader that
-    // rejected the whole document over one bad number reads an error); the
-    // sibling components of each bad one are untouched (a reader that dropped
-    // the whole channel group reads identity for `pos.y`/`pos.z` too); and
-    // `scl.y` comes back as the POSITIVE FLOOR, not as 0 — a codec without the
-    // band repair loads a singular item transform, which is the state the
-    // guard exists to make impossible.
+    // WHY THIS IS NOT THE OLD CELL WITH NEW NUMBERS (task 3150). Until task
+    // 3021 an unreadable numeric node parsed to `0.0` and was written, so
+    // `scl.y` landed SINGULAR and the reader's band repair had to lift it to
+    // the positive floor; this cell asserted that floor. 3021 made the same
+    // node a NaN, which the finite gate refuses — and on this route the
+    // refusal threw, so one corrupt scalar cost the whole document. Neither
+    // is the contract: a stored document is not a hand-typed parameter. The
+    // value is now dropped, so `scl.y` reads 1 — the identity, never invented,
+    // never singular. The band repair is still live and still tested, on the
+    // input it is actually for: a READABLE degenerate number, cell 7.
+    //
+    // Discriminating in four directions: the file still loads (a reader that
+    // rejects the whole document over one bad number reads an error here — it
+    // did, between 3021 and 3150); the SIBLINGS of each bad channel landed, so
+    // the block was really read and not skipped wholesale; `scl.y` is 1 and
+    // not 0, so nothing was substituted; and `scl.y` is 1 and not ~1e-4, so
+    // this is the drop and not the old zero-then-repair.
     enum string path = "/tmp/vibe3d-test-xform-malformed.v3d";
     write(path,
         `{"formatVersion":8,"primaryLayer":0,"layers":[`
         ~ `{"type":"mesh","selected":true,`
         ~ `"channels":{"name":"Tri","visible":true,`
         ~ `"pos.x":"nope","pos.y":4.0,"pos.z":-6.0,`
-        ~ `"rot.x":10.0,"scl.y":null,`
+        ~ `"rot.x":10.0,"rot.y":1e39,"scl.y":null,`
         ~ `"pivot.x":1.0,"pivot.y":2.0,"pivot.z":3.0},`
         ~ `"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]]}}`
         ~ `]}`);
@@ -282,7 +299,7 @@ unittest { // 6. a non-numeric channel value degrades ONE component, still loads
     resetCube();
     runCmd("file.load", `{"path":"` ~ path ~ `"}`);
     assert(model()["vertexCount"].integer == 3,
-        "the triangle must still load despite two unreadable channel values");
+        "the triangle must still load despite three unreadable channel values");
 
     enum string outp = "/tmp/vibe3d-test-xform-malformed-out.v3d";
     if (exists(outp)) remove(outp);
@@ -290,13 +307,92 @@ unittest { // 6. a non-numeric channel value degrades ONE component, still loads
     runCmd("file.save", `{"path":"` ~ outp ~ `"}`);
     auto ch = parseJSON(readText(outp))["layers"].array[0]["channels"];
 
-    assertChannelTriple(ch, "pos",   [0.0, 4.0, -6.0],  "pos (x unreadable -> 0)");
-    assertChannelTriple(ch, "rot",   [10.0, 0.0, 0.0],  "rot (good)");
-    assertChannelTriple(ch, "pivot", [1.0, 2.0, 3.0],   "pivot (good)");
+    assertChannelTriple(ch, "pos",   [0.0, 4.0, -6.0], "pos (x unreadable -> identity)");
+    assertChannelTriple(ch, "rot",   [10.0, 0.0, 0.0], "rot (y overflows a float -> identity)");
+    assertChannelTriple(ch, "pivot", [1.0, 2.0, 3.0],  "pivot (all good)");
     assert(isClose(num(ch["scl.x"]), 1.0, 1e-6), "scl.x untouched at identity");
     assert(isClose(num(ch["scl.z"]), 1.0, 1e-6), "scl.z untouched at identity");
-    assert(num(ch["scl.y"]) > 0.0 && num(ch["scl.y"]) < 1e-3,
-        "an unreadable scale falls to 0 and the band repair lifts it to the "
-        ~ "POSITIVE floor — a codec without the repair loads a singular item "
-        ~ "transform, got " ~ num(ch["scl.y"]).to!string);
+    assert(isClose(num(ch["scl.y"]), 1.0, 1e-6),
+        "an unreadable scale is DROPPED, so the component keeps its identity "
+      ~ "1. A 0 here means the reader substituted a number nobody wrote (the "
+      ~ "pre-3021 behaviour, and a singular item transform); ~1e-4 means it "
+      ~ "substituted and then repaired. Got " ~ num(ch["scl.y"]).to!string);
+}
+
+unittest { // 7. a READABLE degenerate scale is repaired to the band floor
+    // The other half of cell 6, and it must be its own cell: `0.0` is a
+    // perfectly readable JSON number, so the numeric gate has nothing to say
+    // about it and the drop in 6 never runs. What catches it is the reader's
+    // `sanitizeItemXform` band, whose floor is MIN_ITEM_SCALE_MAG (1e-4) with
+    // the sign preserved — a value inside the band makes the item matrix
+    // singular, which is the state that guard exists to make impossible.
+    //
+    // Cell 6 used to carry this witness by accident, through a value that is
+    // no longer written. Without this cell the band repair on the `.v3d` route
+    // has no test at all after task 3150 — a guard nothing can redden.
+    enum string path = "/tmp/vibe3d-test-xform-degenerate.v3d";
+    write(path,
+        `{"formatVersion":8,"primaryLayer":0,"layers":[`
+        ~ `{"type":"mesh","selected":true,`
+        ~ `"channels":{"name":"Tri","visible":true,`
+        ~ `"scl.x":2.0,"scl.y":0.0,"scl.z":-1e-9},`
+        ~ `"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]]}}`
+        ~ `]}`);
+    scope(exit) if (exists(path)) remove(path);
+
+    resetCube();
+    runCmd("file.load", `{"path":"` ~ path ~ `"}`);
+    assert(model()["vertexCount"].integer == 3, "the triangle must load");
+
+    enum string outp = "/tmp/vibe3d-test-xform-degenerate-out.v3d";
+    if (exists(outp)) remove(outp);
+    scope(exit) if (exists(outp)) remove(outp);
+    runCmd("file.save", `{"path":"` ~ outp ~ `"}`);
+    auto ch = parseJSON(readText(outp))["layers"].array[0]["channels"];
+
+    assert(isClose(num(ch["scl.x"]), 2.0, 1e-6),
+        "a legal scale is left alone — a repair that ran on everything would "
+      ~ "be as wrong as one that never ran. Got " ~ num(ch["scl.x"]).to!string);
+    assert(isClose(num(ch["scl.y"]), 1e-4, 1e-3),
+        "a zero scale is lifted to the positive band floor 1e-4, got "
+      ~ num(ch["scl.y"]).to!string);
+    assert(num(ch["scl.z"]) < 0.0 && isClose(num(ch["scl.z"]), -1e-4, 1e-3),
+        "the SIGN is preserved through the repair — a negative scale is a "
+      ~ "legitimate mirror, so -1e-9 goes to -1e-4 and not to +1e-4. Got "
+      ~ num(ch["scl.z"]).to!string);
+}
+
+unittest { // 8. the WIRE edge on the same channel still refuses
+    // The scope check for cell 6. `pos.x` tolerates an unreadable value when
+    // it arrives inside a document; it must NOT when a caller types it, and
+    // the two are one shared injector apart. A tolerance that leaked from the
+    // file route to `layer.attr` would put this whole file back to the silent
+    // coercion task 3021 removed, with every cell above still green.
+    resetCube();
+
+    // Control FIRST, so a refusal below cannot be the route simply being
+    // broken: a legal value on the very same channel still lands.
+    auto ok = cast(string) post("http://localhost:8080/api/command",
+                                "layer.attr 0 pos.x 1.5");
+    assert(parseJSON(ok)["status"].str == "ok",
+        "a legal `layer.attr 0 pos.x 1.5` must still apply: " ~ ok);
+
+    // And now the refusal. `nope` is the same unreadable token cell 6 feeds
+    // the file route; here it must be reported, not absorbed.
+    auto bad = cast(string) post("http://localhost:8080/api/command",
+                                 "layer.attr 0 pos.x nope");
+    auto bj = parseJSON(bad);
+    assert(bj["status"].str == "error",
+        "a hand-typed non-number must be REFUSED at the wire edge, not "
+      ~ "silently coerced (it used to set the channel to 0): " ~ bad);
+
+    // The refusal wrote nothing: the control's 1.5 is still there.
+    enum string outp = "/tmp/vibe3d-test-xform-wire-out.v3d";
+    if (exists(outp)) remove(outp);
+    scope(exit) { if (exists(outp)) remove(outp); resetCube(); }
+    runCmd("file.save", `{"path":"` ~ outp ~ `"}`);
+    auto ch = parseJSON(readText(outp))["layers"].array[0]["channels"];
+    assert(isClose(num(ch["pos.x"]), 1.5, 1e-6),
+        "the refused write must leave the previous value standing, got "
+      ~ num(ch["pos.x"]).to!string);
 }
