@@ -69,9 +69,10 @@ class MeshSessionEdit : Command, Operator {
     // Optional operation-log delta (doc/undo_change_tracker_plan.md Phase 2).
     // When `useDelta_` is set (via setDelta), apply()/revert() replay the
     // delta (O(delta)) instead of restoring the whole-mesh snapshot pair.
-    // The snapshot path stays intact as the fallback (VIBE3D_UNDO_TRACKER=off
-    // / degenerate delta / callers — the majority — that never call setDelta
-    // at all).
+    // The snapshot path stays intact as the fallback: a degenerate (empty)
+    // delta at a tool commit, and the callers — the majority — that never call
+    // setDelta at all. It used to carry a third reader, the
+    // `VIBE3D_UNDO_TRACKER=0` escape hatch, which task 1903 stage N deleted.
     private MeshEditDelta delta_;
     private bool          useDelta_;
 

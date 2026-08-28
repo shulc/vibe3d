@@ -67,10 +67,10 @@ class MeshFixOrientation : Command, Operator {
 
         // TASK 1903 Stage E1 put the batch here, at the command boundary, and
         // never inside the kernel (plan §4.1); Stage L2-a only changed WHICH
-        // batch. `runMapEdit` supplies the three arms — redo (re-run
-        // unrecorded, keep the FIRST delta), record, and the
-        // `VIBE3D_UNDO_TRACKER=0` hatch — and closes the batch on every one of
-        // them, which is what keeps `changeBus.batchLeaks` at 0.
+        // batch. `runMapEdit` supplies the two arms — redo (re-run unrecorded,
+        // keep the FIRST delta) and record — and closes the batch on both,
+        // which is what keeps `changeBus.batchLeaks` at 0. There was a third,
+        // the `VIBE3D_UNDO_TRACKER=0` hatch; stage N deleted it.
         //
         // `fixFaceOrientation` returning 0 is a TRUE no-op: it computes the
         // flip mask first and `flipFacesByMask` returns before its first write

@@ -41,41 +41,24 @@ import mesh_planes : kNoSource, FaceSource, rewriteFaces;   // task 1902 Stage H
 // apply()/revert() take `ref Mesh`. Neither references the other at static-init.
 
 // ---------------------------------------------------------------------------
-// VIBE3D_UNDO_TRACKER toggle (doc/undo_change_tracker_plan.md, Phase 4 §D). When
-// truthy (the DEFAULT) an interactive topology-tool commit records a
-// MeshEditDelta (operation-log undo) instead of a before/after MeshSnapshot
-// pair. `VIBE3D_UNDO_TRACKER=off` (and the other falsey values) is the ESCAPE
-// HATCH that forces the snapshot path — byte-identical to pre-Phase-2 behavior.
-// Read ONCE and cached — it is the rollback safety net + the parity-test lever.
-// Single definition shared by every migrated command (edge-extrude, edge-extend,
-// delete, remove) plus the `undo.tracker.on/off` test-automation commands.
+// THE `VIBE3D_UNDO_TRACKER` ESCAPE HATCH LIVED HERE AND IS GONE (task 1903
+// stage N). It was a process-wide, read-once module global that fifteen sites
+// branched on: eleven position commands, the shared `runMapEdit`, `morph.d`'s
+// apply, and the two interactive edge tools. Under `=off` each took the same
+// kernel through an UNRECORDED batch and undid through a whole-mesh
+// `MeshSnapshot` instead of the op-log.
+//
+// It was load-bearing until the commit that removed it, and the number is
+// recorded rather than asserted after the fact, because after the fact there
+// is nothing left to compare: each of the fifteen sites was driven twice in
+// one process, and every one recorded 0 op-log entries with the hatch shut and
+// more than 0 with it open. No site was already dead.
+//
+// What it cost while it lived: twenty command files declared a `MeshSnapshot`
+// field that fed nothing else, so a declaration census — the obvious closing
+// gate for a migration — read the same on migrated and unmigrated code, and
+// two stages had to abandon it and find another observable.
 // ---------------------------------------------------------------------------
-private bool g_undoTrackerChecked = false;
-private bool g_undoTrackerOn      = true;
-bool undoTrackerEnabled() {
-    if (!g_undoTrackerChecked) {
-        import std.process : environment;
-        import std.uni : toLower;
-        g_undoTrackerChecked = true;
-        auto v = environment.get("VIBE3D_UNDO_TRACKER", "");
-        auto lv = v.toLower;
-        // Default ON: unset ⇒ tracker. Only an explicit falsey value forces the
-        // snapshot escape hatch. (Anything unrecognised stays ON.)
-        g_undoTrackerOn = !(lv == "0" || lv == "off" || lv == "false" || lv == "no");
-    }
-    return g_undoTrackerOn;
-}
-
-// Test-automation override (the parity-gate lever): flip the cached toggle so a
-// single running instance can run the SAME topology op + undo under both the
-// snapshot path and the delta path. Marks the env as already-checked so the env
-// read doesn't clobber the override on the next commit. Wired to the
-// `undo.tracker.on/off` commands in app.d (test-automation only — not surfaced
-// in the UI).
-void setUndoTrackerEnabled(bool on) {
-    g_undoTrackerChecked = true;
-    g_undoTrackerOn      = on;
-}
 
 // ---------------------------------------------------------------------------
 // Change-scope bitfield — declared at beginEditBatch to describe the kinds of

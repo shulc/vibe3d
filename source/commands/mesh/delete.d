@@ -26,10 +26,9 @@ import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope,
 ///
 /// THE `VIBE3D_UNDO_TRACKER` FORK IS GONE (task 1903 stage L3-b). This class
 /// held a second, whole-mesh `MeshSnapshot` arm reachable by one env var; it
-/// was deleted together with `mesh.remove`'s, leaving fifteen
-/// `undoTrackerEnabled()` branch sites in the tree (the two edge tools plus
-/// thirteen commands whose fork is a DIFFERENT shape — it selects between a
-/// recording and an `unrecorded` batch and holds no snapshot at all). What the
+/// was deleted together with `mesh.remove`'s, leaving fifteen branch sites
+/// elsewhere in the tree — and stage N deleted the flag itself, so there are
+/// now none anywhere. What the
 /// deleted arm was FOR is now a frozen fixture: `tests/fixtures/undo_parity/
 /// delete_remove.json`, captured under both arms while they still existed and
 /// read by `tests/unit/undo_parity_l3_test`, which compares the delta path's

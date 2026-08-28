@@ -68,7 +68,7 @@ import view;
 import editmode;
 import change_bus : changeBus;
 import http_json  : meshPlanesJson, PlaneDumpMeta;
-import mesh_edit_delta : MeshOpEntry, setUndoTrackerEnabled;
+import mesh_edit_delta : MeshOpEntry;
 
 import command;
 import commands.mesh.weightmap    : WeightmapCreate, WeightmapRemove,
@@ -161,7 +161,6 @@ private void countersUnmoved(string cell, CounterSnap b) {
 // `map.data.dup` — the result is identical and the addressing row reddens.
 // ===========================================================================
 unittest {
-    setUndoTrackerEnabled(true);
     auto m = stand();
     const before = dump(m);
     const c0 = counters();
@@ -221,7 +220,6 @@ unittest {
 // half — that the family publishes ONE class, ONCE.
 // ===========================================================================
 unittest {
-    setUndoTrackerEnabled(true);
     auto m = stand();
     const mat0 = changeBus.totalMaterial, map0 = changeBus.totalMaps;
 
@@ -263,7 +261,6 @@ unittest {
 // isolation.
 // ===========================================================================
 unittest {
-    setUndoTrackerEnabled(true);
     auto m = stand();
     assert(m.meshMaps.length > 2 && m.meshMaps[1].name == "W", format(
         "C3: this cell needs `W` to sit at index 1 with maps after it, or "
@@ -318,7 +315,6 @@ unittest {
 // value while the undo reports success — the F1 shape.
 // ===========================================================================
 unittest {
-    setUndoTrackerEnabled(true);
     auto m = stand();
     assert(!kindInfo(m.meshMap("W").kind).tracksPresence,
         "C4: `W` must be a kind that does NOT track presence, or this cell is "
@@ -367,7 +363,6 @@ unittest {
 // assertion below stays green, which is the point of asserting the shape.
 // ===========================================================================
 unittest {
-    setUndoTrackerEnabled(true);
     auto m = stand();
     const before = dump(m);
     const c0 = counters();
@@ -429,7 +424,6 @@ unittest {
 // the undo still answers true — and the map comes back zeroed.
 // ===========================================================================
 unittest {
-    setUndoTrackerEnabled(true);
     auto m = stand();
     const uvBefore = m.meshMap("uv").data.dup;
     size_t nonZero = 0;
@@ -483,7 +477,6 @@ unittest {
 // name — and the replay half reddens naming the zeros.
 // ===========================================================================
 unittest {
-    setUndoTrackerEnabled(true);
     auto m = stand();
     const srcData = m.meshMap("uv").data.dup;
     size_t nonZero = 0;
@@ -540,7 +533,6 @@ unittest {
 // `UvDelete.deleteKernel`. Isolate — it reddens the oracle too.
 // ===========================================================================
 unittest {
-    setUndoTrackerEnabled(true);
     auto m = stand();
     assert(m.meshMaps.length > 3 && m.meshMaps[2].name == "uv2", format(
         "D3: this cell needs `uv2` at index 2 with maps after it, or "
@@ -598,7 +590,6 @@ unittest {
 // reddens all eight value commands at once — isolate.
 // ===========================================================================
 unittest {
-    setUndoTrackerEnabled(true);
     auto m = stand();
     const before = dump(m);
 
@@ -660,7 +651,6 @@ unittest {
 // isolate.
 // ===========================================================================
 unittest {
-    setUndoTrackerEnabled(true);
     auto m = stand();
     const before = dump(m);
     const uvA = m.meshMap(kUvMapName).data.dup;
@@ -707,7 +697,6 @@ unittest {
 // `ed.recordMapValueDiff(...)`. Cell (b) below reddens on the orphan.
 // ===========================================================================
 unittest {
-    setUndoTrackerEnabled(true);
     const c0 = counters();
 
     // (a) the map EXISTS -> Values, recorded post-hoc.
@@ -797,7 +786,6 @@ unittest {
 // its own branch.
 // ===========================================================================
 unittest {
-    setUndoTrackerEnabled(true);
     const c0 = counters();
 
     // (a) the map was CREATED by this command -> the rollback un-registers it.
@@ -861,7 +849,6 @@ unittest {
 // row reddens for that command.
 // ===========================================================================
 unittest {
-    setUndoTrackerEnabled(true);
 
     static struct Row { string name; Command delegate(Mesh*, View) mk; }
     auto rows = [
@@ -956,7 +943,6 @@ private struct Made {
 // result-shaped assertion cannot see.
 // ===========================================================================
 unittest {
-    setUndoTrackerEnabled(true);
 
     static struct Row {
         string name;

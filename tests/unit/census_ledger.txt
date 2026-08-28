@@ -93,3 +93,13 @@ drop 0 1 0781 the `static assert` guarding step 2c's `gestureTrack` @property-re
 # producer at all, plus W-b5's FORWARD replay, which is the cell that pins the
 # ORDER of mesh.transform's two entries.
 drop 2 16 1903 the two tracker-on/off parity cells whose OFF arm was the undo hatch — the hatch is gone, the frozen parity oracle and W-b5's forward replay still see what they saw
+
+# NOT A DROP LINE — the arithmetic already closed, and this is the audit trail
+# the gate could not ask for. Task 1903 stage N deleted `withHatch` and its
+# witness block from tests/unit/undo_parity_l3_test.d: the helper flipped the
+# `VIBE3D_UNDO_TRACKER` module global under a `scope (exit)` because druntime
+# runs every unittest module in one process, and the block proved the restore
+# happened on the normal path AND on a throw. The flag is gone, so the hazard
+# has no subject. The same commit added tests/unit/undo_hatch_removed_census_test.d,
+# whose two blocks more than cover the loss, which is why no `drop` line is
+# owed here — recorded so the removal is not invisible to a later reader.

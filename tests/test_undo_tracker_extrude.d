@@ -1,30 +1,28 @@
-// Phase 2 of doc/undo_change_tracker_plan.md — wire the INTERACTIVE edge-extrude
-// commit through the mesh-edit change tracker so its undo entry stores an
-// operation-log MeshEditDelta instead of a before/after MeshSnapshot pair.
+// The INTERACTIVE edge-extrude commit records an operation-log MeshEditDelta
+// (doc/undo_change_tracker_plan.md Phase 2). The file's name is historical: the
+// `VIBE3D_UNDO_TRACKER` toggle it was written around was deleted at task 1903
+// stage N, and what remains is the round-trip pin for the one surviving path.
 //
 // These tests drive the INTERACTIVE tool commit path (activate via
 // `tool.set edge.extrude on`, a real off-handle free-drag through
 // /api/play-events, commit via `tool.set edge.extrude off` → deactivate →
-// commitEdit). This is the ONLY route Phase 2 migrates — the headless
-// tool.doApply / /api/command route stays on MeshSnapshot and is covered by
-// tests/test_edge_extrude_tool.d.
+// commitEdit). The headless tool.doApply / /api/command route is a different
+// seam and is covered by tests/test_edge_extrude_tool.d.
 //
 // Asserted here:
-//   1. PARITY GATE: the same extrude+undo under VIBE3D_UNDO_TRACKER off (snapshot
-//      path) and on (delta path) yields byte-identical post-undo geometry, equal
-//      to the pre-extrude cube.
+//   1. (deleted at stage N — see the block below for what it measured and why
+//      it could no longer come out differently.)
 //   2. ROUND-TRIP: extrude → undo == pre-extrude; redo == post-extrude.
 //   3. EDGE SELECTION SURVIVES: after undo the ORIGINAL selected edge is restored
 //      (NOT the post-extrude ridge).
 //   4. jumpTo: jump back past the extrude then forward — geometry round-trips.
-//   5. NEGATIVE CONTROL: documented separately (built under
-//      -version=UndoNegControlReshape / -version=UndoNegControlReindex, which
-//      stub the ReshapeFaces^-1 / Reindex^-1 inverse and MUST break the round-trip
-//      — see the run instructions in the report).
+//   5. FREE-END round-trip on a grid — the Reindex⁻¹ witness.
+//   6. Task 0317: redo must reproduce the WINDING-CORRECTED mesh.
 //
-// The toggle is flipped at runtime via the test-only `undo.tracker.on` /
-// `undo.tracker.off` commands (app.d), so a single running instance exercises
-// both paths (the toggle is normally read once from VIBE3D_UNDO_TRACKER).
+// NEGATIVE CONTROL, documented separately: built under
+// -version=UndoNegControlReshape / -version=UndoNegControlReindex, which stub
+// the ReshapeFaces⁻¹ / Reindex⁻¹ inverse and MUST break the round-trip — see
+// the run instructions in the report.
 
 import std.net.curl;
 import std.json;
@@ -209,61 +207,28 @@ JSONValue selectGridBoundaryEdgeAndReturnPre() {
 }
 
 // ===========================================================================
-// 1. PARITY GATE: snapshot path (off) == delta path (on) == pre-extrude cube
-//    after undo. Run the SAME sequence under both toggle states in one instance.
+// 1. THE PARITY GATE IS GONE (task 1903 stage N), AND ITS SUBJECT IS TOO.
+//
+// It ran this same extrude twice in one instance — once under
+// `undo.tracker.off`, once under `.on` — and asserted the two post-extrude and
+// two post-undo meshes were byte-identical. The whole gate was the DIFFERENCE
+// between the two arms: with the hatch shut the tool committed a whole-mesh
+// `MeshSnapshot` pair, with it open a `MeshEditDelta`.
+//
+// Stage N deleted the hatch, so there is one arm. Keeping the cell would have
+// left it issuing two commands that no longer exist and comparing the delta
+// path against itself, which is green whatever the delta does. Deleted, and
+// declared in `tests/unit/census_ledger.txt`.
+//
+// The undo ROUND-TRIP it also asserted is not lost — cells 2 to 6 below each
+// carry `extrude → undo == pre` on the surviving path, and cell 5 is the
+// `Reindex⁻¹` witness on a free-end grid.
 // ===========================================================================
-unittest {
-    // --- snapshot path (tracker OFF) ---
-    cmd("undo.tracker.off");
-    scope(exit) cmd("undo.tracker.on");   // the toggle is per-INSTANCE and
-        // /api/reset does not restore it: a block that leaves it off breaks the
-        // next test on this worker (measured: test_mesh_planes_endpoint).
-    cmd("history.clear");
-    auto preOff = selectTopFrontEdgeAndReturnPre();
-    interactiveExtrude();
-    auto postOff = getModel();
-    assert(postOff["vertexCount"].integer > preOff["vertexCount"].integer,
-        "snapshot path: extrude built no geometry (verts unchanged)");
-    auto u1 = postUndo();
-    assert(u1["status"].str == "ok", "snapshot-path undo failed: " ~ u1.toString);
-    auto undoneOff = getModel();
-    assert(sameGeometry(undoneOff, preOff),
-        "snapshot path: post-undo geometry != pre-extrude cube");
-
-    // --- delta path (tracker ON) ---
-    cmd("undo.tracker.on");
-    cmd("history.clear");
-    auto preOn = selectTopFrontEdgeAndReturnPre();
-    interactiveExtrude();
-    auto postOn = getModel();
-    assert(postOn["vertexCount"].integer > preOn["vertexCount"].integer,
-        "delta path: extrude built no geometry (verts unchanged)");
-    auto u2 = postUndo();
-    assert(u2["status"].str == "ok", "delta-path undo failed: " ~ u2.toString);
-    auto undoneOn = getModel();
-    assert(sameGeometry(undoneOn, preOn),
-        "delta path: post-undo geometry != pre-extrude cube");
-
-    // --- PARITY: the two post-extrude meshes match AND the two post-undo meshes
-    //     match (both equal the pre-extrude cube). This is the byte-identical gate.
-    assert(sameGeometry(postOff, postOn),
-        "PARITY: post-extrude geometry differs between snapshot and delta paths");
-    assert(sameGeometry(undoneOff, undoneOn),
-        "PARITY: post-undo geometry differs between snapshot and delta paths");
-    assert(sameGeometry(undoneOff, preOff) && sameGeometry(undoneOn, preOn),
-        "PARITY: post-undo geometry is not the pre-extrude cube on both paths");
-
-    cmd("undo.tracker.off");   // leave the instance in the default state
-    scope(exit) cmd("undo.tracker.on");   // the toggle is per-INSTANCE and
-        // /api/reset does not restore it: a block that leaves it off breaks the
-        // next test on this worker (measured: test_mesh_planes_endpoint).
-}
 
 // ===========================================================================
 // 2. ROUND-TRIP (delta path): extrude → undo == pre; redo == post.
 // ===========================================================================
 unittest {
-    cmd("undo.tracker.on");
     cmd("history.clear");
     auto pre = selectTopFrontEdgeAndReturnPre();
     interactiveExtrude();
@@ -277,10 +242,6 @@ unittest {
     assert(r["status"].str == "ok", "redo failed: " ~ r.toString);
     assert(sameGeometry(getModel(), post), "round-trip: redo != post-extrude");
 
-    cmd("undo.tracker.off");
-    scope(exit) cmd("undo.tracker.on");   // the toggle is per-INSTANCE and
-        // /api/reset does not restore it: a block that leaves it off breaks the
-        // next test on this worker (measured: test_mesh_planes_endpoint).
 }
 
 // ===========================================================================
@@ -288,7 +249,6 @@ unittest {
 //    is restored, NOT the post-extrude ridge.
 // ===========================================================================
 unittest {
-    cmd("undo.tracker.on");
     cmd("history.clear");
     auto pre = selectTopFrontEdgeAndReturnPre();
     auto selPre = getSelection();
@@ -309,10 +269,6 @@ unittest {
         ~ " post=" ~ postKeys.to!string
         ~ " (the original selected edge must come back, NOT the ridge)");
 
-    cmd("undo.tracker.off");
-    scope(exit) cmd("undo.tracker.on");   // the toggle is per-INSTANCE and
-        // /api/reset does not restore it: a block that leaves it off breaks the
-        // next test on this worker (measured: test_mesh_planes_endpoint).
 }
 
 // ===========================================================================
@@ -320,7 +276,6 @@ unittest {
 //    forward — geometry round-trips byte-identically in both directions.
 // ===========================================================================
 unittest {
-    cmd("undo.tracker.on");
     cmd("history.clear");
     auto pre = selectTopFrontEdgeAndReturnPre();
     interactiveExtrude();
@@ -345,10 +300,6 @@ unittest {
     assert(sameGeometry(getModel(), post),
         "jumpTo forward past extrude != post-extrude geometry");
 
-    cmd("undo.tracker.off");
-    scope(exit) cmd("undo.tracker.on");   // the toggle is per-INSTANCE and
-        // /api/reset does not restore it: a block that leaves it off breaks the
-        // next test on this worker (measured: test_mesh_planes_endpoint).
 }
 
 // ===========================================================================
@@ -366,10 +317,6 @@ unittest {
 // ===========================================================================
 unittest {
     // --- snapshot path (tracker OFF) ---
-    cmd("undo.tracker.off");
-    scope(exit) cmd("undo.tracker.on");   // the toggle is per-INSTANCE and
-        // /api/reset does not restore it: a block that leaves it off breaks the
-        // next test on this worker (measured: test_mesh_planes_endpoint).
     cmd("history.clear");
     auto preOff = selectGridBoundaryEdgeAndReturnPre();
     interactiveExtrude();
@@ -385,7 +332,6 @@ unittest {
         "free-end snapshot path: post-undo geometry != pre-extrude grid");
 
     // --- delta path (tracker ON) — the Reindex⁻¹ witness ---
-    cmd("undo.tracker.on");
     cmd("history.clear");
     auto preOn = selectGridBoundaryEdgeAndReturnPre();
     interactiveExtrude();
@@ -412,10 +358,6 @@ unittest {
     assert(sameGeometry(undoneOff, undoneOn),
         "free-end PARITY: post-undo geometry differs between snapshot and delta");
 
-    cmd("undo.tracker.off");
-    scope(exit) cmd("undo.tracker.on");   // the toggle is per-INSTANCE and
-        // /api/reset does not restore it: a block that leaves it off breaks the
-        // next test on this worker (measured: test_mesh_planes_endpoint).
 }
 
 // ===========================================================================
@@ -501,7 +443,6 @@ bool isHoleFree(JSONValue m) {
 }
 
 unittest {
-    cmd("undo.tracker.on");
     cmd("history.clear");
 
     resetGrid(3);
@@ -557,8 +498,4 @@ unittest {
         ~ "mesh (the flip was invisible to the recorded edit-delta)");
     assert(isHoleFree(redone), "0317 redo: redone mesh is not hole-free");
 
-    cmd("undo.tracker.off");
-    scope(exit) cmd("undo.tracker.on");   // the toggle is per-INSTANCE and
-        // /api/reset does not restore it: a block that leaves it off breaks the
-        // next test on this worker (measured: test_mesh_planes_endpoint).
 }

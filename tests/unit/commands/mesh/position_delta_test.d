@@ -37,8 +37,7 @@ import editmode;
 import math      : Vec3;
 import params    : Param;
 import http_json : meshPlanesJson;
-import mesh_edit_delta : MeshEditDelta, MeshOpEntry, MeshEditScope,
-                         undoTrackerEnabled, setUndoTrackerEnabled;
+import mesh_edit_delta : MeshEditDelta, MeshOpEntry, MeshEditScope;
 import operator  : VectorStack;
 import toolpipe.packets : SubjectPacket;
 import commands.mesh.position_undo : PositionUndo;
@@ -221,9 +220,6 @@ private bool armed(Command c) {
 // W-d3d + W-d3a — the forward moves something, and the log says [SetPos].
 // ---------------------------------------------------------------------------
 unittest {
-    const bool wasOn = undoTrackerEnabled();
-    setUndoTrackerEnabled(true);
-    scope(exit) setUndoTrackerEnabled(wasOn);
 
     foreach (cell; cells()) {
         auto m = standMesh();
@@ -280,9 +276,6 @@ unittest {
 // the REVERSE, because a correct forward says nothing about its inverse.
 // ---------------------------------------------------------------------------
 unittest {
-    const bool wasOn = undoTrackerEnabled();
-    setUndoTrackerEnabled(true);
-    scope(exit) setUndoTrackerEnabled(wasOn);
 
     foreach (cell; cells()) {
         auto m = standMesh();
@@ -346,9 +339,6 @@ unittest {
 // post-op mesh.
 // ---------------------------------------------------------------------------
 unittest {
-    const bool wasOn = undoTrackerEnabled();
-    setUndoTrackerEnabled(true);
-    scope(exit) setUndoTrackerEnabled(wasOn);
 
     foreach (cell; cells()) {
         auto m = standMesh();
@@ -385,9 +375,6 @@ unittest {
 // W-d5 — redo lands where the first run landed.
 // ---------------------------------------------------------------------------
 unittest {
-    const bool wasOn = undoTrackerEnabled();
-    setUndoTrackerEnabled(true);
-    scope(exit) setUndoTrackerEnabled(wasOn);
 
     foreach (cell; cells()) {
         auto m = standMesh();
@@ -435,9 +422,6 @@ unittest {
 unittest {
     import mesh : g_hideDeriveRuns, g_rebuildEdgesRuns, g_buildLoopsRuns;
 
-    const bool wasOn = undoTrackerEnabled();
-    setUndoTrackerEnabled(true);
-    scope(exit) setUndoTrackerEnabled(wasOn);
 
     foreach (cell; cells()) {
         auto m = standMesh();

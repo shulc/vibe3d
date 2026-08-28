@@ -42,8 +42,7 @@ import editmode : EditMode;
 import math      : Vec3;
 import params    : Param;
 import http_json : meshPlanesJson;
-import mesh_edit_delta : MeshEditDelta, MeshOpEntry, MeshEditScope,
-                         undoTrackerEnabled, setUndoTrackerEnabled;
+import mesh_edit_delta : MeshEditDelta, MeshOpEntry, MeshEditScope;
 import operator  : VectorStack;
 import toolpipe.pipeline : g_pipeCtx, ToolPipeContext;
 import toolpipe.stages.symmetry : SymmetryStage;
@@ -181,9 +180,6 @@ private bool namesIndex(const(MeshEditDelta)* d, uint vi) {
 // restores the partner off `touchedPrev`.
 // ---------------------------------------------------------------------------
 unittest {
-    const bool wasOn = undoTrackerEnabled();
-    setUndoTrackerEnabled(true);
-    scope(exit) setUndoTrackerEnabled(wasOn);
 
     auto m  = twoQuadStand(0.0f);
     auto v  = standView();
@@ -282,9 +278,6 @@ unittest {
 // write is symmetry's and not the kind switch's.
 // ---------------------------------------------------------------------------
 unittest {
-    const bool wasOn = undoTrackerEnabled();
-    setUndoTrackerEnabled(true);
-    scope(exit) setUndoTrackerEnabled(wasOn);
     // Symmetry ABSENT, and made so rather than assumed: `g_pipeCtx` is
     // `__gshared`, so a cell above (or another module in the same binary)
     // could have left a stage installed, and a leaked stage would silently
@@ -323,9 +316,6 @@ unittest {
 // that proves it was ever live.
 // ---------------------------------------------------------------------------
 unittest {
-    const bool wasOn = undoTrackerEnabled();
-    setUndoTrackerEnabled(true);
-    scope(exit) setUndoTrackerEnabled(wasOn);
 
     auto m = twoQuadStand(0.05f);      // drifted: an exact mesh is a no-op here
     auto v = standView();
@@ -381,9 +371,6 @@ unittest {
 // on the REVERSE: a forward carry says nothing about the inverse (§L0.2).
 // ---------------------------------------------------------------------------
 unittest {
-    const bool wasOn = undoTrackerEnabled();
-    setUndoTrackerEnabled(true);
-    scope(exit) setUndoTrackerEnabled(wasOn);
 
     // --- mesh.transform, symmetry ON ---
     {
@@ -457,9 +444,6 @@ unittest {
 // on a vertex both passes touch the two entries only chain in one order.
 // ---------------------------------------------------------------------------
 unittest {
-    const bool wasOn = undoTrackerEnabled();
-    setUndoTrackerEnabled(true);
-    scope(exit) setUndoTrackerEnabled(wasOn);
 
     foreach (name; ["mesh.transform", "mesh.symmetrize"]) {
         auto v  = standView();
@@ -505,9 +489,6 @@ unittest {
 // still has to produce the same pairing, or the redo mirrors somewhere else.
 // ---------------------------------------------------------------------------
 unittest {
-    const bool wasOn = undoTrackerEnabled();
-    setUndoTrackerEnabled(true);
-    scope(exit) setUndoTrackerEnabled(wasOn);
 
     foreach (name; ["mesh.transform", "mesh.symmetrize"]) {
         auto v  = standView();
@@ -554,9 +535,6 @@ unittest {
 unittest {
     import mesh : g_hideDeriveRuns, g_rebuildEdgesRuns, g_buildLoopsRuns;
 
-    const bool wasOn = undoTrackerEnabled();
-    setUndoTrackerEnabled(true);
-    scope(exit) setUndoTrackerEnabled(wasOn);
 
     foreach (name; ["mesh.transform", "mesh.symmetrize"]) {
         auto v  = standView();

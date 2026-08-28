@@ -113,11 +113,10 @@ import editmode;
 import math      : Vec3;
 import http_json : meshPlanesJson, PlaneDumpMeta;
 
-import mesh_edit_delta : undoTrackerEnabled, setUndoTrackerEnabled;
 
 import tests.unit.fixtures            : makeTaggedGridFull;
 import tests.unit.undo_parity_l0_test : ParityCell, comparePlanes, fixturePath,
-                                        fixtureJson, PlaneException,
+                                        PlaneException,
                                         compareWithExceptions,
                                         assertExceptionTableWellFormed;
 
@@ -168,65 +167,15 @@ enum uint[] kVertOperand = [2u, 5u];
 // The hatch guard, and its own witness.
 // ===========================================================================
 
-/// Run `body_` with the undo-tracker hatch forced to `on`, and put the flag
-/// back whatever happens — including when `body_` throws.
-///
-/// A free function rather than three lines copied into each cell, because the
-/// thing that must not be lost is the `scope (exit)`, and a helper gives it
-/// one place to be witnessed from. The precedent in the tree is
-/// `tests/unit/commands/mesh/symmetry_delta_test.d`'s
-/// `wasOn` / `setUndoTrackerEnabled(wasOn)` pair.
-void withHatch(bool on, scope void delegate() body_)
-{
-    const bool was = undoTrackerEnabled();
-    setUndoTrackerEnabled(on);
-    scope (exit) setUndoTrackerEnabled(was);
-    body_();
-}
-
-unittest // withHatch restores the module global, on the normal path AND on a throw
-{
-    // The witness is BEHAVIOURAL and not a text census, and that is a
-    // decision with a reason: a tree-wide census of "every
-    // `setUndoTrackerEnabled(` has a matching `scope (exit)`" is RED on the
-    // unmodified tree — `tests/unit/morph_delta_test.d` and
-    // `tests/unit/uv_weight_delta_test.d` hold ~20 bare
-    // `setUndoTrackerEnabled(true)` calls at the head of their own cells,
-    // deliberately, because setting the flag to its own default cannot steer
-    // anyone. A census shipped with an exemption list for those files would be
-    // an enumeration gate keyed on the list it guards. This block instead
-    // drives the exact helper every flip in this file goes through.
-    //
-    // MUTATION: delete the `scope (exit)` line in `withHatch`. Both halves
-    // below redden, naming the flag that was left flipped.
-    const bool was = undoTrackerEnabled();
-
-    bool sawInside = true;
-    withHatch(false, { sawInside = undoTrackerEnabled(); });
-    // Non-vacuity: a `withHatch` that flipped NOTHING would satisfy the
-    // "restored" assert below trivially.
-    assert(!sawInside,
-        "withHatch(false) did not actually clear the hatch inside the body — "
-      ~ "the restore assert below is then satisfied by a helper that does "
-      ~ "nothing at all");
-    assert(undoTrackerEnabled() == was,
-        "withHatch(false) left the undo-tracker hatch flipped. It is a module "
-      ~ "global and druntime runs every unittest module in ONE process, so the "
-      ~ "other fifteen hatched files would run the rest of the lane on the "
-      ~ "wrong undo path");
-
-    bool threw = false;
-    try
-        withHatch(false, { throw new Exception("cell blew up"); });
-    catch (Exception)
-        threw = true;
-    assert(threw, "the throwing body did not propagate — this half of the "
-                ~ "witness never reached its assertion");
-    assert(undoTrackerEnabled() == was,
-        "withHatch(false) left the hatch flipped when its body THREW. A plain "
-      ~ "assignment after the call restores on the normal path only, and a "
-      ~ "capture cell that fails would then poison every later module");
-}
+// `withHatch` AND ITS WITNESS ARE GONE (task 1903 stage N). The helper flipped
+// the `VIBE3D_UNDO_TRACKER` module global under a `scope (exit)` because
+// druntime runs every unittest module in ONE process, so a cell that left the
+// flag set steered the other fifteen hatched files. The flag no longer exists,
+// so neither does the hazard, and the one block that witnessed the restore is
+// declared in `tests/unit/census_ledger.txt`.
+//
+// The capture arm this file's `l3RunCell` used it for went with it — see that
+// function.
 
 // ===========================================================================
 // The stand, and the four non-vacuity asserts it owes.
@@ -450,57 +399,31 @@ private CellRun l3RunOnce(in L3CellSpec s, in PlaneDumpMeta meta)
     return r;
 }
 
-/// One cell, run under whichever arms this mode calls for.
+/// One cell, on the one arm that exists.
 ///
-/// CAPTURE MODE runs BOTH arms and asserts their `postOp` dumps agree (see the
-/// module header). COMPARE MODE runs the shipped default, unflipped — after
-/// L3-b the two arms are the same code and a both-arms run would compare a
-/// path against itself.
-private ParityCell l3RunCell(in L3CellSpec s, bool captureMode,
-                             out CellRun chosen)
+/// THIS FUNCTION USED TO TAKE A `captureMode` FORK. Capture mode ran the cell
+/// under BOTH hatch arms and asserted their `postOp` dumps agreed; the frozen
+/// fixture was the SNAPSHOT arm's. Task 1903 stage N deleted the hatch, so
+/// there is no snapshot arm to capture and `compareOrCaptureL3` now REFUSES to
+/// re-capture rather than quietly writing the delta path's own output over the
+/// oracle it is judged by. The parameter is gone with the fork.
+private ParityCell l3RunCell(in L3CellSpec s, out CellRun chosen)
 {
-    if (!captureMode) {
-        auto meta = PlaneDumpMeta(kL3ProducedBy, "delta", kL3Family, kL3Stand);
-        chosen = l3RunOnce(s, meta);
-        return ParityCell(s.name, "delta", chosen.postOp, chosen.postUndo);
-    }
-
-    auto metaOff = PlaneDumpMeta(kL3ProducedBy, "snapshot", kL3Family, kL3Stand);
-    auto metaOn  = PlaneDumpMeta(kL3ProducedBy, "delta",    kL3Family, kL3Stand);
-
-    CellRun off, on;
-    withHatch(false, { off = l3RunOnce(s, metaOff); });
-    withHatch(true,  { on  = l3RunOnce(s, metaOn);  });
-
-    // The both-arms agreement on the FORWARD. `comparePlanes` skips the
-    // `provenance` block, which is the only field the two metas differ in.
-    const JSONValue offDump = parseJSON(off.postOp);
-    comparePlanes("<capture>", s.name, "postOp[snapshot] vs postOp[delta]",
-                  offDump, on.postOp);
-
-    // …and the counts, which `comparePlanes` also covers but which are worth
-    // their own message: a forward that removed a different NUMBER of elements
-    // under the two arms is not a plane-level nuance.
-    assert(off.postVerts == on.postVerts && off.postFaces == on.postFaces,
-        format("%s: the two arms' FORWARD disagree — snapshot arm left "
-             ~ "%d verts / %d faces, delta arm %d / %d. This is a finding for "
-             ~ "the card, not something to route around by picking one arm",
-               s.name, off.postVerts, off.postFaces, on.postVerts, on.postFaces));
-
-    chosen = off;
-    return ParityCell(s.name, "snapshot", off.postOp, off.postUndo);
+    auto meta = PlaneDumpMeta(kL3ProducedBy, "delta", kL3Family, kL3Stand);
+    chosen = l3RunOnce(s, meta);
+    return ParityCell(s.name, "delta", chosen.postOp, chosen.postUndo);
 }
 
 /// Every L3 cell, in a fixed order, plus the cross-cell `keepOrphans` assert
 /// that no single cell can make.
-ParityCell[] l3Cells(bool captureMode)
+ParityCell[] l3Cells()
 {
     ParityCell[] out_;
     CellRun[string] runs;
 
     foreach (ref s; kL3Specs) {
         CellRun r;
-        out_ ~= l3RunCell(s, captureMode, r);
+        out_ ~= l3RunCell(s, r);
         runs[s.name] = r;
     }
 
@@ -640,8 +563,7 @@ unittest // the exception table is well-formed and cannot silence a whole cell
 
 private void compareOrCaptureL3(ParityCell[] cells)
 {
-    import std.file    : exists, readText, write, mkdirRecurse;
-    import std.path    : dirName;
+    import std.file    : exists, readText;
     import std.process : environment;
 
     // ---- anti-vacuity, BEFORE anything is compared or written -------------
@@ -656,17 +578,24 @@ private void compareOrCaptureL3(ParityCell[] cells)
 
     immutable path = fixturePath("delete_remove.json");
 
-    if (environment.get("VIBE3D_PARITY_CAPTURE_L3", "") == "1") {
-        mkdirRecurse(dirName(path));
-        write(path, fixtureJson(kL3Family, kL3ProducedBy, kL3Stand, cells));
-        return;
-    }
+    // RE-CAPTURE IS REFUSED, not merely discouraged (task 1903 stage N).
+    // The frozen file is the SNAPSHOT arm's output, and stage N deleted the
+    // snapshot arm: nothing in this tree can produce it again. A
+    // `VIBE3D_PARITY_CAPTURE_L3=1` run would write the delta path's own dump
+    // over the oracle that judges it — the migration grading its own homework,
+    // which the module header has forbidden in words since L3-b and which is
+    // now unrepresentable.
+    assert(environment.get("VIBE3D_PARITY_CAPTURE_L3", "") != "1",
+           "VIBE3D_PARITY_CAPTURE_L3=1 is refused: " ~ path ~ " was captured "
+         ~ "on the `VIBE3D_UNDO_TRACKER=0` snapshot arm, and task 1903 stage N "
+         ~ "deleted that arm. There is no producer for this fixture any more. "
+         ~ "A legitimate normalisation is a NAMED PER-PLANE EXCEPTION in the "
+         ~ "reader below, argued and reviewed — never a re-capture.");
 
     assert(exists(path),
-           "missing parity fixture " ~ path ~ " — it must be frozen BEFORE the "
-         ~ "`undoTrackerEnabled()` fork is deleted from delete.d / remove.d; "
-         ~ "re-capturing on a tree that no longer HAS that fork would be the "
-         ~ "delta path grading its own homework");
+           "missing parity fixture " ~ path ~ " — it was frozen BEFORE the "
+         ~ "`undoTrackerEnabled()` fork was deleted from delete.d / remove.d, "
+         ~ "and nothing can re-freeze it");
 
     auto frozen = parseJSON(readText(path));
 
@@ -711,8 +640,5 @@ private void compareOrCaptureL3(ParityCell[] cells)
 // ---------------------------------------------------------------------------
 unittest
 {
-    import std.process : environment;
-    immutable bool capture =
-        environment.get("VIBE3D_PARITY_CAPTURE_L3", "") == "1";
-    compareOrCaptureL3(l3Cells(capture));
+    compareOrCaptureL3(l3Cells());
 }

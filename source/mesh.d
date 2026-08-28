@@ -18470,8 +18470,8 @@ struct MeshEditBatch {
     /// weight families publish `Material`, `morph.d` publishes `Maps` — and it
     /// calls this from its RECORDED arm only. A hard-coded class here would
     /// therefore OR a second bit into the recorded arm's stamp and not into
-    /// the redo or hatch arms, making the commit seam depend on
-    /// `VIBE3D_UNDO_TRACKER` and moving `docRevision()` — the unsaved-changes
+    /// the redo arm's, making the commit seam depend on which arm ran and
+    /// moving `docRevision()` — the unsaved-changes
     /// asterisk — by a different amount on each. Reclassifying those
     /// publishers is a real behaviour question (`MeshEditScope.Maps`'s own doc
     /// says the pre-existing `setMeshMapValue` publishers keep `Material` so

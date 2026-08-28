@@ -6,10 +6,7 @@
  *   2. rdmd tools/local/blender_diff/run.d
  *   3. rdmd tools/local/modo_diff/run.d
  *   4. ./tools/local/modo_diff/run_acen_drag.py -j N
- *   5. snapshot: the key undo tests forced onto the legacy MeshSnapshot
- *      path (VIBE3D_UNDO_TRACKER=off) — anti-rot coverage for the escape
- *      hatch now that the change-tracker is default-on (Phase 4).
- *   6. dub test --config=tests — runs ALL module-level unittests in
+ *   5. dub test --config=tests — runs ALL module-level unittests in
  *      source/ AND tests/unit/, including modules not directly imported by
  *      any test binary (math.d, command_history.d, …). The `tests`
  *      configuration is the only one that compiles tests/unit/; a bare
@@ -19,14 +16,14 @@
  *      in imported modules are SILENT there. This lane catches what the
  *      static-lib path misses.  See run_test.d:425-434 for the documented
  *      limitation that motivated this lane.
- *   7. python3 tools/local/fixture_gen/provenance_check.py — golden-fixture
+ *   6. python3 tools/local/fixture_gen/provenance_check.py — golden-fixture
  *      provenance gate (task 0366): fast, offline, MODO-free lint over
  *      tests/fixtures/**.json + the inline .d blocks, exiting non-zero on
  *      any MISSING or STRUCTURALLY INVALID `provenance` block (a valid
  *      `simulated`/`analytic` block is allowed — just counted as smoke, not
  *      parity). Skipped automatically when the private tools/local tree
  *      (and its provenance_check.py) isn't present.
- *   8. rdmd tools/perf/run.d --n 64 --no-absolute (relative invariants)
+ *   7. rdmd tools/perf/run.d --n 64 --no-absolute (relative invariants)
  *
  * Opt-in (NOT in the default set, runs only via --only perf-abs):
  *   perf-abs: rdmd tools/perf/run.d --n 316 — the FULL ~100K-face matrix
@@ -52,10 +49,10 @@
  *   --no-build    forwarded to suites that accept it. NOTE: the dubtest lane
  *                 always compiles (dub test has no --no-build equivalent);
  *                 --no-build is accepted but ignored for that lane.
- *   --skip-X      skip a suite. X ∈ {unit, blender, modo, acen, perf, snapshot,
+ *   --skip-X      skip a suite. X ∈ {unit, blender, modo, acen, perf,
  *                 dubtest, provenance}.
  *   --only-X      run ONLY suite X (mutually exclusive with --skip-X).
- *                 X ∈ {unit, blender, modo, acen, perf, snapshot, dubtest,
+ *                 X ∈ {unit, blender, modo, acen, perf, dubtest,
  *                 provenance, perf-abs}; perf-abs is opt-in (n=316, ~5 min,
  *                 absolute vs the committed baseline) and runs ONLY via
  *                 --only perf-abs.
@@ -178,8 +175,8 @@ int main(string[] args) {
         "j|jobs",     "worker count for unit + ACEN drag suites "
                     ~ "(default = clamp(cpus/4, 4, 12))", &j,
         "no-build",   "skip dub build in unit + Blender + MODO suites", &noBuild,
-        "only",       "run only one suite (unit | blender | modo | acen | perf | snapshot | dubtest | provenance | perf-abs)", &only,
-        "skip",       "skip a suite (repeatable: unit | blender | modo | acen | perf | snapshot | dubtest | provenance)", &skip);
+        "only",       "run only one suite (unit | blender | modo | acen | perf | dubtest | provenance | perf-abs)", &only,
+        "skip",       "skip a suite (repeatable: unit | blender | modo | acen | perf | dubtest | provenance)", &skip);
 
     if (info.helpWanted) {
         writeln("usage: ./run_all.d [options]");
@@ -245,43 +242,6 @@ int main(string[] args) {
         } else {
             writeln(yellow("- skipped acen suite (tools/local/modo_diff not present)"));
         }
-    }
-
-    // Snapshot-fallback lane (anti-rot). The undo change-tracker
-    // (doc/undo_change_tracker_plan.md) is DEFAULT-ON, so the whole unit suite
-    // exercises the operation-log delta path. Two files still keep a
-    // whole-mesh MeshSnapshot arm reachable only through the
-    // VIBE3D_UNDO_TRACKER=off escape hatch — `source/tools/edit/edge_extrude.d`
-    // and `source/tools/edit/edge_extend.d` — and this lane is what keeps that
-    // arm tested.
-    //
-    // THE ROSTER WAS SIX AND IS NOW TWO (task 1903 stage L3-b), and the four
-    // that left were measured, not guessed:
-    //
-    //   * `test_undo_tracker_delete` and `test_delete` drive `mesh.delete` /
-    //     `mesh.remove`, whose fork this stage DELETED. Under `=off` they now
-    //     run exactly the same code as under the default.
-    //   * `test_undo_redo` drives `mesh.subdivide`, `mesh.subdivide_faceted`
-    //     and `select.typeFrom`; `test_history_jump` drives `/api/transform`
-    //     translates and `history.clear`. NONE of those is one of the fifteen
-    //     files that branch on `undoTrackerEnabled()`, so neither test has EVER
-    //     selected a path here — they were spending lane time to re-run the
-    //     same code under a different environment variable. Recorded rather
-    //     than absorbed: a lane whose roster does not select what its comment
-    //     claims is a gate that cannot come out differently.
-    //
-    // Cheap (two small tests, -j 1 for the drag-sensitive ones), included in
-    // the DEFAULT set; --skip snapshot / --only snapshot both work. Runs BEFORE
-    // the perf lane: the perf runner rebuilds ./vibe3d as the ldc-release perf
-    // buildType, and any run_test lane placed after it would silently reuse
-    // that binary instead of the modeling one.
-    if (include("snapshot")) {
-        string[] cmd = ["./run_test.d", "-j", "1",
-                        "test_edge_extrude_tool", "test_undo_tracker_extrude"];
-        if (noBuild) cmd ~= "--no-build";
-        suites ~= Suite("snapshot",
-                        "5/8 snapshot-fallback undo tests (VIBE3D_UNDO_TRACKER=off)",
-                        cmd, ["VIBE3D_UNDO_TRACKER": "off"]);
     }
 
     // dub-test lane — runs `dub test --config=tests` to execute ALL module-level

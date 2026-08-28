@@ -19,8 +19,9 @@ import params : Param;
 ///
 /// UNDO IS THE OPERATION-LOG DELTA since task 1903 Stage L5-c; the whole-mesh
 /// `MeshSnapshot` is gone. There is no fork to select between: this file never
-/// carried `undoTrackerEnabled()` — `grep` it, the hatch's sixteen sites are
-/// elsewhere — so the recording batch is unconditional, exactly as in
+/// carried `undoTrackerEnabled()` — the hatch's other sites are named in
+/// `delete.d`, and stage N removed the flag entirely — so the recording batch
+/// is unconditional, exactly as in
 /// `commands/mesh/delete.d` after Stage L3-b. Redo re-runs the kernel
 /// BATCHLESS from the restored pre-op state.
 ///

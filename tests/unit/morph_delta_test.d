@@ -58,7 +58,7 @@ import editmode;
 import math       : Vec3;
 import change_bus : changeBus;
 import http_json  : meshPlanesJson, PlaneDumpMeta;
-import mesh_edit_delta : MeshOpEntry, setUndoTrackerEnabled;
+import mesh_edit_delta : MeshOpEntry;
 import mesh_morph : morphApply;
 import morph_target;
 
@@ -139,7 +139,6 @@ private void countersUnmoved(string cell, CounterSnap b) {
 // under it, because the forward is identical either way.
 // ===========================================================================
 unittest {
-    setUndoTrackerEnabled(true);
     scope (exit) clearMorphTarget();
 
     auto m = stand();
@@ -213,7 +212,6 @@ unittest {
 // module at M1's first failed assert and M2 never executes.
 // ===========================================================================
 unittest {
-    setUndoTrackerEnabled(true);
     scope (exit) clearMorphTarget();
 
     auto m = stand();
@@ -278,7 +276,6 @@ unittest {
 // because a correct replay now refuses. Two mutations, two rows, isolated.
 // ===========================================================================
 unittest {
-    setUndoTrackerEnabled(true);
     scope (exit) clearMorphTarget();
 
     auto m = stand();
@@ -324,7 +321,6 @@ unittest {
 }
 
 unittest { // M3's control: with no drift the SAME command refuses nothing.
-    setUndoTrackerEnabled(true);
     scope (exit) clearMorphTarget();
 
     auto m = stand();
@@ -357,7 +353,6 @@ unittest { // M3's control: with no drift the SAME command refuses nothing.
 // the content.
 // ===========================================================================
 unittest {
-    setUndoTrackerEnabled(true);
     scope (exit) clearMorphTarget();
     auto v = freshView();
 
@@ -454,7 +449,6 @@ unittest {
 // `morphAbsolute` means every vertex "stays at the base".
 // ===========================================================================
 unittest {
-    setUndoTrackerEnabled(true);
     scope (exit) clearMorphTarget();
 
     auto m = stand();
@@ -498,7 +492,6 @@ unittest {
 // and names it.
 // ===========================================================================
 unittest {
-    setUndoTrackerEnabled(true);
     scope (exit) clearMorphTarget();
 
     auto m = stand();
@@ -541,7 +534,6 @@ unittest {
 // retarget from `MorphRename.revert` -> the second does. Isolated runs.
 // ===========================================================================
 unittest {
-    setUndoTrackerEnabled(true);
     scope (exit) clearMorphTarget();
     auto v = freshView();
 
@@ -593,7 +585,6 @@ unittest {
 // ===========================================================================
 unittest {
     version (unittest) {
-        setUndoTrackerEnabled(true);
         scope (exit) clearMorphTarget();
 
         auto m = stand();
@@ -647,7 +638,6 @@ unittest {
 // a RECORDING batch and the counter moves by 1.
 // ===========================================================================
 unittest {
-    setUndoTrackerEnabled(true);
     scope (exit) clearMorphTarget();
 
     auto m = stand();
