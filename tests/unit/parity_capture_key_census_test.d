@@ -152,12 +152,14 @@ unittest // THE CENSUS
 
     // Vacuity floor FIRST, so a glob that matched nothing is diagnosed as
     // that and not as "every check passed".
-    assert(readers.length >= 10, format(
+    assert(readers.length >= 11, format(
         "the parity-key census found %d reader(s) under %s — the tree has at "
-      ~ "least ten (`undo_parity_l0/l1/l2/l3/l5/l6/l7/l7d/l9/l10_test.d`; L6 "
-      ~ "and L7d arrived with task 1903 stages L6 and L7-d). A glob that "
-      ~ "silently matches nothing makes every assertion below vacuous; fix "
-      ~ "the walk, do not lower this floor.", readers.length, unitDir));
+      ~ "least eleven "
+      ~ "(`undo_parity_l0/l1/l2/l3/l5/l6/l7/l7d/l8/l9/l10_test.d`; L6 and L7d "
+      ~ "arrived with task 1903 stages L6 and L7-d, L8 with stage L8-0). A "
+      ~ "glob that silently matches nothing makes every assertion below "
+      ~ "vacuous; fix the walk, do not lower this floor.",
+        readers.length, unitDir));
 
     auto bad = appender!string;
     string[string] keyOwner;   // key  -> file
