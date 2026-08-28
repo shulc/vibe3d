@@ -433,3 +433,225 @@ unittest {
         ~ "not be READ");
 }
 
+
+// ---------------------------------------------------------------------------
+// TASK 2006 — the selection-BBOX MEMBERSHIP cache.
+//
+// `centroidWithGeometryFallback` (the centre of Auto / Screen / Select /
+// SelectAuto / None, i.e. the default pivot) used to re-derive WHICH vertices
+// contribute on every call, by routing Edges / Polygons into
+// `Mesh.selectionBBoxCenter{Edges,Faces}`. Measured on a 1M-face grid with
+// nothing selected (ldc2 1.42 -O3 -release): 9.31 ms per evaluation in
+// Polygons mode and 4.03 ms in Edges against 1.35 ms in Vertices, and the
+// stage is evaluated ~2 times per rendered frame plus ~2 per motion event.
+// Membership is now cached — 1.02 ms in every mode — and the bbox is not.
+//
+// TWO THINGS MUST HOLD AND EACH NEEDS ITS OWN CELL, because a cache that is
+// wrong in one direction is invisible to a test for the other:
+//
+//   (a) the VALUE is byte-identical to the mesh methods it replaced — with
+//       the cell that separates "walk the membership" from "walk the whole
+//       vertex array", which is an ORPHAN vertex (in no edge and no face,
+//       placed outside the bbox of everything else). Without one, Polygons
+//       mode over a mesh whose every vertex is used agrees with the vertex
+//       arm and the test proves nothing about the membership;
+//
+//   (b) a POSITION change with no topology and no selection change still
+//       moves the answer. This is the cell that reddens if anyone ever
+//       "improves" this into a cache of the RESULT keyed on a bus epoch:
+//       `applyTRS` restores the run baseline with a raw array write that
+//       publishes nothing, so a result cache would hand a baseline-sampled
+//       evaluate the previous step's OUTPUT — the pivot-drift defect
+//       `samplePipeFromBaseline` exists to prevent (doc/measured_laws.md §2).
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : Mesh;
+    import math : Vec3, ModelSpace;
+
+    // A stand with an ORPHAN vertex: two quads sharing an edge, plus vertex 6
+    // at (100, 100, 100), which no edge and no face reference. Every
+    // membership walk that reads faces or edges must EXCLUDE it; the vertex
+    // walk must INCLUDE it. That disagreement is what makes the three modes
+    // separable at all.
+    Mesh m;
+    m.addVertex(Vec3(0, 0, 0));      // 0
+    m.addVertex(Vec3(2, 0, 0));      // 1
+    m.addVertex(Vec3(2, 1, 0));      // 2
+    m.addVertex(Vec3(0, 1, 0));      // 3
+    m.addVertex(Vec3(4, 0, 0));      // 4
+    m.addVertex(Vec3(4, 1, 0));      // 5
+    m.addVertex(Vec3(100, 100, 100));// 6 — ORPHAN
+    m.addFace([0, 1, 2, 3]);
+    m.addFace([1, 4, 5, 2]);
+    m.buildLoops();
+    Mesh* mp = &m;
+
+    EditMode em = EditMode.Vertices;
+    auto acs = new ActionCenterStage(() => mp, &em);
+    acs.mode = ActionCenterStage.Mode.Auto;
+
+    void sameAsMeshMethod(string what, ModelSpace ms = ModelSpace.init) {
+        Vec3 want;
+        final switch (em) {
+            case EditMode.Vertices: want = m.selectionBBoxCenterVertices(ms); break;
+            case EditMode.Edges:    want = m.selectionBBoxCenterEdges(ms);    break;
+            case EditMode.Polygons: want = m.selectionBBoxCenterFaces(ms);    break;
+        }
+        Vec3 got = acs.currentCenter();
+        assert(got.x == want.x && got.y == want.y && got.z == want.z,
+            format("%s: cached membership gave (%s,%s,%s), the mesh method "
+                 ~ "gives (%s,%s,%s)", what,
+                   got.x, got.y, got.z, want.x, want.y, want.z));
+    }
+
+    // (a1) Nothing selected — the universal "empty selection = all" rule, and
+    // the case the failing 1M cell is in. The orphan makes the three modes
+    // disagree, which is what proves each walked its OWN membership.
+    em = EditMode.Vertices; sameAsMeshMethod("vertices/empty");
+    Vec3 vAll = acs.currentCenter();
+    em = EditMode.Polygons; sameAsMeshMethod("polygons/empty");
+    Vec3 pAll = acs.currentCenter();
+    em = EditMode.Edges;    sameAsMeshMethod("edges/empty");
+    Vec3 eAll = acs.currentCenter();
+    assert(vAll.x != pAll.x,
+        "the orphan vertex did not separate Vertices from Polygons — this "
+        ~ "stand cannot witness a membership mix-up at all");
+    assert(eAll.x == pAll.x,
+        "edges and polygons cover the same vertex set on this stand");
+
+    // (a2) With a selection, in each mode. THROUGH THE REAL SETTERS, not by
+    // poking the marks array: since the membership key is `Mesh.marksVersion`
+    // (see the stage's doc comment for why the O(V) `selectionSignature()`
+    // could not stay), the funnel IS the invalidation, and a test that poked
+    // the marks directly would be measuring a path the app never takes. Cell
+    // (c) below pins that narrowing explicitly.
+    m.syncSelection();                       // sizes marks + pick-order arrays
+    m.selectFace(0);
+    em = EditMode.Polygons; sameAsMeshMethod("polygons/one-face");
+    m.selectVertex(6);                       // the orphan, alone
+    em = EditMode.Vertices; sameAsMeshMethod("vertices/orphan-only");
+    m.selectEdge(0);
+    em = EditMode.Edges;    sameAsMeshMethod("edges/one-edge");
+
+    // (b) A POSITION change with no topology and no selection change must
+    // still move the answer. Written straight into the array — exactly the
+    // way `applyTRS`'s baseline restore and the transform kernels write, i.e.
+    // publishing nothing — so a result cache keyed on any bus epoch would
+    // return the stale point here and this assert would redden.
+    em = EditMode.Polygons;
+    m.clearFaceSelection();
+    Vec3 before = acs.currentCenter();
+    m.vertices[4] = Vec3(40, 0, 0);
+    Vec3 after = acs.currentCenter();
+    assert(after.x != before.x,
+        format("a silent position write did not move the action centre "
+             ~ "(%s -> %s) — the RESULT is being cached, and a baseline-"
+             ~ "sampled evaluate will read the previous step's output",
+               before.x, after.x));
+    assert(after.x == m.selectionBBoxCenterFaces().x,
+        "after a silent position write the centre must equal the mesh "
+        ~ "method's, not merely differ from the stale one");
+    m.vertices[4] = Vec3(4, 0, 0);
+}
+
+// ---------------------------------------------------------------------------
+// TASK 2006 — the RATE, which is the only thing that can see the cache at all.
+//
+// Every value assertion above stays green if the membership is rebuilt on
+// every single call: the list would be correct, just re-derived. That is
+// exactly the regression this task removed (~2 rebuilds per rendered frame
+// plus ~2 per motion event, each O(mesh)). So the witness is a counter, and
+// it needs BOTH directions — an anti-vacuity control that the counter moves
+// when it should, or a cache that has been accidentally disabled into a
+// never-rebuild no-op would read the same "1".
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : Mesh, makeGridPlane;
+    import toolpipe.stages.actcenter : g_acenBboxMembershipRebuilds;
+
+    Mesh m = makeGridPlane(4);
+    Mesh* mp = &m;
+    EditMode em = EditMode.Polygons;
+    auto acs = new ActionCenterStage(() => mp, &em);
+    acs.mode = ActionCenterStage.Mode.Auto;
+
+    // 1. Repeated evaluation with nothing changing rebuilds ONCE, not N times.
+    ulong t0 = g_acenBboxMembershipRebuilds;
+    foreach (i; 0 .. 25) acs.currentCenter();
+    ulong warm = g_acenBboxMembershipRebuilds - t0;
+    assert(warm == 1,
+        format("25 evaluations rebuilt the membership %d times, expected 1 — "
+             ~ "the cache key is being missed on every call", warm));
+
+    // 2. A POSITION change must NOT rebuild the membership: which vertices
+    //    contribute is a function of connectivity and selection, never of
+    //    where they are. (The bbox itself is recomputed — cell (b) above.)
+    t0 = g_acenBboxMembershipRebuilds;
+    foreach (i; 0 .. 5) {
+        m.vertices[0].x += 0.25f;
+        acs.currentCenter();
+    }
+    assert(g_acenBboxMembershipRebuilds == t0,
+        format("a position change rebuilt the membership %d times — the key "
+             ~ "carries a Position term it must not carry",
+               g_acenBboxMembershipRebuilds - t0));
+
+    // 3. ANTI-VACUITY, three arms. Without these a cache that never rebuilds
+    //    (a dead walk, a key that always matches) passes 1 and 2 outright.
+    t0 = g_acenBboxMembershipRebuilds;
+    em = EditMode.Vertices;             // edit mode is part of the key
+    acs.currentCenter();
+    assert(g_acenBboxMembershipRebuilds == t0 + 1,
+        "an edit-mode change did not rebuild the membership");
+
+    t0 = g_acenBboxMembershipRebuilds;
+    m.syncSelection();
+    m.selectVertex(3);                       // selection is part of the key
+    acs.currentCenter();
+    assert(g_acenBboxMembershipRebuilds == t0 + 1,
+        "a selection change did not rebuild the membership");
+
+    t0 = g_acenBboxMembershipRebuilds;
+    Mesh other = makeGridPlane(3);           // a different mesh ADDRESS
+    Mesh* op = &other;
+    auto acs2 = new ActionCenterStage(() => op, &em);
+    acs2.mode = ActionCenterStage.Mode.Auto;
+    acs2.currentCenter();
+    assert(g_acenBboxMembershipRebuilds == t0 + 1,
+        "a fresh stage over a different mesh did not rebuild the membership");
+
+    // 4. WHICH selection term. The two candidates — `Mesh.marksVersion` (an
+    //    O(1) counter, bumped only by `noteSelectionChange` / a `MeshEditBatch`
+    //    close) and `Mesh.selectionSignature()` (an O(V) FNV walk over the
+    //    marks array) — agree on every gesture a user can drive, so no VALUE
+    //    and no arm above can tell them apart. They disagree on exactly one
+    //    input: a write straight into the marks array that skips the funnel.
+    //    This is that input, and it is here because the difference is 2.23 ms
+    //    per call at 1M faces (4.46 ms in Edges mode) against a 1.02 ms bbox
+    //    pass — i.e. keyed on the hash this cache costs more than it saves in
+    //    two of the three modes. If this cell ever reddens, someone put the
+    //    O(V) hash back; read `bboxMembershipCached`'s doc comment before
+    //    "fixing" it.
+    //
+    //    It pins a NARROWING, deliberately: the funnel is the invalidation.
+    //    That is the same contract `transform.d`'s `computeSelectionHash`
+    //    memo has shipped under, and the one `changeBus.missedPublishers`
+    //    already gates.
+    t0 = g_acenBboxMembershipRebuilds;
+    m.vertexMarks[5] |= Mesh.Marks.Select;   // straight in — no funnel
+    acs.currentCenter();
+    assert(g_acenBboxMembershipRebuilds == t0,
+        format("a marks write that bypassed noteSelectionChange rebuilt the "
+             ~ "membership %d time(s) — the key is reading the marks array "
+             ~ "itself (O(V) per call), not `Mesh.marksVersion`",
+               g_acenBboxMembershipRebuilds - t0));
+    // ... and the funnel on the SAME mesh still does invalidate, so the cell
+    // above is a narrowing and not a dead cache.
+    m.vertexMarks[5] &= ~Mesh.Marks.Select;
+    t0 = g_acenBboxMembershipRebuilds;
+    m.selectVertex(5);
+    acs.currentCenter();
+    assert(g_acenBboxMembershipRebuilds == t0 + 1,
+        "the same selection made through the funnel did not rebuild — the "
+      ~ "cache is not invalidating at all, and cell 4 above proves nothing");
+}

@@ -648,6 +648,14 @@ private static immutable RemainderFile[] kRemainder = [
       ~ "| SubpatchPreview.rebuildIfStale's two terms (row 10)"),
     RemainderFile("source/render/render_mvp.d", 1,
         "shadowCheckMeshChanged — diagnostic only, behind VIBE3D_RENDER_HASH_CHECK"),
+    RemainderFile("source/toolpipe/stages/actcenter.d", 1,
+        "bboxMembershipCached's marksVersion key (task 2006) — the same "
+      ~ "argument as computeSelectionHash's below, one layer up: no watcher "
+      ~ "carries `Marks`, and the thing this counter stands in for is the "
+      ~ "O(V) `selectionSignature()` the cache used to call on EVERY "
+      ~ "evaluation. Measured at 1M faces (ldc2 -O3 -release): the hash cost "
+      ~ "2.23 ms in Vertices/Polygons and 4.46 ms in Edges, against a 1.02 ms "
+      ~ "bbox pass — i.e. the key was more expensive than the walk it guarded"),
     RemainderFile("source/tools/transform/rotate.d", 1,
         "RotateTool's gesture boundary (§3.6 row 21's family)"),
     RemainderFile("source/tools/transform/scale.d", 1,

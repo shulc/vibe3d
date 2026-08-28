@@ -2498,15 +2498,18 @@ class HttpServer {
         }
         import snap                      : g_snapGridBuilds;
         import toolpipe.stages.symmetry  : g_symPairingRebuilds;
-        import toolpipe.stages.actcenter : g_acenClusterRebuilds;
+        import toolpipe.stages.actcenter : g_acenClusterRebuilds,
+                                            g_acenBboxMembershipRebuilds;
         import toolpipe.stages.falloff   : g_falloffSelWeightRebuilds;
         import std.format : format;
         response.statusCode = 200;
         response.body = format(
             `{"snapGridBuilds":%d,"symmetryPairingRebuilds":%d,` ~
-            `"acenClusterRebuilds":%d,"falloffSelWeightRebuilds":%d}`,
+            `"acenClusterRebuilds":%d,"falloffSelWeightRebuilds":%d,` ~
+            `"acenBboxMembershipRebuilds":%d}`,
             g_snapGridBuilds, g_symPairingRebuilds,
-            g_acenClusterRebuilds, g_falloffSelWeightRebuilds);
+            g_acenClusterRebuilds, g_falloffSelWeightRebuilds,
+            g_acenBboxMembershipRebuilds);
     }
 
     private void route_apiGcCommands(HttpRequest request, HttpResponse response) {

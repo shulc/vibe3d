@@ -30,6 +30,22 @@ import document          : Layer;
 /// the suite lane build with different flags.
 __gshared ulong g_acenClusterRebuilds;
 
+/// How many times `bboxMembershipCached` has rebuilt the list of vertices
+/// that CONTRIBUTE to a selection-derived bounding box — the O(V+E+F) walk,
+/// not the per-call bbox recompute over that list (task 2006).
+///
+/// Same contract, and for the same reason, as `g_acenClusterRebuilds` above:
+/// the failure mode of getting the key wrong is invisible to every value
+/// assertion in this file. Widen the key with a POSITION term and the list is
+/// still CORRECT — it is merely rebuilt on every evaluation of every drag
+/// frame, which is precisely the cost this cache exists to remove (measured:
+/// 2 evaluations per rendered frame + ~2 per motion event, each an O(mesh)
+/// walk, 9.31 ms apiece on a 1M-face grid in Polygons mode). Only a RATE can
+/// see that, so here is the rate. Monotone, never reset; `__gshared` and
+/// always-on rather than `debug`, because the unit lane and the suite lane
+/// build with different flags.
+__gshared ulong g_acenBboxMembershipRebuilds;
+
 // ---------------------------------------------------------------------------
 // ActionCenterStage — phase 7.2a. Sits at ordinal 0x60. Replaces
 // hard-coded `selectionCentroid*` in Move / Rotate / Scale with a pluggable
@@ -448,6 +464,54 @@ private:
     // is needed for it (the address IS the object). See mesh.d's
     // vertexAdjacencyCSR doc comment.
 
+    // --- Selection-BBOX MEMBERSHIP cache (task 2006) -----------------------
+    //
+    // WHICH vertices contribute to the selection-derived bounding box, as a
+    // flat index list. Keyed on the same THREE QUANTITIES as `_clusterKey`
+    // above — address, connectivity epoch, edit mode, selection — and for
+    // exactly the same reason: membership is a function of connectivity and
+    // of the selected set, NEVER of where the vertices are. It differs from
+    // the cluster key in HOW it reads the selection: `Mesh.marksVersion`, an
+    // O(1) counter, rather than the O(V) `selectionSignature()` hash. That is
+    // not a style choice — see `bboxMembershipCached`'s doc for the
+    // measurement that made the hash cost more than the walk it guarded.
+    // The bbox itself is still
+    // recomputed from live positions on EVERY call — that is load-bearing, not
+    // an oversight. `applyTRS` restores the run baseline over `mesh.vertices`
+    // with a raw array write that publishes nothing (xfrm_transform.d's
+    // `restoreBaselinePrefix` is `pure nothrow @nogc`), so a cache that
+    // memoised the RESULT against a bus epoch would hand a baseline-sampled
+    // evaluate the value computed from the previous step's OUTPUT — which is
+    // the pivot-drift-under-its-own-output defect `samplePipeFromBaseline`
+    // exists to prevent (doc/measured_laws.md §2). Caching membership is
+    // immune to that: a silent position write cannot change WHICH vertices are
+    // incident to the selected elements.
+    //
+    // The list reproduces, element for element, the contributing set of
+    // `Mesh.selectionBBoxCenterVertices/Edges/Faces` — including the universal
+    // "no selection ⇒ all geometry" fallback and the edge/face de-duplication.
+    // Order within the list is irrelevant: min/max over a multiset equals
+    // min/max over its set, in any order, exactly.
+    bool         _bboxCacheValid = false;
+    MeshDirtyKey _bboxKey;
+    int          _bboxEditMode   = -1;
+    // The SELECTION term, and it is `Mesh.marksVersion` rather than the
+    // sibling cluster cache's `selectionSignature()` — see
+    // `bboxMembershipCached`'s doc comment for the measurement that forced
+    // the difference. `ulong.max` rather than 0 so a fresh stage cannot
+    // accidentally match a fresh mesh's zero.
+    ulong        _bboxMarksVer   = ulong.max;
+    // Vertex count the list was built against. Part of the key, mirroring the
+    // cluster cache's `_cachedClusterOf.length == mesh_.vertices.length` belt:
+    // an untracked vertex-count change would otherwise index out of range.
+    size_t       _bboxVertCount  = size_t.max;
+    // Grown, never shrunk; only `_bboxVerts[0 .. _bboxCount]` is live.
+    uint[]       _bboxVerts;
+    size_t       _bboxCount     = 0;
+    // De-duplication scratch for the Edges / Polygons walks, kept across
+    // rebuilds so the walk allocates nothing in steady state.
+    bool[]       _bboxSeen;
+
 public:
     this(Mesh* delegate() meshSrc, EditMode* editMode,
          Layer delegate() primarySrc = null,
@@ -492,6 +556,15 @@ public:
         _clusterKey.clear();
         _cachedEditMode = -1;
         _cachedSelSig   = 0;
+        // The bbox-membership list rides the same explicit-reset hook (task
+        // 2006). Its own key check already catches selection / topology /
+        // layer changes mid-session; this is the same belt-and-braces.
+        _bboxCacheValid = false;
+        _bboxKey.clear();
+        _bboxEditMode   = -1;
+        _bboxMarksVer   = ulong.max;
+        _bboxVertCount  = size_t.max;
+        _bboxCount      = 0;
     }
 
     /// resetTransient: same as reset() but respects userLocked.
@@ -1682,32 +1755,221 @@ private:
         // imports `mesh`). Semantics reproduced exactly, including the
         // "no selection ⇒ all geometry" fallback and the item-space transform
         // going IN rather than onto the result.
+        //
+        // TASK 2006 — all three edit modes now share ONE pass, over the cached
+        // MEMBERSHIP list (`bboxMembershipCached`). Before this, Edges and
+        // Polygons routed to `Mesh.selectionBBoxCenter{Edges,Faces}`, whose
+        // walk re-derived the contributing vertex set from scratch on EVERY
+        // call: a per-call `new bool[](V)` plus, in Polygons mode, one slice
+        // dereference per face into the `uint[][]` face store. Measured on a
+        // 1M-face grid with nothing selected (= whole mesh, the universal
+        // rule; ldc2 1.42 -O3 -release, `makeGridPlane(1000)`, marks arrays
+        // sized): 9.31 ms per evaluation in Polygons mode and 4.03 ms in
+        // Edges against 1.35 ms in Vertices, and the stage is evaluated ~2
+        // times per rendered frame plus ~2 per motion event. The MEMBERSHIP is
+        // the part that does not change between those evaluations; the
+        // positions are, so the min/max below still reads them live. After:
+        // 1.02 ms in every mode, i.e. the answer no longer depends on which
+        // element type is current — 9.1x on Polygons, 3.9x on Edges, 1.3x on
+        // Vertices. The full table, and the two design decisions that got it
+        // there, are on `bboxMembershipCached`.
+        //
+        // WHICH ARRAY EACH MODE READS IS PRESERVED EXACTLY, and it is NOT
+        // uniform: the morph-preview displacement (`acenVertex`) applies in
+        // Vertices mode only. Edges and Polygons read `mesh_.vertices[vi]`
+        // even under a live morph preview — that asymmetry is shipped
+        // behaviour (it was the difference between this function's own
+        // morph arm and the three `Mesh.selectionBBoxCenter*` methods), and
+        // reproducing it is the point of the `morph` flag below rather than
+        // routing everything through `acenVertex`.
         auto ms = itemSpace();
-        if (morphPreviewActive(mesh_) && *editMode_ == EditMode.Vertices) {
-            const bool any = mesh_.hasAnySelectedVertices();
-            Vec3 mn = Vec3(float.infinity, float.infinity, float.infinity);
-            Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
-            bool seen = false;
-            foreach (i; 0 .. mesh_.vertices.length) {
-                if (any && !mesh_.isVertexSelected(i)) continue;
-                Vec3 v = acenVertex(i);
+        const bool morph = morphPreviewActive(mesh_)
+                        && *editMode_ == EditMode.Vertices;
+        // Logically const: the caller-visible RESULT never depends on cache
+        // state, but the cached path fills cross-call membership fields. The
+        // cast mirrors an ordinary memoization, exactly as `computeCenter`'s
+        // Local arm does for `localCenterAndClustersCached` (see its comment
+        // for why the off-main-thread const reader cannot race this fill).
+        const(uint)[] verts =
+            (cast(ActionCenterStage)this).bboxMembershipCached();
+        Vec3 mn = Vec3(float.infinity, float.infinity, float.infinity);
+        Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
+        // `seen` was set inside the loop before task 2006 and meant exactly
+        // "at least one vertex was visited". Over a membership list that is
+        // `verts.length > 0`, with no daylight between the two: every entry
+        // in the list is visited unconditionally.
+        const bool seen = verts.length > 0;
+
+        // TWO LOOPS, AND THE SPLIT IS WORTH 3.2x. In the general body below,
+        // `acenVertex` and `ms.toWorldPoint` are opaque to the optimiser, so
+        // it may not hoist `mesh_.vertices` (a field reached through a class
+        // reference) out of the loop and cannot vectorise the min/max — every
+        // iteration reloads the slice's pointer and length. The plain arm
+        // hoists the slice into a local and drops both branches, which is what
+        // lets LDC turn this into a memory-bound SIMD reduction. Measured on
+        // the 1M-face grid (ldc2 1.42 -O3 -release), same rig as the key
+        // measurement above: 3.52 ms per evaluation with one branchy loop,
+        // 1.10 ms with the split — against a 1.07 ms floor for streaming
+        // 12 MB of positions plus 4 MB of indices at this host's bandwidth.
+        // The plain arm is not a special case of the geometry: it is the
+        // ORDINARY state (no morph preview, layer at the identity), so it is
+        // the arm every drag frame takes.
+        if (!morph && ms.isIdentity) {
+            const(Vec3)[] vp = mesh_.vertices;
+            foreach (vi; verts) {
+                const Vec3 v = vp[vi];
+                if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
+                if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
+                if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
+            }
+        } else {
+            foreach (vi; verts) {
+                Vec3 v = morph ? acenVertex(vi) : mesh_.vertices[vi];
                 if (!ms.isIdentity) v = ms.toWorldPoint(v);
                 if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
                 if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
                 if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
-                seen = true;
             }
-            return seen ? (mn + mx) * 0.5f : Vec3(0, 0, 0);
         }
-        // Edge / Polygon modes stay on the mesh method: their bbox is over
-        // element MEMBERSHIP, not over a vertex array this stage can substitute
-        // without duplicating the edge/face selection walk too. Named as a
-        // residue rather than left silent — registry row 48.
+        return seen ? (mn + mx) * 0.5f : Vec3(0, 0, 0);
+    }
+
+    /// The vertices that CONTRIBUTE to a selection-derived bounding box in the
+    /// active edit mode, as a flat index list (task 2006).
+    ///
+    /// Reproduces, element for element, the contributing set of
+    /// `Mesh.selectionBBoxCenterVertices` / `...Edges` / `...Faces`: the
+    /// universal "no selection ⇒ all geometry" fallback, and the
+    /// de-duplication that makes an edge's or a face's shared vertex count
+    /// once. Order is not part of the contract — min/max over a multiset
+    /// equals min/max over its set, in any order, exactly — so a caller may
+    /// not depend on it.
+    ///
+    /// Cache key: (address, CONNECTIVITY epoch, editMode, `marksVersion`,
+    /// vertex count). The watcher is `mesh_dirty.g_topoEpochs`, whose mask
+    /// DELIBERATELY excludes `Position` — see the `_bboxVerts` field comment
+    /// for why a position term here would be a behaviour regression and not
+    /// merely a slower cache.
+    ///
+    /// THE SELECTION TERM IS A COUNTER, NOT `selectionSignature()`, AND THAT
+    /// IS THE WHOLE PERFORMANCE RESULT OF TASK 2006. The sibling cluster cache
+    /// above keys on the FNV hash, which is an O(V) walk over the marks array
+    /// — measured on a 1M-face grid, ldc2 1.42 -O3 -release: 2.23 ms in
+    /// Vertices / Polygons mode and 4.46 ms in Edges mode (edgeMarks is 2M
+    /// entries), against a 1.02 ms bbox pass over the whole membership. Keyed
+    /// on the hash this cache COSTS MORE THAN IT SAVES in two of the three
+    /// modes. Measured end to end on the stage itself, same rig, ms per
+    /// evaluation:
+    ///
+    ///                     before   hash-keyed   counter-keyed
+    ///     Vertices         1.35       3.52          1.02
+    ///     Edges            4.03       3.52          1.02
+    ///     Polygons         9.31       3.52          1.02
+    ///     Polygons/half    3.86       1.76          0.51
+    ///
+    /// — i.e. the first draft of this cache was a 2.6x REGRESSION on the
+    /// commonest mode while being a 2.6x win on Polygons. (The middle column
+    /// also carries the branchy single loop; the split into a plain and a
+    /// general arm, argued at the loop itself, is what takes 3.52 to 1.02.)
+    ///
+    /// `Mesh.marksVersion` is the O(1) key that hash exists to be memoised
+    /// behind — its own doc states the contract ("bumped whenever anything
+    /// `selectionSignature` reads can have changed", never on Position) and
+    /// `transform.d`'s `computeSelectionHash` already keys on it for exactly
+    /// this reason (there, `selectionSignature` was 21.25 % of a falloff
+    /// drag's whole profile). The consequence, stated because it is a real
+    /// narrowing: a write straight into `vertexMarks` / `edgeMarks` /
+    /// `faceMarks` that does NOT go through `noteSelectionChange` or a
+    /// `MeshEditBatch` close no longer invalidates this list. That is the
+    /// same contract the transform memo has shipped under, and it is the one
+    /// `changeBus.missedPublishers` already gates.
+    const(uint)[] bboxMembershipCached() {
+        if (mesh_ is null) return null;
+
+        const int    edMode    = cast(int)(*editMode_);
+        const size_t meshAddr  = cast(size_t)mesh_;
+        const ulong  meshEpoch = g_topoEpochs.epochFor(meshAddr);
+        const size_t nV        = mesh_.vertices.length;
+
+        // recorded remainder (1906 §3.6): `marksVersion` owns this memo's
+        // SELECTION term, the same way it owns `computeSelectionHash`'s in
+        // transform.d, and for the same reason — no watcher carries `Marks`
+        // (the geometry and connectivity masks exclude it on purpose, and
+        // `DisplayEpochMask` does not list it either), so a `Marks` epoch
+        // would be a strictly coarser restatement of a counter that already
+        // tracks exactly this class on the mesh itself. Here it replaces an
+        // O(V) `selectionSignature()` call that cost more than the walk it
+        // was guarding; see the doc comment above for the numbers.
+        // (Census shape C: counter into a local, compared four lines down.)
+        const ulong  marksVer  = mesh_.marksVersion;
+        const bool hit = _bboxCacheValid
+                      && _bboxKey.matches(meshAddr, meshEpoch)
+                      && _bboxEditMode  == edMode
+                      && _bboxMarksVer  == marksVer
+                      && _bboxVertCount == nV;
+        if (hit) return _bboxVerts[0 .. _bboxCount];
+
+        // Test seam. ALWAYS ON, not `debug` — the two gates build with
+        // different flags, so a `debug`-only counter is untestable from the
+        // suite lane. It counts the MEMBERSHIP walk, never the per-call bbox
+        // recompute above, which is meant to run on every evaluation.
+        ++g_acenBboxMembershipRebuilds;
+
+        // Filled into a buffer that is GROWN and never SHRUNK, with a running
+        // count, rather than `length = 0` + `~=`: the append path is a runtime
+        // call per element that `reserve` does not remove, and a shrink-then-
+        // append pattern on a page-backed block is a measured allocation
+        // hazard in this codebase. `nV` is the exact worst case for all three
+        // arms (a vertex appears at most once), so one growth per mesh size is
+        // the whole allocation budget of this cache.
+        if (_bboxVerts.length < nV) _bboxVerts.length = nV;
+        size_t k = 0;
         final switch (*editMode_) {
-            case EditMode.Vertices: return mesh_.selectionBBoxCenterVertices(ms);
-            case EditMode.Edges:    return mesh_.selectionBBoxCenterEdges(ms);
-            case EditMode.Polygons: return mesh_.selectionBBoxCenterFaces(ms);
+            case EditMode.Vertices: {
+                const bool any = mesh_.hasAnySelectedVertices();
+                foreach (i; 0 .. nV) {
+                    if (any && !mesh_.isVertexSelected(i)) continue;
+                    _bboxVerts[k++] = cast(uint)i;
+                }
+                break;
+            }
+            case EditMode.Edges: {
+                const bool any = mesh_.hasAnySelectedEdges();
+                if (_bboxSeen.length < nV) _bboxSeen.length = nV;
+                _bboxSeen[0 .. nV] = false;
+                foreach (i, edge; mesh_.edges) {
+                    if (any && !mesh_.isEdgeSelected(i)) continue;
+                    foreach (vi; edge) {
+                        if (vi >= nV || _bboxSeen[vi]) continue;
+                        _bboxSeen[vi] = true;
+                        _bboxVerts[k++] = vi;
+                    }
+                }
+                break;
+            }
+            case EditMode.Polygons: {
+                const bool any = mesh_.hasAnySelectedFaces();
+                if (_bboxSeen.length < nV) _bboxSeen.length = nV;
+                _bboxSeen[0 .. nV] = false;
+                foreach (i, face; mesh_.faces) {
+                    if (any && !mesh_.isFaceSelected(i)) continue;
+                    foreach (vi; face) {
+                        if (vi >= nV || _bboxSeen[vi]) continue;
+                        _bboxSeen[vi] = true;
+                        _bboxVerts[k++] = vi;
+                    }
+                }
+                break;
+            }
         }
+
+        _bboxCount      = k;
+        _bboxKey.stamp(meshAddr, meshEpoch);
+        _bboxEditMode   = edMode;
+        _bboxMarksVer   = marksVer;
+        _bboxVertCount  = nV;
+        _bboxCacheValid = true;
+        return _bboxVerts[0 .. _bboxCount];
     }
 
     // Phase 7.6 (BaseSide gizmo): centroid of the current selection
