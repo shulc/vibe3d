@@ -51,6 +51,7 @@ class MeshMoveVertex : Command, Operator {
         if (found < 0) return false;
         movedIdx = found;
         origPos  = mesh.vertices[found];
+        noteUndoRecorded();   // task 2500 — the image and its flag, one statement
         mesh.vertices[found] = to_;
 
         // Change-notification (Stage 1): the forward apply moved a position but
@@ -67,10 +68,14 @@ class MeshMoveVertex : Command, Operator {
         return true;
     }
 
-    override bool revert() {
-        if (movedIdx < 0 || movedIdx >= cast(int)mesh.vertices.length) return false;
+    protected override void revertImpl() {
+        // A GENUINE restore failure: the vertex this command moved is no
+        // longer in the mesh, so its position cannot be put back.
+        if (movedIdx < 0 || movedIdx >= cast(int)mesh.vertices.length) {
+            failRevert("the moved vertex is no longer in the mesh");
+            return;
+        }
         mesh.vertices[movedIdx] = origPos;
         mesh.commitChange(MeshEditScope.Position);
-        return true;
     }
 }

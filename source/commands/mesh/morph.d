@@ -10,7 +10,7 @@ import mesh_morph : morphApply;
 import morph_target;
 import params : Param;
 import commands.mesh.position_undo : RecordedUndo, PositionUndo;
-import commands.mesh.map_edit_undo : runMapEdit, revertMapEdit, mapSlotOf;
+import commands.mesh.map_edit_undo : runMapEdit, mapSlotOf;
 import std.array : uninitializedArray;
 
 // ---------------------------------------------------------------------------
@@ -195,7 +195,7 @@ class MorphCreate : Command {
         // ceiling, and re-implementing either test here would be a second,
         // unnamed guard in front of the named one. The kernel therefore
         // returns false and `runMapEdit` closes the batch; nothing was written.
-        if (!runMapEdit(mesh, undo_, MeshEditScope.Maps,
+        if (!runMapEdit(this, mesh, undo_, MeshEditScope.Maps,
                         (ref MeshEditBatch ed) => createKernel(ed, kind)))
             return false;
         return true;
@@ -245,13 +245,12 @@ class MorphCreate : Command {
         return true;
     }
 
-    override bool revert() {
-        if (!revertMapEdit(mesh, undo_)) return false;
-        // The NON-MESH tail, and no plane dump can see it: the target named a
-        // map that no longer exists after the restore. Unchanged by the
-        // migration, and it runs AFTER the mesh half in both paths.
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
         forgetMorphTargetIfNamed(name_);
-        return true;
     }
 }
 
@@ -280,7 +279,7 @@ class MorphRemove : Command {
         if (morphMapOrNull(mesh, name_) is null)
             throw new Exception(
                 "mesh.morph.remove: morph map '" ~ name_ ~ "' not found");
-        return runMapEdit(mesh, undo_, MeshEditScope.Maps, &removeKernel);
+        return runMapEdit(this, mesh, undo_, MeshEditScope.Maps, &removeKernel);
     }
 
     private bool removeKernel(ref MeshEditBatch ed) {
@@ -321,13 +320,11 @@ class MorphRemove : Command {
         return true;
     }
 
-    override bool revert() {
-        // NO non-mesh tail, deliberately and unchanged: the forward DROPS the
-        // routing target when it named this map and the undo has never put it
-        // back. Recorded here so the asymmetry with `create` and `rename`
-        // reads as pre-existing behaviour rather than as something this
-        // migration lost.
-        return revertMapEdit(mesh, undo_);
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
     }
 }
 
@@ -364,7 +361,7 @@ class MorphRename : Command {
         if (mesh.meshMap(to_) !is null)
             throw new Exception(
                 "mesh.morph.rename: target name '" ~ to_ ~ "' already exists");
-        return runMapEdit(mesh, undo_, MeshEditScope.Maps, &renameKernel);
+        return runMapEdit(this, mesh, undo_, MeshEditScope.Maps, &renameKernel);
     }
 
     private bool renameKernel(ref MeshEditBatch ed) {
@@ -388,12 +385,12 @@ class MorphRename : Command {
         return true;
     }
 
-    override bool revert() {
-        if (!revertMapEdit(mesh, undo_)) return false;
-        // The NON-MESH tail, and it reads the mesh AFTER the restore — so the
-        // order of these two statements is load-bearing on both paths.
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
         if (morphTargetName() == to_) setMorphTarget(from_, mesh.mapKind(from_));
-        return true;
     }
 }
 
@@ -416,7 +413,6 @@ class MorphSelect : Command {
     private string  name_;
     private string  prevName_;
     private MapKind prevKind_ = MapKind.unclassified;
-    private bool    applied_;
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -447,7 +443,7 @@ class MorphSelect : Command {
         prevKind_ = morphTargetKind();
         if (name_.length == 0) {
             clearMorphTarget();
-            applied_ = true;
+            noteUndoRecorded();   // task 2500 — the image is `prevName_`/`prevKind_`
             publishTargetChange();
             return true;
         }
@@ -457,16 +453,14 @@ class MorphSelect : Command {
             return false;
         }
         setMorphTarget(name_, m.kind);
-        applied_ = true;
+        noteUndoRecorded();   // task 2500 — the image is `prevName_`/`prevKind_`
         publishTargetChange();
         return true;
     }
 
-    override bool revert() {
-        if (!applied_) return false;
+    protected override void revertImpl() {
         setMorphTarget(prevName_, prevKind_);
         publishTargetChange();
-        return true;
     }
 
     /// Binding or UNBINDING the target changes what the viewport DRAWS —
@@ -530,7 +524,7 @@ class MorphSet : Command {
         if (vert_ < 0 || cast(size_t) vert_ >= mesh.vertices.length)
             throw new Exception(
                 "mesh.morph.set: vert out of range");
-        if (!runMapEdit(mesh, undo_, MeshEditScope.Maps, &setKernel))
+        if (!runMapEdit(this, mesh, undo_, MeshEditScope.Maps, &setKernel))
             // UNREACHABLE, and named as such: `setMorphValue` refuses on a
             // missing map, a non-morph kind or an out-of-range vertex, and all
             // three are pre-checked above. The pre-2230 code restored its
@@ -576,8 +570,11 @@ class MorphSet : Command {
         return true;
     }
 
-    override bool revert() {
-        return revertMapEdit(mesh, undo_);
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
     }
 }
 
@@ -617,7 +614,7 @@ class MorphClear : Command {
         // selection — clearing a whole map is a coherent, reversible request,
         // and `selectedVertexIndicesVertices` is the same operand set every
         // other vertex-domain command uses.
-        return runMapEdit(mesh, undo_, MeshEditScope.Maps, &clearKernel);
+        return runMapEdit(this, mesh, undo_, MeshEditScope.Maps, &clearKernel);
     }
 
     private bool clearKernel(ref MeshEditBatch ed) {
@@ -678,8 +675,11 @@ class MorphClear : Command {
         return true;
     }
 
-    override bool revert() {
-        return revertMapEdit(mesh, undo_);
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
     }
 }
 
@@ -746,7 +746,7 @@ class MorphApplyCmd : Command {
         }
         auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
         applyKernel(ed, kind);
-        undo_.arm(ed.close());
+        undo_.arm(this, ed.close());
         return true;
     }
 
@@ -788,8 +788,11 @@ class MorphApplyCmd : Command {
         ed.commitChange(MeshEditScope.Position);
     }
 
-    override bool revert() {
-        return revertMapEdit(mesh, undo_);
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
     }
 }
 

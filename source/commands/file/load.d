@@ -149,6 +149,7 @@ class FileLoad : Command {
             prevActiveIndex = document.activeIndex;
             prevSelection   = document.captureItemSelection();   // task 0671
             docSnapped      = true;
+            noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
             ok = readV3d(path, *document);
             if (!ok) {
                 // Carry the reader's sentence out to whoever has to tell a
@@ -157,7 +158,7 @@ class FileLoad : Command {
                 auto why = lastV3dRejectReason();
                 refusal_ = why.length ? (path ~ " — " ~ why)
                                       : ("could not read " ~ path);
-                docSnapped = false; prevLayers = null; return false;
+                docSnapped = false; prevLayers = null; forgetUndoRecord(); return false;
             }
             // readV3d (Stage 3) already re-asserts the full selection-set
             // invariants via the Document mutators: the persisted multi-select
@@ -187,6 +188,7 @@ class FileLoad : Command {
                 prevActiveIndex = document.activeIndex;
                 prevSelection   = document.captureItemSelection();   // task 0671
                 docSnapped      = true;
+                noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
                 *document       = toLayers(sc);
                 // toLayers sets primary/selected/activeIndex in lockstep;
                 // defensive re-clamp re-establishes the lockstep invariant.
@@ -194,6 +196,7 @@ class FileLoad : Command {
             } else {
                 // Single-part (or empty) import: keep the active-mesh path.
                 snap = MeshSnapshot.capture(*mesh);
+                noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
                 *mesh = flattenToMesh(sc);
             }
         }
@@ -292,7 +295,7 @@ class FileLoad : Command {
         return true;
     }
 
-    override bool revert() {
+    protected override void revertImpl() {
         if (docSnapped) {
             // Native path: restore the prior layer list + active index in place.
             document.layers      = prevLayers;
@@ -310,10 +313,8 @@ class FileLoad : Command {
             if (active !is null) active.publishChange(MeshChangeAll);
             // Undo restores the prior layer list — another whole-document change.
             noteLayerChange(LayerChangeAll);
-            return true;
+            return;
         }
-        if (!snap.filled) return false;
         snap.restore(*mesh);
-        return true;
     }
 }

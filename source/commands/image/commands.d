@@ -237,7 +237,6 @@ final class ImageLoad : ImageCommandBase {
     // Layer + one ImageData, and the history entry that holds them is dropped
     // when the redo branch is discarded.
     private Layer  created_;
-    private bool   applied;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
          void delegate(size_t, size_t) onSwitch) {
@@ -336,7 +335,7 @@ final class ImageLoad : ImageCommandBase {
         }
 
         doc.layers ~= created_;
-        applied = true;
+        noteUndoRecorded();   // task 2500 — the image is `created_`
         // Structural add. NOT `setActive`/`selectItem`: an image is not a
         // scene item, so there is no "make it active" to perform, and folding
         // an item-SELECTION change (UiState) into this Model command would
@@ -347,10 +346,14 @@ final class ImageLoad : ImageCommandBase {
         return true;
     }
 
-    override bool revert() {
-        if (!applied || created_ is null) return false;
+    protected override void revertImpl() {
         immutable size_t i = doc.indexOf(created_);
-        if (i == doc.layers.length) return false;   // already gone — not ours to undo
+        if (i == doc.layers.length) {
+            // A GENUINE restore failure: the layer we added is already out of
+            // the document, so there is nothing of ours to take back out.
+            failRevert("the image item is no longer in the document");
+            return;
+        }
 
         // The item may have been selected / focused since the load (an image
         // item is selectable through `layer.select` like any other item).
@@ -361,9 +364,7 @@ final class ImageLoad : ImageCommandBase {
         if (created_.selected) doc.selectItem(created_, SelMode.Remove);
 
         doc.layers = doc.layers[0 .. i] ~ doc.layers[i + 1 .. $];
-        applied = false;
         noteLayerChange(LayerChange.Removed);
-        return true;
     }
 }
 
@@ -392,7 +393,6 @@ final class ImageReplace : ImageCommandBase {
     private string prevPath_;
     private int    prevW_, prevH_, prevC_;
     private bool   prevMissing_;
-    private bool   applied;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
          void delegate(size_t, size_t) onSwitch) {
@@ -468,20 +468,18 @@ final class ImageReplace : ImageCommandBase {
         img.missing    = probe.missing;
 
         payload_ = img;
-        applied  = true;
+        noteUndoRecorded();   // task 2500 — the image is the prev* field set
         noteLayerChange(LayerChange.PropertyChanged);
         return true;
     }
 
-    override bool revert() {
-        if (!applied || payload_ is null) return false;
+    protected override void revertImpl() {
         payload_.storedPath = prevPath_;
         payload_.width      = prevW_;
         payload_.height     = prevH_;
         payload_.channels   = prevC_;
         payload_.missing    = prevMissing_;
         noteLayerChange(LayerChange.PropertyChanged);
-        return true;
     }
 }
 
@@ -605,11 +603,13 @@ final class ImageRemove : ImageCommandBase {
         }
         inner_     = del;
         referrers_ = w.referrers;
+        noteUndoRecorded();   // task 2500 — the undo image is the INNER command
         return true;
     }
 
-    override bool revert() {
-        return inner_ !is null && inner_.revert();
+    protected override void revertImpl() {
+        if (!inner_.revert())
+            failRevert("the wrapped layer.delete could not be reverted");
     }
 }
 

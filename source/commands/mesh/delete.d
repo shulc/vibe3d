@@ -103,16 +103,6 @@ class MeshDelete : Command, Operator {
     // copy of the same field — measured on `makeTaggedGridDirty(3)`, where it
     // comes back byte-identical with no belt of any kind.
     // Set once `evaluate` has recorded a delta. It is NOT the old
-    // `useDelta_` under a new name doing the same job: with the fork gone
-    // there is no other path to select, and what this flag now discriminates
-    // is FIRST RUN from REDO — `evaluate` is called again on redo and must
-    // re-run the kernel BATCHLESS, or the second run records a second delta
-    // on top of the first. It is also `revert()`'s guard: an instance whose
-    // `evaluate` refused holds an empty delta and must not replay it, which
-    // is exactly what the deleted arm's `if (!snap.filled) return false;`
-    // did.
-    private bool               recorded_;
-
     // Stable label: captured once in runKernel() after effectiveDeleteMode
     // resolves the actual target type. Initialized to editMode at construction
     // so a label() read before apply() is still valid (returns the raw mode in
@@ -137,13 +127,13 @@ class MeshDelete : Command, Operator {
     // NOT spelled `return true;`, and that is a deviation from the stage plan
     // taken deliberately. The plan expected `useDelta_` to collapse to a
     // constant once the fork went; it does not, because the field is
-    // load-bearing for the redo arm (see `recorded_`). And a constant `true`
+    // load-bearing for the redo arm (see `undoRecorded()`). And a constant `true`
     // would be a claim about instances the class can genuinely be in —
     // constructed-but-not-applied, or refused — where no delta exists. The
     // field is the honest value and it IS `true` for every instance that
     // reaches the history stack, since `acceptRecordedEdit` guarantees a
     // non-empty delta before it is set.
-    override bool isOperationInverse() const { return recorded_; }
+    override bool isOperationInverse() const { return undoRecorded(); }
 
     override string label() const {
         final switch (appliedMode_) {
@@ -200,7 +190,7 @@ class MeshDelete : Command, Operator {
         // Redo path: the delta already recorded the first run; re-run the
         // kernel BATCHLESS (no batch open ⇒ Ph1 hooks inert ⇒ no double
         // record) from the restored pre-op selection.
-        if (recorded_) {
+        if (undoRecorded()) {
             const affected = runKernel();
             if (affected == 0) return false;
             return true;
@@ -227,7 +217,7 @@ class MeshDelete : Command, Operator {
             // anyway. On the paths where both act, they agree; where the carry
             // declines, this is what the user gets back instead of a zeroed
             // map. Redo needs no "after" copy because it re-runs the kernel
-            // (see the `recorded_` redo branch above), which carries the map itself.
+            // (see the `undoRecorded()` redo branch above), which carries the map itself.
             preMaps_ = new MeshMap[](mesh.meshMaps.length);
             foreach (i, ref m; mesh.meshMaps) preMaps_[i] = m.dup;
             auto rec = MeshEditTracker();
@@ -272,17 +262,19 @@ class MeshDelete : Command, Operator {
                 preMaps_      = null;
                 return false;
             }
-            recorded_ = true;
+            noteUndoRecorded();
             return true;
         }
     }
 
-    override bool revert() {
+    protected override void revertImpl() {
         // An instance whose `evaluate` refused holds an empty delta and every
-        // pre-image nulled; replaying it would run the belts below over a
-        // mesh they were never sized against. This refusal is what the
-        // deleted snapshot arm's `if (!snap.filled) return false;` did.
-        if (!recorded_) return false;
+        // pre-image nulled, and replaying it would run the belts below over a
+        // mesh they were never sized against. The refusal is not written here
+        // any more: the refused forward never raised the undo flag, so
+        // `Command.revert` answers `false` before this body is entered (task
+        // 2500). Same job as the deleted snapshot arm's
+        // `if (!snap.filled) return false;`, one layer up and written once.
         {
             delta_.revert(*mesh);     // LIFO inverse replay restores geometry
             // Re-overlay the Subpatch + Hide (task 0613) planes FIRST: the
@@ -327,7 +319,6 @@ class MeshDelete : Command, Operator {
             preSel_.restore(*mesh);
             mesh.clearEdgeSelection();
             restoreSelectedEdgeEnds(*mesh, preEdgeEnds_);
-            return true;
         }
     }
 }

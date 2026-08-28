@@ -10,10 +10,8 @@ import snapshot : SelectionSnapshot;
 // Deselects the most recently selected element (highest *SelectionOrder).
 class SelectLess : Command {
     private SelectionSnapshot snap;
-    override bool revert() {
-        if (!snap.filled) return false;
+    protected override void revertImpl() {
         snap.restore(*mesh);
-        return true;
     }
     this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
@@ -37,6 +35,7 @@ class SelectLess : Command {
         // which can sit past either plane). This command only DESELECTS, and
         // only at an index the reader above proved is inside both planes.
         snap = SelectionSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         const sel = mesh.lastSelectedInSelectionOrder(editMode);
         if (sel.last < 0) return true;
         final switch (editMode) {

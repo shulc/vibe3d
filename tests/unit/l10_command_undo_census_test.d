@@ -105,12 +105,12 @@ unittest // the thirteen are off the whole-mesh snapshot
         immutable code = codeOnly(readText(path));
 
         // TERM 3 — a PER-FILE non-vacuity floor for the stripper. Every one of
-        // the thirteen is a `Command` with exactly one `revert` override; a
+        // the thirteen is a `Command` with exactly one `revertImpl` override; a
         // stripper that ate the file would report 0 for every needle and pass
         // in silence.
-        assert(countOf(code, "override bool revert()") == 1,
+        assert(countOf(code, "protected override void revertImpl()") == 1,
             "source/commands/mesh/" ~ name ~ ": the comment stripper ate the "
-          ~ "file (or the command lost its `revert` override) — every count "
+          ~ "file (or the command lost its `revertImpl` override) — every count "
           ~ "below would be 0 for the wrong reason.");
         scanned += code.length;
 

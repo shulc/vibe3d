@@ -62,9 +62,6 @@ class MeshReduce : Command, Operator {
     /// `commands/mesh/delete.d` and `commands/mesh/cleanup.d`, which hold the
     /// identical `preMarksWord_`.
     private uint[]             preMarksWord_;
-    /// Set once `evaluate` recorded a delta: FIRST RUN vs REDO, and
-    /// `revert()`'s guard — the role the deleted `if (!snap.filled)` played.
-    private bool               recorded_;
     private float            ratio_  = 0.5f;
     private int              count_  = 0;
     private bool             pb_     = true;
@@ -103,7 +100,7 @@ class MeshReduce : Command, Operator {
         // BATCHLESS — no recording frame means every tracker hook takes its
         // `editRecorder_ is null` early-out — and keep the FIRST delta rather
         // than record a second one over it.
-        if (recorded_) {
+        if (undoRecorded()) {
             size_t rw;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, kReduceEditScope);
@@ -169,16 +166,15 @@ class MeshReduce : Command, Operator {
             preMarksWord_ = null;
             return false;
         }
-        recorded_ = true;
+        noteUndoRecorded();
         return true;
     }
 
-    override bool revert() {
+    protected override void revertImpl() {
         // An instance whose `evaluate` refused holds an empty delta and a
         // nulled selection image; replaying it would run `preSel_` over a mesh
         // it was never sized against. Answering false here is correct ONLY
         // because the funnel records no history entry for a refused forward.
-        if (!recorded_) return false;
         delta_.revert(*mesh);     // LIFO inverse replay restores geometry
 
         // …then the Subpatch + Hide plane, BEFORE the selection restore and
@@ -196,6 +192,5 @@ class MeshReduce : Command, Operator {
             mesh.setFaceMarksFrom(preMarksWord_, ~Mesh.Marks.Select);
         }
         preSel_.restore(*mesh);   // …then the three selection domains
-        return true;
     }
 }

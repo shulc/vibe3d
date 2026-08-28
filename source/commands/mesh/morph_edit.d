@@ -76,6 +76,7 @@ final class MeshMorphEdit : Command, RunMergeable {
         mapName_   = mapName;
         entries_   = entries;
         editLabel_ = label.length ? label : "Morph";
+        noteUndoRecorded();   // task 2500 — the image and its flag, one statement
     }
 
     void setHooks(void delegate() onApply, void delegate() onRevert) {
@@ -125,10 +126,9 @@ final class MeshMorphEdit : Command, RunMergeable {
         return true;
     }
 
-    override bool revert() {
+    protected override void revertImpl() {
         write(/*useAfter=*/false);
         if (onRevertHook_ !is null) onRevertHook_();
-        return true;
     }
 
     /// Coalescing predicate. A continuation iff the previous command is also a

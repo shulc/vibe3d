@@ -81,11 +81,11 @@ private string codeOf(string name)
       ~ "below would be measuring nothing.");
     immutable code = codeOnly(readText(path));
     // A PER-FILE non-vacuity floor for the stripper. All six are `Command`s
-    // with exactly one `revert` override; a stripper that ate the file would
+    // with exactly one `revertImpl` override; a stripper that ate the file would
     // report 0 for every needle and pass in silence.
-    assert(countOf(code, "override bool revert()") == 1,
+    assert(countOf(code, "protected override void revertImpl()") == 1,
         "source/commands/mesh/" ~ name ~ ": the comment stripper ate the file "
-      ~ "(or the command lost its `revert` override) — every count below "
+      ~ "(or the command lost its `revertImpl` override) — every count below "
       ~ "would be 0 for the wrong reason.");
     return code;
 }
@@ -237,10 +237,18 @@ unittest // half 2 — the TWO declines still hold their snapshot, and say why
             "MeshSnapshot.capture(":
                 "no longer CAPTURES a whole-mesh snapshot, so its undo has "
               ~ "nothing to restore from",
-            "!snap.filled":
-                "lost its `!snap.filled` revert guard, so `revert()` would "
-              ~ "replay an unfilled capture over a mesh it was never sized "
-              ~ "against",
+            // TASK 2500 — the middle term moved with the mechanism. The
+            // per-command `if (!snap.filled) return false;` guard is gone
+            // tree-wide: `Command.revert` reads ONE flag and answers the
+            // no-image case itself, and this file's flag is raised in the
+            // statement beside its capture. A file that keeps the capture and
+            // the restore but LOSES the raise reverts nothing while reporting
+            // success — the same failure the old needle watched for, one
+            // layer up.
+            "noteUndoRecorded()":
+                "lost the `noteUndoRecorded()` raise beside its capture, so "
+              ~ "`Command.revert` would answer `true` without restoring "
+              ~ "anything",
             "snap.restore(":
                 "no longer RESTORES from the snapshot, so its Ctrl+Z is a "
               ~ "no-op that still reports success",

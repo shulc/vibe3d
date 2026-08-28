@@ -128,7 +128,6 @@ final class LayerAdd : LayerCommandBase {
     private string nameArg;           // "" → auto "Layer N"
     private size_t prevActiveIndex;
     private size_t addedIndex;
-    private bool   applied;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
          void delegate(size_t, size_t) onSwitch) {
@@ -155,7 +154,7 @@ final class LayerAdd : LayerCommandBase {
         // Stage-0 lockstep: set primary + selected + activeIndex together,
         // BEFORE fireSwitchIfChanged (the hook reads activeMesh() == primary).
         doc.setActive(addedIndex);
-        applied = true;
+        noteUndoRecorded();   // task 2500
         // Structural kind from the command; ActiveChanged from the switch hook
         // (add makes the new layer active), both coalescing into one delivery.
         noteLayerChange(LayerChange.Added);
@@ -163,8 +162,7 @@ final class LayerAdd : LayerCommandBase {
         return true;
     }
 
-    override bool revert() {
-        if (!applied) return false;
+    protected override void revertImpl() {
         auto prevLayer = doc.active();
         size_t prevIdx = doc.activeIndex;
         // Drop the appended layer (it is the tail) and restore the prior active.
@@ -178,7 +176,6 @@ final class LayerAdd : LayerCommandBase {
         // Undo of an add is a remove; ActiveChanged via the hook.
         noteLayerChange(LayerChange.Removed);
         fireSwitchIfChanged(prevLayer, prevIdx);
-        return true;
     }
 }
 
@@ -214,7 +211,6 @@ final class LayerDuplicate : LayerCommandBase {
     // `Document.captureItemSelection`.
     private Document.ItemSelectionState prevSelection;
     private size_t      prevActiveIndex;
-    private bool        applied;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
          void delegate(size_t, size_t) onSwitch) {
@@ -342,7 +338,7 @@ final class LayerDuplicate : LayerCommandBase {
         addedIndex   = doc.layers.length - 1;
         doc.setActive(addedIndex);
         added   = l2;
-        applied = true;
+        noteUndoRecorded();   // task 2500
 
         // Structural add: the switch hook contributes ActiveChanged iff the
         // active OBJECT genuinely changed (it did — the clone has a new mesh
@@ -352,8 +348,7 @@ final class LayerDuplicate : LayerCommandBase {
         return true;
     }
 
-    override bool revert() {
-        if (!applied) return false;
+    protected override void revertImpl() {
 
         // Capture the current active BEFORE mutations so fireSwitchIfChanged
         // knows what the screen was showing (the clone, which is about to go).
@@ -371,7 +366,6 @@ final class LayerDuplicate : LayerCommandBase {
         // because the active OBJECT changed from the clone back to prevPrimary.
         noteLayerChange(LayerChange.Removed);
         fireSwitchIfChanged(prevLayer, prevIdx);
-        return true;
     }
 }
 
@@ -392,7 +386,6 @@ final class LayerReorder : LayerCommandBase {
     private int    toArg   = -1;
     private size_t fromIdx;
     private size_t toIdx;
-    private bool   applied;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
          void delegate(size_t, size_t) onSwitch) {
@@ -459,7 +452,7 @@ final class LayerReorder : LayerCommandBase {
         auto prevLayer = doc.active();
         size_t prevIndex = doc.activeIndex;
         moveLayer(fromIdx, toIdx);
-        applied = true;
+        noteUndoRecorded();   // task 2500
         // Identity-preserving: a pure reorder keeps the same active Layer, so
         // the switch hook is a no-op. It only fires if the active object
         // genuinely changed (it should not, here — the guard documents the
@@ -469,15 +462,13 @@ final class LayerReorder : LayerCommandBase {
         return true;
     }
 
-    override bool revert() {
-        if (!applied) return false;
+    protected override void revertImpl() {
         auto prevLayer = doc.active();
         size_t prevIndex = doc.activeIndex;
         // Reverse the move: the layer now sits at toIdx; put it back at fromIdx.
         moveLayer(toIdx, fromIdx);
         noteLayerChange(LayerChange.Reordered);
         fireSwitchIfChanged(prevLayer, prevIndex);
-        return true;
     }
 }
 
@@ -608,7 +599,6 @@ final class LayerDelete : LayerCommandBase {
     // Task 0082: layers whose `parent` pointed at `removed` — cleared on apply,
     // restored on revert (snapshot-by-identity, mirrors the pattern above).
     private Layer[] orphanedChildren_;
-    private bool   applied;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
          void delegate(size_t, size_t) onSwitch) {
@@ -710,7 +700,7 @@ final class LayerDelete : LayerCommandBase {
         // The edit target is derived, so nothing has to be re-pointed here at
         // all: the walk enumerates `layers` and the removed item simply stops
         // being an answer.
-        applied = true;
+        noteUndoRecorded();   // task 2500
         // Removed kind from the command; the hook contributes ActiveChanged iff
         // the active layer OBJECT changed (deleting a layer below the active one
         // shifts the index but keeps the same mesh → no ActiveChanged). Because
@@ -722,8 +712,7 @@ final class LayerDelete : LayerCommandBase {
         return true;
     }
 
-    override bool revert() {
-        if (!applied || removed is null) return false;
+    protected override void revertImpl() {
         auto prevLayer = doc.active();
         size_t prevIdx = doc.activeIndex;
         // Reinsert the layer object at its original index (GC kept it alive,
@@ -745,7 +734,6 @@ final class LayerDelete : LayerCommandBase {
         // Undo of a delete is an add; ActiveChanged via the hook iff it changed.
         noteLayerChange(LayerChange.Added);
         fireSwitchIfChanged(prevLayer, prevIdx);
-        return true;
     }
 }
 
@@ -786,7 +774,6 @@ final class LayerSelect : LayerCommandBase {
     private Document.ItemSelectionState prevSelection;
     private Layer       prevPrimary;   // only for the switch-hook comparison
     private size_t      prevActiveIndex;
-    private bool        applied;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
          void delegate(size_t, size_t) onSwitch) {
@@ -835,7 +822,7 @@ final class LayerSelect : LayerCommandBase {
         // drift would do it silently.
         if (modeArg == "clear") {
             doc.clearItemSelection();
-            applied = true;
+            noteUndoRecorded();   // task 2500
             fireSwitchIfChanged(prevPrimary, prevActiveIndex);
             noteItemSelectionChange();
             if (onItemSelect !is null) onItemSelect();
@@ -867,7 +854,7 @@ final class LayerSelect : LayerCommandBase {
             const batchMode = selModeFromToken(modeArg);
             foreach (l; doc.layers)
                 if (l !is null && l.kind == want) doc.selectItem(l, batchMode);
-            applied = true;
+            noteUndoRecorded();   // task 2500
             fireSwitchIfChanged(prevPrimary, prevActiveIndex);
             noteItemSelectionChange();
             if (onItemSelect !is null) onItemSelect();
@@ -948,7 +935,7 @@ final class LayerSelect : LayerCommandBase {
                             doc.selectItem(doc.layers[i], SelMode.Add);
                 }
             }
-            applied = true;
+            noteUndoRecorded();   // task 2500
             fireSwitchIfChanged(prevPrimary, prevActiveIndex);
             noteItemSelectionChange();
             if (onItemSelect !is null) onItemSelect();
@@ -958,7 +945,7 @@ final class LayerSelect : LayerCommandBase {
         const mode  = selModeFromToken(modeArg);
 
         doc.selectItem(target, mode);
-        applied = true;
+        noteUndoRecorded();   // task 2500
 
         // The primary may or may not have moved; fireSwitchIfChanged is a no-op
         // when the active (primary) OBJECT is unchanged (e.g. a non-primary
@@ -972,8 +959,7 @@ final class LayerSelect : LayerCommandBase {
         return true;
     }
 
-    override bool revert() {
-        if (!applied) return false;
+    protected override void revertImpl() {
         auto prevLayer = doc.active();
         size_t prevIdx = doc.activeIndex;
         // TASK 0671 — one exact restore. The pair of branches this replaces
@@ -987,7 +973,6 @@ final class LayerSelect : LayerCommandBase {
         fireSwitchIfChanged(prevLayer, prevIdx);
         noteItemSelectionChange();
         if (onItemSelect !is null) onItemSelect();
-        return true;
     }
 }
 
@@ -1002,7 +987,6 @@ final class LayerRename : LayerCommandBase {
     private string nameArg;
     private size_t target;
     private string prevName;
-    private bool   applied;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
          void delegate(size_t, size_t) onSwitch) {
@@ -1026,18 +1010,16 @@ final class LayerRename : LayerCommandBase {
         if (target >= doc.layers.length) { refusal_ = kNoDefaultLayerReason; return false; }
         prevName = doc.layers[target].name;
         doc.layers[target].name = nameArg;
-        applied  = true;
+        noteUndoRecorded();   // task 2500
         // Pure document-state change: publish the kind, touch NO mesh-pending
         // state (must not bump any mesh-change counter).
         noteLayerChange(LayerChange.Renamed);
         return true;
     }
 
-    override bool revert() {
-        if (!applied) return false;
+    protected override void revertImpl() {
         doc.layers[target].name = prevName;
         noteLayerChange(LayerChange.Renamed);
-        return true;
     }
 }
 
@@ -1054,7 +1036,6 @@ final class LayerSetVisible : LayerCommandBase {
     private size_t target;
     private bool   prevVal;
     private Layer  prevPrimaryObj;    // primary at apply time (revert restores)
-    private bool   applied;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
          void delegate(size_t, size_t) onSwitch) {
@@ -1092,7 +1073,7 @@ final class LayerSetVisible : LayerCommandBase {
         // still binds the primary's mesh regardless of visibility.
         doc.layers[target].visible = valueArg;
         if (!valueArg) doc.promoteAwayFromHiddenPrimary();  // best-effort promote
-        applied = true;
+        noteUndoRecorded();   // task 2500
         // Pure document-state change: publish the kind, touch NO mesh-pending
         // state (must not bump any mesh-change counter).
         noteLayerChange(LayerChange.VisibilityChanged);
@@ -1102,8 +1083,7 @@ final class LayerSetVisible : LayerCommandBase {
         return true;
     }
 
-    override bool revert() {
-        if (!applied) return false;
+    protected override void revertImpl() {
         auto curPrimary = doc.active();
         size_t prevIdx  = doc.activeIndex;
         // Restore visibility first.
@@ -1121,7 +1101,6 @@ final class LayerSetVisible : LayerCommandBase {
         }
         noteLayerChange(LayerChange.VisibilityChanged);
         fireSwitchIfChanged(curPrimary, prevIdx);
-        return true;
     }
 }
 
@@ -1161,7 +1140,6 @@ final class LayerAttr : LayerCommandBase {
     // apply time so revert hits the same row even if the active layer moved.
     private size_t    target_;
     private JSONValue priorValue_;
-    private bool      applied_;
     // TASK 1880 — GANG EDIT. The index slot accepts a LIST ("0,3,4"), and a
     // write lands on every item in it as ONE undo entry.
     //
@@ -1400,7 +1378,7 @@ final class LayerAttr : LayerCommandBase {
                   ~ ": value was out of range and has been repaired");
             }
         }
-        applied_ = true;
+        noteUndoRecorded();   // task 2500
 
         // Pure document-state change: publish the generic property-changed kind,
         // touch NO mesh-pending / mutation-version state (an item transform is
@@ -1409,10 +1387,15 @@ final class LayerAttr : LayerCommandBase {
         return true;
     }
 
-    override bool revert() {
-        if (!applied_) return false;
-        if (targets_.length == 0 || targets_.length != priorValues_.length)
-            return false;
+    protected override void revertImpl() {
+        // Both halves are guaranteed by the forward that raised the flag —
+        // `resolveTargets()` refuses an empty set and `priorValues_` is sized
+        // from `targets_` — so this is a belt, and it is expressed as a
+        // NAMED failure rather than a bare `false` (task 2500).
+        if (targets_.length == 0 || targets_.length != priorValues_.length) {
+            failRevert("the recorded prior values no longer match the target set");
+            return;
+        }
         // Restore each target's OWN snapshotted prior value. Per target, not
         // one value replayed across the gang: the whole point of the gang write
         // is that the items disagreed beforehand, so a single restore value
@@ -1438,7 +1421,6 @@ final class LayerAttr : LayerCommandBase {
         // write paths makes the invalid state rare; enforced on all of them it
         // is impossible.
         noteLayerChange(LayerChange.PropertyChanged);
-        return true;
     }
 
     // Coalescing predicate: a newer LayerAttr is COMPATIBLE iff it targets the
@@ -1489,7 +1471,6 @@ final class LayerParent : LayerCommandBase {
     private int   parentArg = -1;    // -1 → clear
     private size_t childIdx_;
     private Layer  prevParent_;
-    private bool   applied_;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
          void delegate(size_t, size_t) onSwitch) {
@@ -1518,7 +1499,7 @@ final class LayerParent : LayerCommandBase {
         // Clear: out-of-range or negative parentArg
         if (parentArg < 0 || parentArg >= cast(int)doc.layers.length) {
             child.parent = null;
-            applied_ = true;
+            noteUndoRecorded();   // task 2500
             noteLayerChange(LayerChange.PropertyChanged);
             return true;
         }
@@ -1538,17 +1519,18 @@ final class LayerParent : LayerCommandBase {
         }
 
         child.parent = newParent;
-        applied_ = true;
+        noteUndoRecorded();   // task 2500
         noteLayerChange(LayerChange.PropertyChanged);
         return true;
     }
 
-    override bool revert() {
-        if (!applied_) return false;
-        if (childIdx_ >= doc.layers.length) return false;
+    protected override void revertImpl() {
+        if (childIdx_ >= doc.layers.length) {
+            failRevert("the re-parented item is no longer in the document");
+            return;
+        }
         doc.layers[childIdx_].parent = prevParent_;
         noteLayerChange(LayerChange.PropertyChanged);
-        return true;
     }
 }
 

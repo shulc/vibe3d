@@ -10,7 +10,7 @@ import math : Vec3;
 import params : Param;
 import mesh_edit_delta : MeshEditScope;
 import commands.mesh.position_undo  : RecordedUndo;
-import commands.mesh.map_edit_undo  : runMapEdit, revertMapEditEmptyOk;
+import commands.mesh.map_edit_undo  : runMapEdit;
 import commands.mesh.selection_undo : DenseSelectionUndo;
 
 /// Add one isolated vertex at an absolute position and auto-select it.
@@ -30,8 +30,6 @@ class MeshVertexNew : Command, Operator {
     mixin OperatorActrCommon;
     private RecordedUndo     undo_;
     private DenseSelectionUndo preSel_;
-    /// The forward SUCCEEDED — see `commands/mesh/flip.d`.
-    private bool             applied_;
 
     private Vec3 pos_ = Vec3(0, 0, 0);
 
@@ -73,7 +71,7 @@ class MeshVertexNew : Command, Operator {
         // This command has NO refusal past its `SubjectPacket` guard —
         // `addVertex` always appends — so there is nothing to hoist and the
         // kernel below always answers true.
-        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Geometry,
+        const bool applied_ = runMapEdit(this, mesh, undo_, MeshEditScope.Geometry,
                               (ref MeshEditBatch ed) => runKernel(ed));
         return applied_;
     }
@@ -97,13 +95,11 @@ class MeshVertexNew : Command, Operator {
         return true;
     }
 
-    override bool revert() {
-        // `…EmptyOk`, and the `if (!snap.filled) return false;` this replaces
-        // was DELETED rather than translated (regression 0099).
-        if (!revertMapEditEmptyOk(mesh, undo_, applied_)) return false;
-        // ONLY on the delta arm — the hatch's snapshot already restored every
-        // selection plane.
-        if (undo_.armed()) preSel_.restore(*mesh);
-        return true;
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
+        preSel_.restore(*mesh);
     }
 }

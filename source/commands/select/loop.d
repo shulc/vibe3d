@@ -8,10 +8,8 @@ import snapshot : SelectionSnapshot;
 
 class SelectLoop : Command {
     private SelectionSnapshot snap;
-    override bool revert() {
-        if (!snap.filled) return false;
+    protected override void revertImpl() {
         snap.restore(*mesh);
-        return true;
     }
     this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
@@ -53,6 +51,7 @@ class SelectLoop : Command {
         mesh.assertLoopsValid();
         mesh.assertEdgeMapValid();
         snap = SelectionSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         // ------------------------------------------------------------------ //
         //  Edge loop                                                           //
         // ------------------------------------------------------------------ //

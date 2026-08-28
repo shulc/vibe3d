@@ -38,11 +38,6 @@ class MeshWeldVertexPair : Command, Operator {
     mixin OperatorActrCommon;
     private MeshEditDelta      delta_;
     private DenseSelectionUndo preSel_;
-    /// Set once `evaluate` recorded a delta. It discriminates FIRST RUN from
-    /// REDO (`CommandHistory.redo` calls `apply()` again, and a second
-    /// recording run would record a second delta over the first), and it is
-    /// `revert()`'s guard — the role the deleted `if (!snap.filled)` played.
-    private bool               recorded_;
 
     private int source_ = -1;
     private int target_ = -1;
@@ -74,7 +69,7 @@ class MeshWeldVertexPair : Command, Operator {
         // BATCHLESS — no recording frame means every tracker hook takes its
         // `editRecorder_ is null` early-out — and keep the FIRST delta rather
         // than record a second one over it.
-        if (recorded_) {
+        if (undoRecorded()) {
             size_t rw;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh,
@@ -116,19 +111,17 @@ class MeshWeldVertexPair : Command, Operator {
             preSel_ = DenseSelectionUndo.init;
             return false;
         }
-        recorded_ = true;
+        noteUndoRecorded();
         return true;
     }
 
-    override bool revert() {
+    protected override void revertImpl() {
         // An instance whose `evaluate` refused holds an empty delta and a
         // nulled selection image; replaying it would run `preSel_` over a mesh
         // it was never sized against. Answering false here is correct ONLY
         // because the funnel records no history entry for a refused forward.
-        if (!recorded_) return false;
         delta_.revert(*mesh);     // LIFO inverse replay restores geometry
         preSel_.restore(*mesh);   // …then the three selection domains
-        return true;
     }
 
 private:

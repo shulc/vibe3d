@@ -106,13 +106,6 @@ class MeshAddLoop : Command, Operator {
     /// three counters. THE ONLY BELT THIS CLASS HOLDS, and its content is a
     /// measurement rather than a precaution — see the class doc comment.
     private DenseSelectionUndo preSel_;
-    /// Set once `evaluate` has recorded a delta. It discriminates FIRST RUN
-    /// from REDO (`CommandHistory.redo` calls `apply()` again, and a second
-    /// recording run would lay a second delta over the first) and it is
-    /// `revert()`'s guard: an instance whose `evaluate` refused holds an empty
-    /// delta and must not replay it. That is exactly what the deleted
-    /// `if (!snap.filled) return false;` did.
-    private bool               recorded_;
 
     private float position_ = 0.5f;  // `position` attr — 0 = start, 1 = end
 
@@ -129,10 +122,10 @@ class MeshAddLoop : Command, Operator {
 
     /// Observable through `/api/history`'s `opInverse` field
     /// (`http_providers.d`), so it is not decoration: an entry restoring from
-    /// an op-log must not report itself as a whole-mesh snapshot. `recorded_`
+    /// an op-log must not report itself as a whole-mesh snapshot. `undoRecorded()`
     /// rather than a literal `true`, for `delete.d`'s reason — an instance
     /// whose `evaluate` refused holds no inverse at all.
-    override bool isOperationInverse() const { return recorded_; }
+    override bool isOperationInverse() const { return undoRecorded(); }
 
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded op-log, for the KIND
@@ -181,8 +174,8 @@ class MeshAddLoop : Command, Operator {
         // the kernel BATCHLESS — an unrecorded batch makes every tracker hook
         // take its `editRecorder_ is null` first line — and KEEP the first
         // delta rather than record a second one over it (`cleanup.d`'s
-        // `recorded_` arm).
-        if (recorded_) {
+        // `undoRecorded()` arm).
+        if (undoRecorded()) {
             bool okRedo;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, kLoopSliceEditScope);
@@ -255,20 +248,19 @@ class MeshAddLoop : Command, Operator {
             preSel_ = DenseSelectionUndo.init;
             return false;
         }
-        recorded_ = true;
+        noteUndoRecorded();
 
         // Reference parity (task 0476): select the newly-inserted loop.
         addNewLoopEdges(mesh, firstNewVert);
         return true;
     }
 
-    override bool revert() {
+    protected override void revertImpl() {
         // An instance whose `evaluate` refused holds an empty delta and an
         // unfilled belt; replaying it would run the restore over a mesh the
         // capture was never sized against. It is NOT the spelling for a
         // command that DID record: a `false` there pops the entry off BOTH
         // history stacks and truncates the suffix after it (regression 0099).
-        if (!recorded_) return false;
 
         // ORDER IS LOAD-BEARING: the delta replay FIRST, the dense selection
         // SECOND. `applyFaceReindexReverse` installs a WHOLE `faceMarks`
@@ -277,7 +269,6 @@ class MeshAddLoop : Command, Operator {
         // have keyed on the wrong edge index space for the other.
         delta_.revert(*mesh);
         preSel_.restore(*mesh);
-        return true;
     }
 }
 
@@ -293,8 +284,6 @@ class MeshLoopSlice : Command, Operator {
     /// it is not a per-domain one: the kernel's tail `resetSelection()` and
     /// `setFaceMarksFrom(newWord, ~Marks.Select)` clear all three domains.
     private DenseSelectionUndo preSel_;
-    /// See `MeshAddLoop.recorded_`.
-    private bool               recorded_;
 
     private int count_ = 3;  // `count` attr — number of loops to insert
 
@@ -310,7 +299,7 @@ class MeshLoopSlice : Command, Operator {
     }
 
     /// See `MeshAddLoop.isOperationInverse`.
-    override bool isOperationInverse() const { return recorded_; }
+    override bool isOperationInverse() const { return undoRecorded(); }
 
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded op-log, for the KIND
@@ -361,7 +350,7 @@ class MeshLoopSlice : Command, Operator {
         immutable uint firstNewVert = cast(uint)mesh.vertices.length;
 
         // REDO — see `MeshAddLoop.evaluate`.
-        if (recorded_) {
+        if (undoRecorded()) {
             bool okRedo;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, kLoopSliceEditScope);
@@ -405,19 +394,17 @@ class MeshLoopSlice : Command, Operator {
             preSel_ = DenseSelectionUndo.init;
             return false;
         }
-        recorded_ = true;
+        noteUndoRecorded();
 
         // Reference parity (task 0476): select every newly-inserted loop.
         addNewLoopEdges(mesh, firstNewVert);
         return true;
     }
 
-    override bool revert() {
+    protected override void revertImpl() {
         // See `MeshAddLoop.revert` — the guard, the order, and why neither is
         // decoration.
-        if (!recorded_) return false;
         delta_.revert(*mesh);
         preSel_.restore(*mesh);
-        return true;
     }
 }

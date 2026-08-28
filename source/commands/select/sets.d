@@ -237,15 +237,14 @@ class SelectSetStore : Command {
         if (err !is null) { baseRefusal_ = "select.set.store: " ~ err; return false; }
         if (!domainHasAnySelected(*mesh, dom)) return false;   // empty selection: no-op
         snap = MeshSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         domainEdit(*mesh, dom, name_, SetEditMode.add);
         mesh.commitChange(MeshEditScope.Material);
         return true;
     }
 
-    override bool revert() {
-        if (!snap.filled) return false;
+    protected override void revertImpl() {
         snap.restore(*mesh);
-        return true;
     }
 }
 
@@ -297,15 +296,14 @@ class SelectSetEdit : Command {
         if (modeErr !is null) { baseRefusal_ = modeErr; return false; }
         if (!domainHasAnySelected(*mesh, dom)) return false;   // empty selection: no-op
         snap = MeshSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         domainEdit(*mesh, dom, name_, em);
         mesh.commitChange(MeshEditScope.Material);
         return true;
     }
 
-    override bool revert() {
-        if (!snap.filled) return false;
+    protected override void revertImpl() {
         snap.restore(*mesh);
-        return true;
     }
 }
 
@@ -406,11 +404,11 @@ class SelectSetApply : Command {
             return false;
         }
         touched_ = touched;
+        noteUndoRecorded();   // task 2500 — the image is `touched_`
         return true;
     }
 
-    override bool revert() {
-        if (touched_.length == 0) return false;
+    protected override void revertImpl() {
         // `Layer` is a class (stable heap identity, GC-traced), so a `Mesh*`
         // captured here stays valid even if the owning layer is deleted
         // between apply and undo — undoing onto a deleted layer is then
@@ -418,7 +416,6 @@ class SelectSetApply : Command {
         // every other cross-command `Mesh*` capture in this tree already
         // carries).
         foreach (t; touched_) t.snap.restore(*t.m);
-        return true;
     }
 }
 
@@ -471,6 +468,7 @@ class SelectSetRename : Command {
         auto domErr = domainOf(currentType(), dom);
         if (domErr !is null) { baseRefusal_ = domErr; return false; }
         snap = MeshSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         const rc = domainRename(*mesh, dom, from_, to_);
         if (rc == 1) {
             snap = MeshSnapshot.init;
@@ -486,10 +484,8 @@ class SelectSetRename : Command {
         return true;
     }
 
-    override bool revert() {
-        if (!snap.filled) return false;
+    protected override void revertImpl() {
         snap.restore(*mesh);
-        return true;
     }
 }
 
@@ -535,6 +531,7 @@ class SelectSetDelete : Command {
         auto domErr = domainOf(currentType(), dom);
         if (domErr !is null) { baseRefusal_ = domErr; return false; }
         snap = MeshSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         if (!domainDelete(*mesh, dom, name_)) {
             snap = MeshSnapshot.init;
             baseRefusal_ = "select.set.delete: no set named '" ~ name_ ~ "'";
@@ -544,9 +541,7 @@ class SelectSetDelete : Command {
         return true;
     }
 
-    override bool revert() {
-        if (!snap.filled) return false;
+    protected override void revertImpl() {
         snap.restore(*mesh);
-        return true;
     }
 }

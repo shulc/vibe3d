@@ -21,10 +21,8 @@ import snapshot : SelectionSnapshot;
 // Selects all vertices on the shorter arc between them.
 class SelectBetween : Command {
     private SelectionSnapshot snap;
-    override bool revert() {
-        if (!snap.filled) return false;
+    protected override void revertImpl() {
         snap.restore(*mesh);
-        return true;
     }
     this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
@@ -32,6 +30,7 @@ class SelectBetween : Command {
 
     protected override bool applyImpl() {
         snap = SelectionSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         if      (editMode == EditMode.Polygons) return applyPolygons();
         else if (editMode == EditMode.Edges)    return applyEdges();
         else if (editMode == EditMode.Vertices) return applyVertices();

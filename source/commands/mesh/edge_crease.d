@@ -66,7 +66,6 @@ private uint[] selectedEdgeIndices(ref const Mesh mesh) {
 class EdgeCreaseSet : Command {
     private float         weight_ = 0.0f;
     private MeshEditDelta delta_;
-    private bool          recorded_;
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -89,18 +88,17 @@ class EdgeCreaseSet : Command {
         // REDO: `CommandHistory.redo` re-runs `apply()`. Re-run the write
         // BATCHLESS and keep the FIRST delta rather than record a second one
         // over it.
-        if (recorded_) return runCreaseWrites(mesh, sel, weight_, null);
+        if (undoRecorded()) return runCreaseWrites(mesh, sel, weight_, null);
 
         delta_ = MeshEditDelta.init;
         immutable ok = runCreaseWrites(mesh, sel, weight_, &delta_);
         if (!ok) { baseRefusal_ = "failed to write edge weight"; return false; }
-        recorded_ = true;
+        noteUndoRecorded();
         return true;
     }
 
-    override bool revert() {
-        if (!recorded_) return false;
-        return delta_.revert(*mesh);
+    protected override void revertImpl() {
+        delta_.revert(*mesh);
     }
 
     /// Read-only diagnostic for the cells below — `MeshEditDelta.log` is a
@@ -350,7 +348,6 @@ unittest {
 
 class EdgeCreaseClear : Command {
     private MeshEditDelta delta_;
-    private bool          recorded_;
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -373,18 +370,17 @@ class EdgeCreaseClear : Command {
         // reserved map stays registered. Same write half as `EdgeCreaseSet`,
         // with the weight pinned; see `runCreaseWrites` for the GIGO arm and
         // for the redo arm.
-        if (recorded_) return runCreaseWrites(mesh, sel, 0.0f, null);
+        if (undoRecorded()) return runCreaseWrites(mesh, sel, 0.0f, null);
 
         delta_ = MeshEditDelta.init;
         immutable ok = runCreaseWrites(mesh, sel, 0.0f, &delta_);
         if (!ok) { baseRefusal_ = "failed to clear edge weight"; return false; }
-        recorded_ = true;
+        noteUndoRecorded();
         return true;
     }
 
-    override bool revert() {
-        if (!recorded_) return false;
-        return delta_.revert(*mesh);
+    protected override void revertImpl() {
+        delta_.revert(*mesh);
     }
 
     version (unittest)

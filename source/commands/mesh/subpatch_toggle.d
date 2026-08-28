@@ -46,7 +46,6 @@ import change_bus : MeshEditScope;
 class SubpatchToggle : Command, Operator {
     mixin OperatorActrCommon;
     private bool[] origSubpatch;     // pre-apply isSubpatch[] snapshot
-    private bool   captured;
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -67,7 +66,7 @@ class SubpatchToggle : Command, Operator {
 
         // Snapshot just isSubpatch[] — only field we mutate.
         origSubpatch = mesh.isSubpatch.dup;
-        captured     = true;
+        noteUndoRecorded();   // task 2500 — the image and its flag, one statement
 
         mesh.syncSelection();
         // TYPE-AWARE scope (parity): the persisted face selection is honored
@@ -101,8 +100,7 @@ class SubpatchToggle : Command, Operator {
         return true;
     }
 
-    override bool revert() {
-        if (!captured) return false;
+    protected override void revertImpl() {
         // Restore ONLY the Subpatch bit at each index — no compaction ran
         // between capture and revert (a toggle changes no topology), so index
         // i still names the same face. Merge the captured Subpatch value onto
@@ -124,6 +122,5 @@ class SubpatchToggle : Command, Operator {
         // identical to the prior two raw lines.
         mesh.commitChange(MeshEditScope.Marks);
         ++mesh.topologyVersion;
-        return true;
     }
 }

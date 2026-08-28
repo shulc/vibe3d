@@ -78,10 +78,8 @@ class SelectByTag : Command {
         ];
     }
 
-    override bool revert() {
-        if (!snap.filled) return false;
+    protected override void revertImpl() {
         snap.restore(*mesh);
-        return true;
     }
 
     // -----------------------------------------------------------------------
@@ -134,6 +132,7 @@ class SelectByTag : Command {
 
         mesh.syncSelection();
         snap = SelectionSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
 
         const size_t nf = mesh.faces.length;
         if (nf == 0) return true;

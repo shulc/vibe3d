@@ -70,7 +70,6 @@ class SceneReset : Command {
     private int          primParam = -1;
     private MeshSnapshot snap;
     private EditMode     prevEditMode;
-    private bool         captured;
     // Funnel hook: when installed (app factory), apply/revert route the editMode
     // write through promoteGeometryType so selTypeOrder stays in lockstep.
     // Null in headless/unit construction — the raw-pointer fallback is used then.
@@ -153,8 +152,8 @@ class SceneReset : Command {
             mesh = document.activeMesh();
         }
         snap         = MeshSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         prevEditMode = *editModePtr;
-        captured     = true;
 
         // Layers Stage 2: a reset collapses the document to EXACTLY one default
         // layer (the "reset yields one layer" invariant every existing test
@@ -305,8 +304,7 @@ class SceneReset : Command {
         return true;
     }
 
-    override bool revert() {
-        if (!captured) return false;
+    protected override void revertImpl() {
         // Restore the kept active layer's pre-reset geometry first (the snapshot
         // was captured against `*mesh`, which is the surviving active layer).
         snap.restore(*mesh);
@@ -336,6 +334,5 @@ class SceneReset : Command {
         // restore the camera, only the mesh. The viewport reset is delegated
         // to the app layer (onViewportReset, fired only from apply()) and is
         // not part of model undo, same as before.
-        return true;
     }
 }

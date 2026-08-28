@@ -52,6 +52,7 @@ class Subdivide : Command, Operator {
         // Full mesh snapshot — the kernel replaces the entire mesh (verts,
         // edges, faces, selection, etc.).
         snap = MeshSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         if (onTopologyChange !is null) onTopologyChange();
 
         if (mode_ == "flat" || mode_ == "smooth") {
@@ -158,9 +159,7 @@ class Subdivide : Command, Operator {
         return true;
     }
 
-    override bool revert() {
-        if (!snap.filled) return false;
+    protected override void revertImpl() {
         snap.restore(*mesh);
-        return true;
     }
 }

@@ -39,10 +39,11 @@ class MeshCenterVertices : Command, Operator {
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo (task 1903 §L0-d,
         /// witness W-d3a). The op-log SHAPE is not derivable from the outside:
-        /// a command that records nothing falls back to its legacy revert and
-        /// restores the right positions anyway, so every result-shaped
-        /// assertion — the plane diff, the redo cell, the parity cell — is
-        /// GREEN over a deleted recorder. Only reading the log itself is not.
+        /// a command that records nothing answers `true` from the BASE
+        /// `Command.revert` (task 2500) and the mesh is already where the undo
+        /// wants it, so every result-shaped assertion — the plane diff, the
+        /// redo cell, the parity cell — is GREEN over a deleted recorder. Only
+        /// reading the log itself is not.
         /// `version (unittest)`, so this is not a door in a shipped build; both
         /// gate lanes compile the sources with `-unittest`. `public` on the
         /// declaration and NOT a `public:` section — a section marker here
@@ -91,8 +92,8 @@ class MeshCenterVertices : Command, Operator {
         }
         auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
         const ok = applyKernel(ed, zx, zy, zz);
-        undo_.arm(ed.close());
-        if (!ok) { undo_.disarm(); return false; }
+        undo_.arm(this, ed.close());
+        if (!ok) { undo_.disarm(this); return false; }
         return true;
     }
 
@@ -128,38 +129,13 @@ class MeshCenterVertices : Command, Operator {
         return true;
     }
 
-    override bool revert() {
-        if (undo_.armed()) return undo_.revert(*mesh);
-        // THE EMPTY-DELTA ARM. `RecordedUndo.arm` leaves the holder DISARMED
-        // when the batch came back with an empty log, so this is the live
-        // answer for a forward that succeeded and moved nothing a bitwise diff
-        // could see — not dead code, and not a fallback for a path that no
-        // longer exists. Until task 1903 Stage N it was also the tracker-off
-        // ORACLE the plane-diff cells measured the recorded revert against
-        // (W-d3c); that reading died with the hatch, this one did not.
-        //
-        // Its empty arm answers FALSE and is UNREACHABLE with a history entry:
-        // the forward already refuses on `!hasAnySelectedVertices()`, the same
-        // predicate (task 2110 §R2.1 row 7).
-        if (idxs.length == 0) return false;
-        // TASK 1903 L0-d — THE LEGACY REVERT WRITES THROUGH THE BATCH TOO.
-        // The plan's §2.5 template left this loop "untouched"; that is
-        // incompatible with its own §1/§3/W-d1, which require this file to read
-        // `countRawPositionWrites == 0` — §1's measured table counts THIS LOOP
-        // among the file's raw writes. Resolved the way §2.5 already resolved
-        // the forward: the same write, through the same primitive, on an
-        // UNRECORDED batch. It stays a genuine oracle for W-d3c because it
-        // restores from the command's own stored pre-op array while the delta
-        // path replays the op-log's `posBefore` — two independent data paths
-        // that share only the write primitive, which is what a mutation of the
-        // RECORDING has to be measured against. Byte-identical to the loop it
-        // replaces: `setVertexPositions` skips only writes whose new value is
-        // BIT-identical to the current one, and writing identical bits back was
-        // what the loop did there; the bounds guard is the same `continue`.
-        auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
-        ed.setVertexPositions(idxs, orig);
-        ed.commitChange(MeshEditScope.Position);
-        ed.close();
-        return true;
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `RecordedUndo.arm` raises the flag
+        // only for a NON-EMPTY delta, and `Command.revert` answers both the
+        // empty-edit case and the never-applied case before this body runs. The
+        // hand-rolled `setVertexPositions(touchedIdx, touchedPrev)` fallback that
+        // used to sit under this line was reachable ONLY on `!armed()`, so it is
+        // gone with the predicate that reached it.
+        undo_.revert(*mesh);
     }
 }

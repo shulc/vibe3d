@@ -41,7 +41,10 @@ final class LayerXformEdit : Command, RunMergeable {
 
     /// Programmatic setter — mirrors `MeshVertexEdit.setEdit`. Called once by
     /// the tool's item-commit branch right before recording.
-    void setEdit(LayerXformTarget[] targets) { targets_ = targets; }
+    void setEdit(LayerXformTarget[] targets) {
+        targets_ = targets;
+        noteUndoRecorded();   // task 2500 — the image and its flag, one statement
+    }
 
     /// Read-only accessor so a caller (e.g. a future undo-panel widget, or a
     /// test) can inspect the payload without a downcast into private state.
@@ -57,10 +60,9 @@ final class LayerXformEdit : Command, RunMergeable {
         return true;
     }
 
-    override bool revert() {
+    protected override void revertImpl() {
         foreach (ref t; targets_) t.target.xform = t.before;
         if (targets_.length > 0) noteLayerChange(LayerChange.PropertyChanged);
-        return true;
     }
 
     /// RunMergeable — collapse a whole in-session run into ONE surviving
@@ -110,7 +112,10 @@ final class LayerXformEdit : Command, RunMergeable {
         }
 
         auto result = new LayerXformEdit(meshPtr(), viewRef(), editModeVal());
-        result.targets_ = merged;
+        // Through `setEdit`, not a raw field write: it is the door that raises
+        // the undo flag (task 2500), and a merged run holds an image exactly
+        // like the entries it replaces.
+        result.setEdit(merged);
         return result;
     }
 }

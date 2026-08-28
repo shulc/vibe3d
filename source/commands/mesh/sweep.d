@@ -57,9 +57,6 @@ class MeshSweep : Command, Operator {
     mixin OperatorActrCommon;
     private MeshEditDelta      delta_;
     private DenseSelectionUndo preSel_;
-    /// Set once `evaluate` recorded a delta: FIRST RUN vs REDO, and
-    /// `revert()`'s guard — the role the deleted `if (!snap.filled)` played.
-    private bool               recorded_;
 
     private int    count_  = 8;
     private string axis_   = "Y";
@@ -119,7 +116,7 @@ class MeshSweep : Command, Operator {
         // The dense selection image, taken BEFORE the batch opens. NOT
         // re-taken on the redo arm: a second capture would image the POST-op
         // selection, and the first one is the one `revert()` needs.
-        if (!recorded_) preSel_.capture(*mesh);
+        if (!undoRecorded()) preSel_.capture(*mesh);
 
         // TASK 1903 Stage E2 — the kernel takes `ref MeshEditBatch`, so the
         // batch opens HERE, at the command boundary, and never inside the
@@ -177,7 +174,7 @@ class MeshSweep : Command, Operator {
                 ed.deleteFacesByMask(delMask);
             }
             auto d = ed.close();
-            if (!recorded_) delta_ = d;
+            if (!undoRecorded()) delta_ = d;
         }
 
         // THE POST-CLOSE RULING (§S-6, ruling Q-K6). `inserted == 0` is the
@@ -185,13 +182,13 @@ class MeshSweep : Command, Operator {
         // `revolveProfile` that inserts nothing has mutated nothing, and the
         // deletion above is gated on it. The other arm — mutated, recorded
         // nothing — ticks `changeBus.emptyDeltaOverMutation`.
-        if (recorded_) return inserted != 0;
+        if (undoRecorded()) return inserted != 0;
         if (!acceptRecordedEdit(inserted, delta_)) {
             delta_  = MeshEditDelta.init;
             preSel_ = DenseSelectionUndo.init;
             return false;
         }
-        recorded_ = true;
+        noteUndoRecorded();
         return true;
     }
 
@@ -200,18 +197,16 @@ class MeshSweep : Command, Operator {
     /// recording run would record a second delta over the first; unrecorded,
     /// every tracker hook takes its `editRecorder_ is null` early-out.
     private MeshEditBatch openBatch() {
-        if (recorded_) return MeshEditBatch.unrecorded(*mesh, kRevolveEditScope);
+        if (undoRecorded()) return MeshEditBatch.unrecorded(*mesh, kRevolveEditScope);
         return MeshEditBatch(*mesh, kRevolveEditScope);
     }
 
-    override bool revert() {
+    protected override void revertImpl() {
         // An instance whose `evaluate` refused holds an empty delta and a
         // nulled selection image; replaying it would run `preSel_` over a mesh
         // it was never sized against. Answering false here is correct ONLY
         // because the funnel records no history entry for a refused forward.
-        if (!recorded_) return false;
         delta_.revert(*mesh);     // LIFO inverse replay restores geometry
         preSel_.restore(*mesh);   // …then the three selection domains
-        return true;
     }
 }

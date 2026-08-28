@@ -7,7 +7,7 @@ import editmode;
 import mesh_edit_delta : MeshEditScope, MeshOpEntry;
 import params : Param;
 import commands.mesh.position_undo : RecordedUndo;
-import commands.mesh.map_edit_undo : runMapEdit, revertMapEdit, mapSlotOf;
+import commands.mesh.map_edit_undo : runMapEdit, mapSlotOf;
 
 // ---------------------------------------------------------------------------
 // Weight-map lifecycle commands.
@@ -107,7 +107,7 @@ class WeightmapCreate : Command {
             throw new Exception(
                 "mesh.weightmap.create: this mesh already carries the maximum "
               ~ "number of maps");
-        return runMapEdit(mesh, undo_, MeshEditScope.Material, &createKernel);
+        return runMapEdit(this, mesh, undo_, MeshEditScope.Material, &createKernel);
     }
 
     private bool createKernel(ref MeshEditBatch ed) {
@@ -130,8 +130,11 @@ class WeightmapCreate : Command {
         return true;
     }
 
-    override bool revert() {
-        return revertMapEdit(mesh, undo_);
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
     }
 }
 
@@ -160,7 +163,7 @@ class WeightmapRemove : Command {
         if (mesh.meshMap(name_) is null)
             throw new Exception(
                 "mesh.weightmap.remove: map '" ~ name_ ~ "' not found");
-        return runMapEdit(mesh, undo_, MeshEditScope.Material, &removeKernel);
+        return runMapEdit(this, mesh, undo_, MeshEditScope.Material, &removeKernel);
     }
 
     private bool removeKernel(ref MeshEditBatch ed) {
@@ -198,8 +201,11 @@ class WeightmapRemove : Command {
         return true;
     }
 
-    override bool revert() {
-        return revertMapEdit(mesh, undo_);
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
     }
 }
 
@@ -236,7 +242,7 @@ class WeightmapRename : Command {
         if (mesh.meshMap(to_) !is null)
             throw new Exception(
                 "mesh.weightmap.rename: target name '" ~ to_ ~ "' already exists");
-        return runMapEdit(mesh, undo_, MeshEditScope.Material, &renameKernel);
+        return runMapEdit(this, mesh, undo_, MeshEditScope.Material, &renameKernel);
     }
 
     private bool renameKernel(ref MeshEditBatch ed) {
@@ -255,8 +261,11 @@ class WeightmapRename : Command {
         return true;
     }
 
-    override bool revert() {
-        return revertMapEdit(mesh, undo_);
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
     }
 }
 
@@ -303,7 +312,7 @@ class WeightmapSet : Command {
          || cast(size_t) vert_ * pre.dim + pre.dim > pre.data.length)
             throw new Exception(
                 "mesh.weightmap.set: out-of-range vertex index or type mismatch");
-        return runMapEdit(mesh, undo_, MeshEditScope.Material, &setKernel);
+        return runMapEdit(this, mesh, undo_, MeshEditScope.Material, &setKernel);
     }
 
     private bool setKernel(ref MeshEditBatch ed) {
@@ -352,8 +361,11 @@ class WeightmapSet : Command {
         return true;
     }
 
-    override bool revert() {
-        return revertMapEdit(mesh, undo_);
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
     }
 }
 

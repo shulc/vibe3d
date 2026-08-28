@@ -8,7 +8,7 @@ import editmode        : EditMode;
 import mesh_edit_delta : MeshEditScope, MeshOpEntry;
 import params          : Param;
 import commands.mesh.position_undo : RecordedUndo;
-import commands.mesh.map_edit_undo : runMapEdit, revertMapEdit, mapSlotOf;
+import commands.mesh.map_edit_undo : runMapEdit, mapSlotOf;
 
 // ---------------------------------------------------------------------------
 // UV map lifecycle commands.
@@ -105,7 +105,7 @@ class UvDelete : Command {
 
     protected override bool applyImpl() {
         requireUvMap(mesh, name_);   // throws if absent or not a UV map
-        return runMapEdit(mesh, undo_, MeshEditScope.Material, &deleteKernel);
+        return runMapEdit(this, mesh, undo_, MeshEditScope.Material, &deleteKernel);
     }
 
     private bool deleteKernel(ref MeshEditBatch ed) {
@@ -138,8 +138,11 @@ class UvDelete : Command {
         return true;
     }
 
-    override bool revert() {
-        return revertMapEdit(mesh, undo_);
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
     }
 }
 
@@ -181,7 +184,7 @@ class UvRename : Command {
         if (mesh.meshMap(to_) !is null)
             throw new Exception(
                 "uv.rename: target name '" ~ to_ ~ "' already exists");
-        return runMapEdit(mesh, undo_, MeshEditScope.Material, &renameKernel);
+        return runMapEdit(this, mesh, undo_, MeshEditScope.Material, &renameKernel);
     }
 
     private bool renameKernel(ref MeshEditBatch ed) {
@@ -200,8 +203,11 @@ class UvRename : Command {
         return true;
     }
 
-    override bool revert() {
-        return revertMapEdit(mesh, undo_);
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
     }
 }
 
@@ -254,7 +260,7 @@ class UvCopy : Command {
         if (mesh.meshMaps.length >= MAX_MESH_MAPS)
             throw new Exception(
                 "uv.copy: this mesh already carries the maximum number of maps");
-        return runMapEdit(mesh, undo_, MeshEditScope.Material, &copyKernel);
+        return runMapEdit(this, mesh, undo_, MeshEditScope.Material, &copyKernel);
     }
 
     private bool copyKernel(ref MeshEditBatch ed) {
@@ -285,8 +291,11 @@ class UvCopy : Command {
         return true;
     }
 
-    override bool revert() {
-        return revertMapEdit(mesh, undo_);
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
     }
 }
 
@@ -316,7 +325,7 @@ class UvClear : Command {
 
     protected override bool applyImpl() {
         requireUvMap(mesh, name_);   // throws if absent or not UV
-        return runMapEdit(mesh, undo_, MeshEditScope.Material, &clearKernel);
+        return runMapEdit(this, mesh, undo_, MeshEditScope.Material, &clearKernel);
     }
 
     private bool clearKernel(ref MeshEditBatch ed) {
@@ -356,7 +365,10 @@ class UvClear : Command {
         return true;
     }
 
-    override bool revert() {
-        return revertMapEdit(mesh, undo_);
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
     }
 }

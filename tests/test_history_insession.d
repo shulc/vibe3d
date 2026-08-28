@@ -56,12 +56,23 @@ private struct Scratch {
 private final class ForeignCmd : Command {
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
+        // TASK 2500 — this double is handed to `h.record(...)` WITHOUT ever
+        // being applied, so neither of the base's two bits would be set and
+        // `revert()` would answer false (the mis-ordered-caller belt, doing
+        // its job on a stand that is deliberately mis-ordered). Its undo
+        // image is trivial and exists from construction; say so here.
+        noteUndoRecorded();
     }
     override string name()  const { return "test.foreign"; }
     override string label() const { return "Foreign"; }
     override CmdFlags cmdFlags() const { return CmdFlags.Model; }
     protected override bool applyImpl()  { return true; }
-    override bool revert() { return true; }
+    // …and an EMPTY `revertImpl`, because the constructor above declared an
+    // image. Declaring one and then not saying how to put it back is a
+    // contradiction the base `Command.revertImpl` fails loudly on (task
+    // 2500) — which is what it is for, and what reddened this file's block 4
+    // when the raise went in without this.
+    protected override void revertImpl() {}
 }
 
 // Downcast undoStack[i].cmd back to MeshVertexEdit for payload inspection.

@@ -81,6 +81,7 @@ public:
         if (refusedForNoEditTarget()) return false;
         if (toolInstance is null) toolInstance = factory();
         snap = MeshSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         if (!toolInstance.applyHeadless()) {
             snap = MeshSnapshot.init;
             return false;
@@ -88,10 +89,8 @@ public:
         return true;
     }
 
-    override bool revert() {
-        if (!snap.filled) return false;
+    protected override void revertImpl() {
         snap.restore(*mesh);
-        return true;
     }
 
 private:

@@ -91,7 +91,8 @@ version (unittest) {
         override string   label()    const { return "RefireGate"; }
         override CmdFlags cmdFlags() const { return _flags; }
         protected override bool applyImpl()  { return true; }
-        override bool revert() { return true; }
+        // No `revert` override since task 2500 — the base answers `true` for a
+        // forward that succeeded and recorded nothing.
     }
 
     // Open a refire block, fire one command into it, and walk away — the

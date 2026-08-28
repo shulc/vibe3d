@@ -36,7 +36,6 @@ class MeshSetMaterial : Command, Operator {
     mixin OperatorActrCommon;
     private int    materialId_ = 0;
     private uint[] origMaterial;
-    private bool   captured;
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -81,7 +80,7 @@ class MeshSetMaterial : Command, Operator {
         if (mesh.faceMaterial.length < mesh.faces.length)
             mesh.faceMaterial.length = mesh.faces.length;
         origMaterial = mesh.faceMaterial.dup;
-        captured     = true;
+        noteUndoRecorded();   // task 2500 — the image and its flag, one statement
 
         foreach (fi; 0 .. mesh.faces.length) {
             if (fi < operand.length && operand[fi])
@@ -92,10 +91,8 @@ class MeshSetMaterial : Command, Operator {
         return true;
     }
 
-    override bool revert() {
-        if (!captured) return false;
+    protected override void revertImpl() {
         mesh.faceMaterial = origMaterial.dup;
         mesh.commitChange(MeshEditScope.Material);
-        return true;
     }
 }

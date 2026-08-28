@@ -48,9 +48,6 @@ class MeshDetriangulate : Command, Operator {
     private void delegate()    onTopologyChange;
     private MeshEditDelta      delta_;
     private DenseSelectionUndo preSel_;
-    /// Set once `evaluate` recorded a delta: FIRST RUN vs REDO, and
-    /// `revert()`'s guard — the role the deleted `if (!snap.filled)` played.
-    private bool               recorded_;
 
     this(Mesh* mesh, ref View view, EditMode editMode,
          void delegate() onTopologyChange) {
@@ -96,7 +93,7 @@ class MeshDetriangulate : Command, Operator {
         // BATCHLESS — no recording frame means every tracker hook takes its
         // `editRecorder_ is null` early-out — and keep the FIRST delta rather
         // than record a second one over it.
-        if (recorded_) {
+        if (undoRecorded()) {
             size_t rw;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, kDetriangulateScope);
@@ -130,7 +127,7 @@ class MeshDetriangulate : Command, Operator {
         // visible side effect and §S-6 asks a refusal to leave none.
         // `mesh.mergeFaces` already fires its delegate here for that reason.
         if (onTopologyChange !is null) onTopologyChange();
-        recorded_ = true;
+        noteUndoRecorded();
         return true;
     }
 
@@ -148,15 +145,13 @@ class MeshDetriangulate : Command, Operator {
     private enum uint kDetriangulateScope =
         MeshEditScope.Geometry | MeshEditScope.Marks;
 
-    override bool revert() {
+    protected override void revertImpl() {
         // An instance whose `evaluate` refused holds an empty delta and a
         // nulled selection image; replaying it would run `preSel_` over a mesh
         // it was never sized against. Answering false here is correct ONLY
         // because the funnel records no history entry for a refused forward.
-        if (!recorded_) return false;
         delta_.revert(*mesh);     // LIFO inverse replay restores geometry
         preSel_.restore(*mesh);   // …then the three selection domains
-        return true;
     }
 }
 

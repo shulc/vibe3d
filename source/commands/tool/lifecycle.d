@@ -30,6 +30,10 @@ class ToolDeactivationCommand : Command {
     this(Mesh* mesh, ref View view, EditMode editMode, string droppedId) {
         super(mesh, view, editMode);
         droppedId_ = droppedId;
+        // TASK 2500 — this command's whole undo image IS `droppedId_`: the
+        // revert re-activates the tool by that id. It exists from the
+        // constructor, so the flag is raised there.
+        noteUndoRecorded();
     }
 
     override string name()  const { return "tool.deactivate"; }
@@ -44,9 +48,8 @@ class ToolDeactivationCommand : Command {
     }
 
     // revert() = undo = re-activate the dropped tool by id.
-    override bool revert() {
+    protected override void revertImpl() {
         if (onRevert !is null) onRevert(droppedId_);
-        return true;
     }
 
     string droppedId() const { return droppedId_; }

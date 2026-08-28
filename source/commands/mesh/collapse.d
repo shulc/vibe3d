@@ -46,11 +46,6 @@ class MeshCollapse : Command, Operator {
     mixin OperatorActrCommon;
     private MeshEditDelta      delta_;
     private DenseSelectionUndo preSel_;
-    /// Set once one of the three arms recorded a delta. It discriminates FIRST
-    /// RUN from REDO — `CommandHistory.redo` calls `apply()` again and a second
-    /// recording run would record a second delta over the first — and it is
-    /// `revert()`'s guard, the role the deleted `if (!snap.filled)` played.
-    private bool               recorded_;
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -97,7 +92,7 @@ class MeshCollapse : Command, Operator {
 
         // REDO: re-run the kernel BATCHLESS and keep the first delta — see
         // the note above `revert()`.
-        if (recorded_) {
+        if (undoRecorded()) {
             size_t rw;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, kCollapseScope);
@@ -131,7 +126,7 @@ class MeshCollapse : Command, Operator {
         // pre-op selection (weldVerticesByMask clears edge selection).
         auto sel = mesh.selectedEdges;
 
-        if (recorded_) {
+        if (undoRecorded()) {
             size_t rw;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, kCollapseScope);
@@ -157,7 +152,7 @@ class MeshCollapse : Command, Operator {
 
         auto sel = mesh.selectedFaces;
 
-        if (recorded_) {
+        if (undoRecorded()) {
             size_t rw;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, kCollapseScope);
@@ -204,7 +199,7 @@ class MeshCollapse : Command, Operator {
     ///     defect is documented at that counter's declaration.
     private bool accept(size_t welded) {
         if (acceptRecordedEdit(welded, delta_)) {
-            recorded_ = true;
+            noteUndoRecorded();
             return true;
         }
         if (welded == 0) {
@@ -216,20 +211,18 @@ class MeshCollapse : Command, Operator {
         return false;
     }
 
-    // REDO, and it is why each arm opens with `if (recorded_)`.
+    // REDO, and it is why each arm opens with `if (undoRecorded())`.
     // `CommandHistory.redo` re-runs `apply()` → `evaluate` → the same arm
     // (`editMode` is fixed at construction), so each arm re-runs its own
     // kernel BATCHLESS — no recording frame means every tracker hook takes its
     // `editRecorder_ is null` early-out — and the FIRST delta is kept rather
     // than a second recorded over it.
-    override bool revert() {
+    protected override void revertImpl() {
         // An instance whose `evaluate` refused holds an empty delta and a
         // nulled selection image; replaying it would run `preSel_` over a mesh
         // it was never sized against. Answering false here is correct ONLY
         // because the funnel records no history entry for a refused forward.
-        if (!recorded_) return false;
         delta_.revert(*mesh);     // LIFO inverse replay restores geometry
         preSel_.restore(*mesh);   // …then the three selection domains
-        return true;
     }
 }

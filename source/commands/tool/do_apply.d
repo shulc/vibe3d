@@ -52,6 +52,7 @@ class ToolDoApplyCommand : Command {
         if (t is null) return false;
 
         snap = MeshSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         if (!t.applyHeadless()) {
             snap = MeshSnapshot.init;
             return false;
@@ -60,11 +61,9 @@ class ToolDoApplyCommand : Command {
         return true;
     }
 
-    override bool revert() {
-        if (!snap.filled) return false;
+    protected override void revertImpl() {
         // T-SEP: keep the live selection across a geometry undo (topology-safe
         // fallback built into the method).
         snap.restoreGeometryKeepSelection(*mesh);
-        return true;
     }
 }

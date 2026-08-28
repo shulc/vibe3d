@@ -12,10 +12,8 @@ class SelectionExpand : Command {
 
     override string name() const { return "select.expand"; }
 
-    override bool revert() {
-        if (!snap.filled) return false;
+    protected override void revertImpl() {
         snap.restore(*mesh);
-        return true;
     }
 
     protected override bool applyImpl() {
@@ -25,6 +23,7 @@ class SelectionExpand : Command {
         // loop bound and the per-element test used to allocate — the latter,
         // inside the loop, was O(n²).
         snap = SelectionSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         if (editMode == EditMode.Vertices) {
             bool[] toAdd = new bool[](mesh.vertices.length);
             foreach (i; 0 .. mesh.vertices.length)

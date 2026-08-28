@@ -298,12 +298,20 @@ class Command {
     // themselves, and ride the same close. What is not covered is a null-mesh
     // command whose ONLY publisher is accumulate-only; none exists today.
     final bool apply() {
+        // TASK 2500 — the forward bit is written HERE, by the base, and that
+        // is the whole reason it cannot drift. `apply()` is the one place in
+        // the build that observes "the kernel said yes"; every hand-written
+        // `applied_` / `captured` copy of that observation was a second
+        // derivation of a fact this line already holds.
+        forwardApplied_ = false;
         beginDeliveryBatchGlobal();
         scope(exit) {
             if (mesh !is null) mesh.deliverAccumulated();
             endDeliveryBatchGlobal();
         }
-        return applyImpl();
+        immutable bool ok = applyImpl();
+        forwardApplied_ = ok;
+        return ok;
     }
 
     // Run the operation. Two paths post-Phase-6:
@@ -524,17 +532,155 @@ class Command {
         return true;
     }
 
-    // Restore the pre-apply mesh/selection/state. Default: not undoable.
-    // Mutating commands override and return true on success.
+    // ------------------------------------------------------------------
+    // TASK 2500 — THE RECORDED FLAG, AND WHY `revert()` IS NOT THE OVERRIDE
+    // POINT ANY MORE.
     //
-    // AN OVERRIDE MEANS "THIS COMMAND IS UNDOABLE". Task 0705 deleted 41
-    // overrides that were a bare `return false;` — the default, retyped. They
-    // cost nothing at runtime and a real amount at reading time: with them
-    // present, "does this class override revert()?" answered nothing, so the
-    // question a reader actually has (is this command on the undo stack?) had
-    // to be re-answered by reading each body. Do not restate the default here;
-    // silence is the statement.
-    bool revert() { return false; }
+    // Before this, 110 files under `source/commands/` wrote their own
+    // `override bool revert()`, 973 lines of them, and every one of those
+    // bodies opened by RE-DERIVING one fact: "did my forward leave anything to
+    // restore?". It was spelled eight different ways — `!recorded_`,
+    // `!snap.filled`, `!undo_.armed()`, `!applied_`, `!captured`,
+    // `touchedIdx.length == 0`, `idxs.length == 0`, `touched_.length == 0` —
+    // and it was WRONG in three of them (task 2110: `mesh.smooth`,
+    // `mesh.jitter`, `mesh.quantize` answered `false` on an empty edit, which
+    // makes `CommandHistory.undo` drop the entry AND the whole tail above it,
+    // regression 0099). Three of four commands sharing one line were broken
+    // while the fourth had been fixed a year earlier with a comment that never
+    // reached them. That is what a hidden duplicate costs: the code looked
+    // unalike while standing on one invariant, so a fix could not travel.
+    //
+    // THE STATE MACHINE, and it has THREE states, not two. The third is not
+    // taste — it is shipped behaviour that three suite cells assert
+    // (`test_uv_transform.d`'s "revert without apply must return false",
+    // `test_uv_pack.d`, `test_uv_project.d`), and it is exactly the parameter
+    // `map_edit_undo.revertMapEditEmptyOk` used to take by hand:
+    //
+    //   * NO UNDO IMAGE AND NO FORWARD — nobody applied this command and
+    //     nobody handed it a recorded image. `revert()` answers FALSE. This is
+    //     the mis-ordered-caller belt `RecordedUndo.revert` exists to make
+    //     loud, and it stays loud.
+    //   * A FORWARD THAT SUCCEEDED AND RECORDED NOTHING — a legitimate no-op
+    //     edit (`{iter:0}` on `mesh.smooth`, `uv.rotate` by zero degrees, an
+    //     empty operand). There is nothing to restore, so `revert()` answers
+    //     TRUE. This is 2110's fix, generalised from three files to all of
+    //     them and made structural: the answer is given HERE, once, before any
+    //     command body runs.
+    //   * A RECORDED IMAGE — `revertImpl()` runs.
+    //
+    // WHY THE EMPTY-SET `false` IS NOW INEXPRESSIBLE RATHER THAN MERELY
+    // FIXED. `revertImpl()` returns `void`. A body physically cannot answer
+    // `false`, so it cannot answer `false` FOR EMPTINESS; and it is not
+    // entered at all unless an image exists, so the question it used to ask is
+    // not in front of it. A genuine restore failure — the layer we created is
+    // no longer in the document, an inner command declined — is still
+    // expressible, but only by NAMING it: `failRevert(reason)`. You cannot
+    // fail by falling through a `bool`; you have to say so, with a sentence.
+    //
+    // `false` FROM `revert()` REMAINS THE GENUINE-FAILURE CHANNEL, and that
+    // is deliberate: `CompositeCommand.revert` stops its child chain on it and
+    // `CommandHistory.undo` treats it as unrecoverable. The rule is not
+    // "always true" — it is "`false` is reserved for a real restore failure
+    // and never for emptiness".
+    //
+    // THE SHAPE IS BORROWED, and the upper half of it was already here. A
+    // published-header capture (task 1903) found the reference's undo step to
+    // be an OBJECT with a forward and a reverse, both `void`: failure is
+    // inexpressible there, and the flag is the step's own EXISTENCE, so it
+    // cannot disagree with itself. We had taken that model's recording state
+    // machine (`ACTIVE`/`SUSPEND`) and left this half behind.
+    // ------------------------------------------------------------------
+
+    // The ONE hand-raised bit: "I hold an undo image." Raised at the site that
+    // captures the image and nowhere else — `snap.capture`, `undo_.arm`,
+    // `MeshSessionEdit.setSnapshots` / `setDelta`, `MeshVertexEdit.setEdit`
+    // and its `Param`-filled wire twin. Not raised by `apply()`, because a command can be
+    // handed its image WITHOUT ever being applied: every session tool builds
+    // one, calls `setSnapshots(before, post, label)` and pushes it straight to
+    // `history.record(cmd)` (30 call sites), so a forward-only flag would
+    // answer "nothing to restore" for every tool commit in the build.
+    private bool undoRecorded_;
+
+    // The base-owned bit: "my `applyImpl()` said yes." Written only by
+    // `apply()` above.
+    private bool forwardApplied_;
+
+    // Set by `failRevert`, cleared at the top of every `revert()`.
+    private bool   revertFailed_;
+    private string revertFailure_;
+
+    /// Declare that this command now holds an undo image. Call it at the line
+    /// that captures the image — the point of the flag is that its writer and
+    /// the image's writer are the SAME statement.
+    ///
+    /// PUBLIC, not `protected`, and that is forced rather than chosen: the
+    /// recorder is very often NOT the command's own body. `runMapEdit`
+    /// (`commands/mesh/map_edit_undo.d`) is a shared free function that arms
+    /// 34 commands' images, `MeshSessionEdit.setSnapshots` is called by 30
+    /// session tools from outside the hierarchy, and `setEdit` by three more.
+    /// A `protected` setter would force each of those through a per-class
+    /// forwarder — which is exactly the duplication this task removes.
+    final void noteUndoRecorded() { undoRecorded_ = true; }
+
+    /// Drop the declaration. For a command that abandons a half-captured image
+    /// on a failed forward (`RecordedUndo.disarm`'s partner), or that has
+    /// already put its image back and must not do so twice.
+    final void forgetUndoRecord() { undoRecorded_ = false; }
+
+    /// True once an undo image has been declared. Public because several
+    /// commands ALSO use it as their redo discriminator (`isOperationInverse`,
+    /// "a second `evaluate` must not record a second delta over the first") —
+    /// that reader used to be a private `recorded_` beside this one.
+    final bool undoRecorded() const { return undoRecorded_; }
+
+    /// True once `apply()` has run and its kernel answered yes.
+    final bool forwardApplied() const { return forwardApplied_; }
+
+    /// Report a GENUINE restore failure from inside `revertImpl()`. THE ONLY
+    /// way `revert()` answers `false` for a command that recorded something.
+    /// `why` is one clause, in the same voice as `refusalReason()`.
+    ///
+    /// NEVER for emptiness. "I recorded nothing" is not a failure and is not
+    /// reachable here anyway — `revert()` answered for it before `revertImpl()`
+    /// was entered.
+    protected final void failRevert(string why) {
+        revertFailed_  = true;
+        revertFailure_ = why.length ? why : "restore failed";
+    }
+
+    /// WHY the last `revert()` answered false, in one clause, or "" when it
+    /// did not fail.
+    final string revertFailureReason() const { return revertFailure_; }
+
+    /// Restore the pre-apply mesh/selection/state.
+    ///
+    /// `final`: the three-state answer above is not a convention a command can
+    /// opt out of. A command overrides `revertImpl()`.
+    final bool revert() {
+        if (!undoRecorded_) return forwardApplied_;
+        revertFailed_  = false;
+        revertFailure_ = null;
+        revertImpl();
+        return !revertFailed_;
+    }
+
+    /// THE OVERRIDE POINT. Entered only when an undo image exists, so a body
+    /// never has to ask whether there is one.
+    ///
+    /// AN OVERRIDE MEANS "THIS COMMAND IS UNDOABLE". Task 0705 deleted 41
+    /// overrides that were a bare `return false;` — the default, retyped. They
+    /// cost nothing at runtime and a real amount at reading time: with them
+    /// present, "does this class override revert?" answered nothing, so the
+    /// question a reader actually has (is this command on the undo stack?) had
+    /// to be re-answered by reading each body. Do not restate the default
+    /// here; silence is the statement.
+    ///
+    /// The base body is reached only by a command that declared an undo image
+    /// and then did not say how to put it back — a contradiction, so it fails
+    /// loudly rather than answering a silent `true`.
+    protected void revertImpl() {
+        failRevert("this command declared an undo image but overrides no revertImpl()");
+    }
 
     // WHY the last apply() returned false, in one clause — or "" when the
     // command has nothing to add beyond "it declined". The dispatch funnel

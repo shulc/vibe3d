@@ -136,8 +136,6 @@ class MeshBevel : Command, Operator {
     /// The whole mesh-map set, BY VALUE, pre-op — `MeshDelete`'s and
     /// `MeshCleanup`'s belt, for the residual named at the class doc comment.
     private MeshMap[]          preMaps_;
-    /// See `commands/mesh/poly_inset.d`'s `recorded_`.
-    private bool               recorded_;
     private float            inset_      = 0.1f;
     private float            shift_      = 0.0f;
     private bool             group_      = true;
@@ -165,8 +163,17 @@ class MeshBevel : Command, Operator {
 
     /// Observable through `/api/history`'s `opInverse` field — and on THIS
     /// class it is genuinely per-instance rather than per-class, because the
-    /// two arms undo differently. `recorded_` is set only on the polygon arm.
-    override bool isOperationInverse() const { return recorded_; }
+    /// two arms undo differently: the polygon arm replays an op-log delta, the
+    /// edge arm still restores a whole-mesh snapshot.
+    ///
+    /// TASK 2500 — THE TWO QUESTIONS CAME APART HERE, and nowhere else in the
+    /// tree. The base flag answers "do I hold an undo IMAGE", which is now
+    /// true on BOTH arms; this method asks which KIND of image, and
+    /// `snap.filled` is the edge arm and nothing else fills it. Reading the
+    /// base flag alone made `/api/history` claim `opInverse` for an edge bevel
+    /// that undoes through a snapshot — caught by
+    /// `tests/unit/l7_bevel_inset_delta_test.d:485`.
+    override bool isOperationInverse() const { return undoRecorded() && !snap.filled; }
 
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded op-log — see
@@ -218,14 +225,15 @@ class MeshBevel : Command, Operator {
         // so that flipping it later is a self-contained change.
         if (editMode == EditMode.Edges) {
             snap = MeshSnapshot.capture(*mesh);
+            noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
             immutable size_t nEdge = runKernel(false);   // UNRECORDED batch
-            if (nEdge == 0) { snap = MeshSnapshot.init; return false; }
+            if (nEdge == 0) { snap = MeshSnapshot.init; forgetUndoRecord(); return false; }
             return true;
         }
 
         // REDO: `CommandHistory.redo` re-runs `apply()` -> `evaluate`. Re-run
         // the polygon arm BATCHLESS and keep the FIRST delta.
-        if (recorded_) return runKernel(false) != 0;
+        if (undoRecorded()) return runKernel(false) != 0;
 
         // The belts, captured on the recording arm only — a second capture on
         // redo would image the POST-op state.
@@ -255,7 +263,7 @@ class MeshBevel : Command, Operator {
             preMaps_ = null;
             return false;
         }
-        recorded_ = true;
+        noteUndoRecorded();
         return true;
     }
 
@@ -328,14 +336,10 @@ class MeshBevel : Command, Operator {
         return n;
     }
 
-    override bool revert() {
+    protected override void revertImpl() {
         // THE EDGE ARM, still dense. `snap.filled` is false on the polygon arm
         // (nothing captures it there), so the two cannot be confused.
-        if (snap.filled) { snap.restore(*mesh); return true; }
-
-        // See `commands/mesh/poly_inset.d`'s guard — and it is NOT the
-        // spelling for a command that DID record (regression 0099).
-        if (!recorded_) return false;
+        if (snap.filled) { snap.restore(*mesh); return; }
 
         // ORDER IS LOAD-BEARING, and it is `delete.d`'s: replay -> maps ->
         // selection. `applyFaceReindexReverse` installs a WHOLE `faceMarks`
@@ -350,6 +354,5 @@ class MeshBevel : Command, Operator {
             foreach (i, ref mm; preMaps_) mesh.meshMaps[i] = mm.dup;
         }
         preSel_.restore(*mesh);
-        return true;
     }
 }

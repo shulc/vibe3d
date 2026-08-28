@@ -8,7 +8,7 @@ import editmode;
 import params : Param;
 import mesh_edit_delta : MeshEditScope;
 import commands.mesh.position_undo  : RecordedUndo;
-import commands.mesh.map_edit_undo  : runMapEdit, revertMapEditEmptyOk;
+import commands.mesh.map_edit_undo  : runMapEdit;
 import commands.mesh.selection_undo : DenseSelectionUndo;
 
 /// Spikey (one-shot, undoable): for each selected face, add an apex vertex at
@@ -34,8 +34,6 @@ class MeshSpikey : Command, Operator {
     /// and `syncSelection` resizes the planes; the op-log has nothing that
     /// puts the pre-op bits back. See `commands/mesh/selection_undo.d`.
     private DenseSelectionUndo preSel_;
-    /// The forward SUCCEEDED — see `commands/mesh/flip.d`.
-    private bool             applied_;
     private float            amount_ = 0.5f;
 
     version (unittest) {
@@ -80,7 +78,7 @@ class MeshSpikey : Command, Operator {
         // CONSTRUCTION: `spikeFacesByMask` counts its eligible faces before its
         // first `addVertex` and answers 0 from there, so the kernel below
         // cannot refuse after mutating and no snapshot has to be dropped.
-        applied_ = runMapEdit(mesh, undo_, kPolyBevelEditScope,
+        const bool applied_ = runMapEdit(this, mesh, undo_, kPolyBevelEditScope,
                               (ref MeshEditBatch ed) => runKernel(ed, mask));
         return applied_;
     }
@@ -93,13 +91,11 @@ class MeshSpikey : Command, Operator {
         return ed.spikeFacesByMask(mask, amount_) != 0;
     }
 
-    override bool revert() {
-        // `…EmptyOk`, and the `if (!snap.filled) return false;` this replaces
-        // was DELETED rather than translated (regression 0099).
-        if (!revertMapEditEmptyOk(mesh, undo_, applied_)) return false;
-        // ONLY on the delta arm — the hatch's snapshot already restored every
-        // selection plane.
-        if (undo_.armed()) preSel_.restore(*mesh);
-        return true;
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
+        preSel_.restore(*mesh);
     }
 }

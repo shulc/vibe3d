@@ -8,7 +8,7 @@ import editmode;
 import shader;
 import mesh_edit_delta : MeshEditScope;
 import commands.mesh.position_undo  : RecordedUndo;
-import commands.mesh.map_edit_undo  : runMapEdit, revertMapEditEmptyOk;
+import commands.mesh.map_edit_undo  : runMapEdit;
 import commands.mesh.selection_undo : DenseSelectionUndo;
 
 /// Split the (first) currently selected edge at its midpoint, inserting a
@@ -31,8 +31,6 @@ class MeshSplitEdge : Command, Operator {
     /// The pre-op selection of all three domains — `resetSelection()` destroys
     /// it and the op-log has nothing that puts it back.
     private DenseSelectionUndo preSel_;
-    /// The forward SUCCEEDED — see `commands/mesh/flip.d`.
-    private bool             applied_;
 
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo (see `MeshFlip`).
@@ -106,7 +104,7 @@ class MeshSplitEdge : Command, Operator {
         // above — and for a `t` outside (0, 1), a literal here, and it refuses
         // before its first mutation. So the kernel cannot refuse after
         // mutating and nothing has to be hoisted.
-        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Geometry,
+        const bool applied_ = runMapEdit(this, mesh, undo_, MeshEditScope.Geometry,
                               (ref MeshEditBatch ed) => runKernel(ed, cast(uint)ei));
         return applied_;
     }
@@ -131,15 +129,11 @@ class MeshSplitEdge : Command, Operator {
         return true;
     }
 
-    override bool revert() {
-        // `…EmptyOk`, and the `if (!snap.filled) return false;` this replaces
-        // was DELETED rather than translated — a `false` from a Model entry's
-        // `revert()` truncates the undo stack instead of declining one step
-        // (regression 0099).
-        if (!revertMapEditEmptyOk(mesh, undo_, applied_)) return false;
-        // ONLY on the delta arm — the hatch's snapshot already restored every
-        // selection plane.
-        if (undo_.armed()) preSel_.restore(*mesh);
-        return true;
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
+        preSel_.restore(*mesh);
     }
 }

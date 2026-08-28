@@ -107,11 +107,6 @@ class MeshEdgeSlice : Command, Operator {
     /// the map itself.
     private MeshMap[]          preMaps_;
 
-    /// Set once `evaluate` has recorded a delta — the redo discriminator and
-    /// `revert()`'s guard, the job `snap.filled` used to do. `evaluate` runs
-    /// again on redo and must re-run the kernel BATCHLESS, or the second run
-    /// records a second delta on top of the first.
-    private bool               recorded_;
 
     private uint[] edges_; // IntArray: the two edge indices
     private float  tA_   = 0.5f;
@@ -133,7 +128,7 @@ class MeshEdgeSlice : Command, Operator {
         return MeshEditScope.Geometry | MeshEditScope.Marks;
     }
 
-    override bool isOperationInverse() const { return recorded_; }
+    override bool isOperationInverse() const { return undoRecorded(); }
 
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded op-log, for the KIND
@@ -166,7 +161,7 @@ class MeshEdgeSlice : Command, Operator {
         // from the restored pre-op state. The batch itself is kept because
         // stage L4-P0 measured what it is worth: without it this kernel makes
         // FOUR unbatched geometry commits per run.
-        if (recorded_) {
+        if (undoRecorded()) {
             Mesh.EdgeSliceResult rr;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, editScope());
@@ -213,16 +208,18 @@ class MeshEdgeSlice : Command, Operator {
             preMaps_ = null;
             return false;
         }
-        recorded_ = true;
+        noteUndoRecorded();
         return true;
     }
 
-    override bool revert() {
+    protected override void revertImpl() {
         // An instance whose `evaluate` refused holds an empty delta and every
-        // pre-image cleared; replaying it would run the belts over a mesh they
-        // were never sized against. This is what `if (!snap.filled) return
-        // false;` did before the migration.
-        if (!recorded_) return false;
+        // pre-image cleared, and replaying it would run the belts over a mesh
+        // they were never sized against. Nothing guards that HERE any more:
+        // the refusal never raised the flag, so `Command.revert` answers
+        // before this body is entered (task 2500). That is the job the
+        // pre-migration `if (!snap.filled) return false;` did, and the job
+        // `if (!recorded_) return false;` did after it.
         delta_.revert(*mesh);     // LIFO inverse replay restores geometry
         // Then the maps, sized against the restored geometry…
         if (preMaps_.length) {
@@ -231,6 +228,5 @@ class MeshEdgeSlice : Command, Operator {
         }
         // …and last the selection, which touches no map.
         preSel_.restore(*mesh);
-        return true;
     }
 }

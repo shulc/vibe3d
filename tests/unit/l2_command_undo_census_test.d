@@ -145,11 +145,11 @@ unittest // the twelve are off the snapshot-only undo
         immutable code = codeOnly(readText(path));
 
         // TERM 3 — a PER-FILE non-vacuity floor for the stripper. Every one of
-        // the twelve is a `Command` with a `revert` override; a stripper that
+        // the twelve is a `Command` with a `revertImpl` override; a stripper that
         // ate the file would report 0 for every needle and pass in silence.
-        assert(countOf(code, "override bool revert()") == 1,
+        assert(countOf(code, "protected override void revertImpl()") == 1,
             "source/commands/mesh/" ~ name ~ ": the comment stripper ate the "
-          ~ "file (or the command lost its `revert` override) — every count "
+          ~ "file (or the command lost its `revertImpl` override) — every count "
           ~ "below would be 0 for the wrong reason.");
         scanned += code.length;
 
@@ -165,9 +165,18 @@ unittest // the twelve are off the snapshot-only undo
             missingRecorded = name;
         else if (countOf(code, "RecordedUndo") > 0) ++recorded;
 
-        if (countOf(code, "revertMapEditEmptyOk") == 0 && missingEmptyOk is null)
+        // TASK 2500 — the needle moved because the mechanism did, not
+        // because the row was relaxed. `revertMapEditEmptyOk(mesh, undo_,
+        // applied_)` is gone, along with the per-command `applied_` bit it
+        // took: `Command.revert` answers the empty-delta case itself (the
+        // flag is raised inside `RecordedUndo.arm`, and only for a NON-empty
+        // delta), so every one of the twelve now reverts through the bare
+        // `undo_.revert(*mesh)`. A command that lost that line reverts
+        // NOTHING while still reporting success, which is the same failure
+        // this row has always been watching for.
+        if (countOf(code, "undo_.revert(*mesh)") == 0 && missingEmptyOk is null)
             missingEmptyOk = name;
-        else if (countOf(code, "revertMapEditEmptyOk") > 0) ++emptyOk;
+        else if (countOf(code, "undo_.revert(*mesh)") > 0) ++emptyOk;
     }
 
     assert(scanned >= 30_000,
@@ -207,9 +216,9 @@ unittest // the twelve are off the snapshot-only undo
                missingRecorded is null ? "" : " (first missing: "
                                               ~ missingRecorded ~ ")"));
     assert(emptyOk == 12,
-        format("only %d of the twelve revert through `revertMapEditEmptyOk`%s "
+        format("only %d of the twelve revert through `undo_.revert(*mesh)`%s "
              ~ "— see the guard row above for why the empty-delta answer is "
-             ~ "the command's own and not `false`.", emptyOk,
+             ~ "`Command.revert`'s and not `false` (task 2500).", emptyOk,
                missingEmptyOk is null ? "" : " (first missing: "
                                              ~ missingEmptyOk ~ ")"));
 }

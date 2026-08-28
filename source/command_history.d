@@ -202,6 +202,7 @@ final class CompositeCommand : Command {
         CmdFlags u = CmdFlags.None;
         foreach (c; children_) u |= c.cmdFlags();
         unionFlags_ = u;
+        noteUndoRecorded();   // task 2500 — the image is `children_`
     }
 
     /// Children, in record order. Exposed for inspection/tests.
@@ -227,11 +228,20 @@ final class CompositeCommand : Command {
     // Revert children in REVERSE order (mirror of the apply order). Used by
     // undo(). Stops and reports failure on the first child that fails to
     // revert.
-    override bool revert() {
+    //
+    // TASK 2500 — THE BLOCK'S UNDO IMAGE IS ITS CHILD LIST, so the flag is
+    // raised in the constructor, beside the assignment that creates it. And
+    // this is the site the task's caveat protects: a child that answers
+    // `false` is a GENUINE restore failure, the chain stops there, and
+    // `Command.revert` must be able to carry that out. `false` for EMPTINESS
+    // is what went away; `false` for failure is what this depends on.
+    protected override void revertImpl() {
         foreach_reverse (c; children_) {
-            if (!c.revert()) return false;
+            if (!c.revert()) {
+                failRevert("child command '" ~ c.name() ~ "' failed to revert");
+                return;
+            }
         }
-        return true;
     }
 
     override CmdFlags cmdFlags() const { return unionFlags_; }
@@ -1675,7 +1685,6 @@ version (unittest) {
         override string   label() const { return "EpochTest"; }
         override CmdFlags cmdFlags() const { return CmdFlags.Model; }
         protected override bool applyImpl()  { return true; }
-        override bool revert() { return true; }
     }
 
     // Stub command for class-aware stepping unit tests.
@@ -1697,8 +1706,12 @@ version (unittest) {
         override string   name()     const { return "test.tracked"; }
         override string   label()    const { return "Tracked"; }
         override CmdFlags cmdFlags() const { return _flags; }
-        protected override bool applyImpl()  { ++applyCalls;  return true; }
-        override bool revert() { ++revertCalls; return true; }
+        protected override bool applyImpl()  {
+            ++applyCalls;
+            noteUndoRecorded();   // task 2500 — this double COUNTS its reverts
+            return true;
+        }
+        protected override void revertImpl() { ++revertCalls; }
     }
 
     // Convenience: record a Model-class entry.
@@ -1791,7 +1804,6 @@ version (unittest) {
         override string   label() const { return "RunMergeableTest"; }
         override CmdFlags cmdFlags() const { return CmdFlags.Model; }
         protected override bool applyImpl()  { return true; }
-        override bool revert() { return true; }
 
         Command mergeRunTail(Command[] later) {
             if (later.length == 0) return null;
@@ -1814,7 +1826,6 @@ version (unittest) {
         override string   label() const { return "PlainTest"; }
         override CmdFlags cmdFlags() const { return CmdFlags.Model; }
         protected override bool applyImpl()  { return true; }
-        override bool revert() { return true; }
     }
 }
 
@@ -2117,11 +2128,16 @@ version(unittest) {
             private View  _view = new View(0, 0, 1, 1);
             this() {
                 super(&_mesh, _view, EditMode.Vertices);
+                // TASK 2500 — these doubles are pushed with
+                // `pushEntryForTest`, which never calls `apply()`, so the flag
+                // is raised where their (trivial) undo image exists: at
+                // construction.
+                noteUndoRecorded();
             }
             override string name() const { return "stub.model"; }
             override CmdFlags cmdFlags() const { return CmdFlags.Model; }
             protected override bool applyImpl()  { applied = true;  return true; }
-            override bool revert() { reverted = true; return true; }
+            protected override void revertImpl() { reverted = true; }
         }
         static class StubUi : Command {
             import mesh     : Mesh;
@@ -2131,11 +2147,21 @@ version(unittest) {
             private View  _view = new View(0, 0, 1, 1);
             this() {
                 super(&_mesh, _view, EditMode.Vertices);
+                // TASK 2500 — these doubles are pushed with
+                // `pushEntryForTest`, which never calls `apply()`, so the flag
+                // is raised where their (trivial) undo image exists: at
+                // construction.
+                noteUndoRecorded();
             }
             override string name() const { return "stub.ui"; }
             override CmdFlags cmdFlags() const { return CmdFlags.UiState; }
             protected override bool applyImpl()  { return true; }
-            override bool revert() { return true; }
+            // EMPTY, but PRESENT: the constructor declared an image, and the
+            // base `revertImpl` fails loudly on a command that declares one
+            // and then does not say how to put it back (task 2500). This stub
+            // is carried INERT through the cells below, so nothing calls it
+            // today — which is exactly why it would be a trap to leave out.
+            protected override void revertImpl() {}
         }
         static class StubLifecycle : Command {
             import mesh     : Mesh;
@@ -2147,11 +2173,16 @@ version(unittest) {
             private View  _view = new View(0, 0, 1, 1);
             this() {
                 super(&_mesh, _view, EditMode.Vertices);
+                // TASK 2500 — these doubles are pushed with
+                // `pushEntryForTest`, which never calls `apply()`, so the flag
+                // is raised where their (trivial) undo image exists: at
+                // construction.
+                noteUndoRecorded();
             }
             override string name() const { return "tool.deactivate"; }
             override CmdFlags cmdFlags() const { return CmdFlags.ToolLifecycle; }
             protected override bool applyImpl()  { applied = true;  return true; }
-            override bool revert() { reverted = true; return true; }
+            protected override void revertImpl() { reverted = true; }
         }
 
         auto selA   = new StubUi();

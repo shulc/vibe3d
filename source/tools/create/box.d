@@ -1536,6 +1536,10 @@ public:
         beforeState_ = beforeState;
         afterState_ = afterState;
         super(null, gBoxLiveEditView, EditMode.Vertices);
+        // TASK 2500 — the undo image is the `before_`/`beforeState_` pair the
+        // constructor just took, and the tool pushes this straight to
+        // `history.record(cmd)` without ever calling `apply()`.
+        noteUndoRecorded();
     }
 
     override string name() const { return "prim.cube.live"; }
@@ -1551,10 +1555,12 @@ public:
         return true;
     }
 
-    override bool revert() {
-        if (tool_ is null) return false;
+    protected override void revertImpl() {
+        if (tool_ is null) {
+            failRevert("the box tool that owns this live edit is gone");
+            return;
+        }
         tool_.restoreLiveEdit(before_, beforeState_);
         tool_.noteLiveHistoryRevert();
-        return true;
     }
 }

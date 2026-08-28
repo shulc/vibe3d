@@ -8,7 +8,7 @@ import editmode;
 import selection_product : repointToNothing;
 import mesh_edit_delta : MeshEditScope;
 import commands.mesh.position_undo  : RecordedUndo;
-import commands.mesh.map_edit_undo  : runMapEdit, revertMapEditEmptyOk;
+import commands.mesh.map_edit_undo  : runMapEdit;
 import commands.mesh.selection_undo : DenseSelectionUndo;
 
 /// `mesh.vertexSplit` — unweld each selected vertex: keep it in its
@@ -45,8 +45,6 @@ class MeshVertexSplit : Command, Operator {
     /// the op-log has nothing that puts it back. See
     /// `commands/mesh/selection_undo.d`.
     private DenseSelectionUndo preSel_;
-    /// The forward SUCCEEDED — see `commands/mesh/flip.d`.
-    private bool             applied_;
 
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo (see `MeshFlip`).
@@ -85,7 +83,7 @@ class MeshVertexSplit : Command, Operator {
         // pre-image of the face array, so nothing downstream could detect a
         // half-revert, and a `false` from a Model entry's `revert()` truncates
         // the undo stack (plan §L2.4, regression 0099).
-        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Geometry,
+        const bool applied_ = runMapEdit(this, mesh, undo_, MeshEditScope.Geometry,
                               (ref MeshEditBatch ed) => runKernel(ed, sel));
         return applied_;
     }
@@ -107,13 +105,11 @@ class MeshVertexSplit : Command, Operator {
         return true;
     }
 
-    override bool revert() {
-        // `…EmptyOk`, and the `if (!snap.filled) return false;` this replaces
-        // was DELETED rather than translated (regression 0099).
-        if (!revertMapEditEmptyOk(mesh, undo_, applied_)) return false;
-        // ONLY on the delta arm — the hatch's snapshot already restored every
-        // selection plane.
-        if (undo_.armed()) preSel_.restore(*mesh);
-        return true;
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
+        preSel_.restore(*mesh);
     }
 }

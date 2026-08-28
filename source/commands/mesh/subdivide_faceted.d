@@ -116,15 +116,14 @@ class SubdivideFaceted : Command, Operator {
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
         snap = MeshSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         if (onTopologyChange !is null) onTopologyChange();
         runFacetedFamily(mesh, editMode, /*smooth=*/false);
         return true;
     }
 
-    override bool revert() {
-        if (!snap.filled) return false;
+    protected override void revertImpl() {
         snap.restore(*mesh);
-        return true;
     }
 }
 

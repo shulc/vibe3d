@@ -55,9 +55,6 @@ class MeshRadialArray : Command, Operator {
     mixin OperatorActrCommon;
     private MeshEditDelta      delta_;
     private DenseSelectionUndo preSel_;
-    /// Set once `evaluate` recorded a delta: FIRST RUN vs REDO, and
-    /// `revert()`'s guard — the role the deleted `if (!snap.filled)` played.
-    private bool               recorded_;
 
     private int    count_        = 6;
     private string axis_         = "Y";
@@ -80,7 +77,7 @@ class MeshRadialArray : Command, Operator {
 
     /// True iff this instance actually stored an operation-log delta — see
     /// `MeshDelete.isOperationInverse` for why this is not `return true;`.
-    override bool isOperationInverse() const { return recorded_; }
+    override bool isOperationInverse() const { return undoRecorded(); }
 
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded op-log. The cells assert a
@@ -124,7 +121,7 @@ class MeshRadialArray : Command, Operator {
 
         // REDO: `CommandHistory.redo` re-runs `apply()`. Re-run the kernel
         // BATCHLESS and keep the FIRST delta.
-        if (recorded_) {
+        if (undoRecorded()) {
             size_t ri;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, kDuplicateEditScope);
@@ -149,14 +146,12 @@ class MeshRadialArray : Command, Operator {
             preSel_ = DenseSelectionUndo.init;
             return false;
         }
-        recorded_ = true;
+        noteUndoRecorded();
         return true;
     }
 
-    override bool revert() {
-        if (!recorded_) return false;
+    protected override void revertImpl() {
         delta_.revert(*mesh);     // LIFO inverse replay restores geometry
         preSel_.restore(*mesh);   // …then the three selection domains
-        return true;
     }
 }

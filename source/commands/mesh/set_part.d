@@ -52,7 +52,6 @@ class MeshSetPart : Command, Operator {
     mixin OperatorActrCommon;
     private int    partId_ = 0;
     private uint[] origPart;
-    private bool   captured;
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -88,7 +87,7 @@ class MeshSetPart : Command, Operator {
         if (mesh.facePart.length < mesh.faces.length)
             mesh.facePart.length = mesh.faces.length;
         origPart = mesh.facePart.dup;
-        captured = true;
+        noteUndoRecorded();   // task 2500 — the image and its flag, one statement
 
         auto selView = mesh.selectedFaces;
         foreach (fi; 0 .. mesh.faces.length) {
@@ -100,10 +99,8 @@ class MeshSetPart : Command, Operator {
         return true;
     }
 
-    override bool revert() {
-        if (!captured) return false;
+    protected override void revertImpl() {
         mesh.facePart = origPart.dup;
         mesh.commitChange(MeshEditScope.Material);
-        return true;
     }
 }

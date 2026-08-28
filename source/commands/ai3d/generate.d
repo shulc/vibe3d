@@ -84,11 +84,15 @@ final class Ai3dGenerate : Command {
 
         importer = new Ai3dImportResult(mesh, view, editMode, doc, onSwitch);
         importer.setInput(staged.objPath, nameArg);
-        return importer.apply();
+        if (!importer.apply()) return false;
+        // Task 2500 — the undo image is the INNER command; the flag is raised
+        // in the same statement that makes it exist.
+        noteUndoRecorded();
+        return true;
     }
 
-    override bool revert() {
-        if (importer is null) return false;
-        return importer.revert();
+    protected override void revertImpl() {
+        if (!importer.revert())
+            failRevert("the generated model's import could not be rolled back");
     }
 }

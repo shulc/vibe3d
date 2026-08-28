@@ -80,6 +80,7 @@ class MeshSelectionEdit : Command, Operator {
     void setBefore(SelectionSnapshot s, EditMode m) {
         this.before     = s;
         this.beforeMode = m;
+        noteUndoRecorded();   // task 2500 — the image and its flag, one statement
     }
     void setAfter(SelectionSnapshot s, EditMode m) {
         this.after     = s;
@@ -96,10 +97,9 @@ class MeshSelectionEdit : Command, Operator {
         return true;
     }
 
-    override bool revert() {
+    protected override void revertImpl() {
         before.restore(*mesh);
         if (promoteType) promoteType(beforeMode);
         else *editModePtr = beforeMode;
-        return true;
     }
 }

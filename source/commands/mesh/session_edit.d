@@ -104,6 +104,12 @@ class MeshSessionEdit : Command, Operator {
         this.after     = after_;
         this.editLabel = label_;
         this.useDelta_ = false;
+        // TASK 2500 — THE ONE PLACE THIRTY SESSION TOOLS DECLARE THEIR IMAGE.
+        // A tool builds this carrier, hands it the pair and pushes it straight
+        // to `history.record(cmd)` WITHOUT ever calling `apply()`; the flag
+        // therefore cannot be a forward-only bit, and it is raised here, one
+        // statement from the image it describes.
+        noteUndoRecorded();
     }
 
     // Install an operation-log delta. The tool builds this by re-running its
@@ -114,6 +120,7 @@ class MeshSessionEdit : Command, Operator {
         this.delta_    = delta_;
         this.useDelta_ = true;
         this.editLabel = label_;
+        noteUndoRecorded();
     }
 
     bool evaluate(ref VectorStack vts) {
@@ -151,17 +158,23 @@ class MeshSessionEdit : Command, Operator {
     // does not, `tools/edit/tack.d`, captures `pre` unconditionally, so
     // `filled` is true by construction).
     //
-    // If such a producer is ever written, the correct shape here is a NO-OP
-    // returning `true` — "nothing to undo" — and NEVER `return false`. A
-    // false from a Model entry's `revert()` makes `CommandHistory.undo()` do
+    // If such a producer is ever written, the correct answer is a NO-OP
+    // `true` — "nothing to undo" — and NEVER `false`. A false from a Model
+    // entry's `revert()` makes `CommandHistory.undo()` do
     // `undoStack = undoStack[0 .. mi]`: it silently drops that entry AND the
     // whole tail above it, which the comment at that site says outright is
     // unrecoverable. A guard meant as free insurance would turn "undo leaves
     // an empty mesh" into "undo destroys the history".
-    override bool revert() {
+    //
+    // TASK 2500 — THAT ANSWER IS NO LONGER THIS CLASS'S TO GET RIGHT, and the
+    // decision above survives as its reason rather than as its code. `revert`
+    // is `final` on the base and reads one flag, and this class's flag is
+    // raised inside `setSnapshots`/`setDelta` — the only two doors a payload
+    // arrives through. A carrier that never got one therefore answers from the
+    // base, and `revertImpl` below cannot be entered by it at all.
+    protected override void revertImpl() {
         if (useDelta_) delta_.revert(*mesh);  // LIFO inverse replay (undo)
         else           before.restore(*mesh);
-        return true;
     }
 }
 

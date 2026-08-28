@@ -29,7 +29,6 @@ class MeshLoadRaw : Command {
 
     private MeshSnapshot snap;
     private EditMode     prevEditMode;
-    private bool         captured;
     // Funnel hook: when installed (app factory), apply/revert route the editMode
     // write through promoteGeometryType so selTypeOrder stays in lockstep.
     // Null in headless/unit construction — the raw-pointer fallback is used then.
@@ -81,8 +80,8 @@ class MeshLoadRaw : Command {
 
         // ---- Snapshot for undo, then swap geometry in ----
         snap         = MeshSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         prevEditMode = *editModePtr;
-        captured     = true;
 
         Mesh m;
         m.vertices = newVerts.dup;
@@ -132,12 +131,10 @@ class MeshLoadRaw : Command {
         return true;
     }
 
-    override bool revert() {
-        if (!captured) return false;
+    protected override void revertImpl() {
         snap.restore(*mesh);
         if (promoteType) promoteType(prevEditMode);
         else *editModePtr = prevEditMode;
-        return true;
     }
 
     // Tiny @safe int-to-string for error messages without dragging

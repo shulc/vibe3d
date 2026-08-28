@@ -22,10 +22,8 @@ import snapshot : SelectionSnapshot;
 // ---------------------------------------------------------------------------
 class SelectFillHoles : Command {
     private SelectionSnapshot snap;
-    override bool revert() {
-        if (!snap.filled) return false;
+    protected override void revertImpl() {
         snap.restore(*mesh);
-        return true;
     }
     this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
@@ -33,6 +31,7 @@ class SelectFillHoles : Command {
 
     protected override bool applyImpl() {
         snap = SelectionSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         mesh.syncSelection();
         auto filled = mesh.fillSelectionHoles(mesh.selectedFaces);
         // selectFacesFrom, not setFacesSelectedFrom: the swallowed hole faces
@@ -101,14 +100,12 @@ class SelectFillInsideLoop : Command {
     private EditMode*               editModePtr;
     private void delegate(EditMode) promoteType;
 
-    override bool revert() {
-        if (!snap.filled) return false;
+    protected override void revertImpl() {
         snap.restore(*mesh);
         if (modeSwitched && editModePtr !is null) {
             if (promoteType !is null) promoteType(priorEditMode);
             else                      *editModePtr = priorEditMode;
         }
-        return true;
     }
 
     this(Mesh* mesh, ref View view, EditMode editMode, EditMode* editModePtr) {
@@ -126,6 +123,7 @@ class SelectFillInsideLoop : Command {
 
     protected override bool applyImpl() {
         snap = SelectionSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         priorEditMode = editModePtr !is null ? *editModePtr : editMode;
         mesh.syncSelection();
 

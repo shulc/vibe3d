@@ -29,7 +29,6 @@ final class Ai3dImportResult : Command {
     /// being recorded at all.
     private Document.ItemSelectionState preSelection;
     private size_t preActiveIndex;
-    private bool applied;
     // task 0381 follow-up: surface WHY an import failed so the UI modal can show
     // it (previously every failure only went to stderr via logWarn — a silently
     // rejected mesh looked like "Done — imported" with no geometry).
@@ -37,7 +36,7 @@ final class Ai3dImportResult : Command {
     private string failMessage_;
 
     /// True once apply() has successfully inserted the layer.
-    bool succeeded() const { return applied; }
+    bool succeeded() const { return undoRecorded(); }
     /// The reason apply() returned false (empty until a failure), for the modal.
     string failureCode() const { return failCode_; }
     string failureMessage() const { return failMessage_; }
@@ -138,19 +137,24 @@ final class Ai3dImportResult : Command {
         inserted.meshRef().publishChange(MeshChangeAll);
         noteLayerChange(LayerChange.Added);
         fireSwitchIfChanged(prevLayer, prevIndex);
-        applied = true;
+        noteUndoRecorded();   // task 2500 — the image is `inserted` + `preSelection`
         return true;
     }
 
-    override bool revert() {
-        if (!applied || inserted is null) return false;
+    protected override void revertImpl() {
         auto prevLayer = doc.active();
         const prevIndex = doc.activeIndex;
 
         size_t found = size_t.max;
         foreach (i, l; doc.layers)
             if (l is inserted) { found = i; break; }
-        if (found == size_t.max) return false;
+        if (found == size_t.max) {
+            // A GENUINE restore failure, and the one shape this command has:
+            // the layer we inserted is no longer in the document, so there is
+            // nothing of ours to take out.
+            failRevert("the imported layer is no longer in the document");
+            return;
+        }
         insertedIndex = found;
         doc.layers = doc.layers[0 .. found] ~ doc.layers[found + 1 .. $];
 
@@ -164,7 +168,6 @@ final class Ai3dImportResult : Command {
         if (active !is null) active.publishChange(MeshChangeAll);
         noteLayerChange(LayerChange.Removed);
         fireSwitchIfChanged(prevLayer, prevIndex);
-        return true;
     }
 
     // ~~private void restoreSelection(bool[Layer], Layer primary, size_t

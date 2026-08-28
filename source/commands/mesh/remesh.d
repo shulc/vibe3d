@@ -79,6 +79,7 @@ final class Remesh : Command, Operator {
         // Full mesh snapshot — the kernel replaces the entire mesh (verts,
         // edges, faces, selection, etc.), same as mesh.subdivide.
         snap = MeshSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         if (onTopologyChange !is null) onTopologyChange();
 
         Mesh result = Mesh.init;
@@ -141,10 +142,8 @@ final class Remesh : Command, Operator {
         return true;
     }
 
-    override bool revert() {
-        if (!snap.filled) return false;
+    protected override void revertImpl() {
         snap.restore(*mesh);
-        return true;
     }
 }
 

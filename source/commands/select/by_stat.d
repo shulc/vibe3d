@@ -188,14 +188,12 @@ private abstract class ByStatBase : Command {
         return this;
     }
 
-    override bool revert() {
-        if (!snap.filled) return false;
+    protected override void revertImpl() {
         snap.restore(*mesh);
         if (modeSwitched && editModePtr !is null) {
             if (promoteType !is null) promoteType(priorEditMode);
             else                      *editModePtr = priorEditMode;
         }
-        return true;
     }
 
     /// Parse `compare_`, throwing (naming the value and the legal set) on
@@ -344,6 +342,7 @@ final class SelectByStatVertex : ByStatBase {
         }
 
         snap          = SelectionSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         priorEditMode = editModePtr !is null ? *editModePtr : editMode;
         mesh.syncSelection();
 
@@ -444,6 +443,7 @@ final class SelectByStatEdge : ByStatBase {
         }
 
         snap          = SelectionSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         priorEditMode = editModePtr !is null ? *editModePtr : editMode;
         mesh.syncSelection();
 
@@ -518,6 +518,7 @@ final class SelectByStatPolygon : ByStatBase {
         checkCompareValue(cmp);
 
         snap          = SelectionSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         priorEditMode = editModePtr !is null ? *editModePtr : editMode;
         mesh.syncSelection();
 

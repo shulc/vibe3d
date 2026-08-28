@@ -23,7 +23,6 @@ class MeshSelect : Command {
     private int[]             indices;
     private SelectionSnapshot snap;
     private EditMode          prevEditMode;
-    private bool              captured;
     // Selection-types Stage 5 (audit c): when the app installs this hook, the
     // editMode write routes through the geometry-type funnel (touch the recent
     // ordering + note the current-type flip) so EditMode is never written
@@ -60,8 +59,8 @@ class MeshSelect : Command {
     protected override bool applyImpl() {
         mesh.syncSelection();
         snap         = SelectionSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         prevEditMode = *editModePtr;
-        captured     = true;
 
         // Phase 7.6c: when symmetry is on, every successful pick also
         // selects the mirror counterpart of each clicked element. Gated
@@ -186,10 +185,8 @@ class MeshSelect : Command {
         return result;
     }
 
-    override bool revert() {
-        if (!captured) return false;
+    protected override void revertImpl() {
         snap.restore(*mesh);
         applyEditMode(prevEditMode);   // lockstep on undo too
-        return true;
     }
 }

@@ -53,7 +53,6 @@ class MeshSymmetrize : Command, Operator {
     // ORACLE and as the movement gate's pre-image — `undo_` below serves the
     // default undo path.
     private Vec3[] prevPositions;
-    private bool   captured;
 
     // Recorded `Kind.SetPos` undo (task 1903 §L0-b).
     private PositionUndo undo_;
@@ -110,8 +109,8 @@ class MeshSymmetrize : Command, Operator {
         }
         auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
         const ok = applyKernel(ed);
-        undo_.arm(ed.close());
-        if (!ok) { undo_.disarm(); return false; }
+        undo_.arm(this, ed.close());
+        if (!ok) { undo_.disarm(this); return false; }
         return true;
     }
 
@@ -132,12 +131,13 @@ class MeshSymmetrize : Command, Operator {
     // -----------------------------------------------------------------------
     private bool applyKernel(ref MeshEditBatch ed) {
         // Positional snapshot — taken BEFORE apply so we can diff and revert.
-        // It is THREE things at once: the movement gate's reference, the
-        // EMPTY-DELTA revert arm's source, and `recordPositionDiff`'s
-        // pre-image. The middle one used to be the tracker-off revert's
-        // source; task 1903 Stage N deleted the hatch and left the arm.
+        // It is TWO things at once now: the movement gate's reference and
+        // `recordPositionDiff`'s pre-image. It used to be three — the third
+        // was the EMPTY-DELTA revert arm's source, an arm reachable only on
+        // `!undo_.armed()`, which task 2500 made unreachable by answering
+        // that state in `Command.revert` before any body runs. The arm went
+        // with the predicate that reached it.
         prevPositions = mesh.vertices.dup;
-        captured = false;
 
         // Build a self-contained SymmetryPacket.
         SymmetryPacket sp;
@@ -195,38 +195,18 @@ class MeshSymmetrize : Command, Operator {
         }
         if (!moved) return false;   // already symmetric — no history entry
 
-        captured = true;
         ed.commitChange(MeshEditScope.Position);
         return true;
     }
 
-    override bool revert() {
-        if (undo_.armed()) return undo_.revert(*mesh);
-        // THE EMPTY-DELTA ARM. `RecordedUndo.arm` leaves the holder DISARMED
-        // when the batch came back with an empty log, so this is the live
-        // answer for a forward that succeeded and moved nothing a bitwise diff
-        // could see. Until task 1903 Stage N it was also the tracker-off ORACLE
-        // the parity cell measured the recorded revert against (W-b4); that
-        // reading died with the hatch, this one did not.
-        if (!captured) return false;
-        // TASK 1903 §L0-b — THE LEGACY REVERT WRITES THROUGH THE BATCH TOO,
-        // for the reason L0-d recorded at the same line in nine other files:
-        // §2.5's "leave the loop untouched" is incompatible with §1/§3/W-d1's
-        // `countRawPositionWrites == 0` for this file — that count included
-        // this loop, and it was this file's ONLY raw position write. Resolved
-        // the way §2.5 already resolved the forward: the same write, through
-        // the same primitive, on an UNRECORDED batch. Byte-identical —
-        // `setVertexPositions` skips only writes whose new value is
-        // BIT-identical to the current one (writing identical bits back was
-        // what the loop did), and it drops out-of-range indices, which is the
-        // same guard as the old `if (i < mesh.vertices.length)`.
-        auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
-        uint[] idx = new uint[](prevPositions.length);
-        foreach (i; 0 .. idx.length) idx[i] = cast(uint)i;
-        ed.setVertexPositions(idx, prevPositions);
-        ed.commitChange(MeshEditScope.Position);
-        ed.close();
-        return true;
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `RecordedUndo.arm` raises the flag
+        // only for a NON-EMPTY delta, and `Command.revert` answers both the
+        // empty-edit case and the never-applied case before this body runs. The
+        // hand-rolled `setVertexPositions(touchedIdx, touchedPrev)` fallback that
+        // used to sit under this line was reachable ONLY on `!armed()`, so it is
+        // gone with the predicate that reached it.
+        undo_.revert(*mesh);
     }
 }
 

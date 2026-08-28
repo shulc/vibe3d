@@ -65,10 +65,6 @@ class MeshVertJoin : Command, Operator {
     mixin OperatorActrCommon;
     private MeshEditDelta      delta_;
     private DenseSelectionUndo preSel_;
-    /// Set once `evaluate` recorded a delta: FIRST RUN vs REDO, and
-    /// `revert()`'s guard. It is the role the deleted `if (!snap.filled)`
-    /// played.
-    private bool               recorded_;
 
     private bool average_ = true;
     private bool keep_    = false;
@@ -126,7 +122,7 @@ class MeshVertJoin : Command, Operator {
         // BATCHLESS — no recording frame means every tracker hook takes its
         // `editRecorder_ is null` early-out — and keep the FIRST delta rather
         // than record a second one over it.
-        if (recorded_) {
+        if (undoRecorded()) {
             size_t rw;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, kJoinScope);
@@ -185,7 +181,7 @@ class MeshVertJoin : Command, Operator {
             preSel_ = DenseSelectionUndo.init;
             return false;
         }
-        recorded_ = true;
+        noteUndoRecorded();
         return true;
     }
 
@@ -196,14 +192,12 @@ class MeshVertJoin : Command, Operator {
     private enum uint kJoinScope =
         MeshEditScope.Geometry | MeshEditScope.Marks;
 
-    override bool revert() {
+    protected override void revertImpl() {
         // An instance whose `evaluate` refused holds an empty delta and a
         // nulled selection image; replaying it would run `preSel_` over a mesh
         // it was never sized against. Answering false here is correct ONLY
         // because the funnel records no history entry for a refused forward.
-        if (!recorded_) return false;
         delta_.revert(*mesh);     // LIFO inverse replay restores geometry
         preSel_.restore(*mesh);   // …then the three selection domains
-        return true;
     }
 }

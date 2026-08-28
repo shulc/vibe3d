@@ -69,13 +69,6 @@ class MeshStrokeExtrude : Command, Operator {
     mixin OperatorActrCommon;
     private MeshEditDelta    delta_;
     private DenseSelectionUndo preSel_;
-    /// Set once `evaluate` has recorded a delta. It discriminates FIRST RUN
-    /// from REDO — `CommandHistory.redo` calls `apply()` again and a second
-    /// recording run would lay a second delta over the first — and it is
-    /// `revert()`'s guard: an instance whose `evaluate` refused holds an empty
-    /// delta and must not replay it, which is what the deleted
-    /// `if (!snap.filled) return false;` did.
-    private bool             recorded_;
 
     private Vec3[] path_;
     private bool   alignToPath_ = true;
@@ -119,7 +112,7 @@ class MeshStrokeExtrude : Command, Operator {
         // the kernel BATCHLESS — an unrecorded batch makes every tracker hook
         // take its `editRecorder_ is null` first line — and KEEP the first
         // delta rather than record a second one over it.
-        if (recorded_) {
+        if (undoRecorded()) {
             size_t nRedo;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, kRevolveEditScope);
@@ -180,15 +173,15 @@ class MeshStrokeExtrude : Command, Operator {
             preSel_ = DenseSelectionUndo.init;
             return false;
         }
-        recorded_ = true;
+        noteUndoRecorded();
         return true;
     }
 
     /// Observable through `/api/history`'s `opInverse` field: an entry that
     /// restores from an op-log must not report itself as a whole-mesh
-    /// snapshot. `recorded_` rather than a literal `true` — an instance whose
+    /// snapshot. `undoRecorded()` rather than a literal `true` — an instance whose
     /// `evaluate` refused holds no inverse at all.
-    override bool isOperationInverse() const { return recorded_; }
+    override bool isOperationInverse() const { return undoRecorded(); }
 
     override MeshEditScope editScope() const {
         return cast(MeshEditScope) kRevolveEditScope;
@@ -204,15 +197,13 @@ class MeshStrokeExtrude : Command, Operator {
         }
     }
 
-    override bool revert() {
+    protected override void revertImpl() {
         // An instance whose `evaluate` refused holds an empty delta and a
         // nulled selection image; replaying it would run `preSel_` over a mesh
         // it was never sized against. NOT the spelling for a command that DID
         // record: a `false` there pops the entry off BOTH history stacks and
         // truncates the suffix after it (regression 0099).
-        if (!recorded_) return false;
         delta_.revert(*mesh);     // LIFO inverse replay restores the geometry
         preSel_.restore(*mesh);   // …then the three selection domains
-        return true;
     }
 }

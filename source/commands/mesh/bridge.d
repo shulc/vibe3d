@@ -52,9 +52,6 @@ class MeshBridge : Command, Operator {
     mixin OperatorActrCommon;
     private MeshEditDelta      delta_;
     private DenseSelectionUndo preSel_;
-    /// Set once `evaluate` recorded a delta: FIRST RUN vs REDO, and
-    /// `revert()`'s guard — the role the deleted `if (!snap.filled)` played.
-    private bool               recorded_;
     private bool             flip_ = false;
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
@@ -78,7 +75,7 @@ class MeshBridge : Command, Operator {
         // The dense selection image, taken BEFORE anything opens a batch. On
         // the REDO arm it is NOT re-taken: a second capture would image the
         // POST-op selection, and the first one is the one `revert()` needs.
-        if (!recorded_) preSel_.capture(*mesh);
+        if (!undoRecorded()) preSel_.capture(*mesh);
 
         if (editMode == EditMode.Polygons) {
             // Polygon mode: exactly 2 selected faces supply the vertex rings.
@@ -137,7 +134,7 @@ class MeshBridge : Command, Operator {
                     removed = ed.deleteFacesByMask(mask);
                 }
                 auto d = ed.close();
-                if (!recorded_) delta_ = d;
+                if (!undoRecorded()) delta_ = d;
             }
             // `n == 0` mutated nothing; `removed == 0` mutated and then
             // refused, which is the GIGO arm. `settle` tells them apart.
@@ -205,7 +202,7 @@ class MeshBridge : Command, Operator {
                     if (!removed) ed.buildLoops();
                 }
                 auto d = ed.close();
-                if (!recorded_) delta_ = d;
+                if (!undoRecorded()) delta_ = d;
             }
             // Unlike the polygon branch, an empty cap set is NOT a refusal
             // here — an open-row bridge bounds no face and deletes none — so
@@ -216,7 +213,7 @@ class MeshBridge : Command, Operator {
         }
 
         mesh.syncSelection();
-        recorded_ = true;
+        noteUndoRecorded();
         return true;
     }
 
@@ -225,7 +222,7 @@ class MeshBridge : Command, Operator {
     /// recording run would record a second delta over the first; unrecorded,
     /// every tracker hook takes its `editRecorder_ is null` early-out.
     private MeshEditBatch openBatch() {
-        if (recorded_) return MeshEditBatch.unrecorded(*mesh, kBridgeEditScope);
+        if (undoRecorded()) return MeshEditBatch.unrecorded(*mesh, kBridgeEditScope);
         return MeshEditBatch(*mesh, kBridgeEditScope);
     }
 
@@ -244,7 +241,7 @@ class MeshBridge : Command, Operator {
     ///     whose arrays have already moved would resize the mark arrays back
     ///     to the pre-op length.
     private bool settle(size_t affected) {
-        if (recorded_) return affected != 0;
+        if (undoRecorded()) return affected != 0;
         if (acceptRecordedEdit(affected, delta_)) return true;
         if (affected == 0) {
             delta_.revert(*mesh);
@@ -255,14 +252,12 @@ class MeshBridge : Command, Operator {
         return false;
     }
 
-    override bool revert() {
+    protected override void revertImpl() {
         // An instance whose `evaluate` refused holds an empty delta and a
         // nulled selection image; replaying it would run `preSel_` over a mesh
         // it was never sized against. Answering false here is correct ONLY
         // because the funnel records no history entry for a refused forward.
-        if (!recorded_) return false;
         delta_.revert(*mesh);     // LIFO inverse replay restores geometry
         preSel_.restore(*mesh);   // …then the three selection domains
-        return true;
     }
 }

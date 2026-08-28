@@ -93,6 +93,7 @@ class MeshEdgeExtrude : Command, Operator {
         if (mesh.edges.length == 0) return false;
 
         snap = MeshSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         auto mask = mesh.operandEdgeMask();
         // task 1903 Stage H: extrudeEdgesByMask takes `ref MeshEditBatch` now.
         // This command undoes via the MeshSnapshot above, not the op-log, so
@@ -107,9 +108,7 @@ class MeshEdgeExtrude : Command, Operator {
         return true;
     }
 
-    override bool revert() {
-        if (!snap.filled) return false;
+    protected override void revertImpl() {
         snap.restore(*mesh);
-        return true;
     }
 }

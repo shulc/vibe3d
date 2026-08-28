@@ -38,6 +38,7 @@ class MeshPaste : Command, Operator {
         if (geometryClipboard.empty) return false;
 
         snap = MeshSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         // A clip with points and no faces is a VERTEX-mode copy (task 1200,
         // ledger row 19). `appendGeometry` answers 0 to an empty face list by
         // design — it has nothing to remap or to select — so the loose points
@@ -59,9 +60,7 @@ class MeshPaste : Command, Operator {
         return true;
     }
 
-    override bool revert() {
-        if (!snap.filled) return false;
+    protected override void revertImpl() {
         snap.restore(*mesh);
-        return true;
     }
 }

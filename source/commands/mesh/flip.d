@@ -7,7 +7,7 @@ import view;
 import editmode;
 import mesh_edit_delta : MeshEditScope;
 import commands.mesh.position_undo : RecordedUndo;
-import commands.mesh.map_edit_undo : runMapEdit, revertMapEditEmptyOk;
+import commands.mesh.map_edit_undo : runMapEdit;
 
 /// Reverse the winding order of selected polygons, inverting their normals.
 /// Empty face-selection flips every face of the active layer (matching the
@@ -34,10 +34,6 @@ import commands.mesh.map_edit_undo : runMapEdit, revertMapEditEmptyOk;
 class MeshFlip : Command, Operator {
     mixin OperatorActrCommon;
     private RecordedUndo     undo_;
-    /// The forward SUCCEEDED. NOT derivable from `undo_`/`snap` — see
-    /// `revert()` below, and `map_edit_undo.revertMapEditEmptyOk`'s note on
-    /// why "no delta and no snapshot" is two states with opposite answers.
-    private bool             applied_;
 
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo. Every RESULT-shaped
@@ -84,27 +80,15 @@ class MeshFlip : Command, Operator {
         // This command is NOT one of the four that `snap.restore` on a kernel
         // refusal (`polygon_align`, `split_face`, `vertex_split`,
         // `make_polygon` are), so the L8 pre-flight rule costs it nothing.
-        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Geometry,
+        const bool applied_ = runMapEdit(this, mesh, undo_, MeshEditScope.Geometry,
                               (ref MeshEditBatch ed) => runKernel(ed) != 0);
         return applied_;
     }
 
-    override bool revert() {
-        // `…EmptyOk`, NOT `revertMapEdit`, and the empty case is REACHABLE
-        // here rather than theoretical: `setFaceWindings` drops an IDENTITY
-        // write from both the record and the write, and a winding that is its
-        // own reverse exists — a face carrying a repeated vertex, `[a, b, a]`,
-        // on a mesh the cleanup sweep has not been over. `flipFacesByMask`
-        // still counts such a face as flipped (behaviour preserved), so the
-        // forward succeeds with an EMPTY delta.
-        //
-        // Answering `false` there is the regression-0099 shape and the plan's
-        // refusal ruling forbids it in as many words: `CommandHistory.undo`
-        // discards an entry whose `revert()` answers false AND its whole
-        // trailing suffix (`command_history.d`'s `undoStack.length = mi`), so
-        // a `false` here does not "decline to undo" — it silently destroys
-        // every older entry. The `if (!snap.filled) return false;` this
-        // replaces was deleted, not translated.
-        return revertMapEditEmptyOk(mesh, undo_, applied_);
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
     }
 }

@@ -6,7 +6,7 @@
 //     makes the empty-paren predicate the right one here.
 //
 //   GATE 2 (task 1903 stage N-d): every ARGUMENT-BEARING `.revert(x)` site is
-//     in a 48-file roster totalling 71, and its receiver is one of four
+//     in a 67-file roster totalling 104, and its receiver is one of four
 //     recorded undo-image spellings. These are `MeshEditDelta.revert(*mesh)`
 //     and `RecordedUndo.revert(*mesh)` — a different set with a different
 //     obligation, and until N-d they had no census at all. See gate 2's own
@@ -491,9 +491,12 @@ PROBE";
 private struct RevertRow { string file; string func; string why; }
 
 private static immutable RevertRow[] kRecorded = [
-    RevertRow("source/command_history.d", "revert",
-        "CompositeCommand.revert() — foreach_reverse over children_, nests "
-      ~ "inside the caller's batch rather than opening its own"),
+    RevertRow("source/command_history.d", "revertImpl",
+        "CompositeCommand.revertImpl() — foreach_reverse over children_, nests "
+      ~ "inside the caller's batch rather than opening its own. TASK 2500 "
+      ~ "renamed the enclosing function: `Command.revert` is `final` now and "
+      ~ "`revertImpl` is the override point, so the `func` column moved with "
+      ~ "it. The call itself did not move and is still inside undo()'s batch."),
     RevertRow("source/command_history.d", "undo",
         "undo(), ToolLifecycle branch — inside undo()'s own "
       ~ "beginDeliveryBatchGlobal() at :1091"),
@@ -505,13 +508,13 @@ private static immutable RevertRow[] kRecorded = [
     RevertRow("source/command_history.d", "fire",
         "fire()'s live-command revert before the re-fire's apply — inside "
       ~ "fire()'s own beginDeliveryBatchGlobal() at :1507"),
-    RevertRow("source/commands/copilot/cycle_finding.d", "revert",
+    RevertRow("source/commands/copilot/cycle_finding.d", "revertImpl",
         "delegates to the inner select-only command's revert()"),
-    RevertRow("source/commands/copilot/select_finding.d", "revert",
+    RevertRow("source/commands/copilot/select_finding.d", "revertImpl",
         "delegates to inner.revert(), then restores the panel's active row"),
-    RevertRow("source/commands/ai3d/generate.d", "revert",
+    RevertRow("source/commands/ai3d/generate.d", "revertImpl",
         "delegates to importer.revert()"),
-    RevertRow("source/commands/image/commands.d", "revert",
+    RevertRow("source/commands/image/commands.d", "revertImpl",
         "delegates to inner_.revert()"),
 ];
 
@@ -698,6 +701,7 @@ unittest {
 private struct UndoImageRow { string file; size_t n; }
 
 private static immutable UndoImageRow[] kUndoImage = [
+    UndoImageRow("source/commands/mesh/add_point.d", 1),
     UndoImageRow("source/commands/mesh/array.d", 1),
     UndoImageRow("source/commands/mesh/axis_slice.d", 4),
     UndoImageRow("source/commands/mesh/bevel.d", 2),
@@ -714,14 +718,18 @@ private static immutable UndoImageRow[] kUndoImage = [
     UndoImageRow("source/commands/mesh/edge_slice.d", 2),
     UndoImageRow("source/commands/mesh/edge_slide.d", 1),
     UndoImageRow("source/commands/mesh/face_extrude.d", 2),
+    UndoImageRow("source/commands/mesh/fix_orientation.d", 1),
+    UndoImageRow("source/commands/mesh/flip.d", 1),
     UndoImageRow("source/commands/mesh/jitter.d", 1),
     UndoImageRow("source/commands/mesh/linear_align.d", 1),
     UndoImageRow("source/commands/mesh/loop_slice.d", 4),
     UndoImageRow("source/commands/mesh/magnet.d", 1),
-    UndoImageRow("source/commands/mesh/map_edit_undo.d", 1),
+    UndoImageRow("source/commands/mesh/make_polygon.d", 1),
     UndoImageRow("source/commands/mesh/merge.d", 2),
     UndoImageRow("source/commands/mesh/mirror.d", 1),
+    UndoImageRow("source/commands/mesh/morph.d", 6),
     UndoImageRow("source/commands/mesh/poly_inset.d", 2),
+    UndoImageRow("source/commands/mesh/polygon_align.d", 1),
     UndoImageRow("source/commands/mesh/position_undo.d", 1),
     UndoImageRow("source/commands/mesh/quadruple.d", 1),
     UndoImageRow("source/commands/mesh/quantize.d", 1),
@@ -733,28 +741,47 @@ private static immutable UndoImageRow[] kUndoImage = [
     UndoImageRow("source/commands/mesh/session_edit.d", 1),
     UndoImageRow("source/commands/mesh/smooth.d", 1),
     UndoImageRow("source/commands/mesh/smooth_shift.d", 2),
+    UndoImageRow("source/commands/mesh/spikey.d", 1),
+    UndoImageRow("source/commands/mesh/spin_edge.d", 1),
+    UndoImageRow("source/commands/mesh/split_edge.d", 1),
+    UndoImageRow("source/commands/mesh/split_face.d", 1),
     UndoImageRow("source/commands/mesh/stroke_extrude.d", 2),
     UndoImageRow("source/commands/mesh/sweep.d", 1),
     UndoImageRow("source/commands/mesh/symmetrize.d", 1),
+    UndoImageRow("source/commands/mesh/thicken.d", 1),
     UndoImageRow("source/commands/mesh/transform.d", 1),
     UndoImageRow("source/commands/mesh/triple.d", 1),
     UndoImageRow("source/commands/mesh/unify.d", 1),
+    UndoImageRow("source/commands/mesh/uv_map_util.d", 4),
+    UndoImageRow("source/commands/mesh/uv_pack.d", 2),
+    UndoImageRow("source/commands/mesh/uv_project.d", 1),
+    UndoImageRow("source/commands/mesh/uv_relax.d", 1),
+    UndoImageRow("source/commands/mesh/uv_transform.d", 3),
+    UndoImageRow("source/commands/mesh/uv_unwrap.d", 1),
     UndoImageRow("source/commands/mesh/vert_join.d", 2),
     UndoImageRow("source/commands/mesh/vert_merge.d", 1),
     UndoImageRow("source/commands/mesh/vertex_bevel.d", 1),
     UndoImageRow("source/commands/mesh/vertex_center.d", 1),
     UndoImageRow("source/commands/mesh/vertex_extrude.d", 2),
+    UndoImageRow("source/commands/mesh/vertex_new.d", 1),
     UndoImageRow("source/commands/mesh/vertex_set.d", 1),
+    UndoImageRow("source/commands/mesh/vertex_split.d", 1),
+    UndoImageRow("source/commands/mesh/weightmap.d", 4),
     UndoImageRow("source/commands/mesh/weld_vertex_pair.d", 1),
 ];
 
 /// The EXACT total, not a floor. A threshold would stay green over a file
 /// that stopped reverting for an unrelated reason while another gained a site.
-private enum size_t kUndoImageTotal = 71;
+private enum size_t kUndoImageTotal = 104;
 
-static assert(kUndoImage.length == 48,
-    "the undo-image roster must hold exactly 48 files — the number measured "
-  ~ "when task 1903 stage N-d gave this set its first census. A family that "
+static assert(kUndoImage.length == 67,
+    "the undo-image roster must hold exactly 67 files. It was 48 files / 71 "
+  ~ "sites when task 1903 stage N-d gave this set its first census; task 2500 "
+  ~ "moved it to 67 / 104 by deleting `map_edit_undo.revertMapEdit` (and its "
+  ~ "`…EmptyOk` twin) and putting the bare `undo_.revert(*mesh)` those "
+  ~ "helpers wrapped into the twenty map-edit commands themselves — one "
+  ~ "helper site became thirty-four call sites, and every one of them is now "
+  ~ "declared here rather than hidden behind a forwarder. A family that "
   ~ "migrates changes this together with the rows and with kUndoImageTotal");
 
 /// The CLOSED set of receiver spellings. This is where the type information
@@ -762,7 +789,7 @@ static assert(kUndoImage.length == 48,
 private static immutable string[] kUndoImageReceivers = [
     "delta_",   // MeshEditDelta, the migrated commands' field
     "undo_",    // RecordedUndo / PositionUndo, the L0–L2 position families
-    "undo",     // the same, as a `ref` parameter (map_edit_undo.revertMapEdit)
+    "undo",     // the same, as a `ref` parameter (map_edit_undo.runMapEdit)
     "d",        // position_undo.d's own helper parameter
 ];
 
@@ -803,7 +830,7 @@ unittest
 
     assert(bad.data.length == 0, format(
         "task 1903 stage N-d: the argument-bearing `.revert(` site set no "
-      ~ "longer matches the 48-file roster.%s\n\n"
+      ~ "longer matches the 67-file roster.%s\n\n"
       ~ "  These are undo IMAGES — `MeshEditDelta.revert(*mesh)` and "
       ~ "`RecordedUndo.revert(*mesh)` — not `Command.revert()`, which gate 1 "
       ~ "above owns. A new one is not wrong; it is UNACCOUNTED, and declaring "

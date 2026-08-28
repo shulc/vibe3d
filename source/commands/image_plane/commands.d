@@ -101,7 +101,6 @@ final class ImagePlaneAdd : Command {
     /// in a careful order to avoid one step undoing the previous one.
     private Document.ItemSelectionState prevSelection;
     private Layer prevPrimary;           ///< only for the switch-hook comparison
-    private bool  applied;
     private string refusal_;
 
     /// app.d's `onActiveLayerChanged` (task 0668). Defaulted to `null` so the
@@ -214,7 +213,7 @@ final class ImagePlaneAdd : Command {
         // channels editable the moment it exists — and the document is left
         // with NO mesh edit target until the user selects a mesh again.
         doc.selectItem(created_, SelMode.Set);
-        applied = true;
+        noteUndoRecorded();   // task 2500 — the image is `created_` + `prevSelection`
         noteLayerChange(LayerChange.Added);
         // Task 0668: the primary DID move (mesh → none), so the switch hook
         // runs. Ordered after `noteLayerChange(Added)` for the same reason
@@ -225,10 +224,14 @@ final class ImagePlaneAdd : Command {
         return true;
     }
 
-    override bool revert() {
-        if (!applied || created_ is null) return false;
+    protected override void revertImpl() {
         immutable size_t i = doc.indexOf(created_);
-        if (i == doc.layers.length) return false;   // already gone
+        if (i == doc.layers.length) {
+            // A GENUINE restore failure: the plane we added is already out of
+            // the document, so there is nothing of ours to take back out.
+            failRevert("the image plane is no longer in the document");
+            return;
+        }
 
         // Task 0668: the undo RESTORES the edit target the apply cleared, so
         // it is a primary move in its own right and owes the hook the same
@@ -261,10 +264,8 @@ final class ImagePlaneAdd : Command {
         // is nothing for the undo to put back.
         doc.restoreItemSelection(prevSelection);
 
-        applied = false;
         noteLayerChange(LayerChange.Removed);
         fireSwitchIfChanged(prevLayer, prevIdx);
-        return true;
     }
 
     override string refusalReason() const { return refusal_; }
@@ -372,13 +373,13 @@ final class ImagePlaneSetImage : Command {
         prevTarget_ = plane_.link(kImageLinkSlot).targetUnchecked();
 
         plane_.setLink(kImageLinkSlot, target_);
-        applied = true;
+        applied = true;       // this class's own redo guard — see `if (applied)` above
+        noteUndoRecorded();   // task 2500 — the image is `prevTarget_`
         noteLayerChange(LayerChange.PropertyChanged);
         return true;
     }
 
-    override bool revert() {
-        if (!applied || plane_ is null) return false;
+    protected override void revertImpl() {
         // `setLink(name, null)` REMOVES the slot rather than leaving an unset
         // one behind, which is what makes "there was no link before" restore
         // exactly, with no second representation of "points at nothing" for a
@@ -386,7 +387,6 @@ final class ImagePlaneSetImage : Command {
         plane_.setLink(kImageLinkSlot, prevTarget_);
         applied = false;
         noteLayerChange(LayerChange.PropertyChanged);
-        return true;
     }
 
     override string refusalReason() const { return refusal_; }

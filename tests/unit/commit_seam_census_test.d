@@ -3558,11 +3558,11 @@ unittest // L0-d — the nine files hold no raw position write
         immutable src = stripCommentsAndStrings(readText(path));
 
         // Non-vacuity floor for the stripper, per file: every one of the nine
-        // is a Command with an `evaluate` and a `revert`. A stripper that ate
+        // is a Command with an `evaluate` and a `revertImpl`. A stripper that ate
         // the file would report 0 raw writes and pass by saying nothing.
-        assert(countOccurrences(src, "override bool revert()") == 1,
+        assert(countOccurrences(src, "protected override void revertImpl()") == 1,
             "source/commands/mesh/" ~ name ~ ": the comment stripper ate the "
-          ~ "file (or the command lost its `revert` override) — the raw-write "
+          ~ "file (or the command lost its `revertImpl` override) — the raw-write "
           ~ "count below would be 0 for the wrong reason.");
 
         string firstHit;
@@ -3810,9 +3810,9 @@ unittest // L0-b — the two files hold no raw position write
 
         // Non-vacuity floor for the stripper: a stripper that ate the file
         // would report 0 raw writes and pass by saying nothing.
-        assert(countOccurrences(src, "override bool revert()") == 1,
+        assert(countOccurrences(src, "protected override void revertImpl()") == 1,
             "source/commands/mesh/" ~ name ~ ": the comment stripper ate the "
-          ~ "file (or the command lost its `revert` override) — the raw-write "
+          ~ "file (or the command lost its `revertImpl` override) — the raw-write "
           ~ "count below would be 0 for the wrong reason.");
 
         string firstHit;
@@ -4132,9 +4132,9 @@ unittest // task 2310 — edge_join.d's zero, and the pin that makes it worth ha
     assert(exists(path), "cannot find source/commands/mesh/edge_join.d at " ~ path);
     immutable src = stripCommentsAndStrings(readText(path));
 
-    assert(countOccurrences(src, "override bool revert()") == 1,
+    assert(countOccurrences(src, "protected override void revertImpl()") == 1,
         "source/commands/mesh/edge_join.d: the comment stripper ate the file (or "
-      ~ "the command lost its `revert` override) — the count below would be 0 "
+      ~ "the command lost its `revertImpl` override) — the count below would be 0 "
       ~ "for the wrong reason.");
 
     string firstHit;

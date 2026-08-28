@@ -8,10 +8,8 @@ import snapshot : SelectionSnapshot;
 
 class SelectInvert : Command {
     private SelectionSnapshot snap;
-    override bool revert() {
-        if (!snap.filled) return false;
+    protected override void revertImpl() {
         snap.restore(*mesh);
-        return true;
     }
     this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
@@ -23,6 +21,7 @@ class SelectInvert : Command {
         // `mesh.selectedX` @property inside the loop rebuilt a whole `bool[]`
         // per element — O(n²).
         snap = SelectionSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         if (editMode == EditMode.Vertices) {
             foreach (i; 0 .. mesh.vertices.length)
                 if (mesh.isVertexSelected(i)) mesh.deselectVertex(cast(int)i);

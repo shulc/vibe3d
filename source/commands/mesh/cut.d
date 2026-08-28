@@ -74,9 +74,6 @@ class MeshCut : Command, Operator {
     private MeshEditDelta      delta_;
     private DenseSelectionUndo preSel_;
     private MeshMap[]          preMaps_;
-    /// Set once `evaluate` has recorded a delta — the redo discriminator and
-    /// `revert()`'s guard, the job `snap.filled` used to do.
-    private bool               recorded_;
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -94,7 +91,7 @@ class MeshCut : Command, Operator {
         return MeshEditScope.Geometry | MeshEditScope.Marks;
     }
 
-    override bool isOperationInverse() const { return recorded_; }
+    override bool isOperationInverse() const { return undoRecorded(); }
 
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded op-log, for the KIND
@@ -128,7 +125,7 @@ class MeshCut : Command, Operator {
         // is the same one the first run used, and the clipboard already holds
         // this content — re-committing the identical clip is a no-op the
         // ordering above makes harmless.
-        if (recorded_) {
+        if (undoRecorded()) {
             size_t ra;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, editScope());
@@ -183,12 +180,11 @@ class MeshCut : Command, Operator {
         }
         // Delete succeeded — now commit to the global clipboard.
         geometryClipboard = localClip;
-        recorded_ = true;
+        noteUndoRecorded();
         return true;
     }
 
-    override bool revert() {
-        if (!recorded_) return false;
+    protected override void revertImpl() {
         // The delta replay restores geometry; the clipboard intentionally
         // KEEPS its content — undoing a cut does not wipe the clip. That
         // contract is unchanged by the migration and is asserted, because a
@@ -200,6 +196,5 @@ class MeshCut : Command, Operator {
             foreach (i, ref m; preMaps_) mesh.meshMaps[i] = m.dup;
         }
         preSel_.restore(*mesh);
-        return true;
     }
 }

@@ -46,9 +46,6 @@ class MeshDuplicate : Command, Operator {
     mixin OperatorActrCommon;
     private MeshEditDelta      delta_;
     private DenseSelectionUndo preSel_;
-    /// Set once `evaluate` recorded a delta: FIRST RUN vs REDO, and
-    /// `revert()`'s guard — the role the deleted `if (!snap.filled)` played.
-    private bool               recorded_;
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -70,10 +67,10 @@ class MeshDuplicate : Command, Operator {
     /// NOT `return true;`, for `MeshDelete.isOperationInverse`'s reason
     /// verbatim: a constant would be a claim about instances the class can
     /// genuinely be in — constructed-but-not-applied, or refused — where no
-    /// delta exists. `recorded_` is `true` for every instance that reaches the
+    /// delta exists. `undoRecorded()` is `true` for every instance that reaches the
     /// history stack, because `acceptRecordedEdit` guarantees a non-empty
     /// delta before it is set.
-    override bool isOperationInverse() const { return recorded_; }
+    override bool isOperationInverse() const { return undoRecorded(); }
 
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded op-log. The cells assert a
@@ -98,7 +95,7 @@ class MeshDuplicate : Command, Operator {
         // BATCHLESS — no recording frame means every tracker hook takes its
         // `editRecorder_ is null` early-out — and keep the FIRST delta rather
         // than record a second one over it.
-        if (recorded_) {
+        if (undoRecorded()) {
             size_t rc;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, kDuplicateEditScope);
@@ -142,18 +139,16 @@ class MeshDuplicate : Command, Operator {
             preSel_ = DenseSelectionUndo.init;
             return false;
         }
-        recorded_ = true;
+        noteUndoRecorded();
         return true;
     }
 
-    override bool revert() {
+    protected override void revertImpl() {
         // An instance whose `evaluate` refused holds an empty delta and a
         // nulled selection image; replaying it would run `preSel_` over a mesh
         // it was never sized against. Answering false here is correct ONLY
         // because the funnel records no history entry for a refused forward.
-        if (!recorded_) return false;
         delta_.revert(*mesh);     // LIFO inverse replay restores geometry
         preSel_.restore(*mesh);   // …then the three selection domains
-        return true;
     }
 }

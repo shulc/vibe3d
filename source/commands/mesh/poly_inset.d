@@ -69,13 +69,6 @@ import mesh_edit_delta : MeshEditDelta, MeshEditScope, acceptRecordedEdit;
 class MeshPolygonInset : Command, Operator {
     mixin OperatorActrCommon;
     private MeshEditDelta    delta_;
-    /// Set once `evaluate` has recorded a delta. It discriminates FIRST RUN
-    /// from REDO — `CommandHistory.redo` calls `apply()` again and a second
-    /// recording run would lay a second delta over the first — and it is
-    /// `revert()`'s guard: an instance whose `evaluate` refused holds an empty
-    /// delta and must not replay it, which is what the deleted
-    /// `if (!snap.filled) return false;` did.
-    private bool             recorded_;
     private float            inset_ = 0.1f;   // safe non-zero default (task 0359 review)
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
@@ -91,9 +84,9 @@ class MeshPolygonInset : Command, Operator {
 
     /// Observable through `/api/history`'s `opInverse` field: an entry that
     /// restores from an op-log must not report itself as a whole-mesh
-    /// snapshot. `recorded_` rather than a literal `true` — an instance whose
+    /// snapshot. `undoRecorded()` rather than a literal `true` — an instance whose
     /// `evaluate` refused holds no inverse at all.
-    override bool isOperationInverse() const { return recorded_; }
+    override bool isOperationInverse() const { return undoRecorded(); }
 
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded op-log, for the KIND
@@ -126,7 +119,7 @@ class MeshPolygonInset : Command, Operator {
         // the kernel BATCHLESS — an unrecorded batch makes every tracker hook
         // take its `editRecorder_ is null` first line — and KEEP the first
         // delta rather than record a second one over it.
-        if (recorded_) {
+        if (undoRecorded()) {
             size_t nRedo;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, kPolyBevelEditScope);
@@ -179,18 +172,16 @@ class MeshPolygonInset : Command, Operator {
             delta_ = MeshEditDelta.init;
             return false;
         }
-        recorded_ = true;
+        noteUndoRecorded();
         return true;
     }
 
-    override bool revert() {
+    protected override void revertImpl() {
         // An instance whose `evaluate` refused holds an empty delta;
         // replaying it would run over a mesh it was never sized against. NOT
         // the spelling for a command that DID record: a `false` there pops the
         // entry off BOTH history stacks and truncates the suffix after it
         // (regression 0099).
-        if (!recorded_) return false;
         delta_.revert(*mesh);
-        return true;
     }
 }

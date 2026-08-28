@@ -78,8 +78,6 @@ class MeshRemove : Command, Operator {
     // The delta carries it through `RemoveFaces.faceSetMsk` and `FaceReindex`'s
     // copy of the same field — measured on `makeTaggedGridDirty(3)`, where it
     // comes back byte-identical with no belt of any kind.
-    // First run vs REDO, and `revert()`'s guard — see `MeshDelete.recorded_`.
-    private bool               recorded_;
 
     // Stable label: captured once in runKernel() — see MeshDelete.appliedMode_.
     private EditMode appliedMode_;
@@ -97,7 +95,7 @@ class MeshRemove : Command, Operator {
     }
     // See `MeshDelete.isOperationInverse` for why this stays a field read
     // rather than becoming a constant `true` after the fork deletion.
-    override bool isOperationInverse() const { return recorded_; }
+    override bool isOperationInverse() const { return undoRecorded(); }
 
     override string label() const {
         final switch (appliedMode_) {
@@ -157,7 +155,7 @@ class MeshRemove : Command, Operator {
         if (mesh.faces.length == 0) return false;
 
         // Redo: re-run the kernel BATCHLESS (no double record).
-        if (recorded_) {
+        if (undoRecorded()) {
             const affected = runKernel();
             if (affected == 0) return false;
             return true;
@@ -179,7 +177,7 @@ class MeshRemove : Command, Operator {
             // anyway. On the paths where both act, they agree; where the carry
             // declines, this is what the user gets back instead of a zeroed
             // map. Redo needs no "after" copy because it re-runs the kernel
-            // (see the `recorded_` redo branch above), which carries the map itself.
+            // (see the `undoRecorded()` redo branch above), which carries the map itself.
             preMaps_ = new MeshMap[](mesh.meshMaps.length);
             foreach (i, ref m; mesh.meshMaps) preMaps_[i] = m.dup;
             auto rec = MeshEditTracker();
@@ -207,15 +205,15 @@ class MeshRemove : Command, Operator {
                 preMaps_      = null;
                 return false;
             }
-            recorded_ = true;
+            noteUndoRecorded();
             return true;
         }
     }
 
-    override bool revert() {
-        // See `MeshDelete.revert` — the refusal the deleted snapshot arm's
-        // `if (!snap.filled) return false;` used to provide.
-        if (!recorded_) return false;
+    protected override void revertImpl() {
+        // See `MeshDelete.revertImpl` — the refusal the deleted snapshot arm's
+        // `if (!snap.filled) return false;` used to provide now lives in
+        // `Command.revert` (task 2500).
         {
             delta_.revert(*mesh);
             // See MeshDelete.revert (code review BLOCKER, task 0613): this
@@ -249,7 +247,6 @@ class MeshRemove : Command, Operator {
             preSel_.restore(*mesh);
             mesh.clearEdgeSelection();
             restoreSelectedEdgeEnds(*mesh, preEdgeEnds_);
-            return true;
         }
     }
 }

@@ -58,9 +58,6 @@ class MeshVertexBevel : Command, Operator {
     mixin OperatorActrCommon;
     private MeshEditDelta      delta_;
     private DenseSelectionUndo preSel_;
-    /// Set once `evaluate` recorded a delta: FIRST RUN vs REDO, and
-    /// `revert()`'s guard — the role the deleted `if (!snap.filled)` played.
-    private bool               recorded_;
     private float              amount_ = 0.2f;
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
@@ -76,7 +73,7 @@ class MeshVertexBevel : Command, Operator {
 
     /// True iff this instance actually stored an operation-log delta — see
     /// `MeshDelete.isOperationInverse` for why this is not `return true;`.
-    override bool isOperationInverse() const { return recorded_; }
+    override bool isOperationInverse() const { return undoRecorded(); }
 
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded op-log. The cells assert a
@@ -112,7 +109,7 @@ class MeshVertexBevel : Command, Operator {
         // arm inside the kernel, which captures a null tracker and does
         // nothing — and keep the FIRST delta rather than record a second one
         // over it.
-        if (recorded_) {
+        if (undoRecorded()) {
             size_t rn;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, kBevelVertexEditScope);
@@ -150,18 +147,16 @@ class MeshVertexBevel : Command, Operator {
             preSel_ = DenseSelectionUndo.init;
             return false;
         }
-        recorded_ = true;
+        noteUndoRecorded();
         return true;
     }
 
-    override bool revert() {
+    protected override void revertImpl() {
         // An instance whose `evaluate` refused holds an empty delta and a
         // nulled selection image; replaying it would run `preSel_` over a mesh
         // it was never sized against. Answering false here is correct ONLY
         // because the funnel records no history entry for a refused forward.
-        if (!recorded_) return false;
         delta_.revert(*mesh);     // LIFO inverse replay restores geometry
         preSel_.restore(*mesh);   // …then the three selection domains
-        return true;
     }
 }

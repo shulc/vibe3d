@@ -68,6 +68,7 @@ class MeshVertexEdit : Command, Operator {
         this.before     = before_;
         this.after      = after_;
         this.editLabel  = label_;
+        noteUndoRecorded();   // task 2500 — the image and its flag, one statement
     }
 
     bool isEmpty() const { return indices.length == 0; }
@@ -242,6 +243,14 @@ class MeshVertexEdit : Command, Operator {
                 "no vertex edit payload: the command carries no target vertices";
             return false;
         }
+        // TASK 2500 — THE SECOND DOOR, and the one the census-by-capture-site
+        // missed. `setEdit` above is how a TOOL hands this command its image;
+        // this is how the WIRE does — `indices` / `before` / `after` are
+        // `Param`-bound, so `/api/command mesh.vertex_edit {…}` fills them
+        // through `injectParamsInto` and `setEdit` is never called. The image
+        // is exactly as real, and it is complete right here: the length check
+        // above and `isEmpty()` are what make it so.
+        noteUndoRecorded();
         foreach (i, vid; indices) {
             if (vid < mesh.vertices.length)
                 mesh.vertices[vid] = after[i];
@@ -251,13 +260,12 @@ class MeshVertexEdit : Command, Operator {
         return true;
     }
 
-    override bool revert() {
+    protected override void revertImpl() {
         foreach (i, vid; indices) {
             if (vid < mesh.vertices.length)
                 mesh.vertices[vid] = before[i];
         }
         mesh.commitChange(MeshEditScope.Position);
         if (onRevertHook !is null) onRevertHook();
-        return true;
     }
 }

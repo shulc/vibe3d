@@ -33,7 +33,7 @@ import editmode        : EditMode;
 import mesh_edit_delta : MeshEditScope;
 import params          : Param;
 import commands.mesh.position_undo : RecordedUndo;
-import commands.mesh.map_edit_undo : runMapEdit, revertMapEditEmptyOk;
+import commands.mesh.map_edit_undo : runMapEdit;
 import uv_transform    : applyUvAffine, collectAffectedUvLoops;
 import uv_island       : UvBBox, loopsBBox, computeUvIslands,
                          computeFitAffine, computeShelfPack;
@@ -62,16 +62,6 @@ private MeshMap* validateUvMap(Mesh* mesh, string cmdName) {
 class UvFit : Command {
     private string       keepAspect_ = "fill";
     private RecordedUndo undo_;
-    /// The forward SUCCEEDED. NOT derivable from `undo_`/`snap`, and the three
-    /// shipped cells that caught the attempt say why: these commands' `revert()`
-    /// must answer FALSE when the forward refused or never ran
-    /// (`test_uv_transform.d` "revert without apply must return false",
-    /// `test_uv_pack.d`, `test_uv_project.d`) and TRUE when the forward
-    /// SUCCEEDED while moving nothing a bitwise diff could see (regression
-    /// 0099: `CommandHistory.undo` discards an entry whose revert answers false
-    /// AND its whole trailing suffix). Both states are "no delta and no
-    /// snapshot", so only a bit set by the forward can separate them.
-    private bool applied_;
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo (task 2250). A
         /// command that recorded NOTHING falls back to its snapshot and
@@ -102,7 +92,7 @@ class UvFit : Command {
         // nothing written that would need rolling back.
         if (loops.length == 0) return false;
 
-        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Material,
+        const bool applied_ = runMapEdit(this, mesh, undo_, MeshEditScope.Material,
                           (ref MeshEditBatch ed) => kernel(ed, loops));
         return applied_;
     }
@@ -128,8 +118,11 @@ class UvFit : Command {
         return true;
     }
 
-    override bool revert() {
-        return revertMapEditEmptyOk(mesh, undo_, applied_);
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
     }
 }
 
@@ -140,16 +133,6 @@ class UvFit : Command {
 class UvPack : Command {
     private float        gutter_ = 0.0f;
     private RecordedUndo undo_;
-    /// The forward SUCCEEDED. NOT derivable from `undo_`/`snap`, and the three
-    /// shipped cells that caught the attempt say why: these commands' `revert()`
-    /// must answer FALSE when the forward refused or never ran
-    /// (`test_uv_transform.d` "revert without apply must return false",
-    /// `test_uv_pack.d`, `test_uv_project.d`) and TRUE when the forward
-    /// SUCCEEDED while moving nothing a bitwise diff could see (regression
-    /// 0099: `CommandHistory.undo` discards an entry whose revert answers false
-    /// AND its whole trailing suffix). Both states are "no delta and no
-    /// snapshot", so only a bit set by the forward can separate them.
-    private bool applied_;
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo — see UvFit.
         public ref const(RecordedUndo) recordedUndo() const return { return undo_; }
@@ -173,7 +156,7 @@ class UvPack : Command {
         auto loops = collectAffectedUvLoops(*mesh);
         if (loops.length == 0) return false;
 
-        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Material,
+        const bool applied_ = runMapEdit(this, mesh, undo_, MeshEditScope.Material,
                           (ref MeshEditBatch ed) => kernel(ed, loops));
         return applied_;
     }
@@ -223,7 +206,10 @@ class UvPack : Command {
         return true;
     }
 
-    override bool revert() {
-        return revertMapEditEmptyOk(mesh, undo_, applied_);
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
     }
 }

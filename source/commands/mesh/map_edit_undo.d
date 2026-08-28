@@ -47,8 +47,8 @@
 // they used to be a `throw` from the middle of the mutation.
 // TASK 1903 STAGE L2-a — THE NAME IS NOW HISTORICAL, AND DELIBERATELY NOT
 // CHANGED. Stage L2's `mesh.flip`, `mesh.fixOrientation` and `mesh.spinEdge`
-// take `runMapEdit` / `revertMapEditEmptyOk` unchanged: nothing in either body
-// is about MAPS — the arm dispatch is the same two arms for any family, and
+// take `runMapEdit` unchanged: nothing in its body is about MAPS — the arm
+// dispatch is the same two arms for any family, and
 // `declared` is the caller's scope, here `MeshEditScope.Geometry` rather than
 // `Material`. A private copy in a geometry file would be the SECOND
 // implementation of one mechanism, which is what this module's own header
@@ -59,6 +59,7 @@
 // is carried as a follow-up, not taken here.
 module commands.mesh.map_edit_undo;
 
+import command        : Command;
 import mesh            : Mesh, MeshEditBatch;
 import commands.mesh.position_undo : RecordedUndo;
 
@@ -73,7 +74,12 @@ import commands.mesh.position_undo : RecordedUndo;
 /// effect. See `mesh_edit_delta.MeshEditScope.Maps`, whose own doc says the
 /// pre-existing `setMeshMapValue` publishers keep `Material` so that no
 /// existing consumer changes behaviour.
-bool runMapEdit(Mesh* mesh, ref RecordedUndo undo,
+/// TASK 2500 — `self` is passed straight through to `RecordedUndo.arm`, which
+/// is where the undo image and its flag are raised in one statement. The
+/// per-command `applied_` bit this used to be paired with is gone: an empty
+/// delta leaves the holder disarmed and the flag down, and `Command.revert`
+/// answers that case before any command body runs.
+bool runMapEdit(Command self, Mesh* mesh, ref RecordedUndo undo,
                 uint declared, scope bool delegate(ref MeshEditBatch) kernel)
 {
     // REDO: `CommandHistory.redo` re-runs `apply()`, so a second `evaluate`
@@ -87,22 +93,9 @@ bool runMapEdit(Mesh* mesh, ref RecordedUndo undo,
     }
     auto ed = MeshEditBatch(*mesh, declared);
     const ok = kernel(ed);
-    undo.arm(ed.close());
-    if (!ok) { undo.disarm(); return false; }
+    undo.arm(self, ed.close());
+    if (!ok) { undo.disarm(self); return false; }
     return true;
-}
-
-/// The mesh half of every migrated `revert()`. The command's own non-mesh tail
-/// stays at the call site.
-bool revertMapEdit(Mesh* mesh, ref RecordedUndo undo) {
-    if (undo.armed()) return undo.revert(*mesh);
-    // NOT ARMED. Before Stage N this arm restored the hatch's whole-mesh
-    // `MeshSnapshot`; with the hatch gone the only way to get here is a
-    // `revert()` that nobody's `apply()` preceded — the mis-ordered-caller
-    // case `RecordedUndo.revert` exists to make loud — or a forward that
-    // recorded nothing. The second is what `revertMapEditEmptyOk` is for, and
-    // the split between the two spellings is unchanged by this stage.
-    return false;
 }
 
 /// The map's index in `Mesh.meshMaps`, or `uint.max` when it is not there.
@@ -121,54 +114,3 @@ uint mapSlotOf(Mesh* m, string name) {
     return uint.max;
 }
 
-/// `revertMapEdit`, except that a command which recorded NOTHING answers
-/// **true**.
-///
-/// THE CHOICE BETWEEN THE TWO SPELLINGS IS THE COMMAND'S, WHICH IS WHY THEY
-/// ARE TWO NAMES AND NOT A FLAG — `position_undo.d`'s rule, and its reason was
-/// measured: `CommandHistory.undo` discards an entry whose `revert()` answers
-/// false AND the whole trailing suffix after it (regression 0099,
-/// `tests/test_edge_slide.d`). So the answer belongs next to the guard that
-/// decides whether the empty case is reachable at all.
-///
-/// WHICH COMMANDS TAKE THIS ONE. Every caller of the POST-HOC door
-/// `MeshEditBatch.recordMapValueDiff`: it records nothing when no element
-/// moved bitwise, and "no element moved" is reachable on a forward that
-/// SUCCEEDED — `uv.rotate` by 0 degrees, `uv.fit` on an already-fitted map,
-/// `uv.pack` on one island already at the origin. Those forwards return true
-/// and land a history entry, and before the migration their `revert()` was a
-/// no-op `MeshSnapshot.restore` that answered true. Answering false here would
-/// be both a regression-0099 shape AND a divergence from the dense path.
-///
-/// WHICH DO NOT. The eight commands that record through the tracker directly
-/// (`recordMapValues/Create/Remove/Rename`): those recorders are unconditional
-/// once their command's own guards have passed, so on the tracker path the log
-/// always carries an entry and this arm is UNREACHABLE for them. They take
-/// `revertMapEdit`, and a `false` from it means a real failure rather than an
-/// empty edit.
-///
-/// `forwardSucceeded` IS A PARAMETER BECAUSE THE STATE IS NOT DERIVABLE, and
-/// three shipped cells proved it rather than a review: `test_uv_transform.d`
-/// ("revert without apply must return false"), `test_uv_pack.d` and
-/// `test_uv_project.d` all assert a FALSE revert after a forward that refused
-/// or never ran. "The forward refused" and "the forward succeeded and moved
-/// nothing" are BOTH `!undo.armed()`, so a helper that read only that would
-/// answer true for a command nobody applied — the mis-ordered-caller case
-/// `RecordedUndo.revert` exists to make loud. The caller therefore holds a bit
-/// its own `applyImpl` sets, and the two answers stay separate.
-///
-/// TASK 1903 STAGE N sharpened this rather than changing it. The predicate was
-/// `!undo.armed() && !snap.filled`; with the hatch's `snap` gone the second
-/// conjunct is vacuously true and drops out. The BEHAVIOUR is unchanged on the
-/// default path, where `snap` was never filled — which is exactly why the
-/// gate for this commit is a plane diff and an empty-delta pair, not a
-/// signature diff.
-///
-/// The first draft of this function did NOT take it, went green in lane U on
-/// every cell written for it, and reddened only in lane S. Recorded here
-/// because "no delta and no snapshot" reads like one state and is two.
-bool revertMapEditEmptyOk(Mesh* mesh, ref RecordedUndo undo,
-                          bool forwardSucceeded) {
-    if (!undo.armed()) return forwardSucceeded;
-    return revertMapEdit(mesh, undo);
-}

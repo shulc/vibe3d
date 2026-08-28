@@ -65,13 +65,6 @@ class MeshVertMerge : Command, Operator {
     private MeshEditDelta      delta_;
     private SelectionSnapshot  preSel_;       // vertex/face index-keyed
     private uint[]             preEdgeEnds_;  // flat [a,b, a,b, …]
-    /// Set once `evaluate` has recorded a delta. It discriminates FIRST RUN
-    /// from REDO — `evaluate` is called again on redo and must re-run the
-    /// kernel batchless or the second run records a second delta over the
-    /// first — and it is `revert()`'s guard: an instance whose `evaluate`
-    /// refused holds an empty delta and must not replay it, which is exactly
-    /// what the deleted `if (!snap.filled) return false;` did.
-    private bool               recorded_;
 
     private string range_ = "auto";
     private float  dist_  = 0.001f;
@@ -122,7 +115,7 @@ class MeshVertMerge : Command, Operator {
         // BATCHLESS — no batch open means every tracker hook takes its
         // `editRecorder_ is null` early-out — and keep the FIRST delta rather
         // than record a second one over it.
-        if (recorded_) {
+        if (undoRecorded()) {
             size_t rw;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh,
@@ -177,17 +170,16 @@ class MeshVertMerge : Command, Operator {
             preEdgeEnds_ = null;
             return false;
         }
-        recorded_ = true;
+        noteUndoRecorded();
         return true;
     }
 
-    override bool revert() {
+    protected override void revertImpl() {
         // An instance whose `evaluate` refused holds an empty delta and every
         // pre-image nulled; replaying it would run the belts below over a mesh
         // they were never sized against. It is correct to answer false here
         // ONLY because the funnel never records an entry for a refused
         // forward — see the ruling in `evaluate`.
-        if (!recorded_) return false;
 
         delta_.revert(*mesh);     // LIFO inverse replay restores geometry
 
@@ -198,6 +190,5 @@ class MeshVertMerge : Command, Operator {
         preSel_.restore(*mesh);
         mesh.clearEdgeSelection();
         restoreSelectedEdgeEnds(*mesh, preEdgeEnds_);
-        return true;
     }
 }

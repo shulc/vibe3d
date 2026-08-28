@@ -85,11 +85,14 @@ class CopilotCycleFindingCommand : Command {
         inner = new CopilotSelectFindingCommand(meshPtr(), viewRef(), editModeVal(),
                                                  panel, aiState, meshSelectFactory);
         inner.setIndex(next);
-        return inner.apply();
+        if (!inner.apply()) return false;
+        // Task 2500 — the undo image is the INNER command.
+        noteUndoRecorded();
+        return true;
     }
 
-    override bool revert() {
-        if (inner is null) return false;
-        return inner.revert();
+    protected override void revertImpl() {
+        if (!inner.revert())
+            failRevert("the wrapped select-finding command could not be reverted");
     }
 }

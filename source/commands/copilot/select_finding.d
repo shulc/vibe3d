@@ -106,19 +106,20 @@ class CopilotSelectFindingCommand : Command {
 
         prevActive_ = panel.active(); // remember pre-act-on row (still the old one — setActive below hasn't run)
         panel.setActive(index_);
+        // Task 2500 — the undo image is the INNER command plus `prevActive_`.
+        noteUndoRecorded();
         return true;
     }
 
-    override bool revert() {
-        if (inner is null) return false;
-        const ok = inner.revert();
+    protected override void revertImpl() {
+        if (!inner.revert())
+            failRevert("the wrapped mesh.select command could not be reverted");
         // Restore the panel's active row too — reverting the selection alone
         // left active_ pointing at the just-selected row. Fixes the undo
         // highlight/ghost desync AND makes copilot.cycleFinding redo-idempotent
         // (its apply() recomputes the next index from panel.active(), so the
         // active row must be back to its pre-apply value after an undo).
         if (panel !is null) panel.restoreActive(prevActive_);
-        return ok;
     }
 }
 

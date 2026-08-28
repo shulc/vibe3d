@@ -46,7 +46,7 @@ class UndoForceNoop : Command {
         return CmdFlags.SideEffect | CmdFlags.UndoForce;
     }
     protected override bool applyImpl() { return true; }
-    // Undoable, so revert() must succeed to keep undo()/redo() well-behaved;
-    // the no-op apply means there is nothing to restore.
-    override bool revert() { return true; }
+    // NO `revert` OVERRIDE, and that is the point since task 2500: a forward
+    // that succeeded and recorded nothing answers `true` from the BASE. This
+    // class used to say so by hand, in the one line the base now owns.
 }

@@ -7,7 +7,7 @@ import view;
 import editmode;
 import mesh_edit_delta : MeshEditScope;
 import commands.mesh.position_undo  : RecordedUndo;
-import commands.mesh.map_edit_undo  : runMapEdit, revertMapEditEmptyOk;
+import commands.mesh.map_edit_undo  : runMapEdit;
 
 /// One-shot command that, for each connected island of selected faces,
 /// computes the island's area-weighted average plane and orthogonally
@@ -41,8 +41,6 @@ import commands.mesh.map_edit_undo  : runMapEdit, revertMapEditEmptyOk;
 class MeshAlign : Command, Operator {
     mixin OperatorActrCommon;
     private RecordedUndo     undo_;
-    /// The forward SUCCEEDED — see `commands/mesh/flip.d`.
-    private bool             applied_;
 
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo (see `MeshFlip`).
@@ -80,18 +78,15 @@ class MeshAlign : Command, Operator {
         // cannot happen. Plan §L2.4 listed this command among the four that
         // might need an explicit `delta.revert` on refusal; measured, none of
         // the four does.
-        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Position,
+        const bool applied_ = runMapEdit(this, mesh, undo_, MeshEditScope.Position,
                               (ref MeshEditBatch ed) => ed.mesh.alignFacesByMask(sel) != 0);
         return applied_;
     }
 
-    override bool revert() {
-        // `…EmptyOk`, and the `if (!snap.filled) return false;` this replaces
-        // was DELETED rather than translated (regression 0099). The empty case
-        // is REACHABLE here and not theoretical: `setVertexPositions` drops a
-        // write whose result is bit-identical to what is already there, and a
-        // displacement that clears `eps` while its three products underflow to
-        // zero produces a successful forward with an EMPTY delta.
-        return revertMapEditEmptyOk(mesh, undo_, applied_);
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
     }
 }

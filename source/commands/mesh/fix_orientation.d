@@ -7,7 +7,7 @@ import view;
 import editmode;
 import mesh_edit_delta : MeshEditScope;
 import commands.mesh.position_undo : RecordedUndo;
-import commands.mesh.map_edit_undo : runMapEdit, revertMapEditEmptyOk;
+import commands.mesh.map_edit_undo : runMapEdit;
 
 /// `mesh.fixOrientation` — "Fix Orientation" cleanup op (task 0394 Part B):
 /// heals inconsistently-wound faces (already-corrupt imports, old saves, or
@@ -37,9 +37,6 @@ import commands.mesh.map_edit_undo : runMapEdit, revertMapEditEmptyOk;
 class MeshFixOrientation : Command, Operator {
     mixin OperatorActrCommon;
     private RecordedUndo     undo_;
-    /// The forward SUCCEEDED — see `MeshFlip.applied_` for why the bit is not
-    /// derivable from the two images.
-    private bool             applied_;
 
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo (see `MeshFlip`).
@@ -77,15 +74,15 @@ class MeshFixOrientation : Command, Operator {
         // on an empty one. So answering false from inside the batch is atomic
         // and no roll-back is owed. See `MeshFlip.evaluate` for the four
         // commands that are NOT in that position.
-        applied_ = runMapEdit(mesh, undo_, kCleanupEditScope,
+        const bool applied_ = runMapEdit(this, mesh, undo_, kCleanupEditScope,
                               (ref MeshEditBatch ed) => ed.fixFaceOrientation() != 0);
         return applied_;
     }
 
-    override bool revert() {
-        // `…EmptyOk` for the same reason as `mesh.flip`: a face that is its own
-        // reverse records nothing, and a `false` from `revert()` truncates the
-        // undo stack rather than declining one step (regression 0099).
-        return revertMapEditEmptyOk(mesh, undo_, applied_);
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
     }
 }

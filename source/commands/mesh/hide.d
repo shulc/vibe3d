@@ -275,7 +275,6 @@ private mixin template HideRevertCommon() {
     private int    origVertexOrderCounter_;
     private int    origEdgeOrderCounter_;
     private int    origFaceOrderCounter_;
-    private bool   captured_;
 
     // Snapshot ONLY — this does not arm revert(). captured_ is set by
     // commitCapture_() after the mutation has actually landed (code review
@@ -295,10 +294,9 @@ private mixin template HideRevertCommon() {
     }
 
     // Arm revert(). Called as the last act of a successful evaluate().
-    private void commitCapture_() { captured_ = true; }
+    private void commitCapture_() { noteUndoRecorded(); }
 
-    override bool revert() {
-        if (!captured_) return false;
+    protected override void revertImpl() {
         mesh.vertexMarks = origVertexMarks_.dup;
         mesh.edgeMarks   = origEdgeMarks_.dup;
         mesh.faceMarks   = origFaceMarks_.dup;
@@ -335,7 +333,6 @@ private mixin template HideRevertCommon() {
         // the model and stayed invisible on screen.
         mesh.commitChange(MeshEditScope.Marks | MeshEditScope.Visibility);
         ++mesh.topologyVersion;
-        return true;
     }
 
     // §1.5: Hide changes which part of the mesh the user is working

@@ -9,7 +9,7 @@ import params : Param;
 import mesh_edit_delta : MeshEditScope;
 import mesh_ops.bridge : kBridgeEditScope;
 import commands.mesh.position_undo  : RecordedUndo;
-import commands.mesh.map_edit_undo  : runMapEdit, revertMapEditEmptyOk;
+import commands.mesh.map_edit_undo  : runMapEdit;
 import commands.mesh.selection_undo : DenseSelectionUndo;
 
 /// Thicken (mesh.thicken): build an offset copy of the whole surface
@@ -47,8 +47,6 @@ class MeshThicken : Command, Operator {
     /// selection plane over a doubled mesh. See
     /// `commands/mesh/selection_undo.d`.
     private DenseSelectionUndo preSel_;
-    /// The forward SUCCEEDED — see `commands/mesh/flip.d`.
-    private bool             applied_;
     private float            thickness_ = 0.1f;
     private bool             symmetric_ = false;
 
@@ -87,7 +85,7 @@ class MeshThicken : Command, Operator {
         // a below-epsilon thickness and for a CLOSED surface (no boundary loop
         // to bridge), and both are decided in its step 1, before its first
         // mutation. Nothing to hoist and nothing to roll back.
-        applied_ = runMapEdit(mesh, undo_, kBridgeEditScope,
+        const bool applied_ = runMapEdit(this, mesh, undo_, kBridgeEditScope,
                               (ref MeshEditBatch ed) => runKernel(ed));
         return applied_;
     }
@@ -100,13 +98,11 @@ class MeshThicken : Command, Operator {
         return ed.mesh.thickenSurface(ed, thickness_, symmetric_) != 0;
     }
 
-    override bool revert() {
-        // `…EmptyOk`, and the `if (!snap.filled) return false;` this replaces
-        // was DELETED rather than translated (regression 0099).
-        if (!revertMapEditEmptyOk(mesh, undo_, applied_)) return false;
-        // ONLY on the delta arm — the hatch's snapshot already restored every
-        // selection plane.
-        if (undo_.armed()) preSel_.restore(*mesh);
-        return true;
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
+        preSel_.restore(*mesh);
     }
 }

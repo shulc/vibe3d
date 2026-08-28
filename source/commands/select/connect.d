@@ -31,10 +31,8 @@ private void bfsSelect(bool[] selection, int[][] adj, int seed) {
 
 class SelectConnect : Command {
     private SelectionSnapshot snap;
-    override bool revert() {
-        if (!snap.filled) return false;
+    protected override void revertImpl() {
         snap.restore(*mesh);
-        return true;
     }
     this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
 
@@ -42,6 +40,7 @@ class SelectConnect : Command {
 
     protected override bool applyImpl() {
         snap = SelectionSnapshot.capture(*mesh);
+        noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
         // Connected selection — flood-fill from current selection / hovered element.
         // `selectedX` is now a materialized read view; bfsSelect mutates the
         // bool[] in place, so capture the view into a local, flood-fill it,

@@ -54,13 +54,6 @@ class MeshCleanup : Command, Operator {
     private uint[]             preEdgeEnds_;  // flat [a,b, a,b, …]
     private uint[]             preMarksWord_; // face Subpatch+Hide, by pre-op index
     private MeshMap[]          preMaps_;      // whole mesh-map set, by value, pre-op
-    /// Set once `evaluate` has recorded a delta. It discriminates FIRST RUN
-    /// from REDO — `evaluate` is called again on redo and must re-run the
-    /// kernel batchless or the second run records a second delta over the
-    /// first — and it is `revert()`'s guard: an instance whose `evaluate`
-    /// refused holds an empty delta and must not replay it, which is exactly
-    /// what the deleted `if (!snap.filled) return false;` did.
-    private bool               recorded_;
 
     // Parameter backing fields — defaults match CleanupOptions.init.
     private bool  dropDegenerate_  = true;
@@ -115,7 +108,7 @@ class MeshCleanup : Command, Operator {
         // BATCHLESS — no batch open means every tracker hook takes its
         // `editRecorder_ is null` early-out — and keep the FIRST delta rather
         // than record a second one over it.
-        if (recorded_) {
+        if (undoRecorded()) {
             auto ed = MeshEditBatch.unrecorded(*mesh, kCleanupEditScope);
             const rr = ed.cleanupMesh(opts);
             ed.close();
@@ -179,15 +172,14 @@ class MeshCleanup : Command, Operator {
             preMaps_      = null;
             return false;
         }
-        recorded_ = true;
+        noteUndoRecorded();
         return true;
     }
 
-    override bool revert() {
+    protected override void revertImpl() {
         // An instance whose `evaluate` refused holds an empty delta and every
         // pre-image nulled; replaying it would run the belts below over a mesh
         // they were never sized against.
-        if (!recorded_) return false;
 
         delta_.revert(*mesh);     // LIFO inverse replay restores geometry
 
@@ -220,6 +212,5 @@ class MeshCleanup : Command, Operator {
         preSel_.restore(*mesh);
         mesh.clearEdgeSelection();
         restoreSelectedEdgeEnds(*mesh, preEdgeEnds_);
-        return true;
     }
 }

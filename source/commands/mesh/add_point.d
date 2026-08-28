@@ -9,7 +9,7 @@ import shader;
 import params : Param;
 import mesh_edit_delta : MeshEditScope;
 import commands.mesh.position_undo  : RecordedUndo;
-import commands.mesh.map_edit_undo  : runMapEdit, revertMapEditEmptyOk;
+import commands.mesh.map_edit_undo  : runMapEdit;
 import commands.mesh.selection_undo : DenseSelectionUndo;
 
 /// Insert a vertex on the first selected edge at parameter t ∈ (0,1), splitting
@@ -36,9 +36,6 @@ class MeshAddPoint : Command, Operator {
     /// index space around the split, and the `MeshSnapshot` it replaces put
     /// every selection plane back verbatim.
     private DenseSelectionUndo preSel_;
-    /// The forward SUCCEEDED — see `commands/mesh/flip.d` for why this bit is
-    /// not derivable from the two images.
-    private bool             applied_;
 
     private float t_ = 0.5f;
 
@@ -94,7 +91,7 @@ class MeshAddPoint : Command, Operator {
         // mutation. So the kernel below cannot refuse after mutating, and this
         // command is not one of the four that `snap.restore` on a kernel
         // refusal.
-        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Geometry,
+        const bool applied_ = runMapEdit(this, mesh, undo_, MeshEditScope.Geometry,
                               (ref MeshEditBatch ed) => runKernel(ed, cast(uint)ei));
         return applied_;
     }
@@ -111,21 +108,11 @@ class MeshAddPoint : Command, Operator {
         return ed.mesh.addEdgePoint(ei, t_) != uint.max;
     }
 
-    override bool revert() {
-        // `…EmptyOk`, not `revertMapEdit`, and the `if (!snap.filled) return
-        // false;` this replaces was DELETED rather than translated: a `false`
-        // from a Model entry's `revert()` makes `CommandHistory.undo` discard
-        // that entry AND its whole trailing suffix (regression 0099), so it
-        // does not decline one step — it destroys every older one.
-        if (!revertMapEditEmptyOk(mesh, undo_, applied_)) return false;
-        // Guarded on `armed()` because the unarmed arm restored nothing here
-        // to begin with: before task 1903 Stage N that arm was the hatch's
-        // `MeshSnapshot.restore`, which put every selection plane back by
-        // itself, and a second writer over a correct plane is how a restore
-        // starts disagreeing with itself. With the hatch gone the unarmed arm
-        // is the "nothing was recorded" case, which owns no selection image
-        // either — so the guard stays, and it stays for the same reason.
-        if (undo_.armed()) preSel_.restore(*mesh);
-        return true;
+    protected override void revertImpl() {
+        // Armed by construction (task 2500): `runMapEdit` raises the flag only
+        // when the delta came back NON-EMPTY, and `Command.revert` answers the
+        // empty case — and the never-applied case — before this body is entered.
+        undo_.revert(*mesh);
+        preSel_.restore(*mesh);
     }
 }

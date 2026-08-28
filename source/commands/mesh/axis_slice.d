@@ -78,9 +78,6 @@ class MeshAxisSlice : Command, Operator {
     private MeshEditDelta      delta_;
     private DenseSelectionUndo preSel_;
     private MeshMap[]          preMaps_;
-    /// Set once `evaluate` has recorded a delta — the redo discriminator and
-    /// `revert()`'s guard, the job `snap.filled` used to do.
-    private bool               recorded_;
 
     private int axis_  = 1; // 0=X 1=Y 2=Z
     private int count_ = 1;
@@ -101,7 +98,7 @@ class MeshAxisSlice : Command, Operator {
         return MeshEditScope.Geometry | MeshEditScope.Marks;
     }
 
-    override bool isOperationInverse() const { return recorded_; }
+    override bool isOperationInverse() const { return undoRecorded(); }
 
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded op-log, for the KIND
@@ -152,7 +149,7 @@ class MeshAxisSlice : Command, Operator {
         // an UNRECORDED batch (the Ph1 hooks take their `editRecorder_ is
         // null` first line, so nothing records twice) from the restored
         // pre-op state.
-        if (recorded_) {
+        if (undoRecorded()) {
             size_t rt = 0;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, editScope());
@@ -222,19 +219,17 @@ class MeshAxisSlice : Command, Operator {
             preMaps_ = null;
             return false;
         }
-        recorded_ = true;
+        noteUndoRecorded();
         return true;
     }
 
-    override bool revert() {
-        if (!recorded_) return false;
+    protected override void revertImpl() {
         delta_.revert(*mesh);     // LIFO inverse replay restores geometry
         if (preMaps_.length) {    // …then the maps, sized against it…
             mesh.meshMaps.length = preMaps_.length;
             foreach (i, ref m; preMaps_) mesh.meshMaps[i] = m.dup;
         }
         preSel_.restore(*mesh);   // …and last the selection, which touches none
-        return true;
     }
 }
 
@@ -253,7 +248,6 @@ class MeshJulienne : Command, Operator {
     private MeshEditDelta      delta_;
     private DenseSelectionUndo preSel_;
     private MeshMap[]          preMaps_;
-    private bool               recorded_;
 
     private int axisA_  = 0; // 0=X 1=Y 2=Z
     private int countA_ = 1;
@@ -272,7 +266,7 @@ class MeshJulienne : Command, Operator {
         return MeshEditScope.Geometry | MeshEditScope.Marks;
     }
 
-    override bool isOperationInverse() const { return recorded_; }
+    override bool isOperationInverse() const { return undoRecorded(); }
 
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded op-log, for the KIND
@@ -327,7 +321,7 @@ class MeshJulienne : Command, Operator {
         // A HALF-done lift (hoist the handle here, leave `sliceAlongAxis`
         // opening its own) is a DIFFERENT failure and reddens a different
         // instrument: those opens ARE nested, so `nestedBatchOpens` moves.
-        if (recorded_) {
+        if (undoRecorded()) {
             size_t rt = 0;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, editScope());
@@ -363,19 +357,17 @@ class MeshJulienne : Command, Operator {
             preMaps_ = null;
             return false;
         }
-        recorded_ = true;
+        noteUndoRecorded();
         return true;
     }
 
-    override bool revert() {
-        if (!recorded_) return false;
+    protected override void revertImpl() {
         delta_.revert(*mesh);
         if (preMaps_.length) {
             mesh.meshMaps.length = preMaps_.length;
             foreach (i, ref m; preMaps_) mesh.meshMaps[i] = m.dup;
         }
         preSel_.restore(*mesh);
-        return true;
     }
 
     /// One axis of the grid, INSIDE THE CALLER'S FRAME. The `ref MeshEditBatch`

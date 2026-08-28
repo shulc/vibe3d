@@ -43,7 +43,6 @@ class MeshScreenSlice : Command, Operator {
     private MeshEditDelta      delta_;
     private DenseSelectionUndo preSel_;
     private MeshMap[]          preMaps_;
-    private bool               recorded_;
 
     private float ax_ = 0, ay_ = 0, bx_ = 0, by_ = 0;
 
@@ -59,7 +58,7 @@ class MeshScreenSlice : Command, Operator {
         return MeshEditScope.Geometry | MeshEditScope.Marks;
     }
 
-    override bool isOperationInverse() const { return recorded_; }
+    override bool isOperationInverse() const { return undoRecorded(); }
 
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded op-log, for the KIND
@@ -98,7 +97,7 @@ class MeshScreenSlice : Command, Operator {
 
         // REDO: re-run the cut in an UNRECORDED batch from the restored
         // pre-op state — the delta already holds the first run.
-        if (recorded_) {
+        if (undoRecorded()) {
             size_t rn;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, editScope());
@@ -138,18 +137,16 @@ class MeshScreenSlice : Command, Operator {
             preMaps_ = null;
             return false;
         }
-        recorded_ = true;
+        noteUndoRecorded();
         return true;
     }
 
-    override bool revert() {
-        if (!recorded_) return false;
+    protected override void revertImpl() {
         delta_.revert(*mesh);
         if (preMaps_.length) {
             mesh.meshMaps.length = preMaps_.length;
             foreach (i, ref m; preMaps_) mesh.meshMaps[i] = m.dup;
         }
         preSel_.restore(*mesh);
-        return true;
     }
 }
