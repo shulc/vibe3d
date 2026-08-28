@@ -1,6 +1,17 @@
-// revert_entry_census_test — every production `.revert()` call site is one of
-// the NINE recorded ones, each of which runs inside a global delivery batch
-// (task 1932, closing task 1906 stage 0b review S3's open item 3).
+// revert_entry_census_test — TWO gates over one scan of `source/**`.
+//
+//   GATE 1 (task 1932): every production NO-ARGUMENT `.revert()` call site is
+//     one of the NINE recorded ones, each of which runs inside a global
+//     delivery batch. `Command.revert()` takes no argument, which is what
+//     makes the empty-paren predicate the right one here.
+//
+//   GATE 2 (task 1903 stage N-d): every ARGUMENT-BEARING `.revert(x)` site is
+//     in a 48-file roster totalling 71, and its receiver is one of four
+//     recorded undo-image spellings. These are `MeshEditDelta.revert(*mesh)`
+//     and `RecordedUndo.revert(*mesh)` — a different set with a different
+//     obligation, and until N-d they had no census at all. See gate 2's own
+//     header for why the fix was a second gate rather than a looser first one,
+//     and for the number the roster moved from and to.
 //
 // WHAT THIS GATE IS FOR. `source/command.d`'s doc comment used to claim the
 // two undo paths ("`/api/undo` / `navHistory` call `history.undo()` raw" vs.
@@ -10,8 +21,8 @@
 // `.fire()` (`:1507`) each hold `beginDeliveryBatchGlobal()` around every
 // `revert()` they drive, so ALL production paths deliver once per step. The
 // comment was rewritten to say that instead. This census is the executable
-// half of the correction: it fails the moment a TENTH production `.revert()`
-// call site is added anywhere in `source/**`, because a new site is exactly
+// half of the correction: it fails the moment a TENTH production no-argument
+// `.revert()` call site is added anywhere in `source/**`, because a new site is exactly
 // how the false claim got written the first time — someone added a revert
 // path and never checked whether it landed inside one of the three batches.
 //
@@ -20,7 +31,8 @@
 // `beginDeliveryBatchGlobal`/`endDeliveryBatchGlobal`, or does it need a row
 // added to the table (and, if not, a batch of its own)?
 //
-// WHAT COUNTS AS A SITE. A `.revert()` method call in CODE — comments,
+// WHAT COUNTS AS A SITE. A `.revert(` method call in CODE, with or without an
+// argument — the two gates partition the same scan by that one bit. Comments,
 // string/backtick/char literals and `unittest` bodies are blanked in place
 // first (same three views, same reasons, as
 // `tests/unit/version_poll_census_test.d`; duplicated here rather than
@@ -241,6 +253,16 @@ private struct RevertSite {
     string func;
     size_t line;      // 1-based, into the ORIGINAL text — diagnostic only
     string text;
+    /// The identifier immediately left of the dot, e.g. `delta_` in
+    /// `delta_.revert(*mesh)`. Diagnostic AND load-bearing: gate 2 below
+    /// asserts the argument-bearing receivers are a CLOSED set of undo-image
+    /// spellings, so a `Command`-typed field acquiring an argument would be
+    /// named rather than silently counted.
+    string recv;
+    /// `revert()` (no argument) or `revert(x)`. THE DISCRIMINATOR, and it is
+    /// not a nicety: `Command.revert()` takes none, every undo IMAGE
+    /// (`MeshEditDelta.revert(Mesh&)`, `RecordedUndo.revert(Mesh&)`) takes one.
+    bool hasArg;
 }
 
 private struct ScopeEntry { string name; bool isFunc; }
@@ -279,10 +301,36 @@ private RevertSite[] scanRevertSites(string label, string src) {
             ++i;
             continue;
         }
-        if (code[i .. $].startsWith(".revert()")) {
+        if (code[i .. $].startsWith(".revert(")) {
             string fn = "<module-level>";
             foreach_reverse (s; stack) if (s.isFunc) { fn = s.name; break; }
-            sites.put(RevertSite(label, fn, line, "…" ~ ".revert()"));
+
+            // The receiver: walk left over an identifier / `)` / `]` run.
+            size_t rb = i;
+            while (rb > 0) {
+                const char pc = code[rb - 1];
+                const bool idish = (pc >= 'a' && pc <= 'z') || (pc >= 'A' && pc <= 'Z')
+                                || (pc >= '0' && pc <= '9') || pc == '_'
+                                || pc == ')' || pc == ']';
+                if (!idish) break;
+                --rb;
+            }
+            const string recv = code[rb .. i];
+
+            // The argument list, to the matching close paren.
+            size_t k = i + ".revert(".length;
+            int depth = 1;
+            size_t e = k;
+            while (e < code.length && depth > 0) {
+                if (code[e] == '(') ++depth;
+                else if (code[e] == ')') --depth;
+                ++e;
+            }
+            const string arg = (e > k) ? code[k .. e - 1].strip : "";
+
+            sites.put(RevertSite(label, fn, line,
+                                 "…" ~ recv ~ ".revert(" ~ arg ~ ")",
+                                 recv, arg.length != 0));
         }
         header.put(c);
         ++i;
@@ -552,8 +600,17 @@ unittest {
         = expected.get(r.file ~ "\0" ~ r.func, 0) + 1;
 
     size_t[string] found;
-    foreach (ref s; scanned.sites) found[s.file ~ "\0" ~ s.func]
-        = found.get(s.file ~ "\0" ~ s.func, 0) + 1;
+    foreach (ref s; scanned.sites) {
+        // GATE 1 IS THE NO-ARGUMENT SET, and that restriction is the whole
+        // discrimination: `Command.revert()` takes no argument, and every
+        // undo-IMAGE revert (`MeshEditDelta`, `RecordedUndo`) takes the mesh.
+        // Gate 2 below owns the argument-bearing ones. Before task 1903 stage
+        // N the scanner matched the literal `.revert()` and there was no gate
+        // 2 at all, so 71 sites this project added between L0 and L4 were not
+        // merely unaccounted — they were invisible.
+        if (s.hasArg) continue;
+        found[s.file ~ "\0" ~ s.func] = found.get(s.file ~ "\0" ~ s.func, 0) + 1;
+    }
     found = applyExclusions(found, kNotCommandRevert);
 
     auto bad = appender!string;
@@ -600,6 +657,219 @@ unittest {
         "the revert-census scanner only walked %d file(s) under source/ — it "
       ~ "has almost certainly lost its place, which makes the gate above "
       ~ "vacuous. Fix the walk, do not lower this floor.", scanned.filesScanned));
+}
+
+
+// ===========================================================================
+// GATE 2 — THE ARGUMENT-BEARING SET (task 1903 Stage N-d).
+//
+// WHY THERE IS A SECOND GATE AND NOT A WIDER FIRST ONE. Gate 1's predicate
+// was, and remains, `revert` with NO argument. That is exactly right for the
+// claim it makes: `Command.revert()` takes none. What was wrong was the rule
+// written on top of it — §S-8 item 1 of the seam plan told every migration
+// family to extend `kRecorded` in the same commit ("L7 adds 3, L9 adds 2, L10
+// adds 13"), and no migration ever could, because a migrated command's undo
+// image is `delta_.revert(*mesh)`, which the predicate does not and should not
+// match. Three cards reported the roster "stuck at nine" and none of them
+// found this. It was never a stuck roster; it was a roster asked to hold rows
+// that belong to a different set.
+//
+// So the repair is not to loosen gate 1 — that would sweep every op-log
+// revert into a table about delivery batches. It is to give the
+// argument-bearing set a census of its own, which nothing has ever had.
+// Measured when this gate was written: **9 recorded sites became 9 + 71**,
+// across 48 files, and the 71 had no enumeration anywhere in the tree.
+//
+// WHAT THIS GATE REFUSES. A new argument-bearing `.revert(` site in a file
+// that had none, or an extra one in a file that had some, or ANY receiver
+// spelling outside the closed set below. The last is the part that carries
+// the type information the scanner does not have: every one of these 71 is an
+// undo IMAGE — `MeshEditDelta.revert(ref Mesh)` through a `delta_` field, or
+// `RecordedUndo`/`PositionUndo.revert(ref Mesh)` through `undo_` / `undo`, or
+// the `d` parameter inside `position_undo.d`'s own helper. A `Command`-typed
+// receiver acquiring an argument would land here and be named, rather than
+// vanish between two gates.
+//
+// A new row is not wrong by itself. It is UNACCOUNTED, and adding it is the
+// declaration §S-8 always wanted: the migration commit that adds the site adds
+// its row, and the card records the number the total moved from and to.
+// ===========================================================================
+
+private struct UndoImageRow { string file; size_t n; }
+
+private static immutable UndoImageRow[] kUndoImage = [
+    UndoImageRow("source/commands/mesh/array.d", 1),
+    UndoImageRow("source/commands/mesh/axis_slice.d", 4),
+    UndoImageRow("source/commands/mesh/bevel.d", 2),
+    UndoImageRow("source/commands/mesh/bridge.d", 2),
+    UndoImageRow("source/commands/mesh/cleanup.d", 1),
+    UndoImageRow("source/commands/mesh/clone_.d", 1),
+    UndoImageRow("source/commands/mesh/collapse.d", 2),
+    UndoImageRow("source/commands/mesh/cut.d", 2),
+    UndoImageRow("source/commands/mesh/delete.d", 1),
+    UndoImageRow("source/commands/mesh/detriangulate.d", 1),
+    UndoImageRow("source/commands/mesh/duplicate.d", 1),
+    UndoImageRow("source/commands/mesh/edge_crease.d", 3),
+    UndoImageRow("source/commands/mesh/edge_join.d", 2),
+    UndoImageRow("source/commands/mesh/edge_slice.d", 2),
+    UndoImageRow("source/commands/mesh/edge_slide.d", 1),
+    UndoImageRow("source/commands/mesh/face_extrude.d", 2),
+    UndoImageRow("source/commands/mesh/jitter.d", 1),
+    UndoImageRow("source/commands/mesh/linear_align.d", 1),
+    UndoImageRow("source/commands/mesh/loop_slice.d", 4),
+    UndoImageRow("source/commands/mesh/magnet.d", 1),
+    UndoImageRow("source/commands/mesh/map_edit_undo.d", 1),
+    UndoImageRow("source/commands/mesh/merge.d", 2),
+    UndoImageRow("source/commands/mesh/mirror.d", 1),
+    UndoImageRow("source/commands/mesh/poly_inset.d", 2),
+    UndoImageRow("source/commands/mesh/position_undo.d", 1),
+    UndoImageRow("source/commands/mesh/quadruple.d", 1),
+    UndoImageRow("source/commands/mesh/quantize.d", 1),
+    UndoImageRow("source/commands/mesh/radial_align.d", 1),
+    UndoImageRow("source/commands/mesh/radial_array.d", 1),
+    UndoImageRow("source/commands/mesh/reduce.d", 2),
+    UndoImageRow("source/commands/mesh/remove.d", 1),
+    UndoImageRow("source/commands/mesh/screen_slice.d", 2),
+    UndoImageRow("source/commands/mesh/session_edit.d", 1),
+    UndoImageRow("source/commands/mesh/smooth.d", 1),
+    UndoImageRow("source/commands/mesh/smooth_shift.d", 2),
+    UndoImageRow("source/commands/mesh/stroke_extrude.d", 2),
+    UndoImageRow("source/commands/mesh/sweep.d", 1),
+    UndoImageRow("source/commands/mesh/symmetrize.d", 1),
+    UndoImageRow("source/commands/mesh/transform.d", 1),
+    UndoImageRow("source/commands/mesh/triple.d", 1),
+    UndoImageRow("source/commands/mesh/unify.d", 1),
+    UndoImageRow("source/commands/mesh/vert_join.d", 2),
+    UndoImageRow("source/commands/mesh/vert_merge.d", 1),
+    UndoImageRow("source/commands/mesh/vertex_bevel.d", 1),
+    UndoImageRow("source/commands/mesh/vertex_center.d", 1),
+    UndoImageRow("source/commands/mesh/vertex_extrude.d", 2),
+    UndoImageRow("source/commands/mesh/vertex_set.d", 1),
+    UndoImageRow("source/commands/mesh/weld_vertex_pair.d", 1),
+];
+
+/// The EXACT total, not a floor. A threshold would stay green over a file
+/// that stopped reverting for an unrelated reason while another gained a site.
+private enum size_t kUndoImageTotal = 71;
+
+static assert(kUndoImage.length == 48,
+    "the undo-image roster must hold exactly 48 files — the number measured "
+  ~ "when task 1903 stage N-d gave this set its first census. A family that "
+  ~ "migrates changes this together with the rows and with kUndoImageTotal");
+
+/// The CLOSED set of receiver spellings. This is where the type information
+/// the scanner cannot see is pinned by hand.
+private static immutable string[] kUndoImageReceivers = [
+    "delta_",   // MeshEditDelta, the migrated commands' field
+    "undo_",    // RecordedUndo / PositionUndo, the L0–L2 position families
+    "undo",     // the same, as a `ref` parameter (map_edit_undo.revertMapEdit)
+    "d",        // position_undo.d's own helper parameter
+];
+
+unittest
+{
+    const scanned = scanTree();
+
+    size_t[string] found;
+    size_t total = 0;
+    string[string] recvOf;
+    foreach (ref s; scanned.sites) {
+        if (!s.hasArg) continue;
+        found[s.file] = found.get(s.file, 0) + 1;
+        ++total;
+        assert(canFind(kUndoImageReceivers, s.recv), format(
+            "%s:%d — `%s.revert(...)` takes an argument and `%s` is not one of "
+          ~ "the recorded undo-image receivers %s. Either a new undo image was "
+          ~ "introduced (add its spelling, with what type it is), or a "
+          ~ "`Command`-typed receiver has grown an argument, which would slip "
+          ~ "past gate 1 and land here on purpose.",
+            s.file, s.line, s.recv, s.recv, kUndoImageReceivers));
+    }
+
+    size_t[string] expected;
+    foreach (ref r; kUndoImage) expected[r.file] = r.n;
+
+    auto bad = appender!string;
+    foreach (file, n; expected) {
+        const size_t got = found.get(file, 0);
+        if (got != n)
+            bad.put(format("\n    %s — roster says %d, scanner found %d",
+                           file, n, got));
+    }
+    foreach (file, n; found)
+        if (file !in expected)
+            bad.put(format("\n    %s — NOT IN THE ROSTER AT ALL, scanner "
+                         ~ "found %d site(s)", file, n));
+
+    assert(bad.data.length == 0, format(
+        "task 1903 stage N-d: the argument-bearing `.revert(` site set no "
+      ~ "longer matches the 48-file roster.%s\n\n"
+      ~ "  These are undo IMAGES — `MeshEditDelta.revert(*mesh)` and "
+      ~ "`RecordedUndo.revert(*mesh)` — not `Command.revert()`, which gate 1 "
+      ~ "above owns. A new one is not wrong; it is UNACCOUNTED, and declaring "
+      ~ "it here is what §S-8 item 1 of the seam plan asked every migration "
+      ~ "commit to do and what no migration could do while the scanner "
+      ~ "matched only the empty-paren spelling.\n\n"
+      ~ "  Roster: %d site(s) over %d file(s). Scanner: %d over %d.",
+        bad.data, kUndoImageTotal, kUndoImage.length, total, found.length));
+
+    assert(total == kUndoImageTotal, format(
+        "the roster's per-file counts add up but the total is %d, not the "
+      ~ "recorded %d — kUndoImageTotal and the rows have drifted apart",
+        total, kUndoImageTotal));
+}
+
+/// THE TREE-ROOTED CANARY (P0-N-3). The synthetic scanner cells above prove
+/// the resolver on hand-written probes; they cannot prove the predicate fires
+/// on the spelling the TREE actually uses, and a census whose predicate
+/// matches nothing reads 0 for free — which is precisely how the
+/// argument-bearing set stayed invisible for four migration stages.
+///
+/// So: take a real file the census depends on, append ONE synthetic
+/// `delta_.revert(*mesh)` inside a real function, and assert the scanner's
+/// argument-bearing count for that text goes up by exactly one. Reverting the
+/// predicate to the empty-paren form makes both readings 0 and this cell
+/// reddens before the roster gate does.
+unittest
+{
+    immutable real_ = readText(buildPath(repoRoot, "source/commands/mesh/array.d"));
+    size_t argCount(string src) {
+        size_t n = 0;
+        foreach (ref s; scanRevertSites("array.d", src)) if (s.hasArg) ++n;
+        return n;
+    }
+    const size_t base = argCount(real_);
+    assert(base == 1, format(
+        "the canary's host file no longer holds exactly the 1 argument-bearing "
+      ~ "revert site this cell was calibrated on — it found %d. A ZERO here is "
+      ~ "not a calibration problem: it is the predicate matching nothing, i.e. "
+      ~ "the empty-paren defect of task 1903 stage N-d coming back. Any other "
+      ~ "number means array.d genuinely changed — re-calibrate on it rather "
+      ~ "than deleting the canary.", base));
+
+    immutable planted = real_ ~ "\n"
+        ~ "private bool censusCanaryNeverCompiled(ref Mesh m) {\n"
+        ~ "    MeshEditDelta delta_;\n"
+        ~ "    return delta_.revert(m);\n"
+        ~ "}\n";
+    assert(argCount(planted) == base + 1,
+        "the census scanner did NOT find a planted `delta_.revert(m)` in real "
+      ~ "tree text. Its predicate matches nothing the tree writes, so every "
+      ~ "count assertion above is satisfied for free — this is the empty-paren "
+      ~ "defect of task 1903 stage N-d, in the shape it takes when it comes "
+      ~ "back.");
+
+    // …and the same plant must NOT move gate 1's no-argument count, or the two
+    // gates are reading one set between them.
+    size_t noArgCount(string src) {
+        size_t n = 0;
+        foreach (ref s; scanRevertSites("array.d", src)) if (!s.hasArg) ++n;
+        return n;
+    }
+    assert(noArgCount(planted) == noArgCount(real_),
+        "planting an ARGUMENT-bearing revert moved gate 1's no-argument count "
+      ~ "— the two gates are not partitioning the scan and one of them is "
+      ~ "double-counting");
 }
 
 /// Small local helper: split a `"\0"`-joined `(file, func)` key back apart.
