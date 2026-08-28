@@ -138,12 +138,32 @@ private enum size_t kTwoHopWindow = 6;
 // either way the walker still RECOGNISES comments, so a quote mark inside one
 // can never open a literal.
 //
-// Not handled: wysiwyg strings (`r"…"`) and delimited/token strings (`q"…"`,
-// `q{…}`), any of which desyncs the scanner from that point on. Character
-// literals ARE handled, including `'\''` and `'"'`. Neither unhandled form
-// appears in a scanned file today; the floor at the bottom is what notices if
-// one arrives, because a desynced scanner eats the rest of the file and the
-// site count collapses.
+// HANDLED SINCE TASK 2007: wysiwyg (`r"…"`) and delimited/token strings
+// (`q"…"`, `q{…}`). This block used to claim "neither unhandled form appears in
+// a scanned file today" and rest the whole no-parser argument on that. HALF of
+// it was false, and the false half was the one that matters — MEASURED
+// 2026-08-28 over `source/**` with an identifier-boundary test, which is what
+// the original claim lacked:
+//
+//   * `q{…}` — REAL, and in THREE files: `source/gpu_select.d`,
+//     `source/shader.d`, `source/subpatch_osd.d` (GLSL sources). `gpu_select.d`
+//     is itself a `kRemainder` file, so the desync risk sat directly under a
+//     recorded site.
+//   * `q"…"` — ZERO occurrences. (A naive `grep q"` reports three, all of them
+//     the two characters `q"` INSIDE an ordinary literal: `entry["seq"]`,
+//     `` `{"seq":` ``. The card that raised this item counted that grep.)
+//   * `r"…"` — ZERO occurrences as a LITERAL. The naive `grep r"` reports 166
+//     files and the boundary-aware one still reports four, and all four are
+//     `…"r"…` / `'\r'` inside ordinary literals — `File(path, "r")`,
+//     `enabled["r"]`, `"\\r"`, `,"r":%d`. So the ORIGINAL claim happened to be
+//     true for these two forms and false for the third.
+//
+// Both are lexed now rather than argued about, because "no such literal in the
+// tree today" is a claim that decays silently with every commit, and the one
+// that decayed took the argument down with it. Character literals ARE handled,
+// including `'\''` and `'"'`. The floor at the bottom still notices a desync
+// from any form nobody has thought of, because a desynced scanner eats the rest
+// of the file and the site count collapses.
 // ---------------------------------------------------------------------------
 package string blankNonCode(string src, bool keepComments = false) {
     auto outBuf = new char[src.length];
@@ -181,6 +201,76 @@ package string blankNonCode(string src, bool keepComments = false) {
             }
             if (!keepComments) drop(s, i);
             continue;
+        }
+        // TOKEN and WYSIWYG strings, before the plain `"` handler — they open
+        // on a LETTER, so by the time the walker reaches the quote the prefix
+        // is already behind it. See the block comment above for what was
+        // measured and why this is not the "no such literal here" claim it
+        // replaced.
+        if ((src[i] == 'q' || src[i] == 'r')
+            && (i == 0 || !isIdentChar(src[i - 1]))
+            && i + 1 < src.length) {
+            // `r"…"` — wysiwyg, no escape processing at all.
+            if (src[i] == 'r' && src[i + 1] == '"') {
+                const size_t s = i;
+                i += 2;
+                while (i < src.length && src[i] != '"') ++i;
+                i = (i + 1 <= src.length) ? i + 1 : src.length;
+                drop(s, i);
+                continue;
+            }
+            // `q{…}` — token string, braces NEST.
+            if (src[i] == 'q' && src[i + 1] == '{') {
+                const size_t s = i;
+                i += 2;
+                int depth = 1;
+                while (i < src.length && depth > 0) {
+                    if (src[i] == '{') ++depth;
+                    else if (src[i] == '}') --depth;
+                    ++i;
+                }
+                drop(s, i);
+                continue;
+            }
+            // `q"…"` — delimited. Bracket forms nest; anything else is the
+            // heredoc form, closed by `<ident>"` on its own.
+            if (src[i] == 'q' && src[i + 1] == '"') {
+                const size_t s = i;
+                const char open = (i + 2 < src.length) ? src[i + 2] : '\0';
+                char close = '\0';
+                switch (open) {
+                    case '(': close = ')'; break;
+                    case '[': close = ']'; break;
+                    case '<': close = '>'; break;
+                    case '{': close = '}'; break;
+                    default:  break;
+                }
+                if (close != '\0') {
+                    i += 3;
+                    int depth = 1;
+                    while (i < src.length && depth > 0) {
+                        if (src[i] == open) ++depth;
+                        else if (src[i] == close) --depth;
+                        ++i;
+                    }
+                    if (i < src.length && src[i] == '"') ++i;
+                } else {
+                    // q"IDENT\n … \nIDENT"
+                    size_t t = i + 2;
+                    while (t < src.length && isIdentChar(src[t])) ++t;
+                    const string tag = src[i + 2 .. t];
+                    i = t;
+                    if (tag.length) {
+                        const string term = tag ~ "\"";
+                        while (i + term.length <= src.length
+                               && src[i .. i + term.length] != term) ++i;
+                        i = (i + term.length <= src.length)
+                            ? i + term.length : src.length;
+                    }
+                }
+                drop(s, i);
+                continue;
+            }
         }
         if (src[i] == '"') {
             const size_t s = i;
@@ -393,6 +483,94 @@ private Site[] scanTree() {
 // assert, and a broken scanner must say so in its own words instead of showing
 // up as a strange tree verdict below.
 // ---------------------------------------------------------------------------
+
+/// TASK 2007 item 9 — TOKEN AND WYSIWYG LITERALS ARE LEXED, not assumed
+/// absent. Each probe hides ONE unbalanced `"` inside a literal form the
+/// stripper used to walk straight through, and then puts a real site AFTER it.
+/// Without the corresponding arm in `blankNonCode` that stray quote opens a
+/// D string that runs to the end of the text, the site is blanked away, and the
+/// assert reads 0 — which is exactly how a desynced scanner goes quietly green
+/// over a whole file.
+unittest {
+    // `q{…}` — the form that is REALLY in the tree (gpu_select.d, shader.d,
+    // subpatch_osd.d), one of which is a `kRemainder` file.
+    //
+    // THE DISCRIMINATOR IS "IS THE BODY CODE?", NOT "DOES A STRAY QUOTE EAT
+    // THE FILE". A first draft of this cell hid an unbalanced `"` in a comment
+    // inside the token string and asserted a later site survived — and it
+    // passed with the `q{` arm DISABLED, because the comment stripper ate the
+    // quote first. (D also forbids an unbalanced quote inside `q{…}`: the body
+    // must lex as D tokens, so that probe was not even legal input.) What
+    // actually changes is that the body is a STRING, so a compare written
+    // inside it is NOT a site — walk into it and the scanner invents one.
+    enum string tokenStr = q"PROBE
+        private immutable string fragSrc = q{
+            void main() { if (mesh.mutationVersion != cachedVer) rebuild(); }
+        };
+PROBE";
+    auto t = scanSource("probe.d", tokenStr);
+    assert(t.length == 0, format(
+        "a version compare written INSIDE a `q{…}` token string was counted "
+      ~ "as %d production site(s) — it is string CONTENT, not code, and the "
+      ~ "stripper walked into the body. THREE source files carry `q{…}` today "
+      ~ "and one of them (gpu_select.d) is a kRemainder file: %s",
+        t.length, t));
+
+    // `q"(…)"` — delimited, bracket form. Zero occurrences in `source/**`
+    // today; lexed anyway, because "there are none today" is the argument
+    // that already decayed once for `q{…}`.
+    enum string delimStr = q"PROBE
+        enum msg = q"(a stray " quote inside a delimited string)";
+        void update() {
+            if (mesh.mutationVersion != cachedVer) rebuild();
+        }
+PROBE";
+    auto d = scanSource("probe.d", delimStr);
+    assert(d.length == 1, format(
+        "a site after a `q\"(…)\"` delimited string was not seen: %s", d));
+
+    // `r"…"` — wysiwyg. The discriminating body is a lone backslash: read as
+    // an ordinary string it ESCAPES the closing quote and the literal never
+    // ends.
+    enum string wysiwyg = q"PROBE
+        enum sep = r"\";
+        void update() {
+            if (mesh.mutationVersion != cachedVer) rebuild();
+        }
+PROBE";
+    auto w = scanSource("probe.d", wysiwyg);
+    assert(w.length == 1, format(
+        "a site after a `r\"\\\"` wysiwyg string was not seen: %s", w));
+
+    // THE CONTROL, so none of the three above can pass for the wrong reason:
+    // the identical probe with no literal at all must find the same one site.
+    enum string plain = q"PROBE
+        void update() {
+            if (mesh.mutationVersion != cachedVer) rebuild();
+        }
+PROBE";
+    assert(scanSource("probe.d", plain).length == 1,
+        "the bare probe must find its one site — otherwise the three cells "
+      ~ "above are measuring the probe, not the stripper");
+
+    // …and the identifier-boundary term: `r` / `q` are ordinary letters, so a
+    // name ENDING in one, followed by a string, must not be read as a prefix.
+    // …and the identifier-BOUNDARY term, which is not decoration: an
+    // identifier ending in `q` can sit IMMEDIATELY against an opening brace in
+    // perfectly ordinary D, and without the boundary test the walker reads
+    // those two characters as a token string and blanks the whole body.
+    enum string notAPrefix = q"PROBE
+        struct Fooq{
+            void update() {
+                if (mesh.mutationVersion != cachedVer) rebuild();
+            }
+        }
+PROBE";
+    assert(scanSource("probe.d", notAPrefix).length == 1,
+        "`struct Fooq{` was read as a `q{…}` token string and its whole body "
+      ~ "blanked — `q` here is the last letter of an identifier, not a "
+      ~ "literal prefix, which is what the identifier-boundary term is for");
+}
 
 /// Shape C: the counter is read into a local on one line and compared on the
 /// next. This is the shape of the transform tools' staleness gate — three live

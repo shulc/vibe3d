@@ -31,8 +31,14 @@
 // `beginDeliveryBatchGlobal`/`endDeliveryBatchGlobal`, or does it need a row
 // added to the table (and, if not, a batch of its own)?
 //
-// WHAT COUNTS AS A SITE. A `.revert(` method call in CODE, with or without an
-// argument — the two gates partition the same scan by that one bit. Comments,
+// WHAT COUNTS AS A SITE. A `revert` method call in CODE, with or without an
+// argument — the two gates partition the same scan by that one bit. The
+// TRIGGER is `revertSiteHere` below, three forms rather than the literal
+// `".revert("` this file shipped until task 2007: a direct call, an
+// ADDRESS-OF take (`&cmd.revert`, the indirection finding #2 built and showed
+// scanning as zero), and an optional-paren call in statement position. Its doc
+// comment says why the finding's own prescription — the bare identifier — was
+// measured and rejected, and which correct code it reddened. Comments,
 // string/backtick/char literals and `unittest` bodies are blanked in place
 // first (same three views, same reasons, as
 // `tests/unit/version_poll_census_test.d`; duplicated here rather than
@@ -267,6 +273,86 @@ private struct RevertSite {
 
 private struct ScopeEntry { string name; bool isFunc; }
 
+/// Does a `.revert` SITE begin at `i` in `code`? Three triggers, and the set is
+/// deliberately NOT "the bare identifier".
+///
+/// TASK 2007 FINDING #2, and the correction the fix needed. The finding was
+/// real: the old needle was the literal `".revert("`, so the indirection
+/// `auto fn = &cmd.revert; fn();` — the same call, with the parenthesis
+/// belonging to `fn` — scanned as ZERO sites, and a tenth production revert
+/// path outside every delivery batch would have been invisible. The finding's
+/// prescribed fix was the bare identifier, as already used by
+/// `sel_channel_census_test.d`'s `kMethod` and
+/// `confined_publisher_census_test.d`'s `kIdents`.
+///
+/// THAT FIX WAS MEASURED AND REJECTED: it reddens on CORRECT code. `revert` is
+/// not one name in this tree — `void delegate() revert;` is a FIELD on two
+/// gesture-hook structs (`vertex_edit.d`'s `Hooks`, `xfrm_transform.d`'s
+/// `GestureHooks`), and the bare match reported five of their reads/writes
+/// (`h.revert = () {…}`, `gh.revert`, `fh.revert`) as unaccounted call sites.
+/// A census that reddens on correct code is the same defect as one that cannot
+/// redden, so the trigger is narrowed to the three forms that CANNOT be a field
+/// access:
+///
+///   1. `.revert` … `(`  — the direct call. Whitespace between the name and the
+///      paren is allowed; the old needle required them adjacent.
+///   2. `&` … `.revert`  — the ADDRESS of the method, which is the escape the
+///      finding built. Taking `&` of a delegate FIELD yields a pointer to a
+///      delegate and appears nowhere in `source/**` (checked), so this trigger
+///      adds no site today and fires the moment the indirection is written.
+///   3. `.revert` … `;` in STATEMENT POSITION — D's optional-paren call spelled
+///      as a bare statement (`cmd.revert;`). The statement-position term is
+///      load-bearing and was added after a measurement: without it the trigger
+///      also fired on `scaleSub.wrapperFieldRevertHook = gh.revert;`
+///      (`xfrm_transform.d:3670`, and its rotate twin at `:3564`) — a plain
+///      field READ whose statement happens to end in a semicolon. WITH it, the
+///      only `.revert;` that can reach the trigger is one that is the whole
+///      statement, and a bare field read there is not valid D ("has no effect
+///      in expression"), so it must be a call.
+///
+/// WHAT IS STILL NOT COVERED, said plainly rather than left to be discovered:
+/// an optional-paren call used inside a larger expression (`if (cmd.revert &&
+/// …)`). It is textually identical to a field read (`if (gh.revert !is null)`),
+/// and nothing short of type resolution separates them — so it is left out
+/// rather than shipped as a false positive. The `&`-form above is the one the
+/// finding actually demonstrated.
+private bool revertSiteHere(string code, size_t i) {
+    enum string kName = ".revert";
+    if (!code[i .. $].startsWith(kName)) return false;
+    const size_t after = i + kName.length;
+    if (after < code.length && isIdentChar(code[after])) return false;   // .revertImpl
+
+    // Trigger 2: the receiver run walks left over identifier-ish characters;
+    // an `&` immediately before that run is the address-of take.
+    size_t rb = i;
+    while (rb > 0) {
+        const char pc = code[rb - 1];
+        const bool idish = (pc >= 'a' && pc <= 'z') || (pc >= 'A' && pc <= 'Z')
+                        || (pc >= '0' && pc <= '9') || pc == '_'
+                        || pc == ')' || pc == ']' || pc == '.';
+        if (!idish) break;
+        --rb;
+    }
+    if (rb > 0 && code[rb - 1] == '&') return true;
+
+    // Triggers 1 and 3: the next non-space token.
+    size_t k = after;
+    while (k < code.length && (code[k] == ' ' || code[k] == '\t'
+                            || code[k] == '\n' || code[k] == '\r')) ++k;
+    if (k >= code.length) return false;
+    if (code[k] == '(') return true;
+    if (code[k] != ';') return false;
+
+    // Trigger 3's statement-position term: nothing but whitespace between the
+    // receiver run and a statement boundary. `x = gh.revert;` fails here, as it
+    // must — that is a field read, not a call.
+    size_t b = rb;
+    while (b > 0 && (code[b - 1] == ' ' || code[b - 1] == '\t'
+                  || code[b - 1] == '\n' || code[b - 1] == '\r')) --b;
+    return b == 0 || code[b - 1] == ';' || code[b - 1] == '{'
+                  || code[b - 1] == '}' || code[b - 1] == ':';
+}
+
 /// Scan ONE file's already-blanked CODE text for `.revert()` call sites,
 /// attributing each to its nearest enclosing callable by walking a brace
 /// stack built as the text is consumed left to right.
@@ -301,7 +387,7 @@ private RevertSite[] scanRevertSites(string label, string src) {
             ++i;
             continue;
         }
-        if (code[i .. $].startsWith(".revert(")) {
+        if (revertSiteHere(code, i)) {
             string fn = "<module-level>";
             foreach_reverse (s; stack) if (s.isFunc) { fn = s.name; break; }
 
@@ -317,19 +403,32 @@ private RevertSite[] scanRevertSites(string label, string src) {
             }
             const string recv = code[rb .. i];
 
-            // The argument list, to the matching close paren.
-            size_t k = i + ".revert(".length;
-            int depth = 1;
-            size_t e = k;
-            while (e < code.length && depth > 0) {
-                if (code[e] == '(') ++depth;
-                else if (code[e] == ')') --depth;
-                ++e;
+            // The argument list, IF the site spells one. A delegate take
+            // (`&cmd.revert`) and D's optional-paren call (`cmd.revert;`) both
+            // reach here with no `(` at all; both are argument-LESS, so they
+            // join gate 1's `Command.revert()` bucket, which is exactly where
+            // an unaccounted tenth path has to surface.
+            size_t k = i + ".revert".length;
+            while (k < code.length && (code[k] == ' ' || code[k] == '\t'
+                                    || code[k] == '\n' || code[k] == '\r')) ++k;
+            bool parens = false;
+            string arg;
+            if (k < code.length && code[k] == '(') {
+                parens = true;
+                ++k;
+                int depth = 1;
+                size_t e = k;
+                while (e < code.length && depth > 0) {
+                    if (code[e] == '(') ++depth;
+                    else if (code[e] == ')') --depth;
+                    ++e;
+                }
+                arg = (e > k) ? code[k .. e - 1].strip : "";
             }
-            const string arg = (e > k) ? code[k .. e - 1].strip : "";
 
             sites.put(RevertSite(label, fn, line,
-                                 "…" ~ recv ~ ".revert(" ~ arg ~ ")",
+                                 "…" ~ recv ~ ".revert"
+                                 ~ (parens ? "(" ~ arg ~ ")" : ""),
                                  recv, arg.length != 0));
         }
         header.put(c);
@@ -434,6 +533,77 @@ PROBE";
     auto s = scanRevertSites("probe.d", probe);
     assert(s.length == 1, format("%s", s));
     assert(s[0].func == "fire", s[0].func);
+}
+
+/// TASK 2007 FINDING #2 — THE ESCAPE, PINNED. `auto fn = &cmd.revert; fn();`
+/// is a real revert path with no parenthesis after the name, and the old
+/// literal needle `".revert("` scanned it as ZERO sites. This cell is the
+/// mutation the finding used, frozen: revert `revertSiteHere`'s trigger 2 and
+/// this assert reads 0 and reddens by its own message.
+unittest {
+    enum string probe = q"PROBE
+bool applyUndo(Command cmd) {
+    auto fn = &cmd.revert;
+    return fn();
+}
+PROBE";
+    auto s = scanRevertSites("probe.d", probe);
+    assert(s.length == 1, format("the delegate take `&cmd.revert` scanned as %d "
+        ~ "site(s), expected 1 — this is task 2007 finding #2's escape and the "
+        ~ "whole reason the trigger is not the literal `.revert(`: %s",
+        s.length, s));
+    assert(!s[0].hasArg, format("`&cmd.revert` carries no argument list, so it "
+        ~ "belongs to gate 1's `Command.revert()` bucket; got hasArg=%s",
+        s[0].hasArg));
+    assert(s[0].func == "applyUndo", s[0].func);
+}
+
+/// …and the optional-paren CALL as a bare statement, the other spelling that
+/// reaches `Command.revert` without writing a parenthesis.
+unittest {
+    enum string probe = q"PROBE
+void applyUndo(Command cmd) {
+    cmd.revert;
+}
+PROBE";
+    auto s = scanRevertSites("probe.d", probe);
+    assert(s.length == 1, format("the optional-paren call statement `cmd.revert;` "
+        ~ "scanned as %d site(s), expected 1: %s", s.length, s));
+    assert(!s[0].hasArg, "an optional-paren call passes no argument");
+}
+
+/// THE NEGATIVE CONTROL, and it is not decoration: `revert` is ALSO a
+/// `void delegate()` FIELD in this tree (`vertex_edit.d`'s `Hooks`,
+/// `xfrm_transform.d`'s `GestureHooks`). Task 2007 finding #2 prescribed a BARE
+/// identifier match; measured, that reddened on five correct field reads and
+/// writes. Every shape below must scan as ZERO — widen the trigger and this
+/// cell says which spelling the widening broke.
+unittest {
+    enum string probe = q"PROBE
+struct GestureHooks { void delegate() apply; void delegate() revert; }
+void buildGestureHooks() {
+    GestureHooks h;
+    h.revert = () {
+        run = runStart;
+    };
+    scaleSub.wrapperFieldRevertHook = gh.revert;
+    merged.setHooks(lh.apply, fh.revert);
+}
+PROBE";
+    auto s = scanRevertSites("probe.d", probe);
+    assert(s.length == 0, format("a gesture-hook FIELD named `revert` scanned as "
+        ~ "%d call site(s) — a census that reddens on correct code is the same "
+        ~ "defect as one that cannot redden: %s", s.length, s));
+}
+
+/// `.revertImpl` is a different method and must not be swallowed by the
+/// identifier-boundary check.
+unittest {
+    enum string probe = q"PROBE
+bool f(Command cmd) { return cmd.revertImpl(); }
+PROBE";
+    auto s = scanRevertSites("probe.d", probe);
+    assert(s.length == 0, format("`revertImpl` scanned as a `revert` site: %s", s));
 }
 
 /// The four delegation sites: `override bool revert() { return inner.revert(); }`.

@@ -206,16 +206,60 @@ private string codeView(string src) { return blankUnittestBodies(blankNonCode(sr
 
 private struct FunnelSite { string file; string funnel; size_t line; }
 
-/// Both accumulate-only funnels, over one file's already-code-only text.
+/// EVERY spelling of an accumulate-only tail. Four names, not two, and neither
+/// half of that is decoration — task 2007 built an escape for each.
+///
+///   `noteChange` / `noteSelectionChange` — the two funnels, matched as BARE
+///   IDENTIFIERS. This file scanned for the literal `"noteChange("` until task
+///   2007 finding #3, which showed `auto fn = &mesh.noteChange; fn(x);` — a
+///   genuine dead accumulate tail with no publisher after it — scanning as ZERO
+///   sites, because the parenthesis belongs to `fn`.
+///
+///   `undeliveredChanges_` / `undeliveredSelDomains_` — the FIELDS, and this is
+///   task 2007's third pass, which is the sharper of the two findings because it
+///   needs no delegate trick at all. Both funnels reduce to
+///   `undeliveredChanges_ |= flags;` (plus `undeliveredSelDomains_` for the
+///   second), and BOTH fields are declared on `struct Mesh` with no `private`
+///   in front of them — `struct Mesh` carries no visibility label at all, so
+///   every field is public by D's default. The pass proved it live: a
+///   `mesh.undeliveredChanges_ |= MeshEditScope.Maps;` written into
+///   `commands/mesh/add_point.d`'s `applyImpl` left this census green.
+///   Neither field occurs anywhere under `source/**` outside `mesh.d` today
+///   (checked), so these two names add no site and cost no exception row; they
+///   simply make the one remaining way to write the tail visible.
+///
+/// This is the same correction `sel_channel_census_test.d` already carries for
+/// the same reason — its `kField` (`selSubs`) exists because the METHOD name
+/// was not the only way to register a subscriber.
+private immutable string[] kFunnels = [
+    "noteChange", "noteSelectionChange",
+    "undeliveredChanges_", "undeliveredSelDomains_",
+];
+
+/// Whole-word occurrence of `id` in `ln`: `noteChangeTwice` must not count as
+/// `noteChange`, and an identifier that merely ENDS in one of the four must not
+/// either.
+private bool containsIdent(string ln, string id) {
+    if (id.length == 0 || ln.length < id.length) return false;
+    foreach (i; 0 .. ln.length - id.length + 1) {
+        if (ln[i .. i + id.length] != id) continue;
+        if (i > 0 && isIdentChar(ln[i - 1])) continue;
+        if (i + id.length < ln.length && isIdentChar(ln[i + id.length])) continue;
+        return true;
+    }
+    return false;
+}
+
+/// Every accumulate-only funnel, over one file's already-code-only text. One
+/// site per (line, name), as before — a line naming a funnel twice is still one
+/// site, which is what the recorded per-file COUNTS were measured against.
 private FunnelSite[] scanFunnels(string label, string code) {
     auto sites = appender!(FunnelSite[]);
     auto lines = code.splitLinesKeep();
-    foreach (li, ln; lines) {
-        if (ln.canFind("noteChange("))
-            sites.put(FunnelSite(label, "noteChange", li + 1));
-        if (ln.canFind("noteSelectionChange("))
-            sites.put(FunnelSite(label, "noteSelectionChange", li + 1));
-    }
+    foreach (li, ln; lines)
+        foreach (f; kFunnels)
+            if (containsIdent(ln, f))
+                sites.put(FunnelSite(label, f, li + 1));
     return sites.data;
 }
 
@@ -274,11 +318,11 @@ PROBE";
       ~ "loop_slice.d's own sentence, verbatim");
 }
 
-/// Same for `load.d`'s prose ("`publishChange`, not `noteChange`") — here the
-/// bare word has no trailing paren, so even a naive scanner keyed on
-/// `noteChange(` would not match it; the cell exists so the probe corpus
-/// documents BOTH real witnesses, not just the one that would fool a weaker
-/// scanner.
+/// Same for `load.d`'s prose ("`publishChange`, not `noteChange`"). This cell
+/// used to say the bare word was harmless because it carries no trailing paren
+/// — TRUE of the old `"noteChange("` needle and FALSE since task 2007 made the
+/// trigger a bare identifier. The stripper is now the ONLY thing keeping this
+/// sentence out of the site set, which is what the cell is here to prove.
 unittest {
     enum string probe = q"PROBE
 void f() {
@@ -288,6 +332,76 @@ void f() {
 PROBE";
     const code = codeView(probe);
     assert(scanFunnels("probe.d", code).length == 0);
+}
+
+/// TASK 2007 FINDING #3 — THE DELEGATE ESCAPE, PINNED. A dead accumulate tail
+/// with no publisher after it, written as an indirect call. Under the old
+/// `"noteChange("` needle this scanned as ZERO sites; put that needle back and
+/// this assert reddens by its own message.
+unittest {
+    enum string probe = q"PROBE
+void applyImpl() {
+    auto fn = &mesh.noteChange;
+    fn(MeshEditScope.Maps);
+}
+PROBE";
+    const code = codeView(probe);
+    auto s = scanFunnels("probe.d", code);
+    assert(s.length == 1 && s[0].funnel == "noteChange",
+        format("the delegate take `&mesh.noteChange` scanned as %d site(s), "
+             ~ "expected 1 on `noteChange` — task 2007 finding #3's escape: %s",
+               s.length, s));
+}
+
+/// TASK 2007, THIRD PASS — THE FIELD ESCAPE, PINNED, and it needs no delegate
+/// at all. `noteChange` IS `undeliveredChanges_ |= flags;`, and the field is
+/// public (`struct Mesh` carries no visibility label), so the tail can be
+/// written without either funnel name appearing. The pass proved this live in
+/// `commands/mesh/add_point.d` with the census fully green.
+unittest {
+    enum string probe = q"PROBE
+void applyImpl() {
+    mesh.undeliveredChanges_ |= MeshEditScope.Maps;
+    return true;
+}
+PROBE";
+    const code = codeView(probe);
+    auto s = scanFunnels("probe.d", code);
+    assert(s.length == 1 && s[0].funnel == "undeliveredChanges_",
+        format("a direct write to the public accumulate field scanned as %d "
+             ~ "site(s), expected 1 on `undeliveredChanges_`: %s", s.length, s));
+}
+
+/// …and its selection-domain sibling, which `noteSelectionChange` writes as
+/// well as `undeliveredChanges_`.
+unittest {
+    enum string probe = q"PROBE
+void applyImpl() {
+    mesh.undeliveredSelDomains_ |= 1u << SelDomain.Vertex;
+}
+PROBE";
+    const code = codeView(probe);
+    auto s = scanFunnels("probe.d", code);
+    assert(s.length == 1 && s[0].funnel == "undeliveredSelDomains_",
+        format("%s", s));
+}
+
+/// THE BOUNDARY CONTROL. A bare-identifier trigger must not swallow a LONGER
+/// name that merely contains one of the four — otherwise the widening buys a
+/// false positive, which is the same defect as a check that cannot redden.
+unittest {
+    enum string probe = q"PROBE
+void applyImpl() {
+    mesh.noteChangeTwice(MeshEditScope.Maps);
+    auto x = preNoteChange;
+    auto y = undeliveredChanges_Shadow;
+}
+PROBE";
+    const code = codeView(probe);
+    auto s = scanFunnels("probe.d", code);
+    assert(s.length == 0,
+        format("an identifier that merely CONTAINS a funnel name was counted "
+             ~ "as a site: %s", s));
 }
 
 /// A live site is still found when comments surround it.

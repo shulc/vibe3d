@@ -11,7 +11,18 @@
 // WHAT IS GATED. Two integers over `source/` ∪ `tests/unit/`:
 //
 //     blocks   — `unittest` block declarations
-//     asserts  — assertion tokens (`assert`, `assertThrown`, `assertNotThrown`)
+//     asserts  — assertion tokens: `assert`, and every identifier that begins
+//                `assert` and continues with an uppercase letter or `_`. That
+//                second half is TASK 2007 FINDING #1 and it is not a widening
+//                for tidiness: this repo's house style is the NAMED
+//                verification helper (`assertRevertShape`, `assertResidualLaw`,
+//                `assertDocInvariants`, ~40 more), which carries its own
+//                `assert` ONCE at the definition — so under the old
+//                three-literal rule deleting a CALL moved neither counter, and
+//                six deleted `assertRevertShape(...)` calls (the whole residual
+//                check for six kernel families) printed the same four numbers
+//                byte for byte. Measured again after the fix: the same deletion
+//                now moves `asserts` by exactly 6. See `isAssertName`.
 //
 // WHERE THE BASELINE LIVES. Not in a checked-in number: in git. The baseline is
 // this lane's own history — the branch point (`git merge-base HEAD main`) and
@@ -95,18 +106,25 @@ struct Census
     long blocks;           /// `unittest` block declarations
     long asserts;          /// assertion tokens, anywhere in the file
     long assertsInBlocks;  /// assertion tokens lexically inside a unittest body
+    long helperAsserts;    /// the subset of `asserts` that are NAMED verification
+                           /// helpers (`assertRevertShape`, `assertThrown`, …).
+                           /// DIAGNOSTIC ONLY — folded into `asserts` for the
+                           /// gate, broken out here so a failure can say which
+                           /// kind went missing. See `isAssertName`.
 
     void opOpAssign(string op : "+")(const Census rhs) @safe pure nothrow @nogc
     {
         blocks          += rhs.blocks;
         asserts         += rhs.asserts;
         assertsInBlocks += rhs.assertsInBlocks;
+        helperAsserts   += rhs.helperAsserts;
     }
 
     string toString() const @safe pure
     {
-        return format("%d blocks / %d asserts (%d of them inside blocks)",
-                      blocks, asserts, assertsInBlocks);
+        return format("%d blocks / %d asserts (%d of them inside blocks, "
+                    ~ "%d of them named helpers)",
+                      blocks, asserts, assertsInBlocks, helperAsserts);
     }
 }
 
@@ -193,9 +211,51 @@ private bool isIdentChar(char c) @safe pure nothrow @nogc
     return isIdentStart(c) || (c >= '0' && c <= '9');
 }
 
+/// Is `id` an assertion token?
+///
+/// TASK 2007 FINDING #1 — WHY THIS IS A PREFIX RULE AND NOT THREE LITERALS.
+/// This predicate used to be the enumeration
+/// `id == "assert" || id == "assertThrown" || id == "assertNotThrown"`, and the
+/// hole that leaves is the widest one that sweep found, because it grows with
+/// the practice this repo actively encourages: a NAMED verification helper
+/// carries its `assert` ONCE, at its DEFINITION, so deleting a CALL moves
+/// neither counter by one. Measured on live data: six of the seven
+/// `assertRevertShape(...)` calls in `tests/unit/face_reindex_arming_test.d`
+/// were deleted — the whole residual check for six kernel families, each call
+/// running four residual laws over every plane — and the census printed
+/// `blocks=2301 asserts=13025 assertsInBlocks=12623 files=644` byte for byte
+/// before and after.
+///
+/// It matters more than the other twelve findings put together because it is
+/// the gate that would notice ANY of their fixes being silently deleted later.
+///
+/// THE RULE: an identifier that begins with `assert` and continues with an
+/// UPPERCASE letter or `_`. Mechanical rather than a registry on purpose — a
+/// hand-maintained list of helper names is the same defect one level up (a new
+/// helper joins the tree, nobody adds it, the count stops moving). It subsumes
+/// the two Phobos names the enumeration used to spell, and it rejects
+/// `asserts`, `assertion`, `assertsInBlocks` — a lowercase continuation is a
+/// different word, not a helper.
+///
+/// `check…` IS DELIBERATELY NOT INCLUDED. `assertX` is a naming convention that
+/// means one thing here; `checkX` is an ordinary verb that names plenty of
+/// production logic (`checkBounds`, `checkGlError`), and counting those would
+/// make the assert bar move on refactors that touch no test at all.
 private bool isAssertName(const(char)[] id) @safe pure nothrow @nogc
 {
-    return id == "assert" || id == "assertThrown" || id == "assertNotThrown";
+    if (id.length < 6 || id[0 .. 6] != "assert") return false;
+    if (id.length == 6) return true;                       // bare `assert`
+    const char c = id[6];
+    return (c >= 'A' && c <= 'Z') || c == '_';
+}
+
+/// The helper half of `isAssertName`, for the REPORT only — it is not gated
+/// separately (that would need a third column in `census_ledger.txt` and would
+/// invalidate every line already in it). Its whole job is to let a failure
+/// message say WHICH kind of assertion went missing.
+private bool isHelperAssertName(const(char)[] id) @safe pure nothrow @nogc
+{
+    return isAssertName(id) && id != "assert";
 }
 
 /// Count the census of one D source text.
@@ -309,6 +369,7 @@ Census scanD(const(char)[] s) @safe pure nothrow @nogc
                 if (isAssertName(id))
                 {
                     ++c.asserts;
+                    if (isHelperAssertName(id)) ++c.helperAsserts;
                     if (utBodyDepth >= 0) ++c.assertsInBlocks;
                 }
             }
@@ -383,7 +444,34 @@ private size_t skipDelimited(const(char)[] s, size_t i) @safe pure nothrow @nogc
     ++i;                       // past the `"`
     if (i >= n) return n;
 
-    char open = s[i];
+    const char open = s[i];
+
+    // THE HEREDOC FORM — `q"IDENT<newline> … <newline>IDENT"`. Added at task
+    // 2007 alongside finding #1, and it was not hygiene: without it this
+    // function fell into the `default` arm below with `close == 'P'` for
+    // `q"PROBE`, found no `P"` anywhere, returned `n`, and SWALLOWED THE REST
+    // OF THE FILE. Eight files under the two scanned roots use the form — all
+    // of them census tests, whose probes are exactly this shape — so every
+    // `unittest` block and every assertion after the first probe in each of
+    // them was invisible to the gate that exists to notice tests being
+    // destroyed. Measured on `tests/unit/mesh_dirty_cliff_series_test.d`:
+    // 4 blocks / 11 asserts read as 1 / 0.
+    if (isIdentStart(open))
+    {
+        size_t t = i;
+        while (t < n && isIdentChar(s[t])) ++t;
+        const tag = s[i .. t];
+        // The terminator is the tag again, immediately followed by `"`.
+        size_t k = t;
+        while (k + tag.length < n)
+        {
+            if (s[k .. k + tag.length] == tag
+                && s[k + tag.length] == '"') return k + tag.length + 1;
+            ++k;
+        }
+        return n;
+    }
+
     char close;
     switch (open)
     {
@@ -393,10 +481,20 @@ private size_t skipDelimited(const(char)[] s, size_t i) @safe pure nothrow @nogc
         case '<':  close = '>'; break;
         default:   close = open; break;   // single-character delimiter
     }
+    const bool nests = (close != open);
     ++i;
+    int depth = 1;
     while (i + 1 < n)
     {
-        if (s[i] == close && s[i + 1] == '"') return i + 2;
+        if (nests && s[i] == open) ++depth;
+        else if (s[i] == close)
+        {
+            if (!nests || depth == 1)
+            {
+                if (s[i + 1] == '"') return i + 2;
+            }
+            else --depth;
+        }
         ++i;
     }
     return n;
@@ -1257,6 +1355,77 @@ unittest
     // ... and an identifier that merely begins with the word is not one.
     assert(scanD("int assertsRemaining = 3;").asserts == 0);
     assert(scanD("x.assertive = 1;").asserts == 0);
+}
+
+unittest
+{
+    // TASK 2007 FINDING #1 — A NAMED VERIFICATION HELPER'S CALL IS AN
+    // ASSERTION. The predicate used to be three literals, so a helper carried
+    // its `assert` once at the DEFINITION and deleting a CALL moved neither
+    // counter. Measured on live data: six of seven `assertRevertShape(...)`
+    // calls deleted from `face_reindex_arming_test.d` — the residual check for
+    // six kernel families — and the census printed the same four numbers byte
+    // for byte. Revert `isAssertName` to the enumeration and every assert below
+    // reads 0.
+    assert(scanD("assertRevertShape(m, pre, post);").asserts == 1,
+        "a named verification helper's CALL must count as an assertion — "
+      ~ "this is the whole of finding #1");
+    assert(scanD("assertResidualLaw(d, plan);").asserts == 1);
+    assert(scanD("assertNoUnaccountedTails(root, sites, rows);").asserts == 1);
+    assert(scanD("assert_(x);").asserts == 1,
+        "an underscore continuation is a helper too");
+    // The helper sub-count is the diagnostic half, and it excludes bare
+    // `assert` so a report can say which kind went missing.
+    auto mix = scanD("assert(1); assertRevertShape(a, b); assertThrown(f());");
+    assert(mix.asserts == 3, format("%s", mix));
+    assert(mix.helperAsserts == 2,
+        format("helperAsserts should exclude the bare `assert`: %s", mix));
+
+    // THE FALSE-POSITIVE CONTROL. A lowercase continuation is a DIFFERENT WORD,
+    // and the gate must not move when one of these is edited — widening the
+    // rule to every identifier merely starting with `assert` would count the
+    // scanner's own `assertsInBlocks` field.
+    assert(scanD("int assertsInBlocks;").asserts == 0);
+    assert(scanD("x.assertion = 1;").asserts == 0);
+    assert(scanD("bool asserted = true;").asserts == 0);
+    assert(scanD("void checkBounds() { }").asserts == 0,
+        "`check…` is deliberately NOT in the rule — it names production logic "
+      ~ "as often as it names a test helper");
+}
+
+unittest
+{
+    // TASK 2007 — THE HEREDOC DELIMITED STRING, `q"IDENT … IDENT"`. Found while
+    // fixing finding #1 and it is a defect of the same family: `skipDelimited`
+    // fell into its single-character arm with `close == 'P'` for `q"PROBE`,
+    // never found `P"`, returned the end of the text and SWALLOWED THE REST OF
+    // THE FILE. Eight files under the two scanned roots use the form — all
+    // census tests, whose probes are exactly this shape — so everything after
+    // the first probe in each was invisible to the gate that exists to notice
+    // tests being destroyed. Measured on
+    // `tests/unit/mesh_dirty_cliff_series_test.d`: 4 blocks / 11 asserts read
+    // as 1 / 0; over the whole tree the recovered count was +47 blocks.
+    const probe = "enum p = q\"PROBE\nunittest { assert(9); }\nPROBE\";\n"
+                ~ "unittest { assert(1); assert(2); }\n";
+    auto h = scanD(probe);
+    assert(h.blocks == 1, format(
+        "a `q\"IDENT … IDENT\"` heredoc swallowed the file: expected 1 block "
+      ~ "after it, got %d", h.blocks));
+    assert(h.asserts == 2, format(
+        "expected the two asserts AFTER the heredoc and neither of the one "
+      ~ "inside it, got %d", h.asserts));
+
+    // The tag must match exactly — a mere prefix of it does not close.
+    const tricky = "enum p = q\"PRO\nPROBE\nPRO\";\nunittest { assert(1); }\n";
+    assert(scanD(tricky).blocks == 1, "the tag `PRO` closes at `PRO\"`");
+
+    // Bracket delimiters NEST, which the single-depth loop got wrong.
+    assert(scanD("enum d = q\"(a (b) c)\"; unittest { assert(1); }").blocks == 1,
+        "a nested `(` inside q\"( )\" must not close the literal early");
+    assert(scanD("enum d = q\"[a [b] c]\"; unittest { assert(1); }").blocks == 1);
+
+    // …and the non-nesting single-character delimiter still works.
+    assert(scanD("enum d = q\"/unittest { }/\"; unittest { assert(1); }").blocks == 1);
 }
 
 unittest

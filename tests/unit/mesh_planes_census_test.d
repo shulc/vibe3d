@@ -314,6 +314,48 @@ private bool headInherits(string head) {
     return false;
 }
 
+/// Does a `swap(...)` argument list name the `faces` or `vertices` plane?
+/// Whole-word, so `facesCount` / `vertexCount` do not match, and a dotted
+/// receiver (`swap(m.faces, tmp)`) does because the test is on the identifier,
+/// not on the whole argument.
+///
+/// WHY WHOLE-WORD CONTAINMENT AND NOT A PARSE: the two `swap(` calls under the
+/// scanned tree today are `swap(v.x, v.y)` / `swap(v.y, v.z)`
+/// (`mesh_ops/box_geom.d`), neither of which names a plane — so this test adds
+/// no violation to correct code, which is the property that had to be measured
+/// before widening the scanner at all.
+private bool swapArgsNamePlane(string args) {
+    static immutable string[] kPlanes = ["faces", "vertices"];
+    foreach (pl; kPlanes) {
+        if (args.length < pl.length) continue;
+        foreach (i; 0 .. args.length - pl.length + 1) {
+            if (args[i .. i + pl.length] != pl) continue;
+            if (i > 0 && isIdentChar(args[i - 1])) continue;
+            if (i + pl.length < args.length && isIdentChar(args[i + pl.length])) continue;
+            return true;
+        }
+    }
+    return false;
+}
+
+/// THE FORM THIS SCANNER DELIBERATELY DOES NOT MATCH, and the measurement
+/// behind that decision (task 2007 finding #4, second half). The finding also
+/// named the index-loop rebuild — `foreach (i, nf; newFaces) faces[i] = nf;` —
+/// as a way to replace the whole array with no `faces =` token, and asked for
+/// a separate decision.
+///
+/// DECIDED: NOT SCANNED. An indexed write is not a rewrite; it is the ordinary
+/// spelling of a single in-place correction, and `source/mesh.d` +
+/// `source/mesh_ops/*.d` contain 35 of them (22 + 13, counted 2026-08-28).
+/// A trigger on `faces[<expr>] =` would therefore report 35 findings on code
+/// that is correct today, and nothing textual separates "one in-place fix" from
+/// "a loop that rebuilds the array" — the loop bound is a runtime value. A
+/// census that reddens on correct code is the same defect as one that cannot
+/// redden, so the honest move is to say so here rather than ship the false
+/// positives. `swap` and `[]=` are scanned precisely because they carry the
+/// whole-array meaning IN THE SYNTAX.
+private enum kIndexLoopFormNotScanned = true;
+
 /// Scan one D source text for a hand-rolled assignment to `faces` /
 /// `vertices` (optionally `.length`, optionally through a dotted receiver)
 /// at method (Block) scope, excluding anything inside a `unittest { }` body.
@@ -402,6 +444,30 @@ Violation[] scanForHandRolledRewrites(string file, string src) {
             immutable string word = src[i .. j];
             immutable bool boundary = (i == 0 || !isIdentChar(src[i - 1]));
 
+            // TASK 2007 FINDINGS #4 AND (second pass) `[]=`: the SAME
+            // whole-array replacement, spelled so that no `faces =` token
+            // exists. `swap(faces, tmp)` puts the identifier INSIDE a paren, so
+            // the `paren == 0` trigger below never sees it; the finding built
+            // it and showed the scan green. Handled here, before that trigger,
+            // because it is a different syntactic shape and not a variant of
+            // one. See `swapArgsNamePlane` for the argument test.
+            if (boundary && paren == 0 && cur() == Scope.Block && !inUnit()
+                && word == "swap") {
+                size_t k = j;
+                while (k < src.length && isWhite(src[k])) k++;
+                if (k < src.length && src[k] == '(') {
+                    size_t e = k + 1;
+                    int d = 1;
+                    while (e < src.length && d > 0) {
+                        if (src[e] == '(') d++;
+                        else if (src[e] == ')') d--;
+                        e++;
+                    }
+                    if (d == 0 && swapArgsNamePlane(src[k + 1 .. e - 1]))
+                        out_ ~= Violation(file, line, lineTextAt(src, i));
+                }
+            }
+
             if (boundary && paren == 0 && cur() == Scope.Block && !inUnit()
                 && (word == "faces" || word == "vertices")) {
                 // Reject a DECLARATION (`immutable long faces = …;`): the
@@ -423,6 +489,24 @@ Violation[] scanForHandRolledRewrites(string file, string src) {
                         && !(k + 7 < src.length && isIdentChar(src[k + 7]))) {
                         k += 7;
                         ws();
+                    }
+                    // TASK 2007, second pass: `vertices[] = src[];`, the
+                    // BYTE-WISE content assignment. The character after the
+                    // identifier is `[`, so the bare-`=` test below never
+                    // reaches its operator and the form scanned as ZERO — with
+                    // one occurrence ALREADY in production
+                    // (`Mesh.adoptVertexPositions`, which now carries its own
+                    // reasoned kAllow entry). Consuming the empty `[]` here
+                    // lets the same `=` test judge it.
+                    else if (k + 1 < src.length && src[k] == '[') {
+                        size_t b = k + 1;
+                        while (b < src.length && isWhite(src[b])) b++;
+                        if (b < src.length && src[b] == ']') { k = b + 1; ws(); }
+                    }
+                    // UFCS spelling of finding #4: `faces.swap(tmp)`.
+                    if (k + 5 <= src.length && src[k .. k + 5] == ".swap"
+                        && !(k + 5 < src.length && isIdentChar(src[k + 5]))) {
+                        out_ ~= Violation(file, line, lineTextAt(src, i));
                     }
                     // A bare `=`, not `==` and not a compound op (those have
                     // a non-whitespace operator char between the identifier
@@ -508,6 +592,54 @@ unittest // shapes the scanner MUST flag
          ~ "found the OTHER real gap in (front- vs tail-truncated survivors)");
     assert(nFound("void f() { vertices = newVerts; }") == 1,
            "`vertices`, not only `faces`, must match");
+}
+
+unittest // TASK 2007 FINDING #4 and its second-pass sibling: the two WHOLE-ARRAY
+         // spellings that carry no `faces =` token. Both were built by the
+         // finding and both scanned as ZERO; revert either arm of
+         // `scanForHandRolledRewrites` and the matching assert here reddens.
+{
+    assert(nFound("void f() { swap(faces, tmp); }") == 1,
+           "`swap(faces, tmp)` replaces the whole array and must match — the "
+         ~ "identifier sits INSIDE a paren, which is exactly why the "
+         ~ "`paren == 0` trigger alone could not see it (task 2007 #4)");
+    assert(nFound("void f() { swap(m.vertices, tmp); }") == 1,
+           "a dotted receiver inside swap must match too");
+    assert(nFound("void f() { std.algorithm.mutation.swap(tmp, faces); }") == 1,
+           "the plane may be the SECOND argument, and the call may be "
+         ~ "fully qualified");
+    assert(nFound("void f() { faces.swap(tmp); }") == 1,
+           "the UFCS spelling of the same call must match");
+
+    assert(nFound("void f() { vertices[] = src[]; }") == 1,
+           "`vertices[] = src[];` is a byte-wise content assignment of the "
+         ~ "whole array — this exact line is in production "
+         ~ "(Mesh.adoptVertexPositions) and rode a fully green census until "
+         ~ "task 2007's second pass");
+    assert(nFound("void f() { m.faces[] = other[]; }") == 1,
+           "…and with a dotted receiver");
+}
+
+unittest // …and the shapes the two new arms must NOT flag, because a census that
+         // reddens on correct code is the same defect as one that cannot redden
+{
+    assert(nFound("void f() { swap(v.x, v.y); }") == 0,
+           "the two `swap(` calls under the scanned tree today are exactly "
+         ~ "this shape (mesh_ops/box_geom.d) — they name no plane and must "
+         ~ "stay silent");
+    assert(nFound("void f() { swap(facesCount, n); }") == 0,
+           "`facesCount` merely CONTAINS `faces` — whole-word or nothing");
+    assert(nFound("void f() { swap(a, b); }") == 0,
+           "an unrelated swap must not match");
+    assert(nFound("void f() { foreach (i, nf; newFaces) faces[i] = nf; }") == 0,
+           "THE DECIDED EXCLUSION (see `kIndexLoopFormNotScanned`): an "
+         ~ "INDEXED write is the ordinary spelling of a single in-place "
+         ~ "correction and occurs 35 times in the scanned tree today, so "
+         ~ "matching it would report 35 findings on correct code");
+    assert(nFound("void f() { auto n = faces[i] == x; }") == 0,
+           "an indexed COMPARISON must not match either");
+    assert(nFound("void f() { auto n = vertices[]; }") == 0,
+           "a whole-slice READ is not an assignment");
 }
 
 // ---------------------------------------------------------------------------
@@ -599,6 +731,27 @@ private immutable AllowEntry[] kAllow = [
       ~ "a saved count, not a renumbering", 2),
     AllowEntry("source/mesh_ops/loop_slice.d", "m.vertices = [",
         "fresh-mesh test helper: makeTwoDisjointCubes (fixture-only, not version(unittest)-gated)", 1),
+
+    // TASK 2007, second pass. `vertices[] = src[];` is a BYTE-WISE content
+    // assignment, and until this commit the scanner could not see the form at
+    // all (the char after the identifier is `[`, so the bare-`=` test never
+    // reached its operator) — the finding's own point was that this occurrence
+    // was ALREADY in production and riding through a fully green census.
+    //
+    // JUDGED SAFE, and the argument is the method's own, not an assumption:
+    // `adoptVertexPositions` refuses on a length mismatch, so it can only
+    // overwrite positions IN PLACE — no vertex is added, removed or renumbered,
+    // and there is nothing for `rewriteVertices` to carry. It publishes
+    // `MeshEditScope.Position` deliberately (NOT Geometry) so `topologyVersion`
+    // does not move, which is the whole reason the method exists (task 1620:
+    // the subpatch preview keys its index space on that counter). Its own doc
+    // comment already states the tracker decision — "No tracker hook, matching
+    // the other `commitChange(Position)` sites" — so this entry records a
+    // decision that was argued at the site, rather than granting a new one.
+    AllowEntry("source/mesh.d", "vertices[] = src[];",
+        "Mesh.adoptVertexPositions — in-place, length-checked POSITION "
+      ~ "overwrite; no vertex is added, removed or renumbered, so there is no "
+      ~ "plane to carry and rewriteVertices has nothing to do", 1),
 ];
 
 private bool allowed(string file, string text) {

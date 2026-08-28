@@ -1062,6 +1062,23 @@ unittest { // RECORDING: extrudeEdgesByMask op-log kinds + byteSize (cube, one e
     // `selSetMembersVertex` walks the MASK and an out-of-range entry makes the
     // `.v3d` loader drop the whole set), the line was added, and this revert
     // now round-trips every plane.
+    // TASK 2007 (findings #5 and its second-pass twin) RE-CHECKED HERE, and the
+    // answer is that there is nothing left to fix. Both findings were real when
+    // written: the assert then read
+    // `diffs.length == 1 && diffs[0].path == "vertexSetMask.length"`, and
+    // `meshPlaneDiffs` RETURNS on a length mismatch before comparing elements
+    // ("element paths would be noise past a length change"), so a value loss
+    // inside the already-grown array was invisible — the sweep planted one in
+    // `applyReindexReverse` and this file stayed green. Stage L2-c then pinned
+    // the residual to ZERO, which removed the length mismatch, and with the
+    // lengths equal `diffValue` DOES compare every element. Re-run of the
+    // sweep's own mutation
+    // (`m.vertexSetMask[0] = 0xDEADBEEFUL` after
+    // `selSetGatherVertexMaskReverse`): this line reddens with
+    // `[vertexSetMask[0]: 0 vs 3735928559]`. Rewriting it as an
+    // `assertResidualLaw`-style GROWTH-SHAPE check — which is what the card
+    // asked for — would be strictly WEAKER than `== 0`; that helper exists to
+    // characterise a residual that is expected, and this revert has none.
     assert(diffs.length == 0,
         "extrudeEdgesByMask: revert() left " ~ diffs.length.to!string
       ~ " residual plane(s), expected NONE: " ~ diffs.to!string
@@ -1120,6 +1137,14 @@ unittest { // RECORDING: extendEdgesByMask op-log kinds (cube, one edge)
     // PINNED DOWN TO ZERO at task 1903 Stage L2-c — see the sibling
     // `extrudeEdgesByMask` block above for the plane, the fix and the
     // user-visible half.
+    // TASK 2007 — same re-check as the sibling block above, and the same
+    // answer. This family is pure-add and records no `Reindex`, so the sweep's
+    // `applyReindexReverse` mutation could never reach it (verified: with the
+    // sibling block silenced, that mutation leaves this one green — the twin
+    // was asserted by analogy, not measured). The mutation that DOES land on
+    // this revert path is a value loss on the blanket length sync
+    // (`MeshEditDelta`'s `m.vertexSetMask.length = m.vertices.length;`), and
+    // this line reddens on it with `[vertexSetMask[0]: 0 vs 3735928559]`.
     assert(diffs.length == 0,
         "extendEdgesByMask: revert() left " ~ diffs.length.to!string
       ~ " residual plane(s), expected NONE: " ~ diffs.to!string

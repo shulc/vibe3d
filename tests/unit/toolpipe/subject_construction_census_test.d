@@ -50,6 +50,17 @@
 // not recognise as touching `mesh`/`selType`/etc. Those remain review
 // matters.
 //
+// `with (subj) { mesh = ...; }` LEFT THAT LIST at task 2007. The sweep
+// proved the hole live — `with (subj) { mesh = hideBatchMesh; }` planted
+// straight after `SubjectPacket subj;` in `source/command.d`, census green
+// at the same module count — and `withSubjectOf` + `scanFieldAssignments`'
+// `withStack` now cover both the braced and the braceless single-statement
+// form. A bare field name is counted ONLY inside a `with` bound to a name
+// this file already recognises as a `SubjectPacket`, and only when it is
+// not itself a dotted receiver's field, so the arm cannot fire on unrelated
+// code. `subj.tupleof[i] = ...` and the alias/template routes are still
+// review matters.
+//
 // Two more holes worth stating plainly because they read as exclusions
 // but are not: `version (unittest) { }` blocks are NOT excluded (only
 // a literal `unittest { }` body is — see "WHY FIELD ASSIGNMENT" above),
@@ -268,9 +279,40 @@ private bool[string] declaredSubjectPacketVars(string stripped) {
 /// `unittest { }` body (tracked via a brace stack that inherits its
 /// parent's "inside unittest" state, so a nested block within a unittest
 /// stays covered).
+/// TASK 2007 — `with (subj) { mesh = …; }`, the field write that carries no
+/// `subj.` prefix at all. This file's own header used to list the shape under
+/// "WHAT IT DOES NOT SEE"; the sweep then PROVED it live, planting
+/// `with (subj) { mesh = hideBatchMesh; }` straight after `SubjectPacket subj;`
+/// in `source/command.d` and watching the census stay green at the same module
+/// count. A hole a file names in its own header is still a hole.
+///
+/// Returns the SubjectPacket variable a `with (…)` head binds, or `null` if
+/// this head is not such a `with`. `head` is the token buffer the scanner
+/// accumulates since the last `{`/`}`/`;`, so it already has comments and
+/// string literals blanked out.
+private string withSubjectOf(string head, in bool[string] declared) {
+    auto h = head.strip;
+    if (h.length < 6 || h[$ - 1] != ')') return null;
+    // Walk back to the `(` matching the trailing `)`.
+    int d = 0;
+    size_t k = h.length;
+    while (k > 0) {
+        --k;
+        if (h[k] == ')') ++d;
+        else if (h[k] == '(') { --d; if (d == 0) break; }
+    }
+    if (d != 0 || k == 0) return null;
+    const string inner  = h[k + 1 .. $ - 1].strip;
+    const string before = h[0 .. k].strip;
+    if (before.length < 4 || before[$ - 4 .. $] != "with") return null;
+    if (before.length > 4 && isIdentChar(before[before.length - 5])) return null;
+    return (inner in declared) ? inner : null;
+}
+
 private FieldAssignment[] scanFieldAssignments(string stripped, in bool[string] declared) {
     auto out_ = appender!(FieldAssignment[]);
     bool[] unitStack;
+    string[] withStack;   // the SubjectPacket this frame's `with` binds, or null
     string head;
     size_t i = 0;
     while (i < stripped.length) {
@@ -280,12 +322,17 @@ private FieldAssignment[] scanFieldAssignments(string stripped, in bool[string] 
                 ? true
                 : (unitStack.length ? unitStack[$ - 1] : false);
             unitStack ~= nowUnit;
+            const string w = withSubjectOf(head, declared);
+            withStack ~= (w !is null)
+                ? w
+                : (withStack.length ? withStack[$ - 1] : null);
             head = "";
             i++;
             continue;
         }
         if (c == '}') {
             if (unitStack.length) unitStack = unitStack[0 .. $ - 1];
+            if (withStack.length) withStack = withStack[0 .. $ - 1];
             head = "";
             i++;
             continue;
@@ -297,6 +344,31 @@ private FieldAssignment[] scanFieldAssignments(string stripped, in bool[string] 
             while (j < stripped.length && isIdentChar(stripped[j])) j++;
             immutable string word = stripped[i .. j];
             immutable bool boundary = (i == 0 || !isIdentChar(stripped[i - 1]));
+
+            // The `with (subj)` arm: a BARE field name, no receiver. Active
+            // inside a braced `with` frame, and for the braceless
+            // single-statement form (`with (subj) mesh = x;`) via the head
+            // buffer, which still carries the `with (subj)` tokens.
+            if (boundary && subjectFields.canFind(word)) {
+                string wsub = withStack.length ? withStack[$ - 1] : null;
+                if (wsub is null) wsub = withSubjectOf(head, declared);
+                if (wsub !is null) {
+                    // Not `other.mesh = …` — a dotted receiver is the first
+                    // arm's business, and counting it here would double-report.
+                    size_t b = i;
+                    while (b > 0 && isWhite(stripped[b - 1])) --b;
+                    immutable bool dotted = (b > 0 && stripped[b - 1] == '.');
+                    size_t eqW = j;
+                    skipWs(stripped, eqW);
+                    if (!dotted && eqW < stripped.length && stripped[eqW] == '='
+                        && (eqW + 1 >= stripped.length || stripped[eqW + 1] != '=')) {
+                        immutable bool insideUnitW = unitStack.length && unitStack[$ - 1];
+                        if (!insideUnitW)
+                            out_ ~= FieldAssignment(lineAt(stripped, i), wsub, word,
+                                                    lineTextAt(stripped, i));
+                    }
+                }
+            }
 
             if (boundary && (word in declared)) {
                 size_t m = j;
@@ -424,6 +496,71 @@ unittest {
     auto declEq = declaredSubjectPacketVars(stripCommentsAndStrings(srcEq));
     auto vEq = scanFieldAssignments(stripCommentsAndStrings(srcEq), declEq);
     assert(vEq.length == 0, "`==` is a comparison, not an assignment");
+
+    // TASK 2007 — the `with (subj)` arm. The field write carries no `subj.`
+    // prefix; before this arm the scan read ZERO on every shape below, which
+    // the sweep proved live in `source/command.d` with the census green.
+    static FieldAssignment[] scanBoth(string src) {
+        const st = stripCommentsAndStrings(src);
+        return scanFieldAssignments(st, declaredSubjectPacketVars(st));
+    }
+
+    {
+        auto v = scanBoth("void f() { SubjectPacket subj; "
+            ~ "with (subj) { mesh = hideBatchMesh; } }");
+        assert(v.length == 1, format(
+            "`with (subj) { mesh = …; }` scanned as %d assignment(s), expected "
+          ~ "1 — this is task 2007's live-proven hole, the one this file used "
+          ~ "to name in its own header as uncovered", v.length));
+        assert(v[0].varName == "subj" && v[0].fieldName == "mesh",
+            format("%s.%s", v[0].varName, v[0].fieldName));
+    }
+    {
+        auto v = scanBoth("void f() { SubjectPacket subj; "
+            ~ "with (subj) { if (x) { selType = SelType.Vertex; } } }");
+        assert(v.length == 1, "a NESTED block inside the with-frame is still "
+            ~ "the with-frame");
+    }
+    {
+        auto v = scanBoth("void f() { SubjectPacket subj; "
+            ~ "with (subj) mesh = m; }");
+        assert(v.length == 1, "the braceless single-statement `with` must "
+            ~ "be covered too");
+    }
+    {
+        auto v = scanBoth("void f() { SubjectPacket subj; "
+            ~ "with (subj) { auto m = mesh; } }");
+        assert(v.length == 0, "a field READ inside a with-frame is not a "
+            ~ "decision and must not match");
+    }
+    {
+        auto v = scanBoth("void f() { SubjectPacket subj; "
+            ~ "with (subj) { if (selType == SelType.Item) {} } }");
+        assert(v.length == 0, "`==` inside a with-frame is a comparison");
+    }
+    {
+        // THE FALSE-POSITIVE CONTROL. `mesh` is an ordinary identifier all
+        // over this tree; the arm must fire only inside a `with` bound to a
+        // name this file already knows is a SubjectPacket.
+        auto v = scanBoth("void f() { SubjectPacket subj; "
+            ~ "with (app) { mesh = other; } mesh = third; }");
+        assert(v.length == 0, format(
+            "a bare `mesh = …` outside any SubjectPacket `with` was counted "
+          ~ "(%d) — a census that reddens on correct code is the same defect "
+          ~ "as one that cannot redden", v.length));
+    }
+    {
+        auto v = scanBoth("void f() { SubjectPacket subj; "
+            ~ "with (subj) { other.mesh = m; } }");
+        assert(v.length == 0, "a DOTTED receiver inside a with-frame belongs "
+            ~ "to the first arm's rule, not this one — and `other` is not a "
+            ~ "declared SubjectPacket here");
+    }
+    {
+        auto v = scanBoth("void f() { SubjectPacket subj; "
+            ~ "unittest { with (subj) { mesh = m; } } }");
+        assert(v.length == 0, "the unittest exclusion applies to the with-arm too");
+    }
 
     string srcGet = "void f(ref VectorStack vts) { "
         ~ "auto subj = vts.get!SubjectPacket(); subj.mesh = null; }";

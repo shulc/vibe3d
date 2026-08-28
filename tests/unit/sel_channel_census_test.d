@@ -109,9 +109,11 @@ private enum size_t kMarkerWindow = 12;
 // ---------------------------------------------------------------------------
 // The stripper. Verbatim algorithm from `version_poll_census_test.d`
 // (blankNonCode there, `package`-visibility so it is not duplicated here) —
-// same caveats apply: wysiwyg (`r"…"`) and token (`q"…"`, `q{…}`) strings
-// desync the scanner from that point on; none appear in the files this scans
-// today, and `filesScanned` below is what notices if one arrives.
+// wysiwyg (`r"…"`) and token (`q"…"`, `q{…}`) strings are LEXED there since
+// task 2007 — the note that used to stand here said none appeared in the
+// scanned files, which was measured FALSE for `q{…}` (three source files carry
+// it, one of them a kRemainder file). `filesScanned` below still notices a
+// desync from any form nobody has thought of.
 // ---------------------------------------------------------------------------
 import tests.unit.version_poll_census_test : blankNonCode;
 

@@ -74,6 +74,168 @@ private enum size_t kBgAddr = 0x00_DBFF_0000;   // never born, never published
 /// Mode A: births only. Returns the 1-based N at which `epochFor(kBgAddr)`
 /// first differs from its post-reset baseline, or -1 if it never does within
 /// `upTo` births.
+// ---------------------------------------------------------------------------
+// THE WATCHER-DECLARATION SCAN (task 1932 review fix 1; STRUCTURAL since task
+// 2007 finding #6).
+//
+// WHAT CHANGED AND WHY. The scan used to be a literal prefix test —
+// `t.startsWith("__gshared MeshDirtyEpochs ")` — which is a check on the
+// SPELLING of a declaration, not on its TYPE. Task 2007 built the escape and
+// ran it: with
+//
+//     alias Epochs = MeshDirtyEpochs;
+//     __gshared Epochs g_settledGeomEpochsViaAlias;
+//
+// the fourth watcher does not even enter the `declared` list, so the
+// `allWatchers()` cross-check never runs on it and
+// `resetMeshDirtyStateForTest()` silently leaves it dirty between cells —
+// the exact leak the gate exists to refuse.
+//
+// The scan below reads the TYPE token structurally (`__gshared <type> <name>`)
+// and resolves it through this module's own module-level `alias` declarations
+// before comparing it with `MeshDirtyEpochs`. It also tolerates a leading
+// visibility/storage attribute, so `private __gshared …` cannot hide a
+// declaration either — `mesh_dirty.d` already spells `g_births` that way.
+// ---------------------------------------------------------------------------
+
+private bool isDeclIdentChar(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+        || (c >= '0' && c <= '9') || c == '_';
+}
+
+/// Drop leading attributes so the `__gshared` / `alias` keyword can be found
+/// at the head of the statement whatever decorates it.
+private string stripLeadingAttrs(string t) {
+    import std.string : startsWith, strip;
+    static immutable string[] kAttrs = [
+        "private ", "public ", "package ", "protected ", "export ",
+        "static ", "deprecated ", "shared ",
+    ];
+    bool moved = true;
+    while (moved) {
+        moved = false;
+        foreach (a; kAttrs)
+            if (t.startsWith(a)) { t = t[a.length .. $].strip; moved = true; break; }
+    }
+    return t;
+}
+
+/// The bare type NAME behind a type token: drop a module qualification
+/// (`mesh_dirty.MeshDirtyEpochs`) and any array/pointer suffix
+/// (`MeshDirtyEpochs[4]`, `MeshDirtyEpochs*`). An array OF watchers is
+/// deliberately reduced to the element type so it still enters the list and
+/// the `allWatchers()` cross-check gets to refuse it, rather than escaping as
+/// an unrecognised type.
+private string coreTypeName(string tok) {
+    size_t e = 0;
+    while (e < tok.length && (isDeclIdentChar(tok[e]) || tok[e] == '.')) ++e;
+    tok = tok[0 .. e];
+    size_t d = tok.length;
+    while (d > 0 && tok[d - 1] != '.') --d;
+    return tok[d .. $];
+}
+
+/// Module-level `alias <name> = <type>;` map for one source text.
+private string[string] aliasMapOf(string src) {
+    import std.string : splitLines, strip, startsWith, indexOf;
+    string[string] m;
+    foreach (ln; src.splitLines) {
+        auto t = stripLeadingAttrs(ln.strip);
+        if (!t.startsWith("alias ")) continue;
+        auto rest = t["alias ".length .. $];
+        const eq = rest.indexOf('=');
+        if (eq < 0) continue;
+        const name = rest[0 .. eq].strip;
+        auto rhs = rest[eq + 1 .. $].strip;
+        const sc = rhs.indexOf(';');
+        if (sc >= 0) rhs = rhs[0 .. sc].strip;
+        if (!name.length || !rhs.length) continue;
+        // A single identifier on the left, or it is a template alias / a
+        // parameter list this scan has no business resolving.
+        bool plain = true;
+        foreach (c; name) if (!isDeclIdentChar(c)) { plain = false; break; }
+        if (!plain) continue;
+        m[name] = coreTypeName(rhs);
+    }
+    return m;
+}
+
+/// Follow the alias chain to a fixed point (bounded, so a cyclic alias — which
+/// would not compile anyway — cannot hang the scan).
+private string resolveAlias(string t, string[string] aliases) {
+    foreach (_; 0 .. 8) {
+        auto p = t in aliases;
+        if (p is null) break;
+        if (*p == t) break;
+        t = *p;
+    }
+    return t;
+}
+
+/// Every `__gshared` global in `src` whose type RESOLVES to `typeName`, by
+/// declared name. This is the structural replacement for the literal prefix
+/// test task 2007 finding #6 defeated.
+private string[] gsharedDeclsOfType(string src, string typeName) {
+    import std.string : splitLines, strip, startsWith;
+    auto aliases = aliasMapOf(src);
+    string[] found;
+    foreach (ln; src.splitLines) {
+        auto t = stripLeadingAttrs(ln.strip);
+        if (!t.startsWith("__gshared ")) continue;
+        auto rest = t["__gshared ".length .. $].strip;
+        // <type> <name>
+        size_t e = 0;
+        while (e < rest.length && rest[e] != ' ' && rest[e] != '\t') ++e;
+        if (e == 0 || e >= rest.length) continue;
+        const typeTok = rest[0 .. e];
+        if (resolveAlias(coreTypeName(typeTok), aliases) != typeName) continue;
+        auto nameRest = rest[e .. $].strip;
+        size_t n = 0;
+        while (n < nameRest.length && isDeclIdentChar(nameRest[n])) ++n;
+        if (n == 0) continue;
+        found ~= nameRest[0 .. n];
+    }
+    return found;
+}
+
+unittest { // the scan's own cells — it must find the direct form, the
+           // ALIASED form (task 2007 finding #6's escape), and nothing else
+    enum string probe = q"PROBE
+alias Epochs = MeshDirtyEpochs;
+alias Chain  = Epochs;
+__gshared MeshDirtyEpochs g_displayEpochs = MeshDirtyEpochs.make(1);
+__gshared MeshDirtyEpochs g_geomEpochs =
+    MeshDirtyEpochs.make(2);
+__gshared Epochs g_viaAlias;
+__gshared Chain  g_viaChainedAlias;
+private __gshared MeshDirtyEpochs g_private;
+__gshared MeshBirthTable g_births;
+__gshared ulong g_bgGpuUploads;
+private __gshared MeshBirthTable g_birthsPrivate;
+PROBE";
+    auto d = gsharedDeclsOfType(probe, "MeshDirtyEpochs");
+    assert(d.length == 5, format(
+        "expected five MeshDirtyEpochs globals (two direct, two aliased, one "
+      ~ "private) — got %d: %s. The ALIASED pair is task 2007 finding #6: "
+      ~ "revert `gsharedDeclsOfType` to the literal "
+      ~ "`startsWith(\"__gshared MeshDirtyEpochs \")` and they vanish, taking "
+      ~ "the allWatchers() cross-check with them.", d.length, d));
+    foreach (want; ["g_displayEpochs", "g_geomEpochs", "g_viaAlias",
+                    "g_viaChainedAlias", "g_private"]) {
+        bool got = false;
+        foreach (n; d) if (n == want) { got = true; break; }
+        assert(got, format("declaration `%s` was not found: %s", want, d));
+    }
+    foreach (never; ["g_births", "g_bgGpuUploads", "g_birthsPrivate"]) {
+        bool got = false;
+        foreach (n; d) if (n == never) { got = true; break; }
+        assert(!got, format(
+            "`%s` is NOT a MeshDirtyEpochs and must not be listed — a scan "
+          ~ "that reddens on correct code is the same defect as one that "
+          ~ "cannot redden: %s", never, d));
+    }
+}
+
 private int firstShiftModeA(int upTo) {
     resetMeshDirtyStateForTest();
     const ulong baseline = g_geomEpochs.epochFor(kBgAddr);
@@ -194,7 +356,10 @@ unittest {
     // Text scan, deliberately: the declarations are `__gshared` globals, so
     // there is no reflection that enumerates them, and a count taken from the
     // same list the body uses would be the check that cannot come out
-    // differently.
+    // differently. It is a STRUCTURAL text scan since task 2007 finding #6 —
+    // by resolved TYPE, not by the spelling of the declaration — because a
+    // one-line `alias` was enough to make a fourth watcher invisible to the
+    // literal prefix this cell used to test.
     import std.file    : readText;
     import std.path    : buildPath, dirName;
     import std.algorithm : count, canFind;
@@ -204,14 +369,9 @@ unittest {
     enum string kRepoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
     const src = readText(buildPath(kRepoRoot, "source", "mesh_dirty.d"));
 
-    string[] declared;
-    foreach (ln; src.splitLines) {
-        const t = ln.strip;
-        if (!t.startsWith("__gshared MeshDirtyEpochs ")) continue;
-        auto rest = t["__gshared MeshDirtyEpochs ".length .. $].strip;
-        const cut = rest.indexOf(' ');
-        declared ~= (cut < 0 ? rest : rest[0 .. cut]);
-    }
+    // STRUCTURAL, not textual — see `gsharedDeclsOfType` above and task 2007
+    // finding #6 for the `alias Epochs = MeshDirtyEpochs;` escape this closes.
+    string[] declared = gsharedDeclsOfType(src, "MeshDirtyEpochs");
     assert(declared.length >= 3, format(
         "PREMISE: the scan found %d `__gshared MeshDirtyEpochs` declarations in "
       ~ "source/mesh_dirty.d; this module declares at least three (display / "
