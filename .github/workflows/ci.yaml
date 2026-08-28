@@ -13,7 +13,9 @@ on:
 permissions:
   contents: read
   # actions: read — task 2040's nightly-freshness step below asks the API for
-  # the age of the last nightly-perf run; nothing else in this job needs it.
+  # the age of the last nightly-perf run (and, since task 2580, the age and
+  # drift of the last SCHEDULE-triggered run specifically); nothing else in
+  # this job needs it.
   actions: read
 
 # Self-hosted runner has a small disk. Cancel an in-progress run on the same
@@ -87,13 +89,47 @@ jobs:
     # otherwise UNMODIFIED — no proxy override, no `--noproxy`, see
     # tools/ci/nightly_freshness.d's own header for why a bypass here is
     # exactly the mistake that made three other lanes red for a day.
-    - name: 'Nightly-perf freshness (task 2040)'
+    #
+    # TASK 2580 — same step, a SECOND term. "Figures are fresh" (above) is
+    # not "the schedule is delivering": a manual `workflow_dispatch` resets
+    # the freshness clock but not a genuinely broken cron, and that is
+    # exactly what hid a missed night for a day on 2026-08-28 (three manual
+    # dispatches in one afternoon). The tool now also checks the age of the
+    # last SCHEDULE-triggered run alone (its own threshold — a workflow_
+    # dispatch cannot reset it) and prints median/max delivery drift.
+    #
+    # GATE OR REPORT for this second term is the owner's call, not decided
+    # here (see the tool's own header, "GATE OR REPORT"). Mechanically, this
+    # step's own exit code IS what the final aggregate gate below reads
+    # (`steps.nightly_freshness.outcome`) — there is no free middle ground of
+    # "this step goes red but the build stays green", so the honest choice is
+    # between two states, not three:
+    #   - default (no flag): only term 1 (figure freshness) drives this
+    #     step's exit code, exactly as task 2040 shipped it. A stopped
+    #     schedule is still ALWAYS printed (this step's own log) and ALWAYS
+    #     surfaced as its own line in the job summary below (piped through
+    #     `tee` so the summary step can read it back) — visible to anyone who
+    #     opens the summary, without failing anyone's unrelated PR.
+    #   - `--gate-schedule-health` added to the `run:` line: term 2 also
+    #     drives this step's exit code, which — because of the wiring above —
+    #     means a stopped schedule then fails the WHOLE job for every push/PR
+    #     until it is fixed. That is a real cost (task 2580's own words: "не
+    #     чинится тем, кто открыл PR, и красить ему сборку значит наказывать
+    #     не того").
+    # RECOMMENDATION (mine, not the owner's): stay with the default. The
+    # job-summary line already makes this NOT silent — the exact shape task
+    # 2040 was written to reject — without repeating task 2040's own choice
+    # (which DOES gate) for a failure mode whose fix is not in the PR
+    # author's hands. Flip the one flag above if that judgment call is wrong.
+    - name: 'Nightly-perf freshness (task 2040) + schedule delivery (task 2580)'
       id: nightly_freshness
       continue-on-error: true
       timeout-minutes: 5
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: rdmd tools/ci/nightly_freshness.d
+      run: |
+        set -o pipefail
+        rdmd tools/ci/nightly_freshness.d | tee nightly_freshness_output.log
 
     # nfde is now a VENDORED path dep (third_party/nfde, task 0431). Its C lib
     # (nativefiledialog-extended/out/src/libnfd.a) is produced by the package's
@@ -247,6 +283,24 @@ jobs:
           echo "## Test results"
           echo ""
           echo "- Nightly-perf freshness (task 2040): **${{ steps.nightly_freshness.outcome }}**"
+          # Task 2580's schedule-health term shares the step above but is
+          # report-only by default (see that step's own comment) — its
+          # verdict does not show up in the outcome word on the line above,
+          # so surface it here EXPLICITLY every run, not only on request,
+          # which is the whole point: a number that only prints when someone
+          # goes looking is the exact shape task 2040 was written to reject.
+          if [ -f nightly_freshness_output.log ]; then
+            SCHED_LINE=$(grep -m1 'schedule delivery' nightly_freshness_output.log || true)
+            if [ -n "$SCHED_LINE" ]; then
+              if echo "$SCHED_LINE" | grep -q 'CRON STOPPED'; then
+                echo "  - ⚠️ schedule delivery (task 2580): \`${SCHED_LINE}\`"
+              else
+                echo "  - schedule delivery (task 2580): \`${SCHED_LINE}\`"
+              fi
+            fi
+            DRIFT_LINE=$(grep -m1 'schedule drift' nightly_freshness_output.log || true)
+            [ -n "$DRIFT_LINE" ] && echo "  - \`${DRIFT_LINE}\`"
+          fi
           echo "- Render config compiles (\`--config=with-render\`, compile only): **${{ steps.render_compile.outcome }}**"
           echo "- Embedded unit tests (\`dub test --config=tests\`): **${{ steps.unit.outcome }}**"
           echo ""
