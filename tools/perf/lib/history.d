@@ -5,6 +5,7 @@ module lib.history;
 // back with no vibe3d launch/build.
 
 import std.algorithm : sort, endsWith;
+import std.algorithm.mutation : reverse;
 import std.array     : appender;
 import std.conv      : to;
 import std.datetime.systime : Clock;
@@ -19,6 +20,7 @@ import std.string        : lineSplitter, strip;
 
 import lib.baseline : RunHeader;
 import lib.stats    : jsonNum;
+import lib.vslast;
 
 string historyDir(string repoRoot) {
     return buildPath(repoRoot, "tools", "perf", "history");
@@ -312,8 +314,72 @@ enum double kSnapQueryVsLastThreshold = 0.60;
 // one `kill` away — not to report health it did not establish.
 enum int kVsLastNoVerdict = -2;
 
+// The metric suffixes that are RECORDED into the history file but are not
+// timing medians and must never reach the comparison. Two different reasons,
+// kept apart deliberately (see the long note above `kSnapQueryVsLastThreshold`
+// and tasks 2030 / 2070): `#rssDeltaKb` and the three `#gc*` keys are
+// un-baselined side channels, while `#kernelP95Us` is not a measurement OF the
+// case at all — it is the SPREAD of the case's own repeats, which task 2420's
+// gate consumes as a band term. Comparing a spread day over day would gate the
+// noise instead of the signal.
+private bool isNonGatedMetric(string name) {
+    return name.endsWith("#rssDeltaKb")
+        || name.endsWith("#gcAllocBytes")
+        || name.endsWith("#gcCollections")
+        || name.endsWith("#gcMaxPauseNs")
+        || name.endsWith("#kernelP95Us");
+}
+
+/// The suffix `run.d` writes this case's own p95-over-repeats under, and the
+/// suffix the same-night band arm reads back. One spelling, one place.
+enum string kP95Suffix = "#kernelP95Us";
+
+// Builds the gate's view of one comparison: every gated key present in BOTH
+// rows, carrying its p95 side channel and its own prior series.
+//
+// `prior` must be the comparable, uncontaminated entries STRICTLY EARLIER than
+// `current`, oldest first — the judged run's own value must not appear in any
+// case's `priorSeries`, or the band would widen by exactly the regression it is
+// judging (CLAUDE.md's "the threshold is derived from the measurement it is
+// meant to judge"; task 1840 paid for one of those already).
+lib.vslast.CaseObservation[] buildObservations(
+        const ref HistoryEntry current, const ref HistoryEntry prev,
+        const(HistoryEntry)[] prior, double floorUs) {
+    lib.vslast.CaseObservation[] obs;
+    auto names = current.medians.keys;
+    names.sort();
+    foreach (name; names) {
+        if (isNonGatedMetric(name)) continue;
+        auto pp = name in prev.medians;
+        if (pp is null) continue;                       // new case — no reference
+        double cur = current.medians[name], prv = *pp;
+        if (cur.isNaN || prv.isNaN) continue;
+        if (cur < floorUs && prv < floorUs) continue;   // µs-jitter band
+        lib.vslast.CaseObservation o;
+        o.name   = name;
+        o.prevUs = prv;
+        o.curUs  = cur;
+        double sideOf(const ref HistoryEntry e, string suffix) {
+            if (auto v = (name ~ suffix) in e.medians) return *v;
+            return double.nan;
+        }
+        o.curP95Us  = sideOf(current, kP95Suffix);
+        o.prevP95Us = sideOf(prev,    kP95Suffix);
+        double[] series;
+        foreach (ref e; prior)
+            if (auto v = name in e.medians)
+                if (!(*v).isNaN) series ~= *v;
+        o.priorSeries = series;
+        obs ~= o;
+    }
+    return obs;
+}
+
 int checkVsLast(HistoryEntry[] entries, double threshold, double snapThreshold,
-                double floorUs) {
+                double floorUs, lib.vslast.GateParams params) {
+    params.defaultThreshold = threshold;
+    params.snapThreshold    = snapThreshold;
+
     if (entries.length == 0) {
         writeln("vs-last: no history yet — nothing to compare (PASS)");
         return -1;
@@ -339,10 +405,13 @@ int checkVsLast(HistoryEntry[] entries, double threshold, double snapThreshold,
     HistoryEntry prev;
     bool found = false;
     int skippedContaminated = 0;
+    HistoryEntry[] prior;                 // oldest → newest, current EXCLUDED
     foreach_reverse (e; entries[0 .. $ - 1]) {
         if (!comparableEntries(e, current)) continue;
-        if (e.contaminated) { skippedContaminated++; continue; }
-        prev = e; found = true; break;
+        if (e.contaminated) { if (!found) skippedContaminated++; continue; }
+        if (!found) { prev = e; found = true; }
+        prior ~= e;
+        if (prior.length >= params.priorWindow) break;
     }
     if (skippedContaminated > 0)
         writefln("vs-last: skipped %d contaminated entry/entries while looking "
@@ -351,82 +420,54 @@ int checkVsLast(HistoryEntry[] entries, double threshold, double snapThreshold,
         writeln("vs-last: no comparable previous run — nothing to compare (PASS)");
         return -1;
     }
+    prior.reverse();                       // foreach_reverse gathered newest-first
 
-    import std.datetime.systime : SysTime;
-    writefln("vs-last: comparing ts=%d against ts=%d (ops n=%d %s, threshold +%.0f%%" ~
-             " [+%.0f%% for #snapQuery], floor %.0f µs)",
-             current.ts, prev.ts, current.header.n, current.header.meshType,
-             threshold * 100.0, snapThreshold * 100.0, floorUs);
+    auto obs = buildObservations(current, prev, prior, floorUs);
+    immutable double scale = lib.vslast.runScale(obs, params);
 
-    struct Row { string name; double prevUs, curUs; }
-    Row[] regressed;
-    Row[] improved;
+    if (params.flat)
+        writefln("vs-last: comparing ts=%d against ts=%d (ops n=%d %s, FLAT mode:"
+                 ~ " one threshold +%.0f%% [+%.0f%% for #snapQuery], floor %.0f µs)",
+                 current.ts, prev.ts, current.header.n, current.header.meshType,
+                 threshold * 100.0, snapThreshold * 100.0, floorUs);
+    else
+        writefln("vs-last: comparing ts=%d against ts=%d (ops n=%d %s, per-case band:"
+                 ~ " max(floor %.0f%%, own p95/median, %.1f× own prior spread);"
+                 ~ " %d earlier run(s) feed the band; run common-mode ×%.4f;"
+                 ~ " no-history fallback +%.0f%% [+%.0f%% #snapQuery]; floor %.0f µs)",
+                 current.ts, prev.ts, current.header.n, current.header.meshType,
+                 params.bandFloor * 100.0, params.bandSigma, prior.length, scale,
+                 threshold * 100.0, snapThreshold * 100.0, floorUs);
+
+    struct Row { lib.vslast.CaseObservation o; lib.vslast.Verdict v; }
+    Row[] regressed, improved;
     int compared = 0;
-    auto names = current.medians.keys;
-    names.sort();
-    foreach (name; names) {
-        auto pp = name in prev.medians;
-        if (pp is null) continue;                       // new case — no reference
-        double cur = current.medians[name], prv = *pp;
-        if (cur.isNaN || prv.isNaN) continue;
-        // Task 2030 — memory columns (`#rssDeltaKb`) are RECORDED into this
-        // same history file but deliberately NOT gated: one night's numbers
-        // are not a threshold, and RSS deltas are noisier host-to-host than
-        // a timing median (allocator/OS page-reclaim behaviour, not just
-        // scheduling). A separate, explicit skip rather than folding it into
-        // the floor check below, so the day someone sets a real memory
-        // threshold, deleting this one line is the whole diff.
-        if (name.endsWith("#rssDeltaKb")) continue;
-        // Task 2070 — THE GC COLUMNS ARE RECORDED AND DELIBERATELY NOT
-        // GATED, and this skip is written out rather than left implicit so
-        // the exclusion is a decision on the record instead of an oversight
-        // someone later reads as one.
-        //
-        // Two separate reasons, because they retire at different times:
-        //
-        //  * `#gcAllocBytes` is the one that could plausibly carry a gate
-        //    soonest — it is a COUNTER, not a sample, so it does not have
-        //    the run-to-run spread that makes `#rssDeltaKb` unusable (the
-        //    two spreads sit side by side in results.json for exactly this
-        //    comparison). What it still lacks is a baseline: one night's
-        //    numbers are not a threshold.
-        //  * `#gcCollections` and `#gcMaxPauseNs` are worse than un-baselined,
-        //    they are structurally wrong for THIS check. Both are legitimately
-        //    0 on most cases, and the comparison below is a RATIO against the
-        //    previous run: a case going 0 -> 1 collections is an infinite
-        //    regression, and a 2 ms pause landing in one run and not the next
-        //    would red the lane for the GC's scheduling rather than for any
-        //    change to our code. A pause gate wants an ABSOLUTE budget
-        //    (16.7 ms), not a ratio, and that is a different check.
-        //
-        // Also: `floorUs` below is a MICROSECOND floor. Bytes and nanoseconds
-        // are not commensurate with it, so falling through to it would not
-        // merely gate these too eagerly, it would compare them against a
-        // number in the wrong unit.
-        if (name.endsWith("#gcAllocBytes")
-         || name.endsWith("#gcCollections")
-         || name.endsWith("#gcMaxPauseNs")) continue;
-        if (cur < floorUs && prv < floorUs) continue;   // µs-jitter band
+    foreach (ref o; obs) {
+        auto v = lib.vslast.judge(o, scale, params);
         compared++;
-        // The `#snapQuery` keys get their OWN threshold, resolved by the
-        // caller — NOT `max(threshold, kSnapQueryVsLastThreshold)` (review
-        // fix, task 1358). `max` made +60% a FLOOR: an operator hunting a
-        // small snap regression with `--vs-last-threshold 0.05` got 5% on
-        // every key EXCEPT the ones they were hunting, which is the exact
-        // inverse of what they asked for. It is a separate parameter now, and
-        // run.d pulls it down when the operator tightens the general one.
-        immutable double thr = name.endsWith("#snapQuery")
-            ? snapThreshold : threshold;
-        if (cur > prv * (1.0 + thr)) regressed ~= Row(name, prv, cur);
-        else if (prv > cur * (1.0 + thr)) improved ~= Row(name, prv, cur);
+        if (v.call == lib.vslast.Call.regressed) regressed ~= Row(o, v);
+        else if (v.call == lib.vslast.Call.improved) improved ~= Row(o, v);
     }
 
-    foreach (r; improved)
-        writefln("  [ok]   %-32s %12.1f -> %12.1f µs  (%+.0f%%, improved)",
-                 r.name, r.prevUs, r.curUs, (r.curUs / r.prevUs - 1.0) * 100.0);
-    foreach (r; regressed)
-        writefln("  [FAIL] %-32s %12.1f -> %12.1f µs  (%+.0f%%)",
-                 r.name, r.prevUs, r.curUs, (r.curUs / r.prevUs - 1.0) * 100.0);
+    // The band's SOURCE is printed with every row, so a verdict a reader
+    // disagrees with names the layer to argue with rather than a bare number.
+    string why(const ref lib.vslast.Verdict v) {
+        final switch (v.band.source) {
+            case lib.vslast.BandSource.floor:     return format("floor %.0f%%", v.band.pct);
+            case lib.vslast.BandSource.sameNight: return format("own p95/median %.0f%%", v.band.sameNightPct);
+            case lib.vslast.BandSource.spread:    return format("%.1f× its own prior spread %.1f%%", params.bandSigma, v.band.spreadPct);
+            case lib.vslast.BandSource.fallback:  return params.flat ? "flat threshold"
+                                                                     : "no measured spread yet";
+        }
+    }
+    foreach (ref r; improved)
+        writefln("  [ok]   %-32s %12.1f -> %12.1f µs  (%+.0f%%, improved; band %.0f%% from %s)",
+                 r.o.name, r.o.prevUs, r.o.curUs, r.v.movePct, r.v.band.pct, why(r.v));
+    foreach (ref r; regressed)
+        writefln("  [FAIL] %-32s %12.1f -> %12.1f µs  (%+.0f%%, %+.0f%% after common-mode;"
+                 ~ " band %.0f%% from %s)",
+                 r.o.name, r.o.prevUs, r.o.curUs, r.v.movePct, r.v.scaledMovePct,
+                 r.v.band.pct, why(r.v));
     writefln("vs-last: %d case(s) compared, %d regressed, %d improved — %s",
              compared, cast(int)regressed.length, cast(int)improved.length,
              regressed.length ? "FAIL" : "PASS");

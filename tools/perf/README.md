@@ -521,17 +521,54 @@ rdmd tools/perf/run.d --vs-last --vs-last-threshold 0.3 --vs-last-floor 500
 ```
 
 Compares the latest history entry against the previous COMPARABLE `ops` run
-and exits nonzero when any per-case kernel median grew past the threshold
-(default +20%). Cases where both sides sit under the floor (default 200 µs)
-are skipped — sub-100µs medians jitter multiplicatively. `#snapQuery` keys
-gate at **+60%** instead (`--vs-last-snap-threshold`): measured over ten
+and exits nonzero when any per-case kernel median grew past **that case's own
+band** (task 2420 — before it, one threshold of +20% for every case). Cases
+where both sides sit under the floor (default 200 µs) are skipped —
+sub-100µs medians jitter multiplicatively.
+
+**The band, and why it is not one number.** Measured over this host's whole
+recorded history — 21 comparable `n=316` runs, 1299 consecutive-run
+comparisons — the old +20% sat exactly on the p90 of the noise (p50 1.9%,
+p75 4.9%, p90 14.4%, p95 41.3%), so it was simultaneously too loose for the
+73 of 90 cases whose median move is under 5% and too tight for a noisy
+handful. Raising it only widens the first hole. The gate now asks whether a
+case moved further than THIS CASE moves:
+
+* **the run's common mode** (`runScale`) — the median of every compared
+  case's cur/prev ratio, divided out. It is 0.98-1.01 on 19 of 20 recorded
+  pairs and does nothing; on the one pair where the host itself got 6%
+  slower over four days it is 1.061 and it stops 21 cases reddening for a
+  fact about the machine. Blind spot, stated: a regression that slows every
+  case equally is divided out — that is the absolute lane's job (I1a/I1b and
+  `baseline.json`), as it was before.
+* **the case's own sample spread**, `#kernelP95Us / median` over that run's
+  own repeats. Measured 2026-08-28, four consecutive runs at one HEAD on a
+  quiet host: `remove/vertices/whole` reads p95/median 1.09-1.43 and swings
+  29.5% (17382→22512 µs) with nothing changed, while every
+  `falloff=radial|linear|cylinder` case reads 1.002-1.035 and holds inside
+  2%. One column separates them; no threshold does.
+* **`--vs-last-band-sigma` × the case's own PRIOR between-run spread**
+  (default 5), for rows predating that column, computed from runs STRICTLY
+  EARLIER than the one being judged.
+* floored at `--vs-last-band-floor` (default +5%): the smallest move that can
+  ever be called a regression. A +10% plant in a case whose noise is under 1%
+  reds; the old gate was silent on it.
+
+`--vs-last-flat` reproduces the pre-2420 single-threshold verdict, so the two
+gates can be A/B'd over one history file. `#snapQuery` keys keep their own
+**+60%** as the *no-history fallback* (`--vs-last-snap-threshold`): measured over ten
 consecutive runs their worst consecutive-run step is +17.7%
 (`move/snap=edge`), so +20% would flake nightly, while +60% is still a factor
 of 33 — about one and a half orders of magnitude — below the regression the
 key exists for (that one was +2000%). Lowering `--vs-last-threshold` below
 +60% lowers the snap keys with it, so an operator hunting a small regression
 is not locked out of the keys they are hunting. The derivation, with the
-per-case numbers, is at `kSnapQueryVsLastThreshold` in `lib/history.d`. Like `--trend` it
+per-case numbers, is at `kSnapQueryVsLastThreshold` in `lib/history.d`; the
+band's own derivation, its rejected alternatives and the term that was built
+and then deleted for being inert are at the head of `lib/vslast.d`, and its
+witness is `tests/unit/perf_vslast_gate_test.d` (which runs in
+`dub test --config=tests`, the first thing under `tools/perf/` that runs in a
+gate lane at all — see D1). Like `--trend` it
 is a pure history read. This is the gating signal of the **nightly-perf
 workflow** (`.github/workflows/perf.yaml`): it stays meaningful while the
 absolute lane is knowingly red against a stale committed baseline, because

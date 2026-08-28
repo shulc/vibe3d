@@ -75,6 +75,7 @@ import lib.lifecycle;
 import lib.stats;
 import lib.baseline;
 import lib.history;
+import lib.vslast;
 import lib.flame;
 
 // ---------------------------------------------------------------------------
@@ -5174,6 +5175,9 @@ int main(string[] args) {
     double vsLastThreshold     = double.nan;
     double vsLastSnapThreshold = double.nan;
     double vsLastFloorUs       = 200.0;
+    double vsLastBandFloor     = double.nan;
+    double vsLastBandSigma     = double.nan;
+    bool   vsLastFlat          = false;
     int    flameFreq = 999;
     int    flameCapture = 8;
     bool   ciMode = false;
@@ -5198,6 +5202,9 @@ int main(string[] args) {
         "vs-last-threshold", "`--vs-last` regression threshold as a fraction (default 0.20 = +20%)", &vsLastThreshold,
         "vs-last-snap-threshold", "`--vs-last` threshold for the `#snapQuery` keys, which are measurably noisier (default 0.60 = +60%; lowering --vs-last-threshold below it lowers this too)", &vsLastSnapThreshold,
         "vs-last-floor",     "`--vs-last` ignores cases where both medians sit under this many µs (default 200)", &vsLastFloorUs,
+        "vs-last-band-floor", "`--vs-last` smallest move that can ever be a regression, however quiet the case (default 0.05 = +5%)", &vsLastBandFloor,
+        "vs-last-band-sigma", "`--vs-last` multiplier on a case's own PRIOR between-run spread, for rows predating the p95 column (default 5)", &vsLastBandSigma,
+        "vs-last-flat",      "`--vs-last` reproduce the pre-2420 single-threshold verdict (one number for every case) — for A/B-ing the two gates over one history file", &vsLastFlat,
         "last",      "`--trend` window size (default 20 runs)", &trendLast,
         "freq",      "`flame` perf sampling frequency Hz (default 999)", &flameFreq,
         "capture",   "`flame` idle-capture seconds after the drag/scenario (default 8)", &flameCapture,
@@ -5302,9 +5309,13 @@ int main(string[] args) {
 
         auto path = lib.history.historyPath(g_repoRoot, Socket.hostName);
         auto entries = lib.history.loadHistory(path);
+        lib.vslast.GateParams gp;
+        if (!vsLastBandFloor.isNaN) gp.bandFloor = vsLastBandFloor;
+        if (!vsLastBandSigma.isNaN) gp.bandSigma = vsLastBandSigma;
+        gp.flat = vsLastFlat;
         int regressions = lib.history.checkVsLast(entries, vsLastThreshold,
                                                   vsLastSnapThreshold,
-                                                  vsLastFloorUs);
+                                                  vsLastFloorUs, gp);
         // NO VERDICT is a failure, not a pass: see `kVsLastNoVerdict`. The
         // step it fails is the one whose whole claim is "nothing got slower
         // since yesterday", and tonight that claim was never established.
@@ -5637,6 +5648,22 @@ int main(string[] args) {
                     kernelMedianByCase[r.historyKey ~ "#snapVisMask"] =
                         r.snapVisMaskMedianUs;
             }
+            // Task 2420 — the case's OWN sample spread for this run, so the
+            // day-over-day gate can ask "did it move further than its own
+            // repeats move" instead of comparing it to a constant. It is the
+            // p95 the table already prints, written under the same
+            // metric-agnostic map as everything else. It is NOT gated as a
+            // metric — `isNonGatedMetric` in lib/history.d skips it — because
+            // it is a SPREAD, not a cost: comparing it day over day would gate
+            // the noise instead of the signal. It is read back only as a band
+            // term. Measured justification, 2026-08-28, four consecutive runs
+            // at one HEAD on a quiet host: `remove/vertices/whole` swings 29.5%
+            // (17382 -> 22512) with nothing changed and reads p95/median
+            // 1.09-1.43, while every `falloff=radial|linear|cylinder` case
+            // reads 1.002-1.035 and holds inside 2% between runs. One column
+            // separates them; no threshold does.
+            if (!r.kernelP95Us.isNaN && r.kernelP95Us > 0.0)
+                kernelMedianByCase[r.historyKey ~ lib.history.kP95Suffix] = r.kernelP95Us;
             // Task 2030 — per-case memory, same `#`-suffix convention as
             // `#snapQuery` above: `appendHistory`'s map is metric-agnostic,
             // so this rides the existing history file for free and needs no
