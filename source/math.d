@@ -487,6 +487,14 @@ struct ModelSpace {
     // cross-producting WORLD points/vectors) where the mirror sign genuinely
     // does need correcting, and where `mirrored` itself still isn't the
     // mechanism (the inverse-transpose is applied directly instead).
+    //
+    // The identity quoted above is TRUE but it is not the whole reason, and
+    // reading it as the whole reason is how this got re-opened in task 3110:
+    // `(M^-1)^T * n` is the transported LOCAL normal, NOT the drawn ring's
+    // winding normal, which carries an extra `det(M)`. See the NEGATIVE
+    // DETERMINANT block on `frontFacingLocal` below for the bridge between the
+    // two and for why the local form is the one that answers "what is on
+    // screen".
     bool      mirrored   = false;
 
     /// The identity ModelSpace. Every field already defaults to it — this
@@ -1516,6 +1524,36 @@ bool pointInPolygon2D(float px, float py, float[] xs, float[] ys) {
 // not — see `ModelSpace.mirrored`'s doc comment above for the identity, and for
 // the flip that used to be XOR'd onto all three copies of this test and was
 // wrong. Do not reintroduce it here.
+//
+// NEGATIVE DETERMINANT — the same question asked from the REFERENCE's side in
+// task 3110, and answered by measurement rather than by the identity above.
+// There are two ways to write this rule and they are related by exactly one
+// factor:
+//
+//     dot(Nw, v0w - eyeWorld)  ==  det(L) * dot(N, v0 - eyeLocal)
+//
+// where `Nw` is the corner cross of the DRAWN ring — the form a SCREEN-space
+// test computes, item transform applied before projecting. The two therefore
+// agree wherever `det(L) > 0` and are exact COMPLEMENTS wherever `det(L) < 0`.
+//
+// We keep the LOCAL form, and not as a preference: a mirror moves the points
+// and leaves the index order alone, so the DRAWN surface is inside-out — every
+// polygon the user can see under a mirror, they see from its back. Our mesh
+// pass has no `GL_CULL_FACE` (`gpu_select.renderMode` disables it explicitly
+// and nothing else enables it for geometry) and no DRAW path reverses a ring
+// (`matrixMirrorsWinding`'s callers are the IO/export and primitive-creation
+// boundaries only). So under a mirror the winding-front polygon is the
+// OCCLUDED one, and carrying `det(L)` in here makes the lasso and the snapper
+// answer about geometry that is behind the model. That is the same wrong
+// answer the `ms.mirrored` XOR gave before it was removed — a `det(L)` term
+// here IS that XOR, arrived at from the other direction.
+//
+// Measured, with the three checks that redden on the `det(L)` arm:
+// `tests/unit/facing_mirror_determinant_test.d` (an OPEN rig, plus the bridge
+// identity above asserted rather than quoted), `tests/unit/mesh_test.d`'s
+// mirrored-corner pin, and `tests/test_pick_item_transform.d`'s M1 against an
+// independent GPU-depth oracle. `doc/measured_laws.md` §3 carries the reading
+// and what is still unmeasured about the reference's own behaviour here.
 //
 // PRECISION. The cross and the dot are carried in DOUBLE while the positions
 // stay float, the same choice `Mesh.visibleVertices`'s depth gate already
