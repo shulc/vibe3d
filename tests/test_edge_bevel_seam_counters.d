@@ -242,6 +242,54 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// 0b. THE SECOND POSITIVE CONTROL — task 1903 Stage M.
+//
+//     Block 0 above makes `unbatchedGeometryCommits` move. It says NOTHING
+//     about `opLogEntriesRecorded`, and this file asserts THAT counter at zero
+//     FIVE times: `assertUnrecorded` for the edge arm, the two fin-bundle
+//     doors and the tool's `doApply`, plus the preview drag in block 4. Until
+//     this block there was no cell in this binary that made it move, so a dead
+//     `opLogEntriesRecorded` — a stale `/api/changes` copy, a bus field that
+//     stopped being written — satisfied all five for free. The file even
+//     carried the shape of the fix, `assertRecorded` at the top, DECLARED AND
+//     NEVER CALLED: the edge bevel family is a Stage-A decline, so it has no
+//     recording command of its own to point it at.
+//
+//     `mesh.delete` is one of the four ops that shipped on the per-mutation
+//     tracker default-on, so it records into an op-log. The wording is the
+//     twin of `tests/test_radial_sweep_handle_drag.d`'s control, deliberately:
+//     a red should read the same in both files.
+//
+//     THE TERM IS EXACT (== 1), not `> 0`. `mesh.delete` on ONE cube face
+//     records exactly one entry (measured), and a `> 0` would stay green if
+//     the delete grew a second, unpaired entry — which is the same class of
+//     drift `assertRecorded`'s own doc block was written about.
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    auto s = postTo("/api/select", `{"mode":"polygons","indices":[0]}`);
+    assert(s["status"].str == "ok", "control select failed: " ~ s.toString);
+
+    auto b = changes();
+    cmd("mesh.delete");
+    auto a = changes();
+
+    immutable long ctl = a["opLogEntriesRecorded"].integer
+                       - b["opLogEntriesRecorded"].integer;
+    assert(ctl == 1,
+        "positive control: mesh.delete records into an op-log and must tick "
+      ~ "changeBus.opLogEntriesRecorded exactly once on a single cube face, "
+      ~ "and it ticked " ~ ctl.to!string ~ ". A dead counter passes every "
+      ~ "`opLogEntriesRecorded == 0` assertion in this file for free — the "
+      ~ "edge arm, both fin-bundle doors, the tool's doApply and the preview "
+      ~ "drag in block 4 (task 1903 §5.8, Stage M).");
+
+    assert(faceCount(model()) == 5,
+        "the control's delete did not remove a face, so the tick above (or "
+      ~ "its absence) says nothing about the counter");
+}
+
+// ---------------------------------------------------------------------------
 // 1. `mesh.bevel` — the EDGE arm.
 //
 //    THIS CELL IS A FLIP, NOT A NEW ROW. Stage F2 scoped its polygon-arm batch

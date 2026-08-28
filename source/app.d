@@ -3607,12 +3607,23 @@ void main(string[] args) {
     // consistency with every other *EditFactory closure here.
     import commands.layer.xform_edit : LayerXformEdit;
     auto layerXformEditFactory = () => new LayerXformEdit(&mesh(), cameraView, editMode);
-    // The eleven `*EditFactory` closures below all build the same generic
+    // The TWENTY-FOUR `*EditFactory` closures below all build the same generic
     // MeshSessionEdit (task 0408 / campaign 0407 §A.D1) — a (pre, post)
     // MeshSnapshot-pair record command — differing only in wireName /
     // defaultLabel / editScope. wireName MUST stay byte-identical to each
     // class's former hardcoded name() string: undo history / event-log
     // replay / macros dispatch on it.
+    //
+    // THE NUMBER WAS "eleven" UNTIL TASK 1903 STAGE M CORRECTED IT (2026-08-28)
+    // — measured, `grep -c 'EditFactory = () => new MeshSessionEdit' source/app.d`
+    // reads 24. Thirteen of the 24 are the Topology Pen's, bound POSITIONALLY
+    // to fourteen gestures (registration.d flags the mis-order hazard at its
+    // own site), which is why that family migrates as its own family and never
+    // "with the other tools". A fourteenth, `bevelEditFactory`, is bound by 24
+    // separate tool registrations under ONE wire name (`mesh.bevel_edit`), so
+    // anything done to it lands on all 24 at once and it goes LAST.
+    // Deleting these 24 is task 1905's — the session boundary is what replaces
+    // them, and 1903 could not build it (plan §6.5).
     import mesh_edit_delta : MeshEditScope;
     enum sessionGeomMarks = MeshEditScope.Geometry | MeshEditScope.Marks;
     auto bevelEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,

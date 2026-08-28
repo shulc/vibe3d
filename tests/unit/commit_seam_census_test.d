@@ -4154,3 +4154,374 @@ unittest // task 2310 — edge_join.d's zero, and the pin that makes it worth ha
       ~ "row above is green whether the write moved behind the door or simply "
       ~ "vanished, and only this row tells the two apart.");
 }
+
+// ---------------------------------------------------------------------------
+// STAGE M — THE `PreviewRebuild` ROSTER, AND WHAT EACH CONSUMER'S BATCHES ARE.
+//
+// WHY A SCAN AND NOT A COUNTER, and it is the same argument L9's seam census
+// carries (`tests/unit/l9_loop_slice_delta_test.d`, `kL9Seam`): a recording
+// batch opened on a per-frame preview builds and discards a full op-log at
+// scrub rate, and the preview's OUTPUT is byte-identical either way. So a
+// runtime counter can only see a preview path somebody actually drives, and
+// the runtime half of this stage drives exactly three:
+// `tests/test_poly_bevel_seam_counters.d` (block 5), the Edge Bevel drag in
+// `tests/test_edge_bevel_seam_counters.d` (block 4), and
+// `tests/test_edge_extend_preview_seam.d`. A FOURTH tool joining
+// `tools/edit/preview_rebuild.d` would arrive with no cell at all, and there
+// is nothing in either lane that would notice. This roster is that notice.
+//
+// AND IT IS NOT A SUBSTITUTE FOR THE COUNTERS, which is why both ship. The
+// scan sees the constructor at the call site; it cannot see a kernel that
+// opens its OWN recording batch further down while the tool file's own
+// `unrecorded` count stays at 2 (the two-sided shape F1/F2 already needed for
+// exactly this). The counter sees that and cannot see a fourth consumer.
+//
+// THE ROW SHAPE IS TWO-SIDED per file: how many `MeshEditBatch.unrecorded(`
+// opens and how many RECORDING `MeshEditBatch(` opens. A one-sided
+// `unrecorded == N` row is green when a recording open is ADDED beside the
+// unrecorded ones, which is the exact edit §9 forbids.
+//
+// WHY `edge_extend.d`'s RECORDING ROW IS 1 AND THE OTHER TWO ARE 0 — this is
+// a measured asymmetry, not an oversight, and stage M's own pin turns on it.
+// Stage H (L8) gave `EdgeExtendTool.commitEdit` a RECORDING batch, so its drop
+// records a delta the command keeps. Poly Bevel's and Edge Bevel's commit
+// doors capture a whole-mesh `MeshSnapshot` and do not re-run the kernel at
+// all — the live mesh already holds the previewed geometry — so they record
+// ZERO at the commit and are CORRECT to. Plan §M.1a's step 4 ("commit, assert
+// it is > 0") is therefore wrong on two of the three tools, and asserting it
+// there would be a check that reddens on correct code. Recorded here because
+// the number is the evidence.
+// ---------------------------------------------------------------------------
+
+private struct PreviewSeamRow {
+    string file;            /// path under the repo root
+    size_t unrecorded;      /// `MeshEditBatch.unrecorded(` opens
+    size_t recording;       /// RECORDING `MeshEditBatch(` opens
+    string why;
+}
+
+private static immutable PreviewSeamRow[] kPreviewSeam = [
+    PreviewSeamRow("source/tools/edit/poly_bevel.d", 2, 0,
+        "Stage F2. Two UNRECORDED opens — `applyHeadless` (the tool.doApply "
+      ~ "path) and the per-frame preview kernel lambda. NO recording open: "
+      ~ "`commitEdit` captures a whole-mesh MeshSnapshot and re-runs nothing"),
+    PreviewSeamRow("source/tools/edit/edge_bevel.d", 2, 0,
+        "Stage G. Same two doors, same shape as Poly Bevel's, and the same "
+      ~ "reason for the zero: the manifold edge bevel family is a Stage-A "
+      ~ "decline, so its commit still undoes through MeshSnapshot"),
+    PreviewSeamRow("source/tools/edit/edge_extend.d", 2, 1,
+        "Stage H. Two UNRECORDED opens (`applyHeadless`, the preview kernel "
+      ~ "lambda) plus ONE RECORDING open — `commitEdit`, which stage L8 "
+      ~ "migrated. This is the only converted preview tool whose drop records, "
+      ~ "and it is what `tests/test_edge_extend_preview_seam.d` uses as its "
+      ~ "positive control for `opLogEntriesRecorded`"),
+];
+
+unittest // Stage M — the roster is CLOSED, and each member's batches are pinned
+{
+    import std.algorithm : sort, uniq;
+    import std.array     : array;
+    import std.file      : dirEntries, SpanMode;
+
+    // The anti-duplication term every roster in this file carries: a typo
+    // throws (`readText` on a missing file), a DUPLICATE is silent and leaves
+    // one of the three unscanned and green forever.
+    auto names = new string[kPreviewSeam.length];
+    foreach (i, ref r; kPreviewSeam) names[i] = r.file;
+    sort(names);
+    assert(names.uniq.array.length == kPreviewSeam.length,
+        format("the PreviewRebuild roster names only %d DISTINCT file(s) "
+             ~ "across its %d rows — a duplicate leaves one member unscanned.",
+               names.uniq.array.length, kPreviewSeam.length));
+
+    // TERM 1 — THE ROSTER IS CLOSED. Derived from the tree, not from the
+    // table: every file under `source/tools` that holds a `PreviewRebuild`
+    // must be a row here. A fourth consumer is not a defect in itself; it is a
+    // tool whose preview batch nothing watches, and this is where it is told
+    // to bring a drag cell with it.
+    string[] found;
+    foreach (e; dirEntries(buildPath(repoRoot, "source", "tools"), "*.d",
+                           SpanMode.depth)) {
+        immutable code = stripCommentsAndStrings(readText(e.name));
+        if (countOccurrences(code, "PreviewRebuild preview_") > 0)
+            found ~= e.name[repoRoot.length + 1 .. $];
+    }
+    sort(found);
+    // ACCUMULATE, then assert ONCE. A gate that asserts inside the loop names
+    // only the FIRST offender and sends the reader after one of several.
+    string[] unrostered;
+    foreach (f; found) {
+        bool known = false;
+        foreach (ref r; kPreviewSeam) if (r.file == f) { known = true; break; }
+        if (!known) unrostered ~= f;
+    }
+    assert(found.length == kPreviewSeam.length && unrostered.length == 0,
+        format("source/tools holds %d file(s) with a `PreviewRebuild "
+             ~ "preview_` field; this roster names %d. Unrostered: %s.\n"
+             ~ "  Found: %s\n  Roster: %s\n"
+             ~ "  A NEW CONSUMER OF `tools/edit/preview_rebuild.d` MUST ARRIVE "
+             ~ "WITH TWO THINGS in the same commit: a row here stating its "
+             ~ "two-sided batch counts, and a runtime cell that drives its "
+             ~ "preview and asserts `changeBus.opLogEntriesRecorded` did not "
+             ~ "move across the frames (the three that exist are "
+             ~ "tests/test_poly_bevel_seam_counters.d block 5, "
+             ~ "tests/test_edge_bevel_seam_counters.d block 4 and "
+             ~ "tests/test_edge_extend_preview_seam.d). Neither instrument "
+             ~ "sees what the other does: this scan cannot see a runtime "
+             ~ "switch, and a counter cannot see a tool nobody drives "
+             ~ "(task 1903 Stage M).",
+               found.length, kPreviewSeam.length, unrostered, found, names));
+
+    // TERM 2 — the per-file two-sided counts.
+    foreach (ref r; kPreviewSeam) {
+        immutable abs = buildPath(repoRoot, r.file);
+        assert(exists(abs), "the PreviewRebuild roster names " ~ r.file
+                          ~ " and that file is gone — move the row");
+        immutable code = stripCommentsAndStrings(readText(abs));
+
+        // ANTI-VACUITY for this row: the file must still USE the seam. A file
+        // that stopped calling `preview_.run` would keep whatever batch counts
+        // it happens to have and its row would go on being green about a
+        // preview path that no longer exists.
+        assert(countOccurrences(code, "preview_.run(") == 1,
+            format("%s calls `preview_.run(` %d time(s), expected 1. This row "
+                 ~ "counts the batch opens of a PreviewRebuild consumer; a "
+                 ~ "file that no longer runs the seam is not one, and its "
+                 ~ "counts below would be green about nothing.",
+                   r.file, countOccurrences(code, "preview_.run(")));
+
+        immutable size_t unrec = countOccurrences(code, "MeshEditBatch.unrecorded(");
+        immutable size_t rec   = countOccurrences(code, "MeshEditBatch(");
+        assert(unrec == r.unrecorded && rec == r.recording,
+            format("%s opens %d UNRECORDED and %d RECORDING MeshEditBatch(es); "
+                 ~ "the roster says %d and %d.\n  %s\n"
+                 ~ "  THE ROW IS TWO-SIDED ON PURPOSE: a one-sided "
+                 ~ "`unrecorded == %d` stays green when a RECORDING open is "
+                 ~ "ADDED beside the unrecorded ones, and a recording open on "
+                 ~ "a per-frame preview path is exactly what plan §9 forbids — "
+                 ~ "it builds and throws away a full op-log at scrub rate. If "
+                 ~ "the change is deliberate, move BOTH numbers and say in the "
+                 ~ "commit message WHICH door moved (task 1903 Stage M).",
+                   r.file, unrec, rec, r.unrecorded, r.recording, r.why,
+                   r.unrecorded));
+    }
+
+    // TERM 3 — the seam itself opens NONE. `preview_rebuild.d` takes the
+    // kernel as a delegate and never opens a batch of its own: that decision
+    // (plan §9.1, taken at F2 and repeated at G and H) is what lets each tool
+    // open INSIDE its own lambda, so the batch lands on whichever mesh the
+    // kernel actually got — the private cage on a placement frame, the live
+    // mesh on a full rebuild. A batch opened in the seam would land on one of
+    // the two unconditionally and there is no counter that would say which.
+    immutable seam = stripCommentsAndStrings(
+        readText(buildPath(repoRoot, "source", "tools", "edit", "preview_rebuild.d")));
+    assert(countOccurrences(seam, "MeshEditBatch") == 0,
+        format("source/tools/edit/preview_rebuild.d now names `MeshEditBatch` "
+             ~ "%d time(s). The shared seam must open none: each consumer "
+             ~ "opens inside its own kernel lambda so the batch follows the "
+             ~ "mesh the kernel got (plan §9.1). A batch here would wrap both "
+             ~ "the cage path and the live path in one constructor choice "
+             ~ "(task 1903 Stage M).",
+               countOccurrences(seam, "MeshEditBatch")));
+}
+
+// ---------------------------------------------------------------------------
+// STAGE M — THE `MeshSnapshot` HOLDER CENSUS FOR `source/commands`,
+// i.e. the closing count of task 1903's track 2.
+//
+// WHY THIS COULD NOT BE WRITTEN BEFORE STAGE N, and it is the track's own
+// finding rather than a scheduling note. `runMapEdit`'s third arm — the
+// `VIBE3D_UNDO_TRACKER` hatch — made TWENTY command files declare a
+// `MeshSnapshot` they never used on the shipped path, each with the comment
+// `// the hatch's arm only`. So this row read the SAME on a migrated file and
+// on an un-migrated one, and stages L1 and L2 had to abandon it as a gate
+// (card 2290: "counting `MeshSnapshot` declarations is impossible: they stay
+// until the hatch comes off, so the row would be green before AND after the
+// stage"). Stage N deleted the arm and 34 fields across 20 files with it. THIS
+// is the observable N bought, and it is worth more than the flag N deleted.
+//
+// WHAT THE ROW MEANS NOW. Every remaining declaration under `source/commands`
+// is a DECLINE with its reason recorded at its own site — the bucket is in the
+// row below. A NEW one is a command that quietly went back to a whole-mesh
+// undo; a MISSING one is a decline that quietly became a migration. The row is
+// two-sided by construction: it names the file set AND the per-file count, so
+// both directions redden.
+//
+// WHY NO "the reason comment is still there" TERM, decided at stage M rather
+// than discovered. Pinning the prose at each declaration would pin prose: a
+// deleted reason comment leaves the decline exactly as correct as it was, and
+// the two things that actually break — a new holder, or a decline that lost
+// its field — are both caught by the counts. The reason lives in the ROW,
+// where a red prints it, the way `kL9Seam` and `kPreviewSeam` carry theirs.
+//
+// MUTATION: add `private MeshSnapshot snap;` to any migrated command (e.g.
+// `source/commands/mesh/smooth.d`) → the file-set term reddens naming it.
+// Delete `source/commands/mesh/paste.d`'s field → its count row reddens.
+// ---------------------------------------------------------------------------
+
+private struct SnapHolderRow {
+    string file;      /// path under the repo root
+    size_t decls;     /// `MeshSnapshot <name>` declarations, comment-stripped
+    string bucket;    /// which decline this is
+    string why;
+}
+
+private static immutable SnapHolderRow[] kSnapHolders = [
+    // BUCKET D — document-level / opaque-wrapper declines (plan §6.6). A
+    // snapshot of everything IS the semantics for these; there is no delta
+    // that expresses "the document was replaced".
+    SnapHolderRow("source/commands/mesh/paste.d", 1, "D",
+        "the payload comes from OUTSIDE the document, so the forward is not a "
+      ~ "function of this mesh. It is also the suite's last batchless "
+      ~ "geometry command and therefore the positive control for "
+      ~ "`changeBus.unbatchedGeometryCommits` (tests/batchless_control_helpers.d) "
+      ~ "and the only beneficiary of the hide-derive deferral pair (card 2400)"),
+    SnapHolderRow("source/commands/mesh/remesh.d", 1, "D",
+        "whole-`Mesh` replace plus a forward GIGO rollback a delta cannot serve"),
+    SnapHolderRow("source/commands/mesh/subdivide.d", 1, "D",
+        "whole-`Mesh` replace (Catmull-Clark builds a new mesh)"),
+    SnapHolderRow("source/commands/mesh/subdivide_faceted.d", 1, "D",
+        "whole-`Mesh` replace, same shape as subdivide.d"),
+    SnapHolderRow("source/commands/scene/reset.d", 1, "D",
+        "the primitive factories install a new mesh wholesale"),
+    SnapHolderRow("source/commands/scene/load_mesh.d", 1, "D",
+        "an import replaces the document; a snapshot of everything IS the "
+      ~ "semantics"),
+    SnapHolderRow("source/commands/file/load.d", 1, "D",
+        "the interchange path's single-mesh undo, same reason as load_mesh.d"),
+    SnapHolderRow("source/commands/tool/do_apply.d", 1, "D",
+        "`restoreGeometryKeepSelection` has no delta analogue — the wrapper "
+      ~ "does not know what the tool did"),
+    SnapHolderRow("source/commands/tool/headless.d", 1, "D",
+        "the opaque tool wrapper, same reason as do_apply.d"),
+
+    // BUCKET A — value-blocked kernels: the reason is a measured property of
+    // the kernel, recorded at the declaration.
+    SnapHolderRow("source/commands/mesh/bevel.d", 1, "A",
+        "the EDGE arm only — the POLYGON arm migrated at L7 and holds a "
+      ~ "`MeshEditDelta` in the same class. Three measured candidates refuse "
+      ~ "the edge arm a delta; the corner blocker (two `rewriteFaces` under "
+      ~ "one `beginCornerRewrite`) is still open (cards 2360/2320/2330)"),
+    SnapHolderRow("source/commands/mesh/edge_extrude.d", 1, "A",
+        "L8 DECLINED the command: the swept-surface law leaves untouched "
+      ~ "faces without a source, and no `MeshOpEntry` kind restores the "
+      ~ "PolyVertex map wholesale (card 2370). The interactive TOOL of the "
+      ~ "same name DOES record a delta — do not read the two as one"),
+    SnapHolderRow("source/commands/mesh/edge_extend.d", 1, "A",
+        "the twin of edge_extrude.d, declined by L8 for the same law"),
+    SnapHolderRow("source/commands/select/sets.d", 4, "A",
+        "PERMANENTLY DENSE by the owner's L1 ruling: a recorded undo would "
+      ~ "have to carry a slot index that is NOT stable across save/load plus "
+      ~ "a per-element bit plane in two shapes, and nothing in `MeshOpEntry` "
+      ~ "expresses either. Four classes, one reason"),
+
+    // BUCKET E — infrastructure, not a command's undo at all.
+    SnapHolderRow("source/commands/mesh/session_edit.d", 3, "E",
+        "`MeshSessionEdit`'s own `before`/`after` pair — the payload 24 "
+      ~ "`app.d` factories build and the 30 tool files under `source/tools` "
+      ~ "still fill. That is task 1905's boundary, not a leftover here. The "
+      ~ "THIRD declaration is a `unittest` local (`MeshSnapshot dummy;`)"),
+];
+
+unittest // Stage M — the closing MeshSnapshot count for source/commands
+{
+    import std.algorithm : sort, uniq;
+    import std.array     : array, split;
+    import std.file      : dirEntries, SpanMode;
+    import std.string    : strip, startsWith;
+
+    // How many `MeshSnapshot <ident>` DECLARATIONS a comment-stripped file
+    // holds. Deliberately not a raw `countOccurrences(src, "MeshSnapshot")`:
+    // that counts `ref MeshSnapshot` parameters, `MeshSnapshot.init` and the
+    // type name in a doc line, and the number would move for reasons that are
+    // not a holder appearing.
+    static size_t declCount(string code) {
+        size_t n = 0;
+        foreach (line; code.split('\n')) {
+            auto t = line.strip;
+            if (t.startsWith("private ")) t = t["private ".length .. $].strip;
+            if (!t.startsWith("MeshSnapshot ")) continue;
+            auto rest = t["MeshSnapshot ".length .. $].strip;
+            if (rest.length == 0) continue;
+            immutable char c = rest[0];
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') ++n;
+        }
+        return n;
+    }
+
+    auto names = new string[kSnapHolders.length];
+    foreach (i, ref r; kSnapHolders) names[i] = r.file;
+    sort(names);
+    assert(names.uniq.array.length == kSnapHolders.length,
+        format("the MeshSnapshot-holder roster names only %d DISTINCT file(s) "
+             ~ "across its %d rows — a duplicate leaves one unscanned.",
+               names.uniq.array.length, kSnapHolders.length));
+
+    // TERM 1 — THE FILE SET, derived from the tree. Accumulate BOTH ways and
+    // assert once: a gate that asserts inside the loop names only the first
+    // offender (card 2400's measured lesson).
+    string[] found;
+    size_t totalDecls = 0;
+    foreach (e; dirEntries(buildPath(repoRoot, "source", "commands"), "*.d",
+                           SpanMode.depth)) {
+        immutable code = stripCommentsAndStrings(readText(e.name));
+        immutable size_t n = declCount(code);
+        if (n == 0) continue;
+        found ~= e.name[repoRoot.length + 1 .. $];
+        totalDecls += n;
+    }
+    sort(found);
+
+    string[] newHolders, lostHolders;
+    foreach (f; found) {
+        bool known = false;
+        foreach (ref r; kSnapHolders) if (r.file == f) { known = true; break; }
+        if (!known) newHolders ~= f;
+    }
+    foreach (ref r; kSnapHolders) {
+        bool present = false;
+        foreach (f; found) if (f == r.file) { present = true; break; }
+        if (!present) lostHolders ~= r.file;
+    }
+    assert(newHolders.length == 0 && lostHolders.length == 0,
+        format("the `MeshSnapshot` holder set under source/commands has "
+             ~ "changed.\n  NEW holders (a command went back to a whole-mesh "
+             ~ "undo): %s\n  LOST holders (a decline became a migration, or a "
+             ~ "file moved): %s\n  Found %d file(s), roster names %d.\n"
+             ~ "  THIS ROW IS THE CLOSING COUNT OF TASK 1903 TRACK 2. Every "
+             ~ "entry is a DECLINE with its reason at its own site; there is "
+             ~ "no un-migrated command family left. A NEW entry must arrive "
+             ~ "with its reason at the declaration AND a row here saying which "
+             ~ "bucket it is (D = document-level/opaque, A = value-blocked "
+             ~ "kernel, E = infrastructure). Until stage N this row was "
+             ~ "IMMOVABLE — `runMapEdit`'s hatch arm made 20 files declare a "
+             ~ "field they never used, so it read the same on migrated and "
+             ~ "un-migrated code alike (card 2290).",
+               newHolders, lostHolders, found.length, kSnapHolders.length));
+
+    // TERM 2 — the per-file counts, exact. A file that keeps its row and grows
+    // a SECOND holder is invisible to TERM 1.
+    string[] countMismatches;
+    foreach (ref r; kSnapHolders) {
+        immutable abs = buildPath(repoRoot, r.file);
+        assert(exists(abs), "the MeshSnapshot-holder roster names " ~ r.file
+                          ~ " and that file is gone — move the row");
+        immutable size_t n = declCount(stripCommentsAndStrings(readText(abs)));
+        if (n != r.decls)
+            countMismatches ~= format("%s: %d declaration(s), roster says %d "
+                                    ~ "[bucket %s] — %s",
+                                      r.file, n, r.decls, r.bucket, r.why);
+    }
+    assert(countMismatches.length == 0,
+        format("%d MeshSnapshot-holder row(s) disagree with the tree:\n  %s",
+               countMismatches.length, countMismatches));
+
+    // TERM 3 — the TOTAL, stated so a reader of the track's close has the one
+    // number the DoD asks for. 19 declarations in 14 files: 9 bucket-D, 4
+    // bucket-A (one of which is `select/sets.d` ×4) and 1 bucket-E (×3).
+    assert(totalDecls == 19 && found.length == 14,
+        format("source/commands holds %d `MeshSnapshot` declaration(s) in %d "
+             ~ "file(s); task 1903 closed at 19 in 14. The per-file rows above "
+             ~ "say WHICH moved; this row is what a reader of the card's "
+             ~ "closing summary can compare against.", totalDecls, found.length));
+}
