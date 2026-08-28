@@ -1,80 +1,214 @@
 {
   "fixture": "action_center_freeze_and_source_baseline",
-  "version": 1,
-  "measured": "2026-08-19",
+  "version": 2,
+  "measured": "2026-08-28",
+  "supersedes": {
+    "version": 1,
+    "measured": "2026-08-19",
+    "why": "version 1 carried NO provenance block, and the owner's call on 2026-08-28 was to RE-CAPTURE rather than reconstruct one: a reconstructed block that turns out wrong is worse than a missing one, because it looks like evidence. Version 1 also described ONE rig while its scale case had in fact been driven on a different, denser lattice; every case here runs on the single rig described below.",
+    "agreement": "the law is the same in both captures, and one number is bit-identical across nine days and two independent instruments: the selection-centre cell published -0.600000024 -- the float32 of -0.6, the pre-gesture centroid -- for the whole drag in each. The per-case captured points and evaluation counts differ because a different element was picked and a different drag length used; those are incidental to the law and are not a disagreement."
+  },
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "debug-live",
+    "captured_utc": "2026-08-28",
+    "harness": "tools/local/fixture_gen/acen_freeze/gen.py over a live capture run; driver, breakpoint net and raw stream in the private capture card toolcards/acen_element_freeze_recapture/",
+    "task": "2920",
+    "notes": "INSTRUMENT, two channels, and the first one carries the law. (1) STATIC: the routine that supplies the action centre on every pipe evaluation in element mode was disassembled at its own compute site. It dereferences three stored double channels straight into the outgoing packet and publishes; there is no mesh position accessor anywhere on that path, so the centre is a stored value REPLAYED, not a centroid recomputed and then frozen. The writer is a separate event handler reached only through a gate this read names exactly: a button-DOWN whose handle part is -1, i.e. a press that hit no tool handle. No motion event can reach it. Zero processes were started for this half. (2) LIVE: the numbers below were then read from breakpoints in a RUNNING instance, in an isolated home on a private virtual display, torn down by the PIDs the run itself spawned, with the gestures delivered by pointer injection. Each gesture's window is bracketed at two QUIET moments of the debugger's own output stream, so a cell cannot borrow another cell's events -- an earlier pass that segmented the stream by event DENSITY instead was discarded, because a plain click fires the same events a drag does and the threshold separating them was a number nobody had measured. The routine names, libraries, addresses and the full breakpoint inventory are recorded in the private capture card, not here. TRANSPORT CAVEAT, stated because it applies: the pointer path is injected and acknowledged 80-95% of the time, so the DRAG LENGTH is approximate. Nothing asserted here depends on it -- the claims are 'how many distinct values' and 'which of two predicted values', and a short drag makes the discriminator harder, never easier."
+  },
   "what_this_pins": [
     "An action centre placed by clicking an element is a value CAPTURED at that click, not a quantity recomputed from the element's live vertices. It cannot move while a transform gesture runs.",
     "The capture happens on the button-DOWN of a press that hits no tool handle. It is not scoped to a gesture: the captured point stays in force across later gestures until the next such click.",
     "The per-frame transform reads SOURCE POSITIONS from the pre-gesture mesh, not from the previous frame's output. This holds independently of the action centre and is what makes any live-pivot scheme safe.",
     "Neither behaviour depends on which transform bank is active: translate, rotate and scale all show it."
   ],
+  "why_a_translate_and_not_a_scale": "A uniform scale about an element centre leaves that centre a FIXED POINT in exact arithmetic, so a stored pivot and a live recompute predict the same constant and the cell cannot be reddened by breaking either. Under a translate the two predictions separate by the whole drag delta. The scale case is kept for consistency and is labelled as unable to discriminate.",
+  "why_this_rig": "Three degeneracies were avoided by construction, each of which has cost this project a wrong or unfalsifiable cell before. (1) The lattice is wound so its polygon normals face the camera; the opposite winding makes every element pick MISS and the run then measures nothing. (2) The picked elements are OFF-ORIGIN: on a rig centred at the origin the centre reads (0,0,0), which is simultaneously the centroid and the empty-selection fallback, so a constant is constant for the wrong reason. (3) A closed solid was deliberately NOT used: with an interior the pick could resolve to a hidden facing element and the captured point would no longer be identifiable from the rig's own coordinates. The captured points here are recognisable on sight -- y exactly the rig plane, z exactly a boundary row.",
   "rig": {
-    "description": "3 x 3 lattice of points in the ground plane, y = 0, spanning [-1.2, +1.2] in x and z; four quads wound so their normals point +y (toward the camera).",
+    "description": "3 x 3 lattice of points in the ground plane, y = 0, spanning [-1.2, +1.2] in x and z; four quads wound so their normals point +y (toward the camera). Every case in this fixture ran on this rig.",
     "vertices": [
-      [-1.2, 0.0, -1.2], [0.0, 0.0, -1.2], [1.2, 0.0, -1.2],
-      [-1.2, 0.0,  0.0], [0.0, 0.0,  0.0], [1.2, 0.0,  0.0],
-      [-1.2, 0.0,  1.2], [0.0, 0.0,  1.2], [1.2, 0.0,  1.2]
+      [
+        -1.200000048,
+        0.0,
+        -1.200000048
+      ],
+      [
+        0.0,
+        0.0,
+        -1.200000048
+      ],
+      [
+        1.200000048,
+        0.0,
+        -1.200000048
+      ],
+      [
+        -1.200000048,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        1.200000048,
+        0.0,
+        0.0
+      ],
+      [
+        -1.200000048,
+        0.0,
+        1.200000048
+      ],
+      [
+        0.0,
+        0.0,
+        1.200000048
+      ],
+      [
+        1.200000048,
+        0.0,
+        1.200000048
+      ]
     ],
-    "faces": [[0, 3, 4, 1], [1, 4, 5, 2], [3, 6, 7, 4], [4, 7, 8, 5]]
+    "faces": [
+      [
+        0,
+        3,
+        4,
+        1
+      ],
+      [
+        1,
+        4,
+        5,
+        2
+      ],
+      [
+        3,
+        6,
+        7,
+        4
+      ],
+      [
+        4,
+        7,
+        8,
+        5
+      ]
+    ]
   },
   "cases": [
     {
       "name": "element_centre_under_translate",
       "gesture": "click one element to place the action centre, then drag to translate the whole mesh",
-      "captured_centre": [-0.915865050, 0.0, -1.200000048],
+      "captured_centre": [
+        -0.441555594,
+        0.0,
+        1.200000048
+      ],
       "captured_centre_note": "a point ON the picked element, not its midpoint: y is exactly the rig plane and z is exactly the rig's boundary row",
-      "translation_applied": [0.64, -0.17, 0.0],
+      "translation_applied": [
+        0.360000014,
+        0.0,
+        0.0
+      ],
+      "vertices_moved": 9,
       "centre_values_observed_during_gesture": 1,
       "pivot_placement_events_during_gesture": 0,
-      "evaluations_observed": 215,
-      "tool_reads_observed": 22,
-      "prediction_if_pivot_were_live": "the pivot would travel the full 0.64 with the geometry and compound",
+      "centre_placement_handler_entries_during_gesture": 0,
+      "evaluations_observed": 143,
+      "tool_reads_observed": 18,
+      "mesh_applications_observed": 17,
+      "prediction_if_pivot_were_live": "the pivot would travel the full 0.360000014 with the geometry and compound; the last evaluation would read x = -0.081555580",
       "prediction_if_pivot_were_captured": "one value for the whole gesture",
-      "matched": "captured"
+      "matched": "captured",
+      "margin": "the two predictions are 0.360000014 apart in x; the observed spread across all 143 evaluations is 0 at 9 decimal places"
     },
     {
       "name": "element_centre_under_translate_second_pick",
       "gesture": "same, with the placing click on a different element",
-      "captured_centre": [-0.274634158, 0.0, -0.193005523],
+      "captured_centre": [
+        -1.026749756,
+        0.0,
+        1.200000048
+      ],
       "centre_values_observed_during_gesture": 1,
-      "evaluations_observed": 163,
-      "tool_reads_observed": 20,
+      "evaluations_observed": 136,
+      "tool_reads_observed": 17,
+      "differs_from_first_case_by": 0.585194162,
       "role": "positive control: the placement mechanism is alive, so the constancy above is a measurement and not a dead field"
     },
     {
       "name": "element_centre_under_rotate",
-      "captured_centre": [0.213325466, 0.0, -1.200000048],
+      "captured_centre": [
+        -0.734152675,
+        0.0,
+        1.200000048
+      ],
       "centre_values_observed_during_gesture": 1,
-      "evaluations_observed": 161,
-      "tool_reads_observed": 20,
+      "evaluations_observed": 141,
+      "tool_reads_observed": 18,
       "role": "the law is not specific to one transform bank"
     },
     {
       "name": "element_centre_under_scale",
-      "scale_recovered_from_geometry": 1.38001,
+      "captured_centre": [
+        -0.148958514,
+        0.0,
+        1.200000048
+      ],
+      "scale_recovered_from_geometry": 1.935,
+      "scale_recovered_note": "one ratio fits every non-degenerate component of every vertex about the captured point, so the pivot really is that point and not merely constant",
       "centre_values_observed_during_gesture": 1,
-      "evaluations_observed": 155,
-      "drag_events_observed": 21,
+      "evaluations_observed": 143,
+      "drag_events_observed": 18,
       "pivot_placement_events_during_gesture": 0,
       "role": "a scale about its own pivot is a FIXED POINT of that pivot, so this case cannot by itself separate a captured pivot from a live one. Kept as a consistency check only; the translate cases are the discriminator."
     },
     {
       "name": "source_positions_under_translate",
       "gesture": "select two of the four quads, place the action centre at the SELECTION centroid (a quantity the engine recomputes from geometry every evaluation), then translate",
-      "selection_centroid_before": [-0.6, 0.0, 0.0],
-      "selection_centroid_after": [-0.05, -0.12, 0.0],
-      "centre_published_during_gesture": [-0.600000024, 0.0, 0.0],
+      "selected_polygon_count": 2,
+      "selected_vertex_indices": [
+        0,
+        1,
+        3,
+        4,
+        6,
+        7
+      ],
+      "selection_centroid_before": [
+        -0.600000024,
+        0.0,
+        0.0
+      ],
+      "selection_centroid_after": [
+        0.024999976,
+        0.0,
+        0.0
+      ],
+      "centre_published_during_gesture": [
+        -0.600000024,
+        0.0,
+        0.0
+      ],
       "centre_values_observed_during_gesture": 1,
-      "publications_observed": 161,
-      "prediction_if_source_positions_were_the_previous_frame_output": "the published centroid climbs from -0.6 toward -0.05 across the gesture",
+      "publications_observed": 21,
+      "prediction_if_source_positions_were_the_previous_frame_output": "the published centroid climbs from -0.600000024 toward 0.024999976 across the gesture",
       "prediction_if_source_positions_are_the_pre_gesture_mesh": "one value, exactly the pre-gesture centroid",
       "matched": "pre_gesture_mesh",
-      "why_the_selection_must_not_be_empty": "with nothing selected and a rig centred on the origin the centre reads (0,0,0), which is both the centroid AND the empty-selection fallback — a constant that is constant for the wrong reason. Selecting a subset whose centroid is elsewhere is what makes this case informative."
+      "why_the_selection_must_not_be_empty": "with nothing selected and a rig centred on the origin the centre reads (0,0,0), which is both the centroid AND the empty-selection fallback -- a constant that is constant for the wrong reason. Selecting a subset whose centroid is elsewhere is what makes this case informative."
     }
   ],
   "unmeasured": [
     "The toggle that switches the captured point between the element's centre and the position clicked on it, and its default.",
     "The same question in item mode and in a UV editing pane.",
-    "A tolerance: all constancy claims here are bit-identical at 9 decimal places, so no tolerance was needed."
+    "A tolerance: all constancy claims here are bit-identical at 9 decimal places, so no tolerance was needed.",
+    "Whether the drag would still hold one value if the pointer path were acknowledged 100%. Only the count of distinct values is asserted, and a dropped pointer event can only remove evaluations, never invent a second centre."
   ]
 }
