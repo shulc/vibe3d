@@ -10,6 +10,8 @@ import select_visibility : SelectVisibility, SelectVisibilityTerms,
 // all-GL-objects reclaim site; the cache itself is never touched from here on
 // any other path, and nothing in this module reads a texture.
 import image_cache   : imagePixelCache;
+// Task 1970 — DirtyKey's camera pose term (see the struct field below).
+import camera_stamp  : CameraStamp;
 
 // ---------------------------------------------------------------------------
 // Phase 1 — global camera / ViewCache / picking → per-viewport data model.
@@ -128,8 +130,19 @@ struct ViewportFbo {
 /// Two identical DirtyKeys mean the scene image has not changed and the
 /// retained colorTex can be re-blitted without a GL re-render.
 struct DirtyKey {
-    float[16] view  = 0;
-    float[16] proj  = 0;
+    // Task 1970 — the camera pose, folded into ONE `CameraStamp` value
+    // instead of the two loose `float[16] view/proj` fields this struct
+    // carried before (the shape `gpu_select`'s slot key already moved to in
+    // task 1930). `DirtyKey` is compared WHOLE — `_newKey != _cv.lastKey`,
+    // ~90 lines below the stamping site in `app.d` — so `cam` must NEVER
+    // gain a custom `opEquals`, and `CameraStamp` itself must not either:
+    // either would silently change what "whole" means here, letting this
+    // struct compare equal while the camera moved. `camera_stamp.d`'s own
+    // doc comment states the identical rule from the other side; the two
+    // must stay consistent. Defaults still fold to `= 0` on both matrices
+    // (`CameraStamp`'s own field initialisers), so this is a pure
+    // representation change — no comparison outcome moves.
+    CameraStamp cam;
     ulong     meshMutVer;
     ulong     selEpoch;   // bumped on every selection-mark change (Marks class)
     int       editMode_k;

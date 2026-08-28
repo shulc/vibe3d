@@ -7785,8 +7785,7 @@ void main(string[] args) {
                         needRender = true;
                     } else {
                         DirtyKey _newKey;
-                        _newKey.view       = vpk.view;
-                        _newKey.proj       = vpk.proj;
+                        _newKey.cam.update(vpk.view, vpk.proj);
                         // recorded remainder (1906 §3.5 row 24, §3.6):
                         // `mutationVersion` owns `meshMutVer` and
                         // `GpuMesh.uploadVersion` owns `gpuUploadVer` below.

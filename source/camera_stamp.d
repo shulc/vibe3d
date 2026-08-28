@@ -14,11 +14,13 @@ module camera_stamp;
 // every consumer that wants a boolean compares for itself.
 //
 // WHY IT IS ITS OWN MODULE. `viewport.DirtyKey` (`viewport.d`, the
-// `lastKey` compare) is one of two remaining places that spell this compare
-// out by hand; the other is `ai/exploration.d`'s `viewsEqual`, a frozen
-// stage-time anchor over `view` alone, deliberately left out. Folding DirtyKey in is
-// backlog card 1970; a stamp that lived inside `gpu_select` could not be taken
-// there without a backwards import, so it lives alone and imports nothing.
+// `lastKey` compare) used to be one of two remaining places that spelled this
+// compare out by hand with its own `float[16] view/proj` pair; task 1970
+// folded it into a `CameraStamp cam` field instead, so the one place left is
+// `ai/exploration.d`'s `viewsEqual`, a frozen stage-time anchor over `view`
+// alone, deliberately left out. A stamp that lived inside `gpu_select` could
+// not be taken to `DirtyKey` without a backwards import, so it lives alone
+// and imports nothing.
 //
 // EXACTNESS IS PART OF THE CONTRACT. The compare is element-wise `!=` with no
 // epsilon, which is what the three `viewcache` copies and `gpu_select`'s
@@ -35,13 +37,14 @@ module camera_stamp;
 // (`gpu_select.d`, the `slot.valid &&` short-circuit); that is an argument, not an identity, and it is
 // recorded here rather than left for a reader to re-derive. `= 0` is chosen for
 // two reasons: it makes `changed` between two fresh stamps FALSE, which is the
-// cell `tests/unit/camera_stamp_test.d` pins, and it matches `DirtyKey`, which
-// already declares `float[16] view = 0;` — so card 1970 folds two things that
-// already agree.
+// cell `tests/unit/camera_stamp_test.d` pins, and it matched what `DirtyKey`
+// already declared before task 1970 (`float[16] view = 0;`) — so folding one
+// into the other (`DirtyKey.cam`) was a pure representation change, two
+// things that already agreed.
 //
 // NO `opEquals`, NO MUTABLE MEMO FIELD. `DirtyKey` is compared WHOLE
 // (`app.d`'s per-cell `if (_newKey != _cv.lastKey)`); the moment this struct grows
-// either, that comparison silently changes meaning. Card 1970 depends on this
+// either, that comparison silently changes meaning. `DirtyKey.cam` depends on this
 // line staying true.
 
 /// A camera pose as the two matrices a derived artifact was built under.
