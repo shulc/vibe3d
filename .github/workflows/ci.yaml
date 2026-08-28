@@ -12,6 +12,9 @@ on:
 
 permissions:
   contents: read
+  # actions: read — task 2040's nightly-freshness step below asks the API for
+  # the age of the last nightly-perf run; nothing else in this job needs it.
+  actions: read
 
 # Self-hosted runner has a small disk. Cancel an in-progress run on the same
 # ref when a new push lands so two full builds never write GBs side by side.
@@ -63,6 +66,34 @@ jobs:
         #   every lane revision, and on a blobless clone that is a network round
         #   trip each — 109 s for a 21-revision lane, against 0.23 s on this one.
         fetch-depth: 0
+
+    # task 2040 — a nightly-perf run that never happened reads identically to
+    # one that ran and failed: the run list's "latest" entry is just old, and
+    # nothing says so on its own. `schedule` cron delivery is GitHub's own
+    # documented best-effort, and it CAN silently drop a night under load —
+    # measured here: perf.yaml's cron is '30 0 * * *' and real deliveries
+    # have landed anywhere from 94 minutes to (once) nearly ten hours late.
+    # A watcher for that has to live OUTSIDE the run that can go missing, so
+    # it cannot itself be `schedule`-triggered (that just relocates the same
+    # best-effort delivery, see the tool's own header for the two rejected
+    # alternatives). This job is push/pull_request-triggered — webhook
+    # delivery, not cron — and given this repository's commit cadence it runs
+    # many times a day, which is why it is the chosen home.
+    #
+    # continue-on-error + always()-summary, same shape as render_compile below:
+    # a red step here must not skip anything after it, and the final gate
+    # aggregates outcomes rather than depending on step ordering. GH_TOKEN
+    # inherits into `gh`'s own environment; the step's environment is
+    # otherwise UNMODIFIED — no proxy override, no `--noproxy`, see
+    # tools/ci/nightly_freshness.d's own header for why a bypass here is
+    # exactly the mistake that made three other lanes red for a day.
+    - name: 'Nightly-perf freshness (task 2040)'
+      id: nightly_freshness
+      continue-on-error: true
+      timeout-minutes: 5
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: rdmd tools/ci/nightly_freshness.d
 
     # nfde is now a VENDORED path dep (third_party/nfde, task 0431). Its C lib
     # (nativefiledialog-extended/out/src/libnfd.a) is produced by the package's
@@ -215,6 +246,7 @@ jobs:
         {
           echo "## Test results"
           echo ""
+          echo "- Nightly-perf freshness (task 2040): **${{ steps.nightly_freshness.outcome }}**"
           echo "- Render config compiles (\`--config=with-render\`, compile only): **${{ steps.render_compile.outcome }}**"
           echo "- Embedded unit tests (\`dub test --config=tests\`): **${{ steps.unit.outcome }}**"
           echo ""
@@ -303,7 +335,8 @@ jobs:
       # summary/cleanup always run; this gate turns the job red afterwards.
       if: always()
       run: |
-        echo "render_compile=${{ steps.render_compile.outcome }} unit=${{ steps.unit.outcome }} integration=${{ steps.integration.outcome }} frames=${{ steps.frames.outcome }}"
+        echo "nightly_freshness=${{ steps.nightly_freshness.outcome }} render_compile=${{ steps.render_compile.outcome }} unit=${{ steps.unit.outcome }} integration=${{ steps.integration.outcome }} frames=${{ steps.frames.outcome }}"
+        [ "${{ steps.nightly_freshness.outcome }}" = "success" ] && \
         [ "${{ steps.render_compile.outcome }}" = "success" ] && \
         [ "${{ steps.unit.outcome }}" = "success" ] && \
         [ "${{ steps.integration.outcome }}" = "success" ] && \
