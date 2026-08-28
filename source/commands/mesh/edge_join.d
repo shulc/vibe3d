@@ -8,7 +8,8 @@ import editmode;
 import shader;
 import params : Param;
 import change_bus : MeshEditScope;
-import snapshot : MeshSnapshot;
+import mesh_edit_delta : MeshEditDelta, acceptRecordedEdit;
+import commands.mesh.selection_undo : DenseSelectionUndo;
 import math : Vec3;
 
 /// Join two selected edges sharing a degree-2 vertex into a single edge by
@@ -24,9 +25,25 @@ import math : Vec3;
 ///   - not exactly 2 edges selected
 ///   - selected edges share no common vertex (disjoint)
 ///   - shared vertex has edge-degree ≠ 2
+///
+/// UNDO IS THE OPERATION-LOG DELTA since task 1903 Stage L10-c; the whole-mesh
+/// `MeshSnapshot` is gone. This command was already nearly free: its kernel
+/// `Mesh.dissolveVerticesByMask` describes its own face change
+/// (`ReshapeFaces` + `RemoveFaces`) and is on the §5.3 audit's **do-not-arm**
+/// list, so this migration adds no arming at all — arming it batch-wide is
+/// what re-runs Stage K's red row.
+///
+/// WHAT IS INERT ON THIS PATH: no weld runs here, so the edge-set MERGE record
+/// (task 2310) and the Point-domain map payload (task 2330) on
+/// `Kind.RemoveVerts` are never exercised. A green cell for this command says
+/// nothing about either.
 class MeshEdgeJoin : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;
+    private MeshEditDelta      delta_;
+    private DenseSelectionUndo preSel_;
+    /// Set once `evaluate` recorded a delta: FIRST RUN vs REDO, and
+    /// `revert()`'s guard — the role the deleted `if (!snap.filled)` played.
+    private bool               recorded_;
 
     private int mode_ = 0;  // 0 = plain join, 1 = averaged
 
@@ -76,70 +93,107 @@ class MeshEdgeJoin : Command, Operator {
             if (e[0] == m || e[1] == m) ++degree;
         if (degree != 2) return false;
 
-        // Snapshot before any mutation.
-        snap = MeshSnapshot.capture(*mesh);
+        // REDO: `CommandHistory.redo` re-runs `apply()`. Re-run the kernel
+        // BATCHLESS — no recording frame means every tracker hook takes its
+        // `editRecorder_ is null` early-out — and keep the FIRST delta rather
+        // than record a second one over it.
+        if (recorded_) {
+            size_t rw;
+            {
+                auto ed = MeshEditBatch.unrecorded(*mesh, kJoinScope);
+                rw = runKernel(ed, a, b, m);
+                ed.close();
+            }
+            return rw != 0;
+        }
 
-        // Mode 1 (averaged): shift each sub-edge endpoint to its own midpoint.
-        //   a → midpoint(a, m),  b → midpoint(b, m)
-        // TASK 2310 — through the recorded door. This command is snapshot-backed
-        // today, so its own undo does not depend on the entry; the raw pair was
-        // nevertheless a live-mesh write invisible to any op-log, which is the
-        // shape that bites the moment the family moves to a delta.
-        // TASK 1903 STAGE L10-P0 (axis 0) — an UNRECORDED `MeshEditBatch` at
-        // the command boundary. This command opened none, so the position
-        // write, the dissolve and the selection reset each stamped and
-        // delivered on their own, one `changeBus.unbatchedGeometryCommits`
-        // tick apiece; inside the batch they defer and stamp ONCE at
-        // `close()`.
-        //
-        // UNRECORDED, not recording: axis 0 is the COMMIT SEAM and moves no
-        // undo. Undo here is still the whole-mesh `MeshSnapshot` above.
+        // The dense selection image, taken BEFORE the batch opens: the kernel's
+        // tail calls `resetSelection`, and the reverted mesh gets a FRESH edge
+        // index space out of `finalize`'s `rebuildEdges`, so the edge half has
+        // to be re-keyed by endpoints.
+        preSel_.capture(*mesh);
+
+        // TASK 1903 STAGE L10-P0 gave this command its first `MeshEditBatch`
+        // (axis 0, the commit seam: the position write, the dissolve and the
+        // selection reset each stamped and delivered on their own before it).
+        // STAGE L10-c makes it RECORDING — axis 2, the undo.
         size_t n;
         {
-            auto ed = MeshEditBatch.unrecorded(*mesh,
-                          MeshEditScope.Geometry | MeshEditScope.Marks);
-            if (mode_ == 1) {
-                Vec3 vm = mesh.vertices[m];
-                // SPELLED `mesh.`, NOT `ed.`, and that is deliberate: what
-                // makes this write batched is that a frame is OPEN, not which
-                // handle names it — `MeshEditBatch` has `alias mesh this`, so
-                // the two spellings compile to the same call. The census in
-                // `tests/unit/commit_seam_census_test.d` pins this exact
-                // literal as the two-sided half of its `raw == 0` row (task
-                // 2310), so renaming the receiver here reads to that gate as
-                // "the recorded write vanished".
-                mesh.setVertexPositions([a, b],
-                    [(mesh.vertices[a] + vm) * 0.5f,
-                     (mesh.vertices[b] + vm) * 0.5f]);
-            }
-
-            // Dissolve the middle vertex: drops m from every incident face
-            // boundary, rebuilds edges, and compacts the now-orphan vertex out.
-            auto mask = new bool[](mesh.vertices.length);
-            mask[m] = true;
-            n = ed.dissolveVerticesByMask(mask);
-            if (n != 0) ed.resetSelection();
-            ed.close();
+            auto ed = MeshEditBatch(*mesh, kJoinScope);
+            n = runKernel(ed, a, b, m);
+            delta_ = ed.close();
         }
-        if (n == 0) {
-            // NO rollback, and this is the PRE-EXISTING behaviour carried
-            // across unchanged rather than a ruling this stage takes. In
-            // mode 1 the two endpoint positions have already moved by the time
-            // the dissolve can refuse, so dropping the snapshot here leaves
-            // them moved with no undo entry. Whether that arm is reachable at
-            // all — every guard above has already established a 2-valent
-            // shared vertex — is NOT measured, so it is named here instead of
-            // being asserted away. Migrating this command (Stage L10-c) is
-            // where it gets a rollback or a measurement.
-            snap = MeshSnapshot.init;
+
+        // THE POST-CLOSE RULING (§S-6, ruling Q-K6), AND THE ROLLBACK THIS
+        // FILE ASKED FOR IN WRITING. The deleted comment here said: *"In mode 1
+        // the two endpoint positions have already moved by the time the
+        // dissolve can refuse, so dropping the snapshot here leaves them moved
+        // with no undo entry … Migrating this command (Stage L10-c) is where
+        // it gets a rollback or a measurement."* It gets the rollback: the
+        // partial edit is replayed BACKWARDS out of the delta and every image
+        // dropped. Whether the arm is reachable at all — every guard above has
+        // already established a 2-valent shared vertex — is still NOT
+        // measured, which is precisely why the safe branch is the one to write.
+        //
+        // The second arm behind the same `false` — mutated, recorded nothing —
+        // ticks `changeBus.emptyDeltaOverMutation` inside `acceptRecordedEdit`
+        // and is NOT rolled back: there is nothing to replay, and re-imposing
+        // the pre-op selection over a mesh whose arrays have already moved
+        // would resize the mark arrays back to the pre-op length.
+        if (!acceptRecordedEdit(n, delta_)) {
+            if (n == 0) {
+                delta_.revert(*mesh);
+                preSel_.restore(*mesh);
+            }
+            delta_  = MeshEditDelta.init;
+            preSel_ = DenseSelectionUndo.init;
             return false;
         }
+        recorded_ = true;
         return true;
     }
 
+    private enum uint kJoinScope =
+        MeshEditScope.Geometry | MeshEditScope.Marks;
+
+    /// The optional midpoint write plus the dissolve, written once so the
+    /// recording run and the redo run cannot drift.
+    private size_t runKernel(ref MeshEditBatch ed, uint a, uint b, uint m)
+    {
+        // Mode 1 (averaged): shift each sub-edge endpoint to its own midpoint.
+        //   a → midpoint(a, m),  b → midpoint(b, m)
+        if (mode_ == 1) {
+            Vec3 vm = mesh.vertices[m];
+            // SPELLED `mesh.`, NOT `ed.`, and that is deliberate: what makes
+            // this write batched is that a frame is OPEN, not which handle
+            // names it — `MeshEditBatch` has `alias mesh this`, so the two
+            // spellings compile to the same call. The census in
+            // `tests/unit/commit_seam_census_test.d` pins this exact literal
+            // as the two-sided half of its `raw == 0` row (task 2310), so
+            // renaming the receiver here reads to that gate as "the recorded
+            // write vanished".
+            mesh.setVertexPositions([a, b],
+                [(mesh.vertices[a] + vm) * 0.5f,
+                 (mesh.vertices[b] + vm) * 0.5f]);
+        }
+
+        // Dissolve the middle vertex: drops m from every incident face
+        // boundary, rebuilds edges, and compacts the now-orphan vertex out.
+        auto mask = new bool[](mesh.vertices.length);
+        mask[m] = true;
+        immutable size_t n = ed.dissolveVerticesByMask(mask);
+        if (n != 0) ed.resetSelection();
+        return n;
+    }
+
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
+        // An instance whose `evaluate` refused holds an empty delta and a
+        // nulled selection image; replaying it would run `preSel_` over a mesh
+        // it was never sized against. Answering false here is correct ONLY
+        // because the funnel records no history entry for a refused forward.
+        if (!recorded_) return false;
+        delta_.revert(*mesh);     // LIFO inverse replay restores geometry
+        preSel_.restore(*mesh);   // …then the three selection domains
         return true;
     }
 }

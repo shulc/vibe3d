@@ -640,13 +640,27 @@ unittest { // revolveProfileEx: BOTH arms record a complete, fully-revertible de
         // thing from the op-log side, so a record that is written but does not
         // reach the planes still shows up.
         //
-        // STAGE L10 FLIPS THIS. `mesh.sweep` undoes through a whole-mesh
-        // `MeshSnapshot` today (plan §5.1), which restores every plane, so the
-        // gap is invisible to the user and costs nothing yet. L10 (plan §5.5,
-        // the reindexing half of topo-misc) is the stage that makes this delta
-        // the undo record, and it cannot ship until the kernel records the
-        // Marks it declares. When it does: change `wantPlanes` to `prePlanes`,
-        // change the `SelectionDelta == 0` expectation, and delete this note.
+        // STAGE L10-e SHIPPED AND THIS DID NOT FLIP — the note's own premise
+        // died on the way, and it is recorded here rather than edited away.
+        //
+        // What it predicted: that `mesh.sweep`'s move off the whole-mesh
+        // `MeshSnapshot` "cannot ship until the KERNEL records the Marks it
+        // declares", so that this line would become `prePlanes`. What
+        // happened: the plan's own §0.1 ruling went the other way for all
+        // three of L7/L9/L10 — no family builds a Marks publisher, because
+        // `Kind.SelectionDelta` was MEASURED at Stage L2-b to restore LESS
+        // than the snapshot (no kind carries a selection-order stamp, and
+        // `l1_declined_census_test.d` asserts it). `commands/mesh/sweep.d`
+        // holds a `DenseSelectionUndo` beside its delta instead, and restores
+        // the planes at the COMMAND, where the pre-op image still exists.
+        //
+        // So the gap this block pins is REAL and STILL OPEN AT THE KERNEL, and
+        // the assertions below stay exactly as they were. What changed is only
+        // what a red here would mean: no longer "the command is unsafe to
+        // migrate" but "a Marks record appeared on this path" — in which case
+        // set the expectation to `prePlanes`, delete this note, and check
+        // whether `sweep.d`'s dense image has become a second writer over a
+        // plane the delta now restores.
         const bool reverted = d.revert(m);
         assert(reverted, format("closed=%s: revert() refused the delta outright",
                                 profileClosed));
@@ -672,7 +686,7 @@ unittest { // revolveProfileEx: BOTH arms record a complete, fully-revertible de
                  ~ "faceSelectionOrderCounter is left at the added-face count "
                  ~ "(%d). If a Marks record was just added, this is the line "
                  ~ "that says so: set the expectation to `prePlanes` and "
-                 ~ "delete the gap note above (task 1903 Stage L10).\n"
+                 ~ "delete the gap note above (task 1903 Stage L10-e).\n"
                  ~ "  pre  : %s\n  want : %s\n  got  : %s",
                    profileClosed, n, prePlanes, wantPlanes, dumpMarkPlanes(m)));
         immutable size_t selDeltas = countKind(d, MeshOpEntry.Kind.SelectionDelta);

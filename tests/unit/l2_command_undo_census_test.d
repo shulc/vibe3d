@@ -54,7 +54,14 @@ private enum string[12] kL2Commands = [
 ];
 
 /// `//` line comments, `/* */`, `/+ +/` and string literals blanked.
-private string codeOnly(string src) pure
+///
+/// PUBLIC, and shared with `tests/unit/l10_command_undo_census_test.d` (task
+/// 1903 Stage L10). Not tidiness: a census whose stripper is a private copy
+/// can drift from this one, and then two gates disagree about what counts as
+/// code — the second spelling being the one that drifts. Both censuses carry
+/// their own per-file non-vacuity floor, so a stripper regression reddens in
+/// both rather than being silently absorbed by either.
+string codeOnly(string src) pure
 {
     auto buf = new char[src.length];
     size_t i = 0;
@@ -98,7 +105,8 @@ private string codeOnly(string src) pure
     return cast(string) buf;
 }
 
-private size_t countOf(string hay, string needle)
+/// ditto — shared with the L10 census for the same reason.
+size_t countOf(string hay, string needle)
 {
     size_t n = 0, i = 0;
     while (i + needle.length <= hay.length) {

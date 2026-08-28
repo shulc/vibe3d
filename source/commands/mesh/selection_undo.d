@@ -54,6 +54,27 @@
 // two endpoints and re-applies its STAMP — unlike `delete.d`'s
 // `restoreSelectedEdgeEnds`, a `selectEdge` loop, which restores the bit and
 // mints a fresh rank.
+//
+// ---------------------------------------------------------------------------
+// AND IT CARRIES THE STAMP OF AN *UNSELECTED* EDGE TOO (task 1903 stage L10-c)
+// ---------------------------------------------------------------------------
+// A stamp with no Select bit is a real state of a shipped mesh, not a
+// theoretical one: `clearEdgeSelectionResize` — which every weld and every
+// triangulation runs as its tail — clears the BIT and leaves the RANK. This
+// struct's vertex and face halves already restore those stamps (the wholesale
+// order-array assign below, re-zeroed only where the bulk setter REFUSED),
+// because L2-b measured `MeshSnapshot` putting them back and the frozen oracle
+// caught the difference. THE EDGE HALF DID NOT, and could not have: the
+// endpoint-keyed override called `selectEdgesFrom`, whose writer zeroes
+// `order[i]` for every element it leaves unselected, wiping the wholesale
+// assign two statements earlier.
+//
+// It surfaced on stage L10's family — three cells (`mesh.unify`,
+// `mesh.quadruple`, `mesh.detriangulate`) whose arrangement welds or
+// triangulates BEFORE the command runs, so their pre-op image is exactly an
+// unselected edge carrying a rank. The fix is to capture every edge with a
+// stamp OR a bit, not only the selected ones, and it makes the edge half say
+// what the other two already said: NO LESS THAN THE SNAPSHOT.
 module commands.mesh.selection_undo;
 
 import mesh     : Mesh, edgeKey;
@@ -70,7 +91,12 @@ import snapshot : SelectionSnapshot;
 /// with itself.
 struct DenseSelectionUndo {
     private SelectionSnapshot sel_;
-    private uint[]            edgeEnds_;      // flat [a, b, order] triples
+    /// Flat `[a, b, order, selected]` quads, one per edge that carries a
+    /// Select bit OR a non-zero rank. The fourth word is what separates
+    /// "restore this rank" from "restore this rank AND the bit", and it is a
+    /// word rather than a sign trick because a rank is an `int` whose zero is
+    /// meaningful.
+    private uint[]            edgeEnds_;
     private int               edgeCounter_;
 
     /// True once `capture` has run. The command reads this to decide whether
@@ -89,17 +115,23 @@ struct DenseSelectionUndo {
         // `~=`: an element-wise append is a runtime call per element that
         // `reserve` does not remove (task 2160). A whole-mesh edge selection
         // on a lane-sized mesh is hundreds of thousands of triples.
+        bool carries(size_t ei) {
+            if (m.isEdgeSelected(ei)) return true;
+            return ei < m.edgeSelectionOrder.length
+                && m.edgeSelectionOrder[ei] != 0;
+        }
         size_t n = 0;
-        foreach (ei; 0 .. m.edges.length) if (m.isEdgeSelected(ei)) ++n;
+        foreach (ei; 0 .. m.edges.length) if (carries(ei)) ++n;
         edgeCounter_ = m.edgeSelectionOrderCounter;
-        edgeEnds_    = uninitializedArray!(uint[])(n * 3);
+        edgeEnds_    = uninitializedArray!(uint[])(n * 4);
         size_t w = 0;
         foreach (ei; 0 .. m.edges.length) {
-            if (!m.isEdgeSelected(ei)) continue;
+            if (!carries(ei)) continue;
             edgeEnds_[w++] = m.edges[ei][0];
             edgeEnds_[w++] = m.edges[ei][1];
             edgeEnds_[w++] = ei < m.edgeSelectionOrder.length
                            ? cast(uint) m.edgeSelectionOrder[ei] : 0u;
+            edgeEnds_[w++] = m.isEdgeSelected(ei) ? 1u : 0u;
         }
         assert(w == edgeEnds_.length,
             "DenseSelectionUndo.capture: the counting pass and the write pass "
@@ -146,9 +178,10 @@ struct DenseSelectionUndo {
 
         // …then the EDGE half again, by endpoints, because the index-keyed one
         // above may have named the wrong edges after `rebuildEdges`.
-        bool[] want = new bool[](m.edges.length);
-        uint[] slot = new uint[](m.edges.length);
-        for (size_t k = 0; k + 2 < edgeEnds_.length; k += 3) {
+        bool[] want   = new bool[](m.edges.length);
+        bool[] stamped = new bool[](m.edges.length);
+        uint[] slot   = new uint[](m.edges.length);
+        for (size_t k = 0; k + 3 < edgeEnds_.length; k += 4) {
             immutable uint ei = m.edgeIndexByKey(
                 edgeKey(edgeEnds_[k], edgeEnds_[k + 1]));
             // A pre-op edge the reverted mesh does not have is SKIPPED, not
@@ -157,13 +190,23 @@ struct DenseSelectionUndo {
             // left. Losing one edge's bit there is strictly better than
             // aborting the process out of an undo.
             if (ei == ~0u || ei >= want.length) continue;
-            want[ei] = true;
-            slot[ei] = edgeEnds_[k + 2];
+            stamped[ei] = true;
+            slot[ei]    = edgeEnds_[k + 2];
+            if (edgeEnds_[k + 3] != 0) want[ei] = true;
         }
+        // `selectEdgesFrom` zeroes `order[i]` for every edge it leaves
+        // unselected — which is why the stamps go back AFTER it and not
+        // before, and why the loop below is keyed on `stamped` rather than on
+        // `want`.
         m.selectEdgesFrom(want);
-        foreach (ei; 0 .. want.length)
-            if (want[ei] && ei < m.edgeSelectionOrder.length)
-                m.edgeSelectionOrder[ei] = cast(int) slot[ei];
+        foreach (ei; 0 .. stamped.length) {
+            if (!stamped[ei] || ei >= m.edgeSelectionOrder.length) continue;
+            // The same REFUSAL guard the vertex and face halves carry: an edge
+            // the capture says was selected and the bulk setter refused (the
+            // Select ∧ Hide = ∅ invariant) must not keep a stale rank.
+            if (want[ei] && !m.isEdgeSelected(ei)) m.edgeSelectionOrder[ei] = 0;
+            else                                   m.edgeSelectionOrder[ei] = cast(int) slot[ei];
+        }
         m.edgeSelectionOrderCounter = edgeCounter_;
     }
 }

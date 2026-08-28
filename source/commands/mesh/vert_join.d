@@ -8,7 +8,8 @@ import view;
 import editmode;
 import math : Vec3;
 import change_bus : MeshEditScope;
-import snapshot : MeshSnapshot;
+import mesh_edit_delta : MeshEditDelta, acceptRecordedEdit;
+import commands.mesh.selection_undo : DenseSelectionUndo;
 import params : Param;
 
 /// Tier 1.2: `vert.join`. Collapses the selected vertices to a single point —
@@ -48,9 +49,26 @@ import params : Param;
 /// The post-command selection is CLEARED (`repointToNothing`): the reference
 /// leaves nothing selected after a join, the same answer the vertex split gave
 /// in task 1180's selection-product port.
+///
+/// UNDO IS THE OPERATION-LOG DELTA since task 1903 Stage L10-b; the whole-mesh
+/// `MeshSnapshot` is gone. This class is a weld-group member — the collapse
+/// runs first and the weld's `applyVertexRemapAndRebuild` tail is what needed
+/// Stage L10-P2's arming — and it is the one member whose weld carries a
+/// POLICY (`JoinWeldPolicy`), so its cell in `weld_merge.json` is the only one
+/// that measures law 2 (the pinned survivor) surviving a round trip.
+///
+/// THE SELECTION IS `DenseSelectionUndo`, and here it is load-bearing rather
+/// than a belt: the forward CLEARS the selection outright
+/// (`repointToNothing`, law 3), so there is nothing in the mesh for an
+/// index-keyed re-derive to read after the revert.
 class MeshVertJoin : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;
+    private MeshEditDelta      delta_;
+    private DenseSelectionUndo preSel_;
+    /// Set once `evaluate` recorded a delta: FIRST RUN vs REDO, and
+    /// `revert()`'s guard. It is the role the deleted `if (!snap.filled)`
+    /// played.
+    private bool               recorded_;
 
     private bool average_ = true;
     private bool keep_    = false;
@@ -94,52 +112,98 @@ class MeshVertJoin : Command, Operator {
                    sum.z / ordered.length)
             : mesh.vertices[survivor];
 
-        snap = MeshSnapshot.capture(*mesh);
         auto selMask = mesh.selectedVertices;   // materialise once
-        // TASK 1903 STAGE L10-P0 (axis 0). An UNRECORDED `MeshEditBatch` at
-        // the command boundary. This command opened none, so every
-        // `commitChange` its kernels made stamped the mesh version and
-        // delivered on its own — one `changeBus.unbatchedGeometryCommits` tick
-        // each. Inside the batch they defer and stamp ONCE at `close()`.
+
+        // Laws 1-3 in one place: keep `survivor` as the cluster head, pin it
+        // so a join that consumed every face still leaves it behind, and
+        // honour `keep`.
+        JoinWeldPolicy policy;
+        policy.survivor           = survivor;
+        policy.keepOrphanSurvivor = true;
+        policy.keepTwoPointFaces  = keep_;
+
+        // REDO: `CommandHistory.redo` re-runs `apply()`. Re-run the kernels
+        // BATCHLESS — no recording frame means every tracker hook takes its
+        // `editRecorder_ is null` early-out — and keep the FIRST delta rather
+        // than record a second one over it.
+        if (recorded_) {
+            size_t rw;
+            {
+                auto ed = MeshEditBatch.unrecorded(*mesh, kJoinScope);
+                ed.collapseVerticesByMask(selMask, target);
+                rw = ed.weldVerticesByMask(selMask, 1e-12, false, policy);
+                if (rw != 0) repointToNothing(mesh);
+                ed.close();
+            }
+            return rw != 0;
+        }
+
+        // The dense selection image, taken BEFORE the batch opens — and here
+        // it is the whole undo of the selection, not a belt: the forward
+        // CLEARS every domain (law 3).
+        preSel_.capture(*mesh);
+
+        // TASK 1903 STAGE L10-P0 gave this command its first `MeshEditBatch`
+        // (axis 0, the commit seam: the collapse and the weld each committed
+        // on their own before it, and inside a frame they defer and stamp ONCE
+        // at `close()`). STAGE L10-b makes it RECORDING — axis 2, the undo.
         //
-        // UNRECORDED, not recording: axis 0 is the COMMIT SEAM and moves no
-        // undo. Undo here is still the whole-mesh `MeshSnapshot` above.
-        //
-        // THE BATCH CLOSES BEFORE THE ROLLBACK: `snap.restore` is a wholesale
-        // `*mesh = …`, and the refusal path must leave no frame open and
-        // `changeBus.batchLeaks` unmoved (§S-6).
+        // THE BATCH CLOSES BEFORE THE ROLLBACK, so the refusal path leaves no
+        // frame open and `changeBus.batchLeaks` unmoved (§S-6).
         size_t welded;
         {
-            auto ed = MeshEditBatch.unrecorded(*mesh,
-                          MeshEditScope.Geometry | MeshEditScope.Marks);
+            auto ed = MeshEditBatch(*mesh, kJoinScope);
             ed.collapseVerticesByMask(selMask, target);
-            // Weld the now-coincident verts. Tiny eps is enough since
-            // collapseVerticesByMask sets exact equality. The policy carries
-            // laws 1-3: keep `survivor` as the cluster head, pin it so a join
-            // that consumed every face still leaves it behind, and honour
-            // `keep`.
-            JoinWeldPolicy policy;
-            policy.survivor           = survivor;
-            policy.keepOrphanSurvivor = true;
-            policy.keepTwoPointFaces  = keep_;
+            // Tiny eps is enough since collapseVerticesByMask sets exact
+            // equality.
             welded = ed.weldVerticesByMask(selMask, 1e-12, false, policy);
             // The reference leaves NOTHING selected after a join (task 1210).
             if (welded != 0) repointToNothing(mesh);
-            ed.close();
+            delta_ = ed.close();
         }
-        if (welded == 0) {
-            // Verts didn't actually weld (selection not contiguous?) —
-            // restore and fail.
-            snap.restore(*mesh);
-            snap = MeshSnapshot.init;
+
+        // THE POST-CLOSE RULING (§S-6, ruling Q-K6), and the two arms behind
+        // its single `false` roll back differently:
+        //
+        //   * `welded == 0` is this class's pre-existing GIGO case — the verts
+        //     did not actually weld, but `collapseVerticesByMask` has already
+        //     moved every one of them onto `target`. The partial edit is
+        //     replayed BACKWARDS and every image dropped, which is what the
+        //     deleted `snap.restore` did;
+        //   * `welded > 0` with an EMPTY delta is the contradiction
+        //     `acceptRecordedEdit` ticks `changeBus.emptyDeltaOverMutation`
+        //     for. Nothing rolls back — there is nothing to replay, and
+        //     re-imposing the pre-op selection over a mesh whose arrays have
+        //     already moved would RESIZE the mark arrays back to the pre-op
+        //     length. The live defect is documented at that counter.
+        if (!acceptRecordedEdit(welded, delta_)) {
+            if (welded == 0) {
+                delta_.revert(*mesh);
+                preSel_.restore(*mesh);
+            }
+            delta_  = MeshEditDelta.init;
+            preSel_ = DenseSelectionUndo.init;
             return false;
         }
+        recorded_ = true;
         return true;
     }
 
+    /// The declared scope, written once for the recording and the redo frame.
+    /// `Marks` is not decoration: `repointToNothing` clears all three
+    /// selection domains, and declaring `Geometry` alone would declare less
+    /// than the command does.
+    private enum uint kJoinScope =
+        MeshEditScope.Geometry | MeshEditScope.Marks;
+
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
+        // An instance whose `evaluate` refused holds an empty delta and a
+        // nulled selection image; replaying it would run `preSel_` over a mesh
+        // it was never sized against. Answering false here is correct ONLY
+        // because the funnel records no history entry for a refused forward.
+        if (!recorded_) return false;
+        delta_.revert(*mesh);     // LIFO inverse replay restores geometry
+        preSel_.restore(*mesh);   // …then the three selection domains
         return true;
     }
 }

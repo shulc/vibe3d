@@ -7,7 +7,9 @@ import view;
 import editmode;
 import math    : Vec3;
 import params  : Param;
-import snapshot : MeshSnapshot;
+import change_bus : MeshEditScope;
+import mesh_edit_delta : MeshEditDelta, acceptRecordedEdit;
+import commands.mesh.selection_undo : DenseSelectionUndo;
 
 /// Revolve a selected edge profile (or polygon) around a principal axis to
 /// produce a surface of revolution.
@@ -27,13 +29,37 @@ import snapshot : MeshSnapshot;
 ///   - angle      — total sweep angle in radians.  360° (≈6.2831853) is the
 ///                  default; values < 2π − 1e-3 produce an open arc sweep.
 ///
-/// Undo: snapshot-based (MeshSnapshot), consistent with mesh.bridge and
-///       mesh.radial_array. Task 1903 Stage E2 put the kernel call inside an
-///       UNRECORDED `MeshEditBatch` (the commit seam, plan §5.0 axis 0); the
-///       undo record is untouched and moves at **L10**.
+/// UNDO IS THE OPERATION-LOG DELTA since task 1903 Stage L10-e; the whole-mesh
+/// `MeshSnapshot` is gone. Two things landed together:
+///
+///   1. THE BATCH GREW OVER THE PROFILE-FACE DELETION (P-L10-4). Stage E2 left
+///      it outside on purpose and measured what that cost — a polygon-mode
+///      sweep read `unbatchedGeometryCommits` **+2** where an edge-cycle sweep
+///      of the same closed profile read **+0**. Those two ticks are gone now,
+///      and `tests/test_mesh_sweep.d`'s `unbatchedPoly == 2` is a `0`, which
+///      is what that assertion's own message asked for.
+///      It is not only the seam: a delta recorded across the revolve alone
+///      describes the appends and says NOTHING about the deletion, so its
+///      revert would leave the profile face gone.
+///   2. THE MARKS. `revolveProfileEx` calls `clearVertexSelection`, the only
+///      kernel in this family that does, and
+///      `tests/unit/mesh_ops/revolve_test.d` measured the kernel's revert as
+///      geometry-EXACT with the mark planes ABSENT — its `:643` note asked
+///      this stage for exactly that. `DenseSelectionUndo` is the answer, at
+///      the command, where the pre-op image still exists.
+///
+/// WHAT IS INERT ON THIS PATH: no weld runs here, so the edge-set MERGE record
+/// (task 2310) and the Point-domain map payload (task 2330) on
+/// `Kind.RemoveVerts` are never exercised. `mesh.sweep` also has NO cell in
+/// `weld_merge.json` — the stage's stand cannot present a profile plus a path
+/// — so its oracle is `revolve_test.d`, at the kernel, plus the suite.
 class MeshSweep : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;
+    private MeshEditDelta      delta_;
+    private DenseSelectionUndo preSel_;
+    /// Set once `evaluate` recorded a delta: FIRST RUN vs REDO, and
+    /// `revert()`'s guard — the role the deleted `if (!snap.filled)` played.
+    private bool               recorded_;
 
     private int    count_  = 8;
     private string axis_   = "Y";
@@ -90,7 +116,10 @@ class MeshSweep : Command, Operator {
             return false;   // vertex mode — not supported
         }
 
-        snap = MeshSnapshot.capture(*mesh);
+        // The dense selection image, taken BEFORE the batch opens. NOT
+        // re-taken on the redo arm: a second capture would image the POST-op
+        // selection, and the first one is the one `revert()` needs.
+        if (!recorded_) preSel_.capture(*mesh);
 
         // TASK 1903 Stage E2 — the kernel takes `ref MeshEditBatch`, so the
         // batch opens HERE, at the command boundary, and never inside the
@@ -124,24 +153,10 @@ class MeshSweep : Command, Operator {
         // Start Angle (ring 0 rotated off the profile): the same
         // `deleteFacesByMask` call reads **+4** there, measured.
         //
-        // That deletion is untouched by this stage, and folding it into the
-        // batch would be a second edit hiding inside a move (D3's rule, and the
-        // reason its review had to narrow the transitional block). It moves
-        // with the rest of this command's axis-0 obligation at **L10** (plan
-        // §5.0: "axis 0 rides along" with the family's own stage).
-        //
-        // UNRECORDED, deliberately: undo here is still the whole-mesh `snap`
-        // captured just above (plan §5.1 — track 1 is the conversion axis,
-        // track 2 is the undo migration, and mixing them in one commit is what
-        // §5.1 forbids), so a RECORDING batch would build a full op-log that
-        // nothing reads and `close()` would drop. `mesh.sweep` is an **L10**
-        // row (plan §5.5, the reindexing half of topo-misc) — that is the
-        // stage that turns this into a delta, not L5 and not E2.
-        //
-        // The batch is scoped to the kernel call ALONE and deliberately does
-        // NOT span the polygon-mode `deleteFacesByMask` below: that deletion
-        // is unchanged by this stage, and folding it in would be a second edit
-        // hiding inside a move (D3's rule at commands/mesh/bridge.d).
+        // TASK 1903 STAGE L10-e CLOSED BOTH OF THOSE. The batch is RECORDING
+        // — `close()`'s delta is what `revert()` replays — and it SPANS the
+        // polygon-mode `deleteFacesByMask` below, so the +2 measured above is
+        // now 0 and the deletion is inside the log that has to invert it.
         //
         // No `scope(failure)`, unlike the older `beginEditBatch`/`endEditBatch`
         // spelling at delete.d / remove.d: that pair has no destructor, this
@@ -150,31 +165,53 @@ class MeshSweep : Command, Operator {
         // and ticks `changeBus.batchLeaks`, which the suite asserts stays 0.
         size_t inserted;
         {
-            auto ed = MeshEditBatch.unrecorded(*mesh, kRevolveEditScope);
+            auto ed = openBatch();
             inserted = ed.revolveProfile(profile, profileClosed,
                                          count_, axis_[0], center_, angle_);
-            ed.close();
+            // Polygon mode: delete the source profile polygon now that the
+            // lateral surface has been built, INSIDE the same frame.
+            // `deleteFacesByMask` rebuilds loops internally.
+            if (inserted != 0 && profileFaceIdx != uint.max) {
+                auto delMask = new bool[](mesh.faces.length);
+                delMask[profileFaceIdx] = true;
+                ed.deleteFacesByMask(delMask);
+            }
+            auto d = ed.close();
+            if (!recorded_) delta_ = d;
         }
-        if (inserted == 0) {
-            snap = MeshSnapshot.init;
+
+        // THE POST-CLOSE RULING (§S-6, ruling Q-K6). `inserted == 0` is the
+        // refusal this command has always made, and it needs no rollback: a
+        // `revolveProfile` that inserts nothing has mutated nothing, and the
+        // deletion above is gated on it. The other arm — mutated, recorded
+        // nothing — ticks `changeBus.emptyDeltaOverMutation`.
+        if (recorded_) return inserted != 0;
+        if (!acceptRecordedEdit(inserted, delta_)) {
+            delta_  = MeshEditDelta.init;
+            preSel_ = DenseSelectionUndo.init;
             return false;
         }
-
-        // Polygon mode: delete the source profile polygon now that the
-        // lateral surface has been built.  deleteFacesByMask rebuilds loops
-        // internally; snap already covers the pre-mutation state.
-        if (profileFaceIdx != uint.max) {
-            auto delMask = new bool[](mesh.faces.length);
-            delMask[profileFaceIdx] = true;
-            mesh.deleteFacesByMask(delMask);
-        }
-
+        recorded_ = true;
         return true;
     }
 
+    /// The batch this command opens: RECORDING on the first run, UNRECORDED on
+    /// the redo. `CommandHistory.redo` re-runs `apply()`, and a second
+    /// recording run would record a second delta over the first; unrecorded,
+    /// every tracker hook takes its `editRecorder_ is null` early-out.
+    private MeshEditBatch openBatch() {
+        if (recorded_) return MeshEditBatch.unrecorded(*mesh, kRevolveEditScope);
+        return MeshEditBatch(*mesh, kRevolveEditScope);
+    }
+
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
+        // An instance whose `evaluate` refused holds an empty delta and a
+        // nulled selection image; replaying it would run `preSel_` over a mesh
+        // it was never sized against. Answering false here is correct ONLY
+        // because the funnel records no history entry for a refused forward.
+        if (!recorded_) return false;
+        delta_.revert(*mesh);     // LIFO inverse replay restores geometry
+        preSel_.restore(*mesh);   // …then the three selection domains
         return true;
     }
 }

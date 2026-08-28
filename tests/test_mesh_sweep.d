@@ -488,17 +488,26 @@ unittest { // mesh.sweep runs its kernel inside ONE caller-held edit batch
     // than as "> 0" so that a THIRD unbatched commit appearing here — a kernel
     // regression, or a new post-kernel write — cannot hide inside it.
     //
-    // STAGE L10 FLIPS THIS. The deletion is untouched by Stage E2; folding it
-    // into the batch would be a second edit hiding inside a move, which is the
-    // rule D3's review had to apply to its own transitional block. `sweep` is
-    // an L10 row (plan §5.5, topo-misc/reindexing) and axis 0 rides along with
-    // it (§5.0) — when that stage puts the deletion inside the command's batch,
-    // this expectation becomes 0 and this assertion reddens by design.
+    // STAGE L10-e FLIPPED THIS, and the flip is why the expectation below is
+    // 0 rather than 2. Stage E2 left the deletion outside the batch on
+    // purpose — folding it in would have been a second edit hiding inside a
+    // move, the rule D3's review had to apply to its own transitional block —
+    // and wrote the number down so this line would redden BY DESIGN when the
+    // deletion moved in. It has: `commands/mesh/sweep.d` now runs
+    // `ed.deleteFacesByMask` inside the same frame as `revolveProfile`,
+    // because the command's undo is an op-log delta and a delta recorded
+    // across the appends alone says NOTHING about the deletion.
+    //
+    // WHAT THE 0 IS NOT: it is not "the counter died". Cell (1) above reads 0
+    // through a path that deletes no face at all, so a dead counter would read
+    // 0 in both and prove nothing — which is why THIS block also asserts the
+    // op-log delta below, a channel that was 0 before this stage and is 3 now.
     buildClosedQuadProfile();
     setSelection("polygons", [0]);
 
     immutable long nested2    = busCounter("nestedBatchOpens");
     immutable long unbatched2 = busCounter("unbatchedGeometryCommits");
+    immutable long opLog2     = busCounter("opLogEntriesRecorded");
     cmd(`{"id":"mesh.sweep","count":` ~ count.to!string ~
         `,"axis":"Y","angle":6.2831853}`);
     immutable long nestedPoly    = busCounter("nestedBatchOpens") - nested2;
@@ -508,30 +517,44 @@ unittest { // mesh.sweep runs its kernel inside ONE caller-held edit batch
     assert(nestedPoly == 0,
         "mesh.sweep (closed polygon profile) moved changeBus.nestedBatchOpens "
       ~ "by " ~ nestedPoly.to!string ~ ", expected 0 (task 1903 Stage E2).");
-    assert(unbatchedPoly == 2,
+    assert(unbatchedPoly == 0,
         "mesh.sweep (closed polygon profile) made " ~ unbatchedPoly.to!string
-      ~ " UNBATCHED geometry commit(s), expected exactly 2 — traced at the "
-      ~ "tick site as flags 0x4 then 0x6: the rebuildEdges() inside "
+      ~ " UNBATCHED geometry commit(s), expected exactly 0 as of task 1903 "
+      ~ "Stage L10-e. Until that stage this read exactly 2, traced at the tick "
+      ~ "site as flags 0x4 then 0x6: the rebuildEdges() inside "
       ~ "deleteFacesByMask (Polygons) and that primitive's tail commit "
-      ~ "(Geometry), which this command runs AFTER the batch closes. NOT "
+      ~ "(Geometry), which the command ran AFTER the batch closed. NOT "
       ~ "compactUnreferenced: it early-returns here, because startAngle is 0 "
       ~ "and ring 0 reuses the profile's own vertices, so the deletion orphans "
-      ~ "none. Cell (1) above sweeps "
-      ~ "the same closed profile through an edge cycle, deletes no face and "
-      ~ "reads 0, so a change HERE and not there is the deletion; a change in "
-      ~ "both is the kernel. MEASURED on this exact cell with the batch taken "
-      ~ "away (Mesh.commitChange's deferral disabled): +62 — so 60 of them were "
-      ~ "the kernel and are gone, and these 2 are the deletion. STAGE L10 folds "
-      ~ "the remaining 2 in (task 1903 Stage E2, plan §5.0 / §5.5).");
+      ~ "none. MEASURED on this exact cell with the batch taken away "
+      ~ "(Mesh.commitChange's deferral disabled): +62. A NON-ZERO here now "
+      ~ "means the deletion has left the frame again — and with it the op-log "
+      ~ "entry that inverts it, so mesh.sweep's undo would stop restoring the "
+      ~ "profile face while every count still round-tripped.");
     assert(faceCount() == sides * count,
         "sweep seam probe (polygon): expected " ~ (sides * count).to!string
       ~ " faces, got " ~ faceCount().to!string
       ~ " — the command did not run, so the deltas above were measured across "
       ~ "nothing");
 
-    // (4) The batches closed cleanly and nobody recorded an op-log: undo for
-    // `mesh.sweep` is still a whole-mesh MeshSnapshot, so both callers open
-    // UNRECORDED batches. That flips at L10, not here.
+    // (4) The batches closed cleanly, and the polygon-mode sweep RECORDED an
+    // op-log — three entries, measured. Until Stage L10-e undo for
+    // `mesh.sweep` was a whole-mesh MeshSnapshot and both callers opened
+    // UNRECORDED batches, so this delta was 0.
+    //
+    // It is the second, independent channel on the same change as the 0
+    // above: the counter delta says the deletion is inside the frame, this
+    // says the frame is RECORDING. A dead `unbatchedGeometryCommits` would
+    // satisfy the first and not the second.
+    immutable long opLogPoly = busCounter("opLogEntriesRecorded") - opLog2;
+    assert(opLogPoly == 3,
+        "mesh.sweep (closed polygon profile) recorded " ~ opLogPoly.to!string
+      ~ " op-log entrie(s), expected exactly 3 (task 1903 Stage L10-e: "
+      ~ "AddVerts + AddFaces from revolveProfile, RemoveFaces from the profile "
+      ~ "deletion now inside the same frame). A 0 means the batch went back to "
+      ~ "UNRECORDED and mesh.sweep's undo restores nothing; a different "
+      ~ "non-zero means the kernel's entry shape moved and the undo needs "
+      ~ "re-measuring, not re-baselining.");
     immutable long leaksDelta    = busCounter("batchLeaks")            - leaks0;
     immutable long refusalsDelta = busCounter("batchUpgradeRefusals") - refusals0;
     assert(leaksDelta == 0,

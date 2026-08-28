@@ -347,16 +347,23 @@ private void arrOneFace(Mesh* m)
 /// MEASURED, AND IT IS WHY NEITHER CELL USES `arrOneFace`. `quadruple` is not
 /// a splitter — it MERGES adjacent coplanar TRIANGLE pairs into quads through
 /// `removeEdgesByMask`, so on a quad sheet its accept predicate matches
-/// nothing. Run on face 4 of the bare stand it answers `apply() == true` and
-/// leaves every winding and every count exactly as it found them.
+/// nothing. Run on face 4 of the bare stand it USED TO answer `apply() == true`
+/// and leave every winding and every count exactly as it found them.
 ///
-/// THAT IS A HISTORY ENTRY OVER A NO-OP, which the project's command contract
+/// THAT WAS A HISTORY ENTRY OVER A NO-OP, which the project's command contract
 /// forbids (`evaluate` false ⇒ `apply` false ⇒ no entry). `MeshQuadruple`,
-/// `MeshTriple` and `MeshDetriangulate` all `return true` unconditionally
-/// after their kernel, and all three kernels return a COUNT they discard. It
-/// is recorded in the stage card as a finding rather than fixed here: changing
-/// a shipped command's refusal behaviour is not a freeze-time decision, and
-/// the fixture must freeze what ships.
+/// `MeshTriple` and `MeshDetriangulate` all returned true unconditionally
+/// after their kernel, and all three kernels return a COUNT they discarded.
+/// Stage L10-c/-d FIXED it, and the fix was forced rather than chosen: the
+/// post-close ruling is `acceptRecordedEdit`, and a fabricated non-zero
+/// `affected` over an empty delta ticks `changeBus.emptyDeltaOverMutation`,
+/// which both gate lanes assert stays 0. So the count is read and the three
+/// refuse honestly.
+///
+/// THE ARRANGEMENT IS UNCHANGED BY THAT, and deliberately: it triangulates
+/// first because these two cells must measure their OWN command against the
+/// frozen dumps, not a refusal. The dumps themselves are untouched — the
+/// forward on THIS operand always did work.
 private void arrTriangulated(Mesh* m)
 {
     immutable preF = m.faces.length;
@@ -439,12 +446,13 @@ shared static this() { kNopTopology = () { }; }
 private string pathOf(L10Cmd w)
 {
     final switch (w) {
-        case L10Cmd.vertMerge: return "delta";
+        case L10Cmd.vertMerge: case L10Cmd.weldPair:
         case L10Cmd.collapseV: case L10Cmd.collapseE: case L10Cmd.collapseP:
-        case L10Cmd.vertJoin:  case L10Cmd.weldPair:  case L10Cmd.edgeJoin:
-        case L10Cmd.mergeFaces: case L10Cmd.triple:   case L10Cmd.quadruple:
-        case L10Cmd.detriangulate: case L10Cmd.unify: case L10Cmd.reduce:
-            return "snapshot";
+        case L10Cmd.vertJoin:  case L10Cmd.edgeJoin:
+        case L10Cmd.triple:    case L10Cmd.unify:
+        case L10Cmd.mergeFaces: case L10Cmd.quadruple:
+        case L10Cmd.detriangulate: case L10Cmd.reduce:
+            return "delta";
     }
 }
 
@@ -714,9 +722,24 @@ ParityCell[] l10Cells()
 // new regression on this plane reddens, and so does FIXING the divergence —
 // which is what tells whoever fixed it to retire the entry.
 //
-// ONE ENTRY, NOT THIRTEEN. It names `vert.merge` alone because that is the
-// only cell on the migrated path today; each later migration adds its own row
-// as it lands, and a row added for a cell still on `"snapshot"` reddens on
+// ONE ENTRY, NOT THIRTEEN, AND THAT IS A MEASUREMENT THAT CONTRADICTS THE
+// STAGE'S OWN PREDICTION. Card 2340 wrote: *"the expected divergence for each
+// of them is `faceSelectionOrder` (the L3 normalisation); the row in
+// `kL10Exceptions` is added in the same commit"*. Stage L10-b…-f then migrated
+// the other twelve and NOT ONE of them needed a row.
+//
+// WHY, and it is one line of `commands/mesh/selection_undo.d`: the twelve hold
+// a `DenseSelectionUndo`, whose `restore` puts the three order arrays back
+// WHOLESALE and re-zeroes only the entries the bulk setter REFUSED. So an
+// unselected element keeps its stamp — exactly what `MeshSnapshot.restore`
+// did, which is what the oracle froze. `vert_merge.d` is the one member that
+// does not: it holds a bare `SelectionSnapshot`, whose tail re-zeroes EVERY
+// unselected element's stamp, and that is the divergence this entry pins.
+// `tests/unit/l10_command_undo_census_test.d` asserts that 12-of-13 split by
+// NAME, so moving `vert_merge` onto the dense image reddens there and tells
+// whoever did it to retire this entry.
+//
+// A row added for a cell that does NOT diverge reddens on
 // `compareWithExceptions`'s "now AGREES" assert.
 private immutable PlaneException[] kL10Exceptions = [
     PlaneException("vert.merge", "postUndo", "faceSelectionOrder",

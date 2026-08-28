@@ -685,9 +685,18 @@ unittest // a recording bridge declares kBridgeEditScope, logs AddVerts/AddFaces
         //     BOTH lengths, do not assert the constructor flip is a one-liner).
         //
         //     What this does NOT say: that `mesh.bridge`'s undo is a
-        //     constructor flip. That command deletes the cap faces AFTER the
-        //     batch closes, and that deletion is a separate op with its own
-        //     face-side question.
+        //     constructor flip. That command USED TO delete the cap faces
+        //     AFTER the batch closed, and that deletion is a separate op with
+        //     its own face-side question.
+        //
+        //     TASK 1903 STAGE L10-e MOVED THE DELETION INSIDE THE FRAME, which
+        //     is what let `mesh.bridge`'s undo become this delta. So the
+        //     command's log is no longer this one: it carries the cap
+        //     `RemoveFaces` too, and the caveat above is now a statement about
+        //     THIS stand's kernel-only log rather than about the command. The
+        //     command's own oracle is the suite (`tests/test_bridge.d` and the
+        //     bridge fixtures) — `weld_merge.json` has no bridge cell, because
+        //     stage L10's stand cannot present two bridgeable loops.
         const bool reverted = d.revert(m);
         assert(reverted,
             format("spans=%d: revert() refused the delta outright", spans));

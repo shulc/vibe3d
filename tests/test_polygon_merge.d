@@ -259,10 +259,24 @@ unittest {
         if (f.array.length == 6) { found6 = true; break; }
     assert(found6, "C: merged non-coplanar face must have 6 corners");
 
-    // Cross-check: detriangulate on same selection leaves 6 faces (dot(n0,n2) ≈ 0 < 0.999).
+    // Cross-check: detriangulate on the same selection dissolves NOTHING
+    // (dot(n0,n2) ≈ 0 < 0.999), so it REFUSES and leaves 6 faces.
+    //
+    // IT USED TO ANSWER `ok` HERE, and this line is where that changed (task
+    // 1903 Stage L10-d). `detriangulateFacesByMask` has always returned a
+    // count and `MeshDetriangulate` discarded it, so a refusal landed a
+    // history entry describing no change — an entry the next Ctrl+Z spends
+    // itself on. The migration to an op-log delta could not represent that:
+    // `acceptRecordedEdit` over an empty delta with a fabricated non-zero
+    // `affected` ticks `changeBus.emptyDeltaOverMutation`, which both gate
+    // lanes assert stays 0. So the count is read and the refusal is honest.
     resetCube();
     postSelect("polygons", [0, 2]);
-    runCmd("mesh.detriangulate");
+    auto raw = postCommandRaw("mesh.detriangulate");
+    assert(raw["status"].str == "error",
+           "C: detriangulate on a non-coplanar pair dissolves nothing, so it "
+         ~ "must REFUSE rather than record a history entry over a no-op — got "
+         ~ raw.toString);
     auto m2 = getModel();
     assert(m2["faceCount"].integer == 6,
            "C: detriangulate on non-coplanar pair must leave 6 faces (contrast check)");

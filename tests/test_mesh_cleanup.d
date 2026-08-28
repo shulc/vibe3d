@@ -464,13 +464,19 @@ unittest { // both commands run their kernel inside ONE edit batch
     assert(a2["missedPublishers"].integer == 0,
         "a mutationVersion bump reached the frame with no pending change: "
       ~ a2["missedPublishers"].integer.to!string);
-    // Unrecorded at E1 by design — Stage L10 is where this becomes non-zero.
-    // L10, not L5: the L-table (plan §5.5) is keyed by COMMAND, and `unify`
-    // sits in the topo-misc/reindexing row beside collapse and weld, while L5
-    // is the cleanup/remesh row that owns `mesh.cleanup`.
-    assert(a2["opLogEntriesRecorded"].integer
-        == b2["opLogEntriesRecorded"].integer,
-        "poly.unify recorded op-log entries. Its batch is UNRECORDED until "
-      ~ "Stage L10 moves this command's undo off the whole-mesh snapshot; a "
-      ~ "recording batch here builds a log nothing reads (task 1903 §5.1).");
+    // RECORDING as of Stage L10-c, and the number is exact. It was 0 through
+    // E1, which is what this assertion pinned then; L10 moved `poly.unify`'s
+    // undo off the whole-mesh snapshot, so the batch is now the thing
+    // `revert()` replays. L10, not L5: the L-table (plan §5.5) is keyed by
+    // COMMAND, and `unify` sits in the topo-misc/reindexing row beside
+    // collapse and weld, while L5 is the cleanup/remesh row that owns
+    // `mesh.cleanup`.
+    const long unifyOpLog = a2["opLogEntriesRecorded"].integer
+                          - b2["opLogEntriesRecorded"].integer;
+    assert(unifyOpLog == 1,
+        "poly.unify recorded " ~ unifyOpLog.to!string ~ " op-log entrie(s), "
+      ~ "expected exactly 1 — `unifyFaces` reaches `deleteFacesByMask`, which "
+      ~ "records one RemoveFaces for the duplicate face it drops (task 1903 "
+      ~ "Stage L10-c). A 0 means the batch went back to UNRECORDED and this "
+      ~ "command's undo restores nothing while `revert()` still answers true.");
 }

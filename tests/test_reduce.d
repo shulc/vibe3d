@@ -282,12 +282,20 @@ unittest { // reduce runs inside an edit batch, and publishes the Position class
     assert(after["missedPublishers"].integer == 0,
         "a mutationVersion bump reached the frame with no pending change: "
       ~ after["missedPublishers"].integer.to!string);
-    // Unrecorded at D2 by design — Stage L10 is where this becomes non-zero.
-    assert(after["opLogEntriesRecorded"].integer
-        == before["opLogEntriesRecorded"].integer,
-        "mesh.reduce recorded op-log entries. Its batch is UNRECORDED until "
-      ~ "Stage L10 moves this family's undo off the whole-mesh snapshot; a "
-      ~ "recording batch here builds a log nothing reads (task 1903 §5.1).");
+    // RECORDING as of Stage L10-f, and the number is exact. It was 0 through
+    // D2, which is what this assertion pinned then.
+    const long reduceOpLog = after["opLogEntriesRecorded"].integer
+                           - before["opLogEntriesRecorded"].integer;
+    assert(reduceOpLog == 4,
+        "mesh.reduce recorded " ~ reduceOpLog.to!string ~ " op-log entrie(s), "
+      ~ "expected exactly 4 on this stand (task 1903 Stage L10-f: the "
+      ~ "finalising SetPos, the FaceReindex the weld twin's rewrite now arms, "
+      ~ "and the Reindex + RemoveVerts pair from the tail compaction). A 0 "
+      ~ "means the batch went back to UNRECORDED and this command's undo "
+      ~ "restores nothing while `revert()` still answers true. A THREE means "
+      ~ "the FaceReindex arm is gone — which is the exact defect Stage L10-P2 "
+      ~ "closed: `revert()` answered true over a mesh that had lost half its "
+      ~ "faces.");
 }
 
 unittest { // preserveBoundary: open mesh boundary vertex set preserved

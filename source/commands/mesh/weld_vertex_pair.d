@@ -7,7 +7,8 @@ import view;
 import editmode;
 import params : Param;
 import change_bus : MeshEditScope;
-import snapshot : MeshSnapshot;
+import mesh_edit_delta : MeshEditDelta, acceptRecordedEdit;
+import commands.mesh.selection_undo : DenseSelectionUndo;
 
 /// Weld vertex `source` into vertex `target`: source is removed and its
 /// incident faces are rewritten to reference `target`. The surviving vertex
@@ -20,9 +21,28 @@ import snapshot : MeshSnapshot;
 /// Params (injected via /api/command JSON or injectParamsInto):
 ///   source  — vertex index to remove (the "drop" vertex)
 ///   target  — vertex index to survive at (the "keep" vertex)
+///
+/// UNDO IS THE OPERATION-LOG DELTA since task 1903 Stage L10-b; the whole-mesh
+/// `MeshSnapshot` is gone. This class reaches the SAME tail `vert.merge` does
+/// — `Mesh.applyVertexRemapAndRebuild`, armed at Stage L10-P2 — through a
+/// different door: `weldVertexPairs` rather than `weldVerticesByMask`. That is
+/// why the parity fixture carries a cell for each, and why a red on only one
+/// of the two names the door rather than the tail.
+///
+/// THE SELECTION IS `DenseSelectionUndo`, not this file's own belt. The weld's
+/// tails (`clearFaceSelectionResize`, `clearEdgeSelectionResize`) run AFTER
+/// the face rewrite, so no face entry in the op-log can describe them; and the
+/// edge half has to be re-keyed by ENDPOINTS because `finalize`'s
+/// `rebuildEdges` hands the reverted mesh a fresh edge index space.
 class MeshWeldVertexPair : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;
+    private MeshEditDelta      delta_;
+    private DenseSelectionUndo preSel_;
+    /// Set once `evaluate` recorded a delta. It discriminates FIRST RUN from
+    /// REDO (`CommandHistory.redo` calls `apply()` again, and a second
+    /// recording run would record a second delta over the first), and it is
+    /// `revert()`'s guard — the role the deleted `if (!snap.filled)` played.
+    private bool               recorded_;
 
     private int source_ = -1;
     private int target_ = -1;
@@ -50,36 +70,64 @@ class MeshWeldVertexPair : Command, Operator {
         if (cast(uint)source_ >= mesh.vertices.length) return false;
         if (cast(uint)target_ >= mesh.vertices.length) return false;
 
-        snap = MeshSnapshot.capture(*mesh);
-        // TASK 1903 STAGE L10-P0 (axis 0). An UNRECORDED `MeshEditBatch` at
-        // the command boundary. This command opened none, so every
-        // `commitChange` its kernels made stamped the mesh version and
-        // delivered on its own — one `changeBus.unbatchedGeometryCommits` tick
-        // each. Inside the batch they defer and stamp ONCE at `close()`.
+        // REDO: `CommandHistory.redo` re-runs `apply()`. Re-run the kernel
+        // BATCHLESS — no recording frame means every tracker hook takes its
+        // `editRecorder_ is null` early-out — and keep the FIRST delta rather
+        // than record a second one over it.
+        if (recorded_) {
+            size_t rw;
+            {
+                auto ed = MeshEditBatch.unrecorded(*mesh,
+                              MeshEditScope.Geometry | MeshEditScope.Marks);
+                rw = ed.weldVertexPair(cast(uint)target_, cast(uint)source_);
+                ed.close();
+            }
+            return rw != 0;
+        }
+
+        // The dense selection image, taken BEFORE the batch opens.
+        preSel_.capture(*mesh);
+
+        // TASK 1903 STAGE L10-P0 gave this command its first `MeshEditBatch`
+        // (axis 0: the COMMIT SEAM — the weld commits several times on its way
+        // through, and inside a frame they defer and stamp ONCE at `close()`).
+        // STAGE L10-b makes it RECORDING, which is axis 2: the undo.
         //
-        // UNRECORDED, not recording: axis 0 is the COMMIT SEAM and moves no
-        // undo. Undo here is still the whole-mesh `MeshSnapshot` above.
+        // THE RAII HANDLE, not `beginEditBatch`/`endEditBatch` + a
+        // `scope(failure)`: the unwind path is then the destructor's, which
+        // pops the frame WITHOUT stamping and ticks `changeBus.batchLeaks` —
+        // the suite asserts that stays 0.
         size_t welded;
         {
-            auto ed = MeshEditBatch.unrecorded(*mesh,
+            auto ed = MeshEditBatch(*mesh,
                           MeshEditScope.Geometry | MeshEditScope.Marks);
             welded = ed.weldVertexPair(cast(uint)target_, cast(uint)source_);
-            ed.close();
+            delta_ = ed.close();
         }
-        if (welded == 0) {
-            // NO rollback here, and that is not an omission: a `weldVertexPair`
-            // that welds nothing has mutated nothing, so there is nothing to
-            // restore — which is why this arm drops the snapshot rather than
-            // replaying it, unlike `vert.join` and `mesh.mergeFaces` above.
-            snap = MeshSnapshot.init;
+        // THE POST-CLOSE RULING (§S-6, ruling Q-K6). `welded == 0` is the
+        // honest refusal this command has always made — and it needs NO
+        // rollback for the reason the deleted comment gave: a
+        // `weldVertexPair` that welds nothing has mutated nothing. The second
+        // arm — mutated but recorded nothing — is the one `acceptRecordedEdit`
+        // adds, and it ticks `changeBus.emptyDeltaOverMutation` instead of
+        // passing silently.
+        if (!acceptRecordedEdit(welded, delta_)) {
+            delta_  = MeshEditDelta.init;
+            preSel_ = DenseSelectionUndo.init;
             return false;
         }
+        recorded_ = true;
         return true;
     }
 
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
+        // An instance whose `evaluate` refused holds an empty delta and a
+        // nulled selection image; replaying it would run `preSel_` over a mesh
+        // it was never sized against. Answering false here is correct ONLY
+        // because the funnel records no history entry for a refused forward.
+        if (!recorded_) return false;
+        delta_.revert(*mesh);     // LIFO inverse replay restores geometry
+        preSel_.restore(*mesh);   // …then the three selection domains
         return true;
     }
 
