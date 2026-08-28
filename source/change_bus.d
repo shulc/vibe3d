@@ -255,6 +255,39 @@ struct ChangeBus {
     /// predicate against its own mesh or be green in both directions.
     ulong unbatchedGeometryCommits;
 
+    /// Geometry-class commits whose whole-mesh `refreshHiddenDerived` was
+    /// DEFERRED by `Command.apply`'s `beginHideDeriveBatch` pair instead of
+    /// running inline — i.e. the derives that pair, and only that pair, is
+    /// holding back (task 1903 Stage O).
+    ///
+    /// WHY IT SHIPPED, AND WHAT IT REPLACED. Stage O set out to delete the
+    /// pair on the ground that every migrated family now opens a
+    /// `MeshEditBatch`, whose own `EditBatchFrame.deferSafe` covers the same
+    /// case. Measured 2026-08-28, the ground is false: `mesh.paste` is an
+    /// `Operator` that holds no batch (it is a §6.6 undo DECLINE, and a
+    /// decline about the undo IMAGE says nothing about the batch), and its
+    /// vertex-mode arm `appendLooseVertices` calls `addVertex` per point —
+    /// one unbatched Geometry commit each. So the pair is the only thing
+    /// standing between a paste and task 1330's original defect, and its
+    /// value SCALES with the clip. The number is on the bus rather than in a
+    /// `version (unittest)` counter precisely so the suite lane can assert it,
+    /// which is where the user-reachable gesture lives.
+    ///
+    /// EXACT, not a threshold: one loose paste of N points ticks this N+1
+    /// times (N `addVertex` plus `appendLooseVertices`' own closing commit),
+    /// so a test can demand the count track the operand instead of merely
+    /// being positive. A batched command ticks it ONCE — its batch close —
+    /// and that one is not a saving: without the pair the same close derives
+    /// inline exactly once. Read the counter as "derives moved off the inline
+    /// path", and read the SAVING as the amount by which it exceeds one per
+    /// command.
+    ///
+    /// It counts NOTHING in the hidden regime, and that is not a defect of
+    /// the counter: `beginHideDeriveBatch` arms deferral off
+    /// `!anyHideBitSet()`, so with anything hidden the arm is never reached
+    /// and every commit derives eagerly — the still-open cost of task 1333.
+    ulong hideDerivesDeferred;
+
     /// Recording batches opened inside an UNRECORDED one — a hard refusal
     /// (`mesh.pushEditFrame`). The alternative to refusing is a corrupt undo
     /// record: the inner delta would be missing everything the outer batch did

@@ -209,8 +209,22 @@ unittest // a throw between open and close pops the frame and ticks batchLeaks
 // kernel that appends geometry and then selects its output silently loses the
 // selection if the derive was deferred.
 //
-// Mutation: delete the `&& !f.deferSafe` arm from `commitChange`'s in-batch
-// branch → this block reddens with 1330's own message.
+// MUTATION, corrected by measurement (task 1903 Stage O, 2026-08-28). This
+// header used to name "delete the `&& !f.deferSafe` arm from `commitChange`'s
+// in-batch branch". That mutation is real but it reddens the OTHER block — it
+// makes the batch derive on EVERY commit, so the clean-regime count below goes
+// red ("hide-derive ran INSIDE a clean batch — the deferral is gone") and this
+// block, which needs the derive to RUN, stays green. Naming a mutation that
+// cannot redden the block it is written under is the same defect this file
+// exists to catch, one level up.
+//
+// The mutation for THIS block is to arm the bit the wrong way round:
+// `EditBatchFrame(m, 1, 0, rec, false, !m.anyHideBitSet())` in
+// `mesh.pushEditFrame` → `…, true)`. Measured: it reddens at the assert below
+// with "the select was refused — the derive was deferred while it had writes
+// to make (task 1330 BLOCKER 2)". Both mutations were run in isolation; each
+// reddens exactly one of the two blocks, which is what makes the pair a rule
+// and not one assertion with a spare.
 // ===========================================================================
 
 unittest // with something hidden, a batch must derive INLINE

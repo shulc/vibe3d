@@ -100,6 +100,25 @@ module batchless_control_helpers;
 /// Polygons afterwards. Every call site either reloads its stand or sets its
 /// own selection type before the assertion it cares about; that was checked
 /// site by site when this re-base was taken.
+/// ONE MORE THING NOW RIDES `mesh.paste` BEING BATCHLESS — task 1903 Stage O,
+/// 2026-08-28. It is not another consumer of this constant; it is a second
+/// reason the EIGHTH re-base is more than one line.
+///
+/// `mesh.paste` is the only shipped `Operator` that commits Geometry outside a
+/// `MeshEditBatch`, so it is also the only command for which
+/// `Command.apply`'s `beginHideDeriveBatch`/`endHideDeriveBatch` pair still
+/// suppresses anything. Its vertex-mode arm commits once per pasted point, and
+/// the pair turns N + 1 whole-mesh hide derives into one (measured: 1 vs 290
+/// at 289 points). Two tests are written on that: this control's own subject is
+/// pinned by `tests/test_hide_derive_deferral.d` (exact deltas of N + 1) and by
+/// `mesh.paste`'s row in `tests/unit/command_hide_derive_test.d`.
+///
+/// So whoever gives `mesh.paste` a batch does three things in one commit, not
+/// one: re-base this control (the pool is empty — see above, the replacement is
+/// the M-DM test-only unbatched commit), re-point those two tests, AND
+/// re-measure `changeBus.hideDerivesDeferred`, because that batch is exactly
+/// what would make the hide-derive pair deletable. `source/command.d`'s
+/// refusal comment says the same thing from the other end.
 enum string kBatchlessControlCommand = "mesh.paste";
 
 /// The ordered bodies to POST, all of them, in order. The element that actually

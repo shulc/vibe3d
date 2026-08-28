@@ -402,18 +402,73 @@ class Command {
             // opens the OUTERMOST delivery batch for EVERY command, and this
             // pair now nests strictly inside it.
             //
-            // DO NOT DELETE THE PAIR — and the reason is TASK 1330, not anybody
-            // else's dependency on this call. The `beginHideDeriveBatch` sites
-            // in `mesh.d` open their own batch; nothing outside this branch
-            // relies on this one. What it does is arm the hide-derive DEFERRAL
-            // (`g_hideDeriveDeferSafe`), so an Operator that appends N faces
-            // runs ONE whole-mesh `refreshHiddenDerived` instead of N — the
-            // measured root cause recorded above. Removing this call reddens
-            // `tests/unit/command_hide_derive_test.d`, in those words:
-            // "mesh.spikey: hide-derives per ONE apply grew with the mesh
-            // ([66, 258, 1026] at [16, 64, 256] faces respectively). That is
-            // task 1330's root cause verbatim — a full-mesh derived-plane
-            // refresh per appended element instead of per command."
+            // DO NOT DELETE THE PAIR — and as of task 1903 Stage O the reason
+            // is a MEASURED REGIME, not the history above it.
+            //
+            // Stage O existed to delete this pair. The argument for deleting it
+            // was that every migrated family now opens a `MeshEditBatch`, whose
+            // own `EditBatchFrame.deferSafe` (mesh.d) arms off the same
+            // predicate and covers the same case, so the pair would be
+            // suppressing only derives something else already suppresses.
+            // MEASURED 2026-08-28, that argument is false, and one shipped
+            // command is why.
+            //
+            // `mesh.paste` is an `Operator` that holds NO batch. It is a §6.6
+            // undo DECLINE (the payload comes from outside the document), and a
+            // decline about the undo IMAGE says nothing about the BATCH — so it
+            // reaches this branch with `deferSafe` nowhere in the picture. Its
+            // vertex-mode arm, `Mesh.appendLooseVertices`, calls `addVertex`
+            // per pasted point, and `addVertex` ends in `commitChange(Points)`,
+            // which is a Geometry-class commit. So a paste of N loose points is
+            // N + 1 unbatched Geometry commits on the DOCUMENT mesh, whose mark
+            // planes are sized — i.e. N + 1 full `refreshHiddenDerived` passes
+            // over a mesh that is growing while they run. That is task 1330's
+            // defect verbatim, on today's tree, reachable by a user in four
+            // steps (vertex mode, select, `mesh.copy`, `mesh.paste`).
+            //
+            // The numbers, `g_hideDeriveRuns` for ONE apply, clip of 25 / 81 /
+            // 289 points, lane `dub test --config=tests`:
+            //
+            //     with this pair:      1 /  1 /   1
+            //     with it removed:    26 / 82 / 290
+            //
+            // and on the shipped binary over `/api/command`, a 386-point
+            // vertex-mode clip pasted once ticks
+            // `changeBus.unbatchedGeometryCommits` by 387 and `deliveryCount`
+            // by exactly 1.
+            //
+            // THE REGIME, stated because the pair is worthless outside it.
+            // `beginHideDeriveBatch` arms `g_hideDeriveDeferSafe` off
+            // `!anyHideBitSet()`, so with ANYTHING hidden this pair defers
+            // nothing and the same paste costs 291 derives (measured, same
+            // lane, one face hidden). That is task 1333's known-open cost; the
+            // pair neither opens nor closes it. What the pair buys is the CLEAN
+            // regime, and it buys it for the commands that hold no batch.
+            //
+            // WHAT WOULD MAKE IT DELETABLE, so the next reader does not
+            // re-derive it: give `mesh.paste` (and any future batchless
+            // `Operator`) an axis-0 `MeshEditBatch` — the batch alone, keeping
+            // its snapshot undo — and re-measure `changeBus.hideDerivesDeferred`.
+            // Stage O did not take that step: `mesh.paste` is also the suite's
+            // LAST positive control for `changeBus.unbatchedGeometryCommits`
+            // (`tests/batchless_control_helpers.d`), so batching it is a change
+            // to ten test files' anti-vacuity story and not a measurement's
+            // call to make.
+            //
+            // THE WITNESSES, and the second one is why the roster changed.
+            // Removing this call reddens `tests/unit/command_hide_derive_test.d`
+            // with TWO rows — "mesh.subdivide_faceted: … ([66, 258, 1026] …)"
+            // and "mesh.paste: … ([26, 82, 290] …)" — and
+            // `tests/test_hide_derive_deferral.d` in the suite lane with a
+            // `hideDerivesDeferred` delta of 0 where the operand demands N + 1.
+            // Before Stage O the roster held nine candidates, ALL of them
+            // batched, and the only red it produced was
+            // `mesh.subdivide_faceted`'s — a count over a TEMP mesh whose mark
+            // planes are unsized, so each of those derives early-outs on an
+            // empty three-plane scan and costs nothing. The gate was live and
+            // was naming a command that does not pay. It names both now, and
+            // asserts once at the end rather than per candidate, because
+            // druntime stopped the module at the cheap one.
             //
             // Its close is also what brings the derived hide planes up to date
             // before the OUTER batch delivers; the delivery batch it opens of

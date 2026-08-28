@@ -2622,6 +2622,7 @@ class HttpServer {
                 `"totalLayerActive":%d,` ~
                 `"missedPublishers":%d,"confinedCloseImbalance":%d,` ~
                 `"nestedBatchOpens":%d,"unbatchedGeometryCommits":%d,` ~
+                `"hideDerivesDeferred":%d,` ~
                 `"batchUpgradeRefusals":%d,"opLogEntriesRecorded":%d,` ~
                 `"batchLeaks":%d,"emptyDeltaOverMutation":%d,` ~
                 `"mapDeltaMixRecorded":%d,"mapDeltaMixRefused":%d,` ~
@@ -2654,6 +2655,9 @@ class HttpServer {
                 // which is why they live on the bus and not module-level in
                 // `mesh.d`.
                 snap.nestedBatchOpens, snap.unbatchedGeometryCommits,
+                // Task 1903 Stage O — the hide-derive pair's witness. Same
+                // `snap` copy as its neighbours, for the same reason.
+                snap.hideDerivesDeferred,
                 snap.batchUpgradeRefusals, snap.opLogEntriesRecorded,
                 snap.batchLeaks,
                 // Task 1903 Stage L3-a (ruling Q-K6) — a BACKSTOP, not a fix.

@@ -2693,6 +2693,15 @@ struct Mesh {
                     "mesh: a deferred hide-derive commit outside a delivery "
                   ~ "batch — beginHideDeriveBatch opens one so delivery lands "
                   ~ "AFTER endHideDeriveBatch's derive flush");
+                // TASK 1903 STAGE O — the pair's own witness, on the bus so
+                // the SUITE lane can read it (`/api/changes`). This arm is
+                // reached only while `Command.apply`'s hide-derive pair is
+                // open, so every tick is a whole-mesh derive that pair moved
+                // off the inline path. `mesh.paste`'s vertex-mode arm ticks it
+                // once per pasted point; see the field's declaration for what
+                // the number means and for the one tick per batch close that
+                // is NOT a saving.
+                ++changeBus.hideDerivesDeferred;
                 noteHideDerivePending(&this);
                 deliverPending();   // path (a) — see the header above
                 return;

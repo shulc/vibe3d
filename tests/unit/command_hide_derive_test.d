@@ -61,6 +61,9 @@ import commands.mesh.axis_slice        : MeshAxisSlice;
 import commands.mesh.subdivide_faceted : SubdivideFaceted;
 import commands.mesh.detriangulate     : MeshDetriangulate;
 import commands.mesh.spin_edge         : MeshSpinEdge;
+import commands.mesh.paste_           : MeshPaste;
+
+import geometry_clipboard : geometryClipboard, GeometryClip;
 
 // The operand. Several of these commands refuse an empty selection outright
 // (measured 2026-08-19: mesh.duplicate and mesh.vertexSplit are two), so the
@@ -71,6 +74,29 @@ private void selectAll(ref Mesh m) {
     m.syncSelection();
     foreach (i; 0 .. m.faces.length)    m.selectFace(cast(uint)i);
     foreach (i; 0 .. m.vertices.length) m.selectVertex(cast(uint)i);
+}
+
+// THE OPERAND FOR `mesh.paste`, and it is the half of that candidate that
+// makes it discriminating (task 1903 Stage O).
+//
+// A clip with points and NO faces is a VERTEX-MODE copy, and `mesh.paste`
+// answers it through `Mesh.appendLooseVertices`, which calls `addVertex` per
+// point — one unbatched Geometry commit each. A clip WITH faces goes through
+// `appendGeometry`, which commits twice however big the clip is, so a
+// face-mode clip reads 1 with the pair and 2 without it at EVERY size: flat,
+// and therefore blind to the clause below. The clip is rebuilt per size so
+// the operand scales with the fixture; a fixed clip would make the count flat
+// for the wrong reason and the clause vacuous.
+private void loadLooseClip(int gridN) {
+    Mesh src = makeGridPlane(gridN);
+    src.syncSelection();
+    foreach (i; 0 .. src.vertices.length) src.selectVertex(cast(uint)i);
+    geometryClipboard = GeometryClip.fromSelectedVertices(src);
+    assert(geometryClipboard.looseOnly,
+           "fixture: the clip must be the VERTEX-mode one — a clip with faces "
+         ~ "takes appendGeometry's two-commit path and cannot grow with the mesh");
+    assert(geometryClipboard.verts.length == src.vertices.length,
+           "fixture: the clip must hold every vertex of the source grid");
 }
 
 // A candidate plus the arguments it needs to do work on THIS fixture.
@@ -110,6 +136,26 @@ private Command[] candidates(Mesh* m, ref View v) {
         // moves geometry, so it is a class the 1373 sweep's "growing command"
         // filter could not see.
         Cand(new MeshSpinEdge       (m, v, EditMode.Polygons)),
+        // Task 1903 Stage O — THE CANDIDATE THIS ROSTER WAS MISSING, and the
+        // only one on it whose derives cost anything.
+        //
+        // The other ten all hold a `MeshEditBatch` today, so the pair
+        // `Command.apply` opens changes nothing about their counts: their one
+        // derive happens at the batch close either way. Measured 2026-08-28,
+        // defeating the pair on a scratch copy moved exactly two rows —
+        // `mesh.paste` from [1,1,1] to [26,82,290], and
+        // `mesh.subdivide_faceted` from [3,3,3] to [66,258,1026]. Only the
+        // first is a cost: `subdivide_faceted`'s extra derives land on the
+        // TEMP mesh its kernel builds, whose mark planes are not sized yet, so
+        // each one early-outs on an empty three-plane scan. `mesh.paste`'s land
+        // on the document mesh, whose planes are sized, and each is a full
+        // O(V+E+F+C) pass over a mesh that is growing while they run — task
+        // 1330's defect, on a command a user reaches in four steps.
+        //
+        // `mesh.paste` is here rather than batched because it is also the
+        // suite's last positive control for
+        // `changeBus.unbatchedGeometryCommits` (`tests/batchless_control_helpers.d`).
+        Cand(new MeshPaste          (m, v, EditMode.Polygons)),
     ];
     Command[] out_;
     foreach (c; cs) out_ ~= configured(c);
@@ -153,8 +199,25 @@ unittest { // (2) the derive count for ONE apply does not grow with the mesh
     //   clone 1/1/1          duplicate 1/1/1    vertexSplit 1/1/1
     //   axisSlice 1/1/1      detriangulate 1/1/1
     //   subdivide_faceted 3/3/3
+    //   paste 1/1/1          spinEdge 1/1/1      (task 1903 Stage O)
+    //
+    // AND THE SAME SWEEP WITH THE PAIR DEFEATED, 2026-08-28, because a green
+    // row here means nothing without the number it would read if the thing
+    // under test were gone (Stage O, `command.d`'s refusal):
+    //   paste 26/82/290       subdivide_faceted 66/258/1026
+    //   every other row 1/1/1
+    // Two rows move; nine do not, because those nine hold a `MeshEditBatch`
+    // and their single derive rides its close whatever the pair does.
+    // WHY THE CLAUSE IS ACCUMULATED AND ASSERTED ONCE (task 1903 Stage O).
+    // Two candidates trip it when the pair is removed, and druntime stops a
+    // module at its FIRST failed assert — so a per-candidate assert reported
+    // `mesh.subdivide_faceted` (roster index 7) and hid `mesh.paste`
+    // (index 10), which is the one whose derives cost anything. A gate that
+    // names one of two growers sends the reader after the wrong command; this
+    // one names every grower it found.
     View v = new View(0, 0, 800, 600);
     immutable int[] sizes = [4, 8, 16];        // 16 / 64 / 256 faces
+    string[] growers;
     foreach (i; 0 .. candidates(null, v).length) {
         size_t[] runs;
         string nm;
@@ -164,6 +227,7 @@ unittest { // (2) the derive count for ONE apply does not grow with the mesh
             // make the count depend on loop order.
             Mesh m = makeGridPlane(gridN);
             selectAll(m);
+            loadLooseClip(gridN);      // the operand `mesh.paste` needs
             auto c = candidates(&m, v)[i];
             nm = c.name();
             g_hideDeriveRuns = 0;
@@ -175,18 +239,25 @@ unittest { // (2) the derive count for ONE apply does not grow with the mesh
             runs ~= g_hideDeriveRuns;
             assert(g_hideDeriveRuns >= 1,
                    nm ~ " derived ZERO times for an apply that succeeded — " ~
-                   "the batch close must always derive once");
+                   "one apply must derive at least once (a batched command at " ~
+                   "its close, a batchless one at the pair's flush)");
         }
-        foreach (k; 1 .. runs.length)
-            assert(runs[k] == runs[0],
-                   format("%s: hide-derives per ONE apply grew with the mesh " ~
-                          "(%s at %s faces respectively). That is task 1330's " ~
-                          "root cause verbatim — a full-mesh derived-plane " ~
-                          "refresh per appended element instead of per command.",
+        bool flat = true;
+        foreach (k; 1 .. runs.length) if (runs[k] != runs[0]) flat = false;
+        if (!flat)
+            growers ~= format("%s: hide-derives per ONE apply grew with the " ~
+                          "mesh (%s at %s faces respectively). That is task " ~
+                          "1330's root cause verbatim — a full-mesh " ~
+                          "derived-plane refresh per appended element instead " ~
+                          "of per command.",
                           nm, runs.to!string,
                           [sizes[0]*sizes[0], sizes[1]*sizes[1],
-                           sizes[2]*sizes[2]].to!string));
+                           sizes[2]*sizes[2]].to!string);
     }
+    import std.string : join;
+    assert(growers.length == 0,
+           "task 1903 Stage O — " ~ growers.length.to!string ~
+           " candidate(s) grew:\n" ~ growers.join("\n"));
 }
 
 unittest { // (2b) with a face hidden the deferral is OFF — record what that costs
@@ -208,6 +279,7 @@ unittest { // (2b) with a face hidden the deferral is OFF — record what that c
     foreach (i; 0 .. candidates(null, v).length) {
         Mesh clean = makeGridPlane(4);
         selectAll(clean);
+        loadLooseClip(4);
         auto c0 = candidates(&clean, v)[i];
         g_hideDeriveRuns = 0;
         const bool cleanApplied = c0.apply();
@@ -215,6 +287,7 @@ unittest { // (2b) with a face hidden the deferral is OFF — record what that c
 
         Mesh m = makeGridPlane(4);
         selectAll(m);
+        loadLooseClip(4);
         m.setFaceHidden(0, true);
         assert(m.isFaceHidden(0), "fixture: face 0 must be hidden");
         auto c = candidates(&m, v)[i];
