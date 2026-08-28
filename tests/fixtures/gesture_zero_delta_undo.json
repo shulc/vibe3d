@@ -1,0 +1,102 @@
+{
+  "fixture": "gesture_zero_delta_undo",
+  "version": 1,
+  "measured": "2026-08-28",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "gui-gesture",
+    "captured_utc": "2026-08-28",
+    "task": "2640",
+    "notes": "Five live captures, one FRESH editor process per capture, driven through an isolated virtual display with the pointer injected over the remote-framebuffer channel and each undo typed into the reference's command field. Every run's undo was independently confirmed to have executed (it appears in the reference's own executed-command history) before its effect was read, so a silently dropped undo cannot be read here as a no-op. All geometry readback is read-only and issues no state-changing command."
+  },
+
+  "question": "A tool gesture is committed and its resulting delta is EMPTY -- the mesh after the gesture is byte-identical to the mesh before it. What does the next undo do?",
+
+  "candidates": {
+    "a": "No entry is created. One undo reverts the PRIOR edit.",
+    "b": "An entry is created. One undo consumes it and nothing visible happens; the prior edit survives.",
+    "c": "An entry is created but coalesces into the prior one, so one undo reverts both."
+  },
+  "verdict": "b",
+
+  "law": "A COMMITTED GESTURE COSTS UNDO STEPS EVEN WHEN IT CHANGED NOTHING. A press-move-release on a transform handle that never leaves the press pixel leaves the mesh byte-identical and never writes the tool's transform channel, and it still adds TWO undo entries -- against ZERO for an otherwise byte-identical run with no press at all, and THREE for the same gesture with a real displacement. So the reference does not inspect the result before deciding to record: the first undo after such a gesture does nothing visible and the previous real edit survives it.",
+
+  "why_one_undo_after_one_null_gesture_cannot_answer_this": "With an empty stack, 'no entry was created' and 'an entry was created and undoing it does nothing' are indistinguishable -- both look like nothing happened. A real, visible edit must go on the stack FIRST, and the reading must be a COUNT of undos, not a picture after one. The count is only meaningful against a control run that is identical except that the gesture is not performed -- including the same tool arming, the same handle localisation, the same hover and the same tool drop, so the two runs differ by the button press and by nothing else.",
+
+  "a_degeneracy_this_rig_does_not_resolve": "For a gesture whose delta is empty, candidates (a) and (c) are OBSERVATIONALLY IDENTICAL: 'revert the prior edit' and 'revert the prior edit plus a nothing' produce the same state at the same undo index. The rig separates {a, c} from {b} only. It landed on (b), so the degeneracy never had to be resolved; a port that lands on (a) or (c) cannot be told apart by this fixture and must be judged by the count instead.",
+
+  "rig": {
+    "stand": "A cube subdivided once per axis. THREE DISJOINT four-vertex sets are used -- the top corners, the bottom corners, and the mid-height corners -- never one set moved three times: the transform handle is drawn at the selection's bounding-box centre, so a set that has already moved carries its handle away from the centre of frame and the handle localiser latches onto interface furniture instead. Each of the three sets starts centred, so each gesture grabs a centred handle.",
+    "shape": "E1 = a real committed drag of the top set. E2 = a real committed drag of the bottom set, and the state the undo walk starts from. N = the gesture under test, on the mid-height set. Then ten undos, reading the full mesh after every one.",
+    "reading": "kB = the index of the undo that reverts E2. Everything stacked above E2 -- the third selection, the tool re-arm, the action-centre re-assert, the handle localisation, the tool drop attempt -- is geometry-silent and IDENTICAL in every run, so it cancels. entries(N) = kB(N) - kB(control).",
+    "validity_checks": [
+      "The component selection is identical before and after N in EVERY run, so no press ever missed the handle and re-picked geometry.",
+      "The positive-control run drives a clean axis translate from the SAME press pixel with the SAME press choreography, which is what proves the handle was really grabbed.",
+      "Every undo in every run reported that it executed, with zero retries."
+    ]
+  },
+
+  "instrument_calibration": {
+    "reads_zero": "the control run, which performs the whole gesture path except the button press",
+    "reads_nonzero": "the positive control, a real displacement, at 3",
+    "why_both_are_needed": "A control that cannot read zero makes every non-zero unfalsifiable; a rig with no positive control cannot show it would have seen an entry at all."
+  },
+
+  "cases": [
+    {
+      "id": "control_no_press",
+      "gesture": "the entire gesture path -- tool wake, handle localisation, hover, tool drop, geometry read -- with NO button press",
+      "commands_the_reference_logged_for_the_gesture": 0,
+      "mesh_changed": false,
+      "undo_index_that_reverts_the_previous_edit": 4,
+      "entries_recorded": 0,
+      "trajectory": "u1=C u2=C u3=C u4=B u5=B u6=B u7=B u8=B u9=B u10=A"
+    },
+    {
+      "id": "positive_control_real_drag",
+      "gesture": "press, sixteen pointer moves along the handle axis, release",
+      "commands_the_reference_logged_for_the_gesture": 35,
+      "mesh_changed": true,
+      "net_displacement": 1.145,
+      "undo_index_that_reverts_the_previous_edit": 7,
+      "entries_recorded": 3,
+      "trajectory": "u1=C u2=C u3=C u4=C u5=C u6=C u7=B u8=B u9=B u10=B"
+    },
+    {
+      "id": "zero_distance_gesture",
+      "gesture": "press, sixteen pointer moves that ALL land on the press pixel, release",
+      "commands_the_reference_logged_for_the_gesture": 1,
+      "the_one_command": "the tool drop -- the transform channel is never written once",
+      "mesh_changed": false,
+      "undo_index_that_reverts_the_previous_edit": 6,
+      "entries_recorded": 2,
+      "trajectory": "u1=C u2=C u3=C u4=C u5=C u6=B u7=B u8=B u9=B u10=B",
+      "repeats": 2,
+      "repeats_agree": true
+    }
+  ],
+
+  "decomposition": {
+    "measured": "Arming a tool and dropping it again WITHOUT ever engaging it is free -- the control logged no command and cost no entry. A press and release that engages the tool makes the following drop a real commit, and that commit costs 2 entries with the transform channel never written. A real displacement costs 1 more, for 3.",
+    "not_measured": "WHICH two entries. This channel counts entries and reads state; it does not name them."
+  },
+
+  "assertions_for_a_port": [
+    "A committed gesture that produced no change MUST leave something on the undo stack: the first undo after it must NOT revert the edit that preceded it.",
+    "That undo must succeed and must leave the mesh byte-identical -- it is silent, not refused.",
+    "The gesture must not fold into the preceding entry: the preceding edit reverts LATER than it would have without the gesture, never earlier and never at the same index.",
+    "A tool that was armed and dropped WITHOUT any gesture must cost nothing at all."
+  ],
+
+  "not_measured": [
+    "What the entry STORES (an empty delta, a snapshot, a closure) -- invisible to a count, and a port is free to choose.",
+    "Whether the decision to record is taken before or after the gesture runs; the two are observationally identical.",
+    "The entries' user-visible names or grouping.",
+    "Redo. The redo direction was driven six times in every run and was inert in all of them, while the reference's own command history confirmed each redo had fired. A separate two-run control shows the redo timeline itself survives an undo and a read-only probe, so the inertness belongs to the drive path, not to the reference. No redo claim is made here.",
+    "The OTHER flavour of an empty delta -- a gesture that moved and returned to its origin. It is NOT reachable through injected pointer transport: the tool integrates the pointer's offset from the grab point, so a return leg ADDS a decreasing amount instead of subtracting, and an out-and-back pointer path produced a monotonically increasing transform ending at 1.930 rather than 0. Needs a hand-driven gesture.",
+    "A third flavour, a drag shorter than the axis drag quantum. Not attempted.",
+    "Whether tools outside the transform family behave the same."
+  ]
+}
