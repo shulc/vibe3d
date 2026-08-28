@@ -12,6 +12,27 @@
     "task": "0458",
     "notes": "Phase-0 dump-oracle for group=true && segments>1, doc'd in mesh.d as KNOWN-UNTESTED before this task. Fixed alongside the group shift-accumulator AVE_N law: the shared corner's intermediate ring vertex is now memoized per ring level (sharedVertIdxByLevel), matching the reference's vertex count (20, not the pre-fix 22)."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "group_segs2",
+        "drove": [
+          {
+            "op": "mesh.bevel",
+            "values": {
+              "inset": 0.25,
+              "shift": 0.15,
+              "group": true,
+              "segments": 2
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

@@ -12,6 +12,55 @@
     "task": null,
     "notes": null
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "falloff_trs_segZ",
+        "drove": [
+          {
+            "op": "falloff_affine_matrix",
+            "values": {
+              "pivot": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "translation": [
+                0.254728,
+                -0.0,
+                -0.0
+              ],
+              "polar_info.euler_deg": [
+                -0.0,
+                -0.0,
+                33.85
+              ],
+              "polar_info.scale_eigs": [
+                2.512399,
+                1.017257,
+                1.0
+              ],
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                -0.0,
+                0.0,
+                -0.607513
+              ],
+              "falloff.end": [
+                0.0,
+                -0.0,
+                0.5
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.001,
   "cases": [
     {

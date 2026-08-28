@@ -738,6 +738,11 @@
   "assigned_through": "the selection edit-set command",
   "note_on_arbitrary": "axis 3 (arbitrary) would carry the letter '{' through the same expression; whether that path is reachable was NOT read and must not be assumed either way."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "none",
+  "why": "provenance.method is 'static-read': every value here was decoded from the reference's own shipped, unstripped libraries under objdump. No engine was launched, no tool was armed and no gesture was delivered, so there is no tool parameter this fixture could have been captured at. This is an ANSWER -- 'no parameters exist' -- and is deliberately different from an absent block, which would mean nobody had looked (task 3010)."
+ },
  "provenance": {
   "schema": 1,
   "source": "live-capture",

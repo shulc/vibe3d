@@ -14,6 +14,195 @@
   "task": "1160",
   "notes": "Applied to open surfaces with boundaries, which is where the boundary rule of a subdivision scheme actually shows: on a closed solid there is no boundary and every scheme's boundary clause is unreachable. One cell subdivides TWICE, so a scheme that is right once and wrong on its own output is caught. CHANNELS: the sweep's comparison was never vertex-only -- it compared the vertex multiset, the edge multiset, faces BOTH as ordered rings (winding shows) and as unordered position sets, the material partition, the per-face 'did this face's own tag change', and the post-command selection. Re-checked independently over all 215 frozen cases: ZERO agree on vertices while differing on ordered face rings, so nothing frozen here is a vertex-channel-only agreement. PRECISION: the sweep compared at 1e-4 and this fixture's tolerance matches it. The actual reproduction is far tighter -- 208 of the 215 cases are bit-identical at the dumps' 6 decimals and the remaining 7 agree to 3e-6 or better, that being the worst deviation anywhere in the set. The tolerance is the MEASUREMENT's bound, not the data's."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "subd_face_np_saddle",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "mode": "flat"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "subd_face_np_twist",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "mode": "flat"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "subd_face_reflex_first",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "mode": "flat"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "subd_face_reflex_mid",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "mode": "flat"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "subd_face_zerocorner_first",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "mode": "flat"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "subd_face_wind_flip",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "mode": "flat"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "subd_face_tjunc",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "mode": "flat"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "subd_face_grid_hole",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "mode": "flat"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "subd_face_ngon7",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "mode": "flat"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "subd_face_sliver_quad",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "mode": "flat"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "subd_smooth_np_pair_e1",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "mode": "smooth"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "subd_smooth_grid_hole",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "mode": "smooth"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "subd_ccsds_pole_tri5",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "mode": "ccsds"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "w2_subd_twice_fold_55",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "mode": "flat"
+      }
+     },
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "mode": "flat"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "w4_subd_face_rf_spiral",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "mode": "flat"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "w4_subd_face_dg_spike",
+    "drove": [
+     {
+      "op": "mesh.subdivide",
+      "values": {
+       "mode": "flat"
+      }
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

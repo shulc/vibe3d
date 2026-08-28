@@ -12,6 +12,40 @@
     "task": "0263",
     "notes": "Attributes set via command port + a real interactive commit."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "keep_quads_off_default",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "positions": [
+                0.5
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "keep_quads_on",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "positions": [
+                0.5
+              ],
+              "quad": true
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

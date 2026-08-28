@@ -13,6 +13,157 @@
   "task": "1160",
   "notes": "Kept separate from the parity fixtures on purpose. 'Both engines did nothing' is its own measurement class; merging it into a parity suite is how a suite comes to contain cases that pass vacuously. CHANNELS: the sweep's comparison was never vertex-only -- it compared the vertex multiset, the edge multiset, faces BOTH as ordered rings (winding shows) and as unordered position sets, the material partition, the per-face 'did this face's own tag change', and the post-command selection. Re-checked independently over all 215 frozen cases: ZERO agree on vertices while differing on ordered face rings, so nothing frozen here is a vertex-channel-only agreement. PRECISION: the sweep compared at 1e-4 and this fixture's tolerance matches it. The actual reproduction is far tighter -- 208 of the 215 cases are bit-identical at the dumps' 6 decimals and the remaining 7 agree to 3e-6 or better, that being the worst deviation anywhere in the set. The tolerance is the MEASUREMENT's bound, not the data's."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "split_adjacent_reject",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_triangle",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_pent_pair_shared",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_fan_hub_tip",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_cross_faces",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_fan_ring_pair",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_fan8_ring",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_ring8_across_hole",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_single_vert",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cp_paste_without_copy",
+    "drove": [
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "vsplit_boundary_corner",
+    "drove": [
+     {
+      "op": "mesh.vertexSplit",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "merge_islands",
+    "drove": [
+     {
+      "op": "mesh.mergeFaces",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "merge_single",
+    "drove": [
+     {
+      "op": "mesh.mergeFaces",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "merge_plus_vertexonly",
+    "drove": [
+     {
+      "op": "mesh.mergeFaces",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "spin_boundary_edge",
+    "drove": [
+     {
+      "op": "mesh.spinEdge",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "spin_two_edges_shared_face",
+    "drove": [
+     {
+      "op": "mesh.spinEdge",
+      "values": {}
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

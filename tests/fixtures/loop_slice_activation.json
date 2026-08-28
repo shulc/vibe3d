@@ -12,6 +12,26 @@
     "task": null,
     "notes": "Activation geometry itself not independently captured; derives from previously live-captured `select` semantics + a program directive (2 adjacent polygons -> edge between them)."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "two_adjacent_faces_shared_edge",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "positions": [
+                0.5
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

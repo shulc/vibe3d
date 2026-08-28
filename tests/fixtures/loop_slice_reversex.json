@@ -12,6 +12,38 @@
     "task": "0263",
     "notes": "Reference geometry genuinely uncapturable (profile preset library is closed-content, gated behind a loaded profile). DERIVED mapping (t := 1-t, re-sort samples); underlying normal-inset mechanism IS live-confirmed (loop_slice_profile.json); no exact-preset-match claim."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "step_reversex_off",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "profile": "step",
+              "depth": 2.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "step_reversex_on",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "profile": "step",
+              "depth": 2.0,
+              "reversex": true
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

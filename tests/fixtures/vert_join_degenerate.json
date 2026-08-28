@@ -14,6 +14,36 @@
   "task": "1130",
   "notes": "The reference half is a HEADLESS COMMAND capture \u2014 no display, no pointer injection, no gesture \u2014 so it carries none of the drag-transport caveats. The vibe3d half is measured live from this tree at generation time, so `vibe3d_current` is a regression pin on our own behaviour, not a transcription. Both cells are open meshes; the degenerate remnant is the object of study, so the face/edge counts carry the finding and are asserted on both sides. The remnants are real document state now, not a transient: they survive .v3d save/load, undo/redo and the GPU upload \u2014 two one-sided drops in the .v3d READER had to be removed for that (an arity floor of 3, and a flat refusal to open a mesh with no polygons at all)."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "collapse_everything",
+    "drove": [
+     {
+      "op": "vert.join",
+      "values": {
+       "average": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "keep_flag_on_a_pole",
+    "drove": [
+     {
+      "op": "vert.join",
+      "values": {
+       "average": true,
+       "keep": true
+      }
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

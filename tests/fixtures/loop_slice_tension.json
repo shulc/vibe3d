@@ -12,6 +12,72 @@
     "task": "0263",
     "notes": "Attributes via command port + a real interactive commit; tension is gated behind Preserve Curvature (set after curvature)."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "tension_100_full_bulge",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "positions": [
+                0.5
+              ],
+              "curvature": true,
+              "tension": 1.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "tension_default_matches_100",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "positions": [
+                0.5
+              ],
+              "curvature": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "tension_50_half_bulge",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "positions": [
+                0.5
+              ],
+              "curvature": true,
+              "tension": 0.5
+            }
+          }
+        ]
+      },
+      {
+        "cell": "tension_0_flat_chord",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "positions": [
+                0.5
+              ],
+              "curvature": true,
+              "tension": 0.0
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

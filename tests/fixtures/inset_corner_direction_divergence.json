@@ -12,6 +12,35 @@
   "task": "1150",
   "notes": "offset_law pairs each moved corner with its base corner by proximity; the runner re-derives both offsets from the frozen/live vertex sets rather than trusting the numbers. Regenerated 2026-08-18 by task 1190 after the direction law was ported; the reference side is the 1150 capture, untouched."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "inset_right_angles_pentagon",
+    "drove": [
+     {
+      "op": "mesh.poly_inset",
+      "values": {
+       "inset": 0.12
+      }
+     }
+    ]
+   },
+   {
+    "cell": "inset_reflex_corner_dart",
+    "drove": [
+     {
+      "op": "mesh.poly_inset",
+      "values": {
+       "inset": 0.12
+      }
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.001,
  "cases": [
   {

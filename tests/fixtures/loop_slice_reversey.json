@@ -12,6 +12,38 @@
     "task": "0263",
     "notes": "Reference geometry genuinely uncapturable (same profile-gating as reversex). DERIVED mapping (height := -height); underlying Inset direction IS live-confirmed (loop_slice_profile.json); no exact-preset-match claim."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "vee_reversey_off",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "profile": "vee",
+              "depth": 2.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "vee_reversey_on",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "profile": "vee",
+              "depth": 2.0,
+              "reversey": true
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

@@ -12,6 +12,84 @@
     "task": null,
     "notes": null
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "axis_x_extrudes_line",
+        "drove": [
+          {
+            "op": "slice",
+            "values": {
+              "start": [
+                0,
+                -0.5,
+                0
+              ],
+              "end": [
+                0,
+                0.5,
+                0
+              ],
+              "axis": "x",
+              "infinite": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "axis_z_extrudes_line",
+        "drove": [
+          {
+            "op": "slice",
+            "values": {
+              "start": [
+                0,
+                -0.5,
+                0
+              ],
+              "end": [
+                0,
+                0.5,
+                0
+              ],
+              "axis": "z",
+              "infinite": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "custom_vector_normalized",
+        "drove": [
+          {
+            "op": "slice",
+            "values": {
+              "start": [
+                0,
+                -0.5,
+                0
+              ],
+              "end": [
+                0,
+                0.5,
+                0
+              ],
+              "axis": "custom",
+              "vector": [
+                0,
+                0,
+                2
+              ],
+              "infinite": true
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

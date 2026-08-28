@@ -12,6 +12,26 @@
     "task": "0458",
     "notes": "Phase-0 dump-oracle for the group shift accumulator's fully-enclosed-apex branch. Pins the apex AND its 3 ring vertices bit-exact (task 0458 follow-up closed the ring-vertex gap via the recovered `bevGenInset` mitered-corner offset) plus the topology (vertex/face counts); the dump's remaining standalone (single-face) vertices carry a separate, pre-existing, out-of-scope residual (see bevelFacesByMask's doc comment in source/mesh.d) not asserted here."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "apex_v3",
+        "drove": [
+          {
+            "op": "mesh.bevel",
+            "values": {
+              "inset": 0.1,
+              "shift": 0.1,
+              "group": true
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

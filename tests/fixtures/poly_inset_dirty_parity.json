@@ -13,6 +13,189 @@
   "task": "1160",
   "notes": "Frozen precisely because the family is fragile: a fixture is worth most where the surrounding behaviour is known to be delicate, and the surviving agreements are a thin ledge. CHANNELS: the sweep's comparison was never vertex-only -- it compared the vertex multiset, the edge multiset, faces BOTH as ordered rings (winding shows) and as unordered position sets, the material partition, the per-face 'did this face's own tag change', and the post-command selection. Re-checked independently over all 215 frozen cases: ZERO agree on vertices while differing on ordered face rings, so nothing frozen here is a vertex-channel-only agreement. PRECISION: the sweep compared at 1e-4 and this fixture's tolerance matches it. The actual reproduction is far tighter -- 208 of the 215 cases are bit-identical at the dumps' 6 decimals and the remaining 7 agree to 3e-6 or better, that being the worst deviation anywhere in the set. The tolerance is the MEASUREMENT's bound, not the data's."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "inset_fold_25",
+    "drove": [
+     {
+      "op": "mesh.poly_inset",
+      "values": {
+       "inset": 0.12
+      }
+     }
+    ]
+   },
+   {
+    "cell": "inset_fold_55",
+    "drove": [
+     {
+      "op": "mesh.poly_inset",
+      "values": {
+       "inset": 0.12
+      }
+     }
+    ]
+   },
+   {
+    "cell": "inset_fold_118",
+    "drove": [
+     {
+      "op": "mesh.poly_inset",
+      "values": {
+       "inset": 0.12
+      }
+     }
+    ]
+   },
+   {
+    "cell": "inset_fold_chain",
+    "drove": [
+     {
+      "op": "mesh.poly_inset",
+      "values": {
+       "inset": 0.12
+      }
+     }
+    ]
+   },
+   {
+    "cell": "inset_grid33",
+    "drove": [
+     {
+      "op": "mesh.poly_inset",
+      "values": {
+       "inset": 0.12
+      }
+     }
+    ]
+   },
+   {
+    "cell": "inset_grid_hole",
+    "drove": [
+     {
+      "op": "mesh.poly_inset",
+      "values": {
+       "inset": 0.12
+      }
+     }
+    ]
+   },
+   {
+    "cell": "inset_grid_notch",
+    "drove": [
+     {
+      "op": "mesh.poly_inset",
+      "values": {
+       "inset": 0.12
+      }
+     }
+    ]
+   },
+   {
+    "cell": "inset_grid_2hole",
+    "drove": [
+     {
+      "op": "mesh.poly_inset",
+      "values": {
+       "inset": 0.12
+      }
+     }
+    ]
+   },
+   {
+    "cell": "inset_islands",
+    "drove": [
+     {
+      "op": "mesh.poly_inset",
+      "values": {
+       "inset": 0.12
+      }
+     }
+    ]
+   },
+   {
+    "cell": "inset_tiny_next_big",
+    "drove": [
+     {
+      "op": "mesh.poly_inset",
+      "values": {
+       "inset": 0.12
+      }
+     }
+    ]
+   },
+   {
+    "cell": "inset_wind_flip",
+    "drove": [
+     {
+      "op": "mesh.poly_inset",
+      "values": {
+       "inset": 0.12
+      }
+     }
+    ]
+   },
+   {
+    "cell": "inset_wind_flip_island",
+    "drove": [
+     {
+      "op": "mesh.poly_inset",
+      "values": {
+       "inset": 0.12
+      }
+     }
+    ]
+   },
+   {
+    "cell": "w2_inset_neg_fold_55",
+    "drove": [
+     {
+      "op": "mesh.poly_inset",
+      "values": {
+       "inset": -0.12
+      }
+     }
+    ]
+   },
+   {
+    "cell": "w2_inset_neg_grid_hole",
+    "drove": [
+     {
+      "op": "mesh.poly_inset",
+      "values": {
+       "inset": -0.12
+      }
+     }
+    ]
+   },
+   {
+    "cell": "w4_inset_rf_star6",
+    "drove": [
+     {
+      "op": "mesh.poly_inset",
+      "values": {
+       "inset": 0.12
+      }
+     }
+    ]
+   },
+   {
+    "cell": "w4_inset_dg_scale_step",
+    "drove": [
+     {
+      "op": "mesh.poly_inset",
+      "values": {
+       "inset": 0.12
+      }
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

@@ -12,6 +12,28 @@
     "task": null,
     "notes": null
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "transform_move__base",
+        "drove": [
+          {
+            "op": "translate",
+            "values": {
+              "value": [
+                1.99,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.001,
   "cases": [
     {

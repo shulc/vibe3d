@@ -12,6 +12,28 @@
     "task": "0458",
     "notes": "Dump-oracle for square=true + group=true on 2 adjacent faces. Kernel implemented task 0458 Phase 3 (bevelFacesByMask's square param, source/mesh.d) -- a group-shared 'ridge' corner (sharedCornerPos) gets neither a split nor a cap; its neighbourhood is closed by the two edge-panels meeting directly at the original vertex."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "grouped_square",
+        "drove": [
+          {
+            "op": "mesh.bevel",
+            "values": {
+              "inset": 0.25,
+              "shift": 0.15,
+              "group": true,
+              "segments": 0,
+              "square": true
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

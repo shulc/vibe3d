@@ -12,6 +12,41 @@
     "task": "0261",
     "notes": "Driven headlessly via command port; matches vibe3d's prior Split implementation (the 0261 fix was Cap topology, not Split)."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "split_off_default",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "positions": [
+                0.5
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "split_on",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "positions": [
+                0.5
+              ],
+              "split": true,
+              "caps": false
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

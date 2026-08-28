@@ -13,6 +13,143 @@
   "task": "1160",
   "notes": "The near-duplicate base is the cell worth the bytes: a paste that welds by proximity and a paste that duplicates verbatim give different vertex counts there and identical ones everywhere else. CHANNELS: the sweep's comparison was never vertex-only -- it compared the vertex multiset, the edge multiset, faces BOTH as ordered rings (winding shows) and as unordered position sets, the material partition, the per-face 'did this face's own tag change', and the post-command selection. Re-checked independently over all 215 frozen cases: ZERO agree on vertices while differing on ordered face rings, so nothing frozen here is a vertex-channel-only agreement. PRECISION: the sweep compared at 1e-4 and this fixture's tolerance matches it. The actual reproduction is far tighter -- 208 of the 215 cases are bit-identical at the dumps' 6 decimals and the remaining 7 agree to 3e-6 or better, that being the worst deviation anywhere in the set. The tolerance is the MEASUREMENT's bound, not the data's."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "cp_np_saddle",
+    "drove": [
+     {
+      "op": "mesh.copy",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cp_reflex_first",
+    "drove": [
+     {
+      "op": "mesh.copy",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cp_pole_quad5",
+    "drove": [
+     {
+      "op": "mesh.copy",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cp_grid_hole",
+    "drove": [
+     {
+      "op": "mesh.copy",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cp_tjunc",
+    "drove": [
+     {
+      "op": "mesh.copy",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cp_neardup",
+    "drove": [
+     {
+      "op": "mesh.copy",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cp_sliver",
+    "drove": [
+     {
+      "op": "mesh.copy",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cp_ngon7_pair",
+    "drove": [
+     {
+      "op": "mesh.copy",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cp_mixed_strip",
+    "drove": [
+     {
+      "op": "mesh.copy",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cp_wind_flip",
+    "drove": [
+     {
+      "op": "mesh.copy",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

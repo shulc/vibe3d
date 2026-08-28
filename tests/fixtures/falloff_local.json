@@ -12,6 +12,39 @@
     "task": null,
     "notes": null
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "falloff_local_tripatch",
+        "drove": [
+          {
+            "op": "acen_transform",
+            "values": {
+              "tool": "move",
+              "attr": "TZ",
+              "value": 0.55999994,
+              "acen": "local",
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                0.0,
+                0.0,
+                -0.5
+              ],
+              "falloff.end": [
+                -0.0,
+                -0.0,
+                0.5
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.001,
   "cases": [
     {

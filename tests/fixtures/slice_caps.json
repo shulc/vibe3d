@@ -12,6 +12,57 @@
     "task": null,
     "notes": null
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "caps_off_open_boundaries",
+        "drove": [
+          {
+            "op": "slice",
+            "values": {
+              "start": [
+                0,
+                0,
+                -1
+              ],
+              "end": [
+                0,
+                0,
+                1
+              ],
+              "split": true,
+              "caps": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "caps_on_closed_sections",
+        "drove": [
+          {
+            "op": "slice",
+            "values": {
+              "start": [
+                0,
+                0,
+                -1
+              ],
+              "end": [
+                0,
+                0,
+                1
+              ],
+              "split": true,
+              "caps": true
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

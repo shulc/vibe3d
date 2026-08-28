@@ -14,6 +14,24 @@
   "task": "1130",
   "notes": "Headless COMMAND capture \u2014 no display, no pointer injection, no gesture. The ledger row was found on the pilot's patch, whose intermediate mesh was never dumped and whose amounts are substituted; this cell re-measures the same law on a base both engines build from one command, and the geometry half converges exactly, which the pilot's counts could not show. The reference's selection MODE did not read back in that capture and is therefore absent, not assumed. TASK 1180 PORTED THE LAW. The reference half above is untouched \u2014 the same frozen measurement it always was. The vibe3d half was RE-MEASURED live against the ported tree, and the gap it used to declare is now empty in every dimension, so each case declares every measured dimension a CONTROL: an empty gap asserted exactly as strictly as a full one. Narrow it, widen it, or drop a dimension out of either block, and this reddens."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "band_edges_and_verts_on_both_sides",
+    "drove": [
+     {
+      "op": "mesh.bevel",
+      "values": {
+       "width": 0.1
+      }
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

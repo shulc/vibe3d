@@ -12,6 +12,163 @@
     "task": null,
     "notes": "Headless capture, no live drag."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "taper_sx_gy",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "xfrm.taper",
+              "attr": "SX",
+              "value": 2.0,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                0.0,
+                0.5,
+                0.0
+              ],
+              "falloff.end": [
+                0.0,
+                -0.5,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "taper_sx_gy_shrink",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "xfrm.taper",
+              "attr": "SX",
+              "value": 0.5,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                0.0,
+                0.5,
+                0.0
+              ],
+              "falloff.end": [
+                0.0,
+                -0.5,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "taper_sy_gx",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "xfrm.taper",
+              "attr": "SY",
+              "value": 2.0,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                0.5,
+                0.0,
+                0.0
+              ],
+              "falloff.end": [
+                -0.5,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "taper_sz_gy",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "xfrm.taper",
+              "attr": "SZ",
+              "value": 2.0,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                0.0,
+                0.5,
+                0.0
+              ],
+              "falloff.end": [
+                0.0,
+                -0.5,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "taper_sx_gz",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "xfrm.taper",
+              "attr": "SX",
+              "value": 2.0,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                0.0,
+                0.0,
+                0.5
+              ],
+              "falloff.end": [
+                0.0,
+                0.0,
+                -0.5
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "taper_sx_gy_rev",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "xfrm.taper",
+              "attr": "SX",
+              "value": 2.0,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                0.0,
+                -0.5,
+                0.0
+              ],
+              "falloff.end": [
+                0.0,
+                0.5,
+                0.0
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

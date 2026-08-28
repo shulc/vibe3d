@@ -12,6 +12,29 @@
     "task": null,
     "notes": "Fixture prose defers provenance detail to private capture notes not named by path; source=live-capture per the 'Frozen reference capture' signature convention, method honestly left unknown pending that note."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "translate_top_face_y",
+        "drove": [
+          {
+            "op": "transform",
+            "values": {
+              "kind": "translate",
+              "delta": [
+                0.0,
+                1.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 1e-3,
   "input": [
     { "endpoint": "reset" },

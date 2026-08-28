@@ -12,6 +12,24 @@
     "task": "0391",
     "notes": "Target geometry for a currently-unsupported gesture (vibe3d's bevelEdgesByMask endpoint-disjoint guard skips connected selections) -- expect this fixture to FAIL until the cap fix lands; frozen now so the fix has a real target."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "top_face_perimeter_w01",
+        "drove": [
+          {
+            "op": "mesh.bevel",
+            "values": {
+              "width": 0.1
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

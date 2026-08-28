@@ -12,6 +12,52 @@
     "task": "0263",
     "notes": "Inset displacement DIRECTION/magnitude live-confirmed on the reference app (attribute via command port + a real interactive commit); the profile CURVE shapes (flat/round/vee/step) are vibe3d-defined stand-ins with no reference-match claim. Hybrid: live-captured component present, so source=live-capture per Phase-0(c)."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "flat_baseline",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "positions": [
+                0.25,
+                0.5,
+                0.75
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "vee_depth2",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "profile": "vee",
+              "depth": 2.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "vee_depth0_noop",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "profile": "vee",
+              "depth": 0.0
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

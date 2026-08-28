@@ -333,6 +333,112 @@
    "note": "CONTROL: doubling the width moves the ring and leaves the apex bit-identical -- the apex does not depend on the width at all."
   }
  ],
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "generator",
+  "cells": [
+   {
+    "cell": "cube_corner shift=0.2 width=0.2",
+    "drove": [
+     {
+      "op": "vert.extrude",
+      "values": {
+       "shift": 0.2,
+       "width": 0.2
+      }
+     }
+    ]
+   },
+   {
+    "cell": "cube_corner shift=0.1 width=0.3",
+    "drove": [
+     {
+      "op": "vert.extrude",
+      "values": {
+       "shift": 0.1,
+       "width": 0.3
+      }
+     }
+    ]
+   },
+   {
+    "cell": "cube_corner shift=0.3 width=0.1",
+    "drove": [
+     {
+      "op": "vert.extrude",
+      "values": {
+       "shift": 0.3,
+       "width": 0.1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "cube_corner shift=0.25 width=0",
+    "drove": [
+     {
+      "op": "vert.extrude",
+      "values": {
+       "shift": 0.25,
+       "width": 0.0
+      }
+     }
+    ]
+   },
+   {
+    "cell": "cube_corner shift=0 width=0.25",
+    "drove": [
+     {
+      "op": "vert.extrude",
+      "values": {
+       "shift": 0.0,
+       "width": 0.25
+      }
+     }
+    ]
+   },
+   {
+    "cell": "irregular_fan_valence4 shift=0.4 width=0.15 (width_then_shift)",
+    "drove": [
+     {
+      "op": "vert.extrude",
+      "values": {
+       "shift": 0.4,
+       "width": 0.15,
+       "attr_order": "width_then_shift"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "irregular_fan_valence4 shift=0.4 width=0.15 (shift_then_width)",
+    "drove": [
+     {
+      "op": "vert.extrude",
+      "values": {
+       "shift": 0.4,
+       "width": 0.15,
+       "attr_order": "shift_then_width"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "irregular_fan_valence4 shift=0.4 width=0.3 (width_then_shift)",
+    "drove": [
+     {
+      "op": "vert.extrude",
+      "values": {
+       "shift": 0.4,
+       "width": 0.3,
+       "attr_order": "width_then_shift"
+      }
+     }
+    ]
+   }
+  ]
+ },
  "provenance": {
   "schema": 1,
   "source": "live-capture",

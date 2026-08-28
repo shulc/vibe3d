@@ -13,6 +13,49 @@
   "task": "1320",
   "notes": "The reference side is the BARE command, which is the strip path on a convex ring -- branch-hit counters recorded strip=1 earclip=0 on every cell here. Our side is now the strip as well (task 1320). Every case declares an empty gap; a non-empty one reappearing means the port regressed."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "convex_quad_tuple_start_only",
+    "drove": [
+     {
+      "op": "mesh.triple",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "convex_pentagon",
+    "drove": [
+     {
+      "op": "mesh.triple",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "convex_hexagon",
+    "drove": [
+     {
+      "op": "mesh.triple",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "convex_heptagon",
+    "drove": [
+     {
+      "op": "mesh.triple",
+      "values": {}
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.001,
  "cases": [
   {

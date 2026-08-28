@@ -14,6 +14,66 @@
   "task": "1130",
   "notes": "The reference half is a HEADLESS COMMAND capture \u2014 no display, no pointer injection, no gesture \u2014 so it carries none of the drag-transport caveats. The vibe3d half is measured live from this tree at generation time, so `vibe3d_current` is a regression pin on our own behaviour, not a transcription. The `spin_twice` / `spin_reselect` pair is the law's smallest reproduction: with the product re-selected by coordinate the second spin converges, which is how we know the divergence is the SELECTION and not the spin arithmetic. TASK 1180 PORTED THE LAW. The reference half above is untouched \u2014 the same frozen measurement it always was. The vibe3d half was RE-MEASURED live against the ported tree, and the gap it used to declare is now empty in every dimension, so each case declares every measured dimension a CONTROL: an empty gap asserted exactly as strictly as a full one. Narrow it, widen it, or drop a dimension out of either block, and this reddens."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "spin_twice_second_applies",
+    "drove": [
+     {
+      "op": "mesh.spinEdge",
+      "values": {}
+     },
+     {
+      "op": "mesh.spinEdge",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "spin_reselect_is_the_control",
+    "drove": [
+     {
+      "op": "mesh.spinEdge",
+      "values": {}
+     },
+     {
+      "op": "mesh.spinEdge",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "merge_leaves_product_selected",
+    "drove": [
+     {
+      "op": "mesh.mergeFaces",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "make_leaves_new_face_selected",
+    "drove": [
+     {
+      "op": "mesh.makePolygon",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "vertex_split_clears_the_consumed_input",
+    "drove": [
+     {
+      "op": "mesh.vertexSplit",
+      "values": {}
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

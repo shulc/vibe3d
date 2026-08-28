@@ -14,6 +14,22 @@
   "task": "1130",
   "notes": "The reference half is a HEADLESS COMMAND capture \u2014 no display, no pointer injection, no gesture \u2014 so it carries none of the drag-transport caveats. The vibe3d half is measured live from this tree at generation time, so `vibe3d_current` is a regression pin on our own behaviour, not a transcription. The base is a NON-CONVEX pentagon so that 'the first two selected' is distinguishable from 'the two that give a valid convex cut'."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "three_vertices_cut_one_chord",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

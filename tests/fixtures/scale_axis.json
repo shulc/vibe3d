@@ -12,6 +12,238 @@
     "task": null,
     "notes": "Headless numeric capture via command port (per-axis xfrm.scale factor); no live mouse/gizmo drag (see scale_origin/README.md for the shared rationale)."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "vertices_none",
+        "drove": [
+          {
+            "op": "scale",
+            "values": {
+              "value": [
+                2.0,
+                1.0,
+                1.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "vertices_one",
+        "drove": [
+          {
+            "op": "scale_about",
+            "values": {
+              "factor": [
+                2.0,
+                1.0,
+                1.0
+              ],
+              "pivot": [
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "vertices_adjacent",
+        "drove": [
+          {
+            "op": "scale_about",
+            "values": {
+              "factor": [
+                2.0,
+                1.0,
+                1.0
+              ],
+              "pivot": [
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "vertices_islands",
+        "drove": [
+          {
+            "op": "scale_about",
+            "values": {
+              "factor": [
+                2.0,
+                1.0,
+                1.0
+              ],
+              "pivot": [
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "edges_none",
+        "drove": [
+          {
+            "op": "scale",
+            "values": {
+              "value": [
+                1.0,
+                2.0,
+                1.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "edges_one",
+        "drove": [
+          {
+            "op": "scale_about",
+            "values": {
+              "factor": [
+                1.0,
+                2.0,
+                1.0
+              ],
+              "pivot": [
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "edges_adjacent",
+        "drove": [
+          {
+            "op": "scale_about",
+            "values": {
+              "factor": [
+                1.0,
+                2.0,
+                1.0
+              ],
+              "pivot": [
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "edges_islands",
+        "drove": [
+          {
+            "op": "scale_about",
+            "values": {
+              "factor": [
+                1.0,
+                2.0,
+                1.0
+              ],
+              "pivot": [
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "polygons_none",
+        "drove": [
+          {
+            "op": "scale",
+            "values": {
+              "value": [
+                1.0,
+                1.0,
+                2.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "polygons_one",
+        "drove": [
+          {
+            "op": "scale_about",
+            "values": {
+              "factor": [
+                1.0,
+                1.0,
+                2.0
+              ],
+              "pivot": [
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "polygons_adjacent",
+        "drove": [
+          {
+            "op": "scale_about",
+            "values": {
+              "factor": [
+                1.0,
+                1.0,
+                2.0
+              ],
+              "pivot": [
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "polygons_islands",
+        "drove": [
+          {
+            "op": "scale_about",
+            "values": {
+              "factor": [
+                1.0,
+                1.0,
+                2.0
+              ],
+              "pivot": [
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

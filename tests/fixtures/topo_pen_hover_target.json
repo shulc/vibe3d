@@ -11,6 +11,183 @@
     "task": "topopen-p1-p2",
     "notes": "Most cases use an az=0/el=0 camera (eye = focus + (0,0,distance), forward = -Z) or az=pi/2/el=0 (forward = -X) so the camera's rotation is axis-aligned with a face the case tests head-on -- for any offset confined to that face's own plane (zero depth-component relative to the camera), the perspective projection collapses to an EXACT uniform pixel scale S = (1+sqrt(2)) * 0.5 * viewportHeight / distance (viewportHeight=544 for the default --test window), independent of which in-plane direction the offset points. Cases 5/6 (threshold_wide_vertex / threshold_narrow_face) use this to hand-derive the corner's exact projected distance from the hit point: offset (0.15,0.15,0) at distance=5 -> S=131.3332 px/unit -> corner pixel distance = S*0.15*sqrt(2) = 27.860px, nearest-edge pixel distance = S*0.15 = 19.700px (both independently verified against the standalone Python replica, not against resolveHoverTarget's own output). Case 9 (vertex_beats_edge) uses the same face/camera with a smaller offset (0.03,0.03,0): vertex=5.572px, edge=3.940px -- BOTH inside the default 12px radius, so the PLACEHOLDER Vertex>Edge precedence (not the reference editor's real precedence -- deferred to C2/P4) is what picks 'vertex' despite the edge being the geometrically closer candidate. Cases 4 and 10 reuse topo_pen_surface_raycast.json's 'ray_miss' and 'bg_hidden_not_hit' camera/geometry verbatim (already-verified misses, now both `screen`). All 10 cases relabeled `geometry point` -> `geometry screen` for P2 (doc/topopen_p2_plan.md): every camera here is an axis-aligned head-on view whose auto work-plane and camera-ray direction are NOT generally coincident, so under the corrected Point-mode (nearest-foot-from-work-plane-seed) semantics these same setups would resolve to DIFFERENT hit points than the camera-ray hit these values were derived against -- Screen mode is the honest label for what these cases actually exercise."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "vertex_snap_corner",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "screen"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "edge_snap_boundary",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "screen"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "face_point_interior",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "screen"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "off_surface_none",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "screen"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "threshold_wide_vertex",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "screen"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "threshold_narrow_face",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "screen"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "multi_bg_nearer_vertex",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "screen"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "edge_snap_cube_side",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "screen"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "vertex_beats_edge",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "screen"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "bg_hidden_none",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "screen"
+            }
+          }
+        ]
+      }
+    ]
+  },
   "cases": [
     {
       "name": "vertex_snap_corner",

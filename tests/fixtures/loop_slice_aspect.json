@@ -12,6 +12,38 @@
     "task": "0263",
     "notes": "Reference aspect FORMULA genuinely uncapturable (profile presets are closed-content Bezier curves gated behind a loaded profile); DERIVED aspect-preserving construction, not reference-matched. vibe3d ships a documented default deviation (aspect default OFF vs reference default true)."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "vee_aspect_off",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "profile": "vee",
+              "depth": 2.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "vee_aspect_on",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "profile": "vee",
+              "depth": 2.0,
+              "aspect": true
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

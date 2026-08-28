@@ -12,6 +12,111 @@
   "task": "1054",
   "notes": "No dedicated schema enum for a headless command-port capture; 'capture-drag' stands in per the loop_slice family's established convention (doc/golden_provenance_manifest.md). vibe3d_current is DERIVED (predict_ours.py), not read off a running binary -- pre-registered per plan \u00a73.7 before Phase 3 code existed; the Phase 3 test run confirms it exactly."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "r3_p3_ord_MRL",
+    "drove": [
+     {
+      "op": "loop_slice",
+      "values": {
+       "positions": [
+        0.3
+       ],
+       "select": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "w3_Tstem2",
+    "drove": [
+     {
+      "op": "loop_slice",
+      "values": {
+       "positions": [
+        0.3
+       ],
+       "select": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "w3_all9scr",
+    "drove": [
+     {
+      "op": "loop_slice",
+      "values": {
+       "positions": [
+        0.3
+       ],
+       "select": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "x_both",
+    "drove": [
+     {
+      "op": "loop_slice",
+      "values": {
+       "positions": [
+        0.3
+       ],
+       "select": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "x_tstem_min",
+    "drove": [
+     {
+      "op": "loop_slice",
+      "values": {
+       "positions": [
+        0.3
+       ],
+       "select": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "x_tstem_p7",
+    "drove": [
+     {
+      "op": "loop_slice",
+      "values": {
+       "positions": [
+        0.7
+       ],
+       "select": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "y_tailB",
+    "drove": [
+     {
+      "op": "loop_slice",
+      "values": {
+       "positions": [
+        0.3
+       ],
+       "select": true
+      }
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

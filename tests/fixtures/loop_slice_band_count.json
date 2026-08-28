@@ -12,6 +12,39 @@
   "task": "1054",
   "notes": "No dedicated schema enum for a headless command-port capture; 'capture-drag' stands in per the loop_slice family's established convention (doc/golden_provenance_manifest.md). Generated from tools/local/fixture_gen/loop_slice_band/count_gt1/bandcount.json (cases_bandcount.py's live capture) -- every number is reference-sourced, none re-derived from vibe3d."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "band_count2_L",
+    "drove": [
+     {
+      "op": "loop_slice",
+      "values": {
+       "count": 2,
+       "mode": "uniform",
+       "select": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "band_count3_L",
+    "drove": [
+     {
+      "op": "loop_slice",
+      "values": {
+       "count": 3,
+       "mode": "uniform",
+       "select": true
+      }
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

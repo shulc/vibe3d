@@ -12,6 +12,70 @@
     "task": "0355",
     "notes": "Captured parity case (task 0355 capture notes \u00a76) replayed once against vibe3d's headless tool.set/tool.attr/tool.doApply path and cross-checked against the reference's documented Offset/Scale/Rotate semantics before freezing."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "array_grid_numX3_offX2",
+        "drove": [
+          {
+            "op": "tool.set mesh.arrayTool",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "tool.attr mesh.arrayTool",
+            "values": {
+              "numX": 3
+            }
+          },
+          {
+            "op": "tool.attr mesh.arrayTool",
+            "values": {
+              "numY": 1
+            }
+          },
+          {
+            "op": "tool.attr mesh.arrayTool",
+            "values": {
+              "numZ": 1
+            }
+          },
+          {
+            "op": "tool.attr mesh.arrayTool",
+            "values": {
+              "offX": 2
+            }
+          },
+          {
+            "op": "tool.attr mesh.arrayTool",
+            "values": {
+              "offY": 0
+            }
+          },
+          {
+            "op": "tool.attr mesh.arrayTool",
+            "values": {
+              "offZ": 0
+            }
+          },
+          {
+            "op": "tool.attr mesh.arrayTool",
+            "values": {
+              "merge": false
+            }
+          },
+          {
+            "op": "tool.doApply",
+            "values": {}
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "setup": [
     { "endpoint": "reset" },

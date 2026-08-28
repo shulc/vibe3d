@@ -14,6 +14,301 @@
   "task": "1160",
   "notes": "The weld distance is the interesting axis: the y-plane cells sit ON the mirror plane with the weld off, so every vertex doubles, while the x-plane cells weld a seam whose vertices are 1e-3 apart. Frozen face rings carry the winding, which a mirror is expected to reverse. CHANNELS: the sweep's comparison was never vertex-only -- it compared the vertex multiset, the edge multiset, faces BOTH as ordered rings (winding shows) and as unordered position sets, the material partition, the per-face 'did this face's own tag change', and the post-command selection. Re-checked independently over all 215 frozen cases: ZERO agree on vertices while differing on ordered face rings, so nothing frozen here is a vertex-channel-only agreement. PRECISION: the sweep compared at 1e-4 and this fixture's tolerance matches it. The actual reproduction is far tighter -- 208 of the 215 cases are bit-identical at the dumps' 6 decimals and the remaining 7 agree to 3e-6 or better, that being the worst deviation anywhere in the set. The tolerance is the MEASUREMENT's bound, not the data's."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "mirr_x_np_saddle",
+    "drove": [
+     {
+      "op": "mesh.mirror",
+      "values": {
+       "axis": "X",
+       "center": [
+        0,
+        0,
+        0
+       ],
+       "weld": 0.001,
+       "flip_normals": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "mirr_x_np_twist",
+    "drove": [
+     {
+      "op": "mesh.mirror",
+      "values": {
+       "axis": "X",
+       "center": [
+        0,
+        0,
+        0
+       ],
+       "weld": 0.001,
+       "flip_normals": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "mirr_x_np_polefan",
+    "drove": [
+     {
+      "op": "mesh.mirror",
+      "values": {
+       "axis": "X",
+       "center": [
+        0,
+        0,
+        0
+       ],
+       "weld": 0.001,
+       "flip_normals": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "mirr_x_fold_118",
+    "drove": [
+     {
+      "op": "mesh.mirror",
+      "values": {
+       "axis": "X",
+       "center": [
+        0,
+        0,
+        0
+       ],
+       "weld": 0.001,
+       "flip_normals": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "mirr_x_reflex_first",
+    "drove": [
+     {
+      "op": "mesh.mirror",
+      "values": {
+       "axis": "X",
+       "center": [
+        0,
+        0,
+        0
+       ],
+       "weld": 0.001,
+       "flip_normals": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "mirr_x_reflex_mid",
+    "drove": [
+     {
+      "op": "mesh.mirror",
+      "values": {
+       "axis": "X",
+       "center": [
+        0,
+        0,
+        0
+       ],
+       "weld": 0.001,
+       "flip_normals": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "mirr_x_pole_tri8",
+    "drove": [
+     {
+      "op": "mesh.mirror",
+      "values": {
+       "axis": "X",
+       "center": [
+        0,
+        0,
+        0
+       ],
+       "weld": 0.001,
+       "flip_normals": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "mirr_x_grid_hole",
+    "drove": [
+     {
+      "op": "mesh.mirror",
+      "values": {
+       "axis": "X",
+       "center": [
+        0,
+        0,
+        0
+       ],
+       "weld": 0.001,
+       "flip_normals": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "mirr_x_tjunc",
+    "drove": [
+     {
+      "op": "mesh.mirror",
+      "values": {
+       "axis": "X",
+       "center": [
+        0,
+        0,
+        0
+       ],
+       "weld": 0.001,
+       "flip_normals": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "mirr_x_sliver",
+    "drove": [
+     {
+      "op": "mesh.mirror",
+      "values": {
+       "axis": "X",
+       "center": [
+        0,
+        0,
+        0
+       ],
+       "weld": 0.001,
+       "flip_normals": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "mirr_x_zerocorner_first",
+    "drove": [
+     {
+      "op": "mesh.mirror",
+      "values": {
+       "axis": "X",
+       "center": [
+        0,
+        0,
+        0
+       ],
+       "weld": 0.001,
+       "flip_normals": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "mirr_x_wind_flip",
+    "drove": [
+     {
+      "op": "mesh.mirror",
+      "values": {
+       "axis": "X",
+       "center": [
+        0,
+        0,
+        0
+       ],
+       "weld": 0.001,
+       "flip_normals": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "mirr_x_islands_skew",
+    "drove": [
+     {
+      "op": "mesh.mirror",
+      "values": {
+       "axis": "X",
+       "center": [
+        0,
+        0,
+        0
+       ],
+       "weld": 0.001,
+       "flip_normals": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "w2_mirr_off_grid_hole",
+    "drove": [
+     {
+      "op": "mesh.mirror",
+      "values": {
+       "axis": "X",
+       "center": [
+        0.5,
+        0,
+        0
+       ],
+       "weld": 0.001,
+       "flip_normals": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "w2_mirr_off_sliver",
+    "drove": [
+     {
+      "op": "mesh.mirror",
+      "values": {
+       "axis": "X",
+       "center": [
+        0.5,
+        0,
+        0
+       ],
+       "weld": 0.001,
+       "flip_normals": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "w2_mirr_z_mixed_strip",
+    "drove": [
+     {
+      "op": "mesh.mirror",
+      "values": {
+       "axis": "Z",
+       "center": [
+        0,
+        0,
+        0
+       ],
+       "weld": 0.001,
+       "flip_normals": true
+      }
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

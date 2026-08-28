@@ -14,6 +14,85 @@
   "task": "1160",
   "notes": "Frozen because five of the six divergences this family DID show were hand-written refusals the reference does not perform -- so the cells where the two engines agree are the ones that say which rings are legal, and no measured fixture said that before. CHANNELS: the sweep's comparison was never vertex-only -- it compared the vertex multiset, the edge multiset, faces BOTH as ordered rings (winding shows) and as unordered position sets, the material partition, the per-face 'did this face's own tag change', and the post-command selection. Re-checked independently over all 215 frozen cases: ZERO agree on vertices while differing on ordered face rings, so nothing frozen here is a vertex-channel-only agreement. PRECISION: the sweep compared at 1e-4 and this fixture's tolerance matches it. The actual reproduction is far tighter -- 208 of the 215 cases are bit-identical at the dumps' 6 decimals and the remaining 7 agree to 3e-6 or better, that being the worst deviation anywhere in the set. The tolerance is the MEASUREMENT's bound, not the data's."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "make_free_quad",
+    "drove": [
+     {
+      "op": "mesh.makePolygon",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "make_free_quad_reversed",
+    "drove": [
+     {
+      "op": "mesh.makePolygon",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "make_skew_quad",
+    "drove": [
+     {
+      "op": "mesh.makePolygon",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "make_triangle_free",
+    "drove": [
+     {
+      "op": "mesh.makePolygon",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "make_concave_ring",
+    "drove": [
+     {
+      "op": "mesh.makePolygon",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "make_dup_vertex",
+    "drove": [
+     {
+      "op": "mesh.makePolygon",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "make_octagon",
+    "drove": [
+     {
+      "op": "mesh.makePolygon",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "make_close_hole",
+    "drove": [
+     {
+      "op": "mesh.makePolygon",
+      "values": {}
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

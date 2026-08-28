@@ -12,6 +12,30 @@
     "task": "0343",
     "notes": "preview-state fixture (belt_count3): transient tool state read from vibe3d's own /api/tool/state, not reference-app parity."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "belt_count3",
+        "drove": [
+          {
+            "op": "tool.set mesh.loopSliceTool",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "tool.attr mesh.loopSliceTool",
+            "values": {
+              "count": 3
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

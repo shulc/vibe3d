@@ -12,6 +12,61 @@
   "task": "1052",
   "notes": "Commands only -- no gesture, no pointer injection. The reference's Work Plane arm was NOT captured: it is not portable to our command path (an operator-command's VectorStack carries only a SubjectPacket), so measuring it would have frozen behaviour we cannot reach."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "axis_x_zero",
+    "drove": [
+     {
+      "op": "mesh.setPosition",
+      "values": {
+       "axis": "x",
+       "value": 0.0
+      }
+     }
+    ]
+   },
+   {
+    "cell": "axis_y_nonzero",
+    "drove": [
+     {
+      "op": "mesh.setPosition",
+      "values": {
+       "axis": "y",
+       "value": 0.25
+      }
+     }
+    ]
+   },
+   {
+    "cell": "axis_partial_ring_no_weld",
+    "drove": [
+     {
+      "op": "mesh.setPosition",
+      "values": {
+       "axis": "z",
+       "value": -0.25
+      }
+     }
+    ]
+   },
+   {
+    "cell": "world_space_is_the_default",
+    "drove": [
+     {
+      "op": "mesh.setPosition",
+      "values": {
+       "axis": "x",
+       "value": 0.0
+      }
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

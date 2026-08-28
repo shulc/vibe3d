@@ -12,6 +12,26 @@
     "task": "0458",
     "notes": "Phase-0 dump-oracle for the group shift accumulator's partial branch -- the pre-0458 kernel had NO code path here at all (fell through to the per-face default), producing a topology divergence (3 split vertices vs the reference's 1 shared vertex). Task 0458 follow-up closed the position gap via the recovered `bevGenInset` mitered-corner offset (findings.md SS1/SS5) -- this fixture now pins the corrected topology (17v/12f) AND P's + two ring vertices' bit-exact positions; the remaining standalone (single-face) vertices carry a separate, pre-existing, out-of-scope residual (see bevelFacesByMask's doc comment in source/mesh.d) not asserted here."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "partial_fan",
+        "drove": [
+          {
+            "op": "mesh.bevel",
+            "values": {
+              "inset": 0.1,
+              "shift": 0.1,
+              "group": true
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

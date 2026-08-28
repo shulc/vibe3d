@@ -12,6 +12,26 @@
     "task": "0391",
     "notes": "vibe3d's bevelFacesByMask has NO shared-corner accumulator today (per-face independent only) and mesh.bevel's params() does not expose `group` for Polygons mode -- this fixture's op step names the future param as a spec, not a working call against the current command surface. Expect FAIL until both the accumulator and the param wiring land."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "three_faces_corner_grouped",
+        "drove": [
+          {
+            "op": "mesh.bevel",
+            "values": {
+              "inset": 0.15,
+              "shift": 0.1,
+              "group": true
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

@@ -13,6 +13,189 @@
   "task": "1160",
   "notes": "The direction a shifted face travels is an averaged normal, and on a non-planar ring or a pole there is more than one defensible average -- so agreement here is a real constraint, not a restatement of the obvious. CHANNELS: the sweep's comparison was never vertex-only -- it compared the vertex multiset, the edge multiset, faces BOTH as ordered rings (winding shows) and as unordered position sets, the material partition, the per-face 'did this face's own tag change', and the post-command selection. Re-checked independently over all 215 frozen cases: ZERO agree on vertices while differing on ordered face rings, so nothing frozen here is a vertex-channel-only agreement. PRECISION: the sweep compared at 1e-4 and this fixture's tolerance matches it. The actual reproduction is far tighter -- 208 of the 215 cases are bit-identical at the dumps' 6 decimals and the remaining 7 agree to 3e-6 or better, that being the worst deviation anywhere in the set. The tolerance is the MEASUREMENT's bound, not the data's."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "smsh_out_np_saddle",
+    "drove": [
+     {
+      "op": "mesh.smooth_shift",
+      "values": {
+       "shift": 0.1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "smsh_out_np_twist",
+    "drove": [
+     {
+      "op": "mesh.smooth_shift",
+      "values": {
+       "shift": 0.1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "smsh_out_np_polefan",
+    "drove": [
+     {
+      "op": "mesh.smooth_shift",
+      "values": {
+       "shift": 0.1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "smsh_out_pole_tri8",
+    "drove": [
+     {
+      "op": "mesh.smooth_shift",
+      "values": {
+       "shift": 0.1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "smsh_out_reflex_hex",
+    "drove": [
+     {
+      "op": "mesh.smooth_shift",
+      "values": {
+       "shift": 0.1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "smsh_out_zerocorner_first",
+    "drove": [
+     {
+      "op": "mesh.smooth_shift",
+      "values": {
+       "shift": 0.1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "smsh_out_sliver",
+    "drove": [
+     {
+      "op": "mesh.smooth_shift",
+      "values": {
+       "shift": 0.1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "smsh_out_grid_hole",
+    "drove": [
+     {
+      "op": "mesh.smooth_shift",
+      "values": {
+       "shift": 0.1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "smsh_out_islands_skew",
+    "drove": [
+     {
+      "op": "mesh.smooth_shift",
+      "values": {
+       "shift": 0.1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "smsh_out_ngon7_pair",
+    "drove": [
+     {
+      "op": "mesh.smooth_shift",
+      "values": {
+       "shift": 0.1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "smsh_out_triquad_np",
+    "drove": [
+     {
+      "op": "mesh.smooth_shift",
+      "values": {
+       "shift": 0.1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "smsh_in_np_saddle",
+    "drove": [
+     {
+      "op": "mesh.smooth_shift",
+      "values": {
+       "shift": -0.07
+      }
+     }
+    ]
+   },
+   {
+    "cell": "smsh_in_fold_55",
+    "drove": [
+     {
+      "op": "mesh.smooth_shift",
+      "values": {
+       "shift": -0.07
+      }
+     }
+    ]
+   },
+   {
+    "cell": "smsh_one_grid_hole",
+    "drove": [
+     {
+      "op": "mesh.smooth_shift",
+      "values": {
+       "shift": 0.1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "w4_smsh_rf_spiral",
+    "drove": [
+     {
+      "op": "mesh.smooth_shift",
+      "values": {
+       "shift": 0.1
+      }
+     }
+    ]
+   },
+   {
+    "cell": "w4_smsh_dg_spike",
+    "drove": [
+     {
+      "op": "mesh.smooth_shift",
+      "values": {
+       "shift": 0.1
+      }
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

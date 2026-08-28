@@ -12,6 +12,55 @@
     "task": null,
     "notes": null
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "midX_fast_off",
+        "drove": [
+          {
+            "op": "slice",
+            "values": {
+              "start": [
+                0,
+                0,
+                -1
+              ],
+              "end": [
+                0,
+                0,
+                1
+              ],
+              "fast": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "midX_fast_on",
+        "drove": [
+          {
+            "op": "slice",
+            "values": {
+              "start": [
+                0,
+                0,
+                -1
+              ],
+              "end": [
+                0,
+                0,
+                1
+              ],
+              "fast": true
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

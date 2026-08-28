@@ -12,6 +12,55 @@
     "task": "0263",
     "notes": "Attributes set via command port; the cut COMMITTED by a real interactive viewport gesture (cross-checked bit-identical against a scripted commit)."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "curvature_off_linear",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "positions": [
+                0.5
+              ],
+              "curvature": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "curvature_on_bulges",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "positions": [
+                0.5
+              ],
+              "curvature": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "curvature_on_flat_cage_noop",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "positions": [
+                0.5
+              ],
+              "curvature": true
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

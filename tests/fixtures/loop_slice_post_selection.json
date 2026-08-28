@@ -14,6 +14,27 @@
   "task": "1130",
   "notes": "Headless COMMAND capture \u2014 no display, no pointer injection, no gesture. Re-measured on a base both engines build from one command, because the pilot patch the ledger row was found on was never dumped. The reference's selection MODE did not read back in that capture and is therefore absent, not assumed. TASK 1180 PORTED THE LAW. The reference half above is untouched \u2014 the same frozen measurement it always was. The vibe3d half was RE-MEASURED live against the ported tree, and the gap it used to declare is now empty in every dimension, so each case declares every measured dimension a CONTROL: an empty gap asserted exactly as strictly as a full one. Narrow it, widen it, or drop a dimension out of either block, and this reddens."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "loop_edges_and_verts_on_both_sides",
+    "drove": [
+     {
+      "op": "loop_slice",
+      "values": {
+       "positions": [
+        0.65
+       ],
+       "select": true
+      }
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

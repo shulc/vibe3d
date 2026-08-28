@@ -51,6 +51,11 @@
   "capture_that_was_not_needed": "The register prescribed an rr/gdb before-and-after struct dump on a valence-5 and valence-7 case. The routine is 1680 bytes and reads only its own arguments, so the whole correction decodes statically. No trace was recorded and no process was started.",
   "what_remains_open": "Nothing about this routine. What the register's row also covers -- how the corrected radii propagate through the ring solve into the emitted interior positions -- is downstream of it and unchanged by this read."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "none",
+  "why": "provenance.method is 'static-read': every value here was decoded from the reference's own shipped, unstripped libraries under objdump. No engine was launched, no tool was armed and no gesture was delivered, so there is no tool parameter this fixture could have been captured at. This is an ANSWER -- 'no parameters exist' -- and is deliberately different from an absent block, which would mean nobody had looked (task 3010)."
+ },
  "provenance": {
   "schema": 1,
   "source": "live-capture",

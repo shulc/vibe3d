@@ -13,6 +13,46 @@
   "task": "1130",
   "notes": "The reference half is a HEADLESS COMMAND capture \u2014 no display, no pointer injection, no gesture \u2014 so it carries none of the drag-transport caveats. The vibe3d half is measured live from this tree at generation time, so `vibe3d_current` is a regression pin on our own behaviour, not a transcription. Selection ORDER is the independent variable; the fixture therefore keys the selection on an ORDERED coordinate list and the pair of cells differs only in that order. The cell names are kept: 'diverges' and 'is_the_control' describe what the CELLS are for, not our current state."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "forward_order_diverges",
+    "drove": [
+     {
+      "op": "vert.join",
+      "values": {
+       "average": false
+      }
+     }
+    ]
+   },
+   {
+    "cell": "reversed_order_is_the_control",
+    "drove": [
+     {
+      "op": "vert.join",
+      "values": {
+       "average": false
+      }
+     }
+    ]
+   },
+   {
+    "cell": "three_vertices_confirm",
+    "drove": [
+     {
+      "op": "vert.join",
+      "values": {
+       "average": false
+      }
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

@@ -13,6 +13,113 @@
   "task": "1160",
   "notes": "The two `reversed` cells are a control pair: the same two vertices joined in the opposite selection order. They agree, which is what says the surviving point is not chosen by selection order. CHANNELS: the sweep's comparison was never vertex-only -- it compared the vertex multiset, the edge multiset, faces BOTH as ordered rings (winding shows) and as unordered position sets, the material partition, the per-face 'did this face's own tag change', and the post-command selection. Re-checked independently over all 215 frozen cases: ZERO agree on vertices while differing on ordered face rings, so nothing frozen here is a vertex-channel-only agreement. PRECISION: the sweep compared at 1e-4 and this fixture's tolerance matches it. The actual reproduction is far tighter -- 208 of the 215 cases are bit-identical at the dumps' 6 decimals and the remaining 7 agree to 3e-6 or better, that being the worst deviation anywhere in the set. The tolerance is the MEASUREMENT's bound, not the data's."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "join_plate_boundary_pair",
+    "drove": [
+     {
+      "op": "vert.join",
+      "values": {
+       "average": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "join_quad_opposite",
+    "drove": [
+     {
+      "op": "vert.join",
+      "values": {
+       "average": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "join_average_reversed",
+    "drove": [
+     {
+      "op": "vert.join",
+      "values": {
+       "average": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "join_noaverage_reversed",
+    "drove": [
+     {
+      "op": "vert.join",
+      "values": {
+       "average": false
+      }
+     }
+    ]
+   },
+   {
+    "cell": "join_keep_flag",
+    "drove": [
+     {
+      "op": "vert.join",
+      "values": {
+       "average": true,
+       "keep": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "join_islands",
+    "drove": [
+     {
+      "op": "vert.join",
+      "values": {
+       "average": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "join_fan_ring_three",
+    "drove": [
+     {
+      "op": "vert.join",
+      "values": {
+       "average": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "join_pole_and_ring",
+    "drove": [
+     {
+      "op": "vert.join",
+      "values": {
+       "average": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "join_four_square",
+    "drove": [
+     {
+      "op": "vert.join",
+      "values": {
+       "average": true
+      }
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

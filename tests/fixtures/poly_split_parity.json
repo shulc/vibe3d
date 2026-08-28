@@ -14,6 +14,80 @@
   "task": "1160",
   "notes": "Chord chosen to separate candidate laws, not to be easy: inside and outside a non-convex pentagon, a quad whose neighbours share both endpoints, an n-gon produced by an earlier merge. Geometry AND the post-operation selection agreed in the capture, so both are frozen. CHANNELS: the sweep's comparison was never vertex-only -- it compared the vertex multiset, the edge multiset, faces BOTH as ordered rings (winding shows) and as unordered position sets, the material partition, the per-face 'did this face's own tag change', and the post-command selection. Re-checked independently over all 215 frozen cases: ZERO agree on vertices while differing on ordered face rings, so nothing frozen here is a vertex-channel-only agreement. PRECISION: the sweep compared at 1e-4 and this fixture's tolerance matches it. The actual reproduction is far tighter -- 208 of the 215 cases are bit-identical at the dumps' 6 decimals and the remaining 7 agree to 3e-6 or better, that being the worst deviation anywhere in the set. The tolerance is the MEASUREMENT's bound, not the data's."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "split_quad_diag",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_concave_valid",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_concave_outside",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_triquad_quad",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_grid_two_quads",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_pent_across",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_hex_after_merge",
+    "drove": [
+     {
+      "op": "mesh.mergeFaces",
+      "values": {}
+     },
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

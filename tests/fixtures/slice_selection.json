@@ -12,6 +12,76 @@
     "task": "0279",
     "notes": "LIVE-CAPTURED reference, driven headlessly via command port + an axis-locked plane; vibe3d geometry is connectivity-correct by construction (Mesh.cutByPlaneRestricted)."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "restricted_two_faces",
+        "drove": [
+          {
+            "op": "slice",
+            "values": {
+              "start": [
+                0,
+                0,
+                -1
+              ],
+              "end": [
+                0,
+                0,
+                1
+              ],
+              "infinite": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "restricted_one_face",
+        "drove": [
+          {
+            "op": "slice",
+            "values": {
+              "start": [
+                0,
+                0,
+                -1
+              ],
+              "end": [
+                0,
+                0,
+                1
+              ],
+              "infinite": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "whole_no_selection",
+        "drove": [
+          {
+            "op": "slice",
+            "values": {
+              "start": [
+                0,
+                0,
+                -1
+              ],
+              "end": [
+                0,
+                0,
+                1
+              ],
+              "infinite": true
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

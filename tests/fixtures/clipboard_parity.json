@@ -13,6 +13,191 @@
   "task": "1160",
   "notes": "The shared-vertex question is the point of the two-quad and whole-fan cells: a pole hub belongs to every face of the fan, so a per-face duplication and a per-selection duplication give different vertex counts. Cutting half a fan asks the mirror question -- the hub must survive because the OTHER half still uses it. CHANNELS: the sweep's comparison was never vertex-only -- it compared the vertex multiset, the edge multiset, faces BOTH as ordered rings (winding shows) and as unordered position sets, the material partition, the per-face 'did this face's own tag change', and the post-command selection. Re-checked independently over all 215 frozen cases: ZERO agree on vertices while differing on ordered face rings, so nothing frozen here is a vertex-channel-only agreement. PRECISION: the sweep compared at 1e-4 and this fixture's tolerance matches it. The actual reproduction is far tighter -- 208 of the 215 cases are bit-identical at the dumps' 6 decimals and the remaining 7 agree to 3e-6 or better, that being the worst deviation anywhere in the set. The tolerance is the MEASUREMENT's bound, not the data's."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "cp_plate_one_face",
+    "drove": [
+     {
+      "op": "mesh.copy",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cp_plate_two_shared",
+    "drove": [
+     {
+      "op": "mesh.copy",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cp_triquad_mixed",
+    "drove": [
+     {
+      "op": "mesh.copy",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cp_fan_all",
+    "drove": [
+     {
+      "op": "mesh.copy",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cp_paste_twice",
+    "drove": [
+     {
+      "op": "mesh.copy",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cut_paste_plate",
+    "drove": [
+     {
+      "op": "mesh.cut",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cut_only_plate",
+    "drove": [
+     {
+      "op": "mesh.cut",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cp_ring8_all",
+    "drove": [
+     {
+      "op": "mesh.copy",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cp_concave",
+    "drove": [
+     {
+      "op": "mesh.copy",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cut_fan_half",
+    "drove": [
+     {
+      "op": "mesh.cut",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cut_paste_fan_half",
+    "drove": [
+     {
+      "op": "mesh.cut",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cp_after_merge",
+    "drove": [
+     {
+      "op": "mesh.mergeFaces",
+      "values": {}
+     },
+     {
+      "op": "mesh.copy",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cut_pent_one",
+    "drove": [
+     {
+      "op": "mesh.cut",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "cut_everything",
+    "drove": [
+     {
+      "op": "mesh.cut",
+      "values": {}
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

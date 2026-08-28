@@ -14,6 +14,49 @@
   "task": "1130",
   "notes": "The reference half is a HEADLESS COMMAND capture \u2014 no display, no pointer injection, no gesture \u2014 so it carries none of the drag-transport caveats. The vibe3d half is measured live from this tree at generation time, so `vibe3d_current` is a regression pin on our own behaviour, not a transcription. The click ORDER is load-bearing in the bow-tie cell and is preserved by the coordinate list, which is why the ring is written out vertex by vertex rather than as a set."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "three_collinear_points",
+    "drove": [
+     {
+      "op": "mesh.makePolygon",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "two_points_only",
+    "drove": [
+     {
+      "op": "mesh.makePolygon",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "bowtie_click_order",
+    "drove": [
+     {
+      "op": "mesh.makePolygon",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "duplicate_over_existing_face",
+    "drove": [
+     {
+      "op": "mesh.makePolygon",
+      "values": {}
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

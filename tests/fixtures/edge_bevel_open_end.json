@@ -12,6 +12,24 @@
     "task": "0391",
     "notes": "Cross-checked against a second, more degenerate open-mesh layout (a single open quad, edge_bevel_open_quad_w01.json capture, not committed as its own fixture) which reproduced the SAME asymmetric 1-vs-2 endpoint split -- rules out a single-face artifact. vibe3d has no boundary-edge bevel path today (valence-3-both-endpoints guard); this is new target geometry, not a regression lock."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "boundary_edge_w01",
+        "drove": [
+          {
+            "op": "mesh.bevel",
+            "values": {
+              "width": 0.1
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

@@ -14,6 +14,130 @@
   "task": "1160",
   "notes": "Triangulation is frozen only where the two engines picked the same diagonal: on a reflex or non-planar ring they largely do not (50 of 64 cells diverged), and those are in the divergence lane. What is here is the quad-pole subset where the choice is forced. CHANNELS: the sweep's comparison was never vertex-only -- it compared the vertex multiset, the edge multiset, faces BOTH as ordered rings (winding shows) and as unordered position sets, the material partition, the per-face 'did this face's own tag change', and the post-command selection. Re-checked independently over all 215 frozen cases: ZERO agree on vertices while differing on ordered face rings, so nothing frozen here is a vertex-channel-only agreement. PRECISION: the sweep compared at 1e-4 and this fixture's tolerance matches it. The actual reproduction is far tighter -- 208 of the 215 cases are bit-identical at the dumps' 6 decimals and the remaining 7 agree to 3e-6 or better, that being the worst deviation anywhere in the set. The tolerance is the MEASUREMENT's bound, not the data's."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "flip_wind_flip",
+    "drove": [
+     {
+      "op": "mesh.flip",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "flip_wind_flip_island",
+    "drove": [
+     {
+      "op": "mesh.flip",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "flip_np_pair_e1",
+    "drove": [
+     {
+      "op": "mesh.flip",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "flip_reflex_first",
+    "drove": [
+     {
+      "op": "mesh.flip",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "flip_pole_tri5",
+    "drove": [
+     {
+      "op": "mesh.flip",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "flip_grid_hole",
+    "drove": [
+     {
+      "op": "mesh.flip",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "flip_triquad_np",
+    "drove": [
+     {
+      "op": "mesh.flip",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "flip_zerocorner_first",
+    "drove": [
+     {
+      "op": "mesh.flip",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "tri_np_one",
+    "drove": [
+     {
+      "op": "mesh.triple",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "tri_np_twist",
+    "drove": [
+     {
+      "op": "mesh.triple",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "tri_pole_quad3",
+    "drove": [
+     {
+      "op": "mesh.triple",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "tri_pole_quad5",
+    "drove": [
+     {
+      "op": "mesh.triple",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "tri_pole_quad6",
+    "drove": [
+     {
+      "op": "mesh.triple",
+      "values": {}
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

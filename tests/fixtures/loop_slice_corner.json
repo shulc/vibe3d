@@ -12,6 +12,27 @@
   "task": "1053",
   "notes": "No dedicated schema enum for a headless command-port capture; 'capture-drag' stands in per the loop_slice family's established convention (doc/golden_provenance_manifest.md). The tool APPLIES headlessly -- set the tool, set its attributes, apply, drop it: no viewport gesture and no pointer injection, which the 0263 capture note had recorded as needing an interactive commit. So the drag-transport artifact does not apply to this measurement. Flipped from known-divergence to parity by task 1054 Phase 3 (the selection-band walk) -- see doc/loop_slice_corner_plan.md."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "L_shaped_selection",
+    "drove": [
+     {
+      "op": "loop_slice",
+      "values": {
+       "positions": [
+        0.5
+       ],
+       "select": true
+      }
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

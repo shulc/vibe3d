@@ -11,6 +11,251 @@
     "task": "topopen-p0-p2",
     "notes": "Hand-authored fixture for the topology-pen P0 background-surface-raycast plumbing (doc/topopen_p0_plan.md) and P2's Point-mode nearest-foot correction (doc/topopen_p2_plan.md). Every camera-ray (`screen`) case's hit point/normal/nearestVert/nearestEdge is derived analytically from the loaded mesh's own vertex coordinates (fan-triangle normals, point-to-segment closest-point) and the camera's guaranteed centre-pixel-through-focus property; cross-checked against a standalone Python replica of math.d's screenRay/lookAt/sphericalToCartesian (not committed) to bound the sub-pixel sampling error at <=0.016 world units for every case, comfortably inside the suite's 0.02 tolerance. 'bg_cube_bottom_face' stands in for the plan's 'bg_sphere_center' case -- hand-authoring an exact UV-sphere fixture (face indices + tangent-plane normals) was not practical without generator tooling; a third distinct cube face (-Y, previously untested by the top/+X/-X cases) exercises the same normal-direction diversity goal. 'bg_quad_tilted_normal' (review NIT-4) is 'bg_quad_offcenter' rotated 30deg about world X -- every other case's background face is axis-aligned, so this is the only case whose expected normal has all three components nonzero, exercising pickSurfaceRay's cross(b-a,c-a) fan-triangle normal against a genuinely oblique FACE (not just an oblique camera ray). The `point_*` cases (P2) each pick a camera dominant along ONE world axis (Y for the +X/-Z faces, X for the -Y face, via `mostFacingAxis`'s abs-dot argmax over the camera's back vector) so the auto work-plane's normal is that axis and its plane passes through the world origin (WorkplaneStage's auto-mode publish); `focus`'s component along that SAME axis is set to exactly 0 so the work-plane-cursor seed coincides with `focus` (mirrors the screen-mode trick, just against the work-plane instead of the mesh) -- the other two `focus` components are chosen so exactly one of them exceeds the unit cube's +-0.5 half-extent, making the expected nearest-foot a simple per-axis clamp of `focus` against the box, landing on a specific face/normal with no tie (each case's excess axis is >=1.5 units past the boundary, comfortably outside any float/BVH-adjacent tie region)."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "bg_cube_topface_center",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "screen"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "bg_quad_offcenter",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "screen"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "bg_quad_tilted_normal",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "screen"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "bg_cube_side_oblique",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "screen"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "ray_miss",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "screen"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "grazing_angle",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "screen"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "two_bg_layers_nearest_wins",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "screen"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "bg_hidden_not_hit",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "screen"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "bg_cube_bottom_face",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "screen"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "two_sided_backface",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "screen"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "no_bg_single_layer",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "screen"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "point_cube_posx_face",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "point"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "point_cube_negz_face",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "point"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "point_cube_negy_face",
+        "drove": [
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "enabled": true
+            }
+          },
+          {
+            "op": "tool.pipe.attr constrain",
+            "values": {
+              "geometry": "point"
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.02,
   "cases": [
     {

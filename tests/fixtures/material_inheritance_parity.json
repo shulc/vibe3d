@@ -14,6 +14,182 @@
   "task": "1160",
   "notes": "Nothing in either engine's suite asked this before. The reversed cell is the control that settled the law: tagging the far face first and merging with the near one selected first still yields the LOWEST-INDEX face's tag, so selection order decides nothing. CHANNELS: the sweep's comparison was never vertex-only -- it compared the vertex multiset, the edge multiset, faces BOTH as ordered rings (winding shows) and as unordered position sets, the material partition, the per-face 'did this face's own tag change', and the post-command selection. Re-checked independently over all 215 frozen cases: ZERO agree on vertices while differing on ordered face rings, so nothing frozen here is a vertex-channel-only agreement. PRECISION: the sweep compared at 1e-4 and this fixture's tolerance matches it. The actual reproduction is far tighter -- 208 of the 215 cases are bit-identical at the dumps' 6 decimals and the remaining 7 agree to 3e-6 or better, that being the worst deviation anywhere in the set. The tolerance is the MEASUREMENT's bound, not the data's."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "mat_plate_one",
+    "drove": [
+     {
+      "op": "mesh.setMaterial",
+      "values": {
+       "materialId": 3
+      }
+     }
+    ]
+   },
+   {
+    "cell": "mat_fan_alternate",
+    "drove": [
+     {
+      "op": "mesh.setMaterial",
+      "values": {
+       "materialId": 3
+      }
+     }
+    ]
+   },
+   {
+    "cell": "mat_triquad_tri",
+    "drove": [
+     {
+      "op": "mesh.setMaterial",
+      "values": {
+       "materialId": 3
+      }
+     }
+    ]
+   },
+   {
+    "cell": "mat_then_copy_paste",
+    "drove": [
+     {
+      "op": "mesh.setMaterial",
+      "values": {
+       "materialId": 3
+      }
+     },
+     {
+      "op": "mesh.copy",
+      "values": {}
+     },
+     {
+      "op": "mesh.paste",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "mat_two_then_split",
+    "drove": [
+     {
+      "op": "mesh.setMaterial",
+      "values": {
+       "materialId": 3
+      }
+     },
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "mat_then_merge",
+    "drove": [
+     {
+      "op": "mesh.setMaterial",
+      "values": {
+       "materialId": 3
+      }
+     },
+     {
+      "op": "mesh.setMaterial",
+      "values": {
+       "materialId": 7
+      }
+     },
+     {
+      "op": "mesh.mergeFaces",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "mat_then_split",
+    "drove": [
+     {
+      "op": "mesh.setMaterial",
+      "values": {
+       "materialId": 3
+      }
+     },
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "mat_then_spin",
+    "drove": [
+     {
+      "op": "mesh.setMaterial",
+      "values": {
+       "materialId": 3
+      }
+     },
+     {
+      "op": "mesh.spinEdge",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "mat_then_vsplit",
+    "drove": [
+     {
+      "op": "mesh.setMaterial",
+      "values": {
+       "materialId": 3
+      }
+     },
+     {
+      "op": "mesh.vertexSplit",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "mat_all_then_merge_subset",
+    "drove": [
+     {
+      "op": "mesh.setMaterial",
+      "values": {
+       "materialId": 3
+      }
+     },
+     {
+      "op": "mesh.mergeFaces",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "mat_two_then_merge_reversed",
+    "drove": [
+     {
+      "op": "mesh.setMaterial",
+      "values": {
+       "materialId": 3
+      }
+     },
+     {
+      "op": "mesh.setMaterial",
+      "values": {
+       "materialId": 7
+      }
+     },
+     {
+      "op": "mesh.mergeFaces",
+      "values": {}
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

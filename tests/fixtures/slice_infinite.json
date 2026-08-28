@@ -12,6 +12,55 @@
     "task": null,
     "notes": null
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "infinite_on_cuts_whole_mesh",
+        "drove": [
+          {
+            "op": "slice",
+            "values": {
+              "start": [
+                -4,
+                0,
+                0
+              ],
+              "end": [
+                0,
+                0,
+                0
+              ],
+              "infinite": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "infinite_off_clips_to_drawn_span",
+        "drove": [
+          {
+            "op": "slice",
+            "values": {
+              "start": [
+                -4,
+                0,
+                0
+              ],
+              "end": [
+                0,
+                0,
+                0
+              ],
+              "infinite": false
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

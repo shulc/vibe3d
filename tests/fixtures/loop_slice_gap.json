@@ -12,6 +12,45 @@
     "task": "0261",
     "notes": "Driven headlessly via command port; coordinates scaled from the reference's +/-0.5 cube to this +/-1 fixture cube (gap 0.4 -> y=+/-0.2)."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "gap_zero_noop",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "positions": [
+                0.5
+              ],
+              "split": true,
+              "caps": true,
+              "gap": 0.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "gap_open_caps_on",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "positions": [
+                0.5
+              ],
+              "split": true,
+              "caps": true,
+              "gap": 0.4
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

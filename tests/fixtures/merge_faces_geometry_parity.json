@@ -14,6 +14,112 @@
   "task": "1160",
   "notes": "The pole cells are the separation: merging a whole fan makes the hub interior, and whether an interior vertex is kept as a collinear corner or deleted is exactly the question a closed solid cannot ask. CHANNELS: the sweep's comparison was never vertex-only -- it compared the vertex multiset, the edge multiset, faces BOTH as ordered rings (winding shows) and as unordered position sets, the material partition, the per-face 'did this face's own tag change', and the post-command selection. Re-checked independently over all 215 frozen cases: ZERO agree on vertices while differing on ordered face rings, so nothing frozen here is a vertex-channel-only agreement. PRECISION: the sweep compared at 1e-4 and this fixture's tolerance matches it. The actual reproduction is far tighter -- 208 of the 215 cases are bit-identical at the dumps' 6 decimals and the remaining 7 agree to 3e-6 or better, that being the worst deviation anywhere in the set. The tolerance is the MEASUREMENT's bound, not the data's."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "merge_plate_2quads",
+    "drove": [
+     {
+      "op": "mesh.mergeFaces",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "merge_twotri_diag",
+    "drove": [
+     {
+      "op": "mesh.mergeFaces",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "merge_triquad",
+    "drove": [
+     {
+      "op": "mesh.mergeFaces",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "merge_fold_nonplanar",
+    "drove": [
+     {
+      "op": "mesh.mergeFaces",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "merge_fan_all",
+    "drove": [
+     {
+      "op": "mesh.mergeFaces",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "merge_fan_two",
+    "drove": [
+     {
+      "op": "mesh.mergeFaces",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "merge_grid_2x2",
+    "drove": [
+     {
+      "op": "mesh.mergeFaces",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "merge_grid_L",
+    "drove": [
+     {
+      "op": "mesh.mergeFaces",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "merge_grid_U",
+    "drove": [
+     {
+      "op": "mesh.mergeFaces",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "merge_pent_pair",
+    "drove": [
+     {
+      "op": "mesh.mergeFaces",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "merge_fan8_all",
+    "drove": [
+     {
+      "op": "mesh.mergeFaces",
+      "values": {}
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

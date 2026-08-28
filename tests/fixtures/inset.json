@@ -12,6 +12,46 @@
     "task": "0359",
     "notes": "single_face_pos02 is a bit-exact reference-editor capture; single_face_default/single_face_neg02 are analytic replays of the SAME reference-confirmed law (not independently captured) \u2014 hybrid per Phase-0(c) tie-break: any live-captured component => source=live-capture."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "single_face_pos02",
+        "drove": [
+          {
+            "op": "poly_inset",
+            "values": {
+              "inset": 0.2
+            }
+          }
+        ]
+      },
+      {
+        "cell": "single_face_default",
+        "drove": [
+          {
+            "op": "poly_inset",
+            "values": {
+              "inset": 0.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "single_face_neg02",
+        "drove": [
+          {
+            "op": "poly_inset",
+            "values": {
+              "inset": -0.2
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

@@ -12,6 +12,83 @@
     "task": null,
     "notes": "Hand-authored; no fixture_gen harness. actr.local manual viewport gizmo drag captured via the private capture tooling (task not cited in fixture prose)."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "local_move_TY",
+        "drove": [
+          {
+            "op": "acen_transform",
+            "values": {
+              "tool": "move",
+              "attr": "TY",
+              "value": 0.52,
+              "acen": "local"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "local_rotate_RY",
+        "drove": [
+          {
+            "op": "acen_transform",
+            "values": {
+              "tool": "rotate",
+              "attr": "RY",
+              "value": -61.2,
+              "acen": "local"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "local_move_TZ_sixface",
+        "drove": [
+          {
+            "op": "acen_transform",
+            "values": {
+              "tool": "move",
+              "attr": "TZ",
+              "value": 0.505,
+              "acen": "local"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "local_move_TZ_tripatch_seg4",
+        "drove": [
+          {
+            "op": "acen_transform",
+            "values": {
+              "tool": "move",
+              "attr": "TZ",
+              "value": 0.22,
+              "acen": "local"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "local_move_TY_tripatch_seg4",
+        "drove": [
+          {
+            "op": "acen_transform",
+            "values": {
+              "tool": "move",
+              "attr": "TY",
+              "value": 0.195,
+              "acen": "local"
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.001,
   "cases": [
     {

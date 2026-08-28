@@ -12,6 +12,28 @@
     "task": "0458",
     "notes": "Phase-0 dump-oracle for square=true (single face). Kernel implemented task 0458 Phase 3 (bevelFacesByMask's square param, source/mesh.d) per the recovered square-cap boundary-mark + rebuild topology rewrite (toolcards/poly.bevel/findings.md section 3)."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "single_square",
+        "drove": [
+          {
+            "op": "mesh.bevel",
+            "values": {
+              "inset": 0.25,
+              "shift": 0.15,
+              "group": false,
+              "segments": 0,
+              "square": true
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

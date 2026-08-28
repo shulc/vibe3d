@@ -14,6 +14,139 @@
   "task": "1160",
   "notes": "The reflex_first / reflex_mid pair is the same pentagon differing only in which vertex starts its ring -- the control pair that separated ring-start-dependent laws from ring-start-independent ones elsewhere in the sweep. Split is independent of it in both engines, and that is what these two cells freeze. CHANNELS: the sweep's comparison was never vertex-only -- it compared the vertex multiset, the edge multiset, faces BOTH as ordered rings (winding shows) and as unordered position sets, the material partition, the per-face 'did this face's own tag change', and the post-command selection. Re-checked independently over all 215 frozen cases: ZERO agree on vertices while differing on ordered face rings, so nothing frozen here is a vertex-channel-only agreement. PRECISION: the sweep compared at 1e-4 and this fixture's tolerance matches it. The actual reproduction is far tighter -- 208 of the 215 cases are bit-identical at the dumps' 6 decimals and the remaining 7 agree to 3e-6 or better, that being the worst deviation anywhere in the set. The tolerance is the MEASUREMENT's bound, not the data's."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "split_reflex_first_0_2",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_reflex_first_1_4",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_reflex_mid_0_2",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_reflex_L_0_3",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_reflex_hex_1_4",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_ngon7_0_3",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_ngon7_1_5",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_zerocorner_first_0_2",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_zerocorner_mid_0_2",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_np_saddle_0_5",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_np_twist_0_3",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_sliver_quad_0_2",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_pole_mixed_5_7",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "split_tjunc_welded_0_3",
+    "drove": [
+     {
+      "op": "mesh.splitFace",
+      "values": {}
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

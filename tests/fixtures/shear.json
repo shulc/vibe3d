@@ -12,6 +12,188 @@
     "task": null,
     "notes": null
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "shear_tx_gy",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "xfrm.shear",
+              "attr": "TX",
+              "value": 0.5,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                0.0,
+                0.5,
+                0.0
+              ],
+              "falloff.end": [
+                0.0,
+                -0.5,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "shear_tx_gy_neg",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "xfrm.shear",
+              "attr": "TX",
+              "value": -0.5,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                0.0,
+                0.5,
+                0.0
+              ],
+              "falloff.end": [
+                0.0,
+                -0.5,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "shear_tx_gy_mag1",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "xfrm.shear",
+              "attr": "TX",
+              "value": 1.0,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                0.0,
+                0.5,
+                0.0
+              ],
+              "falloff.end": [
+                0.0,
+                -0.5,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "shear_tx_gy_rev",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "xfrm.shear",
+              "attr": "TX",
+              "value": 0.5,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                0.0,
+                -0.5,
+                0.0
+              ],
+              "falloff.end": [
+                0.0,
+                0.5,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "shear_tz_gy",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "xfrm.shear",
+              "attr": "TZ",
+              "value": 0.5,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                0.0,
+                0.5,
+                0.0
+              ],
+              "falloff.end": [
+                0.0,
+                -0.5,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "shear_tx_gz",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "xfrm.shear",
+              "attr": "TX",
+              "value": 0.5,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                0.0,
+                0.0,
+                0.5
+              ],
+              "falloff.end": [
+                0.0,
+                0.0,
+                -0.5
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "shear_ty_gx",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "xfrm.shear",
+              "attr": "TY",
+              "value": 0.5,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                0.5,
+                0.0,
+                0.0
+              ],
+              "falloff.end": [
+                -0.5,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

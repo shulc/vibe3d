@@ -12,6 +12,28 @@
     "task": "0458",
     "notes": "Phase-0 dump-oracle for square=true + segments=2. Kernel implemented task 0458 Phase 3 (bevelFacesByMask's square param, source/mesh.d) -- square wraps only the outermost (t=0 -> t=1) ring; deeper segment rings are unaffected plain quads."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "square_segs2",
+        "drove": [
+          {
+            "op": "mesh.bevel",
+            "values": {
+              "inset": 0.25,
+              "shift": 0.15,
+              "group": false,
+              "segments": 2,
+              "square": true
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

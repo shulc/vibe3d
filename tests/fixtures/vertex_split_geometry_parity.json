@@ -13,6 +13,112 @@
   "task": "1160",
   "notes": "This family survived the wave-3 cells built to break it, including a valence-8 pole and a vertex shared by three self-overlapping triangles. The counts are load-bearing: a split leaves the copies at the SAME position, so a position set alone cannot tell one vertex from six. CHANNELS: the sweep's comparison was never vertex-only -- it compared the vertex multiset, the edge multiset, faces BOTH as ordered rings (winding shows) and as unordered position sets, the material partition, the per-face 'did this face's own tag change', and the post-command selection. Re-checked independently over all 215 frozen cases: ZERO agree on vertices while differing on ordered face rings, so nothing frozen here is a vertex-channel-only agreement. PRECISION: the sweep compared at 1e-4 and this fixture's tolerance matches it. The actual reproduction is far tighter -- 208 of the 215 cases are bit-identical at the dumps' 6 decimals and the remaining 7 agree to 3e-6 or better, that being the worst deviation anywhere in the set. The tolerance is the MEASUREMENT's bound, not the data's."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "vsplit_plate_shared",
+    "drove": [
+     {
+      "op": "mesh.vertexSplit",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "vsplit_pole_hub",
+    "drove": [
+     {
+      "op": "mesh.vertexSplit",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "vsplit_triquad_shared",
+    "drove": [
+     {
+      "op": "mesh.vertexSplit",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "vsplit_grid_interior",
+    "drove": [
+     {
+      "op": "mesh.vertexSplit",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "vsplit_two_at_once",
+    "drove": [
+     {
+      "op": "mesh.vertexSplit",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "vsplit_fan8_hub",
+    "drove": [
+     {
+      "op": "mesh.vertexSplit",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "vsplit_all_plate",
+    "drove": [
+     {
+      "op": "mesh.vertexSplit",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "vsplit_foldtri_shared",
+    "drove": [
+     {
+      "op": "mesh.vertexSplit",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "vsplit_pent_shared",
+    "drove": [
+     {
+      "op": "mesh.vertexSplit",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "vsplit_ring8_hole_corner",
+    "drove": [
+     {
+      "op": "mesh.vertexSplit",
+      "values": {}
+     }
+    ]
+   },
+   {
+    "cell": "vsplit_fan_ring_tip",
+    "drove": [
+     {
+      "op": "mesh.vertexSplit",
+      "values": {}
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

@@ -12,6 +12,95 @@
     "task": null,
     "notes": "Element falloff cannot be driven by synthetic input; captured via a manual interactive pick+drag session (see capture notes)."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "element_move_corner_lin_r0p5",
+        "drove": [
+          {
+            "op": "element_transform",
+            "values": {
+              "tool": "xfrm.elementMove",
+              "translate": [
+                -1.515,
+                1.205,
+                0.0
+              ],
+              "falloff.type": "element",
+              "falloff.shape": "linear",
+              "falloff.dist": 0.5,
+              "falloff.center": [
+                -0.5,
+                0.5,
+                -0.5
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "element_move_edge_lin_r0p5",
+        "drove": [
+          {
+            "op": "element_transform",
+            "values": {
+              "tool": "xfrm.elementMove",
+              "translate": [
+                0.01,
+                0.46,
+                0.0
+              ],
+              "falloff.type": "element",
+              "falloff.shape": "linear",
+              "falloff.dist": 0.5
+            }
+          }
+        ]
+      },
+      {
+        "cell": "element_move_polygon_lin_r0p5",
+        "drove": [
+          {
+            "op": "element_transform",
+            "values": {
+              "tool": "xfrm.elementMove",
+              "translate": [
+                -0.125,
+                0.45,
+                0.0
+              ],
+              "falloff.type": "element",
+              "falloff.shape": "linear",
+              "falloff.dist": 0.5
+            }
+          }
+        ]
+      },
+      {
+        "cell": "element_move_edgeloops_lin_r0p5",
+        "drove": [
+          {
+            "op": "element_transform",
+            "values": {
+              "tool": "xfrm.elementMove",
+              "translate": [
+                0.045,
+                0.19,
+                0.0
+              ],
+              "falloff.type": "element",
+              "falloff.shape": "linear",
+              "falloff.dist": 0.5,
+              "falloff.connect": "edgeLoops"
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

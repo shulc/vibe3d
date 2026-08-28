@@ -12,6 +12,40 @@
     "task": "0343",
     "notes": "Self-golden topology-diff fixture (belt_t030/belt_two cases); reference-app parity DEFERRED, verified instead by a reference-INDEPENDENT analytic lerp check."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "belt_t030",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "positions": [
+                0.3
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "belt_two",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "positions": [
+                0.25,
+                0.75
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

@@ -12,6 +12,78 @@
     "task": "0358",
     "notes": "Headless numeric tool.attr + apply capture on a stock cube's top face; no live gizmo drag."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "base_noop",
+        "drove": [
+          {
+            "op": "smooth_shift",
+            "values": {
+              "shift": 0.0,
+              "scale": 1.0,
+              "thicken": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "shift03",
+        "drove": [
+          {
+            "op": "smooth_shift",
+            "values": {
+              "shift": 0.3,
+              "scale": 1.0,
+              "thicken": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "thicken_top_only",
+        "drove": [
+          {
+            "op": "smooth_shift",
+            "values": {
+              "shift": 0.3,
+              "scale": 1.0,
+              "thicken": true
+            }
+          }
+        ]
+      },
+      {
+        "cell": "shift03_scale05",
+        "drove": [
+          {
+            "op": "smooth_shift",
+            "values": {
+              "shift": 0.3,
+              "scale": 0.5,
+              "thicken": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "thicken_top_only_noshift",
+        "drove": [
+          {
+            "op": "smooth_shift",
+            "values": {
+              "shift": 0.0,
+              "scale": 1.0,
+              "thicken": true
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 1e-4,
   "cases": [
     {

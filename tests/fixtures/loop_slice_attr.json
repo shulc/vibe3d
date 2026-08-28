@@ -12,6 +12,38 @@
     "task": "0343",
     "notes": "Self-golden: vibe3d's own output, reference-app parity DEFERRED (the reference tool can't be driven headlessly for this gesture)."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "position_echo",
+        "drove": [
+          {
+            "op": "loop_slice",
+            "values": {
+              "positions": [
+                0.3
+              ]
+            }
+          },
+          {
+            "op": "tool.set mesh.loopSliceTool",
+            "values": {
+              "on": true
+            }
+          },
+          {
+            "op": "tool.attr mesh.loopSliceTool",
+            "values": {
+              "mode": "free"
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

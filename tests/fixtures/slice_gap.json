@@ -12,6 +12,109 @@
     "task": null,
     "notes": null
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "gap_zero_coincident",
+        "drove": [
+          {
+            "op": "slice",
+            "values": {
+              "start": [
+                0,
+                0,
+                -1
+              ],
+              "end": [
+                0,
+                0,
+                1
+              ],
+              "split": true,
+              "caps": true,
+              "gap": 0.0,
+              "gapSide": "center"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "gap_center_symmetric",
+        "drove": [
+          {
+            "op": "slice",
+            "values": {
+              "start": [
+                0,
+                0,
+                -1
+              ],
+              "end": [
+                0,
+                0,
+                1
+              ],
+              "split": true,
+              "caps": true,
+              "gap": 0.2,
+              "gapSide": "center"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "gap_positive_one_sided",
+        "drove": [
+          {
+            "op": "slice",
+            "values": {
+              "start": [
+                0,
+                0,
+                -1
+              ],
+              "end": [
+                0,
+                0,
+                1
+              ],
+              "split": true,
+              "caps": true,
+              "gap": 0.2,
+              "gapSide": "positive"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "gap_negative_one_sided",
+        "drove": [
+          {
+            "op": "slice",
+            "values": {
+              "start": [
+                0,
+                0,
+                -1
+              ],
+              "end": [
+                0,
+                0,
+                1
+              ],
+              "split": true,
+              "caps": true,
+              "gap": 0.2,
+              "gapSide": "negative"
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

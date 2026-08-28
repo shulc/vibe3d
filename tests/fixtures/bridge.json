@@ -12,6 +12,83 @@
     "task": "0357",
     "notes": "Closed-form Segments/Twist laws verified in task 0357, applied to a hand-authored base fixture; see per-case description in the fixture itself."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "polygon_default_remove_true",
+        "drove": [
+          {
+            "op": "mesh.bridgeTool",
+            "values": {
+              "segments": 1,
+              "twist": 0,
+              "remove": true,
+              "flip": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "polygon_remove_false",
+        "drove": [
+          {
+            "op": "mesh.bridgeTool",
+            "values": {
+              "segments": 1,
+              "twist": 0,
+              "remove": false,
+              "flip": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "polygon_segments3",
+        "drove": [
+          {
+            "op": "mesh.bridgeTool",
+            "values": {
+              "segments": 3,
+              "twist": 0,
+              "remove": true,
+              "flip": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "polygon_twist1_integer_exact",
+        "drove": [
+          {
+            "op": "mesh.bridgeTool",
+            "values": {
+              "segments": 3,
+              "twist": 1,
+              "remove": true,
+              "flip": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "polygon_huge_segments_dos_regression",
+        "drove": [
+          {
+            "op": "mesh.bridgeTool",
+            "values": {
+              "segments": 100000000,
+              "twist": 0,
+              "remove": true,
+              "flip": false
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 1e-4,
   "cases": [
     {

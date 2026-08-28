@@ -12,6 +12,193 @@
     "task": null,
     "notes": "Headless numeric capture (xfrm.move); no live gizmo drag."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "vertices_none",
+        "drove": [
+          {
+            "op": "translate",
+            "values": {
+              "value": [
+                0.5,
+                0,
+                0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "vertices_one",
+        "drove": [
+          {
+            "op": "translate",
+            "values": {
+              "value": [
+                0.5,
+                0,
+                0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "vertices_adjacent",
+        "drove": [
+          {
+            "op": "translate",
+            "values": {
+              "value": [
+                0,
+                0.4,
+                0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "vertices_islands",
+        "drove": [
+          {
+            "op": "translate",
+            "values": {
+              "value": [
+                0,
+                0,
+                0.3
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "edges_none",
+        "drove": [
+          {
+            "op": "translate",
+            "values": {
+              "value": [
+                0,
+                0.5,
+                0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "edges_one",
+        "drove": [
+          {
+            "op": "translate",
+            "values": {
+              "value": [
+                0.5,
+                0,
+                0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "edges_adjacent",
+        "drove": [
+          {
+            "op": "translate",
+            "values": {
+              "value": [
+                0,
+                0.4,
+                0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "edges_islands",
+        "drove": [
+          {
+            "op": "translate",
+            "values": {
+              "value": [
+                0,
+                0,
+                0.3
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "polygons_none",
+        "drove": [
+          {
+            "op": "translate",
+            "values": {
+              "value": [
+                0,
+                0.5,
+                0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "polygons_one",
+        "drove": [
+          {
+            "op": "translate",
+            "values": {
+              "value": [
+                0,
+                0.5,
+                0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "polygons_adjacent",
+        "drove": [
+          {
+            "op": "translate",
+            "values": {
+              "value": [
+                0.4,
+                0,
+                0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "polygons_islands",
+        "drove": [
+          {
+            "op": "translate",
+            "values": {
+              "value": [
+                0.3,
+                0,
+                0
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

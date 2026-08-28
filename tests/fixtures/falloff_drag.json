@@ -12,6 +12,265 @@
     "task": null,
     "notes": null
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "falloff_move_custom",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "move",
+              "attr": "TX",
+              "value": 1.0,
+              "falloff.type": "linear",
+              "falloff.shape": "custom",
+              "falloff.start": [
+                0.0,
+                -0.0,
+                -0.5
+              ],
+              "falloff.end": [
+                -0.0,
+                0.0,
+                0.5
+              ],
+              "falloff.in": 1.0,
+              "falloff.out": 0.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "falloff_move_easeIn",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "move",
+              "attr": "TX",
+              "value": 1.0,
+              "falloff.type": "linear",
+              "falloff.shape": "easeIn",
+              "falloff.start": [
+                0.0,
+                -0.0,
+                -0.5
+              ],
+              "falloff.end": [
+                -0.0,
+                0.0,
+                0.5
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "falloff_move_easeOut",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "move",
+              "attr": "TX",
+              "value": 1.0,
+              "falloff.type": "linear",
+              "falloff.shape": "easeOut",
+              "falloff.start": [
+                0.0,
+                -0.0,
+                -0.5
+              ],
+              "falloff.end": [
+                -0.0,
+                0.0,
+                0.5
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "falloff_move_segZ",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "move",
+              "attr": "TX",
+              "value": 1.0,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                0.0,
+                -0.0,
+                -0.5
+              ],
+              "falloff.end": [
+                -0.0,
+                0.0,
+                0.5
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "falloff_move_smooth",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "move",
+              "attr": "TX",
+              "value": 1.0,
+              "falloff.type": "linear",
+              "falloff.shape": "smooth",
+              "falloff.start": [
+                -0.0,
+                -0.0,
+                -0.5
+              ],
+              "falloff.end": [
+                0.0,
+                0.0,
+                0.5
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "falloff_rotX_segZ",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "rotate",
+              "attr": "RX",
+              "value": -62.00000116,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                -0.0,
+                0.0,
+                -0.5
+              ],
+              "falloff.end": [
+                0.0,
+                -0.0,
+                0.5
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "falloff_rotate_segY",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "rotate",
+              "attr": "RY",
+              "value": 60.00000012,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                -0.0,
+                0.0,
+                -0.5
+              ],
+              "falloff.end": [
+                0.0,
+                -0.0,
+                0.5
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "falloff_scale_segX",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "scale",
+              "attr": "SZ",
+              "value": 3.55999994,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                0.0,
+                -0.0,
+                -0.5
+              ],
+              "falloff.end": [
+                -0.0,
+                0.0,
+                0.5
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "falloff_scale_segZ",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "scale",
+              "attr": "SX",
+              "value": 2.1400001,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                0.0,
+                -0.0,
+                -0.5
+              ],
+              "falloff.end": [
+                -0.0,
+                0.0,
+                0.5
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "falloff_scale_top",
+        "drove": [
+          {
+            "op": "falloff_transform",
+            "values": {
+              "tool": "scale",
+              "attr": "SX",
+              "value": 2.25,
+              "falloff.type": "linear",
+              "falloff.shape": "linear",
+              "falloff.start": [
+                -0.0,
+                -0.076923,
+                -0.384615
+              ],
+              "falloff.end": [
+                0.0,
+                0.115385,
+                0.576923
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.001,
   "cases": [
     {

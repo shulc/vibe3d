@@ -14,6 +14,35 @@
   "task": "1140",
   "notes": "INSTRUMENT: the reference side is a BEHAVIOURAL CAPTURE driven through the reference editor's own headless command port -- no display, no pointer, no debugger and no static read of its binary; every number in `reference` is a coordinate the reference itself printed after running the operation on the mesh in `input`. The vibe3d side is a LIVE DRIVE of this build over the HTTP test API through the very steps this fixture stores, read back from /api/model. Both engines are given the SAME base mesh (the reference's own dump, injected verbatim) and the selection travels by COORDINATE, so no element index is assumed to mean the same thing on both sides. Nothing here is an inference about the reference's internals; where a MECHANISM is guessed at, the case note says so in that word."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "ring_stops_at_triangle",
+    "drove": [
+     {
+      "op": "mesh.addLoop",
+      "values": {
+       "position": 0.5
+      }
+     }
+    ]
+   },
+   {
+    "cell": "three_cuts_rail_pairing",
+    "drove": [
+     {
+      "op": "mesh.loopSlice",
+      "values": {
+       "count": 3
+      }
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

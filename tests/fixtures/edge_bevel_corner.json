@@ -12,6 +12,24 @@
     "task": "0391",
     "notes": "Target geometry for a currently-unsupported gesture (vibe3d's bevelEdgesByMask endpoint-disjoint guard skips connected selections) -- expect this fixture to FAIL until the cap fix lands. The sharp=true alternate topology (fewer polygons, mitred corner per the reference-editor's own help docs) could not be captured headlessly (attribute readback confirms it is set, but tool.doApply ignores it -- identical output to sharp=false); flagged for a future manual/interactive capture if the implementation ever needs to model that toggle."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "corner3_w01_sharp_default",
+        "drove": [
+          {
+            "op": "mesh.bevel",
+            "values": {
+              "width": 0.1
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

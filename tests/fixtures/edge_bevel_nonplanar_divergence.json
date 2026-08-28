@@ -14,6 +14,52 @@
   "task": "1140",
   "notes": "INSTRUMENT: the reference side is a BEHAVIOURAL CAPTURE driven through the reference editor's own headless command port -- no display, no pointer, no debugger and no static read of its binary; every number in `reference` is a coordinate the reference itself printed after running the operation on the mesh in `input`. The vibe3d side is a LIVE DRIVE of this build over the HTTP test API through the very steps this fixture stores, read back from /api/model. Both engines are given the SAME base mesh (the reference's own dump, injected verbatim) and the selection travels by COORDINATE, so no element index is assumed to mean the same thing on both sides. Nothing here is an inference about the reference's internals; where a MECHANISM is guessed at, the case note says so in that word."
  },
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "replay-steps",
+  "cells": [
+   {
+    "cell": "width_mode_on_folded_base",
+    "drove": [
+     {
+      "op": "mesh.bevel",
+      "values": {
+       "width": 0.08,
+       "roundLevel": 0,
+       "widthMode": true
+      }
+     }
+    ]
+   },
+   {
+    "cell": "round_level_two_arc",
+    "drove": [
+     {
+      "op": "mesh.bevel",
+      "values": {
+       "width": 0.08,
+       "roundLevel": 2,
+       "widthMode": false
+      }
+     }
+    ]
+   },
+   {
+    "cell": "whole_star_of_interior_vertex",
+    "drove": [
+     {
+      "op": "mesh.bevel",
+      "values": {
+       "width": 0.06,
+       "roundLevel": 0,
+       "widthMode": false
+      }
+     }
+    ]
+   }
+  ]
+ },
  "tolerance": 0.0001,
  "cases": [
   {

@@ -12,6 +12,109 @@
     "task": null,
     "notes": "Hybrid: the center case is reference-captured (headless); the +/-gap cases are analytic extensions of the same plane law \u2014 Phase-0(c) tie-break, live-captured component present => source=live-capture."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "gap_zero_single_cut",
+        "drove": [
+          {
+            "op": "slice",
+            "values": {
+              "start": [
+                0,
+                0,
+                -1
+              ],
+              "end": [
+                0,
+                0,
+                1
+              ],
+              "infinite": true,
+              "split": false,
+              "gap": 0.0,
+              "gapSide": "center"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "gap_center_channel",
+        "drove": [
+          {
+            "op": "slice",
+            "values": {
+              "start": [
+                0,
+                0,
+                -1
+              ],
+              "end": [
+                0,
+                0,
+                1
+              ],
+              "infinite": true,
+              "split": false,
+              "gap": 0.2,
+              "gapSide": "center"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "gap_positive_channel",
+        "drove": [
+          {
+            "op": "slice",
+            "values": {
+              "start": [
+                0,
+                0,
+                -1
+              ],
+              "end": [
+                0,
+                0,
+                1
+              ],
+              "infinite": true,
+              "split": false,
+              "gap": 0.2,
+              "gapSide": "positive"
+            }
+          }
+        ]
+      },
+      {
+        "cell": "gap_negative_channel",
+        "drove": [
+          {
+            "op": "slice",
+            "values": {
+              "start": [
+                0,
+                0,
+                -1
+              ],
+              "end": [
+                0,
+                0,
+                1
+              ],
+              "infinite": true,
+              "split": false,
+              "gap": 0.2,
+              "gapSide": "negative"
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

@@ -12,6 +12,35 @@
     "task": "0391",
     "notes": "mode=inset was the correct reference-editor edge-bevel mode to match vibe3d's `width` param 1:1 (offset=value exactly) -- the reference editor's Width mode instead produces offset=value*sqrt(2) for a 90-degree cube corner, an easy trap; verified against mesh.d's existing bevelEdgesByMask unittest (chamfer centroid 0,0.45,0.45) bit-for-bit before freezing."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "width_01",
+        "drove": [
+          {
+            "op": "mesh.bevel",
+            "values": {
+              "width": 0.1
+            }
+          }
+        ]
+      },
+      {
+        "cell": "width_02",
+        "drove": [
+          {
+            "op": "mesh.bevel",
+            "values": {
+              "width": 0.2
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.0001,
   "cases": [
     {

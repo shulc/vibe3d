@@ -12,6 +12,103 @@
     "task": null,
     "notes": null
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "move_drag_adj",
+        "drove": [
+          {
+            "op": "translate",
+            "values": {
+              "value": [
+                0.91,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "move_drag_asym",
+        "drove": [
+          {
+            "op": "translate",
+            "values": {
+              "value": [
+                0.635,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "move_drag_isl",
+        "drove": [
+          {
+            "op": "translate",
+            "values": {
+              "value": [
+                1.285,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "move_drag_top",
+        "drove": [
+          {
+            "op": "translate",
+            "values": {
+              "value": [
+                0.695,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "move_drag_top_y",
+        "drove": [
+          {
+            "op": "translate",
+            "values": {
+              "value": [
+                0.0,
+                1.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "cell": "move_drag_top_z",
+        "drove": [
+          {
+            "op": "translate",
+            "values": {
+              "value": [
+                0.0,
+                0.0,
+                1.0
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 0.001,
   "cases": [
     {

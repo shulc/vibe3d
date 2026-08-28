@@ -12,6 +12,91 @@
     "task": "0395",
     "notes": "Explicit-geometry construction in the reference editor (points and polygons created one by one, then committed as a single mesh edit) with edges selected by POSITION match, not by index -- index stability across that commit is not guaranteed by its scripting API. Every case's expected_vertices/expected_after below is copied verbatim from the captured post-tool dump, not hand-derived. NOTE (not encoded as a fixture, needs a 'connect'/Auto-Connection attribute vibe3d does not have yet): on the reported-bug's specific topology (an internal hole in an otherwise-closed box), the reference tool's Auto Connection default (connect=true) silently OVERRIDES an explicit Segments>1 request back down to spans=1 to keep the patch flush with the surrounding surface; with connect=false (or on a non-enclosed/disjoint topology, e.g. this fixture's other cases) the requested Segments value is honored exactly. Deferred — flagged for whoever implements Auto Connection, not required for the reported bug (which uses the default segments=1)."
   },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "reported_bug_two_open_arcs_equal",
+        "drove": [
+          {
+            "op": "mesh.bridgeTool",
+            "values": {
+              "segments": 1,
+              "twist": 0,
+              "flip": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "two_open_rows_disjoint_default",
+        "drove": [
+          {
+            "op": "mesh.bridgeTool",
+            "values": {
+              "segments": 1,
+              "twist": 0,
+              "flip": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "two_open_rows_segments2",
+        "drove": [
+          {
+            "op": "mesh.bridgeTool",
+            "values": {
+              "segments": 2,
+              "twist": 0,
+              "flip": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "pairing_proximity_not_selection_order",
+        "drove": [
+          {
+            "op": "mesh.bridgeTool",
+            "values": {
+              "segments": 2,
+              "twist": 0,
+              "flip": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "unequal_length_rows_fan",
+        "drove": [
+          {
+            "op": "mesh.bridgeTool",
+            "values": {
+              "segments": 1,
+              "twist": 0,
+              "flip": false
+            }
+          }
+        ]
+      },
+      {
+        "cell": "single_open_chain_noop",
+        "drove": [
+          {
+            "op": "mesh.bridgeTool",
+            "values": {
+              "segments": 1,
+              "twist": 0,
+              "flip": false
+            }
+          }
+        ]
+      }
+    ]
+  },
   "tolerance": 1e-4,
   "cases": [
     {
