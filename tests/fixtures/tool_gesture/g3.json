@@ -4,6 +4,7 @@
   "producedBy": "fb626df7",
   "stand": "per-cell; see each cell's `drive`",
   "recipe": "stand -> gesture (/api/play-events) -> drop -> undo -> redo",
+  "provenance": {"schema": 1, "source": "simulated", "reference": "vibe3d-selfgen", "method": "self-drive", "captured_utc": "2026-08-28T14:12:03Z", "harness": "tests/test_tool_gesture_g*.d, driven over /api/play-events against vibe3d's own running instance -- no reference editor involved (see the file's own `recipe`)", "task": "1905", "notes": "captured_utc is the commit date of this file's own top-level `producedBy` SHA, read from git."},
   "cells": [
     {
       "name": "smooth.shift/offset-drag", "tool": "mesh.smoothShiftTool",

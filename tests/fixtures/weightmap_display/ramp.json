@@ -4,8 +4,11 @@
     "schema": 1,
     "source": "live-capture",
     "method": "self-drive",
-    "reference": "a third-party polygon modelling application, driven headlessly by our own capture harness and read back from its own framebuffer",
-    "captured_utc": "2026-08-17T00:00:00Z"
+    "reference": "ref-editor@11.2v3",
+    "captured_utc": "2026-08-17T00:00:00Z",
+    "harness": null,
+    "task": "1090",
+    "notes": "`reference` corrected 2026-08-28 (task 3140/2860's population widening) from free prose ('a third-party polygon modelling application, driven headlessly by our own capture harness and read back from its own framebuffer') to the schema's neutral vocabulary -- the prose did not name the product, but it was not a valid enum value either, and `provenance_check.py`'s two flat globs never reached this file (it lives under a subdirectory) to catch that. The relocated wording is preserved here verbatim as the capture method: driven headlessly by our own harness, read back from the reference's own framebuffer. No measured value in this file (rgb8, model, quantiser, near_tie_divergence, cases) was touched."
   },
   "model": {
     "neutral_rgb": [

@@ -16,6 +16,7 @@
     "deltaRoundTrip":      "PINNED — yes | no | not-attempted. no means a measured lossy record; not-attempted means the replay is unsafe in this tree and the cell refused."
   },
   "stand": "tests/unit/fixtures.d :: makeTaggedGridFull(n), Hide bit cleared — see tools/odelta/run.d",
+  "provenance": {"schema": 1, "source": "simulated", "reference": "vibe3d-selfgen", "method": "self-drive", "captured_utc": "2026-08-25T11:33:30Z", "harness": "tools/odelta/run.d, in-process against vibe3d's own MeshSnapshot/MeshEditDelta (see the file's own `build`/`stand` fields)", "task": "1903", "notes": "Byte/alloc counts of vibe3d's own undo paths; no reference editor involved. captured_utc is the commit date of the last commit that touched this file on disk (`git log --follow`), since this fixture carries no own `producedBy` SHA to anchor on."},
   "cells": [
     {"cell": "A", "grid": 316, "faces": 99856, "snapshotBytes": 15209152, "deltaBytes": 1153, "snapshotRecordMs": 117.78, "deltaRecordMs": 105.91, "snapshotUndoMs": 64.27, "deltaUndoMs": 74.61, "snapshotAllocBytes": 48986864, "deltaAllocBytes": 29277232, "snapshotCollections": 1, "deltaCollections": 1, "deltaRoundTrip": "yes"},
     {"cell": "B-now", "grid": 100, "faces": 10000, "snapshotBytes": 1530304, "deltaBytes": 362136, "snapshotRecordMs": 414.98, "deltaRecordMs": 59.33, "snapshotUndoMs": 4.39, "deltaUndoMs": null, "snapshotAllocBytes": 136779424, "deltaAllocBytes": 135271168, "snapshotCollections": 1, "deltaCollections": 1, "deltaRoundTrip": "not-attempted"},
