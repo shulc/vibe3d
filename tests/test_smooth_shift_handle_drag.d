@@ -15,7 +15,32 @@
 //     the override behind `queryMouse` is only updated on MOTION events. A drag
 //     log that opens with the button-down would hit-test against a stale
 //     cursor, so a hover motion is played first and given a frame to land.
+//
+// WHAT THIS FILE WAS MISSING (task 2900). The drive here is REAL — measured on
+// this stand, the drag takes the cube from 8 vertices / 6 faces to 12 / 10 and
+// the drop pushes one undo entry. The defect was the ASSERTION:
+// `abs(shift) > 1e-3` and nothing else. `shift` is a gizmo ATTRIBUTE the motion
+// handler moves whether or not `smoothShiftFacesByMask` ever produced a face,
+// so a SmoothShiftTool whose kernel touched nothing — no geometry, no record —
+// left this file green. It is the FOURTH file found in this exact shape
+// (`poly.extrude`, `mesh.vertexBevel` and `mesh.mirrorTool` were the others).
+//
+// `built` IS NOT ON THE WIRE HERE, measured rather than assumed: it is
+// published for exactly six tools tree-wide (poly_bevel, edge_bevel,
+// edge_extend, edge_extrude, edge_slice, loop_slice — `grep -rn '"built"'
+// source/`) and `/api/tool/state` answers `{}` for `mesh.smoothShiftTool`. A
+// GROWN VERTEX AND FACE COUNT stands in and is strictly stronger: `built` is
+// the tool's own claim about its kernel's return, and the counts are that claim
+// read off the mesh. Both planes are named because a smooth shift that inserted
+// vertices without producing the side walls is a different failure from one
+// that did nothing at all.
+//
+// EVERY CHANNEL BELOW FAILS CLOSED, so no positive control is needed: each new
+// assertion is "something MOVED", and a stale `/api/mesh/planes`, a frozen
+// `/api/model` or an `/api/history` that stopped tracking each leave their
+// assertion RED rather than green.
 
+import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.format : format;
 import std.json;
@@ -29,8 +54,36 @@ void main() {}
 enum string BASE = "http://localhost:8080";
 enum string TOOL = "mesh.smoothShiftTool";
 
+string getRaw(string path) { return cast(string) get(BASE ~ path); }
+JSONValue getJson(string path) { return parseJSON(getRaw(path)); }
 JSONValue postJson(string path, string body_) {
     return parseJSON(cast(string) post(BASE ~ path, body_));
+}
+
+/// The PLANE-COMPLETE readback. `/api/model` is not a substitute: it carries no
+/// marks, no set masks and no per-face material/part.
+string planes() { return getRaw("/api/mesh/planes"); }
+long undoLen() { return cast(long) getJson("/api/history")["undo"].array.length; }
+size_t vertexCount() { return getJson("/api/model")["vertices"].array.length; }
+size_t faceCount() { return getJson("/api/model")["faces"].array.length; }
+
+string[] planeDiff(string aText, string bText) {
+    auto a = parseJSON(aText);
+    auto b = parseJSON(bText);
+    bool[string] keys;
+    foreach (k, _; a.objectNoRef) keys[k] = true;
+    foreach (k, _; b.objectNoRef) keys[k] = true;
+    string[] names;
+    foreach (k, _; keys) if (k != "provenance") names ~= k;
+    names.sort();
+    string[] diff;
+    foreach (k; names) {
+        auto pa = k in a.objectNoRef;
+        auto pb = k in b.objectNoRef;
+        if (pa is null || pb is null) { diff ~= k; continue; }
+        if (pa.toString() != pb.toString()) diff ~= k;
+    }
+    return diff;
 }
 
 void cmd(string line) {
@@ -57,6 +110,14 @@ string buildHoverLog(int vpX, int vpY, int vpW, int vpH, int x, int y) {
 }
 
 unittest { // dragging the offset arrow moves `shift` off zero
+    // DISARM FIRST, and it is not defensive decoration (task 2900). `/api/reset`
+    // does NOT drop the active tool, and `toolHost.activate()` deactivates the
+    // outgoing one — which for a session tool means COMMITTING it. So a
+    // previous test (or a previous, RED run of this one) that left a tool armed
+    // makes `tool.set ... on` push a stray commit into the freshly reset mesh,
+    // and every count read after it is off by that tool's edit. Measured here:
+    // a run following a red one started this block at 16 vertices instead of 8.
+    cmd("tool.set " ~ TOOL ~ " off");
     auto r = postJson("/api/reset", "");
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     cmd("history.clear");
@@ -71,6 +132,12 @@ unittest { // dragging the offset arrow moves `shift` off zero
     import core.thread : Thread;
     import core.time   : dur;
     Thread.sleep(dur!"msecs"(200));
+
+    // Read the four channels BEFORE the gesture rather than assuming them.
+    immutable string planesBefore = planes();
+    immutable long   u0           = undoLen();
+    immutable size_t v0           = vertexCount();
+    immutable size_t f0           = faceCount();
 
     auto cam = fetchCamera(BASE);
     auto vp  = viewportFromCamera(cam);
@@ -104,5 +171,34 @@ unittest { // dragging the offset arrow moves `shift` off zero
         ~ "tool consumes nothing when the press misses the handle, so a zero "
         ~ "here means the drag never began. Got " ~ after.to!string);
 
+    // THE CHECKS THIS FILE DID NOT HAVE, half one: the kernel emitted geometry.
+    // This stands in for `built`, which this tool does not publish. Read while
+    // the tool is still armed — the shift previews on the DOCUMENT mesh.
+    immutable size_t v1 = vertexCount();
+    immutable size_t f1 = faceCount();
+    assert(v1 > v0 && f1 > f0,
+        "the drag left " ~ v1.to!string ~ " vertices / " ~ f1.to!string
+        ~ " faces (started at " ~ v0.to!string ~ " / " ~ f0.to!string
+        ~ ", measured 12 / 10 on this stand) while shift reads "
+        ~ after.to!string ~ ". `rebuildPreview` sets `built` from its kernel's "
+        ~ "return and the commit runs only when built, so no growth means the "
+        ~ "smooth shift produced neither the shifted face nor its side walls — "
+        ~ "and the `shift` attribute above reads exactly the same in that "
+        ~ "state, which is where this test used to stop looking");
+
     cmd("tool.set " ~ TOOL ~ " off");
+    Thread.sleep(dur!"msecs"(300));
+
+    // ...half two: a PLANE actually moved, and the drop recorded it.
+    auto moved = planeDiff(planesBefore, planes());
+    assert(moved.canFind("vertices") && moved.canFind("counts"),
+        "the gesture and its drop moved planes " ~ moved.to!string
+        ~ " — `vertices` and `counts` are not both among them, so the mesh is "
+        ~ "byte-identical to what it was before the drag. A tool attribute can "
+        ~ "hold any value over that");
+    immutable long undoDelta = undoLen() - u0;
+    assert(undoDelta == 1,
+        "the gesture recorded " ~ undoDelta.to!string ~ " undo entr(ies), "
+        ~ "expected exactly 1 — 0 means the whole drag was a no-op that left "
+        ~ "nothing undoable behind it");
 }

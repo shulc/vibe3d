@@ -16,7 +16,28 @@
 // does now override toolHandlesJson — task 0660 — so the registry is readable
 // here too; this test's independent reconstruction is left as it was, since it
 // is what makes a geometry change fail loudly instead of silently following.)
+//
+// WHAT THIS FILE WAS MISSING (task 2900). The drive is REAL — measured on this
+// stand, the drag previews on the DOCUMENT mesh (8 -> 100 vertices while the
+// button is down) and the drop pushes one `mesh.radial_array_edit` labelled
+// "Radial Array". The defect was the ASSERTION: `offset` is a gizmo attribute
+// the motion handler moves whether or not `arrayFacesRadial` copied one face,
+// so a RadialArrayTool that built nothing left this file green.
+//
+// Its sibling `tests/test_radial_array_center_space.d` DOES assert geometry (12
+// vertices after an off-handle click), so this tool's PREVIEW had a witness —
+// but neither file touched `/api/undo` or `/api/history`, so the RECORD had
+// none, and the record is where the gesture becomes undoable work.
+//
+// `built` IS NOT ON THE WIRE HERE, measured rather than assumed: it is
+// published for exactly six tools tree-wide (`grep -rn '"built"' source/`) and
+// `/api/tool/state` answers `{}` for `mesh.radialArrayTool`. A GROWN VERTEX
+// COUNT stands in and is strictly stronger — `built` is the tool's claim about
+// its kernel's return, the count is that claim read off the mesh. The bound is
+// `> 8` rather than an exact number because the copy count follows the radial
+// count parameter and the offset follows the drag, which follows the viewport.
 
+import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.json;
 import std.math : abs;
@@ -33,6 +54,42 @@ JSONValue postJson(string path, string body_) {
     return parseJSON(cast(string) post(BASE ~ path, body_));
 }
 
+// --- the acceptance witness -------------------------------------------------
+//
+// EVERY CHANNEL BELOW FAILS CLOSED: each new assertion is "something MOVED", so
+// a stale `/api/mesh/planes`, a frozen `/api/model` or an `/api/history` that
+// stopped tracking go RED rather than silently green. No positive control is
+// needed for that kind, and adding one would be a seventh check that cannot
+// come out differently.
+
+string getRaw(string path) { return cast(string) get(BASE ~ path); }
+JSONValue getJson(string path) { return parseJSON(getRaw(path)); }
+
+/// The PLANE-COMPLETE readback. `/api/model` is not a substitute: it carries no
+/// marks, no set masks and no per-face material/part.
+string planes() { return getRaw("/api/mesh/planes"); }
+long undoLen() { return cast(long) getJson("/api/history")["undo"].array.length; }
+size_t vertexCount() { return getJson("/api/model")["vertices"].array.length; }
+
+string[] planeDiff(string aText, string bText) {
+    auto a = parseJSON(aText);
+    auto b = parseJSON(bText);
+    bool[string] keys;
+    foreach (k, _; a.objectNoRef) keys[k] = true;
+    foreach (k, _; b.objectNoRef) keys[k] = true;
+    string[] names;
+    foreach (k, _; keys) if (k != "provenance") names ~= k;
+    names.sort();
+    string[] diff;
+    foreach (k; names) {
+        auto pa = k in a.objectNoRef;
+        auto pb = k in b.objectNoRef;
+        if (pa is null || pb is null) { diff ~= k; continue; }
+        if (pa.toString() != pb.toString()) diff ~= k;
+    }
+    return diff;
+}
+
 void cmd(string line) {
     auto r = postJson("/api/command", line);
     assert(r["status"].str == "ok" || r["status"].str == "success",
@@ -46,6 +103,14 @@ double queryOffset() {
 }
 
 unittest { // dragging the offset arrow moves `offset` off zero
+    // DISARM FIRST, and it is not defensive decoration (task 2900). `/api/reset`
+    // does NOT drop the active tool, and `toolHost.activate()` deactivates the
+    // outgoing one — which for a session tool means COMMITTING it. So a
+    // previous test (or a previous, RED run of this one) that left a tool armed
+    // makes `tool.set ... on` push a stray commit into the freshly reset mesh,
+    // and every count read after it is off by that tool's edit. Measured here:
+    // a run following a red one started this block at 16 vertices instead of 8.
+    cmd("tool.set " ~ TOOL ~ " off");
     auto r = postJson("/api/reset", "");
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     cmd("history.clear");
@@ -60,6 +125,11 @@ unittest { // dragging the offset arrow moves `offset` off zero
     import core.thread : Thread;
     import core.time   : dur;
     Thread.sleep(dur!"msecs"(200));
+
+    // Read the three channels BEFORE the gesture rather than assuming them.
+    immutable string planesBefore = planes();
+    immutable long   u0           = undoLen();
+    immutable size_t v0           = vertexCount();
 
     auto cam = fetchCamera(BASE);
     auto vp  = viewportFromCamera(cam);
@@ -90,5 +160,32 @@ unittest { // dragging the offset arrow moves `offset` off zero
         ~ "press that missed the handles only repositions the centre and "
         ~ "leaves offset alone. Got " ~ after.to!string);
 
+    // The drop is where RadialArrayTool records (`commitEdit` from
+    // `deactivate()`); the preview it commits is already on the document mesh.
     cmd("tool.set " ~ TOOL ~ " off");
+    Thread.sleep(dur!"msecs"(300));
+
+    // THE CHECKS THIS FILE DID NOT HAVE, half one: the kernel emitted geometry.
+    // This stands in for `built`, which this tool does not publish.
+    immutable size_t v1 = vertexCount();
+    assert(v1 > v0,
+        "the drop left " ~ v1.to!string ~ " vertices (started at "
+      ~ v0.to!string ~ ") while offset reads " ~ after.to!string
+      ~ ". `rebuildPreview` sets `built` from its kernel's return and "
+      ~ "`deactivate()` commits only when built, so no growth means the tool "
+      ~ "copied nothing — and the offset attribute above reads exactly the "
+      ~ "same in that state, which is where this test used to stop looking");
+
+    // ...half two: a PLANE actually moved, and the drop recorded it.
+    auto moved = planeDiff(planesBefore, planes());
+    assert(moved.canFind("vertices") && moved.canFind("counts"),
+        "the gesture and its drop moved planes " ~ moved.to!string
+      ~ " — `vertices` and `counts` are not both among them, so the mesh is "
+      ~ "byte-identical to what it was before the drag. A tool attribute can "
+      ~ "hold any value over that");
+    immutable long undoDelta = undoLen() - u0;
+    assert(undoDelta == 1,
+        "the drop recorded " ~ undoDelta.to!string ~ " undo entr(ies), expected "
+      ~ "exactly 1 (`mesh.radial_array_edit`, label \"Radial Array\") — 0 means "
+      ~ "the gesture left nothing undoable behind it");
 }

@@ -468,10 +468,30 @@ unittest {
 //    g_hoveredEdge is freshly resolved before the button-down fires (the
 //    codebase's own `clickAt`-style idiom, e.g. tests/test_pen_complex_polygon.d,
 //    tests/test_element_pick_edge_clickpoint.d) — the mitigation for the
-//    documented "stationary two-click hover staleness" risk. If the GPU
-//    picker fails to resolve either edge under CI's camera/driver, this test
-//    is the one allowed to be flaky; the headless golden (test 1) remains
-//    the authority on kernel correctness.
+//    documented "stationary two-click hover staleness" risk.
+//
+//    TASK 2900 — THIS BLOCK USED TO SKIP, AND THE SKIP FIRED ON EVERY RUN.
+//    It read `/api/tool/state` after the Enter commit and returned early when
+//    `edgeA < 0 || edgeB < 0`, calling that "the GPU picker didn't resolve an
+//    edge under this environment". Measured here, on a run where the cut
+//    SUCCEEDED (mesh 10v/7f/15e, `armed:true`, `built:true`,
+//    `chainSegments:1`): **`edgeA` and `edgeB` read -1 anyway.** They are
+//    derived as `mesh.edgeIndexOf(latchedPoints_[0].v0, .v1)`, and a standing
+//    preview has already SPLIT the very edge those endpoints name, so
+//    `edgeIndexOf` returns its `~0u` sentinel and the field casts to -1. After
+//    the commit `latchedPoints_` is empty and they are -1 for the other
+//    reason. There is no state in which that guard is false, so the six
+//    assertions below it — phase, armed, 7 faces, 10 verts, 15 edges, one undo
+//    entry — had NEVER EXECUTED. A run that picked nothing and a run that cut
+//    correctly produced the same green.
+//
+//    The repair is both halves of that. The state is now read BEFORE the Enter
+//    key, while the chain is live, on channels that are actually populated
+//    then (`chainSegments`, `armed`, `built`, `phase`); and a miss REFUSES,
+//    naming the picker, instead of returning. `mesh.edgeSliceTool` is one of
+//    the six tools tree-wide that publish `built`, so this block can assert the
+//    acceptance criterion in its literal form — the tool reporting itself
+//    built — rather than through a stand-in count.
 // ---------------------------------------------------------------------------
 unittest {
     resetCube();
@@ -496,34 +516,76 @@ unittest {
             t + 80.0, x, y);
     }
 
-    string log =
-        format(`{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}`,
-               VPX, VPY, VPW, VPH) ~ "\n"
-      ~ clickAt(50.0, AX, AY) ~ "\n"
-      ~ clickAt(200.0, BX, BY) ~ "\n"
-      ~ format(`{"t":350.000,"type":"SDL_KEYDOWN","sym":13,"scan":0,"mod":0,"repeat":0}`);
+    // THE VIEWPORT HEADER IS REPLAYED WITH BOTH HALVES: `/api/play-events`
+    // resolves each log against the viewport that log declares, so the second
+    // call needs its own copy or the Enter would arrive against a stale frame.
+    enum string VP_HDR_FMT =
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}`;
 
-    auto r = postCmd("/api/play-events", log);
-    assert(r["status"].str == "success", "play-events failed: " ~ r.toString);
-    bool finished = false;
-    foreach (_; 0 .. 200) {
-        auto s = getJson("/api/play-events/status");
-        if (s["finished"].type == JSONType.true_) { finished = true; break; }
-        Thread.sleep(50.msecs);
+    void play(string log, string what) {
+        auto r = postCmd("/api/play-events", log);
+        assert(r["status"].str == "success",
+            "play-events (" ~ what ~ ") failed: " ~ r.toString);
+        bool finished = false;
+        foreach (_; 0 .. 200) {
+            auto s = getJson("/api/play-events/status");
+            if (s["finished"].type == JSONType.true_) { finished = true; break; }
+            Thread.sleep(50.msecs);
+        }
+        assert(finished,
+            "interactive edge-slice replay (" ~ what ~ ") did not finish within 10s");
+        Thread.sleep(150.msecs);   // settle (post-playback drain, per CLAUDE.md flake note)
     }
-    assert(finished, "interactive edge-slice replay did not finish within 10s");
-    Thread.sleep(150.msecs);   // settle (post-playback drain, per CLAUDE.md flake note)
+
+    // --- half 1: the two clicks, WITHOUT the commit key --------------------
+    play(format(VP_HDR_FMT, VPX, VPY, VPW, VPH) ~ "\n"
+       ~ clickAt(50.0, AX, AY) ~ "\n"
+       ~ clickAt(200.0, BX, BY), "the two latching clicks");
+
+    // REFUSE ON A MISSED PICK, do not skip. Read while the chain is LIVE, on
+    // the fields that are populated then — `edgeA`/`edgeB` are -1 here by
+    // construction (see this block's header) and cannot be used for this.
+    auto stLive = getJson("/api/tool/state");
+    assert(stLive["chainSegments"].integer == 1,
+        "the two clicks latched " ~ stLive["chainSegments"].integer.to!string
+        ~ " chain segment(s), expected exactly 1. The GPU edge picker did not "
+        ~ "resolve edge(4,5) and/or edge(6,7) under this environment's "
+        ~ "camera/driver, so nothing reached `latchFirstPoint`/`appendPoint`. "
+        ~ "This block used to RETURN here and pass; a skip is not a pin, and a "
+        ~ "run that picked nothing must not read like a run that cut: "
+        ~ stLive.toString);
+    assert(stLive["phase"].str == "edgeB",
+        "after two latches the tool must sit in phase edgeB, got "
+        ~ stLive["phase"].str ~ ": " ~ stLive.toString);
+
+    // THE ACCEPTANCE CRITERION IN ITS LITERAL FORM. `mesh.edgeSliceTool` is one
+    // of the six tools tree-wide that publish `built` (`grep -rn '"built"'
+    // source/`), so this asserts the tool's OWN claim that its kernel produced
+    // a cut, not a stand-in for it.
+    assert(stLive["built"].type == JSONType.true_,
+        "the tool reports built=" ~ stLive["built"].toString ~ " with a "
+        ~ "2-point chain armed — `rebuildPreview` sets it from the chain "
+        ~ "kernel's return, so false here means the standing preview cut "
+        ~ "nothing and the Enter below would commit an empty edit: "
+        ~ stLive.toString);
+    assert(stLive["armed"].type == JSONType.true_,
+        "the 2-point chain is not armed: " ~ stLive.toString);
+
+    // The standing preview is already ON the real mesh — that is this tool's
+    // documented law, and it is what makes the commit a record of geometry
+    // that exists rather than a promise.
+    auto mLive = model();
+    assert(faceCount(mLive) == 7 && vertCount(mLive) == 10 && edgeCount(mLive) == 15,
+        "the armed preview should already read 7f/10v/15e on the real mesh, got "
+        ~ faceCount(mLive).to!string ~ "f/" ~ vertCount(mLive).to!string ~ "v/"
+        ~ edgeCount(mLive).to!string ~ "e");
+
+    // --- half 2: the Enter commit -----------------------------------------
+    play(format(VP_HDR_FMT, VPX, VPY, VPW, VPH) ~ "\n"
+       ~ format(`{"t":50.000,"type":"SDL_KEYDOWN","sym":13,"scan":0,"mod":0,"repeat":0}`),
+       "the Enter commit");
 
     auto st = getJson("/api/tool/state");
-    if (st["edgeA"].integer < 0 || st["edgeB"].integer < 0) {
-        // Best-effort: the GPU picker didn't resolve one of the two edges
-        // under this environment's camera/driver — documented Risk #4, not a
-        // tool-logic failure. The headless golden (test 1) already proves
-        // the kernel wiring; skip the geometry assertions rather than flake.
-        deactivateTool();
-        return;
-    }
-
     assert(st["phase"].str == "idle",
         "after Enter commit the tool must re-arm to idle phase, got " ~ st["phase"].str);
     assert(st["armed"].type == JSONType.false_, "commit must clear armed_");
