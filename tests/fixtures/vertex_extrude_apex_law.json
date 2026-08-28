@@ -1,0 +1,346 @@
+{
+ "name": "vertex_extrude_apex_law",
+ "description": "How a vertex-extrude's two settings -- the outward shift and the ring width -- interact. Eight cells on two stands, measured through the headless command lane, cross-checked against the same law read statically off the reference's own compute site.",
+ "source": "Reference editor, headless command lane (two boots), plus a static read of the same kernel. No display, no pointer injection, no trace.",
+ "tolerance": 2e-06,
+ "law": {
+  "apex": "The extruded apex is a NEW vertex placed at V + shift * w(V) * normalize(sum over the vertex's incident SELECTED polygons of that polygon's per-vertex normal). Its displacement magnitude is exactly `shift`; the width does not enter it. `w(V)` is the falloff weight at V and is 1 when no falloff is active -- READ but not exercised by any cell here.",
+  "ring": "Each incident edge gains a split point at V + width * normalize(N_i - V): Euclidean distance exactly `width` from the ORIGINAL vertex position, along that edge. The shift does not enter it.",
+  "gates": "The shift pass is gated on width > 0 AND valence >= 3. That gate is the MECHANISM behind 'shift alone does nothing' -- it is not a coincidence of the numbers, and it is why the no-op holds for either sign of shift.",
+  "independence": "The two settings drive two separate, sequentially applied passes over the vertex. Apex and ring are therefore independent: the apex is a function of `shift` alone and the ring of `width` alone."
+ },
+ "refuted": {
+  "apex_is_shift_plus_width": "REFUTED by the two reversed-ratio cells: predicts 0.4 for both, measured 0.1 and 0.3. This was the shipped hypothesis, and it was derived from the one cell that cannot tell it apart from three others.",
+  "apex_is_twice_shift": "REFUTED: predicts 0.2 and 0.6, measured 0.1 and 0.3.",
+  "apex_is_twice_width": "REFUTED: predicts 0.6 and 0.2, measured 0.1 and 0.3.",
+  "apex_direction_is_area_weighted_normal": "REFUTED on the irregular fan by 2.53 degrees -- far outside float32 noise. Indistinguishable on a cube corner.",
+  "apex_direction_is_away_from_neighbour_centroid": "REFUTED on the irregular fan by 77.5 degrees.",
+  "apex_direction_is_negated_mean_edge_direction": "REFUTED on the irregular fan by 172.5 degrees."
+ },
+ "stands": {
+  "cube_corner": {
+   "kind": "unit cube, the (0.5,0.5,0.5) corner selected",
+   "vertices": [
+    [
+     -0.5,
+     -0.5,
+     -0.5
+    ],
+    [
+     0.5,
+     -0.5,
+     -0.5
+    ],
+    [
+     0.5,
+     0.5,
+     -0.5
+    ],
+    [
+     -0.5,
+     0.5,
+     -0.5
+    ],
+    [
+     -0.5,
+     -0.5,
+     0.5
+    ],
+    [
+     0.5,
+     -0.5,
+     0.5
+    ],
+    [
+     0.5,
+     0.5,
+     0.5
+    ],
+    [
+     -0.5,
+     0.5,
+     0.5
+    ]
+   ],
+   "faces": [
+    [
+     0,
+     3,
+     2,
+     1
+    ],
+    [
+     4,
+     5,
+     6,
+     7
+    ],
+    [
+     0,
+     1,
+     5,
+     4
+    ],
+    [
+     1,
+     2,
+     6,
+     5
+    ],
+    [
+     2,
+     3,
+     7,
+     6
+    ],
+    [
+     3,
+     0,
+     4,
+     7
+    ]
+   ],
+   "selected": 6,
+   "apex_before": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "cannot_separate": "DIRECTION. At a cube corner every candidate direction rule collapses onto the outward body diagonal. A magnitude law fitted here is evidence about magnitude only."
+  },
+  "irregular_fan_valence4": {
+   "kind": "closed fan of four triangles of unequal area around the origin, the centre vertex selected",
+   "vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     1.0,
+     0.0
+    ],
+    [
+     -2.0,
+     0.0,
+     0.5
+    ],
+    [
+     0.0,
+     -3.0,
+     0.2
+    ]
+   ],
+   "faces": [
+    [
+     0,
+     1,
+     2
+    ],
+    [
+     0,
+     2,
+     3
+    ],
+    [
+     0,
+     3,
+     4
+    ],
+    [
+     0,
+     4,
+     1
+    ]
+   ],
+   "selected": 0,
+   "apex_before": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "separates": "DIRECTION. The four candidate directions are 0, 2.53, 77.5 and 172.5 degrees from the measured one."
+  }
+ },
+ "cells": [
+  {
+   "stand": "cube_corner",
+   "shift": 0.2,
+   "width": 0.2,
+   "counts": [
+    8,
+    6,
+    32,
+    30
+   ],
+   "apex": [
+    0.615470051765,
+    0.615470051765,
+    0.615470051765
+   ],
+   "ring_radii": [
+    0.2
+   ],
+   "note": "THE ORIGINAL CELL, and it is the degenerate one: shift == width, so 'shift', 'shift+width', '2*shift' and '2*width' all predict the same magnitude. The earlier record for this exact cell said the apex moved 0.4; re-measured here it moves 0.2."
+  },
+  {
+   "stand": "cube_corner",
+   "shift": 0.1,
+   "width": 0.3,
+   "counts": [
+    8,
+    6,
+    32,
+    30
+   ],
+   "apex": [
+    0.557735025883,
+    0.557735025883,
+    0.557735025883
+   ],
+   "ring_radii": [
+    0.1,
+    0.3
+   ],
+   "note": "DISCRIMINATING: shift != width and shift < width."
+  },
+  {
+   "stand": "cube_corner",
+   "shift": 0.3,
+   "width": 0.1,
+   "counts": [
+    8,
+    6,
+    32,
+    30
+   ],
+   "apex": [
+    0.673205077648,
+    0.673205077648,
+    0.673205077648
+   ],
+   "ring_radii": [
+    0.1,
+    0.3
+   ],
+   "note": "DISCRIMINATING: the reversed ratio. Together with the cell above this separates all four magnitude candidates."
+  },
+  {
+   "stand": "cube_corner",
+   "shift": 0.25,
+   "width": 0.0,
+   "counts": [
+    8,
+    6,
+    8,
+    6
+   ],
+   "apex": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "ring_radii": [],
+   "note": "width == 0 is a COMPLETE no-op: not one vertex moves and no topology is created, whatever the shift."
+  },
+  {
+   "stand": "cube_corner",
+   "shift": 0.0,
+   "width": 0.25,
+   "counts": [
+    8,
+    6,
+    32,
+    30
+   ],
+   "apex": [
+    0.5,
+    0.5,
+    0.5
+   ],
+   "ring_radii": [
+    0.25
+   ],
+   "note": "shift == 0 leaves the apex exactly where it was."
+  },
+  {
+   "stand": "irregular_fan_valence4",
+   "shift": 0.4,
+   "width": 0.15,
+   "attr_order": "width_then_shift",
+   "counts": [
+    5,
+    4,
+    21,
+    16
+   ],
+   "apex": [
+    0.048848226666,
+    0.013211967424,
+    0.396786212921
+   ],
+   "ring_radii": [
+    0.15
+   ],
+   "note": "DIRECTION discriminator."
+  },
+  {
+   "stand": "irregular_fan_valence4",
+   "shift": 0.4,
+   "width": 0.15,
+   "attr_order": "shift_then_width",
+   "counts": [
+    5,
+    4,
+    21,
+    16
+   ],
+   "apex": [
+    0.048848226666,
+    0.013211967424,
+    0.396786212921
+   ],
+   "ring_radii": [
+    0.15
+   ],
+   "note": "CONTROL: the same cell with the two settings applied in the opposite order, byte-identical -- so the result is a function of the pair, not of the order they were entered in."
+  },
+  {
+   "stand": "irregular_fan_valence4",
+   "shift": 0.4,
+   "width": 0.3,
+   "attr_order": "width_then_shift",
+   "counts": [
+    5,
+    4,
+    21,
+    16
+   ],
+   "apex": [
+    0.048848226666,
+    0.013211967424,
+    0.396786212921
+   ],
+   "ring_radii": [
+    0.3
+   ],
+   "note": "CONTROL: doubling the width moves the ring and leaves the apex bit-identical -- the apex does not depend on the width at all."
+  }
+ ],
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-08-28",
+  "harness": "tools/local/fixture_gen/vertex_extrude/gen.py (headless command lane, two boots, isolated HOME per boot)",
+  "task": "2890",
+  "notes": "INSTRUMENT: the headless command lane, two boots, a fresh isolated HOME each. Every apex and ring number is a MEASUREMENT of the reference, not an evaluation of a formula. The law was read independently off the reference's own compute site by static disassembly BEFORE these cells were run, and predicted them exactly, including the direction; the private toolcard records that read with its routine names and addresses. Positions come back at float32 precision, hence the 2e-6 tolerance. THIS FIXTURE CORRECTS AN EARLIER RECORD: the single prior cell (shift = width = 0.2) was reported as an apex displacement of 0.4 and shipped as a tentative 'shift + width' hypothesis; re-measured, that cell moves 0.2, and it could not have separated the candidates even had it been right."
+ }
+}

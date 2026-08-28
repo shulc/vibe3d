@@ -1,0 +1,64 @@
+{
+ "name": "kernel_solve_reads",
+ "description": "Two iterative/algebraic solves inside the reference, read at their own compute sites: the anchor angle of a radial alignment, and the radius correction applied to an odd-valence junction ring before its solve. Both replace a scheduled boot that would have measured the wrong thing or measured nothing.",
+ "source": "Static disassembly of the reference editor's shipped unstripped libraries. Zero boots, zero traces.",
+ "tolerance": 1e-12,
+ "radial_align_anchor": {
+  "register_row": 14,
+  "symbol_exists": true,
+  "law": "There is NO closed-form anchor. The alignment first lays every selected vertex on the target ring at equal `360/N` spacing from an arbitrary zero, then chooses the ring's overall rotation `theta` about the ring axis by MINIMISING the total displacement of the selection: f(theta) = sqrt( sum over the selection of |current_position - rotate(target, theta)|^2 ), where the rotation is about the ring's axis through the ring's centre. The anchor angle is argmin f.",
+  "objective": "sqrt(sum of squared distances from each vertex to its own rotated target)",
+  "objective_is_monotone_in_sum_of_squares": true,
+  "search": {
+   "start": 0.0,
+   "initial_probe_radians": 0.017453292519943295,
+   "initial_probe_note": "one degree, EXCEPT when a full turn divided by the vertex count is smaller than one degree, in which case the probe is half of `2*pi/N`",
+   "full_turn": 6.283185307179586,
+   "step_factor_on_reversal": 0.5,
+   "max_iterations": 100,
+   "termination": "the change in the objective falling to or below a scale-relative tolerance derived from the tool's own angle setting, or the iteration cap, whichever comes first"
+  },
+  "consequences": [
+   "The anchor is a CONTINUOUS function of the input geometry, so two configurations of the same vertices under different ring modes minimise different objectives and legitimately land on different angles. The register's observation -- about -135.87 degrees in one mode against about -124.20 in another on the same input, with no common closed form -- is the expected behaviour of this solve, not an unexplained discrepancy.",
+   "The result is NOT bit-reproducible in general: it is the stopping point of a bounded search, so a port must match the search schedule, not just the objective, to land on the same angle."
+  ],
+  "refuted": {
+   "anchor_is_the_first_selected_vertex_angle": "REFUTED: no vertex's own pre-align angle is read anywhere on this path. The chain order determines which vertex gets which SLOT, and nothing else.",
+   "anchor_is_a_fixed_basis_vector_convention": "REFUTED: the starting angle is a plain zero and is then searched away from; no basis convention survives into the answer.",
+   "anchor_is_click_order": "REFUTED for the same reason as the first candidate."
+  },
+  "capture_that_would_have_measured_nothing": "The register prescribed varying chain start-vertex and winding across three or more configurations to find what determines the anchor. All three of its named candidates are refuted by the read, so that sweep would have been searching for a quantity that does not exist -- and because reordering a chain also reorders the slots, it would have produced differences with a different cause and invited exactly the wrong conclusion.",
+  "what_a_boot_would_still_add": "One numeric regression anchor -- a concrete chain and the angle the reference settles on -- to pin the search SCHEDULE, which the law alone does not make bit-reproducible. Named as a follow-up, not taken here."
+ },
+ "junction_ring_radius": {
+  "register_row": 23,
+  "symbol_exists": true,
+  "law": "Before the ring solve runs, every side's control point C_i is MOVED ALONG ITS OWN RAY from the junction hub, to a new radius. Direction is preserved exactly; only the radius changes. The new radii come from a cyclic ratio recurrence, rescaled so their mean equals the mean of the original radii.",
+  "steps": [
+   "d_i = C_i - HUB, for each of the N sides.",
+   "s_i = sqrt( 2 * (|d_i.x| + |d_i.y| + |d_i.z|) ). This is an L1 PSEUDO-LENGTH, not the Euclidean norm -- read, not assumed, and it is the single most portable-looking place a port silently diverges.",
+   "t_i = d_i / s_i, skipped when s_i is zero.",
+   "b_i = sqrt( | 1 - (t_i . t_{i+1})^2 | ), indices modulo N. Because |t_i| is not 1, this is a pseudo-sine, and that is exactly where the L1 pseudo-length reaches the answer: the DIRECTION of the final point is unaffected by the odd scale, the RATIOS are not.",
+   "a_0 = 1; then a_{(i+2) mod N} = a_i * b_i / b_{i+1}, walking the ring in steps of TWO.",
+   "k = (mean of s_i) / (mean of a_i); a_i <- a_i * k. Where the mean of a_i is zero, k is 1.",
+   "C_i <- HUB + a_i * t_i, and the same point is mirrored into the next side's own second slot."
+  ],
+  "why_odd_valence_only": "The recurrence walks the ring in steps of TWO. For EVEN N that walk splits the ring into two disjoint orbits and never returns to index 0, so the seed a_0 = 1 does not propagate and no inconsistency accumulates. For ODD N the same walk is a single N-cycle that DOES return to its own start, carrying an accumulated ratio that need not be 1 -- the classic odd-cycle non-closure. That is the whole mechanism behind the register's 'odd-valence rings only' observation.",
+  "step_stride": 2,
+  "seed": 1.0,
+  "pseudo_length_coefficient": 2.0,
+  "rescale": "mean of the new radii is forced to the mean of the old",
+  "capture_that_was_not_needed": "The register prescribed an rr/gdb before-and-after struct dump on a valence-5 and valence-7 case. The routine is 1680 bytes and reads only its own arguments, so the whole correction decodes statically. No trace was recorded and no process was started.",
+  "what_remains_open": "Nothing about this routine. What the register's row also covers -- how the corrected radii propagate through the ring solve into the emitted interior positions -- is downstream of it and unchanged by this read."
+ },
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "static-read",
+  "captured_utc": "2026-08-28",
+  "harness": "tools/local/fixture_gen/kernel_solves/gen.py (objdump/nm over the shipped unstripped libraries; no process was started)",
+  "task": "2890",
+  "notes": "INSTRUMENT: static disassembly. Both solves were read at their own compute sites -- the routine that evaluates the objective, the routine that searches over it, and the routine that rewrites the ring radii. No engine was launched, no display opened, no pointer injected, no trace recorded; there is no behavioural fit anywhere in this file, so none of it can be an artefact of which stands happened to get built. Every constant here was decoded from the read bytes rather than inferred from a name. The private toolcards record the routine names, libraries and addresses; they are the reference's own identifiers and deliberately do not cross into this tree."
+ }
+}
