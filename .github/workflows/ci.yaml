@@ -98,8 +98,12 @@ jobs:
     # last SCHEDULE-triggered run alone (its own threshold — a workflow_
     # dispatch cannot reset it) and prints median/max delivery drift.
     #
-    # GATE OR REPORT for this second term is the owner's call, not decided
-    # here (see the tool's own header, "GATE OR REPORT"). Mechanically, this
+    # GATE OR REPORT: DECIDED BY THE OWNER 2026-08-28 — REPORT, for BOTH
+    # terms. Neither the figure-freshness term (task 2040) nor the schedule-
+    # health term (task 2580) appears in the final aggregate gate any more;
+    # both are printed here and both carry their own summary line below.
+    # The reasoning is recorded at the gate block itself. What follows is the
+    # mechanical description that made the choice a real one: Mechanically, this
     # step's own exit code IS what the final aggregate gate below reads
     # (`steps.nightly_freshness.outcome`) — there is no free middle ground of
     # "this step goes red but the build stays green", so the honest choice is
@@ -116,11 +120,10 @@ jobs:
     #     until it is fixed. That is a real cost (task 2580's own words: "не
     #     чинится тем, кто открыл PR, и красить ему сборку значит наказывать
     #     не того").
-    # RECOMMENDATION (mine, not the owner's): stay with the default. The
-    # job-summary line already makes this NOT silent — the exact shape task
-    # 2040 was written to reject — without repeating task 2040's own choice
-    # (which DOES gate) for a failure mode whose fix is not in the PR
-    # author's hands. Flip the one flag above if that judgment call is wrong.
+    # The recommendation that stood here was to keep the second term as a
+    # report; the owner extended that to the first term as well, so the
+    # asymmetry this comment used to describe is gone. `--gate-schedule-health`
+    # still exists and still works; nothing passes it today.
     - name: 'Nightly-perf freshness (task 2040) + schedule delivery (task 2580)'
       id: nightly_freshness
       continue-on-error: true
@@ -389,8 +392,22 @@ jobs:
       # summary/cleanup always run; this gate turns the job red afterwards.
       if: always()
       run: |
-        echo "nightly_freshness=${{ steps.nightly_freshness.outcome }} render_compile=${{ steps.render_compile.outcome }} unit=${{ steps.unit.outcome }} integration=${{ steps.integration.outcome }} frames=${{ steps.frames.outcome }}"
-        [ "${{ steps.nightly_freshness.outcome }}" = "success" ] && \
+        echo "nightly_freshness=${{ steps.nightly_freshness.outcome }} (REPORT ONLY, does not gate) render_compile=${{ steps.render_compile.outcome }} unit=${{ steps.unit.outcome }} integration=${{ steps.integration.outcome }} frames=${{ steps.frames.outcome }}"
+        # OWNER DECISION 2026-08-28 — the nightly-perf step is REPORT ONLY, both
+        # of its terms. It is printed above and carries its own summary lines,
+        # and it no longer appears in the conjunction below.
+        #
+        # Task 2040 gated deliberately, and the reason was sound at the time: a
+        # missed night read identically to a failed one, and a line nobody opens
+        # is how that went unnoticed for a day. What changed is that task 2580
+        # added an UNCONDITIONAL summary line for both terms, so "report" stopped
+        # meaning "silent" — which was the whole argument for gating.
+        #
+        # What it was costing: the nightly runs on a workstation, so a machine
+        # that was off overnight reddened every unrelated pull request the next
+        # morning. That punishes whoever opened the PR for something they cannot
+        # fix and did not cause, and a gate people learn to route around is worse
+        # than no gate.
         [ "${{ steps.render_compile.outcome }}" = "success" ] && \
         [ "${{ steps.unit.outcome }}" = "success" ] && \
         [ "${{ steps.integration.outcome }}" = "success" ] && \
