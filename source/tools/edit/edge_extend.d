@@ -16,7 +16,7 @@ import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
     PreviewRebuildCounts;
-import mesh_edit_delta : MeshEditDelta, MeshEditScope, undoTrackerEnabled;
+import mesh_edit_delta : MeshEditDelta, MeshEditScope;
 import tools.transform.xfrm_transform : XfrmTransformTool;
 import pipe_gizmo_host : PipeGizmoHost;
 import tools.transform.move : MoveTool;
@@ -31,10 +31,6 @@ import perf_probe : g_perf, Cat;
 /// same plumbing EdgeExtrudeTool uses for MeshSessionEdit. A dedicated class
 /// keeps the undo label reading "Edge Extend".
 alias EdgeExtendEditFactory = MeshSessionEdit delegate();
-
-// The VIBE3D_UNDO_TRACKER toggle (`undoTrackerEnabled`/`setUndoTrackerEnabled`)
-// lives in `mesh_edit_delta` — one definition shared with edge_extrude.d,
-// delete.d and remove.d. See that module for the toggle's semantics.
 
 // ---------------------------------------------------------------------------
 // EdgeExtendTool — interactive Edge Extend (factory id `edge.extend`).
@@ -147,7 +143,16 @@ private:
     // Interactive session state.
     bool         active;           // between activate() and deactivate()
     bool         built;            // true once the kernel built ridge topology
-    MeshSnapshot before;           // captured at activate() (geometry + selection)
+    /// Captured at activate() (geometry + selection). TWO readers, and only
+    /// one of them is about undo — see `edge_extrude.d`'s twin declaration for
+    /// the full note. (1) `commitEdit`'s rewind, a permanent preview baseline;
+    /// (2) the DEGENERATE-DELTA fallback, which pairs it with a fresh capture
+    /// when the committed re-run records nothing. Reader 2 was the
+    /// `VIBE3D_UNDO_TRACKER=0` arm too until task 1903 Stage N deleted the flag
+    /// and kept the fallback (ruling N-R1); whether a zero-delta tool commit
+    /// should record a pair or refuse is task 1905's question, and this field
+    /// cannot go until it is answered.
+    MeshSnapshot before;
     // The restore-and-rebuild seam (task 1620). Owns the split between a
     // topology-changing rebuild and a position-only one; see
     // tools/edit/preview_rebuild.d for what the key must contain and why.
@@ -816,42 +821,45 @@ private:
         if (!before.filled) return;
         auto cmd = factory();
 
-        if (undoTrackerEnabled()) {
-            // Delta path. Re-run the kernel ONCE inside a Mesh edit batch so the
-            // committed extend self-records an operation-log delta. before.restore
-            // MUST precede beginEditBatch: a built preview left the mesh as the
-            // ridge AND reselected the post-extend ridge edges; currentMask()
-            // reads mesh.selectedEdges, so without the rewind the batch would
-            // extend the WRONG (ridge) edges. The restore rewinds the clean cage +
-            // the ORIGINAL edge selection (un-tracked rewind, not part of the
-            // logged batch). The pivot is the same frozen pivot the last preview
-            // used so the committed geometry matches what the user saw.
-            before.restore(*mesh);
+        // Delta path. Re-run the kernel ONCE inside a Mesh edit batch so the
+        // committed extend self-records an operation-log delta. before.restore
+        // MUST precede the batch: a built preview left the mesh as the ridge
+        // AND reselected the post-extend ridge edges; currentMask() reads
+        // mesh.selectedEdges, so without the rewind the batch would extend the
+        // WRONG (ridge) edges. The restore rewinds the clean cage + the
+        // ORIGINAL edge selection (un-tracked rewind, not part of the logged
+        // batch). The pivot is the same frozen pivot the last preview used so
+        // the committed geometry matches what the user saw.
+        before.restore(*mesh);
 
-            // task 1903 Stage H: the RECORDING `MeshEditBatch` struct replaces
-            // the legacy `beginEditBatch(&rec, …)` / `endEditBatch()` /
-            // `abortEditBatch()` trio — see edge_extrude.d's twin comment.
-            // This file drops out of the legacy-spelling roster in
-            // `commit_seam_census_test.d` (2 left: `delete.d`, `remove.d`).
-            auto ed = MeshEditBatch(*mesh, MeshEditScope.Geometry | MeshEditScope.Marks);
-            auto mask = currentMask();
-            ed.extendEdgesByMask(mask, inset_, shift_,
-                                 offsetVec(), rotateVec(), scaleVec(),
-                                 segments_, livePivot());
-            auto delta = ed.close();
+        // task 1903 Stage H: the RECORDING `MeshEditBatch` struct replaces the
+        // legacy `beginEditBatch(&rec, …)` / `endEditBatch()` /
+        // `abortEditBatch()` trio — see edge_extrude.d's twin comment.
+        auto ed = MeshEditBatch(*mesh, MeshEditScope.Geometry | MeshEditScope.Marks);
+        auto mask = currentMask();
+        ed.extendEdgesByMask(mask, inset_, shift_,
+                             offsetVec(), rotateVec(), scaleVec(),
+                             segments_, livePivot());
+        auto delta = ed.close();
 
-            preview_.reset();      // the live mesh was rebuilt outside the seam
-            refreshCaches();
+        preview_.reset();      // the live mesh was rebuilt outside the seam
+        refreshCaches();
 
-            if (!delta.isEmpty) {
-                cmd.setDelta(delta, "Edge Extend");
-                history.record(cmd);
-                return;
-            }
-            // Degenerate delta — fall through to the snapshot path.
+        if (!delta.isEmpty) {
+            cmd.setDelta(delta, "Edge Extend");
+            history.record(cmd);
+            return;
         }
 
-        // Snapshot path (VIBE3D_UNDO_TRACKER=off / degenerate delta).
+        // THE DEGENERATE-DELTA FALLBACK, RETAINED DELIBERATELY — ruling N-R1,
+        // task 1903 Stage N. See `edge_extrude.d`'s twin block for the full
+        // argument: the flag deletion removed one of this block's two readings
+        // and left the other, because what a zero-delta tool commit should do
+        // is a tool COMMIT-semantics question owned by task 1905.
+        //
+        // As there, this block has NO witness in either lane — measured at
+        // Stage N with an `assert(false)` probe on the twin site. It is
+        // defensive, and reaching it or deleting it is part of 1905's answer.
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(before, post, "Edge Extend");
         history.record(cmd);

@@ -19,7 +19,7 @@ import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
-import mesh_edit_delta : MeshEditDelta, MeshEditScope, undoTrackerEnabled;
+import mesh_edit_delta : MeshEditDelta, MeshEditScope;
 
 import std.math : abs, sqrt;
 import std.json : JSONValue;
@@ -31,10 +31,6 @@ import perf_probe : g_perf, Cat;
 /// A dedicated class (rather than reusing the bevel edit) keeps the undo label
 /// reading "Edge Extrude".
 alias EdgeExtrudeEditFactory = MeshSessionEdit delegate();
-
-// The VIBE3D_UNDO_TRACKER toggle (`undoTrackerEnabled`/`setUndoTrackerEnabled`)
-// lives in `mesh_edit_delta` — one definition shared with edge_extend.d,
-// delete.d and remove.d. See that module for the toggle's semantics.
 
 // ---------------------------------------------------------------------------
 // EdgeExtrudeTool — interactive Edge Extrude (factory id `edge.extrude`).
@@ -101,7 +97,21 @@ private:
     // Interactive session state.
     bool          active;          // between activate() and deactivate()
     bool          built;           // true once a nonzero extrude/width built topology
-    MeshSnapshot  before;          // captured at activate() (geometry + selection)
+    /// Captured at activate() (geometry + selection). TWO readers, and after
+    /// task 1903 Stage N only one of them is about undo:
+    ///   1. `commitEdit`'s rewind — `before.restore(*mesh)` puts the clean cage
+    ///      and the ORIGINAL edge selection back so the committed re-run
+    ///      extrudes the right edges. That is a preview baseline, the use
+    ///      `MeshSnapshot` is correct for, and it is permanent.
+    ///   2. the DEGENERATE-DELTA fallback — when the committed re-run records
+    ///      an empty delta, this pairs with a fresh capture through
+    ///      `setSnapshots` so the history entry is still well-formed.
+    /// Reader 2 used to be the `VIBE3D_UNDO_TRACKER=0` arm as well; Stage N
+    /// deleted the flag and kept the fallback (ruling N-R1). The open question
+    /// it answers — should a zero-delta tool commit record a whole-mesh pair or
+    /// refuse? — is task 1905's, because it is a tool COMMIT-semantics
+    /// decision, and this field cannot go until 1905 answers it.
+    MeshSnapshot  before;
     Viewport      cachedVp;        // last frame's viewport (for the gizmo handles)
 
     // Gizmo frame, computed at activate() from the ORIGINAL (pre-extrude)
@@ -553,54 +563,71 @@ private:
         if (!before.filled) return;
         auto cmd = factory();
 
-        if (undoTrackerEnabled()) {
-            // Phase 2 delta path. Re-run the kernel ONCE inside a Mesh edit batch
-            // so the committed extrude self-records an operation-log delta. This
-            // adds one extra kernel run per session (cheap, off the per-drag hot
-            // path); the interactive preview loop in rebuildPreview() stays
-            // batchless (HP5 — zero tracker cost per mouse-motion frame).
-            //
-            // before.restore MUST precede beginEditBatch: a built preview left the
-            // mesh as the lifted ridge AND reselected the post-extrude ridge edges.
-            // currentMask() reads mesh.selectedEdges, so without the rewind the
-            // batch would extrude the WRONG (ridge) edges. The restore rewinds the
-            // clean cage + the ORIGINAL edge selection; it is the un-tracked
-            // rewind, NOT part of the logged batch.
-            before.restore(*mesh);
+        // Delta path. Re-run the kernel ONCE inside a Mesh edit batch so the
+        // committed extrude self-records an operation-log delta. This adds one
+        // extra kernel run per session (cheap, off the per-drag hot path); the
+        // interactive preview loop in rebuildPreview() stays batchless (HP5 —
+        // zero tracker cost per mouse-motion frame).
+        //
+        // before.restore MUST precede the batch: a built preview left the mesh
+        // as the lifted ridge AND reselected the post-extrude ridge edges.
+        // currentMask() reads mesh.selectedEdges, so without the rewind the
+        // batch would extrude the WRONG (ridge) edges. The restore rewinds the
+        // clean cage + the ORIGINAL edge selection; it is the un-tracked
+        // rewind, NOT part of the logged batch.
+        before.restore(*mesh);
 
-            // task 1903 Stage H: the RECORDING `MeshEditBatch` struct replaces
-            // the legacy `beginEditBatch(&rec, …)` / `endEditBatch()` /
-            // `abortEditBatch()` trio — `extrudeEdgesByMask` now takes
-            // `ref MeshEditBatch ed`, so a handle is the only way to call it,
-            // and `pushEditFrame`/`closeEditFrame` are the SAME primitives
-            // both spellings drive (mesh.d's own comment on the legacy pair:
-            // "the two spellings cannot drift"). The manual
-            // `scope(failure) mesh.abortEditBatch();` this replaces is now
-            // unconditional and automatic: `MeshEditBatch.~this()` runs the
-            // identical pop-without-stamping + `changeBus.batchLeaks` tick on
-            // ANY unwind, recording or not (plan §2.2c) — this site no longer
-            // needs to spell it. This file drops out of the legacy-spelling
-            // roster in `commit_seam_census_test.d` (2 left: `delete.d`,
-            // `remove.d`).
-            auto ed = MeshEditBatch(*mesh, MeshEditScope.Geometry | MeshEditScope.Marks);
-            auto mask = currentMask();
-            ed.extrudeEdgesByMask(mask, extrude_, width_);
-            auto delta = ed.close();
+        // task 1903 Stage H: the RECORDING `MeshEditBatch` struct replaces the
+        // legacy `beginEditBatch(&rec, …)` / `endEditBatch()` /
+        // `abortEditBatch()` trio — `extrudeEdgesByMask` now takes
+        // `ref MeshEditBatch ed`, so a handle is the only way to call it, and
+        // `pushEditFrame`/`closeEditFrame` are the SAME primitives both
+        // spellings drive (mesh.d's own comment on the legacy pair: "the two
+        // spellings cannot drift"). The manual
+        // `scope(failure) mesh.abortEditBatch();` this replaces is now
+        // unconditional and automatic: `MeshEditBatch.~this()` runs the
+        // identical pop-without-stamping + `changeBus.batchLeaks` tick on ANY
+        // unwind, recording or not (plan §2.2c) — this site no longer needs to
+        // spell it.
+        auto ed = MeshEditBatch(*mesh, MeshEditScope.Geometry | MeshEditScope.Marks);
+        auto mask = currentMask();
+        ed.extrudeEdgesByMask(mask, extrude_, width_);
+        auto delta = ed.close();
 
-            // After the re-run the mesh is back in the post-extrude state the user
-            // was viewing; refresh the display so the GPU buffer reflects it.
-            refreshCaches();
+        // After the re-run the mesh is back in the post-extrude state the user
+        // was viewing; refresh the display so the GPU buffer reflects it.
+        refreshCaches();
 
-            if (!delta.isEmpty) {
-                cmd.setDelta(delta, "Edge Extrude");
-                history.record(cmd);
-                return;
-            }
-            // Degenerate delta (nothing recorded) — fall through to the snapshot
-            // path below so a no-op commit is still well-formed.
+        if (!delta.isEmpty) {
+            cmd.setDelta(delta, "Edge Extrude");
+            history.record(cmd);
+            return;
         }
 
-        // Snapshot path (default / VIBE3D_UNDO_TRACKER=off / degenerate delta).
+        // THE DEGENERATE-DELTA FALLBACK, and it is RETAINED DELIBERATELY —
+        // ruling N-R1, task 1903 Stage N. Until that stage this block was two
+        // things at once: the undo hatch's arm AND the answer for a commit
+        // whose re-run recorded nothing. Deleting the flag deleted the first
+        // reading only. What a zero-delta tool commit OUGHT to do — record a
+        // whole-mesh pair as it does here, or refuse — is a change to tool
+        // COMMIT semantics and belongs to the session-boundary work (task
+        // 1905), not to a commit whose subject is a process-wide flag. So the
+        // behaviour is unchanged and the question is written down where the
+        // field lives (see `before`'s declaration).
+        //
+        // MEASURED, SO NOBODY MISTAKES IT FOR A COVERED PATH: with the hatch
+        // gone this block has NO witness in either lane. An `assert(false)`
+        // planted here at Stage N left `test_undo_tracker_extrude` and
+        // `test_edge_extrude_tool` green, i.e. nothing the suite drives reaches
+        // it. That is not an oversight in the tests — `deactivate` only commits
+        // when the preview already BUILT topology, and the commit re-runs the
+        // same kernel on the same restored mesh, so an empty delta here needs
+        // the kernel to disagree with itself. It is a defensive arm, and the
+        // reason it is retained rather than deleted is the ruling above: what a
+        // zero-delta tool commit should do is 1905's decision, and an
+        // unreachable branch is the wrong thing to change in a flag-removal
+        // commit. Whoever answers that question should delete it or reach it,
+        // not leave it as it stands.
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(before, post, "Edge Extrude");
         history.record(cmd);
