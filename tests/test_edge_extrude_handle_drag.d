@@ -4,20 +4,43 @@
 // events, but only its OFF-handle branch — the blind 2-axis free drag, which
 // measures from the PRESS pixel. The on-handle branch, the one that projects a
 // per-event pixel increment onto the extrude axis, had no test at all. That
-// increment now takes its previous pixel from the cooked gesture and
-// cross-checks it against the tool's own, so it needs a test that enters it.
+// increment takes its previous pixel from the cooked gesture and cross-checks
+// it against the tool's own, so it needs a test that enters it.
 //
-// Separating the branches: a press that misses both arrows becomes the free
-// drag, and the free drag moves `extrude` from VERTICAL travel only
-// (`-dy * FREE_SCALE`). So the gesture here is purely HORIZONTAL — a miss
-// would leave `extrude` at exactly 0, and a non-zero `extrude` is evidence the
-// press landed on the arrow.
+// WHY THIS FILE WAS REWRITTEN (task 2690). Until now the gesture here grabbed
+// the EXTRUDE arrow ALONE and the only thing asserted was the `extrude`
+// attribute. Measured on this very stand, that gesture is EMPTY:
+//
+//     extrude = 0.524   <- the shipped assertion passed on this
+//     width   = 0
+//     /api/tool/state  "built": false
+//     /api/mesh/planes before vs after: NOT ONE PLANE MOVED
+//     the drop recorded ZERO undo entries
+//
+// The extrude arrow alone moves a number; the kernel `extrudeEdgesByMask`
+// needs a non-zero WIDTH before it touches a single edge, and with n == 0 the
+// tool never sets `built`, so `deactivate()` commits nothing. An attribute is
+// not a witness that a tool built something — it is a witness that a drag
+// began. So the gesture now grabs the WIDTH box (part 1) FIRST and the extrude
+// arrow (part 0) second, and the assertions are the two the acceptance
+// criterion names: the tool reports itself BUILT, and a PLANE actually moved.
+//
+// Both press points come from `/api/tool/handles` rather than from a local
+// re-derivation of the arm geometry: a re-derivation that drifts away from the
+// tool silently turns the drag back into the non-gesture described above, and
+// nothing would say so.
+//
+// Separating the on-handle branch from the free one is still part of the
+// design: a press that misses both arrows becomes the free drag, which moves
+// `extrude` from VERTICAL travel only (`-dy * FREE_SCALE`). Both drags here
+// are purely HORIZONTAL, so the free branch could not have produced any of it.
 //
 // Geometry: one edge of the cube at x = +0.5, z = -0.5. Its two adjacent faces
 // are the +X and -Z faces, so the averaged normal — the extrude axis — is the
 // diagonal (1,0,-1)/sqrt(2), which projects with a large horizontal component
-// under the default camera.
+// under the framing this file pins.
 
+import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.json;
 import std.math : abs;
@@ -30,7 +53,8 @@ void main() {}
 enum string BASE = "http://localhost:8080";
 enum string TOOL = "edge.extrude";
 
-JSONValue getJson(string path)  { return parseJSON(cast(string) get(BASE ~ path)); }
+string getRaw(string path)  { return cast(string) get(BASE ~ path); }
+JSONValue getJson(string path)  { return parseJSON(getRaw(path)); }
 JSONValue postJson(string path, string body_) {
     return parseJSON(cast(string) post(BASE ~ path, body_));
 }
@@ -45,6 +69,73 @@ double queryExtrude() {
     auto r = postJson("/api/command", "tool.attr " ~ TOOL ~ " extrude ?");
     assert(r["status"].str == "ok", "query extrude failed: " ~ r.toString);
     return r["value"].floating;
+}
+
+// --- the acceptance witness -------------------------------------------------
+//
+// THESE THREE CHANNELS FAIL CLOSED, which is why this file carries no separate
+// positive control while tests/test_tool_gesture_g1.d does. That file asserts
+// "the fresh dump EQUALS the frozen one" and "this residual is EMPTY" — a dead
+// channel satisfies both for free, so it has to prove its channels alive first.
+// Here every assertion is "something MOVED": a `/api/mesh/planes` answering a
+// stale copy makes `moved` empty and the assert RED, an `/api/history` that
+// stopped tracking makes the delta 0 and the `== 1` RED, and a `/api/tool/state`
+// that dropped `built` throws on the key. A dead channel cannot make this file
+// green.
+
+/// The PLANE-COMPLETE readback. `/api/model` is not a substitute: it carries no
+/// marks, no set masks and no per-face material/part, all of which are planes a
+/// commit can move and an undo can lose.
+string planes() { return getRaw("/api/mesh/planes"); }
+
+long undoLen() { return cast(long) getJson("/api/history")["undo"].array.length; }
+
+/// Every plane on which two dumps disagree, sorted. `provenance` is skipped: it
+/// carries the capture SHA and would differ for the one reason never a finding.
+string[] planeDiff(string aText, string bText) {
+    auto a = parseJSON(aText);
+    auto b = parseJSON(bText);
+    bool[string] keys;
+    foreach (k, _; a.objectNoRef) keys[k] = true;
+    foreach (k, _; b.objectNoRef) keys[k] = true;
+    string[] names;
+    foreach (k, _; keys) if (k != "provenance") names ~= k;
+    names.sort();
+    string[] diff;
+    foreach (k; names) {
+        auto pa = k in a.objectNoRef;
+        auto pb = k in b.objectNoRef;
+        if (pa is null || pb is null) { diff ~= k; continue; }
+        if (pa.toString() != pb.toString()) diff ~= k;
+    }
+    return diff;
+}
+
+/// The screen anchor of a registered handle part.
+void handlePx(int part, out int x, out int y) {
+    auto h = getJson("/api/tool/handles")["handles"];
+    assert(h.type != JSONType.null_,
+        TOOL ~ " publishes no handle arbiter — part " ~ part.to!string
+      ~ " cannot be grabbed, and a drag that grabs nothing is the empty "
+      ~ "gesture this file exists to reject");
+    foreach (p; h["parts"].array) {
+        if (cast(int) p["part"].integer != part) continue;
+        assert(p["screen"].type != JSONType.null_,
+            "handle part " ~ part.to!string ~ " is off-camera");
+        x = cast(int) p["screen"].array[0].floating;
+        y = cast(int) p["screen"].array[1].floating;
+        return;
+    }
+    assert(false, "no handle part " ~ part.to!string);
+}
+
+void drag(int x0, int y0, int x1, int y1, int steps = 12) {
+    auto cam = fetchCamera(BASE);
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                             x0, y0, x1, y1, steps), BASE);
+    import core.thread : Thread;
+    import core.time   : dur;
+    Thread.sleep(dur!"msecs"(120));
 }
 
 // The cube's edge index whose two endpoints both sit at x=+0.5, z=-0.5.
@@ -63,7 +154,7 @@ int findEdgeXPosZNeg() {
     return -1;
 }
 
-unittest { // a purely horizontal drag on the extrude arrow moves `extrude`
+unittest { // width, then a horizontal haul on the extrude arrow, and the tool builds
     auto r = postJson("/api/reset", "");
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     cmd("history.clear");
@@ -74,37 +165,32 @@ unittest { // a purely horizontal drag on the extrude arrow moves `extrude`
         `{"mode":"edges","indices":[` ~ ei.to!string ~ `]}`);
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 
+    // The framing is PART OF THE GESTURE, not decoration: the handle anchors
+    // this test grabs are read back per-frame, so the camera has to be pinned
+    // or the two drags read a different arm on a different default.
+    r = postJson("/api/camera",
+        `{"azimuth":0.4,"elevation":1.1,"distance":4.0,`
+        ~ `"focus":{"x":0,"y":0,"z":0}}`);
+    assert(r["status"].str == "ok", "camera failed: " ~ r.toString);
+
     cmd("tool.set " ~ TOOL ~ " on");
 
     import core.thread : Thread;
     import core.time   : dur;
-    Thread.sleep(dur!"msecs"(200));
+    Thread.sleep(dur!"msecs"(250));
 
-    auto cam = fetchCamera(BASE);
-    auto vp  = viewportFromCamera(cam);
-    // Anchor = midpoint of the selected edge; axis = averaged adjacent-face
-    // normal. The shaft runs from anchor + axis*(arm/6) to anchor + axis*arm.
-    Vec3 anchor = Vec3(0.5f, 0.0f, -0.5f);
-    enum float R = 0.70710678f;
-    Vec3 axis   = Vec3(R, 0.0f, -R);
-    float arm   = gizmoSize(anchor, vp);
-    Vec3 press  = anchor + axis * (arm * 0.6f);
+    immutable string planesBefore = planes();
+    immutable long   u0           = undoLen();
+    immutable size_t v0           = getJson("/api/model")["vertices"].array.length;
 
-    float ax, ay, tx, ty, px, py;
-    assert(projectToWindow(anchor, vp, ax, ay), "anchor projects behind camera");
-    assert(projectToWindow(anchor + axis, vp, tx, ty),
-        "anchor + axis projects behind camera");
-    assert(projectToWindow(press, vp, px, py), "shaft mid-point is off-camera");
-    double sdx = tx - ax;
-    assert(abs(sdx) > 20.0,
-        "the extrude axis must project with a real horizontal component for "
-        ~ "this test to separate the two branches, got " ~ sdx.to!string);
+    // 1. the WIDTH box. Without it the kernel affects zero edges no matter how
+    //    far the extrude arrow is hauled.
+    int wx, wy; handlePx(1, wx, wy);
+    drag(wx, wy, wx - 40, wy);
 
-    int x0 = cast(int) px, y0 = cast(int) py;
-    int x1 = x0 + (sdx > 0 ? 80 : -80);
-    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
-                             x0, y0, x1, y0, 16), BASE);
-    Thread.sleep(dur!"msecs"(120));
+    // 2. the EXTRUDE arrow, purely horizontal.
+    int ex, ey; handlePx(0, ex, ey);
+    drag(ex, ey, ex + 70, ey);
 
     double after = queryExtrude();
     assert(after > 1e-3,
@@ -113,5 +199,33 @@ unittest { // a purely horizontal drag on the extrude arrow moves `extrude`
         ~ "the free branch, which reads only vertical travel for extrude and "
         ~ "would have left it at 0. Got " ~ after.to!string);
 
+    // THE CHECK THE OLD FILE DID NOT HAVE, half one: the tool says it BUILT.
+    // `edge.extrude` is one of only six tools tree-wide that publish this
+    // (edge_extend, edge_extrude, edge_bevel, poly_bevel, edge_slice,
+    // loop_slice), so here the acceptance criterion is asserted literally.
+    auto st = getJson("/api/tool/state");
+    assert(st["built"].type == JSONType.true_,
+        "the two handle drags left `built` FALSE while extrude reads "
+        ~ after.to!string ~ ": " ~ st.toString ~ ". That is the empty gesture "
+        ~ "this file shipped for months — `extrudeEdgesByMask` returned 0, so "
+        ~ "the tool built nothing and the drop will record nothing, and an "
+        ~ "attribute assertion cannot tell the difference");
+
     cmd("tool.set " ~ TOOL ~ " off");
+    Thread.sleep(dur!"msecs"(250));
+
+    // ...and half two: a PLANE actually moved, and the drop recorded it.
+    auto moved = planeDiff(planesBefore, planes());
+    assert(moved.canFind("vertices") && moved.canFind("counts"),
+        "the gesture and its drop moved planes " ~ moved.to!string
+        ~ " — `vertices` and `counts` are not both among them, so the mesh is "
+        ~ "byte-identical to what it was before the drag. A tool attribute can "
+        ~ "hold any value over that");
+    immutable size_t v1 = getJson("/api/model")["vertices"].array.length;
+    assert(v1 > v0,
+        "the extrude added no vertex (still " ~ v0.to!string ~ ")");
+    assert(undoLen() - u0 == 1,
+        "the drop recorded " ~ (undoLen() - u0).to!string ~ " undo entr(ies), "
+        ~ "expected exactly 1 — `deactivate()` commits only when the tool is "
+        ~ "`built`, so 0 here means the whole gesture was a no-op");
 }

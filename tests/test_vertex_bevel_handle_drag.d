@@ -15,7 +15,34 @@
 //     the override behind `queryMouse` is only updated on MOTION events. A drag
 //     log that opens with the button-down would hit-test against a stale
 //     cursor, so a hover motion is played first and given a frame to land.
+//
+// WHAT THIS FILE WAS MISSING (task 2690), and it is NOT the failure the two
+// extrude handle pins had. Measured on this stand, THE DRAG HERE IS REAL: it
+// moves thirteen planes, grows the cube from 8 vertices to 10 and records one
+// undo entry. The defect was the ASSERTION — `abs(inset) > 1e-3` and three bus
+// counters that must read ZERO. An attribute rises on a gesture whose kernel
+// touched nothing (that is exactly how the two sibling files in this family
+// shipped green over an empty drag), and THREE ZEROES ARE THE THING AN EMPTY
+// GESTURE PRODUCES BEST: a drag that rebuilt no preview makes no unbatched
+// commit, records no op-log entry and leaks no frame. So a no-op regression in
+// `rebuildPreview` would have left every assertion in this file green, and the
+// counter block would have been actively misleading — it would have gone on
+// reporting "the deferral holds" about frames that never ran.
+//
+// It now asserts the two things the acceptance criterion names — the tool
+// built, and a plane actually moved — and the counter block's anti-vacuity is
+// re-pointed at those instead of at `inset`.
+//
+// `built` IS NOT AVAILABLE ON THE WIRE HERE, and that is measured rather than
+// assumed: `/api/tool/state` publishes it for exactly six tools tree-wide
+// (edge_extend, edge_extrude, edge_bevel, poly_bevel, edge_slice, loop_slice —
+// `grep -rn '"built"' source/`), and `mesh.vertexBevel` answers `{}` even
+// though it carries the flag internally. A GROWN VERTEX COUNT stands in for it
+// and is strictly stronger: `built = (n != 0)` is the tool's own claim about
+// its kernel's return, and the count is that claim's consequence read off the
+// mesh.
 
+import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.format : format;
 import std.json;
@@ -29,8 +56,43 @@ void main() {}
 enum string BASE = "http://localhost:8080";
 enum string TOOL = "mesh.vertexBevel";
 
+string getRaw(string path) { return cast(string) get(BASE ~ path); }
+JSONValue getJson(string path) { return parseJSON(getRaw(path)); }
 JSONValue postJson(string path, string body_) {
     return parseJSON(cast(string) post(BASE ~ path, body_));
+}
+
+// --- the acceptance witness -------------------------------------------------
+//
+// THE THREE CHANNELS BELOW FAIL CLOSED, and that is exactly what the counter
+// block further down does NOT do. Each assertion here is "something MOVED", so
+// a `/api/mesh/planes` serving a stale copy leaves `moved` empty and goes RED,
+// and an `/api/history` that stopped tracking leaves the delta at 0 and goes
+// RED. That is what lets them serve as the anti-vacuity for the three zeroes.
+
+/// The PLANE-COMPLETE readback. `/api/model` is not a substitute: it carries no
+/// marks, no set masks and no per-face material/part.
+string planes() { return getRaw("/api/mesh/planes"); }
+long undoLen() { return cast(long) getJson("/api/history")["undo"].array.length; }
+size_t vertexCount() { return getJson("/api/model")["vertices"].array.length; }
+
+string[] planeDiff(string aText, string bText) {
+    auto a = parseJSON(aText);
+    auto b = parseJSON(bText);
+    bool[string] keys;
+    foreach (k, _; a.objectNoRef) keys[k] = true;
+    foreach (k, _; b.objectNoRef) keys[k] = true;
+    string[] names;
+    foreach (k, _; keys) if (k != "provenance") names ~= k;
+    names.sort();
+    string[] diff;
+    foreach (k; names) {
+        auto pa = k in a.objectNoRef;
+        auto pb = k in b.objectNoRef;
+        if (pa is null || pb is null) { diff ~= k; continue; }
+        if (pa.toString() != pb.toString()) diff ~= k;
+    }
+    return diff;
 }
 
 void cmd(string line) {
@@ -66,11 +128,22 @@ unittest { // dragging the inset arrow moves `inset` off zero
     r = postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 
+    // The framing is PART OF THE GESTURE: the press point is derived from the
+    // arm at the live camera, so the camera is pinned rather than inherited.
+    r = postJson("/api/camera",
+        `{"azimuth":0.4,"elevation":1.1,"distance":4.0,`
+        ~ `"focus":{"x":0,"y":0,"z":0}}`);
+    assert(r["status"].str == "ok", "camera failed: " ~ r.toString);
+
     cmd("tool.set " ~ TOOL ~ " on");
 
     import core.thread : Thread;
     import core.time   : dur;
-    Thread.sleep(dur!"msecs"(200));
+    Thread.sleep(dur!"msecs"(250));
+
+    immutable string planesBefore = planes();
+    immutable long   u0           = undoLen();
+    immutable size_t v0           = vertexCount();
 
     auto cam = fetchCamera(BASE);
     auto vp  = viewportFromCamera(cam);
@@ -116,9 +189,17 @@ unittest { // dragging the inset arrow moves `inset` off zero
         ~ "tool consumes nothing when the press misses the handle, so a zero "
         ~ "here means the drag never began. Got " ~ after.to!string);
 
-    // …and the anti-vacuity for the counters is that same assertion: a drag
-    // that never began rebuilds no preview and moves no counter, so the three
-    // zeroes below only mean something after it has passed.
+    // THE CHECK THIS FILE DID NOT HAVE, and the anti-vacuity the three zeroes
+    // below actually need: a drag that rebuilt no preview moves no counter, so
+    // `0 == 0` is what an empty gesture produces best. `inset` alone could not
+    // carry that weight — it rises whether or not the kernel emitted a vertex.
+    immutable size_t v1 = vertexCount();
+    assert(v1 > v0,
+        "the drag added no vertex (still " ~ v0.to!string ~ ") while inset "
+        ~ "reads " ~ after.to!string ~ ". `rebuildPreview` sets `built` from "
+        ~ "its kernel's return, so a kernel that touched nothing leaves the "
+        ~ "attribute exactly where this test used to stop looking — AND makes "
+        ~ "every one of the three counter zeroes below true for free");
     auto cAfter = parseJSON(cast(string) get(BASE ~ "/api/changes"));
     immutable long unbatched = cAfter["unbatchedGeometryCommits"].integer
                              - cBefore["unbatchedGeometryCommits"].integer;
@@ -147,4 +228,16 @@ unittest { // dragging the inset arrow moves `inset` off zero
         ~ "the app silently stops publishing (plan §2.2c).");
 
     cmd("tool.set " ~ TOOL ~ " off");
+    Thread.sleep(dur!"msecs"(250));
+
+    // …and a PLANE actually moved, with the drop recording it.
+    auto moved = planeDiff(planesBefore, planes());
+    assert(moved.canFind("vertices") && moved.canFind("counts"),
+        "the gesture and its drop moved planes " ~ moved.to!string
+        ~ " — `vertices` and `counts` are not both among them, so the mesh is "
+        ~ "byte-identical to what it was before the drag");
+    assert(undoLen() - u0 == 1,
+        "the drop recorded " ~ (undoLen() - u0).to!string ~ " undo entr(ies), "
+        ~ "expected exactly 1 — `deactivate()` commits only when the tool "
+        ~ "built, so 0 here means the whole gesture was a no-op");
 }
