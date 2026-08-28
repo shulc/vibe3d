@@ -631,13 +631,13 @@ private:
                 else if (value == "item")      { snapScope = SnapMode.Item;      return true; }
                 return false;
             }
-            case "innerRange": innerRangePx  = parseFloat(value); return true;
-            case "outerRange": outerRangePx  = parseFloat(value); return true;
+            case "innerRange": return parseFloat(value, innerRangePx);
+            case "outerRange": return parseFloat(value, outerRangePx);
             case "fixedGrid":
                 if      (value == "true"  || value == "1") { fixedGrid = true;  return true; }
                 else if (value == "false" || value == "0") { fixedGrid = false; return true; }
                 return false;
-            case "fixedGridSize": fixedGridSize = parseFloat(value); return true;
+            case "fixedGridSize": return parseFloat(value, fixedGridSize);
             case "fixedGridToggle":
                 fixedGrid = !fixedGrid;
                 return true;
@@ -742,8 +742,13 @@ private:
                      (enabledTypes & SnapType.Box)          ? "true" : "false");
     }
 
-    static float parseFloat(string s) {
-        return s.length == 0 ? 0.0f : s.to!float;
+    // Task 3020 — delegates to the ONE wire-token gate in params.d (see the
+    // section header there). Was a bare `s.to!float`, so `tool.pipe.attr snap
+    // innerRange nan` was accepted and put a NaN in a pixel radius that every
+    // later comparison then answers "no" to.
+    static bool parseFloat(string s, ref float dst) {
+        import params : assignWireFloat;
+        return assignWireFloat(s, dst);
     }
 }
 

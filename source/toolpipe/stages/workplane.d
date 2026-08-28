@@ -290,12 +290,15 @@ private:
                 if      (value == "true"  || value == "1") { isAuto = true;  return true; }
                 else if (value == "false" || value == "0") { isAuto = false; return true; }
                 return false;
-            case "cenX":  center.x   = parseFloat(value); return true;
-            case "cenY":  center.y   = parseFloat(value); return true;
-            case "cenZ":  center.z   = parseFloat(value); return true;
-            case "rotX":  rotation.x = parseFloat(value); isAuto = false; return true;
-            case "rotY":  rotation.y = parseFloat(value); isAuto = false; return true;
-            case "rotZ":  rotation.z = parseFloat(value); isAuto = false; return true;
+            case "cenX":  return parseFloat(value, center.x);
+            case "cenY":  return parseFloat(value, center.y);
+            case "cenZ":  return parseFloat(value, center.z);
+            case "rotX":  { if (!parseFloat(value, rotation.x)) return false;
+                          isAuto = false; return true; }
+            case "rotY":  { if (!parseFloat(value, rotation.y)) return false;
+                          isAuto = false; return true; }
+            case "rotZ":  { if (!parseFloat(value, rotation.z)) return false;
+                          isAuto = false; return true; }
             case "mode":
                 // Convenience presets — translate enum-style values into
                 // (isAuto, rotation) pairs. `worldY` is the default flat
@@ -375,7 +378,9 @@ private:
         return c;
     }
 
-    static float parseFloat(string s) {
-        return s.length == 0 ? 0.0f : s.to!float;
+    // Task 3020 — delegates to the ONE wire-token gate in params.d.
+    static bool parseFloat(string s, ref float dst) {
+        import params : assignWireFloat;
+        return assignWireFloat(s, dst);
     }
 }

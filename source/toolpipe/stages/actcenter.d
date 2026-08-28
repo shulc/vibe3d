@@ -2105,10 +2105,12 @@ private:
                 return true;
             }
             case "cenX": case "cenY": case "cenZ": {
-                import std.conv : to;
+                // Task 3020 — the shared wire gate; a non-finite pivot
+                // component makes every later frame NaN, so it is refused
+                // rather than written.
+                import params : assignWireFloat;
                 float v;
-                try v = value.to!float;
-                catch (Exception) return false;
+                if (!assignWireFloat(value, v)) return false;
                 if      (name == "cenX") manualCenter.x = v;
                 else if (name == "cenY") manualCenter.y = v;
                 else                     manualCenter.z = v;
@@ -2124,16 +2126,11 @@ private:
                 // baseline exactly like the real click-pick / click-away
                 // relocate does — this is the headless counterpart of that
                 // mouse-down relocate and tests rely on it staging.
-                import std.string : split, strip;
-                import std.conv   : to;
-                auto parts = value.split(",");
-                if (parts.length != 3) return false;
+                // Task 3020 — the shared wire gate, atomic across the three
+                // components (nothing is staged unless all three are finite).
+                import params : assignWireVec3;
                 Vec3 hit;
-                try {
-                    hit.x = parts[0].strip.to!float;
-                    hit.y = parts[1].strip.to!float;
-                    hit.z = parts[2].strip.to!float;
-                } catch (Exception) { return false; }
+                if (!assignWireVec3(value, hit)) return false;
                 setUserPlaced(hit);
                 return true;
             }
@@ -2146,10 +2143,9 @@ private:
                 // use to simulate the post-click state for the Element
                 // falloff pivot path without a real GPU-hover-driven
                 // click.
-                import std.conv : to;
+                import params : assignWireFloat;
                 float v;
-                try v = value.to!float;
-                catch (Exception) return false;
+                if (!assignWireFloat(value, v)) return false;
                 if      (name == "userPlacedX") userPin.center.x = v;
                 else if (name == "userPlacedY") userPin.center.y = v;
                 else                            userPin.center.z = v;

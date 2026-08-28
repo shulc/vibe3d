@@ -55,12 +55,24 @@
 // two-layer contract of doc/param_bounds_plan.md (task 0365) applied to two
 // stragglers, not a new policy.
 //
+// WHAT TASK 3020 CHANGED UNDER THIS TEST
+// --------------------------------------
+// The first block is unchanged and still green: an ENFORCED int is clamped
+// into its declared range whatever the wire hands it. The second block was
+// rewritten — an UNENFORCED int handed an unrepresentable value is now
+// REFUSED rather than given the raw `int.min`, because the cast now runs
+// AFTER the bounds arm and a value with no int to land on has no honest
+// answer. The `int.min` forensics above are kept as the record of what the
+// cast does; they are no longer what this path produces.
+//
 // MUTATION (this test is not finished without it)
 // -----------------------------------------------
 // Remove `.enforceBounds()` from `source/tools/slice/loop_slice_tool.d:615`
 // and this test fails with:
-//   "Int param with declared bounds [20,2000] took the value -2147483648 from
-//    JSON 1e39"
+//   "enforced [20,2000]: 1e39 injected into a [20,2000] Int gave ..."
+// (before task 3020 the same mutation reddened it with the value
+// -2147483648; it now reddens because the unenforced param REFUSES and the
+// refusal escapes `assertBoundedAfterInject` as an uncaught exception)
 module tests.unit.param_cast_overflow_test;
 
 import std.json   : JSONValue, parseJSON;
@@ -105,20 +117,45 @@ unittest { // EnforcedIntSurvivesEveryWireExtreme
     }
 }
 
-unittest { // UnenforcedIntTakesTheRawCast_documented
-    // The other half of the same fact, asserted so that "enforceBounds is
-    // what does the work" is a measured statement rather than a belief. If
-    // `injectParamsInto` ever grows an unconditional clamp, THIS test fails
-    // and the one above keeps passing — which is the correct way round for
-    // the change to be noticed.
+unittest { // UnenforcedIntIsREFUSED_notCast (task 3020)
+    // The other half of the same fact. This block used to assert that an
+    // unenforced int took the RAW cast — `int.min` — and said, in as many
+    // words, that if `injectParamsInto` ever changed here the change should be
+    // noticed HERE. It changed, and it did.
+    //
+    // The change is NOT the unconditional clamp that sentence anticipated:
+    // there is still no ceiling to clamp an unenforced param to, and inventing
+    // one would be an edit the caller never asked for. What the value gets
+    // instead is a REFUSAL — the same policy `document.sanitizeItemXform`
+    // settled for a non-finite item xform, and now applied to any number with
+    // no `int` to land on. `enforceBounds` is still exactly what decides
+    // whether the value is CLAMPED (the block above) or REFUSED (this one);
+    // what is gone is the third outcome, silently writing garbage.
+    // Recorded in doc/param_bounds_plan.md.
     int storage = 200;
     auto p = Param.int_("probe", "Probe", &storage, 200).min(20).max(2000);
     Param[] schema = [p];
     auto pj = parseJSON(`{"probe":1e39}`);
     import params : injectParamsInto;
-    injectParamsInto(schema, pj);
-    assert(storage == int.min,
-        format("expected the unclamped float->int cast to yield int.min, got %d"
-             ~ " — if injectParamsInto now clamps unconditionally, delete this"
-             ~ " test and say so in doc/param_bounds_plan.md", storage));
+    bool threw = false;
+    try injectParamsInto(schema, pj);
+    catch (Exception e) {
+        threw = true;
+        assert(e.msg == "param 'probe' is not a representable integer", e.msg);
+    }
+    assert(threw,
+        "an unenforced Int handed a value with no int to land on must be "
+        ~ "REFUSED, not silently cast to int.min");
+    assert(storage == 200,
+        format("a refused write must leave the field at its prior value, got %d",
+               storage));
+
+    // Control, and the reason this is a refusal rather than a blanket clamp:
+    // an unenforced param with a perfectly representable value is still
+    // written through unclamped, declared hints and all.
+    auto pjOk = parseJSON(`{"probe":9999}`);
+    injectParamsInto(schema, pjOk);
+    assert(storage == 9999,
+        format("an unenforced [20,2000] hint must stay UI-only for a "
+             ~ "representable value, got %d", storage));
 }

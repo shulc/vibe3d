@@ -468,3 +468,173 @@ unittest {
     injectParamsInto(arrU, pj5);
     assert(unbounded == 99999, "hint-less param must not be clamped");
 }
+
+// ---------------------------------------------------------------------------
+// Task 3020 — the numeric gate: what a declared domain means, on BOTH routes.
+//
+// Before this task `parseInto` had no bounds arm and no finiteness check, and
+// `injectParamsInto`'s clamp ran after the Int cast. Each block below was
+// measured red on that code; see tests/test_param_bounds_gate.d for the same
+// three defects driven through the shipped HTTP routes.
+// ---------------------------------------------------------------------------
+
+unittest { // NON-FINITE IS REFUSED, on both routes, and writes nothing.
+    import std.conv : to;
+    import std.math : isNaN;
+
+    // -- the wire-string route. `to!float` accepts std.conv's textual
+    //    sentinels, which is how `tool.pipe.attr falloff dist nan` used to be
+    //    answered `status ok`.
+    float f = 2.5f;
+    auto pf = Param.float_("dist", "Distance", &f, 1.0f);
+    assert(!parseInto(pf, "nan"),  "parseInto must REFUSE a NaN token");
+    assert(f == 2.5f, "a refused parse must leave the field untouched");
+    assert(!parseInto(pf, "inf"),  "parseInto must REFUSE an inf token");
+    assert(!parseInto(pf, "-inf"), "parseInto must REFUSE a -inf token");
+    assert(f == 2.5f);
+    // …and the control: an ordinary value on the same call still lands.
+    assert(parseInto(pf, "0.25"), "a finite token must still be accepted");
+    assert(f == 0.25f);
+
+    // -- the JSON route. A NaN cannot be a JSON literal, but it reaches this
+    //    function from in-process callers (paramToJson round-trips a live
+    //    field), and `1e300` — an ordinary finite double — becomes an INFINITE
+    //    float in the narrowing, which is the door that was actually open.
+    float g = 7.0f;
+    auto pg = Param.float_("w", "W", &g, 1.0f);
+    auto arr = [pg];
+    JSONValue pj = JSONValue(cast(JSONValue[string]) null);
+    pj["w"] = JSONValue(1e300);
+    bool threw = false;
+    try injectParamsInto(arr, pj);
+    catch (Exception e) {
+        threw = true;
+        assert(e.msg == "param 'w' must be a finite number", e.msg);
+    }
+    assert(threw, "a double whose float narrowing overflows must be refused");
+    assert(g == 7.0f, "and the field must be untouched");
+
+    // Control: the largest value that DOES narrow finitely is accepted.
+    JSONValue pj2 = JSONValue(cast(JSONValue[string]) null);
+    pj2["w"] = JSONValue(3.0e38);          // < float.max (~3.4e38)
+    injectParamsInto(arr, pj2);
+    assert(g > 2.9e38f, "a representable magnitude must still be written");
+}
+
+unittest { // THE BOUNDS ARM RUNS BEFORE THE INT CAST.
+    import std.conv : to;
+    int iter = 5;
+    auto p = Param.int_("iter", "Iterations", &iter, 1)
+                .min(0).max(256).enforceBounds();
+    auto arr = [p];
+
+    // 1e18 has no `int` to land on: `cast(int)` yields the x86 indefinite
+    // integer (int.min), so a clamp AFTER the cast lifted it to the param's
+    // MINIMUM. Measured on the shipped route, `mesh.smooth {"iter":1e18}`
+    // behaved exactly like `iter:0`.
+    JSONValue pj = JSONValue(cast(JSONValue[string]) null);
+    pj["iter"] = JSONValue(1e18);
+    injectParamsInto(arr, pj);
+    assert(iter == 256,
+        "an over-max float must clamp UP to the declared ceiling, not down to "
+        ~ "the floor via a destroyed cast — got " ~ iter.to!string);
+
+    // The other direction, and the boundary values themselves.
+    JSONValue pjLo = JSONValue(cast(JSONValue[string]) null);
+    pjLo["iter"] = JSONValue(-1e18);
+    injectParamsInto(arr, pjLo);
+    assert(iter == 0, "an under-min float must clamp to the floor, got "
+        ~ iter.to!string);
+    foreach (int b; [0, 1, 255, 256]) {
+        JSONValue pjB = JSONValue(cast(JSONValue[string]) null);
+        pjB["iter"] = JSONValue(b);
+        injectParamsInto(arr, pjB);
+        assert(iter == b, "the boundary value " ~ b.to!string
+            ~ " is INSIDE the domain and must pass through, got "
+            ~ iter.to!string);
+    }
+
+    // An UNENFORCED int has no ceiling to clamp to, so a value with no int to
+    // land on is refused rather than silently becoming int.min.
+    int free = 9;
+    auto pu = Param.int_("free", "Free", &free, 0);
+    auto arrU = [pu];
+    JSONValue pjU = JSONValue(cast(JSONValue[string]) null);
+    pjU["free"] = JSONValue(1e18);
+    bool threw = false;
+    try injectParamsInto(arrU, pjU);
+    catch (Exception e) {
+        threw = true;
+        assert(e.msg == "param 'free' is not a representable integer", e.msg);
+    }
+    assert(threw, "an unrepresentable int on an unbounded param must be refused");
+    assert(free == 9, "and the field must be untouched");
+    // Control: a large-but-representable int still passes through unclamped.
+    JSONValue pjOk = JSONValue(cast(JSONValue[string]) null);
+    pjOk["free"] = JSONValue(2_000_000_000);
+    injectParamsInto(arrU, pjOk);
+    assert(free == 2_000_000_000, "a hint-less param must not be clamped");
+}
+
+unittest { // THE FLAG IS NO LONGER INERT ON THE WIRE-STRING ROUTE.
+    //
+    // `applyStickyToolDefaults` (tool_presets.d) re-applies a prefs-stored
+    // value string onto a freshly built tool through `parseInto`. `prim.box`'s
+    // `segmentsX` is `.min(1).max(64).enforceBounds()` — a DoS ceiling on an
+    // allocation scaler (doc/param_bounds_plan.md) — so before this task a
+    // prefs entry re-armed an unbounded segment count that the JSON route
+    // clamps. Same declared domain, two routes, one answer.
+    import std.conv : to;
+    int segs = 3;
+    auto p = Param.int_("segmentsX", "Segments X", &segs, 1)
+                .min(1).max(64).enforceBounds();
+    assert(parseInto(p, "100000"), "an over-max value is CLAMPED, not refused");
+    assert(segs == 64, "…to the declared ceiling, got " ~ segs.to!string);
+    assert(parseInto(p, "-7"));
+    assert(segs == 1, "…and to the declared floor, got " ~ segs.to!string);
+    // Boundary values are inside the domain and must survive verbatim.
+    foreach (int b; [1, 2, 63, 64]) {
+        assert(parseInto(p, b.to!string));
+        assert(segs == b, "boundary " ~ b.to!string ~ " must pass through, got "
+            ~ segs.to!string);
+    }
+
+    float w = 0.5f;
+    auto pf = Param.float_("blend", "Blend", &w, 0.5f)
+                .min(0.0f).max(1.0f).enforceBounds();
+    assert(parseInto(pf, "9.0"));
+    assert(w == 1.0f, "an over-max float clamps on this route too");
+    assert(parseInto(pf, "0"));
+    assert(w == 0.0f, "the floor is a LEGAL value, not a refusal");
+
+    // A Param WITHOUT the opt-in is still unclamped here, exactly as on the
+    // JSON route — the flag is what decides, on both.
+    int count = 8;
+    auto pc = Param.int_("count", "Count", &count, 8).min(2);
+    assert(parseInto(pc, "1"));
+    assert(count == 1, "a hint without the opt-in stays UI-only");
+
+    // This route keeps its STRICT integer grammar: the gate applies the
+    // declared domain, it does not relax what counts as an int token.
+    int strict = 5;
+    auto pstrict = Param.int_("n", "N", &strict, 5).min(0).max(10).enforceBounds();
+    assert(!parseInto(pstrict, "2.5"),
+        "a non-integral token stays a parse failure, not a silent truncation");
+    assert(strict == 5);
+    assert(!parseInto(pstrict, "99999999999"),
+        "a token with no int to land on stays a parse failure");
+    assert(strict == 5);
+}
+
+unittest { // A Vec3 write is ATOMIC across its three components.
+    Vec3 v = Vec3(1, 2, 3);
+    auto p = Param.vec3_("start", "Start", &v, Vec3(0, 0, 0));
+    assert(!parseInto(p, "9,nan,9"),
+        "a non-finite component must refuse the whole vector");
+    assert(v.x == 1 && v.y == 2 && v.z == 3,
+        "…and leave NO component written (x/y precede the bad z/y)");
+    assert(!parseInto(p, "1,2,inf"));
+    assert(v.x == 1 && v.y == 2 && v.z == 3);
+    assert(parseInto(p, "4,5,6"), "a finite triple must still be accepted");
+    assert(v.x == 4 && v.y == 5 && v.z == 6);
+}

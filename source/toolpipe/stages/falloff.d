@@ -1246,8 +1246,15 @@ private:
             case "center":       return parseVec3(value, center);
             case "size":         return parseVec3(value, size);
             case "axis":         return parseVec3(value, normal);
-            case "dist":         pickedRadius = parseFloat(value); return true;
-            case "steps":        steps = cast(int)parseFloat(value); return true;
+            case "dist":         return parseFloat(value, pickedRadius);
+            // Task 3020 — was `cast(int)parseFloat(value)`: the cast ran
+            // BEFORE anything could refuse the value, so `steps nan` landed
+            // `int.min` in a loop bound. `assignWireInt` refuses a non-finite
+            // and anything with no int to land on, parsing as a double first.
+            // (The MISSING half — `steps` scales work and still has no
+            // `enum MAX_…` ceiling in its kernel — is carded, task 3022.)
+            case "steps":        { import params : assignWireInt;
+                                   return assignWireInt(value, steps); }
             case "connect": {
                 int v;
                 if (!valueForWireTag(elementConnectEntries, value, v)) return false;
@@ -1270,9 +1277,9 @@ private:
                 elementMode = cast(ElementMode)v;
                 return true;
             }
-            case "screenCx":   screenCx     = parseFloat(value); return true;
-            case "screenCy":   screenCy     = parseFloat(value); return true;
-            case "screenSize": screenSize   = parseFloat(value); return true;
+            case "screenCx":   return parseFloat(value, screenCx);
+            case "screenCy":   return parseFloat(value, screenCy);
+            case "screenSize": return parseFloat(value, screenSize);
             case "transparent":
                 if      (value == "true"  || value == "1") { transparent = true;  return true; }
                 else if (value == "false" || value == "0") { transparent = false; return true; }
@@ -1283,9 +1290,9 @@ private:
                 lassoStyle = cast(LassoStyle)v;
                 return true;
             }
-            case "softBorder": softBorderPx = parseFloat(value); return true;
-            case "in":         in_          = parseFloat(value); return true;
-            case "out":        out_         = parseFloat(value); return true;
+            case "softBorder": return parseFloat(value, softBorderPx);
+            case "in":         return parseFloat(value, in_);
+            case "out":        return parseFloat(value, out_);
             case "mix": {
                 // Multi-falloff Mix Mode wire keys (5): multiply / add /
                 // subtract / max / min. Bogus values are refused so the
@@ -1434,23 +1441,22 @@ private:
                      type == FalloffType.VertexMap ? "true" : "false");
     }
 
-    static float parseFloat(string s) {
-        return s.length == 0 ? 0.0f : s.to!float;
+    // Task 3020 — both of these are now thin delegates to the ONE wire-token
+    // gate in params.d. They used to be a bare `s.to!float`, which accepts
+    // std.conv's textual sentinels, so `tool.pipe.attr falloff dist nan` was
+    // answered `status ok` and put a NaN in the picked radius; `parseVec3`
+    // wrote x and y before discovering a bad z. Refusal (false) reaches the
+    // caller as this route's existing "rejected attr" answer.
+    static bool parseFloat(string s, ref float dst) {
+        import params : assignWireFloat;
+        return assignWireFloat(s, dst);
     }
 
     // "x,y,z" → Vec3. Returns false on parse error so setAttr can
     // refuse the change instead of corrupting the field.
     static bool parseVec3(string s, ref Vec3 out_v) {
-        auto parts = s.split(",");
-        if (parts.length != 3) return false;
-        try {
-            out_v.x = parts[0].strip.to!float;
-            out_v.y = parts[1].strip.to!float;
-            out_v.z = parts[2].strip.to!float;
-        } catch (Exception) {
-            return false;
-        }
-        return true;
+        import params : assignWireVec3;
+        return assignWireVec3(s, out_v);
     }
 
     static string vec3Str(Vec3 v) {

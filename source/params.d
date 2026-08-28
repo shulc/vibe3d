@@ -552,11 +552,180 @@ string fmtFloatWire(double f)
 
 
 
+// ---------------------------------------------------------------------------
+// The numeric gate — ONE implementation, both param-write routes (task 3020).
+//
+// A Param's declared `.min()/.max()/.enforceBounds()` used to mean different
+// things depending on which door a value came in by. `injectParamsInto` (the
+// JSON route: /api/command bodies, argstring positionals, preset injection)
+// read the flag; `parseInto` (the wire-STRING route: every `tool.pipe.attr`
+// stage write — so every falloff, snap, symmetry and workplane number — plus
+// the sticky-tool-default restore out of prefs) had no bounds arm at all. On
+// that second route the flag was INERT: a Param could carry
+// `.min(1).max(64).enforceBounds()` and still be written to 100000.
+//
+// That is the shape this project pays for most — a guard that reads as armed
+// and is not. `prim.box`'s `segmentsX/Y/Z` are the concrete case: the ceiling
+// is a DoS clamp on an allocation scaler (doc/param_bounds_plan.md), it is
+// honoured when the value arrives as JSON, and `applyStickyToolDefaults`
+// re-applies the SAME param out of `prefs.json` through `parseInto`, where it
+// was not. Two routes, one declared domain, one gate — so a new route cannot
+// be born unclamped by forgetting to copy an arm.
+//
+// Three rules, in this order, and the order is the fix:
+//
+//  1. NON-FINITE IS REFUSED, never clamped. `enforceBounds` compares with `<`
+//     and `>` and BOTH are false against a NaN, so a NaN sailed through the
+//     clamp it was declared to obey. Refusing rather than coercing is the
+//     policy `document.sanitizeItemXform` already settled for the item xform,
+//     for the reason stated there: there is no "nearest legal value" for a
+//     NaN, so any number we substituted would be an edit the caller never
+//     asked for. The check runs BEFORE the bounds arm (a NaN is not in the
+//     domain at all) and AGAIN after the double→float narrowing, which is its
+//     own door: `1e300` is a perfectly finite JSON double and an INFINITE
+//     float, and it reached the mesh (`tool.attr <id> SX 1e300` + `doApply`
+//     put a NaN in all 24 vertex components).
+//
+//  2. THE BOUNDS ARM RUNS BEFORE THE CAST, not after it. The Int route used
+//     to do `cast(int)_jsonFloat(...)` and clamp the RESULT, but an
+//     out-of-range float casts to the x86 "indefinite integer" — `int.min` —
+//     so the clamp then lifted it to the param's MINIMUM. Measured on the
+//     shipped route: `mesh.smooth {"iter":1e18}` (declared
+//     `.min(0).max(256).enforceBounds()`) behaved exactly like `iter:0` — no
+//     smoothing at all — while `iter:1000000` correctly clamped to 256. A
+//     clamp cannot guard a value the cast has already destroyed.
+//
+//  3. AN INT THE CAST CANNOT REPRESENT IS REFUSED. After the bounds arm, a
+//     value still outside `[int.min, int.max]` has no legal int to land on —
+//     the same "do not invent an answer" rule as (1). An UNENFORCED int param
+//     is exactly where this bites, because there is no ceiling to clamp to.
+//
+// Both return false and write NOTHING on refusal; each caller turns that into
+// its own route's refusal (a throw for the JSON route, which already throws
+// for a bad enum tag; `false` for the wire-string route, which already returns
+// false for an unparseable token).
+// ---------------------------------------------------------------------------
+
+/// Gate a float-kinded Param write. See the section header above.
+/// `raw` is a double so a JSON `float_` node and a `to!double` of a wire token
+/// both arrive without a lossy caller-side narrowing.
+bool paramGateFloat(const ref Param p, double raw, out float v)
+{
+    import std.math : isFinite;
+    if (!isFinite(raw)) return false;
+    if (p.enforceBounds_) {
+        if (p.hints.hasMinF && raw < p.hints.minF) raw = p.hints.minF;
+        if (p.hints.hasMaxF && raw > p.hints.maxF) raw = p.hints.maxF;
+    }
+    immutable float narrowed = cast(float)raw;
+    // The narrowing is its own overflow door — see rule 1 above.
+    if (!isFinite(narrowed)) return false;
+    v = narrowed;
+    return true;
+}
+
+/// Gate an int-kinded Param write. See the section header above — the bounds
+/// arm runs on `raw`, BEFORE the cast, which is the whole point.
+bool paramGateInt(const ref Param p, double raw, out int v)
+{
+    import std.math : isFinite;
+    if (!isFinite(raw)) return false;
+    if (p.enforceBounds_) {
+        if (p.hints.hasMinI && raw < p.hints.minI) raw = p.hints.minI;
+        if (p.hints.hasMaxI && raw > p.hints.maxI) raw = p.hints.maxI;
+    }
+    if (raw < int.min || raw > int.max) return false;
+    v = cast(int)raw;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// The same refusal, for the wire-token parsers that do NOT have a Param in
+// hand (task 3020).
+//
+// `parseInto` is only ONE of the doors a stage attribute comes in by: five
+// stages override `Stage.setAttrImpl` with a hand-written string switch
+// (falloff, snap, symmetry, workplane, action centre), and each grew its own
+// `s.to!float`. Those are the doors the audit's own examples actually landed
+// on — `tool.pipe.attr falloff dist nan` and `tool.pipe.attr symmetry epsilon
+// inf` were both accepted with `status ok`, and `symmetry`'s hand-written
+// `if (v <= 0.0f) return false` guard let the NaN past for the very reason
+// `enforceBounds` did: every comparison against a NaN is false.
+//
+// These live HERE, beside the Param gate, so a sixth stage parser cannot be
+// born with a private copy of the rule. They carry the FINITENESS half only —
+// the bounds half needs a Param to read `.min()/.max()/.enforceBounds()` from,
+// and these callers have a bare field.
+//
+// `dst` is left UNTOUCHED on refusal (hence `ref`, not `out` — `out` would
+// zero the field before the parse and turn a refusal into a silent write of
+// 0), and the Vec3 form is atomic: a bad `z` does not leave `x`/`y` written.
+// ---------------------------------------------------------------------------
+
+/// Parse one wire float token into `dst`. Empty string means 0 (the prior
+/// contract of the per-stage `parseFloat` helpers this replaces). Returns
+/// false — writing nothing — on an unparseable token or a non-finite value.
+bool assignWireFloat(string s, ref float dst)
+{
+    import std.conv   : to;
+    import std.math   : isFinite;
+    import std.string : strip;
+    if (s.length == 0) { dst = 0.0f; return true; }
+    float v;
+    try { v = s.strip.to!float; } catch (Exception) { return false; }
+    if (!isFinite(v)) return false;
+    dst = v;
+    return true;
+}
+
+/// Parse one wire numeric token into an int `dst`, refusing a non-finite and
+/// a value with no int to land on. Parsed as a double FIRST so the refusal
+/// sees the value the caller wrote rather than the `int.min` an out-of-range
+/// `cast(int)` produces — the same ordering rule as `paramGateInt`.
+bool assignWireInt(string s, ref int dst)
+{
+    import std.conv   : to;
+    import std.math   : isFinite;
+    import std.string : strip;
+    if (s.length == 0) { dst = 0; return true; }
+    double v;
+    try { v = s.strip.to!double; } catch (Exception) { return false; }
+    if (!isFinite(v)) return false;
+    if (v < int.min || v > int.max) return false;
+    dst = cast(int)v;
+    return true;
+}
+
+/// "x,y,z" → Vec3, atomic: nothing is written unless all three components
+/// parse to finite floats.
+bool assignWireVec3(string s, ref Vec3 dst)
+{
+    import std.string : split, strip;
+    auto parts = s.split(",");
+    if (parts.length != 3) return false;
+    float x, y, z;
+    if (!assignWireFloat(parts[0].strip, x)) return false;
+    if (!assignWireFloat(parts[1].strip, y)) return false;
+    if (!assignWireFloat(parts[2].strip, z)) return false;
+    dst.x = x; dst.y = y; dst.z = z;
+    return true;
+}
+
+
 // Parse `value` per `p.kind` and write into the Param's typed pointer.
 // Returns false on parse failure (caller surfaces as "rejected attr").
 // Public so the sticky tool-default path (prefs) can re-apply a stored
 // value-string onto a freshly built tool's Param[] — same string→param
 // machinery as the stage attr setter, no logic change beyond visibility.
+//
+// The numeric kinds go through `paramGateFloat`/`paramGateInt` — the SAME
+// gate `injectParamsInto` uses — so a declared `.enforceBounds()` domain and
+// the finiteness refusal mean the same thing on this route as on the JSON
+// one. Before task 3020 this route had no bounds arm at all, which made the
+// flag inert here and let `to!float("nan")` (std.conv accepts the sentinel)
+// write a NaN into any stage attr: `tool.pipe.attr falloff dist nan` and
+// `tool.pipe.attr symmetry epsilon inf` were both accepted with status ok.
+// A refusal here surfaces as the route's existing "rejected attr" answer.
 bool parseInto(ref Param p, string value) {
     import std.conv   : to;
     import std.string : split, strip;
@@ -566,10 +735,27 @@ bool parseInto(ref Param p, string value) {
             if (value == "false" || value == "0") { *p.bptr = false; return true; }
             return false;
         case Param.Kind.Int:
-            try { *p.iptr = value.strip.to!int; return true; }
+            try {
+                // `to!int` keeps this route's STRICT integer grammar — "2.5"
+                // and a value with no int to land on are refused exactly as
+                // before, and nothing is silently truncated. The gate then
+                // applies the declared domain, which is the half that was
+                // missing: a Param can carry `.min(1).max(64).enforceBounds()`
+                // and this route used to write 100000 into it.
+                int iv;
+                if (!paramGateInt(p, cast(double)value.strip.to!int, iv))
+                    return false;
+                *p.iptr = iv;
+                return true;
+            }
             catch (Exception) { return false; }
         case Param.Kind.Float:
-            try { *p.fptr = value.strip.to!float; return true; }
+            try {
+                float fv;
+                if (!paramGateFloat(p, value.strip.to!double, fv)) return false;
+                *p.fptr = fv;
+                return true;
+            }
             catch (Exception) { return false; }
         case Param.Kind.Enum:
             // Accept the wire tag exactly as listed in p.enumValues[i][0].
@@ -587,9 +773,15 @@ bool parseInto(ref Param p, string value) {
             auto parts = value.split(",");
             if (parts.length != 3) return false;
             try {
-                p.vptr.x = parts[0].strip.to!float;
-                p.vptr.y = parts[1].strip.to!float;
-                p.vptr.z = parts[2].strip.to!float;
+                // All three components gated into locals FIRST: a Vec3 write is
+                // atomic, so a refusal on z must not leave x and y written.
+                float vx, vy, vz;
+                if (!paramGateFloat(p, parts[0].strip.to!double, vx)) return false;
+                if (!paramGateFloat(p, parts[1].strip.to!double, vy)) return false;
+                if (!paramGateFloat(p, parts[2].strip.to!double, vz)) return false;
+                p.vptr.x = vx;
+                p.vptr.y = vy;
+                p.vptr.z = vz;
                 return true;
             } catch (Exception) { return false; }
         case Param.Kind.IntArray:   return false;   // out of scope
@@ -878,20 +1070,18 @@ void injectParamsInto(Param[] params, ref JSONValue pj)
                     *p.bptr = false;
                 break;
             case Param.Kind.Int: {
-                int iv = cast(int)_jsonFloat(*jp);
-                if (p.enforceBounds_) {
-                    if (p.hints.hasMinI && iv < p.hints.minI) iv = p.hints.minI;
-                    if (p.hints.hasMaxI && iv > p.hints.maxI) iv = p.hints.maxI;
-                }
+                int iv;
+                if (!paramGateInt(p, _jsonNum(*jp), iv))
+                    throw new Exception(
+                        "param '" ~ p.name ~ "' is not a representable integer");
                 *p.iptr = iv;
                 break;
             }
             case Param.Kind.Float: {
-                float fv = _jsonFloat(*jp);
-                if (p.enforceBounds_) {
-                    if (p.hints.hasMinF && fv < p.hints.minF) fv = p.hints.minF;
-                    if (p.hints.hasMaxF && fv > p.hints.maxF) fv = p.hints.maxF;
-                }
+                float fv;
+                if (!paramGateFloat(p, _jsonNum(*jp), fv))
+                    throw new Exception(
+                        "param '" ~ p.name ~ "' must be a finite number");
                 *p.fptr = fv;
                 break;
             }
@@ -919,7 +1109,15 @@ void injectParamsInto(Param[] params, ref JSONValue pj)
                     throw new Exception(
                         "param '" ~ p.name ~ "' must be [x,y,z]");
                 auto a = jp.array;
-                *p.vptr = Vec3(_jsonFloat(a[0]), _jsonFloat(a[1]), _jsonFloat(a[2]));
+                // Gated per component into locals first — a Vec3 write is
+                // atomic, so a refusal on z must not leave x and y written.
+                float vx, vy, vz;
+                if (!paramGateFloat(p, _jsonNum(a[0]), vx)
+                 || !paramGateFloat(p, _jsonNum(a[1]), vy)
+                 || !paramGateFloat(p, _jsonNum(a[2]), vz))
+                    throw new Exception(
+                        "param '" ~ p.name ~ "' must be a finite number");
+                *p.vptr = Vec3(vx, vy, vz);
                 break;
             case Param.Kind.IntEnum:
                 if (jp.type == JSONType.integer || jp.type == JSONType.uinteger) {
@@ -984,9 +1182,17 @@ void injectParamsInto(Param[] params, ref JSONValue pj)
                     if (vJson.type != JSONType.array || vJson.array.length != 3)
                         throw new Exception(
                             "param '" ~ p.name ~ "[" ~ i.to!string ~ "]' must be [x,y,z]");
-                    result[i] = Vec3(_jsonFloat(vJson.array[0]),
-                                     _jsonFloat(vJson.array[1]),
-                                     _jsonFloat(vJson.array[2]));
+                    // Same gate as the scalar Vec3 arm — a non-finite in ONE
+                    // element refuses the whole array (the write below is the
+                    // single assignment, so nothing partial lands).
+                    float ax, ay, az;
+                    if (!paramGateFloat(p, _jsonNum(vJson.array[0]), ax)
+                     || !paramGateFloat(p, _jsonNum(vJson.array[1]), ay)
+                     || !paramGateFloat(p, _jsonNum(vJson.array[2]), az))
+                        throw new Exception(
+                            "param '" ~ p.name ~ "[" ~ i.to!string
+                            ~ "]' must be a finite number");
+                    result[i] = Vec3(ax, ay, az);
                 }
                 *p.v3aPtr = result;
                 break;
@@ -995,11 +1201,25 @@ void injectParamsInto(Param[] params, ref JSONValue pj)
     }
 }
 
-// Private helper: accept integer, uinteger, or float_ JSON nodes as float.
-private float _jsonFloat(ref JSONValue v)
+// Private helper: accept integer, uinteger, or float_ JSON nodes as a double.
+//
+// DOUBLE, not float (task 3020): the narrowing to float belongs to
+// `paramGateFloat`, AFTER the bounds arm, because it is an overflow door of
+// its own — `1e300` is a finite JSON double and an infinite float, and it used
+// to be narrowed here and written straight through. The int side needs the
+// undamaged value for the same reason: clamping must see `1e18`, not the
+// `int.min` a premature `cast(int)` turns it into.
+//
+// A NON-NUMERIC node still answers 0.0 rather than throwing. That is a
+// SEPARATE silent coercion, deliberately left alone here and carded (task
+// 3021): today `tool.attr <id> SX zzz` reports ok and sets the scale to zero,
+// because the argstring grammar has no float exponent / nan / inf literal and
+// hands any such token through as a JSON STRING. Turning it into a refusal is
+// a wire-contract change with its own blast radius, not part of the bounds fix.
+private double _jsonNum(ref JSONValue v)
 {
-    if (v.type == JSONType.integer)  return cast(float)v.integer;
-    if (v.type == JSONType.uinteger) return cast(float)v.uinteger;
-    if (v.type == JSONType.float_)   return cast(float)v.floating;
-    return 0.0f;
+    if (v.type == JSONType.integer)  return cast(double)v.integer;
+    if (v.type == JSONType.uinteger) return cast(double)v.uinteger;
+    if (v.type == JSONType.float_)   return v.floating;
+    return 0.0;
 }

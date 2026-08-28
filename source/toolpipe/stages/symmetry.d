@@ -488,13 +488,13 @@ private:
                 else if (value == "y" || value == "Y") { axisIndex = 1; return true; }
                 else if (value == "z" || value == "Z") { axisIndex = 2; return true; }
                 return false;
-            case "offset":
-                try {
-                    import std.conv : to;
-                    import std.string : strip;
-                    offset = value.strip.to!float;
-                    return true;
-                } catch (Exception) { return false; }
+            case "offset": {
+                // Task 3020 — through the shared wire gate, which refuses a
+                // non-finite. `to!float` on its own accepts std.conv's textual
+                // sentinels, so `offset nan` used to be answered `status ok`.
+                import params : assignWireFloat;
+                return assignWireFloat(value, offset);
+            }
             case "useWorkplane":
                 if      (value == "true"  || value == "1") { useWorkplane = true;  return true; }
                 else if (value == "false" || value == "0") { useWorkplane = false; return true; }
@@ -503,15 +503,20 @@ private:
                 if      (value == "true"  || value == "1") { topology = true;  return true; }
                 else if (value == "false" || value == "0") { topology = false; return true; }
                 return false;
-            case "epsilon":
-                try {
-                    import std.conv : to;
-                    import std.string : strip;
-                    float v = value.strip.to!float;
-                    if (v <= 0.0f) return false;
-                    epsilonWorld = v;
-                    return true;
-                } catch (Exception) { return false; }
+            case "epsilon": {
+                // Task 3020 — the `v <= 0.0f` guard below is a COMPARISON, and
+                // every comparison against a NaN is false, so it refused a
+                // negative epsilon and waved a NaN one through: measured,
+                // `tool.pipe.attr symmetry epsilon nan` answered `status ok`.
+                // `assignWireFloat` refuses the non-finite first; the positivity
+                // rule is unchanged and still this stage's own.
+                import params : assignWireFloat;
+                float v;
+                if (!assignWireFloat(value, v)) return false;
+                if (v <= 0.0f) return false;
+                epsilonWorld = v;
+                return true;
+            }
             default: return false;
         }
     }
