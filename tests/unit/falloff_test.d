@@ -118,6 +118,64 @@ unittest { // Selection RAW-weight kernel vs the flat-grid diffusion law
     }
 }
 
+// ---------------------------------------------------------------------------
+// Task 3022 — `falloff.steps` costs O(V+E) regardless of its VALUE: there is
+// no missing kernel ceiling because there is nothing for one to cap.
+// `capped = min(ring, S)` and `raw = capped / S` are the ONLY two places `S`
+// appears anywhere in `bakeSelectionRingWeights` — the multi-source BFS
+// visits each vertex at most once no matter how large `S` is (guarded by
+// `ring[n] != UNSEEN`), and the Jacobi blur is a FIXED `foreach (pass; 0..4)`
+// — so nothing here allocates or loops proportional to `steps`. Measured
+// independently and earlier in doc/param_bounds_plan.md (task 0365 gap #11);
+// this is the same conclusion reached a second way, pinned as a test.
+//
+// Proven two ways on a closed cycle (every vertex selected, so no vertex is
+// ever a boundary and the BFS seeds nothing):
+//   (a) a wall-clock watchdog on an ASTRONOMICALLY large `steps` — this is
+//       what would trip if a "fix" for the (refuted) premise had added an
+//       O(steps) loop to the kernel;
+//   (b) the no-boundary degenerate reads EXACTLY 1.0 for ANY `S`, not merely
+//       "close to 1": `capped == S` in the UNSEEN branch, so
+//       `raw == S/S == 1` bit-for-bit, independent of how large S grows —
+//       casting the same int to float twice and dividing by itself cannot
+//       round to anything but exactly 1.0.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.datetime.stopwatch : StopWatch, AutoStart;
+    import std.format : format;
+
+    enum size_t NV = 4000;
+    size_t[] off = new size_t[](NV + 1);
+    uint[]   nbr = new uint[](NV * 2);
+    foreach (v; 0 .. NV) {
+        off[v]         = v * 2;
+        nbr[v * 2]     = cast(uint)((v + NV - 1) % NV);
+        nbr[v * 2 + 1] = cast(uint)((v + 1) % NV);
+    }
+    off[NV] = NV * 2;
+    bool[] sel = new bool[](NV);
+    sel[] = true;
+
+    auto sw = StopWatch(AutoStart.yes);
+    auto w = bakeSelectionRingWeights(off, nbr, sel, 2_000_000_000);
+    sw.stop();
+    // 100ms is a wide margin over the true O(V+E) cost on 4000 vertices
+    // (microseconds, measured well under 1ms) while still being ~15000x
+    // tighter than a `steps`-proportional loop would take at S=2e9 (~1.5s
+    // for a bare `long` increment loop alone, measured on this toolchain) —
+    // wide enough to never flake, tight enough that an O(steps) mutation
+    // cannot sneak under it.
+    assert(sw.peek.total!"msecs" < 100,
+           format("steps=2_000_000_000 must cost the SAME as any small steps "
+                  ~ "value (O(V+E), not O(steps)) — took %d ms on %d vertices",
+                  sw.peek.total!"msecs", NV));
+    assert(w.length == NV);
+    foreach (v; w)
+        assert(v == 1.0f,
+               "no-boundary selection must read EXACTLY 1.0 for ANY steps "
+               ~ "value (capped == S in the UNSEEN branch, so raw == S/S == 1)");
+}
+
 unittest { // applyShape endpoints + linear midpoint
     // Ordinal-locked curve values at t=0.5: Linear=0.5, EaseIn=0.75,
     // EaseOut=0.25, Smooth=0.5. Asserted by ORDINAL/VALUE, not by a
@@ -279,6 +337,126 @@ unittest { // cylinder falloff: radial-perpendicular linear profile (axis-respon
     assert(isClose(evaluateFalloff(p, Vec3(0.5f, 0, 0), 0, vp), 1.0f/3.0f, tol));
     // plen from Y only → same 0.3333
     assert(isClose(evaluateFalloff(p, Vec3(0, 0.5f, 0), 0, vp), 1.0f/3.0f, tol));
+}
+
+// ---------------------------------------------------------------------------
+// Task 3025 — the intended law is DOCUMENTED at each function above
+// ("degenerate line/ellipsoid/radius -> full influence") but was not, until
+// now, WITNESSED: no test exercised the degenerate branches themselves, only
+// real gradients. The corpus sweep for this task (every `tests/fixtures/*.json`
+// that touches `falloff`, plus every block in this file and
+// toolpipe/stages/falloff_test.d) found NO fixture/test accidentally parked
+// on a degenerate falloff parameter while asserting something about a
+// GRADIENT — the premise that motivated this task did not survive the
+// sweep. What it DID surface is `tests/test_magnet.d`, which documents the
+// same law from the CALLER's side: `mesh.magnet` used to inherit
+// `elementWeight()`'s degenerate fallback (`dist<=0` -> every vertex weight
+// 1.0, so every vertex snapped onto the target) and was fixed by REJECTING
+// `dist<=0` at the command boundary rather than changing the shared kernel —
+// this codebase's "REFUSE, never substitute" policy, applied to a falloff
+// radius specifically. That test pins the CALLER's refusal; this one pins
+// what the shared kernel itself returns when handed a degenerate input,
+// which every OTHER caller still relies on (falloff.selection has its own
+// degenerate law, pinned separately — the "no-boundary" block above).
+//
+// "Zero axis" is in the audit's own list of degenerate triggers, but
+// measured precisely it is NOT independently degenerate for Cylinder: a
+// zero axis falls back to `radialWeight` (a REAL gradient, if `size` is
+// legit) — only a zero axis COMBINED WITH a non-positive `size` collapses
+// to flat 1.0. The negative control below proves that distinction, not
+// just the positive case; the audit's blanket "zero axis" phrasing
+// overstates it.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.math : isClose;
+    Viewport vpW;
+    auto vp = aimSpace(vpW, ModelSpace.world());
+
+    // Linear: start == end (degenerate line) -> full weight everywhere, not
+    // merely near the (collapsed) point.
+    {
+        FalloffPacket p;
+        p.enabled = true;
+        p.type    = FalloffType.Linear;
+        p.shape   = FalloffShape.Linear;
+        p.start   = Vec3(0.3f, -0.7f, 1.1f);
+        p.end     = p.start;               // degenerate: zero-length axis
+        foreach (pos; [Vec3(0, 0, 0), Vec3(50, 0, 0), Vec3(0.3f, -0.7f, 1.1f)])
+            assert(isClose(evaluateFalloff(p, pos, 0, vp), 1.0f),
+                   "Linear with start==end must read 1.0 EVERYWHERE, not "
+                   ~ "just near the collapsed point");
+    }
+
+    // Radial: size == (0,0,0) (degenerate ellipsoid) -> full weight everywhere.
+    {
+        FalloffPacket p;
+        p.enabled = true;
+        p.type    = FalloffType.Radial;
+        p.shape   = FalloffShape.Linear;
+        p.center  = Vec3(0, 0, 0);
+        p.size    = Vec3(0, 0, 0);
+        foreach (pos; [Vec3(0, 0, 0), Vec3(1000, 0, 0)])
+            assert(isClose(evaluateFalloff(p, pos, 0, vp), 1.0f),
+                   "Radial with size=(0,0,0) must read 1.0 EVERYWHERE");
+    }
+
+    // Element: pickedRadius <= 0 (degenerate sphere) -> full weight everywhere.
+    {
+        FalloffPacket p;
+        p.enabled      = true;
+        p.type         = FalloffType.Element;
+        p.shape        = FalloffShape.Linear;
+        p.pickedRadius = 0.0f;
+        p.anchorPos    = [Vec3(0, 0, 0)];
+        foreach (pos; [Vec3(0, 0, 0), Vec3(1000, 0, 0)])
+            assert(isClose(evaluateFalloff(p, pos, 0, vp), 1.0f),
+                   "Element with pickedRadius=0 must read 1.0 EVERYWHERE");
+        // A negative radius reads the same as zero (same "<= 1e-9" gate) —
+        // this is the exact shape `tests/test_magnet.d` guards against one
+        // caller away from here.
+        p.pickedRadius = -3.0f;
+        assert(isClose(evaluateFalloff(p, Vec3(1000, 0, 0), 0, vp), 1.0f),
+               "Element with a negative pickedRadius must ALSO read 1.0 "
+               ~ "EVERYWHERE, not merely near the anchor");
+    }
+
+    // Cylinder, size == (0,0,0): BOTH axis and size degenerate -> full weight.
+    {
+        FalloffPacket p;
+        p.enabled = true;
+        p.type    = FalloffType.Cylinder;
+        p.shape   = FalloffShape.Linear;
+        p.center  = Vec3(0, 0, 0);
+        p.size    = Vec3(0, 0, 0);
+        p.normal  = Vec3(0, 0, 0);
+        foreach (pos; [Vec3(0, 0, 0), Vec3(1000, 0, 0)])
+            assert(isClose(evaluateFalloff(p, pos, 0, vp), 1.0f),
+                   "Cylinder with size=(0,0,0) must read 1.0 EVERYWHERE "
+                   ~ "regardless of axis");
+    }
+
+    // NEGATIVE CONTROL — the correction above, proven rather than just
+    // asserted: a zero cylinder AXIS with a REAL size is NOT degenerate. It
+    // falls back to a genuine radial gradient, not flat 1.0.
+    {
+        FalloffPacket p;
+        p.enabled = true;
+        p.type    = FalloffType.Cylinder;
+        p.shape   = FalloffShape.Linear;
+        p.center  = Vec3(0, 0, 0);
+        p.size    = Vec3(1, 1, 1);
+        p.normal  = Vec3(0, 0, 0);          // degenerate axis, legit size
+        assert(isClose(evaluateFalloff(p, Vec3(0, 0, 0), 0, vp), 1.0f),
+               "at the center this still reads 1.0, same as any radial "
+               ~ "gradient's centre — not evidence of transparency by itself");
+        assert(isClose(evaluateFalloff(p, Vec3(0.5f, 0, 0), 0, vp), 0.5f),
+               "a zero cylinder axis with a REAL size must fall back to a "
+               ~ "genuine radial GRADIENT, not saturate to flat 1.0 — a "
+               ~ "degenerate axis alone does not make this falloff "
+               ~ "transparent, only a degenerate SIZE does");
+        assert(isClose(evaluateFalloff(p, Vec3(1, 0, 0), 0, vp), 0.0f),
+               "…and it must still reach 0 at the ellipsoid surface");
+    }
 }
 
 unittest { // screen falloff: behind-camera handling

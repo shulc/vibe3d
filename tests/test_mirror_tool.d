@@ -75,6 +75,15 @@ unittest { // interactive tool with equal params matches the command exactly
     resetCube();
     toolSet(TOOL);
     cmd("tool.attr " ~ TOOL ~ " axis X");
+    // `angle` is left at its default, 180 — task 3024: DELIBERATE and
+    // written out here rather than merely relied on. 180 is two-fold
+    // degenerate (reflection is invariant under negating the plane normal,
+    // and a 180-degree turn about any perpendicular axis just negates the
+    // base axis), so `toolNormal(axis=X, angle=180) == -X` and this parity
+    // check exercises the AXIS-ALIGNED mirror path, not the oriented-plane
+    // rotate machinery. Case 9 below is the one that actually discriminates
+    // a real rotation.
+    cmd("tool.attr " ~ TOOL ~ " angle 180");
     attrVec3(TOOL, "center", 1, 0, 0);
     cmd("tool.attr " ~ TOOL ~ " mergeVerts false");
     cmd("tool.attr " ~ TOOL ~ " invertPolys true");
@@ -274,4 +283,81 @@ unittest {
     assert(m["vertexCount"].integer == 16,
         "non-cumulative: expected single-mirror 16 verts, got "
         ~ m["vertexCount"].integer.to!string);
+}
+
+// ---------------------------------------------------------------------------
+// 9. Oriented plane, a NON-degenerate angle (task 3024). Case 1's parity
+// check leaves `angle` at its default (180), which is byte-identical to 0 —
+// a broken `toolNormal`/rotate-box path (wrong refAxis, wrong rotation
+// sign, …) could still pass it by accident, since a whole family of bugs
+// happens to agree with the correct answer exactly AT 180 degrees. This
+// case cannot: `axis=X, angle=90` rotates the base +X normal onto +Y
+// EXACTLY (verified independently outside this suite: pivotRotationMatrix
+// about refAxis(X)=+Z by +90 degrees sends (1,0,0) to (0,1,0) to float
+// precision, not merely "some non-axis-aligned tilt") — so the oriented
+// mirror must land BYTE-IDENTICAL to a plain axis=Y command mirror through
+// the same center, and nowhere near the axis=X answer.
+// ---------------------------------------------------------------------------
+
+unittest {
+    resetCube();
+    cmd(`{"id":"mesh.mirror","params":{
+        "axis":"Y","center":[0,0.5,0],"weld":0,"flip_normals":true
+    }}`);
+    auto expectedY = getModel();
+
+    resetCube();
+    toolSet(TOOL);
+    cmd("tool.attr " ~ TOOL ~ " axis X");
+    cmd("tool.attr " ~ TOOL ~ " angle 90");
+    attrVec3(TOOL, "center", 0, 0.5, 0);
+    cmd("tool.attr " ~ TOOL ~ " mergeVerts false");
+    cmd("tool.attr " ~ TOOL ~ " invertPolys true");
+    toolOff(TOOL);
+    auto actual = getModel();
+
+    assert(actual["vertexCount"].integer == expectedY["vertexCount"].integer,
+        "vertex count mismatch vs axis=Y: expected "
+        ~ expectedY["vertexCount"].toString ~ ", got "
+        ~ actual["vertexCount"].toString);
+    assert(actual["faceCount"].integer == expectedY["faceCount"].integer,
+        "face count mismatch vs axis=Y: expected "
+        ~ expectedY["faceCount"].toString ~ ", got "
+        ~ actual["faceCount"].toString);
+
+    auto ev = expectedY["vertices"].array;
+    auto av = actual["vertices"].array;
+    assert(ev.length == av.length);
+    foreach (i; 0 .. ev.length) {
+        auto e = ev[i].array; auto a = av[i].array;
+        assert(approxEq(e[0].floating, a[0].floating)
+            && approxEq(e[1].floating, a[1].floating)
+            && approxEq(e[2].floating, a[2].floating),
+            "axis=X angle=90 vertex " ~ i.to!string
+            ~ " must match a plain axis=Y mirror: expected ("
+            ~ e[0].floating.to!string ~ "," ~ e[1].floating.to!string ~ ","
+            ~ e[2].floating.to!string ~ "), got ("
+            ~ a[0].floating.to!string ~ "," ~ a[1].floating.to!string ~ ","
+            ~ a[2].floating.to!string ~ ")");
+    }
+
+    // And the negative control: it must NOT match the plain axis=X mirror
+    // (proving this case actually exercises a different plane, not that
+    // `angle` was silently ignored).
+    resetCube();
+    cmd(`{"id":"mesh.mirror","params":{
+        "axis":"X","center":[0,0.5,0],"weld":0,"flip_normals":true
+    }}`);
+    auto expectedX = getModel();
+    auto exArr = expectedX["vertices"].array;
+    bool anyDiffers = false;
+    foreach (i; 0 .. exArr.length) {
+        auto e = exArr[i].array; auto a = av[i].array;
+        if (!approxEq(e[0].floating, a[0].floating)
+         || !approxEq(e[1].floating, a[1].floating)
+         || !approxEq(e[2].floating, a[2].floating)) { anyDiffers = true; break; }
+    }
+    assert(anyDiffers,
+        "axis=X angle=90 must NOT equal the plain axis=X mirror — if it "
+        ~ "does, `angle` was silently ignored");
 }

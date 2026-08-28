@@ -311,3 +311,54 @@ unittest { // THE WITNESS: FalloffStage.resolveConnectMask must not allocate
                used, used / (1024.0 * 1024.0), mesh.vertices.length,
                kBoundBytes, kBoundBytes / (1024.0 * 1024.0)));
 }
+
+// ---------------------------------------------------------------------------
+// Task 3022 — `falloff.selection`'s `steps` Param declares a finite ceiling.
+// NOT a DoS backstop (tests.unit.falloff_test pins that `bakeSelectionRingWeights`
+// costs O(V+E) regardless of `steps`, and doc/param_bounds_plan.md gap #11
+// reached the same conclusion independently): this is plain value-domain
+// hygiene. Before this, `.min(1)` with no `.max()` left `params_widgets.d`'s
+// `drawInt` feeding `ImGui.DragInt(..., lo=1, hi=0, ...)` — a MALFORMED
+// range (lo > hi) for the interactive slider, since `hi` defaults to 0 when
+// `hasMaxI` is false regardless of what `lo` is.
+//
+// `enforceBounds()` is deliberately NOT set — asserted here as an EXPLICIT
+// negative, not an omission. `FalloffStage.setAttrImpl` overrides the base
+// `Stage.setAttrImpl` end-to-end (see the `case "steps"` switch arm above),
+// so the shared `parseInto` gate that reads `enforceBounds_` is never
+// reached on the only reachable wire route for this attr (`tool.pipe.attr
+// falloff steps <value>`); `applyStickyToolDefaults` is likewise only ever
+// called with a `Tool`, never a `Stage` (source/app.d:3997,4271). Setting the
+// flag would be a guard that LOOKS armed and is not — the exact shape this
+// codebase treats as a defect in its own right, not a decoration to add for
+// symmetry with the JSON-route Params that CAN reach `injectParamsInto`.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+    import std.format : format;
+
+    Mesh cube = makeCube();
+    EditMode em = EditMode.Vertices;
+    Mesh* meshPtr = &cube;
+    auto fs = new FalloffStage(() => meshPtr, &em);
+    fs.type = FalloffType.Selection;
+
+    bool found = false;
+    foreach (p; fs.params()) {
+        if (p.name != "steps") continue;
+        found = true;
+        assert(p.hints.hasMinI && p.hints.minI == 1,
+               "steps must keep its floor of 1");
+        assert(p.hints.hasMaxI && p.hints.maxI == 1024,
+               format("steps must declare a finite ceiling for the widget "
+                      ~ "(params_widgets.d's DragInt needs a well-formed "
+                      ~ "[lo,hi] range) — hasMaxI=%s maxI=%d",
+                      p.hints.hasMaxI, p.hints.maxI));
+        assert(!p.enforceBounds_(),
+               "steps' enforceBounds must stay OFF: the only reachable wire "
+               ~ "route (FalloffStage.setAttrImpl's own \"steps\" case) "
+               ~ "never reads this Param at all, so the flag would be inert "
+               ~ "— an armed-looking guard nothing ever checks");
+    }
+    assert(found, "FalloffType.Selection must expose a 'steps' param");
+}

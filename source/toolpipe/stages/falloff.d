@@ -783,7 +783,40 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
                 // `falloff.selection` (attr `steps`) — the ring-seed cap
                 // depth `S` (a proper integer; the Jacobi blur pass count
                 // is fixed at 4, independent of this value).
-                ps ~= Param.int_("steps", "Steps", &config.steps, 2).min(1);
+                //
+                // Task 3022 — NOT a work-scaling Param, measured twice
+                // (`bakeSelectionRingWeights`'s own header plus the
+                // independent gap-#11 trace in doc/param_bounds_plan.md):
+                // `S` is used ONLY as the cap/divisor in `capped = min(ring,
+                // S); raw = capped / S`. The multi-source BFS visits each
+                // vertex at most once regardless of `S`, the Jacobi blur is a
+                // FIXED `foreach (pass; 0 .. 4)`, and every array is sized
+                // `nVerts` — nothing allocates or loops proportional to
+                // `steps`. `steps = 2_000_000_000` costs exactly what
+                // `steps = 2` costs; it just saturates every interior weight
+                // toward 0 (a degenerate falloff, a correctness curiosity,
+                // not a hang/OOM — see tests.unit.falloff_test). So this does
+                // NOT get a kernel `enum MAX_…` ceiling — the two-layer
+                // rule's layer (1) is for a value that scales work, and this
+                // one provably does not.
+                //
+                // `.max(1024)` below IS still added: layer (2) alone, plain
+                // value-domain hygiene for the interactive slider —
+                // `params_widgets.d`'s `drawInt` feeds `hasMinI`/`hasMaxI`
+                // straight into `ImGui.DragInt(lo, hi, ...)` unconditionally,
+                // so `.min(1)` with no `.max()` left the widget a MALFORMED
+                // `[1, 0]` range (`hi` defaults to 0 when `hasMaxI` is
+                // false). `.enforceBounds()` is deliberately NOT added:
+                // FalloffStage's own `setAttrImpl` (the `case "steps"` arm
+                // above) is the ONLY reachable wire route for this attr, and
+                // it writes `steps` via `assignWireInt` directly — it never
+                // reads this Param's hints at all, and neither does anything
+                // else reachable (`applyStickyToolDefaults` is only ever
+                // called with a `Tool`, never a `Stage`). Setting the flag
+                // would be a guard that LOOKS armed and is not — pinned as an
+                // explicit negative in tests.unit.toolpipe.stages.falloff_test.
+                ps ~= Param.int_("steps", "Steps", &config.steps, 2)
+                        .min(1).max(1024);
                 break;
             case FalloffType.Composite:
                 // A FalloffStage's own `type` is never Composite — that
@@ -1251,8 +1284,13 @@ private:
             // BEFORE anything could refuse the value, so `steps nan` landed
             // `int.min` in a loop bound. `assignWireInt` refuses a non-finite
             // and anything with no int to land on, parsing as a double first.
-            // (The MISSING half — `steps` scales work and still has no
-            // `enum MAX_…` ceiling in its kernel — is carded, task 3022.)
+            // (Task 3022 re-measured the "steps scales work" premise this
+            // comment used to carry forward and found it FALSE — see the
+            // `params()` Selection-type declaration above for the full
+            // trace. No kernel ceiling is missing because there is nothing
+            // for one to cap; `.max(1024).enforceBounds()` on the Param is
+            // hygiene, not a DoS backstop, and — like every other hand-
+            // parsed stage attr — this wire route does not read it.)
             case "steps":        { import params : assignWireInt;
                                    return assignWireInt(value, steps); }
             case "connect": {

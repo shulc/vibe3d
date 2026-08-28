@@ -265,3 +265,55 @@ unittest {
                       c.line, c.stage, c.attr, got, c.want));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Block 4 — the JSON route refuses a non-numeric token, instead of silently
+// writing zero (task 3021).
+//
+// The argstring grammar has no float exponent / nan / inf literal, so a
+// typo'd numeric attr value (`SX zzz`) hands through `tool.attr`'s
+// `_positional` array as a JSON STRING, not a bad number. `params._jsonNum`
+// used to answer `0.0` for any non-numeric node, and that 0.0 sailed straight
+// through `paramGateFloat` (0.0 is perfectly finite) — measured before the
+// fix: `status:ok`, `v0.x` collapsed to 0.0. `_jsonNum` now answers NaN for a
+// non-numeric node, which is the SAME value the sibling `1e300` case in Block
+// 1 already refuses — one fallback change, no new refusal wording.
+// ---------------------------------------------------------------------------
+unittest {
+    reset();
+    armTransformScaleOnly();
+
+    auto r = command("tool.attr",
+                     `{"_positional":["xfrm.transform","SX","zzz"]}`);
+    assert(r["status"].str == "error",
+           "a non-numeric token on a float param must be REFUSED, not "
+           ~ "silently coerced to zero, got: " ~ r.toString());
+    assert(r["message"].str.canFind("must be a finite number"),
+           "the refusal must say WHY — got: " ~ r["message"].str);
+
+    command("tool.doApply", `{}`);
+    assert(nonFiniteCount() == 0,
+           format("the refused write must leave the mesh finite, "
+                  ~ "/api/model reports %s", model()["nonFinite"].toString()));
+    auto v = vertex0();
+    assert(fabs(v[0] - (-0.5)) < 1e-6,
+           format("…and untouched: vertex0.x = %.6f, expected -0.5", v[0]));
+}
+
+// Block 4's control: an ordinary numeric string ("3", not a bare 3.0 JSON
+// number) still lands — the refusal must not have widened to catch every
+// JSON string, only the ones that fail to parse as a number.
+unittest {
+    reset();
+    armTransformScaleOnly();
+
+    auto r = command("tool.attr",
+                     `{"_positional":["xfrm.transform","SX",3.0]}`);
+    assert(r["status"].str == "ok",
+           "SX=3 is an ordinary scale and must be accepted: " ~ r.toString());
+    command("tool.doApply", `{}`);
+    auto v = vertex0();
+    assert(fabs(v[0] - (-1.5)) < 1e-6,
+           format("SX=3 must actually scale: vertex0.x = %.6f, expected -1.5",
+                  v[0]));
+}

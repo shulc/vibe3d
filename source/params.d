@@ -1210,16 +1210,22 @@ void injectParamsInto(Param[] params, ref JSONValue pj)
 // undamaged value for the same reason: clamping must see `1e18`, not the
 // `int.min` a premature `cast(int)` turns it into.
 //
-// A NON-NUMERIC node still answers 0.0 rather than throwing. That is a
-// SEPARATE silent coercion, deliberately left alone here and carded (task
-// 3021): today `tool.attr <id> SX zzz` reports ok and sets the scale to zero,
-// because the argstring grammar has no float exponent / nan / inf literal and
-// hands any such token through as a JSON STRING. Turning it into a refusal is
-// a wire-contract change with its own blast radius, not part of the bounds fix.
+// A NON-NUMERIC node answers NaN, not 0.0 (task 3021). Before this, `tool.attr
+// <id> SX zzz` reported ok and silently set the scale to zero — the argstring
+// grammar has no float exponent / nan / inf literal, so any such token hands
+// through as a JSON STRING, and a plain string node used to fall through to
+// the `0.0` default below. NaN is not a special case here: every call site
+// (six of them, all six Int/Float/Vec3_/Vec3Array component writes) already
+// routes the result through `paramGateFloat`/`paramGateInt`, and both already
+// refuse a non-finite `raw` with "must be a finite number" / "not a
+// representable integer" — the exact refusal a hand-typed `nan` token gets on
+// the same route. A non-numeric token is just another value with no legal
+// number to land on; REFUSE, never substitute (the policy `paramGateFloat`
+// itself and `document.sanitizeItemXform` already apply).
 private double _jsonNum(ref JSONValue v)
 {
     if (v.type == JSONType.integer)  return cast(double)v.integer;
     if (v.type == JSONType.uinteger) return cast(double)v.uinteger;
     if (v.type == JSONType.float_)   return v.floating;
-    return 0.0;
+    return double.nan;
 }
