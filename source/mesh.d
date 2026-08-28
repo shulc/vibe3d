@@ -5532,8 +5532,78 @@ struct Mesh {
                     }
                 }
             }
+            // TASK 1903 STAGE L7-P3 — the POINT-DOMAIN MAP-VALUE payload, on
+            // the same principle and at the same last-live moment as the
+            // set-mask capture above: `removeVertsReverse` used to re-insert a
+            // dropped vertex with a ZEROED value in every Point map, which is
+            // the residual that kept `bevelEdgesByMask` unarmed (card 2320) and
+            // that Stage L10's weld twin walks into.
+            //
+            // ALL Point-domain channels with `dim > 0`, in registration order —
+            // the same predicate `removeVertsReverse`'s zeroing loop uses, term
+            // for term, so the capture and the loss cannot drift apart.
+            //
+            // PER ROUND: one pass over the map registry per dropped vertex, no
+            // per-element call. The block is `dropped x Σ dim` floats — for the
+            // one Point map on the parity stands, one float per dropped vertex.
+            //
+            // AN ALL-ZERO BLOCK IS DROPPED, exactly as the vertex set-mask
+            // block above is: a mesh with no Point map (the common case) and
+            // one whose dropped vertices carry nothing both pay ZERO bytes and
+            // behave bit-for-bit as before, which keeps `MeshEditDelta.byteSize`
+            // and therefore §8's delta-vs-snapshot ratio unmoved on them.
+            ubyte[] pmDims;
+            float[] pmVals;
+            ubyte[] pmPresent;
+            {
+                size_t stride = 0;
+                size_t nMaps  = 0;
+                foreach (ref mm; meshMaps) {
+                    if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
+                    stride += mm.dim;
+                    ++nMaps;
+                }
+                if (nMaps != 0 && droppedIdx.length != 0) {
+                    auto dims = new ubyte[](nMaps);
+                    auto vals = new float[](droppedIdx.length * stride);
+                    auto pres = new ubyte[](droppedIdx.length * nMaps);
+                    bool worthIt = false;
+                    size_t j = 0, off = 0;
+                    foreach (ref mm; meshMaps) {
+                        if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
+                        dims[j] = mm.dim;
+                        const size_t dim = mm.dim;
+                        const bool tracksPresence = mm.present.length != 0;
+                        foreach (k, vi; droppedIdx) {
+                            const size_t src = cast(size_t)vi * dim;
+                            if (src + dim <= mm.data.length) {
+                                const size_t dst = k * stride + off;
+                                vals[dst .. dst + dim] = mm.data[src .. src + dim];
+                                foreach (c; 0 .. dim)
+                                    if (vals[dst + c] != 0f) worthIt = true;
+                            }
+                            // "Empty ⇒ all present" is the map's convention, so
+                            // a map that tracks no presence records a 1 that the
+                            // reverse never writes back — recorded honestly
+                            // rather than as a 0 that would read as "absent".
+                            const ubyte p = tracksPresence
+                                ? (vi < mm.present.length ? mm.present[vi] : cast(ubyte)0)
+                                : cast(ubyte)1;
+                            pres[k * nMaps + j] = p;
+                            // Only a TRACKED presence can differ from what the
+                            // pre-L7-P3 arms wrote (they wrote 0, and only into
+                            // a non-empty `present`).
+                            if (tracksPresence && p != 0) worthIt = true;
+                        }
+                        ++j;
+                        off += dim;
+                    }
+                    if (worthIt) { pmDims = dims; pmVals = vals; pmPresent = pres; }
+                }
+            }
             editRecorder_.recordRemoveVerts(droppedIdx, droppedPos,
-                                            vertSetWords, esKeys, esWords);
+                                            vertSetWords, esKeys, esWords,
+                                            pmDims, pmVals, pmPresent);
             editRecorder_.recordReindex(remap);
         }
         // Rewrite face vertex IDs

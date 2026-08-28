@@ -295,12 +295,24 @@ struct ChangeBus {
     /// one of the three a hand-built log can trip.
     ulong mapDeltaMixRefused;
 
-    /// A `MapValueDelta` entry could not BIND its map at replay: the map is
-    /// gone, was renamed, or came back with a different dim / domain / kind,
-    /// or the entry's own payload planes are out of step with each other.
-    /// The entry then applies NOTHING — never partially, never zero-filled —
-    /// and `revert` still returns true. A non-zero value means history drift,
-    /// not a log-shape bug.
+    /// A map payload could not BIND at replay: the map is gone, was renamed,
+    /// or came back with a different dim / domain / kind, or the entry's own
+    /// payload planes are out of step with each other. The payload then
+    /// applies NOTHING — never partially, never zero-filled — and `revert`
+    /// still returns true. A non-zero value means history drift, not a
+    /// log-shape bug.
+    ///
+    /// TWO PUBLISHERS, ONE MEANING, and the second was added deliberately
+    /// rather than given a counter of its own (task 1903 Stage L7-P3):
+    ///   * a `MapValueDelta` entry, which refuses WHOLE — it applies nothing
+    ///     at all;
+    ///   * a `Kind.RemoveVerts` entry's Point-domain map payload, which
+    ///     refuses the whole MAP block (every channel) while the vertex
+    ///     re-insertion still runs, because skipping that half would leave the
+    ///     mesh short a vertex.
+    /// A test that needs to attribute a tick therefore drives one kind at a
+    /// time; both are the same event — "a map plane was NOT restored, and the
+    /// replay said so instead of writing a legal-looking wrong answer".
     ulong mapDeltaBindRefused;
 
     /// Op-log entries the closed batches recorded, summed. Read as a delta

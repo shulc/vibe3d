@@ -539,6 +539,60 @@ struct MeshOpEntry {
     //              one another.
     //   mapVals  — face-major, then corner, then map: `Σ mapDims` floats per
     //              corner, `Σ mapArity` corners in total.
+    //
+    // --- AND, ON A `Kind.RemoveVerts` ENTRY, THE POINT-DOMAIN MAP-VALUE
+    //     PAYLOAD (task 1903 Stage L7-P3) -----------------------------------
+    //
+    // TWO KINDS SHARE THESE THREE ARRAYS, AND THAT IS THE DESIGN, not an
+    // accident to tidy up later. `MeshOpEntry.sizeof` is charged PER ENTRY, so
+    // a new field moves every pinned `byteSize` number in the tree — a cost
+    // paid once already (560 -> 608 for L5-b's three arrays, seven numbers) and
+    // deliberately not paid again, exactly as `Kind.EdgeSetRekey` re-used
+    // `edgeSetKeys`/`edgeSetWords`/`perm` rather than adding two (card 2310).
+    // Nothing can confuse the two readings: every reader of the MeshMapDelta
+    // meaning binds through `CornerCarry.payloadForCount`, whose FIRST test is
+    // `p.kind != MeshMapDelta -> decline`, and `removeVertsReverse` is reached
+    // only from the `RemoveVerts` arm of the two dispatch switches.
+    //
+    //   mapDims  — `dim` of each POINT-domain map with `dim > 0`, in
+    //              registration order. Same role as above (identity by
+    //              count + dims + order), on the other domain.
+    //   mapVals  — VERTEX-major, then map: `Σ mapDims` floats per entry of
+    //              `vIdx`, in the same order as `vIdx`. Length is therefore
+    //              either 0 or `vIdx.length * Σ mapDims`.
+    //   presentBefore — one byte per (dropped vertex, map), same order, so
+    //              `vIdx.length * mapDims.length` or 0. It is the field the
+    //              REVERSE reads for `MapValueDelta` too, which is the same
+    //              direction this payload is for.
+    //   mapArity — NOT USED by `RemoveVerts`. A payload is addressed by
+    //              vertex, not by face, and `CornerCarry`'s adjacency guard
+    //              keys on this array's length, so leaving it empty is what
+    //              keeps a `RemoveVerts` entry from ever being mistaken for a
+    //              corner payload even if the kind test above were removed.
+    //
+    // WHICH MAPS: ALL Point-domain channels with `dim > 0`, never a named
+    // subset. The payload mirrors `removeVertsReverse`'s own zeroing predicate
+    // (`domain == Point && dim != 0`) TERM FOR TERM, so the two cannot drift;
+    // a subset would be a second, unstated predicate with no census to keep it
+    // honest. It matters most for the channels a subset would be tempted to
+    // skip: a `morphAbsolute` map's zero is a LEGAL value ("stay at the base"),
+    // so a zeroed morph entry is a silent geometric answer, not a blank.
+    //
+    // EMPTY MEANS "NOTHING TO RESTORE", never "the recorder forgot". The
+    // recorder drops an all-zero block (a mesh with no Point map, or one whose
+    // dropped vertices carry nothing, pays ZERO bytes and behaves bit-for-bit
+    // as before), so `mapDims.length == 0` on a `RemoveVerts` entry means the
+    // reverse zeroes exactly as it always did and refuses NOTHING.
+    //
+    // A PRESENT PAYLOAD THAT DOES NOT BIND IS REFUSED **WHOLE** — all channels,
+    // never the prefix that happens to line up, never per-channel. The
+    // precedent is `MapValueDelta`'s own bind refusal and the reason is
+    // measured: Stage L1 recorded a revert that restored a map's LENGTH while
+    // zeroing every value and answered success. A per-channel accept would
+    // reproduce exactly that, one channel at a time. The refusal ticks
+    // `changeBus.mapDeltaBindRefused` and the vertex re-insertion still runs:
+    // the geometry half of a `RemoveVerts` entry is never skipped, because
+    // "refuse the entry" for THIS kind would leave the mesh short a vertex.
     ubyte[]   mapDims;
     uint[]    mapArity;
     float[]   mapVals;
@@ -618,6 +672,20 @@ struct MeshOpEntry {
     float[]   mapValsAfter;
     /// Per ELEMENT, with NO `* mapDim` — an element is present or absent as a
     /// whole (the `MeshMap.present` invariant).
+    ///
+    /// `presentBefore` IS ALSO THE PRESENCE HALF OF `Kind.RemoveVerts`'
+    /// Point-domain payload (Stage L7-P3) — see the `mapDims`/`mapVals` block
+    /// above for the shape and for why the two kinds share the field.
+    /// `presentAfter` is NOT: a `RemoveVerts` payload is a before-image
+    /// restored on the reverse, and the FORWARD direction owes nothing —
+    /// measured, and not by reading the nearest plausible function. On the
+    /// compaction path the log is `[RemoveVerts, Reindex]` and it is
+    /// `applyReindexForward`'s Point-map GATHER that re-drops the restored
+    /// value on a redo; `removeVertsForward`'s own map drop-filter is not on
+    /// that path at all (defeating it leaves the redo cell green, defeating
+    /// the gather reddens it). So this stage does not repeat card 2310's edge
+    /// -set lesson — where an undo fix bought a loss on the redo — but the
+    /// reason is the entry AFTER this one, not this one.
     ///
     /// THE MAP'S "empty means all present" CONVENTION DOES NOT APPLY INSIDE AN
     /// ENTRY, and inverting it here is deliberate: these must have the
@@ -2595,7 +2663,10 @@ struct MeshEditTracker {
     void recordRemoveVerts(in uint[] idx, in Vec3[] pos,
                            in ulong[] vertSetMaskBefore,
                            in ulong[] edgeSetKeys,
-                           in ulong[] edgeSetWords) {
+                           in ulong[] edgeSetWords,
+                           in ubyte[] pointMapDims = null,
+                           in float[] pointMapVals = null,
+                           in ubyte[] pointMapPresent = null) {
         if (idx.length == 0) return;
         assert(vertSetMaskBefore.length == 0
             || vertSetMaskBefore.length == idx.length,
@@ -2605,6 +2676,25 @@ struct MeshEditTracker {
         assert(edgeSetKeys.length == edgeSetWords.length,
             "recordRemoveVerts: the dropped edge-set keys and words are not "
           ~ "parallel");
+        // Task 1903 Stage L7-P3. The same "empty, or exactly parallel" law the
+        // set-mask half has, on the two arrays that carry the Point-domain map
+        // values — asserted at the RECORDER so a malformed payload cannot
+        // reach a replay that would have to guess what to do with it.
+        // `removeVertsReverse` re-checks rather than trusting this, because a
+        // hand-built entry never passes through here.
+        {
+            size_t stride = 0;
+            foreach (d; pointMapDims) stride += d;
+            assert(pointMapDims.length == 0
+                || pointMapVals.length == idx.length * stride,
+                "recordRemoveVerts: the Point-domain map payload must be empty "
+              ~ "or hold `vIdx.length * Σ dims` floats, vertex-major — a "
+              ~ "partial one would slice one channel's values into another");
+            assert(pointMapPresent.length == 0
+                || pointMapPresent.length == idx.length * pointMapDims.length,
+                "recordRemoveVerts: the Point-domain presence payload must be "
+              ~ "empty or hold one byte per (dropped vertex, map)");
+        }
         MeshOpEntry e;
         e.kind = MeshOpEntry.Kind.RemoveVerts;
         e.vIdx = idx.dup;
@@ -2612,6 +2702,13 @@ struct MeshEditTracker {
         e.vertSetMaskBefore  = vertSetMaskBefore.dup;
         e.edgeSetKeys  = edgeSetKeys.dup;
         e.edgeSetWords = edgeSetWords.dup;
+        // Stage L7-P3 — the Point-domain map values, on the three fields
+        // `Kind.MeshMapDelta` uses for the PolyVertex domain. `mapArity` stays
+        // empty on purpose: see the field's own doc for why that is a guard and
+        // not an omission.
+        e.mapDims       = pointMapDims.dup;
+        e.mapVals       = pointMapVals.dup;
+        e.presentBefore = pointMapPresent.dup;
         append(e);
     }
 
@@ -3109,7 +3206,8 @@ private void applyReverse(ref Mesh m, ref const MeshOpEntry e,
         case MeshOpEntry.Kind.RemoveVerts:
             // Inverse of drop = re-insert at the recorded (pre-removal) indices.
             removeVertsReverse(m, e.vIdx, e.pos, e.vertSetMaskBefore,
-                               e.edgeSetKeys, e.edgeSetWords);
+                               e.edgeSetKeys, e.edgeSetWords,
+                               e.mapDims, e.mapVals, e.presentBefore);
             break;
         case MeshOpEntry.Kind.SetPos:
             foreach (i, vi; e.vIdx)
@@ -3672,17 +3770,30 @@ private void removeVertsForward(ref Mesh m, in uint[] idx) {
 //       arms, plus the `edgeSetMask` entries whose endpoint vanished (re-
 //       inserted after the loop, in the pre-compaction key space
 //       `applyReindexReverse` has just put the mesh back into).
-//   STILL ZEROED, unchanged: `vertexMarks`, every Point-domain `MeshMap`
-//       value and its `present` byte.
+//   ALSO RESTORED SINCE STAGE L7-P3: every Point-domain `MeshMap` VALUE and
+//       its `present` byte, on the same three arms, from `mapDims` /
+//       `mapVals` / `presentBefore` (see their doc on `MeshOpEntry`). The
+//       payload is optional — absent means "nothing to restore" and the arms
+//       zero as they always did — and a present-but-unbindable one is refused
+//       WHOLE, ticking `changeBus.mapDeltaBindRefused`.
+//   STILL ZEROED, unchanged: `vertexMarks` — and it is now the ONLY plane in
+//       that class, so the paragraph above should not be read as covering a
+//       family.
 //
 // WHY THE SPLIT IS NOT ARBITRARY. The set mask is DOCUMENT state a user
 // names, saves in `.v3d` and reloads — "a named selection set vanished on
-// Ctrl+Z" is a data-loss report (task 2280). A re-inserted vertex coming back
-// VISIBLE and un-marked is the convention the rest of `mesh.d` already
-// follows for index changes (`clearFaceSelectionResize` et al.), and the
-// Point-map half is covered belt-and-braces by the migrated commands' own
-// `preMaps_` capture. Widening the payload to the other three is a separate
-// decision with its own byte cost; it is NOT implied by this one.
+// Ctrl+Z" is a data-loss report (task 2280). The Point-map values are the
+// same class of loss one level down: a weight or a morph offset is authored
+// data, and for a `morphAbsolute` map the zero this used to write is a LEGAL
+// value ("stay at the base"), so the loss is a silent geometric answer rather
+// than a blank. It was measured as the last blocker under an armed
+// `bevelEdgesByMask` (card 2320) and under the L10 weld twin, which is why it
+// left the class here rather than staying belt-covered by the migrated
+// commands' own `preMaps_` capture.
+//
+// A re-inserted vertex coming back VISIBLE and un-marked is a different case
+// and stays: that is the convention the rest of `mesh.d` already follows for
+// index changes (`clearFaceSelectionResize` et al.), not authored data.
 //
 // `vertexSelectionOrder` (task 0930, secondary finding) now gets the SAME
 // standalone-insert treatment `vertexMarks` already had: the gap-fill and
@@ -3698,7 +3809,10 @@ private void removeVertsForward(ref Mesh m, in uint[] idx) {
 private void removeVertsReverse(ref Mesh m, in uint[] idx, in Vec3[] pos,
                                 in ulong[] vertSetMaskBefore,
                                 in ulong[] edgeSetKeys,
-                                in ulong[] edgeSetWords) {
+                                in ulong[] edgeSetWords,
+                                in ubyte[] pointMapDims = null,
+                                in float[] pointMapVals = null,
+                                in ubyte[] pointMapPresent = null) {
     // Task 1903 Stage L5-b. EMPTY means "nothing to restore" — the honest
     // empty a mesh with no selection sets produces — and a payload of the
     // WRONG length is refused WHOLE rather than applied to the prefix that
@@ -3706,17 +3820,90 @@ private void removeVertsReverse(ref Mesh m, in uint[] idx, in Vec3[] pos,
     // legal-looking wrong answer, which is worse than the zero it replaces.
     const bool haveVsm = vertSetMaskBefore.length == idx.length;
     ulong vsmFor(size_t i) { return haveVsm ? vertSetMaskBefore[i] : 0UL; }
+
+    // ---- Task 1903 Stage L7-P3: the Point-domain MAP-VALUE payload ---------
+    //
+    // BIND FIRST, ONCE, BEFORE ANY ARM RUNS. The three arms below differ in how
+    // they make room for the vertex, not in what they write into it, so the
+    // decision "is this payload usable at all" is taken here and the arms only
+    // read `pmValue` / `pmPresent`.
+    //
+    // THE BIND IS BY COUNT + DIMS + REGISTRATION ORDER, the same identity
+    // `CornerCarry`'s restore uses for the PolyVertex side. Names are
+    // deliberately not carried: a rename is its own history entry, so it must
+    // already have been undone before this delta's own undo can run (LIFO), and
+    // a `string[]` would be the fourth heap field on the struct — the cost this
+    // stage exists to avoid.
+    //
+    // MISMATCH REFUSES THE WHOLE BLOCK — every channel, not the prefix that
+    // lines up — and the arms then zero exactly as they did before this stage.
+    // The `RemoveVerts` entry itself is NOT refused: its other half re-inserts
+    // the vertex, and skipping that would leave the mesh short a vertex, which
+    // is a corruption rather than a documented limit.
+    size_t pmStride = 0;
+    foreach (d; pointMapDims) pmStride += d;
+    bool pmBound = false;
+    if (pointMapDims.length != 0) {
+        // The live Point-domain registry, in the order the recorder walked it.
+        // The COUNT and the DIMS are two separate terms on purpose: they fail
+        // on different drifts (a map appearing or vanishing vs a map coming
+        // back with a different shape), and a bind that folded them together
+        // would have one of the two untestable. The loop does not `break` for
+        // the same reason — an early exit makes `liveCount` a function of the
+        // dim mismatch and collapses the two terms back into one.
+        size_t liveCount = 0;
+        bool   dimsOk    = true;
+        foreach (ref mm; m.meshMaps) {
+            if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
+            if (liveCount >= pointMapDims.length
+                || pointMapDims[liveCount] != mm.dim) dimsOk = false;
+            ++liveCount;
+        }
+        if (dimsOk && liveCount == pointMapDims.length
+            && pointMapVals.length == idx.length * pmStride
+            && (pointMapPresent.length == 0
+                || pointMapPresent.length == idx.length * pointMapDims.length))
+            pmBound = true;
+        else
+            ++changeBus.mapDeltaBindRefused;
+    }
+    /// The `dim` floats this payload holds for dropped vertex `i`, map `j` —
+    /// or `null` when the payload is absent or refused, which is what the arms
+    /// read as "zero, as before".
+    const(float)[] pmValue(size_t i, size_t j, size_t off, size_t dim) {
+        if (!pmBound) return null;
+        const size_t b = i * pmStride + off;
+        return pointMapVals[b .. b + dim];
+    }
+    /// The presence byte for the same pair. Absent presence payload ⇒ 0, which
+    /// is exactly what the pre-L7-P3 arms wrote.
+    ubyte pmPresent(size_t i, size_t j) {
+        if (!pmBound || pointMapPresent.length == 0) return 0;
+        return pointMapPresent[i * pointMapDims.length + j];
+    }
+
     foreach (i, vi; idx) {
         if (vi < m.vertices.length) {
             m.vertices[vi] = pos[i];          // fill the gap re-opened by Reindex^-1
             if (vi < m.vertexMarks.length) m.vertexMarks[vi] = 0;
-            foreach (ref mm; m.meshMaps) {
-                if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
-                const size_t dim = mm.dim;
-                if (vi * dim + dim <= mm.data.length) mm.data[vi * dim .. vi * dim + dim] = 0f;
-                // Task 1069: same "not a restored capture" convention as the
-                // value above — the re-inserted vertex has no entry.
-                if (vi < mm.present.length) mm.present[vi] = 0;
+            {
+                size_t j = 0, off = 0;
+                foreach (ref mm; m.meshMaps) {
+                    if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
+                    const size_t dim = mm.dim;
+                    // Task 1903 Stage L7-P3: this IS a restored capture now,
+                    // when the payload bound. `null` from `pmValue` is the
+                    // pre-L7-P3 zero-fill, unchanged.
+                    auto src = pmValue(i, j, off, dim);
+                    if (vi * dim + dim <= mm.data.length) {
+                        if (src !is null) mm.data[vi * dim .. vi * dim + dim] = src[];
+                        else              mm.data[vi * dim .. vi * dim + dim] = 0f;
+                    }
+                    // Task 1069: the presence channel travels with the value.
+                    if (vi < mm.present.length) mm.present[vi] = pmPresent(i, j);
+                    ++j;
+                    off += dim;
+                }
             }
             // Task 1903 Stage L5-b: this IS a restored capture now — the
             // one plane of the four that left the "documented limit" class.
@@ -3725,27 +3912,42 @@ private void removeVertsReverse(ref Mesh m, in uint[] idx, in Vec3[] pos,
         } else if (vi == m.vertices.length) {
             m.vertices ~= pos[i];             // contiguous append at the tail
             m.vertexMarks ~= 0u;
-            foreach (ref mm; m.meshMaps) {
-                if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
-                foreach (_; 0 .. mm.dim) mm.data ~= 0f;
-                if (mm.present.length != 0) mm.present ~= cast(ubyte)0; // task 1069
+            {
+                size_t j = 0, off = 0;
+                foreach (ref mm; m.meshMaps) {
+                    if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
+                    const size_t dim = mm.dim;
+                    auto src = pmValue(i, j, off, dim);   // Stage L7-P3
+                    if (src !is null) mm.data ~= src[];
+                    else foreach (_; 0 .. dim) mm.data ~= 0f;
+                    if (mm.present.length != 0) mm.present ~= pmPresent(i, j); // task 1069
+                    ++j;
+                    off += dim;
+                }
             }
             m.vertexSetMask ~= vsmFor(i);   // task 1903 Stage L5-b
         } else {
             m.vertices.insertInPlace(vi, pos[i]); // standalone removal (no Reindex)
             if (vi <= m.vertexMarks.length) m.vertexMarks.insertInPlace(vi, 0u);
             if (vi <= m.vertexSelectionOrder.length) m.vertexSelectionOrder.insertInPlace(vi, 0);
-            foreach (ref mm; m.meshMaps) {
-                if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
-                const size_t dim = mm.dim;
-                if (vi * dim <= mm.data.length) {
-                    float[] zeros;
-                    zeros.length = dim;
-                    zeros[] = 0f;
-                    mm.data.insertInPlace(vi * dim, zeros);
-                    // Task 1069: the presence channel shifts with the values.
-                    if (mm.present.length != 0 && vi <= mm.present.length)
-                        mm.present.insertInPlace(vi, cast(ubyte)0);
+            {
+                size_t j = 0, off = 0;
+                foreach (ref mm; m.meshMaps) {
+                    if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
+                    const size_t dim = mm.dim;
+                    auto src = pmValue(i, j, off, dim);   // Stage L7-P3
+                    if (vi * dim <= mm.data.length) {
+                        float[] fill;
+                        fill.length = dim;
+                        if (src !is null) fill[] = src[];
+                        else              fill[] = 0f;
+                        mm.data.insertInPlace(vi * dim, fill);
+                        // Task 1069: the presence channel shifts with the values.
+                        if (mm.present.length != 0 && vi <= mm.present.length)
+                            mm.present.insertInPlace(vi, pmPresent(i, j));
+                    }
+                    ++j;
+                    off += dim;
                 }
             }
             if (vi <= m.vertexSetMask.length)

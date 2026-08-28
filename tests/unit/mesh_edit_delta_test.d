@@ -482,21 +482,38 @@ unittest {
     // Undo (revert): Reindex^-1 restores the pre-compaction index space,
     // perm-gathering the Point-map value of every KEPT vertex back to its
     // own pre-compaction slot; RemoveVerts^-1 then fills the re-opened gap
-    // at index 3. The gap's own weight is NOT restored — the same documented
-    // limit `removeVertsReverse` already states for `vertexMarks` (a removed
-    // vertex's non-positional data is not captured by
-    // `MeshOpEntry.RemoveVerts`, which records only `vIdx` + `pos`) — but
-    // every OTHER (kept) vertex must carry its OWN weight back to its own
-    // slot, not a neighbour's.
+    // at index 3.
+    //
+    // THE GAP'S OWN WEIGHT USED TO BE THE ONE VALUE THIS CELL EXPECTED TO
+    // LOSE, and task 1903 Stage L7-P3 is what changed that. This expectation
+    // was `[0, 1, 2, 0, 4, 5, 6]` — a documented limit shared with
+    // `vertexMarks`, on the ground that `MeshOpEntry.RemoveVerts` recorded
+    // only `vIdx` + `pos`. It now records the dropped vertices' Point-domain
+    // map values as well (`mapDims` / `mapVals` / `presentBefore`; see the
+    // fields' own doc), so vertex 3 comes back carrying **3**, not 0. The
+    // change is the point of that stage, not a side effect: a weight or morph
+    // value silently coming back as zero is a legal-looking wrong answer, and
+    // it was the last blocker under an armed `bevelEdgesByMask` (card 2320).
+    //
+    // WHAT THIS CELL STILL GUARDS, unchanged and separately: the KEPT
+    // vertices must carry their OWN weights back to their OWN pre-compaction
+    // slots. That is `applyReindexReverse`'s un-permutation, and it is a
+    // different mechanism from the gap fill — before task 0920's fix
+    // `m.meshMaps` was untouched by the replay entirely and the array stayed
+    // at its post-compaction values with a trailing zero pad (measured:
+    // [0,1,2,4,5,6,0]). Both claims are in the one array below, so read a red
+    // by WHICH slot moved: index 3 is L7-P3's payload, the others are 0920's
+    // permutation.
     assert(delta.revert(m), "reverse replay must succeed");
     assert(m.vertices.length == 7);
-    assert(weights() == [0f, 1f, 2f, 0f, 4f, 5f, 6f],
+    assert(weights() == [0f, 1f, 2f, 3f, 4f, 5f, 6f],
         "applyReindexReverse/removeVertsReverse: every KEPT vertex "
       ~ "(0,1,2,4,5,6) must carry its OWN weight back to its pre-compaction "
-      ~ "slot — before this fix `m.meshMaps` was untouched by the replay "
-      ~ "entirely, so the array stayed at its post-compaction values and "
-      ~ "only grew a trailing zero pad (measured: [0,1,2,4,5,6,0]) instead "
-      ~ "of un-permuting — got " ~ weights().to!string);
+      ~ "slot (task 0920's un-permutation), AND the dropped vertex 3 must "
+      ~ "come back carrying its own weight 3 rather than a zero (task 1903 "
+      ~ "Stage L7-P3's `RemoveVerts` Point-map payload). A 0 at index 3 "
+      ~ "alone means the payload; a shifted tail means the permutation "
+      ~ "— got " ~ weights().to!string);
 
     // Redo (apply): must reproduce the direct kernel's result through a
     // GENUINE gather (applyReindexForward now permutes `m.meshMaps` too),
