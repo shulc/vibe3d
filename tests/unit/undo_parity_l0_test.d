@@ -178,8 +178,15 @@ string fixturePath(string leaf)
 /// were owed here. So the key moves to the call site, one distinct key per
 /// reader, and `tests/unit/parity_capture_key_census_test.d` asserts the
 /// `leaf` -> `key` map is 1:1 over every `undo_parity_*_test.d`.
+/// `exceptions` defaults to EMPTY, and a reader that passes one gets the
+/// per-plane exception route instead of the raw compare. It is a parameter for
+/// the same reason `captureKey` became one (task 2320, decision 1): L5's
+/// reader needed exceptions and wrote a private copy of this whole body to get
+/// them, which is how two copies of one mechanism start. An empty table makes
+/// `compareWithExceptions` behave exactly as `comparePlanes` did.
 void compareOrCapture(string leaf, string family, string sha, string stand,
-                      ParityCell[] cells, string captureKey)
+                      ParityCell[] cells, string captureKey,
+                      in PlaneException[] exceptions = null)
 {
     import std.file   : exists, readText, write, mkdirRecurse;
     import std.path   : dirName;
@@ -236,8 +243,10 @@ void compareOrCapture(string leaf, string family, string sha, string stand,
         assert(fc["name"].str == c.name,
                format("%s: cell %d is '%s' in the fixture and '%s' now — the "
                     ~ "roster was reordered", path, i, fc["name"].str, c.name));
-        comparePlanes(path, c.name, "postOp",   fc["postOp"],   c.postOp);
-        comparePlanes(path, c.name, "postUndo", fc["postUndo"], c.postUndo);
+        compareWithExceptions(path, c.name, "postOp",   fc["postOp"],
+                              c.postOp,  exceptions);
+        compareWithExceptions(path, c.name, "postUndo", fc["postUndo"],
+                              c.postUndo, exceptions);
     }
 }
 

@@ -35,6 +35,7 @@
 import std.net.curl;
 import std.json;
 import std.conv : to;
+import batchless_control_helpers;
 import std.math : cos, sin, PI, abs;
 
 void main() {}
@@ -116,15 +117,13 @@ unittest { // the fin-bundle path runs inside ONE batch, and it is the OUTERMOST
     loadCube();
     ok(postJson("/api/select", `{"mode":"vertices","indices":[]}`), "/api/select");
     auto c0 = changes();
-    ok(postJson("/api/command", `{"id":"mesh.triple"}`), "mesh.triple");
+    ok(postJson("/api/command", kBatchlessControlJson),
+       kBatchlessControlCommand);
     auto c1 = changes();
     immutable long ctrl = c1["unbatchedGeometryCommits"].integer
                         - c0["unbatchedGeometryCommits"].integer;
     assert(ctrl > 0,
-        "positive control: an UNBATCHED command must tick "
-      ~ "unbatchedGeometryCommits, and mesh.triple ticked " ~ ctrl.to!string
-      ~ ". A dead counter passes every assertion below for free "
-      ~ "(task 1903 §3.2 L2).");
+        kBatchlessControlWhy ~ ctrl.to!string ~ kBatchlessControlFix);
 
     // ---- the single-spine door -------------------------------------------
     loadFinBundle(3);

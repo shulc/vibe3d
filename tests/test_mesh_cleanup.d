@@ -12,6 +12,7 @@
 import std.net.curl;
 import std.json;
 import std.conv : to;
+import batchless_control_helpers;
 
 void main() {}
 
@@ -55,7 +56,7 @@ JSONValue getChanges() {
     return parseJSON(get("http://localhost:8080/api/changes"));
 }
 
-// Required before mesh.triple, which the seam block below uses as its
+// Required before the seam block below, which uses a polygon command as its
 // positive control.
 void setPolygonMode() {
     auto resp = post("http://localhost:8080/api/command", "select.typeFrom polygon");
@@ -388,18 +389,16 @@ unittest { // both commands run their kernel inside ONE edit batch
     // "this counter did not move", and a dead counter — the g_isDocumentMesh
     // predicate uninstalled, the endpoint reading a stale copy — satisfies
     // that for free. So make the SAME counter move first, with a command that
-    // is deliberately still batchless: mesh.triple commits its geometry
-    // unbatched, exactly as mesh.cleanup did before Stage E1.
+    // is deliberately still batchless — `kBatchlessControlCommand`, which
+    // lives in tests/batchless_control_helpers.d because the answer has moved
+    // five times, most recently when stage L10-P0 gave mesh.triple a batch.
     auto c0 = getChanges();
-    postCommand(`{"id":"mesh.triple"}`);
+    postCommand(kBatchlessControlJson);
     auto c1 = getChanges();
     const long ctrl = c1["unbatchedGeometryCommits"].integer
                     - c0["unbatchedGeometryCommits"].integer;
     assert(ctrl > 0,
-        "positive control: an UNBATCHED command must tick "
-      ~ "unbatchedGeometryCommits, and mesh.triple ticked " ~ ctrl.to!string
-      ~ ". A dead counter passes the two assertions below for free "
-      ~ "(task 1903 §3.2 L2, M-DM).");
+        kBatchlessControlWhy ~ ctrl.to!string ~ kBatchlessControlFix);
 
     // (1) mesh.cleanup — the caller with the most to gain: a default sweep
     // runs weld, degenerate, unify and two compactions, each of which commits

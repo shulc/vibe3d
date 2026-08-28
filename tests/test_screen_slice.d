@@ -27,6 +27,7 @@
 import std.net.curl;
 import std.json;
 import std.conv : to;
+import batchless_control_helpers;
 
 void main() {}
 
@@ -245,14 +246,12 @@ unittest { // mesh.screenSlice runs its cut inside ONE edit batch
     // or the zero below is the zero of a dead counter (task 1903 §3.2 L2,
     // M-DM).
     auto c0 = getChanges();
-    postCmd("/api/command", `{"id":"mesh.triple"}`);
+    postCmd("/api/command", kBatchlessControlJson);
     auto c1 = getChanges();
     const long ctrl = c1["unbatchedGeometryCommits"].integer
                     - c0["unbatchedGeometryCommits"].integer;
     assert(ctrl > 0,
-        "positive control: mesh.triple ticked " ~ ctrl.to!string
-      ~ " unbatched geometry commit(s); a dead counter passes the assertion "
-      ~ "below for free");
+        kBatchlessControlWhy ~ ctrl.to!string ~ kBatchlessControlFix);
 
     loadCube();
     // The line is derived from the REAL viewport, exactly as the geometry cell

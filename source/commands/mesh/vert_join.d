@@ -7,6 +7,7 @@ import selection_product : repointToNothing;
 import view;
 import editmode;
 import math : Vec3;
+import change_bus : MeshEditScope;
 import snapshot : MeshSnapshot;
 import params : Param;
 
@@ -95,16 +96,37 @@ class MeshVertJoin : Command, Operator {
 
         snap = MeshSnapshot.capture(*mesh);
         auto selMask = mesh.selectedVertices;   // materialise once
-        mesh.collapseVerticesByMask(selMask, target);
-        // Weld the now-coincident verts. Tiny eps is enough since
-        // collapseVerticesByMask sets exact equality. The policy carries laws
-        // 1-3: keep `survivor` as the cluster head, pin it so a join that
-        // consumed every face still leaves it behind, and honour `keep`.
-        JoinWeldPolicy policy;
-        policy.survivor           = survivor;
-        policy.keepOrphanSurvivor = true;
-        policy.keepTwoPointFaces  = keep_;
-        size_t welded = mesh.weldVerticesByMask(selMask, 1e-12, false, policy);
+        // TASK 1903 STAGE L10-P0 (axis 0). An UNRECORDED `MeshEditBatch` at
+        // the command boundary. This command opened none, so every
+        // `commitChange` its kernels made stamped the mesh version and
+        // delivered on its own — one `changeBus.unbatchedGeometryCommits` tick
+        // each. Inside the batch they defer and stamp ONCE at `close()`.
+        //
+        // UNRECORDED, not recording: axis 0 is the COMMIT SEAM and moves no
+        // undo. Undo here is still the whole-mesh `MeshSnapshot` above.
+        //
+        // THE BATCH CLOSES BEFORE THE ROLLBACK: `snap.restore` is a wholesale
+        // `*mesh = …`, and the refusal path must leave no frame open and
+        // `changeBus.batchLeaks` unmoved (§S-6).
+        size_t welded;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh,
+                          MeshEditScope.Geometry | MeshEditScope.Marks);
+            ed.collapseVerticesByMask(selMask, target);
+            // Weld the now-coincident verts. Tiny eps is enough since
+            // collapseVerticesByMask sets exact equality. The policy carries
+            // laws 1-3: keep `survivor` as the cluster head, pin it so a join
+            // that consumed every face still leaves it behind, and honour
+            // `keep`.
+            JoinWeldPolicy policy;
+            policy.survivor           = survivor;
+            policy.keepOrphanSurvivor = true;
+            policy.keepTwoPointFaces  = keep_;
+            welded = ed.weldVerticesByMask(selMask, 1e-12, false, policy);
+            // The reference leaves NOTHING selected after a join (task 1210).
+            if (welded != 0) repointToNothing(mesh);
+            ed.close();
+        }
         if (welded == 0) {
             // Verts didn't actually weld (selection not contiguous?) —
             // restore and fail.
@@ -112,8 +134,6 @@ class MeshVertJoin : Command, Operator {
             snap = MeshSnapshot.init;
             return false;
         }
-        // The reference leaves NOTHING selected after a join (task 1210).
-        repointToNothing(mesh);
         return true;
     }
 

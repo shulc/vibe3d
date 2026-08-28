@@ -1467,3 +1467,101 @@ string explainMeshPlaneDiff(string[string] a, string[string] b)
 }
 
 private string clip(string s) { return s.length > 400 ? s[0 .. 400] ~ " …" : s; }
+
+// ---------------------------------------------------------------------------
+// makeTaggedGridWeldSets (task 1903 Stage L10) — `makeTaggedGridDirty` plus the
+// ONE plane no earlier stand can exhibit: an edge-set membership that MERGES.
+// ---------------------------------------------------------------------------
+
+/// The stand for stage L10's parity fixture
+/// (`tests/fixtures/undo_parity/weld_merge.json`) and for its witnesses.
+///
+/// WHY A SIXTH STAND AND NOT AN EDIT OF `makeTaggedGridDirty`. The same rule
+/// the four stands above follow: `makeTaggedGridDirty` is the stand of L5's
+/// frozen parity fixture (`tests/fixtures/undo_parity/cleanup.json`, read by
+/// `undo_parity_l5_test.d`), and changing what it CONTAINS changes what that
+/// frozen gate OBSERVES. This is a sibling, and the superset unittest below is
+/// the guard against the two drifting apart.
+///
+/// THE ONE ADDITION, and it is the stage's discriminating instrument.
+/// `makeTaggedGridDirty` tags edges `(0,vCol)` and `(1,vCol)`, whose shared
+/// endpoint `vCol` is DROPPED by the compaction — so it exercises the edge-set
+/// payload's DROP predicate (Stage L5-b) and the RENUMBER of the survivors, and
+/// **nothing else**. It cannot exhibit a MERGE by construction: no tagged edge
+/// is incident to the WELDED vertex.
+///
+/// This stand tags `(0, vCoin)` — `vCoin` being `makeTaggedGridDirty`'s
+/// coincident duplicate of vertex 1 — into its own edge set `"M"`. Post-weld
+/// `(0,vCoin)` re-keys to `(0,1)`, **which already exists and is NOT a member**,
+/// so `mesh_selsets.selSetRekeyEdges` OR-merges two keys into one. A merge is
+/// not invertible entry by entry: after it, "was this key here before?" is not
+/// derivable from the state, which is why Stage L10 records the pre-image
+/// (`Kind.EdgeSetRekey`, task 2310) rather than inverting per entry.
+///
+/// The FAILURE THIS EXISTS TO SEE moves no count: V, F, E, every mark word,
+/// `vertexSetMask`, `faceSetMask`, `faceMaterial`, `facePart` and every map
+/// compare EQUAL across it. Exactly two AA entries differ — one absent
+/// (`(0,vCoin)` lost its membership) and one spurious (`(0,1)` gained one).
+///
+/// A SEPARATE SET NAME, not `"E"`, and that is deliberate: with the merge in
+/// its own slot a cell can print the plane's two halves by name, and a red
+/// cannot be read as the DROP half (`"E"`) regressing.
+///
+/// The second half of the discriminator — a vertex in a named vertex set that
+/// is welded AWAY rather than merely orphaned — is INHERITED, not added:
+/// `makeTaggedGridDirty` already puts `vCoin` in set `"V"`. It is ASSERTED
+/// here so that a change to the parent which drops it reddens at this stand
+/// instead of quietly making this one weaker.
+Mesh makeTaggedGridWeldSets(int n = 3)
+{
+    import mesh_selsets : selSetEditEdge, SetEditMode;
+
+    Mesh m = makeTaggedGridDirty(n);
+
+    // `vCoin` is the FIRST of `makeTaggedGridDirty`'s three appended vertices,
+    // derived rather than hard-coded: the parent appends three, in the order
+    // coincident / collinear / orphan.
+    immutable uint vCoin = cast(uint) m.vertices.length - 3;
+    assert(m.vertices[vCoin] == m.vertices[1],
+           "makeTaggedGridWeldSets: the parent's coincident vertex is no longer "
+         ~ "a duplicate of vertex 1 — the weld this stand is about would not "
+         ~ "fire, and every cell on it would pass over an operation that did "
+         ~ "nothing");
+
+    immutable uint eMerge = m.edgeIndex(0, vCoin);
+    immutable uint eSurv  = m.edgeIndex(0, 1);
+    assert(eMerge != ~0u && eSurv != ~0u,
+           "makeTaggedGridWeldSets: the merge pair (0,vCoin) and (0,1) are not "
+         ~ "BOTH in the edge array — with only one of them present the weld "
+         ~ "re-keys onto a free slot, which is a RENUMBER and is already "
+         ~ "covered by the parent stand");
+
+    bool[] es = new bool[](m.edges.length);
+    es[eMerge] = true;
+    selSetEditEdge(m, "M", SetEditMode.add, es);
+
+    // Both halves of the pre-op image, asserted rather than assumed: a cell
+    // that reads a post-undo red must be able to rule out "the stand never had
+    // it" and "the stand always had it" without re-deriving either.
+    assert(m.edgeSetMask.get(edgeKeyOf(0, vCoin), 0UL) != 0,
+           "makeTaggedGridWeldSets: the merge-case edge is not a member");
+    assert(m.edgeSetMask.get(edgeKeyOf(0, 1), 0UL) == 0,
+           "makeTaggedGridWeldSets: the SURVIVOR edge (0,1) is ALREADY a "
+         ~ "member — the spurious half of the loss would then be invisible");
+
+    // Inherited, and asserted so the parent cannot weaken this stand quietly.
+    assert(m.vertexSetMask.length > vCoin && m.vertexSetMask[vCoin] != 0,
+           "makeTaggedGridWeldSets: the parent no longer puts the WELDED "
+         ~ "vertex in a named vertex set, so this stand covers only the "
+         ~ "orphan/drop case the parent already covered");
+
+    return m;
+}
+
+/// The edge-set registry's key, spelled once here so the stand and its cells
+/// agree with the registry rather than with each other.
+private ulong edgeKeyOf(uint a, uint b)
+{
+    import mesh : edgeKey;
+    return edgeKey(a, b);
+}

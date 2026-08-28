@@ -8,6 +8,7 @@
 import std.net.curl;
 import std.json;
 import std.conv    : to;
+import batchless_control_helpers;
 import std.math    : fabs;
 import std.algorithm : sort;
 
@@ -226,19 +227,19 @@ unittest { // reduce runs inside an edit batch, and publishes the Position class
     // counter — the g_isDocumentMesh predicate uninstalled, the endpoint
     // reading a stale copy — satisfies the first kind for free. So make the
     // SAME counter move first, with a command that is deliberately still
-    // batchless: mesh.triple commits its geometry unbatched, exactly as
-    // mesh.reduce did before Stage D2 (measured on this build: triple +2,
-    // reduce +4 before the conversion and +0 after).
+    // batchless. WHICH command that is has moved five times and now lives in
+    // ONE place, `kBatchlessControlCommand` in
+    // tests/batchless_control_helpers.d — stage L10-P0 gave mesh.triple, the
+    // fourth pick, a batch, and turned this line and nine like it red in one
+    // run. (Measured on this build before that: triple +2, reduce +4 before
+    // the D2 conversion and +0 after.)
     auto c0 = getChanges();
-    runCmd("mesh.triple");
+    runCmd(kBatchlessControlCommand);
     auto c1 = getChanges();
     const long ctrl = c1["unbatchedGeometryCommits"].integer
                     - c0["unbatchedGeometryCommits"].integer;
     assert(ctrl > 0,
-        "positive control: an UNBATCHED command must tick "
-      ~ "unbatchedGeometryCommits, and mesh.triple ticked " ~ ctrl.to!string
-      ~ ". A dead counter passes the two assertions below for free "
-      ~ "(task 1903 §3.2 L2, M-DM).");
+        kBatchlessControlWhy ~ ctrl.to!string ~ kBatchlessControlFix);
 
     auto before = getChanges();
     postCommand(`{"id":"mesh.reduce","params":{"ratio":0.5,"preserveBoundary":false}}`);

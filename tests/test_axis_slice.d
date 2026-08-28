@@ -18,6 +18,7 @@
 import std.net.curl;
 import std.json;
 import std.conv : to;
+import batchless_control_helpers;
 
 void main() {}
 
@@ -275,18 +276,16 @@ unittest { // both slice commands run every cut of the ladder inside ONE batch
     // "this counter did not move", and a dead counter — the g_isDocumentMesh
     // predicate uninstalled, the endpoint reading a stale copy — satisfies
     // that for free. So make the SAME counter move first, with a command that
-    // is deliberately still batchless: mesh.triple commits its geometry
-    // unbatched, exactly as mesh.axisSlice did before Stage E3.
+    // is deliberately still batchless — `kBatchlessControlCommand`, which
+    // lives in tests/batchless_control_helpers.d because the answer has moved
+    // five times, most recently when stage L10-P0 gave mesh.triple a batch.
     auto c0 = getChanges();
-    runCommand("mesh.triple");
+    runCommand(kBatchlessControlCommand);
     auto c1 = getChanges();
     const long ctrl = c1["unbatchedGeometryCommits"].integer
                     - c0["unbatchedGeometryCommits"].integer;
     assert(ctrl > 0,
-        "positive control: an UNBATCHED command must tick "
-      ~ "unbatchedGeometryCommits, and mesh.triple ticked " ~ ctrl.to!string
-      ~ ". A dead counter passes every assertion below for free "
-      ~ "(task 1903 §3.2 L2, M-DM).");
+        kBatchlessControlWhy ~ ctrl.to!string ~ kBatchlessControlFix);
 
     // (1) ONE cut. Measured pre-E3 delta is in the message, in ONE place —
     // a comment carrying a second copy is the copy that drifts (E1 review).

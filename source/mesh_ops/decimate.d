@@ -57,14 +57,23 @@ module mesh_ops.decimate;
 //     code (the only site that arms it is
 //     `tests/unit/mesh_edit_delta_face_reindex_test.d`).
 //
-//     So what L10 owes this family is the same decision Stage B named for
-//     Stage J / L8 on the `&rw` `rewriteFaces` site: ARM `FaceReindex` for
-//     this kernel, or REFUSE to write a delta at all. Switching the
-//     constructor and stopping there would ship a delta whose `revert` returns
-//     true and silently loses half the mesh. The unit test in
-//     `tests/unit/mesh_ops/decimate_test.d` pins the incomplete revert as a
-//     KNOWN-INCOMPLETE assertion so that L10 cannot fix the face side without
-//     being told to come back here.
+//     STAGE L10 ANSWERED IT, AND NOT IN THIS FILE (2026-08-28). The decision
+//     was ARM rather than refuse, and the arm went where the rewrite is: one
+//     `faceReindexScope()` around `Mesh.applyVertexRemapAndRebuild`'s single
+//     `rewriteFaces`. This family inherited the face side through the weld it
+//     already calls — `reduce` is a member of the WELD group, so its face half
+//     was never this kernel's to publish. Re-measured on the same stand: the
+//     op-log is `[SetPos, MeshMapDelta, FaceReindex, RemoveVerts, Reindex]`
+//     and `revert()` restores **F=192 of 192**.
+//
+//     WHAT REMAINS THIS FILE'S: the batch here is still `unrecorded`, so the
+//     op-log above exists only under a recording batch opened by a test. The
+//     command `mesh.reduce` is migrated at its own site
+//     (`source/commands/mesh/reduce.d`); the tool's preview path is why this
+//     constructor is not simply switched (§9 forbids an op-log per drag
+//     frame). `tests/unit/mesh_ops/decimate_test.d` now pins the COMPLETE
+//     revert, and its two assertions have separate mutations: the recorded
+//     finalise write below and the arm named above.
 //
 // The kernel BODY is otherwise unchanged: every edit is an `ed.` prefix, plus
 // the one recorded write described at the finalize below.

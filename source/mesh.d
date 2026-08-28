@@ -4088,7 +4088,8 @@ struct Mesh {
         // nothing about it. Read the sibling's note before arming here — the
         // measurement it records was taken through the OTHER function and does
         // not transfer by inspection.
-        rewriteFaces(this, newFaces, FaceSource(oldOfNew));
+        { auto arm = faceReindexScope();
+          rewriteFaces(this, newFaces, FaceSource(oldOfNew)); }
         setFaceMarksFrom(faceMarks, ~Marks.Select);
         clearFaceSelectionResize();
 

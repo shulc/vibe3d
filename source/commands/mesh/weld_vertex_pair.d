@@ -6,6 +6,7 @@ import mesh;
 import view;
 import editmode;
 import params : Param;
+import change_bus : MeshEditScope;
 import snapshot : MeshSnapshot;
 
 /// Weld vertex `source` into vertex `target`: source is removed and its
@@ -50,9 +51,26 @@ class MeshWeldVertexPair : Command, Operator {
         if (cast(uint)target_ >= mesh.vertices.length) return false;
 
         snap = MeshSnapshot.capture(*mesh);
-        size_t welded = mesh.weldVertexPair(cast(uint)target_,
-                                            cast(uint)source_);
+        // TASK 1903 STAGE L10-P0 (axis 0). An UNRECORDED `MeshEditBatch` at
+        // the command boundary. This command opened none, so every
+        // `commitChange` its kernels made stamped the mesh version and
+        // delivered on its own — one `changeBus.unbatchedGeometryCommits` tick
+        // each. Inside the batch they defer and stamp ONCE at `close()`.
+        //
+        // UNRECORDED, not recording: axis 0 is the COMMIT SEAM and moves no
+        // undo. Undo here is still the whole-mesh `MeshSnapshot` above.
+        size_t welded;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh,
+                          MeshEditScope.Geometry | MeshEditScope.Marks);
+            welded = ed.weldVertexPair(cast(uint)target_, cast(uint)source_);
+            ed.close();
+        }
         if (welded == 0) {
+            // NO rollback here, and that is not an omission: a `weldVertexPair`
+            // that welds nothing has mutated nothing, so there is nothing to
+            // restore — which is why this arm drops the snapshot rather than
+            // replaying it, unlike `vert.join` and `mesh.mergeFaces` above.
             snap = MeshSnapshot.init;
             return false;
         }

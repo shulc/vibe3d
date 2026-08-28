@@ -54,25 +54,41 @@ class MeshTriple : Command, Operator {
             ? mesh.selectedFaces
             : mesh.visibleFaceMask();
 
-        uint[] faceOrigin;
-        mesh.triangulateFacesByMask(mask, &faceOrigin);
+        // TASK 1903 STAGE L10-P0 (axis 0). An UNRECORDED `MeshEditBatch` at
+        // the command boundary. Nine of this stage's thirteen commands opened
+        // none at all, so every `commitChange` their kernels made stamped the
+        // mesh version and delivered on its own — `changeBus`'s
+        // `unbatchedGeometryCommits` counted each one. Inside the batch they
+        // defer into the frame and stamp ONCE at `close()`.
+        //
+        // UNRECORDED, not recording, and that is the whole point of separating
+        // this commit from the migration: axis 0 is the COMMIT SEAM and moves
+        // no undo. Undo here is still the whole-mesh `MeshSnapshot` above.
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh,
+                          MeshEditScope.Geometry | MeshEditScope.Marks);
+            uint[] faceOrigin;
+            ed.triangulateFacesByMask(mask, &faceOrigin);
 
-        // Re-select children of originally-selected parents.
-        if (hasSelection) {
-            mesh.resetSelection();
-            foreach (k, parentFi; faceOrigin) {
-                if (parentFi < prevSelectedFaces.length
-                    && prevSelectedFaces[parentFi])
-                    mesh.selectFace(cast(int)k);
+            // Re-select children of originally-selected parents.
+            if (hasSelection) {
+                ed.resetSelection();
+                foreach (k, parentFi; faceOrigin) {
+                    if (parentFi < prevSelectedFaces.length
+                        && prevSelectedFaces[parentFi])
+                        ed.selectFace(cast(int)k);
+                }
             }
-        }
 
-        // TASK 1906 STAGE 2 — `publishChange`, not `noteChange`: this is the
-        // command's LAST mesh publisher, and a command's tail must DELIVER.
-        // `Mesh.publishChange`'s doc comment carries the whole rule and the
-        // reason (same flags, same version-silence, one delivery at the batch
-        // close — but structural instead of incidental).
-        mesh.publishChange(MeshEditScope.Geometry);
+            // TASK 1906 STAGE 2 — `publishChange`, not `noteChange`: this is
+            // the command's LAST mesh publisher, and a command's tail must
+            // DELIVER. It sits INSIDE the batch as of Stage L10-P0: with a
+            // frame open the delivery defers and `close()` makes it, which is
+            // the same one delivery by a structural route instead of an
+            // incidental one.
+            ed.publishChange(MeshEditScope.Geometry);
+            ed.close();
+        }
         return true;
     }
 

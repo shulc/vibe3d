@@ -760,15 +760,32 @@ unittest // W-7-P3-h: the unarmed weld TWIN — what this closes, what L10 still
         "the twin funnel's undo lost the Point-map value of the consumed "
       ~ "vertex. " ~ mapResidual("map:W", preW, pointMapValues(m, "W")));
 
-    // FACT 2 — still owed by L10, pinned on the MEASURED deficit so that
-    // closing it is loud.
-    assert(m.edges.length == preE - 1,
-        format("this pin records what stage L10 STILL OWES on the weld twin: "
-             ~ "`applyVertexRemapAndRebuild`'s `rewriteFaces` is UNARMED, so "
-             ~ "the reverse cannot restore the edge the weld collapsed — E "
-             ~ "came back %d against a pre-op %d. When L10 arms the twin this "
-             ~ "line reddens BY DESIGN and its expectation becomes `preE` in "
-             ~ "that same commit; card 2310's cell A carries the identical pin "
-             ~ "for the `edgeSetMask` plane on this funnel",
+    // FACT 2 — CLOSED BY STAGE L10, and the arithmetic of the flip is written
+    // here rather than in a commit message. This line read `preE - 1` until
+    // 2026-08-28: the twin's `rewriteFaces` was UNARMED, so `FaceReindex`
+    // never entered the log, the pre-weld windings were never reinstalled, and
+    // `rebuildEdges` re-derived the edge array from the POST-weld faces —
+    // **11 edges against a pre-op 12**, a deficit of exactly the one edge the
+    // weld collapsed. Stage L10 wrapped that rewrite in `faceReindexScope()`
+    // (`source/mesh.d:applyVertexRemapAndRebuild`), the log became
+    // `[FaceReindex RemoveVerts Reindex]`, and E came back **12 of 12**.
+    // The pin reddened BY DESIGN in that commit, exactly as the sentence it
+    // replaced predicted, and this is its armed expectation.
+    //
+    // THE ORDER IS WHY THERE IS NO DOUBLE REVERT, and it was MEASURED rather
+    // than reasoned (the identical prediction died once at `arrayFacesGrid`,
+    // plan §5.3 MAJOR-4, where arming landed E=48 against a pre-op E=24):
+    // the LIFO replay runs `Reindex⁻¹` then `RemoveVerts⁻¹` — re-opening the
+    // pre-compaction vertex space — BEFORE `FaceReindex⁻¹` installs windings
+    // that name pre-compaction indices.
+    assert(m.edges.length == preE,
+        format("the weld twin's armed revert must restore the edge the weld "
+             ~ "collapsed: E came back %d against a pre-op %d. This is stage "
+             ~ "L10's `faceReindexScope()` at "
+             ~ "`Mesh.applyVertexRemapAndRebuild`; deleting that arm returns "
+             ~ "this to the pre-L10 deficit of exactly one edge (11 of 12) "
+             ~ "while `revert()` still answers TRUE and V and F still "
+             ~ "round-trip — which is why this line, and not a count of "
+             ~ "vertices or faces, is the one that can see it",
                m.edges.length, preE));
 }

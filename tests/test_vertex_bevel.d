@@ -16,6 +16,7 @@
 import std.net.curl;
 import std.json;
 import std.conv   : to;
+import batchless_control_helpers;
 import std.math   : abs, sqrt;
 import std.format : format;
 
@@ -284,21 +285,19 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest { // mesh.vertexBevel runs the whole chamfer inside ONE batch
     // POSITIVE CONTROL FIRST. Both assertions below are "this counter did not
-    // move", and a dead counter satisfies that for free. mesh.triple is
+    // move", and a dead counter satisfies that for free.
+    // `kBatchlessControlCommand` is
     // deliberately still batchless, so it makes the SAME counter move.
     resetCube();
     cmdArg("select.typeFrom vertex");
     postSelect("vertices", []);
     auto c0 = parseJSON(get("http://localhost:8080/api/changes"));
-    postCommand(`{"id":"mesh.triple"}`);
+    postCommand(kBatchlessControlJson);
     auto c1 = parseJSON(get("http://localhost:8080/api/changes"));
     immutable long ctrl = c1["unbatchedGeometryCommits"].integer
                         - c0["unbatchedGeometryCommits"].integer;
     assert(ctrl > 0,
-        "positive control: an UNBATCHED command must tick "
-      ~ "unbatchedGeometryCommits, and mesh.triple ticked " ~ ctrl.to!string
-      ~ " — a dead counter passes the assertions below for free "
-      ~ "(task 1903 §3.2 L2).");
+        kBatchlessControlWhy ~ ctrl.to!string ~ kBatchlessControlFix);
 
     // (1) ONE corner.
     resetCube();

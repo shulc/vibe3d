@@ -46,6 +46,7 @@
 import std.net.curl;
 import std.json;
 import std.conv    : to;
+import batchless_control_helpers;
 import std.format  : format;
 import std.math    : cos, sin, PI, sqrt, fabs;
 import core.thread : Thread;
@@ -231,16 +232,13 @@ unittest {
     assert(s["status"].str == "ok", "clear select failed: " ~ s.toString);
 
     auto b = changes();
-    cmd(`{"id":"mesh.triple"}`);
+    cmd(kBatchlessControlJson);
     auto a = changes();
 
     immutable long ctrl = a["unbatchedGeometryCommits"].integer
                         - b["unbatchedGeometryCommits"].integer;
     assert(ctrl > 0,
-        "positive control: an UNBATCHED command must tick "
-      ~ "unbatchedGeometryCommits, and mesh.triple ticked " ~ ctrl.to!string
-      ~ ". A dead counter passes every assertion in this file for free "
-      ~ "(task 1903 §3.2 L2).");
+        kBatchlessControlWhy ~ ctrl.to!string ~ kBatchlessControlFix);
 }
 
 // ---------------------------------------------------------------------------

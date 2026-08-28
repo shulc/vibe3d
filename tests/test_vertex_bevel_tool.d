@@ -10,6 +10,7 @@
 import std.net.curl;
 import std.json;
 import std.conv : to;
+import batchless_control_helpers;
 import std.math : sqrt;
 
 void main() {}
@@ -136,12 +137,12 @@ unittest {
     // POSITIVE CONTROL: the same counter, moved by a deliberately batchless
     // command, so a dead counter cannot pass the assertion below for free.
     auto c0 = parseJSON(cast(string)get("http://localhost:8080/api/changes"));
-    postCommand(`{"id":"mesh.triple"}`);
+    postCommand(kBatchlessControlJson);
     auto c1 = parseJSON(cast(string)get("http://localhost:8080/api/changes"));
-    assert(c1["unbatchedGeometryCommits"].integer
-         - c0["unbatchedGeometryCommits"].integer > 0,
-        "positive control: mesh.triple must tick unbatchedGeometryCommits — a "
-      ~ "dead counter passes the assertion below for free (task 1903 §3.2 L2)");
+    immutable long ctrl = c1["unbatchedGeometryCommits"].integer
+                        - c0["unbatchedGeometryCommits"].integer;
+    assert(ctrl > 0,
+        kBatchlessControlWhy ~ ctrl.to!string ~ kBatchlessControlFix);
 
     resetCube();
     postSelect("vertices", [0]);

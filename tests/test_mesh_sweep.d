@@ -30,6 +30,7 @@
 import std.net.curl;
 import std.json;
 import std.conv : to;
+import batchless_control_helpers;
 
 void main() {}
 
@@ -366,7 +367,9 @@ unittest { // mesh.sweep runs its kernel inside ONE caller-held edit batch
     // "this counter did not move", and a dead counter — the g_isDocumentMesh
     // predicate uninstalled, the endpoint reading a stale copy — satisfies that
     // for free. So make the SAME counter move first, with a command that is
-    // deliberately still batchless: mesh.triple commits its geometry unbatched,
+    // deliberately still batchless — `kBatchlessControlCommand`, which lives
+    // in tests/batchless_control_helpers.d because the answer has moved five
+    // times,
     // exactly as mesh.sweep's open-profile arm did before Stage E2.
     postJson("/api/reset", "");          // the default cube, so triple has work
     setSelection("polygons", []);
@@ -379,13 +382,10 @@ unittest { // mesh.sweep runs its kernel inside ONE caller-held edit batch
     immutable long leaks0    = busCounter("batchLeaks");
     immutable long refusals0 = busCounter("batchUpgradeRefusals");
     immutable long ctl0 = busCounter("unbatchedGeometryCommits");
-    cmd(`{"id":"mesh.triple"}`);
+    cmd(kBatchlessControlJson);
     immutable long ctrl = busCounter("unbatchedGeometryCommits") - ctl0;
     assert(ctrl > 0,
-        "positive control: an UNBATCHED command must tick "
-      ~ "unbatchedGeometryCommits, and mesh.triple ticked " ~ ctrl.to!string
-      ~ ". A dead counter passes every assertion below for free "
-      ~ "(task 1903 §3.2 L2).");
+        kBatchlessControlWhy ~ ctrl.to!string ~ kBatchlessControlFix);
 
     // (1) CLOSED profile reached through an EDGE CYCLE. This is the
     // DISCRIMINATING cell of the three: it runs the arm that carried the D3

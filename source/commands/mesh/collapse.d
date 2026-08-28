@@ -6,6 +6,7 @@ import mesh;
 import view;
 import editmode;
 import math : Vec3;
+import change_bus : MeshEditScope;
 import snapshot : MeshSnapshot;
 
 /// Tier 1.x: `mesh.collapse`. Collapses the selected elements to a point,
@@ -73,8 +74,18 @@ class MeshCollapse : Command, Operator {
 
         Vec3 centroid = Vec3(sum.x / count, sum.y / count, sum.z / count);
         snap = MeshSnapshot.capture(*mesh);
-        mesh.collapseVerticesByMask(sel, centroid);
-        size_t welded = mesh.weldVerticesByMask(sel, 1e-12);
+        // TASK 1903 STAGE L10-P0 (axis 0) — an UNRECORDED `MeshEditBatch` at
+        // the command boundary; see this class's doc comment. The batch closes
+        // BEFORE the rollback: `snap.restore` is a wholesale `*mesh = …` and
+        // the refusal path must leave no frame open (§S-6).
+        size_t welded;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh,
+                          MeshEditScope.Geometry | MeshEditScope.Marks);
+            ed.collapseVerticesByMask(sel, centroid);
+            welded = ed.weldVerticesByMask(sel, 1e-12);
+            ed.close();
+        }
         if (welded == 0) {
             snap.restore(*mesh);
             snap = MeshSnapshot.init;
@@ -90,7 +101,17 @@ class MeshCollapse : Command, Operator {
         // pre-op selection (weldVerticesByMask clears edge selection).
         auto sel = mesh.selectedEdges;
         snap = MeshSnapshot.capture(*mesh);
-        size_t welded = mesh.collapseEdgesByMask(sel);
+        // TASK 1903 STAGE L10-P0 (axis 0) — an UNRECORDED `MeshEditBatch` at
+        // the command boundary; see this class's doc comment. The batch closes
+        // BEFORE the rollback: `snap.restore` is a wholesale `*mesh = …` and
+        // the refusal path must leave no frame open (§S-6).
+        size_t welded;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh,
+                          MeshEditScope.Geometry | MeshEditScope.Marks);
+            welded = ed.collapseEdgesByMask(sel);
+            ed.close();
+        }
         if (welded == 0) {
             snap.restore(*mesh);
             snap = MeshSnapshot.init;
@@ -104,7 +125,17 @@ class MeshCollapse : Command, Operator {
 
         auto sel = mesh.selectedFaces;
         snap = MeshSnapshot.capture(*mesh);
-        size_t welded = mesh.collapseFacesByMask(sel);
+        // TASK 1903 STAGE L10-P0 (axis 0) — an UNRECORDED `MeshEditBatch` at
+        // the command boundary; see this class's doc comment. The batch closes
+        // BEFORE the rollback: `snap.restore` is a wholesale `*mesh = …` and
+        // the refusal path must leave no frame open (§S-6).
+        size_t welded;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh,
+                          MeshEditScope.Geometry | MeshEditScope.Marks);
+            welded = ed.collapseFacesByMask(sel);
+            ed.close();
+        }
         if (welded == 0) {
             snap.restore(*mesh);
             snap = MeshSnapshot.init;

@@ -58,15 +58,27 @@ class MeshDetriangulate : Command, Operator {
             ? mesh.selectedFaces
             : mesh.visibleFaceMask();
 
-        mesh.detriangulateFacesByMask(mask);
-        mesh.resetSelection();
-
-        // TASK 1906 STAGE 2 — `publishChange`, not `noteChange`: this is the
-        // command's LAST mesh publisher, and a command's tail must DELIVER.
-        // `Mesh.publishChange`'s doc comment carries the whole rule and the
-        // reason (same flags, same version-silence, one delivery at the batch
-        // close — but structural instead of incidental).
-        mesh.publishChange(MeshEditScope.Geometry);
+        // TASK 1903 STAGE L10-P0 (axis 0). An UNRECORDED `MeshEditBatch` at
+        // the command boundary. Nine of this stage's thirteen commands opened
+        // none at all, so every `commitChange` their kernels made stamped the
+        // mesh version and delivered on its own — `changeBus`'s
+        // `unbatchedGeometryCommits` counted each one. Inside the batch they
+        // defer into the frame and stamp ONCE at `close()`.
+        //
+        // UNRECORDED, not recording: axis 0 is the COMMIT SEAM and moves no
+        // undo. Undo here is still the whole-mesh `MeshSnapshot` above.
+        //
+        // The `publishChange` tail sits INSIDE the batch as of this stage —
+        // with a frame open the delivery defers and `close()` makes it, which
+        // is the same one delivery by a structural route.
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh,
+                          MeshEditScope.Geometry | MeshEditScope.Marks);
+            ed.detriangulateFacesByMask(mask);
+            ed.resetSelection();
+            ed.publishChange(MeshEditScope.Geometry);
+            ed.close();
+        }
         return true;
     }
 

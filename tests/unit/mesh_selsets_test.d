@@ -425,18 +425,20 @@ unittest { // test 2c — the MERGE weld through UNDO, funnel A: weldVerticesByM
         "the revert must restore V and F — and it ALREADY DID before this commit: "
       ~ "every count that CAN round-trip on this funnel is equal across the defect, "
       ~ "which is why the two rows below are the only ones that can see it");
-    // MEASURED ON THIS FUNNEL, 2026-08-28, and pinned rather than skipped:
-    // E does NOT round-trip here. `applyVertexRemapAndRebuild`'s `rewriteFaces`
-    // is the twin L5-a deliberately left UNARMED (its own note in mesh.d says so),
-    // so the pre-weld windings are never restored and `finalize`'s rebuildEdges
-    // re-derives 11 edges from the post-weld faces instead of 12. That is task
-    // 1903 §P-L10-1's gap, NOT this commit's, and arming it is L10's. When L10
-    // arms it this row reddens BY DESIGN and its expectation becomes `preE`.
-    assert(m.edges.length == preE - 1,
-        "E after revert is " ~ to!string(m.edges.length) ~ ", expected " ~ to!string(preE - 1)
-      ~ " (pre-op " ~ to!string(preE) ~ "). See the note above: this funnel's face "
-      ~ "rewrite is unarmed, so one edge does not come back. If P-L10-1 armed it, "
-      ~ "change this to `== preE` in the SAME commit.");
+    // CLOSED BY STAGE L10 (2026-08-28), and the flip is recorded here with its
+    // arithmetic. This row read `preE - 1` while `applyVertexRemapAndRebuild`'s
+    // `rewriteFaces` was the twin L5-a deliberately left UNARMED: no
+    // `FaceReindex` entered the log, the pre-weld windings were never
+    // reinstalled, and `rebuildEdges` re-derived **11** edges from the
+    // post-weld faces against a pre-op **12**. L10 wrapped that one rewrite in
+    // `faceReindexScope()` and E came back whole. The row reddened BY DESIGN
+    // in that commit, which is what the sentence it replaced asked for.
+    assert(m.edges.length == preE,
+        "E after revert is " ~ to!string(m.edges.length) ~ ", expected " ~ to!string(preE)
+      ~ ". This funnel's face rewrite is ARMED as of stage L10 "
+      ~ "(`Mesh.applyVertexRemapAndRebuild`); deleting that arm returns E to "
+      ~ preE.to!string ~ " - 1 while `revert()` still answers TRUE and V and F "
+      ~ "still round-trip.");
 
     // THE WITNESS. Both directions, both values printed, because the failure is
     // symmetric: the membership must come BACK to (4,5) and must be GONE from
@@ -449,10 +451,22 @@ unittest { // test 2c — the MERGE weld through UNDO, funnel A: weldVerticesByM
         "undo left a SPURIOUS edge-set membership on the survivor edge (0,5), "
       ~ "which was not a member before the weld. " ~ mergePlaneReport(m));
 
-    // NO user-visible `selSetApplyEdge` tail on THIS funnel: edge (4,5) does not
-    // exist after the revert (see the E row above), so a selection-based check
-    // here would be measuring P-L10-1's gap, not this commit's. Test 2d, on the
-    // funnel whose rewrite IS armed, carries that half.
+    // The user-visible tail. Until stage L10 armed this funnel's rewrite, edge
+    // (4,5) did not EXIST after the revert (see the E row above), so no
+    // selection-based check could run here at all and test 2d — on the funnel
+    // whose rewrite was already armed — carried this half alone. It exists
+    // again now, so the membership is checked the way a user would see it:
+    // through `selSetApplyEdge`, not only through the registry AA.
+    m.clearEdgeSelection();
+    selSetApplyEdge(m, "E", SetApplyMode.replace);
+    const eBack = m.edgeIndex(4, 5);
+    assert(eBack != cast(uint)~0u,
+        "the armed revert must bring edge (4,5) back into the edge array — "
+      ~ "without it the row above is the only witness and this tail is inert");
+    assert(m.isEdgeSelected(eBack),
+        "selecting set \"E\" after the revert must select edge (4,5): the "
+      ~ "registry AA and the user-visible selection must agree, and a "
+      ~ "membership that only the AA can see is not the plane a user has.");
 }
 
 unittest { // test 2d — the MERGE weld through UNDO, funnel B: weldCoincidentVertices -> applyVertexRemap

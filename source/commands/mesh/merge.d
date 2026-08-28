@@ -62,8 +62,50 @@ class MeshMergeFaces : Command, Operator {
         // Step 3: snapshot for undo.
         snap = MeshSnapshot.capture(*mesh);
 
-        // Step 4: run the kernel.
-        size_t dissolved = mesh.mergeFacesByMask(mesh.selectedFaces);
+        // TASK 1903 STAGE L10-P0 (axis 0). An UNRECORDED `MeshEditBatch` at
+        // the command boundary. This command opened none, so every
+        // `commitChange` the kernel and the re-point made stamped the mesh
+        // version and delivered on its own, one `unbatchedGeometryCommits` tick
+        // each. Inside the batch they defer and stamp ONCE at `close()`.
+        //
+        // UNRECORDED, not recording: axis 0 is the COMMIT SEAM and moves no
+        // undo. Undo here is still the whole-mesh `MeshSnapshot` above.
+        //
+        // THE BATCH CLOSES BEFORE THE ROLLBACK, deliberately. `snap.restore`
+        // is a wholesale `*mesh = …`, and the refusal path must leave the
+        // process in the state §S-6 describes — no history entry, no leaked
+        // frame, `changeBus.batchLeaks` unmoved. Closing first is the spelling
+        // that says so; leaving the restore inside would work today (the
+        // depth counter is at module scope) and would be one refactor away
+        // from not working.
+        size_t dissolved;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh,
+                          MeshEditScope.Geometry | MeshEditScope.Marks);
+
+            // Step 4: run the kernel.
+            dissolved = ed.mergeFacesByMask(mesh.selectedFaces);
+
+            if (dissolved != 0) {
+                // Step 7: re-point the selection at the PRODUCT — the merged
+                // face(s) (task 1180). `resetSelection` is kept for its RESIZE
+                // half (the face arrays shrank under us) and for the clear;
+                // the kernel then names the merged polygons it appended, which
+                // is what the reference leaves selected. Before 1180 this step
+                // ended at the clear, and the merged polygon — the whole
+                // result of the command — was selected by nothing.
+                ed.resetSelection();
+                repointToFaces(mesh, mesh.dissolveProductFaces());
+
+                // Steps 8-9: notify bus + refresh GPU/caches.
+                // TASK 1906 STAGE 2 — `publishChange`, not `noteChange`: this
+                // is the command's LAST mesh publisher, and a command's tail
+                // must DELIVER. Inside the batch it defers and `close()`
+                // makes it.
+                ed.publishChange(MeshEditScope.Geometry);
+            }
+            ed.close();
+        }
 
         // Step 5: if nothing was dissolved (non-adjacent / disjoint selection),
         // restore the snapshot and bail — no side-effects, no undo entry.
@@ -75,23 +117,6 @@ class MeshMergeFaces : Command, Operator {
 
         // Step 6: topology changed — drop active tool.
         if (onTopologyChange !is null) onTopologyChange();
-
-        // Step 7: re-point the selection at the PRODUCT — the merged face(s)
-        // (task 1180). `resetSelection` is kept for its RESIZE half (the face
-        // arrays shrank under us) and for the clear; the kernel then names the
-        // merged polygons it appended, which is what the reference leaves
-        // selected. Before 1180 this step ended at the clear, and the merged
-        // polygon — the whole result of the command — was selected by nothing.
-        mesh.resetSelection();
-        repointToFaces(mesh, mesh.dissolveProductFaces());
-
-        // Steps 8-9: notify bus + refresh GPU/caches.
-        // TASK 1906 STAGE 2 — `publishChange`, not `noteChange`: this is the
-        // command's LAST mesh publisher, and a command's tail must DELIVER.
-        // `Mesh.publishChange`'s doc comment carries the whole rule and the
-        // reason (same flags, same version-silence, one delivery at the batch
-        // close — but structural instead of incidental).
-        mesh.publishChange(MeshEditScope.Geometry);
         return true;
     }
 

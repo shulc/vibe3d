@@ -261,21 +261,29 @@ unittest // a recording reduce declares kReduceEditScope and records the SetPos
              ~ "topology and leave every coordinate at its post-collapse "
              ~ "value (task 1903 §2.5, §5.7 M-D2)", setPosEntries));
 
-    // (c) KNOWN-INCOMPLETE, AND L10 FLIPS THIS. Reverting the delta restores
-    //     the VERTEX side and not the FACE side: the dropped faces leave
+    // (c) CLOSED BY STAGE L10, and NOT by a line in this file. Until
+    //     2026-08-28 this block asserted the opposite: the dropped faces leave
     //     through weldVerticesByMask → Mesh.applyVertexRemapAndRebuild →
     //     mesh_planes.rewriteFaces, whose op-log publisher is gated on
-    //     `MeshEditTracker.wantsFaceReindex` (`rewriteFaces`'s own
-    //     `m.wantsFaceReindexRecording()` gate) —
-    //     default false and armed by no production code. So `revert()` answers
-    //     TRUE over a mesh that has lost half its faces, which is exactly the
-    //     shape Stage B named as the precondition for the `&rw` site: a kernel
-    //     migrating to a delta must ARM FaceReindex or REFUSE to write one.
+    //     `MeshEditTracker.wantsFaceReindex`, and that ONE rewrite was the twin
+    //     Stage L5-a deliberately left unarmed. So `revert()` answered TRUE
+    //     over a mesh that had lost half its faces — 96 of 192 on this stand.
     //
-    //     This assertion is written to REDDEN when that is fixed. When L10
-    //     arms the face side, `revert` will restore preF and the line below
-    //     fails with the message naming itself — flip it to
-    //     `assert(m.faces.length == preF)` then, and delete this paragraph.
+    //     WHAT ACTUALLY CHANGED, because it matters for where to look when
+    //     this line moves again: `mesh_ops/decimate.d` was not touched. L10
+    //     wrapped `applyVertexRemapAndRebuild`'s single `rewriteFaces` in
+    //     `faceReindexScope()` and this family inherited the face side through
+    //     the weld it already called. `reduce` is a member of the WELD group,
+    //     which is why its face half was never `decimate.d`'s to publish.
+    //
+    //     THE PAIR BELOW IS THE POINT. Assertion (b) — one `Kind.SetPos` from
+    //     the recorded finalise — and this one are the two halves of M-D2, and
+    //     each has its own mutation: reverting `decimate.d:561` to a raw
+    //     `vertices[i] = …` write leaves THIS line green and reddens (b) plus
+    //     the position plane; deleting the arm at
+    //     `Mesh.applyVertexRemapAndRebuild` leaves (b) green and reddens THIS
+    //     one. A cell asserting only one of the two cannot tell a lost
+    //     position from a lost face.
     const bool reverted = d.revert(m);
     assert(reverted,
         "revert() refused the delta outright — that is a THIRD state, neither "
@@ -285,17 +293,15 @@ unittest // a recording reduce declares kReduceEditScope and records the SetPos
         format("revert restored %d vertices of %d — the vertex side of this "
              ~ "delta (RemoveVerts + Reindex + SetPos) is the half that IS "
              ~ "complete today", m.vertices.length, preV));
-    assert(m.faces.length == postF && m.faces.length != preF,
-        format("L10 FLIPS THIS. revert() restored %d faces (pre-reduce %d, "
-             ~ "post-reduce %d). At Stage D2 the face side of a reduce delta "
-             ~ "is NOT recorded — rewriteFaces' FaceReindex publisher is "
-             ~ "disarmed by default — so revert leaves the post-reduce face "
-             ~ "count and still answers true. If this line just went red "
-             ~ "because the faces came back, that is L10 landing: change this "
-             ~ "to `m.faces.length == preF`, and update decision (3) in "
-             ~ "source/mesh_ops/decimate.d's header, which says L10 owes this "
-             ~ "family a face-side publisher decision rather than a "
-             ~ "constructor flip", m.faces.length, preF, postF));
+    assert(m.faces.length == preF,
+        format("revert restored %d faces of a pre-reduce %d (post-reduce %d). "
+             ~ "The face side of a reduce delta rides on the arming of "
+             ~ "`Mesh.applyVertexRemapAndRebuild`'s `rewriteFaces` (stage "
+             ~ "L10) — `decimate.d` publishes no face entry of its own and is "
+             ~ "not where to look. Deleting that arm returns this number to "
+             ~ "%d while `revert()` still answers TRUE, which is the shape "
+             ~ "this cell existed to refuse",
+               m.faces.length, preF, postF, postF));
 }
 
 unittest { // THE WITNESS: reduceToTarget's collapse heap must not allocate

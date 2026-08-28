@@ -53,7 +53,8 @@ import mesh_ops.extrude;
 import mesh_ops.loop_slice;
 import mesh_ops.cleanup;
 import mesh_ops.revolve;
-import tests.unit.fixtures : makeTaggedGridFull, dumpMeshPlanes, diffMeshPlanes,
+import tests.unit.fixtures : makeTaggedGridFull, makeTaggedGridWeldSets,
+                             dumpMeshPlanes, diffMeshPlanes,
                              explainMeshPlaneDiff;
 
 private size_t countKind(ref MeshEditDelta d, MeshOpEntry.Kind k)
@@ -760,6 +761,83 @@ unittest // armed: mesh_ops.cleanup.cleanDegenerateFaces
     assertNonSelectMarksSurvive("cleanDegenerateFaces", m);
 }
 
+/// MEASURED 2026-08-28 on `makeTaggedGridWeldSets(3)`, and it is the SAME two
+/// planes the armed sibling `Mesh.applyVertexRemap` records — which is the
+/// point: the two funnels differ in who calls them, not in what their arming
+/// restores. Both are Select-class, and both are written by the
+/// `setFaceMarksFrom(faceMarks, ~Marks.Select)` /
+/// `clearFaceSelectionResize()` / `clearEdgeSelectionResize()` TAILS that run
+/// AFTER the rewrite and are therefore outside what any face entry can
+/// describe. The non-Select bits of `faceMarks` DO come back — visible in the
+/// measurement above, where the 2 and the 4 survive and only the 1s are lost —
+/// and `assertNonSelectMarksSurvive` below is the assertion that says so
+/// rather than leaving it to a reader of the expected/got pair.
+private static immutable string[] kTwinResidual = ["edgeMarks", "faceMarks"];
+
+unittest // armed: Mesh.applyVertexRemapAndRebuild — the weld TWIN, Stage L10
+{
+    // The other half of the weld. `Mesh.applyVertexRemap` (the cell for which
+    // is L5-a's) is reached by `weldCoincidentVertices`; THIS one is reached by
+    // `weldVerticesByMask` and `weldVertexPairs`, i.e. by `collapse`,
+    // `vert_join`, `vert_merge`, `weld_vertex_pair` and `reduce`. L5 armed one
+    // and left the other on purpose, and the two are separable: L5's green said
+    // nothing about this funnel.
+    //
+    // THE STAND MUST SHARE AN EDGE ACROSS THE WELD, or the arming is invisible
+    // here: with nothing collapsing, `rebuildEdges` re-derives the same edge
+    // count either way and the disarmed revert differs only in the WINDINGS,
+    // which `assertRevertShape`'s plane table does see but which a reader
+    // would then be free to mistake for a renumber. `makeTaggedGridWeldSets`
+    // welds its coincident vertex into vertex 1, and both `(0,vCoin)` and
+    // `(0,1)` exist before the weld.
+    Mesh m = makeTaggedGridWeldSets(3);
+    immutable uint vCoin = cast(uint) m.vertices.length - 3;
+    auto pre = capturePre(m);
+    immutable size_t preV = m.vertices.length;
+    immutable size_t preE = m.edges.length;
+    immutable size_t preF = m.faces.length;
+
+    size_t welded;
+    MeshEditDelta d;
+    {
+        auto ed = MeshEditBatch(m, kCleanupEditScope);
+        auto mask = new bool[](m.vertices.length);
+        mask[1] = true;
+        mask[vCoin] = true;
+        welded = ed.mesh.weldVerticesByMask(mask, 1e-9f);
+        d = ed.close();
+    }
+    assert(welded == 1 && m.vertices.length == preV - 2 && m.edges.length == preE - 2,
+        format("the stand welded %d vertex/vertices to V=%d E=%d, expected 1 "
+             ~ "and %d/%d — the forward must both WELD and COLLAPSE an edge, or "
+             ~ "this cell measures a renumber",
+               welded, m.vertices.length, m.edges.length, preV - 2, preE - 2));
+
+    // ONE `FaceReindex`, from the ONE rewrite this function performs. Two would
+    // mean the scope leaked over the compaction's own work; zero would mean the
+    // arm did not land and the cell below is measuring the disarmed shape.
+    assert(countKind(d, MeshOpEntry.Kind.FaceReindex) == 1,
+        format("expected exactly 1 FaceReindex from this funnel's single "
+             ~ "rewrite, got %d. Log %s",
+               countKind(d, MeshOpEntry.Kind.FaceReindex), kindsOf(d)));
+
+    assertRevertShape("applyVertexRemapAndRebuild", m, d, pre,
+                      kTwinResidual);
+
+    // THE COUNTS, and E is the one that carries the arming. Disarmed, this
+    // funnel's revert answers TRUE, restores V and F, and leaves E one short —
+    // measured 11 of 12 on the smaller stand `mesh_selsets_test.d` uses, which
+    // pins the same deficit for the `edgeSetMask` plane. A residual list alone
+    // would not say that, because a plane table names planes, not counts.
+    assert(m.vertices.length == preV && m.edges.length == preE
+        && m.faces.length == preF,
+        format("the armed revert must restore all three counts: V/E/F came "
+             ~ "back %d/%d/%d against a pre-op %d/%d/%d",
+               m.vertices.length, m.edges.length, m.faces.length,
+               preV, preE, preF));
+    assertNonSelectMarksSurvive("applyVertexRemapAndRebuild", m);
+}
+
 unittest // armed: mesh_ops.revolve.extrudePathStep_, through extrudeAlongPath
 {
     Mesh m = makeTaggedGridFull();
@@ -959,14 +1037,25 @@ unittest // the resolver itself, on hand-written text — it is the census's onl
 /// the cheaper `AddFaces` + `ReshapeFaces`.
 private static immutable string[] kArmedSites = [
     "source/mesh.d:rebuildFacesWithChordSplits",
+    // Task 1903 Stage L10. The weld's OTHER apply half — the twin L5-a
+    // deliberately left alone — reached by `weldVerticesByMask` (and so by
+    // `collapse`, `vert_join`, `vert_merge` and `reduce`) and by
+    // `weldVertexPairs` (`weld_vertex_pair`). Its residual row is the
+    // `applyVertexRemapAndRebuild` cell in block 2.
+    //
+    // THE PREDICTION THAT HAD TO BE MEASURED, because the identical one died
+    // at `arrayFacesGrid` under Stage K: NO DOUBLE REVERT. Measured on two
+    // stands, 2026-08-28 — one where the weld drops no face and one where it
+    // drops a triangle below the arity floor. Log `[FaceReindex RemoveVerts
+    // Reindex]` on both, and V, F and E all land on their pre-op values
+    // (disarmed: E 11 of 12 and F 2 of 3, with `revert()` answering TRUE).
+    "source/mesh.d:applyVertexRemapAndRebuild",
     // Task 1903 Stage L5-a. The weld's apply half, reached by
     // `weldCoincidentVertices` and therefore by `mesh_ops/cleanup.cleanupMesh`
     // (L5), by `arrayFaces` / `radialArrayFaces` / `mirrorFacesPlane` (L6) and
-    // by the reduce family (L10). Its TWIN `applyVertexRemapAndRebuild` — same
-    // file, reached by `weldVertexPairs` — is deliberately NOT here: L5
-    // measured this one and left the other to L10, and the two are separable
-    // on purpose. Adding the twin without its own measured residual row in
-    // block 2 is the mutation this census exists to redden.
+    // by the reduce family (L10). Its TWIN — same file, reached by
+    // `weldVerticesByMask` / `weldVertexPairs` — was deliberately NOT here
+    // until Stage L10 measured it and armed it; the entry above is that arm.
     "source/mesh.d:applyVertexRemap",
     "source/mesh.d:triangulateFacesByMask",
     "source/mesh_ops/cleanup.d:cleanDegenerateFaces",

@@ -10,6 +10,7 @@
 import std.net.curl;
 import std.json;
 import std.conv : to;
+import batchless_control_helpers;
 import std.format : format;
 
 void main() {}
@@ -176,9 +177,14 @@ unittest { // mesh.fixOrientation runs its kernel inside ONE edit batch
     // the only thing standing between the three assertions below and a dead
     // counter.
     //
-    // `mesh.triple` is the fourth pick and it is one of the nine commands the
-    // topo-misc stage has not reached yet, so it will keep ticking until that
-    // stage lands — at which point this line moves again.
+    // `mesh.triple` was the fourth pick, and stage L10-P0 gave it — and the
+    // other eight batchless topo-misc commands — an `unrecorded` batch on
+    // 2026-08-28. MEASURED on that tree through this very endpoint:
+    // `mesh.triple` 0, `mesh.quadruple` 0, `mesh.detriangulate` 0, against a
+    // `mesh.clone` of 2 and a `mesh.mirror` of 7. So the fifth pick is
+    // `mesh.clone`, whose tick was measured at 2 on a fresh reset with face 0
+    // selected — recorded here so the sixth re-base knows what it is replacing
+    // rather than re-deriving it.
     //
     // WHAT CHANGED THE SECOND TIME is the ORDER, so the next re-base is a
     // one-word edit instead of a re-think: the control now runs on a FRESH
@@ -191,17 +197,12 @@ unittest { // mesh.fixOrientation runs its kernel inside ONE edit batch
     postReset();
     selectFaces([0]);
     auto c0 = getChanges();
-    postCommand(`{"id":"mesh.triple"}`);
+    postCommand(kBatchlessControlJson);
     auto c1 = getChanges();
     const long ctrl = c1["unbatchedGeometryCommits"].integer
                     - c0["unbatchedGeometryCommits"].integer;
     assert(ctrl > 0,
-        format("positive control: an UNBATCHED command must tick "
-             ~ "unbatchedGeometryCommits, and mesh.triple ticked %d. Either "
-             ~ "the counter is dead — in which case the three assertions below "
-             ~ "pass for free — or mesh.triple has been migrated and this "
-             ~ "line needs re-basing onto another still-batchless command "
-             ~ "(task 1903 §3.2 L2, M-DM).", ctrl));
+        kBatchlessControlWhy ~ to!string(ctrl) ~ kBatchlessControlFix);
 
     // The real measurement, on a clean mesh.
     postReset();
