@@ -837,7 +837,15 @@ private:
         // `abortEditBatch()` trio — see edge_extrude.d's twin comment.
         auto ed = MeshEditBatch(*mesh, MeshEditScope.Geometry | MeshEditScope.Marks);
         auto mask = currentMask();
-        ed.extendEdgesByMask(mask, inset_, shift_,
+        // task 1905 Stage P0-a: catch the return value the kernel already
+        // produces (it used to be discarded here). INSTRUMENT ONLY — `affected`
+        // is not read below and decides nothing yet; the degenerate-delta
+        // fallback's own rule stays exactly where it was. Capturing it is the
+        // precondition for a later commit to tell "the kernel touched nothing"
+        // (`affected == 0`) apart from "the kernel touched something and the
+        // batch recorded none of it" (`affected > 0 && delta.isEmpty`) — see
+        // the fallback block below and doc/tasks/work/1905-*.md §D2/§Б12.
+        size_t affected = ed.extendEdgesByMask(mask, inset_, shift_,
                              offsetVec(), rotateVec(), scaleVec(),
                              segments_, livePivot());
         auto delta = ed.close();
@@ -860,6 +868,8 @@ private:
         // As there, this block has NO witness in either lane — measured at
         // Stage N with an `assert(false)` probe on the twin site. It is
         // defensive, and reaching it or deleting it is part of 1905's answer.
+        // `affected` above is now available to that answer but is not yet
+        // consulted — see the comment at its capture site.
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(before, post, "Edge Extend");
         history.record(cmd);

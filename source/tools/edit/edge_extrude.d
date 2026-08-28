@@ -591,7 +591,12 @@ private:
         // spell it.
         auto ed = MeshEditBatch(*mesh, MeshEditScope.Geometry | MeshEditScope.Marks);
         auto mask = currentMask();
-        ed.extrudeEdgesByMask(mask, extrude_, width_);
+        // task 1905 Stage P0-a: catch the return value the kernel already
+        // produces (it used to be discarded here) — the `edge_extend.d` twin
+        // carries the full note. INSTRUMENT ONLY — `affected` is not read
+        // below and decides nothing yet; the degenerate-delta fallback's own
+        // rule stays exactly where it was.
+        size_t affected = ed.extrudeEdgesByMask(mask, extrude_, width_);
         auto delta = ed.close();
 
         // After the re-run the mesh is back in the post-extrude state the user
@@ -613,7 +618,8 @@ private:
         // COMMIT semantics and belongs to the session-boundary work (task
         // 1905), not to a commit whose subject is a process-wide flag. So the
         // behaviour is unchanged and the question is written down where the
-        // field lives (see `before`'s declaration).
+        // field lives (see `before`'s declaration). `affected` above is now
+        // available to that answer but is not yet consulted.
         //
         // MEASURED, SO NOBODY MISTAKES IT FOR A COVERED PATH: with the hatch
         // gone this block has NO witness in either lane. An `assert(false)`
