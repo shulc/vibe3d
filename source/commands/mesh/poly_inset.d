@@ -6,7 +6,7 @@ import mesh;
 import view;
 import editmode;
 import params : Param;
-import snapshot : MeshSnapshot;
+import mesh_edit_delta : MeshEditDelta, MeshEditScope, acceptRecordedEdit;
 
 /// Polygon Inset (one-shot, undoable): for each selected face, move each
 /// corner along its angle BISECTOR by an absolute distance of `inset` world
@@ -36,9 +36,46 @@ import snapshot : MeshSnapshot;
 /// starts at the reference-matched 0.0 (its activate() does not build a
 /// preview, so 0.0 is only ever a transient starting value, never silently
 /// applied — see PolyInsetTool's class doc-comment).
+/// TASK 1903 STAGE L7-a — UNDO IS THE OPERATION-LOG DELTA; the whole-mesh
+/// `MeshSnapshot` is gone. There is no `undoTrackerEnabled()` fork to select
+/// between — grep it, this file never carried one — so the recording batch is
+/// unconditional, in `commands/mesh/delete.d`'s shape after Stage L3-b.
+///
+/// THIS IS THE DISCRIMINATING MEMBER OF THE FAMILY, and it migrates first for
+/// three reasons. It is the only one whose op-log contained NO face entry at
+/// all before Stage L7-P2 (`[AddVerts, AddFaces]` per processed face, and
+/// `revert()` THREW: `index [16] is out of bounds for array of length 16`), so
+/// it proves the diagnosis "ABSENT publisher, not a disarmed one" end to end.
+/// It reaches no `compactUnreferenced` on this path, so its log has no
+/// `[RemoveVerts, Reindex]` tail and nothing else can be credited for the
+/// restore. And its failure mode is INVISIBLE anywhere else:
+/// `Mesh.setFaceWindings` SILENTLY DECLINES an unordered `idx` list — it does
+/// not throw, it returns a smaller count — and on the inset path that produces
+/// a revert restoring V/F/E, every mark word, `faceMaterial`, `facePart` and
+/// both set masks BYTE-IDENTICAL with only the WINDINGS wrong. In the bevel
+/// groups the same defect lands beside a `[RemoveVerts, Reindex]` pair and
+/// surfaces as a dangling index or a throw — loud, and therefore attributed to
+/// something else.
+///
+/// AND IT CARRIES NO BELT, which is a measurement and not an omission. The
+/// EXACT residual of an armed revert on `makeTaggedGridFull(3)`, reported both
+/// ways, is EMPTY — all 22 planes byte-identical, Select-class included. The
+/// kernel's tail is `syncSelection()`, which RESIZES the selection planes
+/// rather than clearing them, so nothing in this path destroys a bit the
+/// op-log cannot put back. `MeshBevel` next door DOES carry a
+/// `DenseSelectionUndo`, because its edge arm re-derives the selection one
+/// dimension down AFTER the batch closes; the difference is per command and
+/// is not a style.
 class MeshPolygonInset : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;
+    private MeshEditDelta    delta_;
+    /// Set once `evaluate` has recorded a delta. It discriminates FIRST RUN
+    /// from REDO — `CommandHistory.redo` calls `apply()` again and a second
+    /// recording run would lay a second delta over the first — and it is
+    /// `revert()`'s guard: an instance whose `evaluate` refused holds an empty
+    /// delta and must not replay it, which is what the deleted
+    /// `if (!snap.filled) return false;` did.
+    private bool             recorded_;
     private float            inset_ = 0.1f;   // safe non-zero default (task 0359 review)
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
@@ -47,6 +84,28 @@ class MeshPolygonInset : Command, Operator {
 
     override string name()  const { return "mesh.poly_inset"; }
     override string label() const { return "Inset"; }
+
+    override MeshEditScope editScope() const {
+        return cast(MeshEditScope) kPolyBevelEditScope;
+    }
+
+    /// Observable through `/api/history`'s `opInverse` field: an entry that
+    /// restores from an op-log must not report itself as a whole-mesh
+    /// snapshot. `recorded_` rather than a literal `true` — an instance whose
+    /// `evaluate` refused holds no inverse at all.
+    override bool isOperationInverse() const { return recorded_; }
+
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded op-log, for the KIND
+        /// SEQUENCE assertions in `tests/unit/l7_bevel_inset_delta_test.d`.
+        /// A LENGTH is satisfied by a broken log: Stage J made the
+        /// `[MeshMapDelta, ReshapeFaces]` ADJACENCY contractual, and an
+        /// interposed entry unpairs the corner restore SILENTLY while the
+        /// geometry still round-trips.
+        public ref const(MeshEditDelta) recordedDelta() const return {
+            return delta_;
+        }
+    }
 
     override Param[] params() {
         return [
@@ -61,8 +120,21 @@ class MeshPolygonInset : Command, Operator {
         if (editMode != EditMode.Polygons) return false;
         if (mesh.faces.length == 0) return false;
 
-        snap = MeshSnapshot.capture(*mesh);
         auto mask = mesh.operandFaceMask();
+
+        // REDO: `CommandHistory.redo` re-runs `apply()` -> `evaluate`. Re-run
+        // the kernel BATCHLESS — an unrecorded batch makes every tracker hook
+        // take its `editRecorder_ is null` first line — and KEEP the first
+        // delta rather than record a second one over it.
+        if (recorded_) {
+            size_t nRedo;
+            {
+                auto ed = MeshEditBatch.unrecorded(*mesh, kPolyBevelEditScope);
+                nRedo = ed.insetFacesByMask(mask, inset_);
+                ed.close();
+            }
+            return nRedo != 0;
+        }
         // Task 1903 Stage F2: `insetFacesByMask` is a free function over
         // `ref MeshEditBatch` (source/mesh_ops/poly_bevel.d), so the batch
         // opens HERE — at the command boundary, which is where §4.1 says it
@@ -76,25 +148,49 @@ class MeshPolygonInset : Command, Operator {
         // returns early on `g_deliveryDepth > 0` and never consults
         // `g_editBatchStack`. What holds the delivery count down at this call
         // site is `Command.apply`'s own `beginDeliveryBatchGlobal()`.
-        // UNRECORDED because this command's undo is still the whole-mesh
-        // `snap` above; Stage L7 (`bevel / inset`) flips it to the recording
-        // constructor.
+        // TASK 1903 STAGE L7-a — and it is RECORDING now. Stage L7-P2 gave
+        // `insetFacesByMask` its winding publisher (one BULK
+        // `Mesh.setFaceWindings` call for the whole processed set), so the
+        // op-log this closes on is `[AddVerts, AddFaces]` per processed face
+        // followed by ONE `[MeshMapDelta, ReshapeFaces]` pair.
         size_t n;
         {
-            auto ed = MeshEditBatch.unrecorded(*mesh, kPolyBevelEditScope);
+            auto ed = MeshEditBatch(*mesh, kPolyBevelEditScope);   // RECORDING
             n = ed.insetFacesByMask(mask, inset_);
-            ed.close();
+            delta_ = ed.close();
         }
-        if (n == 0) {
-            snap = MeshSnapshot.init;
+
+        // THE POST-CLOSE RULING, shared with `mesh.delete` / `mesh.remove` /
+        // `mesh.cleanup` (Stage L3-a, ruling Q-K6). `n == 0` is the kernel's
+        // own refusal — an empty/undersized mask, or every masked face
+        // refused at a COLLINEAR ring start (task 1230, ledger row 42) — and
+        // `affected == 0` turns it into this command's. `n > 0` over an EMPTY
+        // delta is the contradiction: `acceptRecordedEdit` REFUSES it and
+        // ticks `changeBus.emptyDeltaOverMutation`, rather than recording a
+        // history entry whose undo would do nothing.
+        //
+        // `delta_.revert` on the refusal arm is a BELT: `insetFacesByMask`
+        // decides `processed == 0` only after its loop, and a face that
+        // refused on `ringSign == 0` was `continue`d before any mutation, so
+        // a refusal that reaches here has an empty log. The belt costs one
+        // statement over an empty log and does not rely on that reading.
+        if (!acceptRecordedEdit(n, delta_)) {
+            delta_.revert(*mesh);
+            delta_ = MeshEditDelta.init;
             return false;
         }
+        recorded_ = true;
         return true;
     }
 
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
+        // An instance whose `evaluate` refused holds an empty delta;
+        // replaying it would run over a mesh it was never sized against. NOT
+        // the spelling for a command that DID record: a `false` there pops the
+        // entry off BOTH history stacks and truncates the suffix after it
+        // (regression 0099).
+        if (!recorded_) return false;
+        delta_.revert(*mesh);
         return true;
     }
 }

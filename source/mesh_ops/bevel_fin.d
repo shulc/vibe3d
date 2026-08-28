@@ -2,6 +2,7 @@ module mesh_ops.bevel_fin;
 
 import mesh;
 import math;
+import std.array : uninitializedArray;
 import mesh_edit_delta : MeshEditScope;
 
 // ---------------------------------------------------------------------------
@@ -41,26 +42,56 @@ import mesh_edit_delta : MeshEditScope;
 // three-fin bundle — the branch is unreachable from a cube, so a delta assert
 // on any other bevel cell would be inert.
 //
-// WHAT THIS FAMILY DOES **NOT** RECORD, measured at E4 and owned by STAGE L7
-// (`bevel/inset`): the fin rewrite is `ed.faces[fi] = nf;`, a DIRECT indexed
-// winding install that reaches no mutation hook — `mesh_planes.rewriteFaces`
-// is never called here. Inside a RECORDING batch the op-log therefore names
-// the added rail vertices and the two cap faces and says NOTHING about the N
-// fins whose windings changed; the measurement, its op-log kinds and what
-// `revert()` does with them are pinned in
-// `tests/unit/mesh_ops/bevel_fin_test.d`'s recording block, labelled
-// "STAGE K/L7 FLIPS THIS". This is a K-audit row of the class §5.3's
-// other-audit table collects (a face rewrite that never reaches
-// `rewriteFaces`), not a row Stage K's per-rewrite arming scope can reach.
-// The primitive it owes EXISTS: `ed.faces[fi] = nf;` is a `Kind.ReshapeFaces`,
-// and `MeshEditTracker.recordReshapeFaces(idx, before, after)`
-// (source/mesh_edit_delta.d) is the call L7 writes at the install site — the
-// alternative is a stated refusal. One thing L7 must decide before writing it:
-// `bevelIsolatedFinBundleSpine` reshapes at EQUAL arity, but
-// `bevelFinBundleSpineMultiEdge`'s corner-cut CHANGES a fin's arity, which
-// flips the delta's `renumbersCorners` and drops the per-corner planes on the
-// revert path. The tracker handles the arity-changing case explicitly; it is
-// the planes, not the winding, that need the decision.
+// WHAT THIS FAMILY DID NOT RECORD — CLOSED BY STAGE L7 (`bevel/inset`), AND
+// THIS IS THE MEASUREMENT THAT CLOSED IT.
+//
+// Until L7 the fin rewrite was `ed.faces[fi] = nf;`, a DIRECT indexed winding
+// install that reached no mutation hook — `mesh_planes.rewriteFaces` is never
+// called here — so inside a RECORDING batch the op-log named the added rail
+// vertices and the two cap faces and said NOTHING about the N fins whose
+// windings changed. Measured on a three-fin stand driven through the
+// production door (`bevelEdgesByMask` inside a recording batch): the log was
+// `[AddVerts AddFaces RemoveVerts Reindex]`, four entries, and `revert()`
+// THREW out of `finalize` -> `buildLoops` ("index [9] is out of bounds for
+// array of length 8") leaving the mesh half-reverted — V and F back at the
+// pre-op 8 / 3 with six face corners still naming rail vertices that no longer
+// existed.
+//
+// BOTH kernels now install their fin windings with ONE BULK
+// `ed.setFaceWindings(idx, to)` after the loop (see each Phase B for why bulk,
+// why after the cap appends, and why the accumulator is ascending). The log on
+// the same stand is `[AddVerts AddFaces (MeshMapDelta) ReshapeFaces
+// RemoveVerts Reindex]` — the `MeshMapDelta` appears only when the mesh
+// carries a PolyVertex map, and it is ADJACENT to the `ReshapeFaces` by
+// contract (`CornerCarry.payloadForCount` binds the two by that adjacency) —
+// and `revert()` returns true, throws nothing, and restores V / F / E,
+// every winding, every vertex position bit-exactly, the material / part /
+// subpatch planes, and every per-corner map value.
+//
+// THE ONE RESIDUAL, NAMED. The kernels' own selection edits
+// (`clearFaceSelection` / `selectFace` / `clearVertexSelection` /
+// `clearEdgeSelectionResize`) are still in NO op-log entry, so a revert leaves
+// the fins selected and the pre-op vertex/edge selection cleared. That gap
+// predates L7 (the four-entry log above had no `SelectionDelta` either) and is
+// untouched by it; the delta still declares `Marks`, which is what its scope
+// constant says.
+//
+// THE CORNER SPACE IS WHERE THE TWO KERNELS DIVERGE, and it is measured, not
+// reasoned: `bevelIsolatedFinBundleSpine` reshapes at EQUAL arity, so
+// `resizePolyVertexMaps`' length insurance keeps every value on its own corner
+// and it declares no provenance. `bevelFinBundleSpineMultiEdge`'s corner cut
+// CHANGES a fin's arity, and before L7 that tripped mesh.d's always-on
+// `debug assert` — verbatim, on a UV stand in a `-debug` build: "corner
+// provenance: a face rewrite reached buildLoops without declaring what became
+// of the corners, and without arming beginCornerRewrite()/
+// beginCornerRelocate() either …", through `resizePolyVertexMaps <-
+// buildLoops <- finalizeTopologyEdit <- bevelFinBundleSpineMultiEdge <-
+// bevelEdgesByMask`. It declares a CARRY now; the reasoning is at that site.
+//
+// (`tests/unit/mesh_ops/bevel_fin_test.d`'s recording block still asserts the
+// PRE-L7 four-entry log and `ReshapeFaces == 0`, under a comment labelled
+// "STAGE K/L7 FLIPS THIS". L7 is that stage: that block and its comment have
+// to move with this change.)
 //
 // `Mesh.finalizeTopologyEdit` is one of §2.6's eleven private names, widened
 // to public in this stage's commit because this file (and bevel_vertex.d)
@@ -158,8 +189,58 @@ size_t bevelIsolatedFinBundleSpine(ref MeshEditBatch ed, uint spineEdge, float w
     }
 
     // --- Phase B: mutate. Add rails, rewrite each fin in place, add caps. ---
+    //
+    // TASK 1903 STAGE L7 — THE FIN WINDINGS HAVE A PUBLISHER NOW.
+    //
+    // `ed.faces[fi] = nf;` was a RAW indexed install: `alias mesh this` makes
+    // it compile inside a recording batch and it reaches no record primitive at
+    // all, so the op-log named the six rails (`AddVerts`), the two fan caps
+    // (`AddFaces`) and the tail compaction (`RemoveVerts Reindex`) and said
+    // NOTHING about the N fin windings it had just rewritten. Measured on the
+    // three-fin stand before this change: `[AddVerts AddFaces RemoveVerts
+    // Reindex]`, four entries, and `revert()` THREW out of `finalize` ->
+    // `buildLoops` ("index [9] is out of bounds for array of length 8") leaving
+    // the mesh half-reverted — V and F back at 8 / 3 with six face corners
+    // still naming rail vertices that no longer exist. That is the file
+    // header's "WHAT THIS FAMILY DOES NOT RECORD" row, and this is the call it
+    // said the family owed.
+    //
+    // ONE BULK CALL AFTER THE LOOP, not one per fin. `Mesh.setFaceWindings`
+    // pairs its `ReshapeFaces` entry with a per-corner payload, and
+    // `recordPolyVertexPayload` resolves the corner bases of the faces it is
+    // handed by ONE ordered sweep over `faces` — so N single-face calls are
+    // O(N·F) (card 2260 measured the per-element door at 31x on 3 600 faces and
+    // 66x on 10 000; judged by TIME, never by the GC byte counter, which points
+    // the wrong way on this choice). The install is also deferred past the two
+    // cap `addFace`s for the same reason `spikeFacesByMask` defers past its fan
+    // appends: `addFace` grows the PolyVertex maps in lock-step with `faces`,
+    // and every read in this call has to happen in one consistent corner space.
+    //
+    // `windIdx` IS STRICTLY ASCENDING BY CONSTRUCTION, which `setFaceWindings`
+    // REQUIRES and which it enforces only in a `debug` build: on an unordered
+    // list its ordered sweep bails at `k != oldFaceIdx.length` and DECLINES
+    // SILENTLY, leaving the entry unpaired and the per-corner values re-derived
+    // slot-for-slot instead of restored verbatim. `fins` is filled by a
+    // `foreach (fi; 0 .. faces.length)` scan above, so it is ascending, and
+    // this loop walks it in order.
+    //
+    // THE ARRAYS ARE PRE-SIZED AND SLICED, never grown with `~=`. `FaceIdx`
+    // `@disable`s default construction (a defaulted face index would be face 0,
+    // and face 0 is a real face), so `.length =` does not compile on a
+    // `FaceIdx[]` in either direction — `uninitializedArray` plus a slice is
+    // the only spelling.
+    //
+    // NO CORNER-PROVENANCE DECLARATION HERE, and that is measured rather than
+    // assumed: this kernel replaces two corners of each fin with rail vertices
+    // at EQUAL arity, so the corner space is untouched and `resizePolyVertexMaps`'
+    // length insurance keeps every value on its own corner. Driven on a UV
+    // stand in a `-debug` build it does not trip the provenance assert (its
+    // multi-edge sibling, whose corner cut changes arity, does — see there).
     uint[] railA; railA.reserve(N);
     uint[] railB; railB.reserve(N);
+    auto windIdx = uninitializedArray!(FaceIdx[])(N);
+    auto windTo  = uninitializedArray!(uint[][])(N);
+    size_t nw = 0;
     foreach (idx, fi; fins) {
         immutable uint ia = ed.addVertex(railAPos[idx]);
         immutable uint ib = ed.addVertex(railBPos[idx]);
@@ -167,11 +248,25 @@ size_t bevelIsolatedFinBundleSpine(ref MeshEditBatch ed, uint spineEdge, float w
         uint[] nf = ed.faces[fi].dup;
         nf[finPa[idx]] = ia;
         nf[finPb[idx]] = ib;
-        ed.faces[fi] = nf;
+        // COLLECTED here, INSTALLED in the one bulk call below. Nothing between
+        // this point and that call reads `ed.faces[fi]` for a rewritten fin —
+        // verified: the rest of this loop only calls `addVertex`, the cap
+        // builders read `railA`/`railB` (vertex indices, not windings), and
+        // `ed.faces.length` is a count. So the deferral is forward-invisible.
+        assert(nw == 0 || windIdx[nw - 1].raw < fi,
+            "bevelIsolatedFinBundleSpine: the winding accumulator went "
+          ~ "non-ascending — `setFaceWindings` DECLINES SILENTLY on an "
+          ~ "unordered list, which would unpair the per-corner payload");
+        windIdx[nw] = ed.faceIndexAt(fi);
+        windTo[nw]  = nf;
+        ++nw;
     }
     // One N-gon fan cap per spine end, both in incident-face order.
     immutable uint capA = cast(uint)ed.faces.length; ed.addFace(railA);
     immutable uint capB = cast(uint)ed.faces.length; ed.addFace(railB);
+    assert(nw == N, "bevelIsolatedFinBundleSpine: the fin loop and the winding "
+                  ~ "accumulator disagree about how many fins were rewritten");
+    cast(void) ed.setFaceWindings(windIdx[0 .. nw], windTo[0 .. nw]);
 
     // The original spine verts a, b are now unreferenced; the tail
     // compaction drops them (net: −2 spine verts, +2N rails; +2 cap faces).
@@ -385,15 +480,75 @@ size_t bevelFinBundleSpineMultiEdge(ref MeshEditBatch ed, uint spineEdge,
     }
 
     // --- Phase B: mutate. Add rails/miters/cuts, rewrite fins, add caps. ---
+    //
+    // TASK 1903 STAGE L7 — THE PUBLISHER, AND THE CORNER DECLARATION THIS
+    // KERNEL (UNLIKE ITS SINGLE-SPINE SIBLING) ALSO OWES.
+    //
+    // The winding install is the same story as the sibling's — see the long
+    // note there for why it is ONE BULK `setFaceWindings` after every append,
+    // why `windIdx` is ascending by construction, and why the arrays are
+    // pre-sized and sliced rather than grown. What is EXTRA here is the corner
+    // space: a corner cut splices two ring vertices in place of one, so a fin's
+    // ARITY changes, and a kernel that renumbers corners without saying what
+    // became of them is exactly what `Mesh.resizePolyVertexMaps`' always-on
+    // `debug assert` refuses. MEASURED, not predicted — on a three-fin stand
+    // carrying a PolyVertex map, in a `-debug` build, this kernel used to die
+    // FORWARD at mesh.d's "corner provenance: a face rewrite reached buildLoops
+    // without declaring what became of the corners, and without arming
+    // beginCornerRewrite()/beginCornerRelocate() either", through
+    // `resizePolyVertexMaps <- buildLoops <- finalizeTopologyEdit <- here`. The
+    // single-spine sibling reshapes at EQUAL arity and does NOT fire; its
+    // provenance is deliberately left alone.
+    //
+    // WHAT IS DECLARED, AND WHAT IS DELIBERATELY NOT. The declaration below
+    // states what the splice ALREADY performs — nothing more. Sourcing is by
+    // VERTEX IDENTITY, `spikeFacesByMask`'s carry shape: each new face names
+    // the OLD face in its own slot, so a corner still standing on a vertex that
+    // fin already had resolves to that fin's own corner and keeps its value,
+    // while a corner standing on a genuinely NEW vertex — a spine rail, a
+    // miter, either half of a corner cut — finds no source and comes out at an
+    // honest ZERO. The two fan caps name no source face at all (`~0u`), so all
+    // their corners are zero, which is the same answer the pre-L7 whole-map
+    // drop gave them. The gain is that the drop is now ONE CORNER WIDE instead
+    // of the WHOLE MESH.
+    //
+    // NO GEOMETRIC UV LAW FOR A CHAMFER CORNER IS INVENTED HERE. What a miter
+    // or a corner-cut vertex's per-corner value SHOULD be is an unmeasured
+    // question and it belongs to tasks 0830 / 0901 (the corner-law census), not
+    // to this stage: a `PolyVertexGen` law written from a plausible guess would
+    // look like a working feature and be re-litigated forever (task 0697's
+    // exact failure). Zero is the honest answer until someone captures one.
+    immutable size_t nFacesPre = ed.faces.length;   // faces that EXISTED, and the
+                                                    // srcFace of their own corners
+    auto rw = ed.beginCornerRewrite();   // opened AFTER the last refusal above:
+                                         // Phase A owns every `return 0`, so the
+                                         // arming can never outlive a no-op.
+    const bool carryUv = rw.active();
     uint[] aCapG; aCapG.reserve(N);
     uint[] bCapG; bCapG.reserve(N);
+    auto windIdx = uninitializedArray!(FaceIdx[])(N);
+    auto windTo  = uninitializedArray!(uint[][])(N);
+    size_t nw = 0;
     foreach (fp, fi; fins) {
         auto pl = plans[fp];
         uint[] gnew; gnew.reserve(pl.np.length);
         foreach (p; pl.np) gnew ~= ed.addVertex(p);
         uint[] nf; nf.reserve(pl.ring.length);
         foreach (r; pl.ring) nf ~= (r >= 0) ? cast(uint)r : gnew[-(r) - 1];
-        ed.faces[fi] = nf;
+        // COLLECTED here, INSTALLED after the caps. Nothing between this point
+        // and that call reads `ed.faces[fi]` for a rewritten fin — verified:
+        // the rest of this loop only calls `addVertex` and indexes `gnew`, the
+        // cap builders read `aCapG`/`bCapG` (vertex indices, not windings), and
+        // `ed.faces.length` is a count. `fins` is ascending (a
+        // `foreach (fi; 0 .. faces.length)` scan built it), which is what
+        // `setFaceWindings` requires and what it declines SILENTLY without.
+        assert(nw == 0 || windIdx[nw - 1].raw < fi,
+            "bevelFinBundleSpineMultiEdge: the winding accumulator went "
+          ~ "non-ascending — `setFaceWindings` DECLINES SILENTLY on an "
+          ~ "unordered list, which would unpair the per-corner payload");
+        windIdx[nw] = ed.faceIndexAt(fi);
+        windTo[nw]  = nf;
+        ++nw;
         aCapG ~= gnew[pl.aCapL];
         bCapG ~= gnew[pl.bCapL];
     }
@@ -401,6 +556,22 @@ size_t bevelFinBundleSpineMultiEdge(ref MeshEditBatch ed, uint spineEdge,
     // the single-spine sibling's emergent-consistent winding).
     immutable uint capA = cast(uint)ed.faces.length; ed.addFace(aCapG);
     immutable uint capB = cast(uint)ed.faces.length; ed.addFace(bCapG);
+    assert(nw == N, "bevelFinBundleSpineMultiEdge: the fin loop and the winding "
+                  ~ "accumulator disagree about how many fins were rewritten");
+    cast(void) ed.setFaceWindings(windIdx[0 .. nw], windTo[0 .. nw]);
+    // The corner declaration, against the space `rw` captured before the
+    // rewrite. Built only when there is a per-corner plane to owe anything to —
+    // `carriedPerFace` on an inactive handle degrades to `unchanged()` anyway,
+    // but the `srcFaceOfNewFace` array should not be allocated for nothing.
+    if (carryUv) {
+        auto srcFaceOfNewFace = uninitializedArray!(uint[])(ed.faces.length);
+        foreach (nfi; 0 .. ed.faces.length)
+            srcFaceOfNewFace[nfi] = (nfi < nFacesPre) ? cast(uint)nfi : ~0u;
+        PolyVertexBlend[uint] noBlends;   // no corner here is a BLEND of old
+                                          // corners: see the note above.
+        ed.declareCornerProvenance(
+            rw.carriedPerFace(ed.faces.range, srcFaceOfNewFace, noBlends));
+    }
 
     // The original spine verts a, b (and any corner-cut'd outer verts) are
     // now unreferenced; the tail compaction drops them.

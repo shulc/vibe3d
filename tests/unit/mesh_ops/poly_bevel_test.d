@@ -145,23 +145,29 @@ unittest { // the declared SCOPE, written out independently of the enum
     }
 }
 
-unittest { // WHAT THE OP-LOG SAYS — and it now says something about ONE of the
-           // four face reshapes. STAGE L2-f FLIPPED THE SPIKE ROW (2026-08-28);
-           // STAGE L7 STILL OWES THE OTHER THREE.
+unittest { // WHAT THE OP-LOG SAYS — and STAGE L7-P2 CLOSED THE LAST THREE OF
+           // THE FOUR FACE RESHAPES (2026-08-28). Stage L2-f had closed the
+           // spike row; every row below now expects a `ReshapeFaces` and every
+           // row CALLS `revert()`.
     //
-    // WHAT CHANGED, AND WHAT DID NOT. `mesh.spikey` is an L2 command (the L
-    // table is keyed by COMMAND, памятка E1 №3), so Stage L2-f gave ITS install
-    // — `ed.faces[fi] = [v0, v1, apex]` — a publisher: the kernel now collects
-    // the parent windings and hands them to `Mesh.setFaceWindings` in ONE bulk
-    // call after the fan loop. So the spike cell below expects a `ReshapeFaces`
-    // and CALLS `revert()`; the four inset/bevel cells still expect none and
-    // still do not, because `insetFacesByMask` and `bevelFacesByMask` install
-    // their other three windings by index and are L7's.
+    // WHAT CHANGED. All four of this file's indexed installs now go through
+    // `Mesh.setFaceWindings`, in ONE BULK call per install site:
+    // `insetFacesByMask`'s ring, `bevelFacesByMask`'s cap, its SQUARE SPLICE
+    // into an unselected neighbour (a second call — that one changes ARITY),
+    // and the spike's first fan triangle. The bulk shape is not ergonomics:
+    // `recordPolyVertexPayload` resolves corner bases by ONE ordered sweep over
+    // `faces`, so N single calls are O(N.F) — measured at 31x (3 600 faces) and
+    // 66x (10 000) on card 2260 — and the payload must be paired with its entry
+    // by ADJACENCY, which one call per set gives for free.
     //
-    // The paragraphs below are the Stage F2 measurement as it stood; they are
-    // kept because the DIAGNOSIS they record (absent publisher, not disarmed —
-    // established by ARMING and re-measuring) is what the three remaining rows
-    // still rest on. Read "four" as "four, of which one is now closed".
+    // The `n`-face rows below are what pin that: EIGHT processed faces record
+    // ONE `ReshapeFaces`, not eight. A per-element loop would still round-trip
+    // and would still be green on a `>= 1`.
+    //
+    // The paragraphs below are the Stage F2 measurement as it stood, KEPT
+    // because the DIAGNOSIS they record — absent publisher, not disarmed,
+    // established by ARMING and re-measuring rather than by reading — is what
+    // L7-P2 acted on. Read them as the BEFORE picture.
     // Measured at Stage F2 on the stand above, under a RECORDING batch:
     //
     //   inset  0.1, 1 face   -> [AddVerts AddFaces]        revert() THROWS
@@ -216,10 +222,15 @@ unittest { // WHAT THE OP-LOG SAYS — and it now says something about ONE of th
     // THIS ALSO CORRECTS PLAN §5.5's L7 ROW, which reads "`poly_inset` is
     // clear (append-only)". It is not: `insetFacesByMask` replaces the source
     // face's winding in its own slot, at equal arity, and no hook sees it.
+    // The row under-counts the work too: the family owns FIVE hook-free
+    // indexed installs, not three — the two in `mesh_ops/bevel_fin.d` are the
+    // other two, and they are closed the same way.
     //
-    // `revert()` IS NOT CALLED IN THIS BLOCK, and that is a MEASUREMENT rather
-    // than caution — calling it aborts the module. The observable that flips
-    // when the family is fixed is the LIST OF ENTRY KINDS below.
+    // `revert()` IS NOW CALLED ON EVERY ROW. Before L2-f/L7-P2 it aborted the
+    // module (`index [16] is out of bounds for array of length 16`, leaving V
+    // back at 16 with F still 9 and windings pointing at vertices that no
+    // longer exist), so this block deliberately only asserted the KINDS. A
+    // cell that still declined to call it would not be testing the migration.
     //
     // NO REVERSE MAP MEASUREMENT IS POSSIBLE HERE, and that is worth stating
     // because F1's family could do one: there the armed build stopped throwing
@@ -232,15 +243,14 @@ unittest { // WHAT THE OP-LOG SAYS — and it now says something about ONE of th
     // this family is inside the 0682/0830 corner-carry census on the forward
     // side — and, exactly as the F1 review measured for Loop Slice, A FORWARD
     // CARRY SAYS NOTHING ABOUT THE REVERSE.
-    // `reshapes` is 0 for the rows L7 still owns and 1 for the spike, whose
-    // publisher landed at L2-f. A single shared `== 0` would have to be
-    // weakened to `>= 0` to let the spike through, which is the shape that
-    // cannot come out differently.
+    // `reshapes` is ONE on every row, INCLUDING the eight-face one — that is
+    // the bulk-shape pin. Written per row rather than as a shared constant so
+    // that a row whose publisher regresses names itself.
     static struct Cell { string name; int kind; size_t nsel; size_t faces;
                          size_t reshapes; }
     static immutable Cell[5] cells = [
-        Cell("inset, 1 face",  0, 1, 1, 0), Cell("inset, 8 faces", 0, 9, 8, 0),
-        Cell("bevel, 1 face",  1, 1, 1, 0), Cell("bevel, 4 faces", 1, 4, 4, 0),
+        Cell("inset, 1 face",  0, 1, 1, 1), Cell("inset, 8 faces", 0, 9, 8, 1),
+        Cell("bevel, 1 face",  1, 1, 1, 1), Cell("bevel, 4 faces", 1, 4, 4, 1),
         Cell("spike, 1 face",  2, 1, 1, 1),
     ];
     foreach (c; cells) {
@@ -273,28 +283,30 @@ unittest { // WHAT THE OP-LOG SAYS — and it now says something about ONE of th
             && countKind(d, MeshOpEntry.Kind.RemoveFaces)  == 0,
             format("%s: the op-log is %s — expected exactly %d ReshapeFaces, "
                  ~ "no FaceReindex and no RemoveFaces.\n"
-                 ~ "  For the three INSET/BEVEL rows the expectation is 0 and "
-                 ~ "an entry appearing is GOOD NEWS: Stage F2 measured the "
-                 ~ "publisher ABSENT, not disarmed (arming `wantsFaceReindex` "
-                 ~ "left the log byte-identical, because those kernels reach "
-                 ~ "no `rewriteFaces` at all and install their windings by "
-                 ~ "index), so somebody has given one of them a publisher and "
-                 ~ "plan §5.3's OTHER-audit rows plus §5.5's L7 row move with "
-                 ~ "it.\n"
-                 ~ "  For the SPIKE row the expectation is 1 and a 0 is a "
-                 ~ "REGRESSION: Stage L2-f routed `ed.faces[fi] = [v0, v1, "
-                 ~ "apex]` through `Mesh.setFaceWindings`, and without it the "
-                 ~ "revert below throws `index out of bounds` out of the LIFO "
-                 ~ "replay.", c.name, kindsOf(d), c.reshapes));
+                 ~ "  ZERO is the pre-L7-P2 state and is a REGRESSION: the "
+                 ~ "install went back to a raw `ed.faces[fi] = ...`, which "
+                 ~ "reaches no record primitive, and the revert below then "
+                 ~ "throws `index out of bounds` out of the LIFO replay.\n"
+                 ~ "  MORE THAN ONE on a multi-face row is the OTHER "
+                 ~ "regression: the bulk `Mesh.setFaceWindings` call became a "
+                 ~ "per-face loop, which is the O(N.F) shape card 2260 "
+                 ~ "measured at 31x/66x — and it still round-trips, so no "
+                 ~ "value assertion anywhere can see it.\n"
+                 ~ "  A `FaceReindex` appearing means somebody armed one of "
+                 ~ "these kernels; they reach no `rewriteFaces` at all, so "
+                 ~ "plan §5.3's OTHER-audit rows move with it.",
+                   c.name, kindsOf(d), c.reshapes));
 
-        // THE REVERT, CALLED — for the spike row only, and calling it IS the
-        // check. Before L2-f this block deliberately did not call `revert()`
+        // THE REVERT, CALLED ON EVERY ROW, and calling it IS the check.
+        // Before L2-f / L7-P2 this block deliberately did not call `revert()`
         // on any cell because it aborted the module (`index [16] is out of
         // bounds for array of length 16`, leaving V back at 16 with F still 9
-        // and windings pointing at vertices that no longer exist). A cell that
-        // still declined to call it after L2-f would not have tested the
-        // migration. The three L7 rows still decline, for the reason above.
-        if (c.reshapes > 0) {
+        // and windings pointing at vertices that no longer exist).
+        {
+            assert(c.reshapes > 0, c.name ~ ": every row in this block is "
+                 ~ "supposed to record a winding entry now; a row expecting "
+                 ~ "zero has been added without its revert being thought "
+                 ~ "through");
             assert(d.revert(m),
                 format("%s: revert() refused the delta outright", c.name));
             assert(m.vertices.length == preV && m.faces.length == preF,
@@ -340,13 +352,22 @@ unittest { // WHAT THE OP-LOG SAYS — and it now says something about ONE of th
                  ~ "8), and `compactUnreferenced` published the orphaned "
                  ~ "vertex's removal plus the resulting reindex (task 1903 "
                  ~ "Stage F2).", kindsOf(d)));
-        assert(countKind(d, MeshOpEntry.Kind.ReshapeFaces) == 0
+        // STAGE L7-P2 FLIPPED THIS TO ONE. The cap install is published now,
+        // in ONE bulk `Mesh.setFaceWindings` call for the whole processed set
+        // — so EIGHT processed faces record ONE `ReshapeFaces`, not eight,
+        // and that is the bulk-shape pin. `FaceReindex` stays 0: this kernel
+        // reaches no `rewriteFaces` at all, and one appearing would mean
+        // somebody armed it.
+        assert(countKind(d, MeshOpEntry.Kind.ReshapeFaces) == 1
             && countKind(d, MeshOpEntry.Kind.FaceReindex)  == 0
             && countKind(d, MeshOpEntry.Kind.RemoveFaces)  == 0,
-            format("bevel, group, grid full mask: the op-log now names a face "
-                 ~ "RESHAPE/FaceReindex/RemoveFaces (%s) — this family still "
-                 ~ "calls no `rewriteFaces` at all (task 1903 Stage F2).",
-                   kindsOf(d)));
+            format("bevel, group, grid full mask: the op-log is %s — expected "
+                 ~ "exactly ONE ReshapeFaces (the bulk cap install for all 8 "
+                 ~ "processed faces), no FaceReindex and no RemoveFaces.\n"
+                 ~ "  ZERO is the pre-L7-P2 raw indexed write and the revert "
+                 ~ "then throws out of the LIFO replay; MORE THAN ONE is the "
+                 ~ "per-face loop, which still round-trips and is the O(N.F) "
+                 ~ "shape card 2260 measured at 31x/66x.", kindsOf(d)));
     }
     {   // GROUP, closed cube, all 6 — the review's other cell. On a closed
         // solid EVERY face shares its whole corner set with a neighbour once
@@ -377,13 +398,16 @@ unittest { // WHAT THE OP-LOG SAYS — and it now says something about ONE of th
                  ~ "their neighbours once grouped, so only the one shared "
                  ~ "apex vertex is appended and no face is (task 1903 Stage "
                  ~ "F2).", kindsOf(d)));
-        assert(countKind(d, MeshOpEntry.Kind.ReshapeFaces) == 0
+        // STAGE L7-P2: one bulk `ReshapeFaces` for all six caps.
+        assert(countKind(d, MeshOpEntry.Kind.ReshapeFaces) == 1
             && countKind(d, MeshOpEntry.Kind.FaceReindex)  == 0
             && countKind(d, MeshOpEntry.Kind.RemoveFaces)  == 0,
-            format("bevel, group, closed cube: the op-log now names a face "
-                 ~ "RESHAPE/FaceReindex/RemoveFaces (%s) — this family still "
-                 ~ "calls no `rewriteFaces` at all (task 1903 Stage F2).",
-                   kindsOf(d)));
+            format("bevel, group, closed cube: the op-log is %s — expected "
+                 ~ "exactly ONE ReshapeFaces (the bulk cap install for all 6 "
+                 ~ "caps), no FaceReindex and no RemoveFaces. ZERO is the "
+                 ~ "pre-L7-P2 raw indexed write; MORE THAN ONE is the "
+                 ~ "per-face loop, which still round-trips (task 1903 Stage "
+                 ~ "L7-P2).", kindsOf(d)));
         assert(m.vertices.length == v0 && m.faces.length == f0,
             format("bevel, group, closed cube: V %d->%d F %d->%d — one "
                  ~ "AddVerts against one RemoveVerts is a net-zero vertex "

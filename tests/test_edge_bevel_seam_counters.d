@@ -190,6 +190,34 @@ void assertUnrecorded(JSONValue before, JSONValue after, string what, string who
       ~ "it (task 1903 Stage G).");
 }
 
+/// The other half of `assertUnrecorded`, for a command whose L stage has
+/// LANDED: its batch is RECORDING and its `close()` hands back a delta the
+/// command keeps. Same shape as `tests/test_poly_bevel_seam_counters.d`'s,
+/// duplicated rather than shared because these two files are independent
+/// suite binaries.
+///
+/// WHY THE EXACT COUNT AND NOT `> 0`. `AddVerts`, `RemoveVerts` and `Reindex`
+/// were already hooked before this stage and were in the op-log while the
+/// command was still unrecorded — a `> 0` would have been green on the broken
+/// code. The entries stage L7 ADDED are the `[MeshMapDelta, FaceReindex]`
+/// pairs, one per rewrite, and only the exact number sees them.
+///
+/// AND THIS ROW IS THE ONLY THING IN EITHER LANE THAT SEES THE COMMAND'S OWN
+/// CONSTRUCTOR. `tests/unit/mesh_ops/edge_bevel_test.d` drives the KERNEL
+/// under a recording batch it opens itself, so it is green with
+/// `commands/mesh/bevel.d` still `unrecorded`; only a run of the real command
+/// can tell those apart, and it is in the OTHER lane.
+void assertRecorded(JSONValue before, JSONValue after, string what,
+                    long want, string shape) {
+    immutable long opLog = after["opLogEntriesRecorded"].integer
+                         - before["opLogEntriesRecorded"].integer;
+    assert(opLog == want,
+        what ~ " recorded " ~ opLog.to!string ~ " op-log entr(ies), expected "
+      ~ want.to!string ~ ". ZERO means the command still opens the UNRECORDED "
+      ~ "constructor — its undo would be the whole-mesh MeshSnapshot the "
+      ~ "migration deleted, i.e. no undo at all. " ~ shape);
+}
+
 // ---------------------------------------------------------------------------
 // 0. POSITIVE CONTROL FIRST, and it is not decoration. Every assertion in this
 //    file is "this counter did not move", and a DEAD counter — the endpoint
@@ -248,7 +276,20 @@ unittest {
       ~ "shipped build, because the edge arm had no batch at all — that is the "
       ~ "number tests/test_poly_bevel_seam_counters.d asserted as `> 0` and "
       ~ "this stage flipped.");
-    assertUnrecorded(b, a, "mesh.bevel (edge mode)", "Stage L7 (`bevel / inset`)");
+    // STAGE L7 LOOKED AT THIS ROW AND DECLINED IT — the assertion is
+    // UNCHANGED and that is now a positive statement rather than a pending
+    // one. `mesh.bevel`'s POLYGON arm migrated (see
+    // `tests/test_poly_bevel_seam_counters.d`, which now asserts THREE
+    // entries); the EDGE arm keeps its `MeshSnapshot` because all three
+    // candidate delta shapes were measured and refused — routing rewrite #1
+    // through `Mesh.setFaceWindings` is inadmissible (it GROWS the face count,
+    // 9 -> 11 for one interior edge), the two-handle `carriedPerFace` shape is
+    // unsound (the merge pass can leave a corner on a vertex its source face
+    // does not contain), and arming as-is loses a Point-domain map VALUE that
+    // needs a `MeshOpEntry` payload FIELD. The full argument is at
+    // `commands/mesh/bevel.d`'s class doc comment.
+    assertUnrecorded(b, a, "mesh.bevel (edge mode)",
+        "The point-domain payload on `Kind.RemoveVerts`");
 }
 
 // ---------------------------------------------------------------------------
@@ -286,7 +327,15 @@ unittest {   // the single-spine door
       ~ "because the kernel was a mixin body with no caller batch to hand on. "
       ~ "The zero is the same and the reason is not, which is why the "
       ~ "nestedBatchOpens delta above is worth reading twice.");
-    assertUnrecorded(b, a, "mesh.bevel (isolated fin bundle)", "Stage L7");
+    // Same decline as the interior-edge cell above: the fin bundles are early
+    // returns from `bevelEdgesByMask`, so they ride the EDGE arm's undo. Note
+    // the KERNELS did migrate — stage L7-P2 gave both `bevel_fin.d` kernels a
+    // winding publisher and the multi-edge one its corner declaration — and
+    // `tests/unit/mesh_ops/bevel_fin_test.d` measures that. This row is about
+    // the COMMAND's constructor, which is a different question and has a
+    // different answer.
+    assertUnrecorded(b, a, "mesh.bevel (isolated fin bundle)",
+        "The point-domain payload on `Kind.RemoveVerts`");
 }
 
 unittest {   // the MULTI-EDGE door — the second of the two arms
@@ -313,7 +362,8 @@ unittest {   // the MULTI-EDGE door — the second of the two arms
         "Measured with the deferral disabled (M-G-BATCH): +14 — a DIFFERENT "
       ~ "number from the single-spine cell's +12, which is why both arms have "
       ~ "their own cell: this one runs the corner-cut the other does not.");
-    assertUnrecorded(b, a, "mesh.bevel (multi-edge fin bundle)", "Stage L7");
+    assertUnrecorded(b, a, "mesh.bevel (multi-edge fin bundle)",
+        "The point-domain payload on `Kind.RemoveVerts`");
 }
 
 // ---------------------------------------------------------------------------

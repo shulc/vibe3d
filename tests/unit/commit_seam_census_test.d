@@ -2122,48 +2122,56 @@ unittest // Stage F2 — the polygon bevel / inset / spike family
                    rawWritesPb, firstHitPb));
     }
 
-    // THE THREE REMAINING INDEXED `ed.faces[fi] = …` INSTALLS, plan §5.3's
-    // OTHER audit. `insetFacesByMask` replaces the source face's winding with
-    // the inset ring in its own slot; `bevelFacesByMask` does the same with the
-    // cap and ALSO rewrites an UNSELECTED neighbour's winding on the `square`
-    // splice. NEITHER calls `rewriteFaces` — MEASURED comment-stripped, the row
-    // below — so K's audit needle cannot see either, and arming
-    // `wantsFaceReindex` was measured to leave the op-log BYTE-IDENTICAL.
+    // ZERO INDEXED `ed.faces[fi] = …` INSTALLS LEFT IN THIS FILE, plan §5.3's
+    // OTHER audit CLOSED for it — and the row is REWRITTEN rather than having
+    // its number widened, which is what its own message demanded.
     //
-    // FOUR BECAME THREE AT STAGE L2-f (2026-08-28), AND THAT IS THE ROW'S
-    // POINT. `spikeFacesByMask`'s install — the source face replaced by the
-    // first fan triangle — went through `Mesh.setFaceWindings`, so it is no
-    // longer a silent reshape and no longer counted here. It was ALWAYS a
-    // separate owner: §5.3's other-audit row reads "one file, two owners" and
-    // attributes all four jointly to L7 and L2 because `mesh.spikey` is in the
-    // caller list, but measured over `spikeFacesByMask`'s OWN line range it
-    // reaches exactly ONE of the four and calls no `compactUnreferenced`.
-    // Attribute by the callee's line range, not by the file's caller list. The
-    // three left are L7's alone.
+    // THE LADDER, so the zero is readable as an end state and not as a scan
+    // that lost its place. Stage F2 measured FOUR silent reshapes here:
+    // `insetFacesByMask`'s ring, `bevelFacesByMask`'s cap, that same kernel's
+    // SQUARE SPLICE into an UNSELECTED neighbour, and `spikeFacesByMask`'s
+    // first fan triangle. Stage L2-f closed the spike's (it is `mesh.spikey`'s,
+    // an L2 command — attribute by the CALLEE's line range, not by the file's
+    // caller list). Stage L7-P2 closed the other three: all of them now go
+    // through `Mesh.setFaceWindings`, the cap and the splice in TWO separate
+    // bulk calls because the splice changes ARITY and its payload must
+    // describe the corner space as it is after the cap call has run.
+    //
+    // WHY THE ZERO IS STILL WORTH ASSERTING. `alias mesh this` means
+    // `ed.faces[fi] = …` compiles inside a recording batch and records
+    // NOTHING, so the boundary is a counted census and not a type. A ONE here
+    // is a new silent reshape — the pre-L7 shape, whose revert THREW
+    // `index [16] is out of bounds for array of length 16` out of the LIFO
+    // replay — and its owner has to know about it.
+    //
+    // The `rewriteFaces` row below is UNCHANGED and still a `== 0`: L7-P2 gave
+    // this family a WINDING publisher, not an arming. Nothing here reaches
+    // `mesh_planes.rewriteFaces`, which is why `Kind.FaceReindex` was never
+    // the answer and why `face_reindex_arming_test.d`'s roster does not name
+    // it.
     assert(countOccurrences(pb, "rewriteFaces") == 0
         && countOccurrences(pb, "rewriteVertices") == 0,
         "source/mesh_ops/poly_bevel.d now calls `rewriteFaces`/"
       ~ "`rewriteVertices`. It did not when Stage F2 measured this family, and "
-      ~ "that ABSENCE is the whole diagnosis: the op-log names no face change "
-      ~ "because the primitive is never reached, not because its publisher is "
-      ~ "disarmed. If the primitive is here now, Stage K's per-rewrite arming "
-      ~ "DOES reach this family and the recording block's "
-      ~ "\"STAGE K/L7/L2 FLIPS THIS\" comment has to be re-measured "
-      ~ "(task 1903 §5.3, Stage F2).");
-    assert(countOccurrences(pb, "ed.faces[fi] = ") == 3,
+      ~ "that ABSENCE is the whole diagnosis: the op-log named no face change "
+      ~ "because the primitive was never reached, not because its publisher "
+      ~ "was disarmed — which is why Stage L7-P2's answer is "
+      ~ "`Mesh.setFaceWindings` and not an arming. If the primitive is here "
+      ~ "now, Stage K's per-rewrite arming DOES reach this family and the "
+      ~ "recording block's op-log expectations have to be re-measured "
+      ~ "(task 1903 §5.3, Stage F2 -> L7-P2).");
+    assert(countOccurrences(pb, "ed.faces[fi] = ") == 0,
         format("source/mesh_ops/poly_bevel.d makes %d indexed `ed.faces[fi] = "
-             ~ "…` installs; expected 3 — the inset ring, the bevel cap and "
-             ~ "the square splice into the UNSELECTED neighbour, all three "
-             ~ "L7's. Stage F2 measured FOUR; Stage L2-f closed the fourth "
-             ~ "(the spike's first fan triangle) by routing it through "
+             ~ "…` install(s); expected 0. Stage F2 measured FOUR, Stage L2-f "
+             ~ "closed the spike's and Stage L7-P2 closed the remaining three "
+             ~ "(the inset ring, the bevel cap, the square splice into the "
+             ~ "UNSELECTED neighbour) by routing them through "
              ~ "`Mesh.setFaceWindings`.\n"
-             ~ "  FOUR means the spike's install came back as a raw write and "
-             ~ "`mesh.spikey`'s undo throws `index out of bounds` out of the "
-             ~ "LIFO replay again. FIVE means a new silent reshape, and the "
-             ~ "owning L stage (L7) has to know about it. Each is a face "
-             ~ "reshape no mutation hook sees — plan §5.3's OTHER audit, the "
-             ~ "class whose needle is NOT `rewriteFaces` "
-             ~ "(task 1903 §5.3, Stage F2 -> Stage L2-f).",
+             ~ "  ANY non-zero is a face reshape no mutation hook sees — plan "
+             ~ "§5.3's OTHER audit, the class whose needle is NOT "
+             ~ "`rewriteFaces` — and the recorded revert of whichever command "
+             ~ "drives it throws `index out of bounds` out of the LIFO replay "
+             ~ "(task 1903 §5.3, Stage F2 -> L2-f -> L7-P2).",
                countOccurrences(pb, "ed.faces[fi] = ")));
 
     // `Mesh.boundaryContourInset` IS GONE FROM THE WHOLE TREE — the MIRROR of
@@ -2410,9 +2418,21 @@ unittest // Stage G — the manifold edge bevel family
       ~ "corner provenance ONCE, after the SECOND rewrite (task 1903 Stage G).");
 
     // …and NO indexed install, which is what puts this family on the ARMABLE
-    // side of §5.3's split. `bevel_fin.d` and `poly_bevel.d` install windings
-    // with `ed.faces[fi] = …` and reach no hook at all; this one goes through
-    // the primitive every time.
+    // side of §5.3's split. THE OTHER HALF OF THAT SENTENCE IS NOW STALE AND IS
+    // CORRECTED HERE: `bevel_fin.d` and `poly_bevel.d` used to install windings
+    // with `ed.faces[fi] = …` and reach no hook at all; stage L7-P2 routed all
+    // five of those installs through `Mesh.setFaceWindings`, so both files are
+    // now at ZERO (their own rows above and further down assert it). The
+    // distinction this row draws still holds and is unchanged: an indexed
+    // install writes AND installs in ONE act on the live index space, while
+    // `rewriteFaces` describes a rewrite the primitive then performs in a NEW
+    // one — which is why only the latter is what an arming can reach.
+    //
+    // AND THIS FAMILY IS STILL NOT ARMED. Stage L7 measured three candidate
+    // shapes for it and refused all three; the blocker is a Point-domain map
+    // VALUE that `Kind.RemoveVerts` cannot carry today. See
+    // `commands/mesh/bevel.d`'s class doc comment and
+    // `tests/unit/face_reindex_arming_test.d`'s refusal text.
     {
         import std.regex : ctRegex, matchAll;
         size_t installs = 0;
@@ -2423,7 +2443,7 @@ unittest // Stage G — the manifold edge bevel family
                  ~ "winding this family writes goes through "
                  ~ "`mesh_planes.rewriteFaces`, and that is exactly why its "
                  ~ "publisher is DISARMED rather than ABSENT — arming "
-                 ~ "`wantsFaceReindex` changes its op-log, where it leaves "
+                 ~ "`wantsFaceReindex` changes its op-log, where it left "
                  ~ "bevel_fin.d's and poly_bevel.d's byte-identical. An indexed "
                  ~ "install here would move this family into §5.3's OTHER "
                  ~ "audit, out of Stage K's reach, with no other row noticing "

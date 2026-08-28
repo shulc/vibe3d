@@ -2067,10 +2067,41 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
     // rewrite below (the merge pass) — the shared-`rwB` constraint
     // (plan §2.6): this kernel opens ONE handle and rewrites `faces`
     // TWICE, declaring only once.
-    // TASK 1903 STAGE K MEASURED THIS ROW AND LEFT BOTH REWRITES DISARMED
-    // (2026-08-27). The plan asked for TWO scopes here, one per rewrite, and
-    // that shape is right — but the arming itself cannot land yet, and the
-    // blocker is the SECOND rewrite, not this one. See the note at that call.
+    // TASK 1903 STAGE L7-P1 MEASURED THIS ROW AND **DECLINES** THE ARMING
+    // (2026-08-28, task 2320). Stage K left both rewrites disarmed on
+    // 2026-08-27 and named the SECOND rewrite as the blocker; that is still
+    // where the corner defect is, but it is no longer the reason the family
+    // stays out. Three findings, all on a `makeTaggedGridFull(3)` stand:
+    //
+    //   * THE PLAN'S CANDIDATE (b) IS REJECTED — routing this rewrite through
+    //     `Mesh.setFaceWindings`, which takes its own before-image, is
+    //     impossible: that writer cannot change the face COUNT and this
+    //     rewrite does. `faces` goes 9 -> 11 for one interior edge and
+    //     9 -> 12 for two. Even the count-neutral rim-edge case (9 -> 9) moves
+    //     the CORNER total, 36 -> 37, so the softened version dies too.
+    //
+    //   * THE PLAN'S CANDIDATE (a) IS BUILDABLE, AND ITS OBVIOUS SPELLING IS
+    //     UNSOUND. Two handles, declaring once per rewrite, does work — but
+    //     only if the second declaration is a RELOCATION. A `carriedPerFace`
+    //     second handle is wrong: the merge pass below writes
+    //     `resolvePool(vid0)`, so a merged corner can stand on a vertex its
+    //     own source face does not contain, and a carry resolves a source
+    //     corner by looking that VERTEX up in the old face. It measured "0 of
+    //     72 UV floats differ" anyway — because the pooling fires ZERO times
+    //     on these stands, so the cell cannot exhibit the defect it would
+    //     have. Do not read that green as evidence. The sound form names each
+    //     survivor's exact old loop index, `oldFaceLoop[fi] + ci`, which the
+    //     merge pass (a pure corner SUBSET) always has.
+    //
+    //   * AND NEITHER MATTERS YET, because arming the family surfaces a loss
+    //     the disarmed throw was hiding — see the second rewrite below for the
+    //     measured residual. That loss is a Point-domain map VALUE, it needs a
+    //     payload FIELD on `MeshOpEntry`, and sizing that field is owed to the
+    //     stage that serves ALL its consumers, not to this kernel.
+    //
+    // So the arming is DECLINED here and now, not merely postponed, and
+    // `tests/unit/face_reindex_arming_test.d`'s roster is CORRECT at nine
+    // sites BECAUSE of this — do not add a tenth for this family.
     rewriteFaces(ed, newFaces, FaceSource(oldOfNew));
     // The two chamfer-strip faces above fold two source faces'
     // faceMarks into one word no single `oldOfNew` entry can express —
@@ -2250,9 +2281,39 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
     // — the shared-`rwB` constraint (plan §2.6): this kernel opens ONE
     // handle and rewrites `faces` twice (the rebuild pass above, this
     // merge pass here), declaring only once, after this second rewrite.
-    // TASK 1903 STAGE K MEASURED THIS ROW AND LEFT IT DISARMED (2026-08-27) —
-    // and this call is the reason the whole family stays out, so the reason
-    // lives here rather than in a table.
+    // TASK 1903 STAGE K MEASURED THIS ROW AND LEFT IT DISARMED (2026-08-27).
+    // STAGE L7-P1 RE-MEASURED IT ON 2026-08-28 (task 2320) AND THE ROW MOVED:
+    // this call is NO LONGER the reason the family stays out. The corner
+    // defect described below is real and is CLOSABLE — giving each rewrite its
+    // own corner-provenance handle (a carry here, consumed by a `buildLoops`,
+    // then a RELOCATE over the merge pass's exact corner subset) produced one
+    // `MeshMapDelta` per `FaceReindex` and an armed revert with 0 of 72 UV
+    // floats differing, against 71 of 72 under the single shared handle. (71,
+    // not 72: the stand fills `uv` with `0, 1, 2, …`, so corner 0's U is
+    // already 0 and zeroing it changes nothing. Quoting "all 72" would be one
+    // float wider than the measurement.) That shape is deliberately NOT in the
+    // tree: while the family is unarmed nothing records a `FaceReindex`, so no
+    // lane can observe whether it is right.
+    //
+    // WHAT ACTUALLY BLOCKS THE ARMING is a different plane with a different
+    // owner. Measured residual of the armed revert on `makeTaggedGridFull(3)`,
+    // edge (1,5), both ways:
+    //
+    //     [edgeMarks, faceMarks, map:W, orderCounters, vertexMarks,
+    //      vertexSelectionOrder]
+    //
+    // Five are Select-class and are what every armed family carries. `map:W`
+    // is not: it is a Point-domain map VALUE. The kernel's tail
+    // `compactUnreferenced` drops the two consumed endpoint vertices, and
+    // `mesh_edit_delta.removeVertsReverse` re-inserts a dropped vertex with
+    // its Point-map values ZEROED — its own documented limit — so `W` comes
+    // back `0.5, 0, 2.5, …, 0, …` where the stand held
+    // `0.5, 1.5, 2.5, …, 5.5, …`. A lost VALUE is exactly the line
+    // `face_reindex_arming_test.d` block 2 draws, and its guard asserts
+    // `map:W` equal outright, so the residual row is not even writable.
+    // Closing it means a Point-domain payload on `Kind.RemoveVerts` — a FIELD
+    // on `MeshOpEntry`, sized once for every family that compacts vertices,
+    // which is not this kernel's to add.
     //
     // THE SHARED-`rwB` SHAPE AND THE STAGE J PAYLOAD ARE INCOMPATIBLE AS
     // WRITTEN. `Kind.FaceReindex` restores per-corner values from a

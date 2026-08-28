@@ -158,14 +158,28 @@ string fixturePath(string leaf)
     return buildPath(tests, "fixtures", "undo_parity", leaf);
 }
 
-/// Compare the freshly-run cells against the frozen file — or, under
-/// `VIBE3D_PARITY_CAPTURE=1`, WRITE the file instead.
+/// Compare the freshly-run cells against the frozen file — or, under the
+/// environment variable NAMED BY `captureKey`, WRITE the file instead.
 ///
 /// The capture arm is what produced the committed fixture, and it lives beside
 /// the reader deliberately: a capture script that is not the reader can drift
 /// from it, and then the fixture records a recipe no test ever runs.
+///
+/// `captureKey` IS A PARAMETER AND NOT A CONSTANT, and that is task 1903 stage
+/// L9-0 retiring a class rather than routing around it. It used to be the bare
+/// literal `VIBE3D_PARITY_CAPTURE` inside this body, and three readers share
+/// this function: L0's own, `undo_parity_l1_test.d:36` and
+/// `undo_parity_l2_test.d:52`. Druntime runs every unittest module in ONE
+/// process and `environment` is process-wide, so a capture run intended for
+/// ONE of the three re-froze the other two's fixtures in the same run —
+/// silently, and against a tree the other two's headers declare immutable.
+/// L3 and L5 each dodged it by writing a private copy of this function with a
+/// suffixed key; that is two copies of a mechanism, and a fourth and fifth
+/// were owed here. So the key moves to the call site, one distinct key per
+/// reader, and `tests/unit/parity_capture_key_census_test.d` asserts the
+/// `leaf` -> `key` map is 1:1 over every `undo_parity_*_test.d`.
 void compareOrCapture(string leaf, string family, string sha, string stand,
-                      ParityCell[] cells)
+                      ParityCell[] cells, string captureKey)
 {
     import std.file   : exists, readText, write, mkdirRecurse;
     import std.path   : dirName;
@@ -183,7 +197,15 @@ void compareOrCapture(string leaf, string family, string sha, string stand,
 
     immutable path = fixturePath(leaf);
 
-    if (environment.get("VIBE3D_PARITY_CAPTURE", "") == "1") {
+    // A caller that forgets the key must not fall back to "compare" and look
+    // healthy: an empty key would make the capture arm unreachable and the
+    // reader would silently stop being capturable at all.
+    assert(captureKey.length > 0,
+           leaf ~ ": compareOrCapture was given an EMPTY capture key — every "
+         ~ "reader owns a distinct capture-key name; the map is asserted "
+         ~ "1:1 by tests/unit/parity_capture_key_census_test.d");
+
+    if (environment.get(captureKey, "") == "1") {
         mkdirRecurse(dirName(path));
         write(path, fixtureJson(family, sha, stand, cells));
         return;
@@ -192,7 +214,7 @@ void compareOrCapture(string leaf, string family, string sha, string stand,
     assert(exists(path),
            "missing parity fixture " ~ path ~ " — plan §6.3 requires it to be "
          ~ "frozen BEFORE the family's dense path is deleted; re-run with "
-         ~ "VIBE3D_PARITY_CAPTURE=1 only on a tree that still HAS that path");
+         ~ captureKey ~ "=1 only on a tree that still HAS that path");
 
     auto frozen = parseJSON(readText(path));
 
@@ -540,5 +562,5 @@ unittest
     import std.process : environment;
     immutable sha = environment.get("VIBE3D_PARITY_SHA", "");
     compareOrCapture("position_marks.json", kL0Family, sha, kL0Stand,
-                     l0Cells(sha));
+                     l0Cells(sha), "VIBE3D_PARITY_CAPTURE_L0");
 }

@@ -254,5 +254,5 @@ unittest
     import std.process : environment;
     immutable sha = environment.get("VIBE3D_PARITY_SHA", "");
     compareOrCapture("create_stable.json", kL2Family, sha, kL2Stand,
-                     l2Cells(sha));
+                     l2Cells(sha), "VIBE3D_PARITY_CAPTURE_L2");
 }

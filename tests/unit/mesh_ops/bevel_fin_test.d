@@ -272,62 +272,93 @@ unittest { // the fin-bundle op-log NAMES NO WINDING CHANGE, and its revert FAUL
              ~ "reaching MeshEditDelta.scope_ at all",
                cast(uint)d.scope_, kBevelFinEditScope));
 
-    // THE FINDING, MEASURED — and it is why this block exists.
+    // THE FINDING, MEASURED — and STAGE L7-P2 CLOSED IT (2026-08-28). The
+    // block is REWRITTEN rather than having its number widened, which is what
+    // its own message demanded.
     //
-    // Three fins were rewritten in place, and the op-log is four entries:
+    // WHAT IT USED TO SAY. Three fins were rewritten in place and the op-log
+    // was four entries, `[AddVerts AddFaces RemoveVerts Reindex]`: the six
+    // rails in, the two fan caps, the two spine vertices the tail compaction
+    // dropped, and the renumbering after it. It said NOTHING about the three
+    // fin WINDINGS, which the kernel installed with `ed.faces[fi] = nf;` — a
+    // direct indexed write reaching no mutation hook at all — and `revert()`
+    // THREW out of `finalize` -> `buildLoops` ("index [9] is out of bounds for
+    // array of length 8"), leaving V and F back at 8/3 with six face corners
+    // still pointing at rail vertices that no longer existed.
     //
-    //     entries=4 kinds=[AddVerts AddFaces RemoveVerts Reindex]
+    // THE DIAGNOSIS WAS "ABSENT PUBLISHER", NOT "DISARMED ONE", and it was
+    // established the only way the two can be told apart — by ARMING
+    // `MeshEditTracker.wantsFaceReindex` and re-measuring (E3 memo 12). The
+    // armed log was BYTE-IDENTICAL and the revert still faulted, while the
+    // same armed build reddened `tests/unit/mesh_ops/cleanup_test.d(785)`, so
+    // the mutation was live and the primitive simply was not reached. Stage
+    // K's per-rewrite arming scope could never have fixed it.
     //
-    // It names the six rails that came in (AddVerts), the two fan caps
-    // (AddFaces), the two spine vertices the tail compaction dropped
-    // (RemoveVerts) and the renumbering that followed (Reindex). It says
-    // NOTHING about the three fin WINDINGS, which the kernel rewrites with
-    // `ed.faces[fi] = nf;` — a direct indexed install that reaches no mutation
-    // hook at all.
+    // WHAT L7-P2 DID. The install goes through `Mesh.setFaceWindings`, in ONE
+    // BULK call after the two cap `addFace`s, so the log gains ONE
+    // `ReshapeFaces` for all three fins — not one per fin. That is the shape
+    // assertion below and it is not decoration: `recordPolyVertexPayload`
+    // resolves corner bases by ONE ordered sweep over `faces`, so N single
+    // calls are O(N.F), measured at 31x (3 600 faces) and 66x (10 000) on card
+    // 2260. A per-fin loop still round-trips, so no value assertion anywhere
+    // can see it.
     //
-    // THE DIAGNOSIS IS "ABSENT PUBLISHER", NOT "DISARMED ONE", AND THAT DECIDES
-    // WHICH STAGE CAN FIX IT (E3 memo 12: the two are told apart only by arming
-    // the flag and measuring). Measured at E4: setting
-    // `MeshEditTracker.wantsFaceReindex = true` at its declaration leaves this
-    // op-log BYTE-IDENTICAL and the revert still faulting — while the same
-    // armed build reddens `tests/unit/mesh_ops/cleanup_test.d(785)` ("revert
-    // restored V=4 F=3, expected V=4 F=2", Stage E1's row) and turns the vertex
-    // chamfer's log into `[AddVerts FaceReindex RemoveVerts Reindex]`. So the
-    // green here is the ABSENCE of the primitive, not a dead mutation. Stage
-    // K's per-rewrite arming scope cannot reach this family; it is a row of K's
-    // OTHER audit — the census of face rewrites that never call
-    // `mesh_planes.rewriteFaces` (plan §5.3) — and the stage that owns it is
-    // **L7** (`bevel/inset`).
-    //
-    // STAGE K/L7 FLIPS THIS.
-    assert(d.log.length == 4,
-        format("the fin bevel recorded %d op-log entr(ies) %s, expected exactly "
-             ~ "4. If a face entry has appeared, L7 has given the in-place "
-             ~ "winding install a publisher and this block's whole comment is "
-             ~ "now wrong — rewrite it, do not widen the number "
-             ~ "(task 1903 Stage E4).", d.log.length, kindsOf(d)));
-    assert(countKind(d, MeshOpEntry.Kind.AddVerts)    == 1
-        && countKind(d, MeshOpEntry.Kind.AddFaces)    == 1
-        && countKind(d, MeshOpEntry.Kind.RemoveVerts) == 1
-        && countKind(d, MeshOpEntry.Kind.Reindex)     == 1,
-        format("the fin bevel's op-log is %s, expected exactly one each of "
-             ~ "AddVerts / AddFaces / RemoveVerts / Reindex "
-             ~ "(task 1903 Stage E4).", kindsOf(d)));
-    assert(countKind(d, MeshOpEntry.Kind.ReshapeFaces) == 0
+    // THE ASSERTION IS A KIND SEQUENCE, NOT A LENGTH, and that is the second
+    // instruction this block's old message gave. A length is satisfied by a
+    // broken log — Stage J made the `[MeshMapDelta, ReshapeFaces]` ADJACENCY
+    // contractual (`CornerCarry.payloadForCount` binds by it), so an entry
+    // interposed between a payload and its face entry unpairs the corner
+    // restore SILENTLY while the geometry still round-trips. On THIS stand
+    // there is no PolyVertex map, so no `MeshMapDelta` is recorded and the
+    // sequence is the five below; the map-carrying variant is measured in the
+    // per-corner block further down this file.
+    assert(kindsOf(d) == "[AddVerts AddFaces ReshapeFaces RemoveVerts Reindex]",
+        format("the fin bevel's op-log kinds are %s, expected\n"
+             ~ "  [AddVerts AddFaces ReshapeFaces RemoveVerts Reindex]\n"
+             ~ "  NO `ReshapeFaces` is the pre-L7-P2 state: the winding "
+             ~ "install went back to a raw `ed.faces[fi] = nf;`, which reaches "
+             ~ "no record primitive, and `revert()` then THROWS out of "
+             ~ "buildLoops leaving the mesh half-reverted.\n"
+             ~ "  MORE THAN ONE `ReshapeFaces` is the other regression: the "
+             ~ "bulk call became a per-fin loop, which still round-trips and "
+             ~ "is the O(N.F) shape card 2260 measured at 31x/66x.\n"
+             ~ "  A different ORDER means an entry moved across the face "
+             ~ "entry, which is what the corner payload pairs by.",
+               kindsOf(d)));
+    assert(countKind(d, MeshOpEntry.Kind.AddVerts)     == 1
+        && countKind(d, MeshOpEntry.Kind.AddFaces)     == 1
+        && countKind(d, MeshOpEntry.Kind.ReshapeFaces) == 1
+        && countKind(d, MeshOpEntry.Kind.RemoveVerts)  == 1
+        && countKind(d, MeshOpEntry.Kind.Reindex)      == 1
         && countKind(d, MeshOpEntry.Kind.FaceReindex)  == 0,
-        format("the fin bevel's op-log now names a face RESHAPE (%s). That is "
-             ~ "the gap L7 owns and it would be good news — but this block's "
-             ~ "comment, the file header, and plan §5.3's other-audit row all "
-             ~ "say the publisher is ABSENT, so all three have to move with it "
-             ~ "(task 1903 Stage E4).", kindsOf(d)));
+        format("the fin bevel's op-log is %s, expected exactly one each of "
+             ~ "AddVerts / AddFaces / ReshapeFaces / RemoveVerts / Reindex and "
+             ~ "NO FaceReindex — this kernel reaches no `rewriteFaces` at all, "
+             ~ "so a FaceReindex appearing means somebody armed it (task 1903 "
+             ~ "Stage L7-P2).", kindsOf(d)));
 
-    // `d.revert(m)` is NOT called here, and that is MEASURED rather than
-    // cautious. It THROWS out of `finalize` -> `buildLoops`
-    // ("index [9] is out of bounds for array of length 8") and leaves the mesh
-    // HALF-REVERTED: V and F back at the pre-op 8 / 3, but SIX face corners
-    // still pointing at rail vertices up to index 13 that no longer exist. The
-    // N=4 stand is the same shape with 8 dangling corners, and the multi-edge
-    // door with 8. Unreachable in production today — `mesh.bevel` and the two
-    // bevel tools all open UNRECORDED batches — which is exactly why it is
-    // written down before L7 walks into it.
+    // `d.revert(m)` IS CALLED NOW, and calling it IS the check. Before L7-P2
+    // it threw out of `finalize` -> `buildLoops` ("index [9] is out of bounds
+    // for array of length 8") and left the mesh HALF-REVERTED: V and F back at
+    // the pre-op 8 / 3, but SIX face corners still pointing at rail vertices up
+    // to index 13 that no longer existed. The N=4 stand was the same shape with
+    // 8 dangling corners, and the multi-edge
+    // door with 8.
+    {
+        auto preWind = new uint[][](m.faces.length);
+        assert(d.revert(m),
+            "revert() refused the fin-bundle delta outright");
+        assert(m.vertices.length == preV && m.faces.length == preF,
+            format("revert left V=%d F=%d, expected the pre-op %d / %d — the "
+                 ~ "shape that used to be a THROW out of buildLoops",
+                   m.vertices.length, m.faces.length, preV, preF));
+        foreach (fi; 0 .. m.faces.length)
+            foreach (c; m.faces[fi])
+                assert(c < m.vertices.length,
+                    format("revert left face %d naming vertex %d against %d "
+                         ~ "live vertices — a DANGLING corner, which is "
+                         ~ "exactly the half-reverted state this block used to "
+                         ~ "record", fi, c, m.vertices.length));
+        cast(void) preWind;
+    }
 }

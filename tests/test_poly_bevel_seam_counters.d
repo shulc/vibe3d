@@ -209,7 +209,49 @@ unittest {
         "Measured with the deferral disabled: +10 for ONE face and +34 for "
       ~ "four (tests/unit/mesh_ops/poly_bevel_test.d records the same ladder "
       ~ "as a mutationVersion delta), i.e. 8n+2 — the zero is a SCALE claim.");
-    assertUnrecorded(b, a, "mesh.poly_inset", "Stage L7 (`bevel / inset`)");
+    // TASK 1903 STAGE L7-a FLIPPED THIS ROW. `mesh.poly_inset` opens a
+    // RECORDING batch and undoes from the op-log; the whole-mesh
+    // `MeshSnapshot` is gone. THREE entries on this CUBE stand —
+    // `[AddVerts, AddFaces, ReshapeFaces]`, the last of them the winding
+    // publisher Stage L7-P2 added. There is no `MeshMapDelta`: a cube carries
+    // no PolyVertex map, so the payload has nothing to record. The
+    // four-entry form is on the UV-carrying stand in
+    // `tests/unit/l7_bevel_inset_delta_test.d`, which is where the SEQUENCE
+    // is asserted; this row is the only one in EITHER lane that sees the
+    // COMMAND's own constructor.
+    assertRecorded(b, a, "mesh.poly_inset", 3,
+        "ONE `ReshapeFaces` closes the whole processed set, however many "
+      ~ "faces were inset: the bulk `Mesh.setFaceWindings` call is what makes "
+      ~ "it one, and a per-face loop — the O(N*F) shape card 2260 measured at "
+      ~ "31x/66x — still round-trips, so nothing but a COUNT can see it.");
+    // …and the undo has to actually work, through the real history stack.
+    // Neither lane's other cells drive `/api/undo`: the unit cells call
+    // `revert()` directly, which cannot see the funnel at all.
+    assertUndoRestoresCube("mesh.poly_inset");
+}
+
+/// Drive ONE `/api/undo` and assert it took effect: the undo stack moves by
+/// EXACTLY ONE and the mesh is back to the cube's 8 / 6.
+///
+/// MUTATION: stub `/api/undo` to a literal `{"status":"ok"}`. The depth does
+/// not move and this reddens naming the count. A `status:ok` on its own proves
+/// nothing — an endpoint returns it whatever it did.
+void assertUndoRestoresCube(string what) {
+    immutable long d1 = getJson("/api/history")["undo"].array.length;
+    auto u = postTo("/api/undo", "");
+    assert(u["status"].str == "ok", what ~ ": /api/undo failed: " ~ u.toString);
+    immutable long d2 = getJson("/api/history")["undo"].array.length;
+    assert(d1 - d2 == 1,
+        format("%s: the undo moved the stack from %d to %d, expected exactly "
+             ~ "one entry — a stack that does not move means the endpoint "
+             ~ "answered ok without undoing anything", what, d1, d2));
+    auto m = model();
+    assert(vertCount(m) == 8 && faceCount(m) == 6,
+        format("%s: undo left V=%d F=%d, expected the cube's 8/6. This command "
+             ~ "undoes from its OP-LOG since stage L7; the whole-mesh "
+             ~ "MeshSnapshot is gone, so a wrong count here is the delta "
+             ~ "replay and not a snapshot restore", what,
+               vertCount(m), faceCount(m)));
 }
 
 // ---------------------------------------------------------------------------
@@ -236,7 +278,18 @@ unittest {
     assertSeamClean(b, a, "mesh.bevel (polygon mode)",
         "Measured with the deferral disabled: +10 for ONE face and +66 for "
       ~ "eight, i.e. 8n+2.");
-    assertUnrecorded(b, a, "mesh.bevel (polygon mode)", "Stage L7");
+    // TASK 1903 STAGE L7-b FLIPPED THIS ROW — see `mesh.poly_inset` above.
+    // Three entries on the cube: `[AddVerts, AddFaces, ReshapeFaces]`. The
+    // command's `group` default is TRUE, and on a cube the grouped path's
+    // shared-corner memo serves every face from one appended apex, so no
+    // compaction fires here and there is no `[RemoveVerts, Reindex]` tail —
+    // the grid stand in `tests/unit/mesh_ops/poly_bevel_test.d` is where that
+    // shape is pinned.
+    assertRecorded(b, a, "mesh.bevel (polygon mode)", 3,
+        "The EDGE arm of this same command is DECLINED and still records "
+      ~ "NOTHING (see the cell below and `commands/mesh/bevel.d`'s class doc) "
+      ~ "— one class, two arms, two undo paths.");
+    assertUndoRestoresCube("mesh.bevel (polygon mode)");
 }
 
 unittest {   // the EDGE arm — FLIPPED BY STAGE G

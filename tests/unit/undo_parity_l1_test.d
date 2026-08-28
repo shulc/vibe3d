@@ -240,5 +240,6 @@ unittest
 {
     import std.process : environment;
     immutable sha = environment.get("VIBE3D_PARITY_SHA", "");
-    compareOrCapture("uv_maps_sets.json", kL1Family, sha, kL1Stand, l1Cells(sha));
+    compareOrCapture("uv_maps_sets.json", kL1Family, sha, kL1Stand,
+                     l1Cells(sha), "VIBE3D_PARITY_CAPTURE_L1");
 }

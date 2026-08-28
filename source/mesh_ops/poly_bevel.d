@@ -234,6 +234,41 @@ size_t insetFacesByMask(ref MeshEditBatch ed, const bool[] maskIn, float inset) 
     const mask = ed.maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
     size_t processed = 0;
     const size_t nFaces = ed.faces.length; // snapshot before appending ring quads
+
+    // TASK 1903 STAGE L7-P2 — the inset ring's parent-slot install goes
+    // through `Mesh.setFaceWindings`, in ONE BULK CALL after the loop.
+    //
+    // WHY IT IS A PUBLISHER AND NOT A RAW WRITE. `ed.faces[fi] = newVerts` is
+    // a `Kind.ReshapeFaces` that reaches no record primitive, so a recorded
+    // undo restored the appended ring quads (`AddFaces`' inverse truncates)
+    // and left the PARENT face holding the inset winding. Measured on
+    // `makeTaggedGridFull(3)` before this change: the op-log of a one-face
+    // inset was `[AddVerts, AddFaces]` and `revert()` THREW
+    // (`index [16] is out of bounds for array of length 16`).
+    //
+    // WHY BULK, AND WHY THE ACCUMULATOR IS ASCENDING BY CONSTRUCTION. Card
+    // 2260 measured the per-element path at 31x (3 600 faces) and 66x
+    // (10 000) — `recordPolyVertexPayload` resolves corner bases by ONE
+    // ordered sweep over `faces`, so N single calls are O(N.F). The same
+    // sweep is why `setFaceWindings` REQUIRES a strictly ascending `idx` and
+    // SILENTLY DECLINES an unordered one: the loop below walks
+    // `0 .. nFaces` front to back, so ascending is what it already produces.
+    // (Judged by TIME, never by the GC byte counter, which points the wrong
+    // way on this choice — card 2160.)
+    //
+    // THE ARRAYS ARE PRE-SIZED to the masked-face count and SLICED at the
+    // end, never grown with `~=` (a per-element runtime call `reserve` does
+    // not remove). `FaceIdx` disables default construction, so `.length =`
+    // does not compile on a `FaceIdx[]` in either direction — slicing is the
+    // only spelling. This mirrors `spikeFacesByMask` below, closed the same
+    // way at Stage L2-f.
+    size_t nMasked = 0;
+    foreach (fi; 0 .. nFaces) if (fi < mask.length && mask[fi]) ++nMasked;
+    if (nMasked == 0) return 0;
+    auto windIdx = uninitializedArray!(FaceIdx[])(nMasked);
+    auto windTo  = uninitializedArray!(uint[][])(nMasked);
+    size_t nw = 0;
+
     foreach (fi; 0 .. nFaces) {
         if (fi >= mask.length || !mask[fi]) continue;
         const uint[] origFaceVerts = ed.faces[fi].dup;
@@ -287,7 +322,18 @@ size_t insetFacesByMask(ref MeshEditBatch ed, const bool[] maskIn, float inset) 
         // Replace the original face with the inner (inset) face.
         // The face slot index is unchanged, so faceMarks[fi] (select mark
         // AND subpatch mark) carries over to the inner face automatically.
-        ed.faces[fi] = newVerts.dup;
+        //
+        // COLLECTED here, INSTALLED in the one bulk call after the loop (Stage
+        // L7-P2, above). Nothing between here and the end of this iteration
+        // reads `ed.faces[fi]` — the ring quads are built from
+        // `origFaceVerts`/`newVerts` directly and `isFaceSubpatch` reads the
+        // marks word — so the deferral is forward-invisible. The inner face
+        // has the SAME arity N as the original, so deferring changes no
+        // corner count either, which is what keeps the per-corner map in step
+        // with `faces` at the call site.
+        windIdx[nw] = ed.faceIndexAt(fi);
+        windTo[nw]  = newVerts;
+        ++nw;
         // Task 0389: read the source face's Subpatch bit BEFORE the ring
         // quads below grow `faceMarks` (addFace does not grow it itself —
         // `fi`'s own bit is unaffected by the in-place replace above).
@@ -305,6 +351,12 @@ size_t insetFacesByMask(ref MeshEditBatch ed, const bool[] maskIn, float inset) 
         ++processed;
     }
     if (processed == 0) return 0;
+    assert(nw == processed,
+        "insetFacesByMask: the winding accumulator and the processed count "
+      ~ "disagree — a face was inset without collecting its parent slot, or "
+      ~ "the reverse");
+    // The parent slots, all of them, in ONE entry (Stage L7-P2).
+    cast(void) ed.setFaceWindings(windIdx[0 .. nw], windTo[0 .. nw]);
     ed.rebuildEdges();
     ed.buildLoops();
     ed.syncSelection();
@@ -886,6 +938,21 @@ size_t bevelFacesByMask(ref MeshEditBatch ed, const bool[] maskIn, float inset, 
         foreach (fi; 0 .. nFaces) faceSrcOf[fi] = cast(uint)fi;
     }
 
+    // TASK 1903 STAGE L7-P2 — the CAP install goes through
+    // `Mesh.setFaceWindings` in ONE BULK CALL after the loop, for the reasons
+    // spelled out at `insetFacesByMask` above (an unrecorded `ReshapeFaces`,
+    // the 31x/66x per-element cost, the strictly-ascending requirement and
+    // the silent decline on an unordered list). The loop walks
+    // `0 .. nFaces` front to back, so the accumulator is ascending by
+    // construction; the arrays are pre-sized to the masked count and SLICED,
+    // because `FaceIdx` disables default construction.
+    size_t nMaskedB = 0;
+    foreach (fi; 0 .. nFaces) if (fi < mask.length && mask[fi]) ++nMaskedB;
+    if (nMaskedB == 0) return 0;
+    auto capIdx  = uninitializedArray!(FaceIdx[])(nMaskedB);
+    auto capWind = uninitializedArray!(uint[][])(nMaskedB);
+    size_t ncw = 0;
+
     foreach (fi; 0 .. nFaces) {
         if (fi >= mask.length || !mask[fi]) continue;
         const uint[] origFaceVerts = ed.faces[fi].dup;
@@ -1130,7 +1197,17 @@ size_t bevelFacesByMask(ref MeshEditBatch ed, const bool[] maskIn, float inset, 
             }
         }
 
-        ed.faces[fi] = finalVerts.dup;
+        // COLLECTED here, INSTALLED in the one bulk call after the loop
+        // (Stage L7-P2, above). Nothing between here and the end of this
+        // iteration reads `ed.faces[fi]`: the ring quads are built from
+        // `origFaceVerts` / `ringVerts` / the split points directly, and the
+        // Subpatch / material / part / set reads all go to the per-face
+        // PLANES, not the winding. The cap has the SAME arity `Nc` as the
+        // original, so deferring changes no corner count and the per-corner
+        // map is still in step with `faces` at the call site.
+        capIdx[ncw]  = ed.faceIndexAt(fi);
+        capWind[ncw] = finalVerts.dup;
+        ++ncw;
         // Task 0389: read the source face's Subpatch bit BEFORE the ring
         // quads below grow `faceMarks` (addFace does not grow it itself —
         // `fi`'s own bit is unaffected by the in-place replace above).
@@ -1202,6 +1279,11 @@ size_t bevelFacesByMask(ref MeshEditBatch ed, const bool[] maskIn, float inset, 
         ++processed;
     }
     if (processed == 0) return 0;
+    assert(ncw == processed,
+        "bevelFacesByMask: the cap-winding accumulator and the processed "
+      ~ "count disagree");
+    // The cap slots, all of them, in ONE entry (Stage L7-P2).
+    cast(void) ed.setFaceWindings(capIdx[0 .. ncw], capWind[0 .. ncw]);
     if (square && squareSplitAt.length > 0) {
         // Splice each surviving split point into the UNSELECTED face
         // sharing that original edge, so the mesh stays watertight (no
@@ -1209,6 +1291,29 @@ size_t bevelFacesByMask(ref MeshEditBatch ed, const bool[] maskIn, float inset, 
         // ORIGINAL (pre-op) faces can need this; a face already
         // rebuilt above (`mask[fi]`) holds its own new ring/final
         // verts already, not the original boundary, and is skipped.
+        // THE SPLICE IS THE TRAP THIS STAGE'S GROUP CELL EXISTS FOR (Stage
+        // L7-P2). It writes an UNSELECTED neighbour — a face nobody selected
+        // changes winding — so a check keyed on the selection cannot see
+        // whether its restore works. It is also the one install whose ARITY
+        // CHANGES (the split points are spliced in), which is why it takes a
+        // SECOND bulk call rather than riding the cap's: `setFaceWindings`
+        // captures its own before-image, and the payload it pairs with that
+        // entry must describe the corner space as it is HERE, after the cap
+        // call has already run.
+        //
+        // The accumulator is ascending because this loop walks
+        // `0 .. nFaces` front to back and skips masked faces — an "append as
+        // processed" accumulator over some other order would be UNORDERED and
+        // `setFaceWindings` would decline it SILENTLY, leaving V/F/E, every
+        // mark word, both materials and both set masks byte-identical with
+        // only the windings wrong.
+        size_t nUnmasked = 0;
+        foreach (fi; 0 .. nFaces)
+            if (!(fi < mask.length && mask[fi]) && ed.faces[fi].length >= 3)
+                ++nUnmasked;
+        auto splIdx  = uninitializedArray!(FaceIdx[])(nUnmasked ? nUnmasked : 1);
+        auto splWind = uninitializedArray!(uint[][])(nUnmasked ? nUnmasked : 1);
+        size_t nsw = 0;
         foreach (fi; 0 .. nFaces) {
             if (fi < mask.length && mask[fi]) continue;
             const uint[] cur = ed.faces[fi];
@@ -1221,8 +1326,11 @@ size_t bevelFacesByMask(ref MeshEditBatch ed, const bool[] maskIn, float inset, 
                 if (auto p = ((cast(ulong)a << 32) | b) in squareSplitAt) rebuilt ~= *p;
                 if (auto p2 = ((cast(ulong)b << 32) | a) in squareSplitAt) rebuilt ~= *p2;
             }
-            ed.faces[fi] = rebuilt;
+            splIdx[nsw]  = ed.faceIndexAt(fi);
+            splWind[nsw] = rebuilt;
+            ++nsw;
         }
+        if (nsw) cast(void) ed.setFaceWindings(splIdx[0 .. nsw], splWind[0 .. nsw]);
     }
     // Parity (fuzz D3): a positive inset clamped to `maxSafeUniformInset`
     // lands the cap ring AT the collapse point — several (or all) cap

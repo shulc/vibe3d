@@ -2463,19 +2463,31 @@ unittest { // the loop slice is ARMED at Stage K — geometry, planes and UV com
     //     7. all three selection-order counters   1,1,1 -> 0,0,0
     //     8. vertexSetMask  — VALUES correct, LENGTH left grown (8 -> 12)
     //
-    // The three-way attribution the F1 review established still holds and is
-    // what L9 acts on: seven of the eight (1, 2, 4-8) are the tail
-    // `resetSelection()` — delete that one call and every one of them comes
-    // back; row 3 is NOT — `faceMarks[4]` Select is cleared by
+    // The three-way attribution the F1 review established still holds: seven
+    // of the eight (1, 2, 4-8) are the tail `resetSelection()` — delete that
+    // one call and every one of them comes back; row 3 is NOT —
+    // `faceMarks[4]` Select is cleared by
     // `ed.setFaceMarksFrom(newWord, ~ed.Marks.Select)` before the tail ever
-    // runs, so the reverse faithfully restores an already-cleared word. So L9
-    // owes TWO publishers, not the three the disarmed measurement named: a
-    // MARKS publisher (plan L0's first production publishers) for all three
-    // domains plus the set-mask resize, and a publish of `setFaceMarksFrom`,
-    // which the Marks publisher does not cover. The third — a `MeshMapDelta`
-    // publisher on this path — is what Stage J shipped.
+    // runs, so the reverse faithfully restores an already-cleared word.
     //
-    // STAGE L9 FLIPS THE REMAINDER.
+    // STAGE L9 LANDED AND BUILT **NO** PUBLISHER, WHICH IS WHY THIS BLOCK IS
+    // UNCHANGED. Row 8 closed at Stage L2-c (see its inverted assertion at the
+    // bottom of this block) and row 9 at Stage J. The remaining seven are
+    // Select-class, and the ruling is that they are the COMMAND's, not this
+    // kernel's: `commands/mesh/loop_slice.d` holds a `DenseSelectionUndo`
+    // (`commands/mesh/selection_undo.d`) and restores all seven one statement
+    // after `delta_.revert`. `Kind.SelectionDelta` CANNOT carry them — its
+    // restore re-selects through `Mesh.selectEdge`, which mints a FRESH order
+    // stamp off the counter, and no delta kind carries a selection-order stamp
+    // at all — so a "Marks publisher" here would be a second, lossy writer
+    // over a plane the dense image already owns.
+    //
+    // SO THE RESIDUAL BELOW IS CORRECT AND EXPECTED AT THE KERNEL, and the
+    // instruction on its lines still stands for the opposite reason: a line
+    // going red because something came back means somebody built the publisher
+    // this stage argued against. The COMMAND's side of the same measurement is
+    // `tests/unit/undo_parity_l9_test.d`, whose `postUndo` dumps have NO
+    // Select-class residual at all.
     assert(countKind(d, MeshOpEntry.Kind.FaceReindex) == 1,
         format("the loop slice's op-log is %s, expected exactly one "
              ~ "FaceReindex entry. ZERO means `insertEdgeLoopsMulti`'s "
@@ -2549,15 +2561,18 @@ unittest { // the loop slice is ARMED at Stage K — geometry, planes and UV com
     // and L9 owes it. A line here going red because something came back is
     // GOOD NEWS and means this block plus plan §5.5's L9 row move together.
     assert(!m.isVertexSelected(1) && !m.isEdgeSelected(3) && !m.isFaceSelected(4),
-        "a Select bit came back that Stage K measured as still lost (rows 1-3 "
-      ~ "of the loss list above). If L9's Marks publisher has landed, rewrite "
-      ~ "this block and plan §5.5's L9 row together — do not simply delete "
-      ~ "this line");
+        "a Select bit came back that Stage K measured as still lost at the "
+      ~ "KERNEL (rows 1-3 of the loss list above). Stage L9 deliberately built "
+      ~ "no publisher for these — they are restored at the COMMAND, by "
+      ~ "`DenseSelectionUndo`. If a bit comes back HERE, somebody built the "
+      ~ "publisher this stage argued against; rewrite this block, the L9 row "
+      ~ "and `commands/mesh/loop_slice.d`'s class doc together — do not simply "
+      ~ "delete this line");
     assert(m.vertexSelectionOrderCounter == 0
         && m.edgeSelectionOrderCounter == 0
         && m.faceSelectionOrderCounter == 0,
         "a selection-order counter came back that Stage K measured as still "
-      ~ "lost (row 7). Same instruction as the line above");
+      ~ "lost at the kernel (row 7). Same instruction as the line above");
     // ROW 8 CAME BACK, AND THAT IS THE GOOD NEWS THIS BLOCK'S OWN HEADER ASKS
     // FOR. `vertexSetMask` used to be left grown to the post-op length by
     // `finalizeTopologyEdit`'s resize, with every VALUE intact — the residual

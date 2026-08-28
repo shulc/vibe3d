@@ -162,15 +162,26 @@ unittest {
       ~ "(tests/unit/mesh_ops/loop_slice_test.d records the same figure as a "
       ~ "mutationVersion delta), and it GROWS with the position count.");
 
+    // TASK 1903 STAGE L9-b FLIPPED THIS ROW. `mesh.addLoop` now opens a
+    // RECORDING batch and undoes from the op-log; the whole-mesh
+    // `MeshSnapshot` is gone. The count is EXACT rather than `> 0`, because
+    // the KIND SEQUENCE is what the corner carry binds on and a growing log
+    // would mean an extra publisher landed between the payload and its face
+    // entry. On this CUBE stand there is no PolyVertex map, so no
+    // `MeshMapDelta` is recorded and the log is `[AddVerts, FaceReindex]` —
+    // two entries. The three-entry form is on the UV-carrying stand in
+    // `tests/unit/l9_loop_slice_delta_test.d`, which is where the sequence
+    // itself is asserted; this row is the only one in EITHER lane that sees
+    // the COMMAND's own constructor.
     immutable long opLog = a["opLogEntriesRecorded"].integer
                          - b["opLogEntriesRecorded"].integer;
-    assert(opLog == 0,
-        "mesh.addLoop recorded " ~ opLog.to!string ~ " op-log entr(ies). This "
-      ~ "command still undoes through a whole-mesh MeshSnapshot, so Stage F1 "
-      ~ "gave it the UNRECORDED constructor: a recording batch would build an "
-      ~ "op-log nothing reads and close() would drop it. Stage L9 is what "
-      ~ "flips this to a recording batch, and it flips this assertion with it "
-      ~ "(task 1903 Stage F1, plan §5.5 L9).");
+    assert(opLog == 2,
+        "mesh.addLoop recorded " ~ opLog.to!string ~ " op-log entr(ies), "
+      ~ "expected 2 ([AddVerts, FaceReindex] on a cube, which carries no "
+      ~ "per-corner map). ZERO means the batch went back to the `unrecorded` "
+      ~ "constructor and this command has no undo image at all — the unit "
+      ~ "lane cannot see that, because its cells drive the KERNEL under their "
+      ~ "own recording batch (task 1903 Stage L9-b).");
 }
 
 // ---------------------------------------------------------------------------
@@ -202,14 +213,74 @@ unittest {
           ~ "for three on this belt, i.e. the amplitude grows with the ladder "
           ~ "— which is why this block runs count=3 AND count=8.");
 
+        // TASK 1903 STAGE L9-a FLIPPED THIS ROW — see the note on
+        // `mesh.addLoop` above. The count does NOT grow with the ladder: the
+        // whole ladder is ONE `insertEdgeLoops` call, so it is one `AddVerts`
+        // and one `FaceReindex` at count=3 and at count=8 alike. That
+        // invariance is the point of running both.
         immutable long opLog = a["opLogEntriesRecorded"].integer
                              - b["opLogEntriesRecorded"].integer;
-        assert(opLog == 0,
-            format("mesh.loopSlice count=%d recorded %d op-log entr(ies) — the "
-                 ~ "command's batch is UNRECORDED until Stage L9 "
-                 ~ "(task 1903 Stage F1).", count, opLog));
+        assert(opLog == 2,
+            format("mesh.loopSlice count=%d recorded %d op-log entr(ies), "
+                 ~ "expected 2 ([AddVerts, FaceReindex] on a cube). ZERO means "
+                 ~ "the batch went back to the `unrecorded` constructor; a "
+                 ~ "count that GROWS with the ladder means the batch stopped "
+                 ~ "spanning the cut (task 1903 Stage L9-a).", count, opLog));
     }
 }
+
+// ---------------------------------------------------------------------------
+// 2b. W-9-UNDO — the delta undo through the REAL history stack, with the
+//     stack depth asserted.
+//
+//     Neither lane's other cells drive `/api/undo`: the unit cells call
+//     `revert()` directly, which cannot see the funnel at all. A witness has
+//     been inert twice in this task for exactly that — "undo ran" was asserted
+//     by a `status:ok` an endpoint returns whatever it did. So this cell
+//     asserts a stack-depth delta of EXACTLY ONE, in both directions, and that
+//     the mesh moved.
+//
+//     MUTATION: stub `/api/undo` to a literal `{"status":"ok"}`. The depth
+//     does not move and the cell reddens naming the count.
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    selectEdge(seedEdgeIndex());
+
+    immutable long d0 = undoDepth();
+    auto rc = postCmd("/api/command", `{"id":"mesh.loopSlice","params":{"count":3}}`);
+    assert(rc["status"].str == "ok", "mesh.loopSlice failed: " ~ rc.toString);
+    immutable long d1 = undoDepth();
+    assert(d1 - d0 == 1,
+        format("mesh.loopSlice moved the undo stack by %d entr(ies), expected "
+             ~ "exactly 1 — with no entry recorded, the undo below is undoing "
+             ~ "somebody else's command and every assertion after it is about "
+             ~ "the wrong operation", d1 - d0));
+
+    auto m1 = model();
+    assert(vertCount(m1) == 20 && faceCount(m1) == 18,
+        format("the cut left V=%d F=%d, expected 20/18 — on a refusal the "
+             ~ "round trip below is satisfied by an undo that does nothing",
+               vertCount(m1), faceCount(m1)));
+
+    auto u = postCmd("/api/undo", "");
+    assert(u["status"].str == "ok", "/api/undo failed: " ~ u.toString);
+    immutable long d2 = undoDepth();
+    assert(d0 - d2 == 0 && d1 - d2 == 1,
+        format("the undo moved the stack from %d to %d (it was %d before the "
+             ~ "cut) — a stack that does not move by exactly one means the "
+             ~ "endpoint answered ok without undoing anything", d1, d2, d0));
+
+    auto m2 = model();
+    assert(vertCount(m2) == 8 && faceCount(m2) == 6,
+        format("undo left V=%d F=%d, expected the cube's 8/6. This command "
+             ~ "undoes from its OP-LOG since Stage L9-a; the whole-mesh "
+             ~ "MeshSnapshot is gone, so a wrong count here is the delta "
+             ~ "replay and not a snapshot restore", vertCount(m2), faceCount(m2)));
+}
+
+/// Depth of the undo stack, for the cell above.
+long undoDepth() { return getJson("/api/history")["undo"].array.length; }
 
 // ---------------------------------------------------------------------------
 // 3. The TOOL's commit path (`applyHeadless`), which is a different call site
