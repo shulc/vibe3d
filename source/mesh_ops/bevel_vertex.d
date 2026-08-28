@@ -339,25 +339,46 @@ size_t bevelVerticesByMask(ref MeshEditBatch ed, const bool[] maskIn, float amou
     // hand-rolled code always zeroed the cap range's order (`newOrd ~=
     // 0;`), never the survived range's (inherited by identity), which
     // the carry already reproduces via oldOfNew[i] == i.
-    // TASK 1903 STAGE K MEASURED THIS ROW AND LEFT IT DISARMED (2026-08-27),
-    // confirming Stage E4's warning on today's tree and on a stand that also
-    // carries a Point-domain map. Arming does reach the publisher — the
-    // op-log becomes `[AddVerts MeshMapDelta FaceReindex RemoveVerts Reindex]`
-    // and the `revert()` THROW goes away — and the FACE side then comes back
-    // whole, per-corner UV included (Stage J). What does NOT come back is on
-    // the VERTEX side, and it is a VALUE loss rather than a Select bit or an
-    // array length: on a `makeTaggedGridFull` stand bevelling vertex 5, the
-    // revert leaves `meshMaps["W"][5]` (Point domain) ZEROED, `vertexSetMask`
-    // bit 5 cleared, and one of the two `edgeSetMask` entries gone. Those ride
-    // `compactUnreferenced`'s `RemoveVerts`/`Reindex` pair, which restores
-    // POSITIONS and nothing else per vertex — no `FaceReindex` could have
-    // carried them, and arming here would buy a revert that answers `true`
-    // while a weight map silently loses a value. Every ARMED family in this
-    // stage was measured to lose only Select-class planes and array LENGTHS;
-    // this one loses values, which is the line Stage K draws.
-    // L7 owes the vertex-side publisher (or a stated `MeshSnapshot` refusal)
-    // before this line changes — see the plan's §5.5 L7 note.
-    rewriteFaces(ed, newFaces, FaceSource(oldOfNew));
+    // TASK 1903 STAGE L7-d — ARMED, INVERTING STAGE K'S REFUSAL, AND THE
+    // INVERSION IS A MEASUREMENT RATHER THAN A CHANGE OF MIND.
+    //
+    // Stage K measured this row on 2026-08-27 and left it DISARMED under one
+    // stated rule: *do not arm when a VALUE is lost*. Its residual on a
+    // `makeTaggedGridFull` stand bevelling vertex 5 was SEVEN planes, and
+    // three of them were not Select bits — `meshMaps["W"]` (a Point-domain map
+    // VALUE) zeroed at the bevelled vertex, `vertexSetMask` bit 5 cleared, and
+    // one of the two `edgeSetMask` entries gone. All three ride
+    // `compactUnreferenced`'s `[RemoveVerts, Reindex]` pair, which at the time
+    // restored POSITIONS and nothing else per vertex.
+    //
+    // That pair now carries all three. `Kind.RemoveVerts` gained the set-mask
+    // payload at Stage L5-b (`vertSetMaskBefore` + the
+    // `edgeSetKeyDropped`/`edgeSetWordDropped` half) and the Point-domain
+    // map-value payload at L7-P3 (task 2330), on the same three fields
+    // `Kind.MeshMapDelta` already used, so no `MeshOpEntry` field and no
+    // `byteSize` number moved for it.
+    //
+    // RE-MEASURED HERE BEFORE ARMING, not inherited: armed-revert plane diff
+    // on `makeTaggedGridFull(3)`, EXACT residual BOTH ways, three operands
+    // (the stand's own {2,9}, Stage K's {5}, and {5,10}). Log
+    // `[AddVerts MeshMapDelta FaceReindex RemoveVerts Reindex]` on all three,
+    // `revert()` answers true, and the residual is FIVE planes, every one of
+    // them Select-class: `vertexMarks`, `vertexSelectionOrder`, `edgeMarks`,
+    // `faceMarks` and `orderCounters`. `meshMaps["W"]`, `vertexSetMask`,
+    // `edgeSetMask`, `meshMaps["uv"]`, every position, every winding, both
+    // face-attribute planes and all three counts come back BYTE-IDENTICAL.
+    // No value is lost, so Stage K's rule now permits the arming rather than
+    // refusing it.
+    //
+    // The five Select-class planes are `DenseSelectionUndo`'s, taken by
+    // `commands/mesh/vertex_bevel.d` — NOT a publisher (§0.1: this family
+    // CONSUMES the dense image, it does not build a Marks publisher).
+    //
+    // ROSTER: `tests/unit/face_reindex_arming_test.d`'s `kArmedSites` names
+    // this site, and its block-2 cell carries the residual row above. A new
+    // arming without a roster row reddens that census by name.
+    { auto arm = ed.faceReindexScope();
+      rewriteFaces(ed, newFaces, FaceSource(oldOfNew)); }
     foreach (i; capStart .. ed.faces.length) ed.faceSelectionOrder[i] = 0;
 
     // Re-mask the just-carried word in place — src here IS faceMarks

@@ -351,8 +351,43 @@ unittest { // mesh.vertexBevel runs the whole chamfer inside ONE batch
       ~ "this family has NO transitional debt — both its callers are outside "
       ~ "the mesh and open the batch at their own boundary, which is the "
       ~ "finished shape (task 1903 Stage E4, plan §4.4a).");
-    assert(a2["opLogEntriesRecorded"].integer - b2["opLogEntriesRecorded"].integer == 0,
-        "mesh.vertexBevel recorded op-log entries. The batch is `unrecorded` "
-      ~ "deliberately: this command still undoes through a whole-mesh "
-      ~ "MeshSnapshot, and Stage L7 is what flips it (task 1903 Stage E4).");
+    // TASK 1903 STAGE L7-d FLIPPED THIS ROW. It used to assert the counter did
+    // NOT move, because the batch was `unrecorded` and the command undid
+    // through a whole-mesh `MeshSnapshot`. It now asserts an EXACT count,
+    // because the batch is recording and the delta is what `revert()` replays.
+    //
+    // FOUR, and the number is a KIND SEQUENCE's length rather than a range:
+    // `[AddVerts, FaceReindex, RemoveVerts, Reindex]` — the appended chamfer
+    // points, the face rewrite (stage L7-d armed `bevelVerticesByMask`), and
+    // the tail compaction's pair. A range would hide an interposed entry.
+    //
+    // FOUR AND NOT FIVE BECAUSE THIS STAND IS A CUBE, and that is measured
+    // rather than assumed: `Mesh.recordPolyVertexPayload` returns on its
+    // `hasPolyVertexMap()` line, so the `[MeshMapDelta, FaceReindex]` PAIR the
+    // unit lane sees on `makeTaggedGridFull` (which carries a UV map) is a
+    // lone `FaceReindex` here. The pairing itself is therefore NOT what this
+    // row measures — `tests/unit/face_reindex_arming_test.d`'s
+    // `bevelVerticesByMask` cell owns that, on a stand that has a map to
+    // unpair.
+    //
+    // THIS ROW IS THE ONLY ONE THAT SEES THE COMMAND'S OWN CONSTRUCTOR. The
+    // unit-lane cells drive the KERNEL and open their own batch, so they stay
+    // green with the command still unrecorded — which is why the seam counters
+    // live in the suite lane.
+    immutable long ops2 = a2["opLogEntriesRecorded"].integer
+                        - b2["opLogEntriesRecorded"].integer;
+    assert(ops2 == 4,
+        "mesh.vertexBevel recorded " ~ ops2.to!string ~ " op-log entr(ies), "
+      ~ "expected exactly 4 on this map-less cube stand — [AddVerts, "
+      ~ "FaceReindex, RemoveVerts, Reindex]. 0 means the command is back on "
+      ~ "the `unrecorded` constructor and its undo is a whole-mesh "
+      ~ "MeshSnapshot again (task 1903 Stage L7-d); 3 means the "
+      ~ "`faceReindexScope()` arm in bevelVerticesByMask is gone and the face "
+      ~ "array has no restorer at all; 5 or more means something was "
+      ~ "interposed.");
+    assert(a2["emptyDeltaOverMutation"].integer
+         - b2["emptyDeltaOverMutation"].integer == 0,
+        "mesh.vertexBevel closed a RECORDING batch with an EMPTY delta over a "
+      ~ "real mutation. `acceptRecordedEdit` refuses that pairing, so the user "
+      ~ "gets status:error over a chamfered mesh with no history entry.");
 }

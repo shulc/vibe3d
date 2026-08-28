@@ -325,6 +325,24 @@ struct JoinWeldPolicy {
 /// `faces[fi]`, `fi < faces.length`, `insertInPlace(fi, …)` and every existing
 /// `uint`/`size_t` parameter keep working with no `.raw` at the call site — the
 /// same one-way-conversion trick `FaceList` above uses, for the same reason.
+/// The edit scope every member of the DUPLICATION family declares on its batch
+/// (task 1903 Stage L6): `mesh.array`, `mesh.clone`, `mesh.duplicate`,
+/// `mesh.mirror`, `mesh.radial_array`.
+///
+/// `Marks` AND `Geometry`, not `Geometry` alone. All five kernels move the
+/// SELECTION as part of their contract — they deselect every original and
+/// select the copies (`arrayFaces`, `radialArrayFaces`, `mirrorFacesPlane`,
+/// `duplicateSelectedFaces` all do), and every one of them clears the vertex
+/// and edge selections. Selection is the `Marks` class, so declaring
+/// `Geometry` alone would declare LESS than the command does. Same reading
+/// stage L10's axis 0 took for its own nine, for the same reason.
+///
+/// The name is `mesh.d`'s rather than a `mesh_ops/` file's because these five
+/// kernels are `Mesh` MEMBERS — there is no `mesh_ops/duplicate.d` to hang it
+/// off, and a per-command literal in five files is the shape a shared constant
+/// exists to stop.
+enum uint kDuplicateEditScope = MeshEditScope.Geometry | MeshEditScope.Marks;
+
 struct FaceIdx {
     private uint _v;
     uint raw() const { return _v; }
@@ -8214,6 +8232,8 @@ struct Mesh {
             if (mask[fi]) sourceFaces ~= fi;
         size_t origFaceCount = faces.length;
         size_t[] newFaceIndices;
+        // Task 1903 Stage L6-b: the base of this kernel's ONE append round.
+        const size_t appendVertBase = vertices.length;
 
         Vec3 axisVec;
         if      (axis == 'X') axisVec = Vec3(1, 0, 0);
@@ -8252,6 +8272,12 @@ struct Mesh {
                 appendFaceRaw(cloned);   // grows per-corner maps (task 0690)
             }
         }
+
+        // Task 1903 Stage L6-b — the WHOLE round, ONE `AddVerts` + ONE
+        // `AddFaces` for every step of the array, recorded BEFORE the optional
+        // weld below so the LIFO reverse undoes the weld's compaction first and
+        // truncates the appended tail last.
+        recordBulkAppendRound(appendVertBase, origFaceCount);
 
         // Task 0830: a tail append, stated. `appendFaceRaw` already grew the
         // per-corner plane face by face; this states the resulting TOTAL so the
@@ -8378,6 +8404,11 @@ struct Mesh {
         // the existing keep+`count-1` path is left untouched (whole-cube
         // array cases stay byte-for-byte exact).
         bool detachSource = detachSubsetSource && (selCount < faces.length);
+        // Task 1903 Stage L6-b: the base of the DETACH round. `arrayFaces` is
+        // the one member of the family with TWO append rounds, and they are
+        // recorded separately for an ordering reason, not for tidiness — see
+        // the winding install below.
+        const size_t detachVertBase = vertices.length;
         if (detachSource) {
             uint[uint] seamMap;
             foreach (fi; sourceFaces) {
@@ -8389,10 +8420,61 @@ struct Mesh {
                     }
                 }
             }
-            foreach (fi; sourceFaces)
-                foreach (k, vid; faces[fi])
-                    faces[fi][k] = seamMap[vid];
+            // THE DETACH ROUND'S `AddVerts` GOES IN FIRST, BEFORE the winding
+            // entry below, and the order is the whole reason these are two
+            // calls instead of one at the end. The reverse replays LIFO, so
+            // `ReshapeFaces`^-1 (which puts the ORIGINAL windings back, all of
+            // them pointing below `detachVertBase`) must run BEFORE
+            // `AddVerts`^-1 truncates the seam duplicates away. Recorded the
+            // other way round, the replay would leave the detached windings
+            // pointing past `vertices.length` for one entry.
+            recordAppendedVertsRound(detachVertBase);
+
+            // --- TASK 1903 STAGE L6-b: THE DETACH'S WINDING INSTALL GOES
+            // THROUGH THE DOOR. These used to be `faces[fi][k] = seamMap[vid];`
+            // — an INDEXED winding rewrite that reaches no hook, so a recording
+            // batch came back with an op-log that never mentioned the splice
+            // and a revert that left every detached source face repointed at
+            // its duplicate. The detach is arity-PRESERVING, so V/F/E and every
+            // mark word round-trip either way and ONLY a per-winding compare
+            // can see it.
+            //
+            // ONE BULK CALL, and ASCENDING: `Mesh.setFaceWindings` requires a
+            // strictly ascending `idx` (its per-corner payload resolves each
+            // face's corner base by a single ordered sweep) and the per-element
+            // door is quadratic. `sourceFaces` is built by a front-to-back
+            // filter over `faces`, so it is already strictly ascending and
+            // needs no sort — asserted at the door, which carries an
+            // always-on assert rather than a silent decline.
+            //
+            // THE PER-CORNER PAYLOAD THE DOOR PAIRS HERE IS INERT ON THIS
+            // PATH, said here rather than left to look like coverage: the
+            // repoint preserves every face's ARITY, so `CornerCarry.reshapeSrc`
+            // would re-derive the same values slot-for-slot with no payload at
+            // all. The pair is written because the `[MeshMapDelta, <face
+            // entry>]` ADJACENCY is contractual since Stage J and an unpaired
+            // payload zeroes a map silently — the door owns that, not us.
+            if (sourceFaces.length > 0) {
+                import std.array : uninitializedArray;
+                auto idx     = uninitializedArray!(FaceIdx[])(sourceFaces.length);
+                auto newWind = uninitializedArray!(uint[][])(sourceFaces.length);
+                foreach (i, fi; sourceFaces) {
+                    auto nf = faces[fi].dup;   // NOT in place: the door's
+                                               // aliasing guard refuses a new
+                                               // winding that IS the live one
+                    foreach (k, vid; faces[fi]) nf[k] = seamMap[vid];
+                    idx[i]     = faceIndexAt(fi);
+                    newWind[i] = nf;
+                }
+                // The return is deliberately not read as "did it work": every
+                // detached corner is repointed at a vertex index at or above
+                // `detachVertBase`, so no face in `idx` can compare equal to
+                // its own new winding and the identity filter cannot drop one.
+                cast(void) setFaceWindings(idx, newWind);
+            }
         }
+        // The MARCH round's base — after the detach has finished appending.
+        const size_t marchVertBase = vertices.length;
 
         // For each step i ∈ [1..count-1], clone the original masked
         // verts at offset i*step and emit cloned faces referencing them.
@@ -8419,6 +8501,11 @@ struct Mesh {
                 appendFaceRaw(cloned);   // grows per-corner maps (task 0690)
             }
         }
+
+        // Task 1903 Stage L6-b — the MARCH round, one `AddVerts` + one
+        // `AddFaces`. Recorded before the optional weld below, so the LIFO
+        // reverse undoes the weld's compaction first.
+        recordBulkAppendRound(marchVertBase, origFaceCount);
 
         declareCornerAppend();   // tail append, stated (task 0830)
 
@@ -8945,6 +9032,21 @@ struct Mesh {
             vertices[newVid] = v - normal * (2.0f * d);
         }
 
+        // Task 1903 Stage L6-c — the WHOLE round, one `AddVerts` + one
+        // `AddFaces`.
+        //
+        // AFTER THE REFLECTION LOOP, NOT BEFORE, and that placement is the
+        // answer to a measured question rather than a preference: the clones
+        // are appended UNREFLECTED at `vertices ~= vertices[vid]` above and the
+        // loop just overhead writes their real positions in place. Recording
+        // here reads the FINAL positions, so no `Kind.SetPos` is owed for them;
+        // recording at the append site would have owed one. Asserted by value
+        // in `undo_parity_l6_test`'s mirror cells.
+        //
+        // `origVertexCount` is the same bound the weld's `protectBelow` uses,
+        // which is what makes "everything appended by this kernel" one number.
+        recordBulkAppendRound(origVertexCount, origFaceCount);
+
         declareCornerAppend();   // tail append, stated (task 0830)
 
         // Re-derive edges from the (now larger) face list.
@@ -9157,6 +9259,11 @@ struct Mesh {
         foreach (b; selectedFaces) if (b) ++selCount;
         if (selCount == 0) return 0;
 
+        // Task 1903 Stage L6-a: the base of this kernel's ONE append round,
+        // read before the first `vertices ~=` below. See
+        // `recordBulkAppendRound`.
+        const size_t appendVertBase = vertices.length;
+
         // Map old vert index → cloned vert index. Built lazily as we
         // iterate selected faces; shared verts between two selected
         // faces get cloned once.
@@ -9186,6 +9293,12 @@ struct Mesh {
             foreach (k, vid; src) cloned[k] = vertMap[vid];
             appendFaceRaw(cloned);   // grows per-corner maps (task 0690)
         }
+
+        // Task 1903 Stage L6-a — the WHOLE round, one `AddVerts` + one
+        // `AddFaces`. This kernel has no weld and no compaction, so this pair
+        // is the ENTIRE op-log: before it, a recording batch here closed EMPTY
+        // over a real duplication and `acceptRecordedEdit` refused the pairing.
+        recordBulkAppendRound(appendVertBase, origFaceCount);
 
         // Re-derive edges from the (now larger) face list. Doing this
         // wholesale is simpler and faster than tracking which edges are
@@ -9626,6 +9739,89 @@ struct Mesh {
     void appendFaceRaw(uint[] idx) {
         faces ~= idx;
         growPolyVertexMapsForAppendedCorners(idx.length);
+    }
+
+    /// --- TASK 1903 STAGE L6: THE DUPLICATION FAMILY'S APPEND PUBLISHER ---
+    ///
+    /// Record ONE `Kind.AddVerts` and ONE `Kind.AddFaces` entry covering a bulk
+    /// kernel's WHOLE append round — everything `vertices` grew by since
+    /// `vertBase` and everything `faces` grew by since `faceBase`.
+    ///
+    /// WHY IT EXISTS AT ALL. `arrayFaces`, `radialArrayFaces`,
+    /// `mirrorFacesPlane` and `duplicateSelectedFaces` grow the mesh with a
+    /// bare `vertices ~= …` and `appendFaceRaw`, and NEITHER reaches a tracker
+    /// hook (`appendFaceRaw` deliberately has none — see its own doc comment;
+    /// `addVertex`'s `recordAddVert` is on the OTHER door). Before this, a
+    /// recording batch around any of the four closed with an op-log that was
+    /// EMPTY over a mesh that really had been duplicated, and
+    /// `acceptRecordedEdit` refuses that pairing — so the command would have
+    /// answered `status:error` over a changed document, with no history entry.
+    /// That is the worst outcome in the family and it is why the two members
+    /// with no weld (`mesh.duplicate`, `mesh.clone`) could not migrate at all
+    /// until this landed.
+    ///
+    /// PER ROUND, NEVER PER ELEMENT, and that is measured rather than tidy.
+    /// A publisher inside `appendFaceRaw` (the tempting shape) would fire once
+    /// per appended FACE: an array of count 8 over a 2 000-face selection
+    /// appends 16 000 faces, so 16 000 `MeshOpEntry` of `MeshOpEntry.sizeof`
+    /// apiece — and, for any kernel that also pays a per-corner payload, an
+    /// O(F) ordered sweep EACH TIME. Card 2260 measured that exact shape at
+    /// 31x (3 600 faces) and 66x (10 000), exponent 1.85 against 0.99.
+    /// `appendFaceRaw` also has eight production call sites across three
+    /// stages (L4's cut caps and the §6.6-declined `paste` among them), so a
+    /// hook there would change three families' settled op-logs at once.
+    /// JUDGED BY TIME: `gcAllocBytes` points the WRONG WAY on this choice
+    /// (task 2160 — an append-grown array is charged by page, a pre-sized one
+    /// by whole payload).
+    ///
+    /// ORDER IS PART OF THE CONTRACT. `AddVerts` must precede `AddFaces` in
+    /// the log, because the reverse replays LIFO: `AddFaces`^-1 truncates
+    /// `faces` back to `faceBase` and only then does `AddVerts`^-1 truncate
+    /// `vertices` back to `vertBase`. The other order leaves a live face
+    /// pointing at a vertex index that no longer exists for one entry, which
+    /// `finalize`'s `rebuildEdges` would then read.
+    ///
+    /// POSITIONS ARE READ AT CALL TIME, so a kernel that writes an appended
+    /// vertex AFTER appending it (`mirrorFacesPlane` reflects its clones)
+    /// must call this AFTER that write — and then owes no `SetPos`. Measured:
+    /// the recorded position equals the reflected position, by value
+    /// (`undo_parity_l6_test`'s mirror cells).
+    ///
+    /// NOT A COMMIT AND NOT A DECLARATION. The kernel's own tail
+    /// `declareCornerAppend()` / `commitChange` still stand; this only writes
+    /// the op-log. The per-corner plane needs nothing from it either:
+    /// `CornerCarry.step` already handles `AddFaces` in reverse by truncating
+    /// its provenance array to `f0`, which is exactly a tail append undone.
+    void recordBulkAppendRound(size_t vertBase, size_t faceBase) {
+        recordAppendedVertsRound(vertBase);
+        recordAppendedFacesRound(faceBase);
+    }
+
+    /// The vertex half alone — for a kernel that appends verts, then rewrites
+    /// EXISTING windings to point at them, and then appends faces.
+    /// `arrayFaces`' detach pass is the one such caller: its
+    /// `Mesh.setFaceWindings` entry has to sit BETWEEN the two vertex rounds so
+    /// the LIFO reverse puts the original windings back BEFORE truncating away
+    /// the vertices the detached ones point at.
+    void recordAppendedVertsRound(size_t vertBase) {
+        if (editRecorder_ is null) return;
+        if (vertices.length <= vertBase) return;
+        editRecorder_.recordAddVerts(cast(uint)vertBase,
+                                     cast(uint)vertices.length,
+                                     vertices[vertBase .. $]);
+    }
+
+    /// ditto, the face half.
+    void recordAppendedFacesRound(size_t faceBase) {
+        if (editRecorder_ is null) return;
+        if (faces.length <= faceBase) return;
+        // `assumeFaceSpace`, and it is earned here for the reason the merge
+        // path's call spells out: an `AddFaces`' `[F0, F1)` is a TAIL BASE in
+        // the array `faces` has just become, not a live index minted from the
+        // pre-op face space.
+        editRecorder_.recordAddFaces(FaceIdx.assumeFaceSpace(faceBase),
+                                     cast(uint)faces.length,
+                                     faces[faceBase .. $]);
     }
 
     // Grow every PolyVertex map by `nCorners` zero-filled elements at the END —

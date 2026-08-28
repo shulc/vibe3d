@@ -36,7 +36,7 @@
 // stops a module at its first failing assert.
 //
 // A NOTE ON THE FILE FLOOR. The scan is `__FILE_FULL_PATH__`-rooted, not
-// cwd-rooted, and it asserts it found at least five readers: a glob that
+// cwd-rooted, and it asserts it found at least ten readers: a glob that
 // silently matches nothing is a census that passes because it looked at
 // nothing, which is this repository's most-paid-for defect class.
 module tests.unit.parity_capture_key_census_test;
@@ -152,9 +152,10 @@ unittest // THE CENSUS
 
     // Vacuity floor FIRST, so a glob that matched nothing is diagnosed as
     // that and not as "every check passed".
-    assert(readers.length >= 5, format(
+    assert(readers.length >= 10, format(
         "the parity-key census found %d reader(s) under %s — the tree has at "
-      ~ "least five (`undo_parity_l0/l1/l2/l3/l5_test.d`). A glob that "
+      ~ "least ten (`undo_parity_l0/l1/l2/l3/l5/l6/l7/l7d/l9/l10_test.d`; L6 "
+      ~ "and L7d arrived with task 1903 stages L6 and L7-d). A glob that "
       ~ "silently matches nothing makes every assertion below vacuous; fix "
       ~ "the walk, do not lower this floor.", readers.length, unitDir));
 

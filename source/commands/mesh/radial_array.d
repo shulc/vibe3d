@@ -7,7 +7,8 @@ import view;
 import editmode;
 import math    : Vec3;
 import params  : Param;
-import snapshot : MeshSnapshot;
+import mesh_edit_delta : MeshEditScope, MeshEditDelta, acceptRecordedEdit;
+import commands.mesh.selection_undo : DenseSelectionUndo;
 
 /// Radial array — insert `count-1` rotated copies of the selected
 /// faces (or the whole mesh on empty selection). Each step rotates
@@ -29,9 +30,34 @@ import snapshot : MeshSnapshot;
 /// sweep-angle argument and always fill a full 360°). Do NOT "fix" a
 /// partial-sweep parity divergence by forcing step = 2π/count: that would
 /// delete this feature. See task 0472 (radial-array-quarter-winding).
+///
+/// UNDO IS THE OPERATION-LOG DELTA since task 1903 Stage L6-b; the whole-mesh
+/// `MeshSnapshot` is gone. Nothing is armed for it — the `FaceReindex` its
+/// op-log carries when the weld fires is stage L5-a's arming of
+/// `Mesh.applyVertexRemap`, INHERITED through `weldCoincidentVertices`. The
+/// appends are published by `Mesh.recordBulkAppendRound`, one `AddVerts` and
+/// one `AddFaces` for the whole round rather than one pair per copy: a
+/// `count`-step radial over a 2 000-face selection appends `(count-1) * 2 000`
+/// faces, and card 2260 measured the per-element shape at 31x/66x.
+///
+/// ONE POST-CARRY PLANE EDIT, recorded rather than discovered: this kernel runs
+/// `clearEdgeSelectionResize()` AFTER the weld's `rewriteFaces`, so an armed
+/// entry's reverse restores the pre-clear edge-selection value and the tail
+/// re-clears it. That is a Select-class plane, i.e. inside the arming rule, and
+/// `DenseSelectionUndo` is what puts it back.
+///
+/// WHAT IS INERT ON THIS PATH: both `Kind.RemoveVerts` payloads (the set-mask
+/// half, stage L5-b; the Point-domain map-value half, task 2330). Measured —
+/// this family's weld only ever merges a CLONE into an ORIGINAL, so the
+/// compaction drops only APPENDED slots, which carry neither set membership
+/// nor a Point-map value.
 class MeshRadialArray : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;
+    private MeshEditDelta      delta_;
+    private DenseSelectionUndo preSel_;
+    /// Set once `evaluate` recorded a delta: FIRST RUN vs REDO, and
+    /// `revert()`'s guard — the role the deleted `if (!snap.filled)` played.
+    private bool               recorded_;
 
     private int    count_        = 6;
     private string axis_         = "Y";
@@ -47,6 +73,25 @@ class MeshRadialArray : Command, Operator {
 
     override string name()  const { return "mesh.radial_array"; }
     override string label() const { return "Radial Array"; }
+
+    override MeshEditScope editScope() const {
+        return cast(MeshEditScope) kDuplicateEditScope;
+    }
+
+    /// True iff this instance actually stored an operation-log delta — see
+    /// `MeshDelete.isOperationInverse` for why this is not `return true;`.
+    override bool isOperationInverse() const { return recorded_; }
+
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded op-log. The cells assert a
+        /// KIND SEQUENCE and never a length: stage J made the
+        /// `[MeshMapDelta, <face entry>]` adjacency contractual, and an
+        /// interposed entry unpairs the corner carry SILENTLY while the
+        /// geometry still round-trips — a length check cannot see that.
+        public ref const(MeshEditDelta) recordedDelta() const return {
+            return delta_;
+        }
+    }
 
     override Param[] params() {
         return [
@@ -77,19 +122,41 @@ class MeshRadialArray : Command, Operator {
         // L1 funnel (task 0613, S5): selected faces, else every VISIBLE face.
         bool[] mask = mesh.operandFaceMask();
 
-        snap = MeshSnapshot.capture(*mesh);
-        size_t inserted = mesh.radialArrayFaces(mask, count_, axis_[0], center_,
-                                                totalAngle_, extraShift_, weld_);
-        if (inserted == 0) {
-            snap = MeshSnapshot.init;
+        // REDO: `CommandHistory.redo` re-runs `apply()`. Re-run the kernel
+        // BATCHLESS and keep the FIRST delta.
+        if (recorded_) {
+            size_t ri;
+            {
+                auto ed = MeshEditBatch.unrecorded(*mesh, kDuplicateEditScope);
+                ri = ed.radialArrayFaces(mask, count_, axis_[0], center_,
+                                         totalAngle_, extraShift_, weld_);
+                ed.close();
+            }
+            return ri != 0;
+        }
+
+        preSel_.capture(*mesh);
+
+        size_t inserted;
+        {
+            auto ed = MeshEditBatch(*mesh, kDuplicateEditScope);
+            inserted = ed.radialArrayFaces(mask, count_, axis_[0], center_,
+                                           totalAngle_, extraShift_, weld_);
+            delta_ = ed.close();
+        }
+        if (!acceptRecordedEdit(inserted, delta_)) {
+            delta_  = MeshEditDelta.init;
+            preSel_ = DenseSelectionUndo.init;
             return false;
         }
+        recorded_ = true;
         return true;
     }
 
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
+        if (!recorded_) return false;
+        delta_.revert(*mesh);     // LIFO inverse replay restores geometry
+        preSel_.restore(*mesh);   // …then the three selection domains
         return true;
     }
 }

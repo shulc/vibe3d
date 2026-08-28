@@ -229,64 +229,88 @@ unittest { // the vertex chamfer's op-log NAMES NO FACE CHANGE, and its revert F
              ~ "reaching MeshEditDelta.scope_ at all",
                cast(uint)d.scope_, kBevelVertexEditScope));
 
-    // THE FINDING, MEASURED.
+    // THE FINDING, MEASURED — AND STAGE L7-d FLIPPED IT (2026-08-28).
     //
-    // Nine faces became ten, every one of the four faces around vertex 5 was
-    // re-ringed, and the op-log is three entries:
+    // WHAT THIS BLOCK USED TO ASSERT, kept because it is the reason the flip
+    // is a result rather than an edit. Unarmed, the log was three entries —
+    // `[AddVerts RemoveVerts Reindex]`, the vertex side of the edit and
+    // nothing else — and `d.revert(m)` THREW out of `finalize` -> `buildLoops`
+    // ("index [16] is out of bounds for array of length 16"), leaving the mesh
+    // HALF-REVERTED (V back to 16 with F still 10, twelve corners pointing at
+    // split vertices that no longer existed). This kernel DOES hand its new
+    // face array to `mesh_planes.rewriteFaces`; that primitive's
+    // `Kind.FaceReindex` publisher was merely DISARMED, which is the shape
+    // Stage K's per-rewrite arming scope reaches — told apart from the fin
+    // family's ABSENT publisher by arming the flag and measuring, which is the
+    // only way the two can be distinguished (E3 memo 12).
     //
-    //     entries=3 kinds=[AddVerts RemoveVerts Reindex]
-    //
-    // — the vertex side of the edit and nothing else. Unlike its fin sibling
-    // this kernel DOES hand its new face array to `mesh_planes.rewriteFaces`;
-    // that primitive's `Kind.FaceReindex` publisher is merely DISARMED
-    // (`MeshEditTracker.wantsFaceReindex` is false), which is the shape Stage
-    // K's per-rewrite arming scope reaches. Told apart from the fin family's
-    // ABSENT publisher by arming the flag and measuring, which is the only way
-    // the two can be distinguished (E3 memo 12).
-    //
-    // ARMING IT IS NOT THE FIX, AND THAT IS MEASURED TOO. With
-    // `MeshEditTracker.wantsFaceReindex = true` at its declaration the log
-    // becomes `[AddVerts FaceReindex RemoveVerts Reindex]` and `revert()` stops
-    // throwing — it answers **`true`** — but the mesh does NOT come back. On
-    // this stand the revert loses, every one of them a plane the op-log never
-    // enumerated:
+    // STAGE K MEASURED THE ARMING AND REFUSED IT, under one rule: *do not arm
+    // when a VALUE is lost*. Armed, the log became
+    // `[AddVerts MeshMapDelta FaceReindex RemoveVerts Reindex]`, the throw went
+    // away and `revert()` answered `true` — but SEVEN planes did not come
+    // back:
     //
     //     faceMarks[4]   Select 1 -> 0        (the pre-op face selection)
     //     vertexMarks[1] Select 1 -> 0
     //     edgeMarks[3]   Select 1 -> 0
     //     vertexSelectionOrder[1]      1 -> 0
     //     vertexSelectionOrderCounter  1 -> 0
-    //     vertexSetMask  — the "V" vertex set emptied and grown to stale slots
+    //     vertexSetMask  — the "V" vertex set emptied
     //     edgeSetMask    — 2 entries -> 1 (key 4294967301 gone)
     //
-    // SEVEN planes, and the E4 review attributed each on the armed build, by
-    // variant: (B) moving `setFaceMarksFrom` in front of `rewriteFaces` loses
-    // the SAME seven — the rewrite then carries the already-cleared word and
-    // the `FaceReindex` reverse restores it faithfully; (C) DELETING that
-    // clear recovers `faceMarks` alone; (D) dropping the tail
-    // `clearVertexSelection()` recovers exactly `vertexMarks`,
-    // `vertexSelectionOrder` and the counter. `edgeMarks` and both set masks
-    // survive no variant — they are the edge-array rebuild and set resize in
-    // `finalizeTopologyEdit`, not face planes, so no `FaceReindex` could
-    // carry them. And `faceSelectionOrder[i] = 0` over the cap range is not a
-    // cause at all: it writes only appended slots, and `faceSelectionOrder`
-    // survives in every variant. So the remedy L7 owes is a MARKS publisher
-    // (plan L0's first production publishers) for the face half, L0 again
-    // for the vertex/edge half, or a stated `MeshSnapshot` refusal — a
-    // reorder is measured to be a no-op. One more thing L7 must weigh: on a
-    // PolyVertex-carrying stand the FORWARD op already zeroes the whole UV
-    // map (identical OLD/NEW, recorded/unrecorded — pre-existing), and
-    // today's `MeshSnapshot` undo restores `meshMaps` where a delta would
-    // not; flipping this family off the snapshot regresses UV undo unless
-    // 0830/0901 closes first.
+    // …plus, on a Point-map-carrying stand, `meshMaps["W"]` ZEROED at the
+    // consumed vertex. That last one is a lost VALUE, and it is what Stage K
+    // drew the line on.
     //
-    // STAGE K/L7 FLIPS THIS.
-    assert(d.log.length == 3,
+    // WHAT CHANGED IS THE OTHER ENTRY, NOT THIS KERNEL. `Kind.RemoveVerts`
+    // gained the set-mask payload at stage L5-b and the Point-domain
+    // map-value payload at L7-P3 (task 2330). Re-measured before arming, three
+    // operands, EXACT residual both ways on `makeTaggedGridFull(3)`: the armed
+    // revert now loses FIVE planes and every one of them is Select-class
+    // (`vertexMarks`, `vertexSelectionOrder`, `edgeMarks`, `faceMarks`,
+    // `orderCounters`). `vertexSetMask`, `edgeSetMask`, `meshMaps["W"]`,
+    // `meshMaps["uv"]`, every position, every winding and all three counts come
+    // back BYTE-IDENTICAL. No value is lost, so Stage K's own rule now PERMITS
+    // the arming instead of refusing it.
+    //
+    // The five Select-class planes are `DenseSelectionUndo`'s, taken by
+    // `commands/mesh/vertex_bevel.d` — not a publisher (§0.1: this family
+    // CONSUMES the dense image). The residual row lives in
+    // `tests/unit/face_reindex_arming_test.d`'s `bevelVerticesByMask` cell,
+    // and the plane-for-plane oracle in
+    // `tests/unit/undo_parity_l7d_test.d`.
+    //
+    // THE E4-ERA UV WARNING THAT USED TO END THIS BLOCK IS STALE AND IS NOT
+    // CARRIED FORWARD. It read: *"on a PolyVertex-carrying stand the FORWARD op
+    // already zeroes the whole UV map … flipping this family off the snapshot
+    // regresses UV undo unless 0830/0901 closes first"*. That text predates
+    // stages J and K. The FORWARD still drops the per-corner map (a real,
+    // pre-existing defect owned by 0830/0901 — this kernel states it with
+    // `dropCornerProvenance(CornerDrop.VertexBevelNoCase)`), but the REVERSE
+    // restores the pre-op values out of the payload the armed `rewriteFaces`
+    // now records, so the migration does NOT regress UV undo. Measured, not
+    // inherited.
+    // The op-log, as a KIND SEQUENCE and never a length: stage J made the
+    // `[MeshMapDelta, <face entry>]` adjacency contractual, and an interposed
+    // entry unpairs the corner carry SILENTLY while the geometry still
+    // round-trips.
+    // FOUR ENTRIES ON THIS STAND, NOT FIVE, AND THE MISSING ONE IS MEASURED
+    // RATHER THAN TOLERATED: `recVertStand` is a bare `makeGridPlane(3)` with
+    // no PolyVertex map, so `Mesh.recordPolyVertexPayload` returns on its
+    // `hasPolyVertexMap()` line and the `FaceReindex` here is UNPAIRED BY
+    // CONSTRUCTION. On a map-carrying stand the log is five and the pair is
+    // present — `tests/unit/undo_parity_l7d_test.d` and
+    // `tests/unit/l7d_vertex_bevel_delta_test.d` both run on
+    // `makeTaggedGridFull(3)` and assert it. So this row must NOT be read as
+    // "the pairing is optional"; it is the map-less half of the same law.
+    assert(d.log.length == 4,
         format("the vertex chamfer recorded %d op-log entr(ies) %s, expected "
-             ~ "exactly 3. If a face entry has appeared, K/L7 has armed the "
-             ~ "rewrite — good news, and this block's whole comment plus plan "
-             ~ "§5.3's row move with it, including the seven planes the armed "
-             ~ "revert was measured to lose (task 1903 Stage E4).",
+             ~ "exactly 4 on this map-less stand — [AddVerts FaceReindex "
+             ~ "RemoveVerts Reindex]. THREE means stage L7-d's "
+             ~ "`faceReindexScope()` arm in mesh_ops/bevel_vertex.d is gone "
+             ~ "and the face array has no restorer at all — the state this "
+             ~ "block used to pin, where `revert()` THREW out of "
+             ~ "finalize -> buildLoops and left the mesh HALF-REVERTED.",
                d.log.length, kindsOf(d)));
     assert(countKind(d, MeshOpEntry.Kind.AddVerts)    == 1
         && countKind(d, MeshOpEntry.Kind.RemoveVerts) == 1
@@ -294,22 +318,31 @@ unittest { // the vertex chamfer's op-log NAMES NO FACE CHANGE, and its revert F
         format("the vertex chamfer's op-log is %s, expected exactly one each of "
              ~ "AddVerts / RemoveVerts / Reindex (task 1903 Stage E4).",
                kindsOf(d)));
-    assert(countKind(d, MeshOpEntry.Kind.FaceReindex)  == 0
+    // EXACTLY ONE face entry, and NO per-corner payload on a stand with no
+    // per-corner map. Two `FaceReindex` against one payload is the shape that
+    // keeps `bevelEdgesByMask` unarmed to this day; the 1:1 pairing itself is
+    // asserted on the map-carrying stands named above.
+    assert(countKind(d, MeshOpEntry.Kind.FaceReindex)  == 1
+        && countKind(d, MeshOpEntry.Kind.MeshMapDelta) == 0
         && countKind(d, MeshOpEntry.Kind.AddFaces)     == 0
         && countKind(d, MeshOpEntry.Kind.ReshapeFaces) == 0,
-        format("the vertex chamfer's op-log now names a face change (%s) — see "
-             ~ "the block comment: arming `wantsFaceReindex` produces exactly "
-             ~ "that, and it makes `revert()` answer `true` while silently "
-             ~ "dropping seven selection/set planes. If this is deliberate, L7 "
-             ~ "owes the plane fix in the same change (task 1903 Stage E4).",
+        format("the vertex chamfer's op-log is %s. This kernel performs ONE "
+             ~ "`rewriteFaces` under ONE corner-rewrite handle, so exactly one "
+             ~ "`FaceReindex` is owed — and NO `MeshMapDelta`, because this "
+             ~ "stand carries no PolyVertex map for one to describe. A payload "
+             ~ "appearing here means the stand grew a map and this row's "
+             ~ "reasoning about the unpaired entry no longer holds.",
                kindsOf(d)));
 
-    // `d.revert(m)` is NOT called here, and that is MEASURED rather than
-    // cautious. Unarmed it THROWS out of `finalize` -> `buildLoops`
-    // ("index [16] is out of bounds for array of length 16") and leaves the
-    // mesh HALF-REVERTED: V back to the pre-op 16 with F still 10, and TWELVE
-    // face corners pointing at split vertices up to index 19 that no longer
-    // exist. Unreachable in production today — the command and both tool entry
-    // points open UNRECORDED batches — which is why it is written down before
-    // L7 walks into it.
+    // AND THE REVERT RUNS, which is the half this block could not assert
+    // before stage L7-d. Unarmed it threw out of `finalize` -> `buildLoops`
+    // and left the mesh HALF-REVERTED; armed it round-trips. The plane-level
+    // oracle is `tests/unit/undo_parity_l7d_test.d`; what is asserted here is
+    // the ABSENCE of the throw and the three counts, so the intent is readable
+    // at the site the throw used to be documented at.
+    assert(d.revert(m),
+        "the armed vertex chamfer's revert() answered false");
+    assert(m.vertices.length == preV && m.faces.length == preF,
+        format("the revert landed on V=%d F=%d against a pre-op %d/%d",
+               m.vertices.length, m.faces.length, preV, preF));
 }

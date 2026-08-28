@@ -280,7 +280,11 @@ unittest { // both slice commands run every cut of the ladder inside ONE batch
     // lives in tests/batchless_control_helpers.d because the answer has moved
     // five times, most recently when stage L10-P0 gave mesh.triple a batch.
     auto c0 = getChanges();
-    runCommand(kBatchlessControlCommand);
+    // POSTS THE BODY, NOT THE BARE ID. The sixth re-base (stage L6-P0 gave
+    // `mesh.clone` a batch) landed on `mesh.edgeSlice`, which REFUSES without
+    // a two-element `edges` list — and a refused command ticks nothing, so the
+    // bare-id form would leave this control silently dead.
+    runCommandWith(kBatchlessControlJson);
     auto c1 = getChanges();
     const long ctrl = c1["unbatchedGeometryCommits"].integer
                     - c0["unbatchedGeometryCommits"].integer;

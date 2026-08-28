@@ -13,7 +13,17 @@
 //   3. `mesh.subdivide` — until stage L5's own commit
 //   4. `mesh.triple`    — until stage L10-P0, which gave a batch to all NINE
 //                         remaining topo-misc commands at once
-//   5. `mesh.clone`     — this one
+//   5. `mesh.clone`     — until stage L6-P0, which gave a batch to all FIVE
+//                         members of the duplication family. Stage L10-P0 had
+//                         picked it over `mesh.array`/`mesh.mirror` on the
+//                         ground that those three were "one family with one
+//                         migration stage (L6) ahead of them"; `mesh.clone` is
+//                         in that same family, so the pick spent the sixth
+//                         re-base anyway. Named here because the reasoning was
+//                         right and the reading of the roster was wrong, and
+//                         the next picker should check the FAMILY, not the
+//                         command.
+//   6. `mesh.edgeSlice` — this one
 //
 // The fourth re-base is what produced this file. `mesh.triple` was written as a
 // literal in TEN test files, and stage L10-P0 turned all ten red in one run —
@@ -36,18 +46,33 @@
 // on a default cube and tick nothing.
 module batchless_control_helpers;
 
-/// The command id. MEASURED on 2026-08-28 through `/api/command` on a fresh
-/// reset with face 0 selected: `mesh.clone` ticks **2**, against
-/// `mesh.triple` 0, `mesh.quadruple` 0 and `mesh.detriangulate` 0 after stage
-/// L10-P0, and `mesh.array` 6 / `mesh.mirror` 7 as the other live candidates.
+/// The command id. MEASURED on 2026-08-28 through `/api/command` on this
+/// build, port 8860: `mesh.edgeSlice` with the body below ticks **4**, and it
+/// ticks 4 from a VERTEX-mode, an EDGE-mode and a POLYGON-mode selection
+/// alike, which matters because the ten call sites reach it in all three. On
+/// the same build after stage L6-P0: `mesh.clone` 0, `mesh.array` 0,
+/// `mesh.mirror` 0, `mesh.duplicate` refuses on a bare cube; `mesh.remove` 0;
+/// `mesh.hide` and `mesh.move_vertex` apply but tick 0, because the counter is
+/// GEOMETRY-class only and those publish Marks and Position.
 ///
-/// `mesh.clone` was chosen over those two because `array` / `radialArray` /
-/// `mirror` are one family with one migration stage (L6) ahead of them, which
-/// would spend the sixth re-base and the seventh on the same commit.
-enum string kBatchlessControlCommand = "mesh.clone";
+/// THIS ONE TAKES PARAMETERS, which the previous five did not, so
+/// `kBatchlessControlJson` is now the ONLY correct way to post it —
+/// `mesh.edgeSlice` refuses outright without a two-element `edges` list
+/// (`edge_slice.d`: `if (edges_.length != 2) return false;`) and a refused
+/// command ticks nothing, which would make all ten controls silently dead.
+/// The two call sites that used to post the bare id
+/// (`tests/test_axis_slice.d`, `tests/test_reduce.d`) were changed to post the
+/// body; `kBatchlessControlCommand` survives for the assertion MESSAGES only.
+enum string kBatchlessControlCommand = "mesh.edgeSlice";
 
-/// The JSON body for `/api/command`, for the tests that post one.
-enum string kBatchlessControlJson = `{"id":"` ~ kBatchlessControlCommand ~ `"}`;
+/// The JSON body for `/api/command`. POST THIS, never the bare id — see above.
+/// Edges 0 and 2 of a default cube are opposite edges of the same face, which
+/// is what `mesh.edgeSlice` needs; `tA`/`tB` are its defaults, spelled out so a
+/// future change to those defaults cannot silently move what this control
+/// does.
+enum string kBatchlessControlJson =
+    `{"id":"` ~ kBatchlessControlCommand
+  ~ `","params":{"edges":[0,2],"tA":0.5,"tB":0.5}}`;
 
 /// The shared half of every one of those ten assertion messages, so a red says
 /// the same thing everywhere and names the one place to edit.
@@ -60,6 +85,11 @@ enum string kBatchlessControlFix =
     ". Either the counter is dead — in which case the assertion(s) this "
   ~ "control guards pass for free — or " ~ kBatchlessControlCommand
   ~ " has been migrated and the control needs re-basing onto another "
-  ~ "still-batchless command. It is ONE line: "
-  ~ "`kBatchlessControlCommand` in tests/batchless_control_helpers.d "
-  ~ "(task 1903 §3.2 L2, M-DM).";
+  ~ "still-batchless command. It is TWO lines and both are in "
+  ~ "tests/batchless_control_helpers.d: `kBatchlessControlCommand` and the "
+  ~ "params inside `kBatchlessControlJson` (task 1903 §3.2 L2, M-DM). Find a "
+  ~ "candidate with `grep -rL MeshEditBatch source/commands/`, keep only the "
+  ~ "ones that publish MeshEditScope.Geometry, and CONFIRM BY MEASUREMENT "
+  ~ "over /api/command — several batchless commands refuse on a default cube, "
+  ~ "and two more (mesh.hide, mesh.move_vertex) apply and still tick 0 "
+  ~ "because they publish Marks and Position rather than Geometry.";

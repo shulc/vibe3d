@@ -53,6 +53,8 @@ import mesh_ops.extrude;
 import mesh_ops.loop_slice;
 import mesh_ops.cleanup;
 import mesh_ops.revolve;
+import mesh_ops.bevel_vertex : bevelVerticesByMask, kBevelVertexEditScope;
+import editmode : EditMode;
 import tests.unit.fixtures : makeTaggedGridFull, makeTaggedGridWeldSets,
                              dumpMeshPlanes, diffMeshPlanes,
                              explainMeshPlaneDiff;
@@ -838,6 +840,82 @@ unittest // armed: Mesh.applyVertexRemapAndRebuild — the weld TWIN, Stage L10
     assertNonSelectMarksSurvive("applyVertexRemapAndRebuild", m);
 }
 
+unittest // armed: mesh_ops.bevel_vertex.bevelVerticesByMask — Stage L7-d
+{
+    // THE ROW THAT INVERTED. Stage K measured this kernel armed on 2026-08-27
+    // and refused it: the residual then held `map:W` (a Point-domain map
+    // VALUE), `vertexSetMask` and one `edgeSetMask` entry — three planes no
+    // `Kind.FaceReindex` entry could ever carry, because they ride
+    // `compactUnreferenced`'s `[RemoveVerts, Reindex]` pair, which at the time
+    // restored positions and nothing else per vertex.
+    //
+    // WHAT CHANGED IS THE OTHER ENTRY, not this one. `Kind.RemoveVerts` gained
+    // the set-mask payload at Stage L5-b and the Point-domain map-value
+    // payload at L7-P3 (task 2330). So this cell's expected residual is the
+    // measurement of that: FIVE planes, every one Select-class, and the three
+    // K named are now in `assertRevertShape`'s never-in-the-residual list
+    // (`map:W`, `map:uv`) or simply absent from the list below
+    // (`vertexSetMask`, `edgeSetMask`).
+    //
+    // MUTATION THAT REDDENS IT (W-7-d1), and it is a VALUE mutation rather
+    // than a geometry one: disable the Point-map arm of the `RemoveVerts`
+    // payload at its single publisher (`Mesh.compactUnreferenced`). Positions,
+    // windings, all three counts and every mark word still compare EQUAL —
+    // only `map:W` differs, and `assertRevertShape`'s never-list names it.
+    // Disabling the SET-MASK arm instead reddens the same cell on
+    // `vertexSetMask`/`edgeSetMask`, which are absent from the list below.
+    Mesh m = makeTaggedGridFull(3);
+    m.buildLoops();
+    m.syncSelection();
+    // Vertex 5 is an INTERIOR vertex of the 3x3 grid and is a member of the
+    // stand's named vertex set "V"; the stand's own edge set "E" holds two
+    // entries, one of whose endpoints this chamfer consumes. Both are what
+    // make the L5-b arm of the payload non-vacuous here — without them this
+    // cell would be green under any design of it.
+    m.clearVertexSelection();
+    m.selectVertex(5);
+    assert((m.vertexSetMask[5] & 1UL) != 0,
+        "the stand's vertex 5 is not in a named vertex set — the set-mask arm "
+      ~ "of the RemoveVerts payload is then INERT here and this cell says "
+      ~ "nothing about task 1903 Stage L5-b");
+    auto wm = m.meshMap("W");
+    assert(wm !is null && wm.dim == 1 && wm.data.length > 5 && wm.data[5] != 0.0f,
+        "the stand carries no non-zero Point-domain `W` value at vertex 5 — "
+      ~ "the Point-map arm of the RemoveVerts payload (task 2330) is then "
+      ~ "INERT here, and this cell is not the witness for Stage K's inversion");
+
+    auto pre = capturePre(m);
+    immutable size_t preV = m.vertices.length;
+
+    size_t processed;
+    MeshEditDelta d;
+    {
+        auto ed = MeshEditBatch(m, kBevelVertexEditScope);
+        auto mask = ed.operandVertexMask(EditMode.Vertices);
+        processed = ed.bevelVerticesByMask(mask, 0.2f);
+        d = ed.close();
+    }
+    assert(processed == 1 && m.vertices.length == preV + 3,
+        format("the stand chamfered %d vertex/vertices to V=%d, expected 1 and "
+             ~ "%d — a cell whose forward did nothing measures an undo of "
+             ~ "nothing", processed, m.vertices.length, preV + 3));
+
+    // ONE rewrite, ONE scope: two `FaceReindex` entries would mean the arm
+    // leaked over the tail compaction, zero that it never landed.
+    assert(countKind(d, MeshOpEntry.Kind.FaceReindex) == 1
+        && countKind(d, MeshOpEntry.Kind.MeshMapDelta) == 1,
+        format("expected exactly one FaceReindex and its OWN payload, got "
+             ~ "%d/%d. An orphaned FaceReindex declines the corner carry on "
+             ~ "reverse and zeroes the per-corner map silently. Log %s",
+               countKind(d, MeshOpEntry.Kind.FaceReindex),
+               countKind(d, MeshOpEntry.Kind.MeshMapDelta), kindsOf(d)));
+
+    assertRevertShape("bevelVerticesByMask", m, d, pre,
+                      ["edgeMarks", "faceMarks", "orderCounters",
+                       "vertexMarks", "vertexSelectionOrder"]);
+    assertNonSelectMarksSurvive("bevelVerticesByMask", m);
+}
+
 unittest // armed: mesh_ops.revolve.extrudePathStep_, through extrudeAlongPath
 {
     Mesh m = makeTaggedGridFull();
@@ -1058,6 +1136,16 @@ private static immutable string[] kArmedSites = [
     // until Stage L10 measured it and armed it; the entry above is that arm.
     "source/mesh.d:applyVertexRemap",
     "source/mesh.d:triangulateFacesByMask",
+    // Task 1903 Stage L7-d — the VERTEX chamfer, and the entry that INVERTS
+    // Stage K's refusal. K left it out under "do not arm when a VALUE is
+    // lost": its residual then held `meshMaps["W"]` (a Point-domain map
+    // value), `vertexSetMask` and one `edgeSetMask` entry, none of which any
+    // face-rewrite entry could carry. `Kind.RemoveVerts` now carries all three
+    // — the set-mask half from Stage L5-b, the Point-domain map-value half
+    // from L7-P3 (task 2330) — so the loss is gone and the rule permits the
+    // arm. RE-MEASURED before arming, three operands, EXACT residual both
+    // ways: the `bevelVerticesByMask` cell in block 2 is that row.
+    "source/mesh_ops/bevel_vertex.d:bevelVerticesByMask",
     "source/mesh_ops/cleanup.d:cleanDegenerateFaces",
     "source/mesh_ops/extrude.d:extrudeFacesByMask",
     "source/mesh_ops/extrude.d:extrudeVerticesByMask",
@@ -1110,9 +1198,13 @@ unittest // the census: exactly these kernels arm FaceReindex, and no others
              ~ "growth is hook-free, so a delta describes only the weld pass "
              ~ "and lands on a third mesh while answering true — which it "
              ~ "already does DISARMED, so arming would not be the cause and "
-             ~ "is not the cure; L6 owes it a publisher at its two appends), "
-             ~ "`bevel_vertex.bevelVerticesByMask` (the revert loses "
-             ~ "per-vertex map VALUES, not just Select bits) and "
+             ~ "is not the cure. Task 1903 Stage L6 re-checked it and struck "
+             ~ "it from that stage: `arrayFacesGrid` is UNREACHABLE from all "
+             ~ "five duplication COMMANDS \u2014 its only production callers "
+             ~ "are the interactive Array TOOL, `tools/alignment/"
+             ~ "array_tool.d`, which is Stage M's. L6 published its own five "
+             ~ "kernels through `Mesh.recordBulkAppendRound` instead, and "
+             ~ "armed nothing) and "
              ~ "`edge_bevel.bevelEdgesByMask` (its second rewrite cannot "
              ~ "record a corner payload, so the entry is orphaned and the "
              ~ "reverse zeroes the UV map).\nTHAT LAST REFUSAL HAS A SECOND, "
@@ -1129,9 +1221,15 @@ unittest // the census: exactly these kernels arm FaceReindex, and no others
              ~ "Point-domain map VALUE — `map:W` zeroed at the two consumed "
              ~ "endpoints, because `removeVertsReverse` re-inserts a dropped "
              ~ "vertex with its Point-map values zeroed. That is a lost VALUE, "
-             ~ "which this block refuses outright, so ARMING THIS FAMILY IS "
-             ~ "GATED ON `Kind.RemoveVerts` CARRYING POINT-DOMAIN MAP VALUES "
-             ~ "and on nothing else. Until then this roster stays at nine. "
+             ~ "which this block refuses outright. THAT GATE HAS SINCE "
+             ~ "OPENED for the VERTEX chamfer and NOT for the edge one: "
+             ~ "`Kind.RemoveVerts` carries Point-domain map values as of task "
+             ~ "2330, so `bevelVerticesByMask` was re-measured and armed "
+             ~ "(Stage L7-d, the entry above), while `bevelEdgesByMask` still "
+             ~ "owes the CORNER half \u2014 two rewrites under one "
+             ~ "`beginCornerRewrite` handle, so one payload for two entries "
+             ~ "and the reverse zeroes the UV map. The two halves of this "
+             ~ "family are separable and only one of them landed. "
              ~ "Each refusal is written at its "
              ~ "call site with the measurement; read it before adding an arm "
              ~ "there.\nA MISSING entry: a family lost its arming, and its "
