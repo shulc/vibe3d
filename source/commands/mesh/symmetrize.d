@@ -8,7 +8,6 @@ import editmode;
 import math   : Vec3;
 import params : Param;
 import change_bus : MeshEditScope;
-import mesh_edit_delta : undoTrackerEnabled;
 import commands.mesh.position_undo : PositionUndo;
 import toolpipe.packets : SymmetryPacket, SubjectPacket;
 import symmetry : rebuildPairing, rebuildPairingTopological, applySymmetryMirror;
@@ -109,20 +108,11 @@ class MeshSymmetrize : Command, Operator {
             ed.close();
             return ok;
         }
-        if (undoTrackerEnabled()) {
-            auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
-            const ok = applyKernel(ed);
-            undo_.arm(ed.close());
-            if (!ok) { undo_.disarm(); return false; }
-            return true;
-        }
-        // Legacy path (VIBE3D_UNDO_TRACKER=off). The SAME kernel through an
-        // UNRECORDED batch, so this file's raw-write census row is 0 on BOTH
-        // paths rather than only on the one the default happens to take.
-        auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+        auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
         const ok = applyKernel(ed);
-        ed.close();
-        return ok;
+        undo_.arm(ed.close());
+        if (!ok) { undo_.disarm(); return false; }
+        return true;
     }
 
     // -----------------------------------------------------------------------
@@ -142,8 +132,10 @@ class MeshSymmetrize : Command, Operator {
     // -----------------------------------------------------------------------
     private bool applyKernel(ref MeshEditBatch ed) {
         // Positional snapshot — taken BEFORE apply so we can diff and revert.
-        // It is now THREE things at once: the movement gate's reference, the
-        // tracker-off revert's source, and `recordPositionDiff`'s pre-image.
+        // It is THREE things at once: the movement gate's reference, the
+        // EMPTY-DELTA revert arm's source, and `recordPositionDiff`'s
+        // pre-image. The middle one used to be the tracker-off revert's
+        // source; task 1903 Stage N deleted the hatch and left the arm.
         prevPositions = mesh.vertices.dup;
         captured = false;
 
@@ -210,7 +202,12 @@ class MeshSymmetrize : Command, Operator {
 
     override bool revert() {
         if (undo_.armed()) return undo_.revert(*mesh);
-        // THE TRACKER-OFF ORACLE (W-b4). Kept, not deleted.
+        // THE EMPTY-DELTA ARM. `RecordedUndo.arm` leaves the holder DISARMED
+        // when the batch came back with an empty log, so this is the live
+        // answer for a forward that succeeded and moved nothing a bitwise diff
+        // could see. Until task 1903 Stage N it was also the tracker-off ORACLE
+        // the parity cell measured the recorded revert against (W-b4); that
+        // reading died with the hatch, this one did not.
         if (!captured) return false;
         // TASK 1903 §L0-b — THE LEGACY REVERT WRITES THROUGH THE BATCH TOO,
         // for the reason L0-d recorded at the same line in nine other files:

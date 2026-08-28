@@ -9,7 +9,6 @@ import math : Vec3, Viewport, AimViewport, aimSpace;
 import document : primaryModelSpace;
 import params : Param;
 import change_bus : MeshEditScope;
-import mesh_edit_delta : undoTrackerEnabled;
 import commands.mesh.position_undo : PositionUndo;
 import toolpipe.packets : FalloffPacket, SubjectPacket;
 import falloff : evaluateFalloff, IFalloffAware;
@@ -170,19 +169,11 @@ class MeshSmooth : Command, Operator, IFalloffAware {
             ed.close();
             return ok;
         }
-        if (undoTrackerEnabled()) {
-            auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
-            const ok = applyKernel(ed, aim);
-            undo_.arm(ed.close());
-            if (!ok) { undo_.disarm(); return false; }
-            return true;
-        }
-        // Legacy path — the SAME kernel through an UNRECORDED batch, so this
-        // file's raw-write census row is 0 on BOTH paths.
-        auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+        auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
         const ok = applyKernel(ed, aim);
-        ed.close();
-        return ok;
+        undo_.arm(ed.close());
+        if (!ok) { undo_.disarm(); return false; }
+        return true;
     }
 
     private bool applyKernel(ref MeshEditBatch ed, const ref AimViewport aim) {
@@ -430,7 +421,17 @@ class MeshSmooth : Command, Operator, IFalloffAware {
 
     override bool revert() {
         if (undo_.armed()) return undo_.revert(*mesh);
-        // The tracker-off oracle (W-d3c), and the 0099 arm (task 2110).
+        // THE EMPTY-DELTA ARM. `RecordedUndo.arm` leaves the holder DISARMED
+        // when the batch came back with an empty log, so this is the live
+        // answer for a forward that succeeded and moved nothing a bitwise diff
+        // could see — not dead code, and not a fallback for a path that no
+        // longer exists. Until task 1903 Stage N it was also the tracker-off
+        // ORACLE the plane-diff cells measured the recorded revert against
+        // (W-d3c); that reading died with the hatch, this one did not.
+        //
+        // It is also the 0099 arm (task 2110): a no-op smooth must answer
+        // TRUE, or `CommandHistory.undo` discards this entry and every older
+        // one.
         if (touchedIdx.length == 0) return true;   // no-op smooth: positions unchanged, revert succeeds
         // TASK 1903 L0-d — THE LEGACY REVERT WRITES THROUGH THE BATCH TOO.
         // The plan's §2.5 template left this loop "untouched"; that is

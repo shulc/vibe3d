@@ -9,7 +9,6 @@ import math : Vec3, Viewport, AimViewport, aimSpace;
 import document : primaryModelSpace;
 import params : Param;
 import change_bus : MeshEditScope;
-import mesh_edit_delta : undoTrackerEnabled;
 import commands.mesh.position_undo : PositionUndo;
 import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, ElementConnect, SubjectPacket;
 import falloff : evaluateFalloff, IFalloffAware;
@@ -46,8 +45,9 @@ private:
     Vec3[] touchedPrev_;
     // Recorded `Kind.SetPos` undo (task 1903 L0-d1). The two arrays above stay
     // — `applyMagnet` fills them and they are ALSO the values this command
-    // records — and the legacy loop in `revert()` stays as the
-    // `VIBE3D_UNDO_TRACKER=off` oracle.
+    // records — and the loop in `revert()` stays as the EMPTY-DELTA arm: a
+    // forward that moved nothing bitwise leaves the holder disarmed. It was
+    // the `VIBE3D_UNDO_TRACKER=off` oracle too until task 1903 Stage N.
     PositionUndo undo_;
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo (task 1903 §L0-d,
@@ -116,28 +116,22 @@ public:
             ed.close();
             return ok;
         }
-        if (undoTrackerEnabled()) {
-            auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
-            const ok = applyKernel(ed, aim);
-            undo_.arm(ed.close());
-            if (!ok) { undo_.disarm(); return false; }
-            return true;
-        }
-        // Legacy path (VIBE3D_UNDO_TRACKER=off). The SAME kernel through an
-        // UNRECORDED batch, so this file's raw-write census row is 0 on BOTH
-        // paths rather than only on the one the default happens to take.
-        auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+        auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
         const ok = applyKernel(ed, aim);
-        ed.close();
-        return ok;
+        undo_.arm(ed.close());
+        if (!ok) { undo_.disarm(); return false; }
+        return true;
     }
 
     override bool revert() {
         if (undo_.armed()) return undo_.revert(*mesh);
-        // The tracker-off oracle. Kept, not deleted: the plane-diff cells run
-        // the same sequence under `undo.tracker.off` and diff the two
-        // post-revert dumps against each other, so this loop is the reference
-        // the recorded revert is measured against (W-d3c).
+        // THE EMPTY-DELTA ARM. `RecordedUndo.arm` leaves the holder DISARMED
+        // when the batch came back with an empty log, so this is the live
+        // answer for a forward that succeeded and moved nothing a bitwise diff
+        // could see — not dead code, and not a fallback for a path that no
+        // longer exists. Until task 1903 Stage N it was also the tracker-off
+        // ORACLE the plane-diff cells measured the recorded revert against
+        // (W-d3c); that reading died with the hatch, this one did not.
         if (touchedIdx_.length == 0) return false;
         // TASK 1903 L0-d — THE LEGACY REVERT WRITES THROUGH THE BATCH TOO.
         // The plan's §2.5 template left this loop "untouched"; that is

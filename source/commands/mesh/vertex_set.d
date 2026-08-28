@@ -10,7 +10,6 @@ import shader;
 import math : Vec3;
 import params : Param;
 import change_bus : MeshEditScope;
-import mesh_edit_delta : undoTrackerEnabled;
 import commands.mesh.position_undo : PositionUndo;
 
 /// Set the position of every selected vertex — either all three coordinates
@@ -133,19 +132,11 @@ class MeshSetPosition : Command, Operator {
             ed.close();
             return ok;
         }
-        if (undoTrackerEnabled()) {
-            auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
-            const ok = applyKernel(ed, comp);
-            undo_.arm(ed.close());
-            if (!ok) { undo_.disarm(); return false; }
-            return true;
-        }
-        // Legacy path — the SAME kernel through an UNRECORDED batch, so this
-        // file's raw-write census row is 0 on BOTH paths.
-        auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+        auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
         const ok = applyKernel(ed, comp);
-        ed.close();
-        return ok;
+        undo_.arm(ed.close());
+        if (!ok) { undo_.disarm(); return false; }
+        return true;
     }
 
     private bool applyKernel(ref MeshEditBatch ed, int comp) {
@@ -186,9 +177,17 @@ class MeshSetPosition : Command, Operator {
 
     override bool revert() {
         if (undo_.armed()) return undo_.revert(*mesh);
-        // The tracker-off oracle (W-d3c). Its empty arm answers FALSE and is
-        // UNREACHABLE with a history entry: the forward already refuses on
-        // `!hasAnySelectedVertices()` (task 2110 §R2.1 row 8).
+        // THE EMPTY-DELTA ARM. `RecordedUndo.arm` leaves the holder DISARMED
+        // when the batch came back with an empty log, so this is the live
+        // answer for a forward that succeeded and moved nothing a bitwise diff
+        // could see — not dead code, and not a fallback for a path that no
+        // longer exists. Until task 1903 Stage N it was also the tracker-off
+        // ORACLE the plane-diff cells measured the recorded revert against
+        // (W-d3c); that reading died with the hatch, this one did not.
+        //
+        // Its empty arm answers FALSE and is UNREACHABLE with a history entry:
+        // the forward already refuses on `!hasAnySelectedVertices()` (task
+        // 2110 §R2.1 row 8).
         if (idxs.length == 0) return false;
         // TASK 1903 L0-d — THE LEGACY REVERT WRITES THROUGH THE BATCH TOO.
         // The plan's §2.5 template left this loop "untouched"; that is

@@ -425,61 +425,27 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// W-b4 — tracker-on / tracker-off parity. The hand-rolled path is the ORACLE
-// and neither command's version of it changed meaning in this stage, so a
-// delta that lands on an intermediate state reddens here even when its own
-// round-trip looks self-consistent.
+// W-b4 IS GONE, AND ITS OBSERVABLE IS NOT (task 1903 Stage N).
 //
-// For `mesh.transform` this is the cell that would catch a pass-2 recorder
-// whose before-image was the PRE-OP mesh instead of the post-pass-1 one on a
-// vertex both passes touch.
+// The cell that stood here ran `mesh.transform` and `mesh.symmetrize` twice in
+// one process, once under `VIBE3D_UNDO_TRACKER` on and once off, and asserted
+// the two post-revert plane dumps agreed. For `mesh.transform` it was the cell
+// that would catch a pass-2 recorder whose before-image was the PRE-OP mesh
+// instead of the post-pass-1 one on a vertex both passes touch.
+//
+// Stage N deleted the hatch. With no second in-process path the cell would set
+// the flag to the value it already has and compare a path against itself, so
+// it is DELETED rather than left to go vacuously green, and declared in
+// `tests/unit/census_ledger.txt`.
+//
+// WHAT STILL SEES THE PASS-2 DEFECT, because that is the question a deletion
+// here has to answer: W-b5 below, which replays the recorded delta FORWARD and
+// is explicitly the only cell that pins the ORDER of the two entries — on a
+// vertex both passes touch they chain in one order only. And the frozen
+// `tests/fixtures/undo_parity/position_marks.json`, captured on the snapshot
+// arm before that arm existed no longer, which no longer has any producer and
+// therefore cannot be re-derived from the code it judges.
 // ---------------------------------------------------------------------------
-unittest {
-    const bool wasOn = undoTrackerEnabled();
-    scope(exit) setUndoTrackerEnabled(wasOn);
-
-    foreach (name; ["mesh.transform", "mesh.symmetrize"]) {
-        string[2] pres, backs;
-        foreach (k, on; [true, false]) {
-            setUndoTrackerEnabled(on);
-            auto v  = standView();
-            auto em = EditMode.Vertices;
-            Command c;
-            Mesh*   m;
-            if (name == "mesh.transform") {
-                m = twoQuadStand(0.0f);
-                installSymmetry(m, &em);
-                c = mkTranslate(m, v, &em);
-            } else {
-                m = twoQuadStand(0.05f);
-                c = mkSymmetrize(m, v);
-            }
-            scope(exit) g_pipeCtx = null;
-
-            pres[k] = planes(m);
-            assert(c.apply(), name ~ ": forward");
-            assert(planes(m) != pres[k], name ~ ": vacuous stand");
-            if (on) assert(armedOf(c),  name ~ ": nothing recorded");
-            else    assert(!armedOf(c), name ~ ": the tracker-off arm ARMED a "
-                                      ~ "delta — it opened a RECORDING batch, "
-                                      ~ "so it is not an independent oracle "
-                                      ~ "and this cell compares one path to "
-                                      ~ "itself.");
-            assert(c.revert(), name ~ ": revert");
-            backs[k] = planes(m);
-        }
-        assert(pres[0] == pres[1],
-            name ~ ": the two stands are not the same mesh — the parity "
-          ~ "comparison would be measuring the stand, not the paths.");
-        assert(backs[0] == backs[1],
-            name ~ ": the DELTA revert and the HAND-ROLLED revert land on "
-          ~ "different meshes. The hand-rolled path is the reference and it "
-          ~ "did not change in this stage, so the recorded delta is what is "
-          ~ "wrong — most likely a `posBefore` captured after part of the "
-          ~ "forward had already run.");
-        assert(backs[0] == pres[0], name ~ ": neither path restored the pre-op mesh.");
-    }
-}
 
 // ---------------------------------------------------------------------------
 // W-b5 — the `posAfter` half. Nothing on the command path reads it (redo

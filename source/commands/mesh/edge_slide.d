@@ -8,7 +8,6 @@ import editmode;
 import math : Vec3, Viewport;
 import params : Param;
 import change_bus : MeshEditScope;
-import mesh_edit_delta : undoTrackerEnabled;
 import commands.mesh.position_undo : PositionUndo;
 import toolpipe.packets : SubjectPacket;
 import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
@@ -90,19 +89,11 @@ class MeshEdgeSlide : Command, Operator {
             ed.close();
             return ok;
         }
-        if (undoTrackerEnabled()) {
-            auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
-            const ok = applyKernel(ed, edgeMask);
-            undo_.arm(ed.close());
-            if (!ok) { undo_.disarm(); return false; }
-            return true;
-        }
-        // Legacy path — the SAME kernel through an UNRECORDED batch, so this
-        // file's raw-write census row is 0 on BOTH paths.
-        auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+        auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
         const ok = applyKernel(ed, edgeMask);
-        ed.close();
-        return ok;
+        undo_.arm(ed.close());
+        if (!ok) { undo_.disarm(); return false; }
+        return true;
     }
 
     private bool applyKernel(ref MeshEditBatch ed, in bool[] edgeMask) {
@@ -117,8 +108,8 @@ class MeshEdgeSlide : Command, Operator {
         // `==`-but-not-bit-identical cells and flip a signed zero — the exact
         // class measured at Stage D2 (9 of 320 cells, `mesh.d`'s `sameBits`
         // comment). Every index in the `==`-filtered list below is not `==`, so
-        // `sameBits` is false for all of them and every write happens: delta
-        // path ≡ legacy path ≡ the retired raw loop, byte for byte, with the
+        // `sameBits` is false for all of them and every write happens: the
+        // recorded path ≡ the retired raw loop, byte for byte, with the
         // predicate spelled ONCE rather than exported twice.
         touchedIdx.length  = 0;
         touchedPrev.length = 0;
@@ -147,14 +138,21 @@ class MeshEdgeSlide : Command, Operator {
 
     override bool revert() {
         if (undo_.armed()) return undo_.revert(*mesh);
-        // The tracker-off oracle (W-d3c), and the 0099 arm. THIS COMMAND IS
-        // WHERE 0099 WAS FIXED: a rail-less slide answers `ok` with an empty
-        // touched set, so a `false` here makes `CommandHistory.undo` discard
-        // the entry AND its whole trailing suffix. `delete.d`'s fallback
-        // returns FALSE on an empty delta; copying that shape here regresses
-        // `tests/test_edge_slide.d:296`. The empty-delta arm in `evaluate`
-        // above therefore leaves `undo_` UNARMED rather than forcing an entry,
-        // and this line answers true for it.
+        // THE EMPTY-DELTA ARM. `RecordedUndo.arm` leaves the holder DISARMED
+        // when the batch came back with an empty log, so this is the live
+        // answer for a forward that succeeded and moved nothing a bitwise diff
+        // could see — not dead code, and not a fallback for a path that no
+        // longer exists. Until task 1903 Stage N it was also the tracker-off
+        // ORACLE the plane-diff cells measured the recorded revert against
+        // (W-d3c); that reading died with the hatch, this one did not.
+        //
+        // THIS COMMAND IS WHERE 0099 WAS FIXED: a rail-less slide answers `ok`
+        // with an empty touched set, so a `false` here makes
+        // `CommandHistory.undo` discard the entry AND its whole trailing
+        // suffix. `delete.d`'s fallback returns FALSE on an empty delta;
+        // copying that shape here regresses `tests/test_edge_slide.d:296`. The
+        // empty-delta arm in `evaluate` above therefore leaves `undo_` UNARMED
+        // rather than forcing an entry, and this line answers true for it.
         if (touchedIdx.length == 0) return true;   // no-op slide: positions unchanged, revert succeeds
         // TASK 1903 L0-d — THE LEGACY REVERT WRITES THROUGH THE BATCH TOO.
         // The plan's §2.5 template left this loop "untouched"; that is

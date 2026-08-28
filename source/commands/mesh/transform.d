@@ -8,7 +8,6 @@ import view;
 import editmode;
 import math : Vec3, Vec4, mulMV, pivotRotationMatrix, pivotScaleMatrix;
 import change_bus : MeshEditScope;
-import mesh_edit_delta   : undoTrackerEnabled;
 import commands.mesh.position_undo : PositionUndo;
 import toolpipe.packets  : SubjectPacket, SymmetryPacket;
 import symmetry          : applySymmetryMirror, applySymmetryMirrorDelta, projectOnPlane;
@@ -107,20 +106,11 @@ class MeshTransform : Command, Operator {
             ed.close();
             return ok;
         }
-        if (undoTrackerEnabled()) {
-            auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
-            const ok = applyKernel(ed);
-            undo_.arm(ed.close());
-            if (!ok) { undo_.disarm(); return false; }
-            return true;
-        }
-        // Legacy path (VIBE3D_UNDO_TRACKER=off). The SAME kernel through an
-        // UNRECORDED batch, so this file's raw-write census row is 0 on BOTH
-        // paths rather than only on the one the default happens to take.
-        auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+        auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
         const ok = applyKernel(ed);
-        ed.close();
-        return ok;
+        undo_.arm(ed.close());
+        if (!ok) { undo_.disarm(); return false; }
+        return true;
     }
 
     // -----------------------------------------------------------------------
@@ -213,16 +203,17 @@ class MeshTransform : Command, Operator {
                       && symm.pairOf.length == mesh.vertices.length;
         }
 
-        // Snapshot the touched verts only. The TRACKER-OFF `revert()` restores
-        // them. With symmetry active we also capture each selected vert's
-        // mirror counterpart so that revert undoes the mirror write too.
+        // Snapshot the touched verts only. The EMPTY-DELTA arm of `revert()`
+        // restores them. With symmetry active we also capture each selected
+        // vert's mirror counterpart so that revert undoes the mirror write too.
         //
         // NOTE FOR ANYONE MEASURING THIS FILE: that partner capture is why a
-        // migration of this command is invisible to every result-shaped check.
-        // The legacy path was already complete over both passes, so deleting
-        // the pass-2 recorder leaves the forward correct, the census row at 0,
-        // and the undo correct WHENEVER the tracker is off. Only the op-log
-        // and the ARMED revert can see it (task 1903 §L0-b, W-b1).
+        // migration of this command was invisible to every result-shaped check.
+        // These two arrays were already complete over both passes, so deleting
+        // the pass-2 recorder leaves the forward correct and the census row at
+        // 0. Only the op-log and the ARMED revert can see it (task 1903 §L0-b,
+        // W-b1). Until Stage N the same arrays also served the hatch's
+        // tracker-off revert, which made that blindness total.
         touchedIdx.length  = 0;
         touchedPrev.length = 0;
         foreach (i; 0 .. mesh.vertices.length) {
@@ -325,9 +316,9 @@ class MeshTransform : Command, Operator {
         // selected vertex's new position into its plane-counterpart, and
         // projects on-plane selected verts back onto the plane.
         if (symmActive) {
-            // The `.dup` is guarded, not unconditional: on the redo and
-            // tracker-off arms the batch records nothing and this whole image
-            // would be built only to be discarded (`recordPositionDiff`
+            // The `.dup` is guarded, not unconditional: on the REDO arm the
+            // batch records nothing and this whole image would be built only
+            // to be discarded (`recordPositionDiff`
             // early-outs before the compare, but the caller owns the copy).
             Vec3[] preMirror;
             if (ed.recording()) preMirror = mesh.vertices.dup;
@@ -354,10 +345,12 @@ class MeshTransform : Command, Operator {
 
     override bool revert() {
         if (undo_.armed()) return undo_.revert(*mesh);
-        // THE TRACKER-OFF ORACLE. Kept, not deleted: the parity cell runs the
-        // same sequence with the tracker off and diffs the two post-revert
-        // dumps against each other, so this is the reference the recorded
-        // revert is measured against (W-b4).
+        // THE EMPTY-DELTA ARM. `RecordedUndo.arm` leaves the holder DISARMED
+        // when the batch came back with an empty log, so this is the live
+        // answer for a forward that succeeded and moved nothing a bitwise diff
+        // could see. Until task 1903 Stage N it was also the tracker-off ORACLE
+        // the parity cell measured the recorded revert against (W-b4); that
+        // reading died with the hatch, this one did not.
         if (!captured) return false;
         // TASK 1903 §L0-b — THE LEGACY REVERT WRITES THROUGH THE BATCH TOO,
         // for the reason L0-d recorded at the same line in nine other files:

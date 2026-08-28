@@ -312,46 +312,29 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// W-d3c — tracker-on / tracker-off parity. The hand-rolled path is the oracle
-// and it did not change; a delta that lands on an intermediate state reddens
-// here even when its own round-trip looks self-consistent.
+// W-d3c IS GONE, AND ITS OBSERVABLE IS NOT (task 1903 Stage N).
+//
+// The cell that stood here ran every command TWICE in one process — once with
+// `VIBE3D_UNDO_TRACKER` on and once off — and asserted the two post-revert
+// plane dumps agreed. Its value was that the OFF arm was an INDEPENDENT data
+// path: the command's own stored pre-op arrays, never the op-log's
+// `posBefore`. That is what caught a `posBefore` captured after part of the
+// forward had already run.
+//
+// Stage N deleted the hatch, so there is no second in-process path left to
+// compare against; keeping the cell would have made it flip the flag to the
+// value it already has and compare a path to itself — green before a defect
+// and green after it. It is DELETED, not weakened, and declared in
+// `tests/unit/census_ledger.txt`.
+//
+// WHAT STILL SEES THE DEFECT IT CAUGHT, so this is a removal and not a hole:
+// the FROZEN parity oracle `tests/fixtures/undo_parity/position_marks.json`,
+// read by `tests/unit/undo_parity_l0_test.d`. It was captured on the snapshot
+// arm before that arm was deleted and it does not change, so it is the same
+// independent reference this cell was — with the extra property that it
+// cannot be re-derived from the code it judges. The neighbouring cell above
+// keeps the round-trip half (`back == pre` and `back != post`).
 // ---------------------------------------------------------------------------
-unittest {
-    const bool wasOn = undoTrackerEnabled();
-    scope(exit) setUndoTrackerEnabled(wasOn);
-
-    foreach (cell; cells()) {
-        string[2] pres, backs;
-        foreach (k, on; [true, false]) {
-            setUndoTrackerEnabled(on);
-            auto m = standMesh();
-            auto v = standView();
-            auto c = cell.make(m, v);
-            pres[k] = planes(m);
-            assert(c.apply(), cell.name ~ ": forward");
-            assert(planes(m) != pres[k], cell.name ~ ": vacuous stand");
-            if (on) assert(armed(c),  cell.name ~ ": nothing recorded");
-            else    assert(!armed(c), cell.name ~ ": the tracker-off arm armed "
-                                    ~ "a delta — it opened a RECORDING batch, "
-                                    ~ "so it is not an independent oracle and "
-                                    ~ "this cell is comparing one path to "
-                                    ~ "itself.");
-            assert(c.revert(), cell.name ~ ": revert");
-            backs[k] = planes(m);
-        }
-        assert(pres[0] == pres[1],
-            cell.name ~ ": the two stands are not the same mesh — the parity "
-          ~ "comparison below would be measuring the stand, not the paths.");
-        assert(backs[0] == backs[1],
-            cell.name ~ ": the DELTA revert and the HAND-ROLLED revert land on "
-          ~ "different meshes. The hand-rolled path is the reference and it "
-          ~ "did not change in this stage, so the recorded delta is what is "
-          ~ "wrong — most likely its `posBefore` was captured after part of "
-          ~ "the forward had already run.");
-        assert(backs[0] == pres[0],
-            cell.name ~ ": neither path restored the pre-op mesh.");
-    }
-}
 
 // ---------------------------------------------------------------------------
 // W-d4 — the `posAfter` half has ONE consumer, and it is not the command.

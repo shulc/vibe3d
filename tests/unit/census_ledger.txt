@@ -76,3 +76,20 @@ drop 0 2 1902 mesh_ops/loop_slice.d's newMat/newPart/newSetMask length asserts a
 # `app.gpuUploadedPreview`) into input_router.d's `handleMouseButtonUp`, which
 # is why the net is -1 and not -2.
 drop 0 1 0781 the `static assert` guarding step 2c's `gestureTrack` @property-ref forwarder — the forwarder itself is gone with its last main()-side readers
+
+# The two tracker-on / tracker-off PARITY cells (W-d3c in
+# tests/unit/commands/mesh/position_delta_test.d, W-b4 in
+# tests/unit/commands/mesh/symmetry_delta_test.d). Each ran its commands twice
+# in one process — once with VIBE3D_UNDO_TRACKER on, once off — and asserted
+# the two post-revert plane dumps agreed. Their whole value was that the OFF
+# arm was an INDEPENDENT data path: the command's own stored pre-op arrays
+# rather than the op-log's `posBefore`. Task 1903 stage N deleted the hatch, so
+# that arm does not exist; the cells would have set the flag to the value it
+# already holds and compared a path against itself, which is green before a
+# defect and green after it. Removed rather than left standing, and the
+# observable they carried is still read: the FROZEN oracle
+# tests/fixtures/undo_parity/position_marks.json (undo_parity_l0_test.d), which
+# was captured on the snapshot arm before that arm was deleted and now has no
+# producer at all, plus W-b5's FORWARD replay, which is the cell that pins the
+# ORDER of mesh.transform's two entries.
+drop 2 16 1903 the two tracker-on/off parity cells whose OFF arm was the undo hatch — the hatch is gone, the frozen parity oracle and W-b5's forward replay still see what they saw
