@@ -58,7 +58,7 @@ import core.time          : msecs, seconds, dur, Duration;
 import core.stdc.stdlib   : exit;
 import core.sys.posix.signal : signal, kill, SIGINT, SIGTERM, SIGKILL;
 import core.sys.posix.unistd : isatty, STDOUT_FILENO, close, getpid, ftruncate,
-                               setpgid;
+                               setpgid, getpgrp;
 import core.sys.posix.fcntl  : open, O_RDWR, O_CREAT;
 import core.sys.posix.sys.types : ssize_t;
 
@@ -467,11 +467,102 @@ void releaseRunLock() {
     }
 }
 
+// Is `p` (a recorded process-GROUP id, from `testGroupPids` or a per-test
+// timeout kill) actually safe to SIGKILL as a whole group? `ownPgid` is the
+// runner's own `getpgrp()`.
+//
+// `p <= 0` is never a real group leader's pid — `0` is a retired slot (see
+// `testGroupPids`'s comment), and `kill(-0, …)` is the POSIX special case
+// "signal the CALLER's own group" — another route to the exact hazard this
+// function exists to close, so it is excluded the same way `p == ownPgid`
+// is, not treated as merely "no-op".
+//
+// `p == ownPgid` is the case this task exists for. This runner is NOT
+// always its own process-group leader: under `xvfb-run`, neither `sh` (the
+// wrapper) nor its non-interactive `Xvfb … &` job control a new pgrp for
+// what they spawn, so `xvfb-run`'s own shell, `Xvfb`, and this process all
+// inherit ONE shared group — measured 2026-08-28 with instrumented builds
+// on this host AND on `ai` (task 2001; a `getpgrp()` probe placed at
+// `main()`, at every `vibePids`/`testGroupPids` append, and at both
+// group-kill sites). A `testGroupPids` entry is only ever supposed to be a
+// FRESH test child's own post-`setpgid(0,0)` group — by pid-uniqueness that
+// can never legitimately equal a group an ALIVE ancestor (the wrapper)
+// still holds — but this check costs one word compare and turns any future
+// violation of that invariant into a skipped signal instead of a
+// self-inflicted, uncatchable SIGKILL of the wrapper (and of this process,
+// since it is a member of that same group). Group-wide kill call sites
+// must route through this, not `p > 0` alone.
+bool shouldKillGroup(int p, int ownPgid) pure @safe @nogc nothrow {
+    return p > 0 && p != ownPgid;
+}
+
+// `run_test.d` is an rdmd script, outside `source/` and `tests/unit/`, so it
+// has no home in the `dub test --config=tests` gate — the same reason
+// `tools/perf/lib/vslast.d` needed its own carve-out (dub.json's `_comment`
+// there). This block is this file's own witness instead: build+run it with
+//   dmd -unittest run_test.d -of=/tmp/run_test_ut && /tmp/run_test_ut
+// (a single-file compile — this module has no project-local imports, so no
+// `-i`/import-path juggling is needed). Compiling WITHOUT `-unittest`, which
+// is how every real invocation of this script runs, elides this block
+// entirely; druntime's default (non-`--DRT-testmode=run-main`) unittest
+// runner exits after the block below instead of falling into the real
+// `main()`, so running this is never destructive.
+//
+// The mutation this guards against: restoring either group-kill loop to its
+// pre-task-2001 form (`foreach (p; testGroupPids) if (p > 0) kill(-p, …)`,
+// i.e. dropping the `p != ownPgid` term) reddens this block at the
+// `assert(!shouldKillGroup(selfGroup, selfGroup), ...)` line with its
+// message, because `shouldKillGroup` is exactly that dropped term factored
+// out — the loops have no other path to "is this our own group" than this
+// function.
+unittest {
+    // A real recorded id: positive, distinct from our own group — the
+    // ordinary case, killable.
+    assert(shouldKillGroup(4242, 1000),
+        "a fresh test/vibe3d process group must remain killable");
+
+    // The retired-slot sentinel `testGroupPids` zeroes a finished test's
+    // entry to (see its declaration comment) — never a group to signal.
+    assert(!shouldKillGroup(0, 1000),
+        "a retired (zeroed) slot must never be sent a group signal");
+
+    // A theoretically-possible negative/garbage value must not be
+    // reinterpreted as some OTHER group by negating it again.
+    assert(!shouldKillGroup(-7, 1000),
+        "a negative recorded id must never be treated as killable");
+
+    // THE case this task exists for: under `xvfb-run` this runner shares its
+    // process group with the wrapper (measured, see the doc comment above).
+    // A recorded id equal to our own group must be refused, or
+    // `kill(-p, SIGKILL)` SIGKILLs the wrapper and this process with it.
+    enum selfGroup = 1000;
+    assert(!shouldKillGroup(selfGroup, selfGroup),
+        "a process-group id equal to the runner's own group must be refused "
+        ~ "— sending it SIGKILL reaches the xvfb-run wrapper AND this runner");
+
+    // A near-miss (adjacent pid, not an exact match) must NOT be caught by
+    // the guard — this is a targeted exclusion, not a blanket refusal of
+    // anything nearby.
+    assert(shouldKillGroup(selfGroup + 1, selfGroup),
+        "a group merely adjacent to our own must remain killable — the "
+        ~ "guard is an exact-id exclusion, not a range");
+}
+
 extern(C) void onSignal(int sig) nothrow @nogc @system {
     foreach (p; vibePids) if (p != 0) kill(p, SIGKILL);
+    immutable ownPgid = getpgrp();
     // Negative pid = the whole process group. Running tests are group leaders
-    // of their own group precisely so this reaches their children too.
-    foreach (p; testGroupPids) if (p > 0) kill(-p, SIGKILL);
+    // of their own group precisely so this reaches their children too — see
+    // `shouldKillGroup` for why `ownPgid` is excluded.
+    foreach (p; testGroupPids) {
+        if (p > 0 && p == ownPgid) {
+            import core.stdc.stdio : fprintf, stderr;
+            fprintf(stderr, "run_test: onSignal: refusing to SIGKILL process "
+                ~ "group %d — it is this runner's OWN group\n", p);
+            continue;
+        }
+        if (shouldKillGroup(p, ownPgid)) kill(-p, SIGKILL);
+    }
     if (runLockFd >= 0) { flock(runLockFd, LOCK_UN); close(runLockFd); }
     import core.stdc.stdio : fputs, stderr;
     fputs("\ninterrupted\n", stderr);
@@ -500,8 +591,24 @@ void cleanup() {
     // Anything a per-test timeout could not reap (or a test still running when
     // an exception unwound the run) gets one last group-wide SIGKILL. Cheap,
     // and it is the difference between "the next lane's worker starts" and
-    // "the next lane's worker finds its port taken by an orphan".
-    foreach (p; testGroupPids) if (p > 0) { try { kill(-p, SIGKILL); } catch (Exception) {} }
+    // "the next lane's worker finds its port taken by an orphan" — EXCEPT
+    // when the recorded id is our own process group (see `shouldKillGroup`):
+    // under `xvfb-run` that group also holds the wrapper we are running
+    // under and this process itself, and SIGKILL cannot be caught, so
+    // sending it there would kill the wrapper and read back to the caller
+    // as this runner exiting 137 — AFTER a fully green summary already
+    // printed (task 2001; the race this file's tests pin).
+    immutable ownPgid = getpgrp();
+    foreach (p; testGroupPids) {
+        if (p > 0 && p == ownPgid)
+            stderr.writefln("run_test: cleanup(): refusing to SIGKILL process "
+                ~ "group %d — it is this runner's OWN group (shared with the "
+                ~ "xvfb-run wrapper); sending it SIGKILL would kill the "
+                ~ "wrapper and this runner too", p);
+    }
+    foreach (p; testGroupPids) if (shouldKillGroup(p, ownPgid)) {
+        try { kill(-p, SIGKILL); } catch (Exception) {}
+    }
     testGroupPids = null;
     // Only ever the tree THIS run made (or adopted at startup and emptied);
     // never another checkout's, and never a parked one that is still busy.
@@ -1240,8 +1347,19 @@ bool waitFor(Pid pid, Duration limit, out int status) {
 // The group is killed BEFORE the leader is reaped, which is also what keeps
 // `-gpid` unambiguous: a process group cannot be recycled while it still has a
 // member, and the un-reaped leader is one.
+//
+// `gpid` here is always a just-spawned test's own post-`setpgid(0,0)` group,
+// so by pid-uniqueness it can never legitimately equal the runner's own
+// group (see `shouldKillGroup`) — but the check is one word compare, and
+// skipping a self-group kill here is cheap insurance against exactly the
+// same hazard `cleanup()`/`onSignal` guard against.
 bool killTestTree(Pid pid, int gpid) {
     if (gpid <= 0) return false;
+    if (!shouldKillGroup(gpid, getpgrp())) {
+        stderr.writefln("run_test: killTestTree: refusing to SIGKILL process "
+            ~ "group %d — it is this runner's OWN group", gpid);
+        return false;
+    }
     kill(-gpid, SIGKILL);
     return reapWithin(pid, 10.seconds);
 }
