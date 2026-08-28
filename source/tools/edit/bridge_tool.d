@@ -11,6 +11,7 @@ import editmode : EditMode;
 import params : Param;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
+import tools.common.session_mesh_key : SessionMeshKey;
 import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
 import shader : Shader, LitShader, drawLitPreview;
@@ -271,6 +272,25 @@ private:
     // panel/headless attr write) — mirrors Mirror's `engaged`.
     bool engaged;
 
+    // ----- THE SECOND HALF OF THE COMMIT GUARD: evidence about the MESH ----
+    //
+    // `engaged` and `valid_` are both GESTURE state, and neither is
+    // invalidated when the DOCUMENT changes underneath a live tool. Task 2880
+    // (backlog 2760) measured what that costs here: engage a haul on two caps,
+    // then `POST /api/reset?empty=true`, and the process dies with
+    // `ArrayIndexError@source/mesh_ops/bridge.d(204)` — `deactivate()` fed
+    // `loopA_`/`loopB_`, frozen at `activate()`, to a kernel that indexes them
+    // blind, over a mesh that had just been emptied.
+    //
+    // The general argument — why an address term and a bus epoch are BOTH
+    // blind on that path, and why the counter is `topologyVersion` rather than
+    // `mutationVersion` — is on `SessionMeshKey`, with the measurements. What
+    // is specific here: this tool never writes the document mesh between
+    // `activate()` / `resyncSession()` and `deactivate()` (it edits its own
+    // `previewMesh_`), so an unchanged document IS the definition of a legal
+    // commit, and no term of the key can fire on one.
+    SessionMeshKey sessionKey_;
+
     // Drag state (Segments-only; no handle to hit-test against).
     bool dragging_;
     int  dragStartX_;
@@ -301,6 +321,14 @@ public:
         return (editModePtr is null) ? EditMode.Polygons : *editModePtr;
     }
 
+    /// Freeze the identity of the mesh the frozen loops index. Called from the
+    /// two — and only two — places that (re-)derive those loops.
+    private void stampSessionMesh() { sessionKey_.stamp(*mesh); }
+
+    /// Is the document mesh still the one this gesture was armed over? See
+    /// `SessionMeshKey` for what the three terms are and why each is needed.
+    private bool sessionMeshIntact() const { return sessionKey_.matches(*mesh); }
+
     override void activate() {
         if (meshSrc_ is null) return;
         auto resolved = resolveBridgeSelection(*mesh, editModeVal());
@@ -312,6 +340,7 @@ public:
         capFaces_    = resolved.capFaces;
 
         baseSnap_        = MeshSnapshot.capture(*mesh);
+        stampSessionMesh();
         engaged          = false;
         dragging_        = false;
         havePreviewCache = false;
@@ -320,7 +349,14 @@ public:
     }
 
     override void deactivate() {
-        bool willCommit = engaged && valid_;
+        // THREE terms, and the third is the one this tool was missing: the
+        // first two describe the GESTURE, `sessionMeshIntact()` describes the
+        // MESH. Without it a document change under a live gesture (reset, File
+        // → New, load, layer switch) reached the kernel with stale indices and
+        // killed the process — see the `sessionKey_` field note. The refusal is
+        // SILENT, matching `LoopSliceTool.commitEdit`'s own swap guard: a throw
+        // here would fail the `/api/reset` that legitimately caused it.
+        bool willCommit = engaged && valid_ && sessionMeshIntact();
         MeshSnapshot pre;
         if (willCommit) pre = MeshSnapshot.capture(*mesh);
 
@@ -359,6 +395,11 @@ public:
         loopB_       = resolved.loopB;
         capFaces_    = resolved.capFaces;
         baseSnap_        = MeshSnapshot.capture(*mesh);
+        // The loops above were re-derived against the now-current mesh, so the
+        // session identity is re-frozen with them. Without this the guard in
+        // `deactivate()` would refuse a commit that undo/redo had legitimately
+        // re-baselined — the "reddens on correct code" half of the contract.
+        stampSessionMesh();
         havePreviewCache = false;
         if (valid_) evaluate();
     }

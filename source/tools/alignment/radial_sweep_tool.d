@@ -12,6 +12,7 @@ import editmode : EditMode;
 import params : Param, IntEnumEntry;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
+import tools.common.session_mesh_key : SessionMeshKey;
 import snapshot : MeshSnapshot;
 import shader : Shader, LitShader, drawLitPreview;
 import handler : ToolHandles, BoxHandler, gizmoSize, drawThickLinesExt;
@@ -248,6 +249,15 @@ private:
     // tool then shows only the axis gizmo and commits nothing.
     MeshSnapshot baseSnap;
     uint[]       profile_;
+    /// The identity of the mesh `profile_` indexes — see `SessionMeshKey`.
+    /// Without it `deactivate()`'s `engaged && validProfile_` was GESTURE
+    /// state only, and a document change under a live gesture reached
+    /// `revolveProfileEx` with stale vertex ids: measured 2026-08-28, arm the
+    /// tool on a cube face, `POST /api/reset?empty=true`, and the process dies
+    /// with `ArrayIndexError@source/mesh_ops/revolve.d(374)`. `revolveProfileEx`
+    /// checks its own length / count / angle preconditions and never that a
+    /// profile id addresses the mesh it was handed.
+    SessionMeshKey sessionKey_;
     bool         profileClosed_;
     uint         profileFaceIdx_ = uint.max;
     bool         validProfile_;
@@ -319,6 +329,7 @@ public:
     override void activate() {
         baseSnap      = MeshSnapshot.capture(*mesh);
         validProfile_ = captureProfile(mesh, profile_, profileClosed_, profileFaceIdx_);
+        sessionKey_.stamp(*mesh);
         engaged       = false;
         dragPart      = -1;
         toolHandles.clearHaul();
@@ -328,7 +339,11 @@ public:
     }
 
     override void deactivate() {
-        bool willCommit = engaged && validProfile_;
+        // The third term is evidence about the MESH; the first two describe
+        // only the gesture. See `sessionKey_`. The refusal is SILENT, matching
+        // `LoopSliceTool.commitEdit`'s own swap guard — a throw here would
+        // fail the `/api/reset` that legitimately caused it.
+        bool willCommit = engaged && validProfile_ && sessionKey_.matches(*mesh);
         MeshSnapshot pre;
         if (willCommit) pre = MeshSnapshot.capture(*mesh);
 
@@ -377,6 +392,10 @@ public:
     public override void resyncSession() {
         baseSnap         = MeshSnapshot.capture(*mesh);
         validProfile_    = captureProfile(mesh, profile_, profileClosed_, profileFaceIdx_);
+        // Re-frozen WITH the profile it protects: undo/redo re-derived these
+        // ids against the now-current mesh, and a guard left holding the old
+        // stamp would refuse a commit that is entirely legal.
+        sessionKey_.stamp(*mesh);
         havePreviewCache = false;
         evaluate();
     }

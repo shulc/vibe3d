@@ -12,6 +12,7 @@ import shader : Shader;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import snapshot : MeshSnapshot;
+import tools.common.session_mesh_key : SessionMeshKey;
 import display_sync : refreshDisplay;
 import deform_magnet : applyMagnet;
 import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, ElementConnect;
@@ -76,6 +77,15 @@ private:
 
     // Per-gesture undo payload (populated by applyMagnet via rebuildPreview).
     uint[] touchedIdx_;
+    /// The identity of the mesh `touchedIdx_` indexes — see `SessionMeshKey`.
+    /// `commitEdit()` reads `mesh.vertices[touchedIdx_[k]]` to build the undo
+    /// AFTER-image, and `built` alone is gesture state: measured 2026-08-28, a
+    /// vertex haul left mid-drag (LMB still down) followed by
+    /// `POST /api/reset?empty=true` kills the process with
+    /// `ArrayIndexError@source/tools/deform/magnet.d(298)`. The mouse-UP path
+    /// clears `built`, so the reachable window is a tool-drop mid-drag — which
+    /// is exactly what a document change performs.
+    SessionMeshKey sessionKey_;
     Vec3[] touchedPrev_;
 
     /// Pixel drag distance that maps to strength = 1.0.
@@ -285,6 +295,10 @@ private:
         bool displaced = applyMagnet(mesh, indices, target_, strength_, fp, aim,
                                      touchedIdx_, touchedPrev_);
         built = displaced;
+        // Freeze the identity WITH the indices, every rebuild. This tool's own
+        // per-motion edit is Position-class, so it moves no term of the key —
+        // a legal drag stamps and matches the same three values throughout.
+        if (displaced) sessionKey_.stamp(*mesh);
         if (displaced) mesh.commitChange(MeshEditScope.Position);
         refreshCaches();
     }
@@ -292,6 +306,16 @@ private:
     void commitEdit() {
         if (history is null || factory is null) return;
         if (!built || touchedIdx_.length == 0) return;
+        // ... and the document mesh must still be the one those indices came
+        // from. Without this the read below indexed a mesh a scene reset had
+        // already replaced. Dropping silently is right: there is no edit of
+        // ours left on that mesh to record.
+        if (!sessionKey_.matches(*mesh)) {
+            built               = false;
+            touchedIdx_.length  = 0;
+            touchedPrev_.length = 0;
+            return;
+        }
         Vec3[] after;
         after.length = touchedIdx_.length;
         foreach (k; 0 .. touchedIdx_.length)
