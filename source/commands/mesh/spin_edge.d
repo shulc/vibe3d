@@ -6,7 +6,6 @@ import mesh;
 import view;
 import editmode;
 import shader;
-import snapshot : MeshSnapshot;
 import selection_product : repointToEdgeKeys;
 import mesh_edit_delta : MeshEditScope;
 import commands.mesh.position_undo : RecordedUndo;
@@ -56,7 +55,6 @@ import commands.mesh.selection_undo : DenseSelectionUndo;
 /// UV plane where it was" cell.
 class MeshSpinEdge : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;      // the hatch's arm only
     private RecordedUndo     undo_;
     /// The forward SUCCEEDED — see `commands/mesh/flip.d` for why this bit is
     /// not derivable from the two images.
@@ -250,7 +248,7 @@ class MeshSpinEdge : Command, Operator {
         // kernel walks (`spinEdgesByKeys` re-derives incidence each round), and
         // answering it twice would be a second, unnamed guard in front of the
         // one under test. The kernel's `affected == 0` is a true no-op.
-        applied_ = runMapEdit(mesh, undo_, snap, MeshEditScope.Geometry,
+        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Geometry,
                               (ref MeshEditBatch ed) => runKernel(ed, keys, edgeBranch));
         return applied_;
     }
@@ -287,11 +285,13 @@ class MeshSpinEdge : Command, Operator {
         // truncates the undo stack instead of declining one step (regression
         // 0099), so the empty-delta case must answer per this command's own
         // forward rather than inherit a `false` from the absence of both images.
-        if (!revertMapEditEmptyOk(mesh, undo_, snap, applied_)) return false;
-        // ONLY on the delta arm. The hatch's `MeshSnapshot.restore` already put
-        // the whole `edgeMarks` word and both order arrays back, and re-running
-        // the overlay over it would be a second writer for a plane that is
-        // already correct.
+        if (!revertMapEditEmptyOk(mesh, undo_, applied_)) return false;
+        // Guarded on `armed()` — see `add_point.d`'s twin comment. Before task
+        // 1903 Stage N the unarmed arm was the hatch's `MeshSnapshot.restore`,
+        // which put the whole `edgeMarks` word and both order arrays back by
+        // itself; re-running the overlay over it would have been a second
+        // writer for an already-correct plane. With the hatch gone the unarmed
+        // arm carries no image at all, so the guard is still the right one.
         if (undo_.armed()) preSel_.restore(*mesh);
         return true;
     }

@@ -22,8 +22,8 @@ module commands.mesh.uv_transform;
 /// L1-b, through the POST-HOC door `MeshEditBatch.recordMapValueDiff`:
 /// `applyUvAffine` takes the map pointer and writes it, so the command holds a
 /// pre-op image and the DIFF against the live map is the record. Kernel
-/// signatures are unchanged. `MeshSnapshot` survives only as the escape
-/// hatch's arm (`VIBE3D_UNDO_TRACKER=0`).
+/// signatures are unchanged. Task 1903 Stage N deleted the escape hatch, so
+/// the recorded delta is now the ONLY undo image this file has.
 ///
 /// MODE C, and the ratio is stated rather than assumed: these three rewrite
 /// every affected corner, so the payload is two whole images of the map —
@@ -40,7 +40,6 @@ import command;
 import mesh           : Mesh, MapDomain, MeshEditBatch, kUvMapName;
 import view           : View;
 import editmode       : EditMode;
-import snapshot       : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
 import params         : Param;
 import commands.mesh.position_undo : RecordedUndo;
@@ -62,7 +61,6 @@ import uv_transform;
 class UvFlip : Command {
     private string       axis_  = "u";
     private string       pivot_ = "unit";
-    private MeshSnapshot snap;      // the hatch's arm only
     private RecordedUndo undo_;
     /// The forward SUCCEEDED. NOT derivable from `undo_`/`snap`, and the three
     /// shipped cells that caught the attempt say why: these commands' `revert()`
@@ -116,7 +114,7 @@ class UvFlip : Command {
         // history entry, and nothing to roll back.
         if (loops.length == 0) return false;
 
-        applied_ = runMapEdit(mesh, undo_, snap, MeshEditScope.Material,
+        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Material,
                           (ref MeshEditBatch ed) => kernel(ed, loops));
         return applied_;
     }
@@ -147,7 +145,7 @@ class UvFlip : Command {
     }
 
     override bool revert() {
-        return revertMapEditEmptyOk(mesh, undo_, snap, applied_);
+        return revertMapEditEmptyOk(mesh, undo_, applied_);
     }
 }
 
@@ -161,7 +159,6 @@ class UvFlip : Command {
 class UvMirror : Command {
     private string       axis_  = "u";
     private string       pivot_ = "centroid";
-    private MeshSnapshot snap;      // the hatch's arm only
     private RecordedUndo undo_;
     /// The forward SUCCEEDED. NOT derivable from `undo_`/`snap`, and the three
     /// shipped cells that caught the attempt say why: these commands' `revert()`
@@ -211,7 +208,7 @@ class UvMirror : Command {
         // history entry, and nothing to roll back.
         if (loops.length == 0) return false;
 
-        applied_ = runMapEdit(mesh, undo_, snap, MeshEditScope.Material,
+        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Material,
                           (ref MeshEditBatch ed) => kernel(ed, loops));
         return applied_;
     }
@@ -242,7 +239,7 @@ class UvMirror : Command {
     }
 
     override bool revert() {
-        return revertMapEditEmptyOk(mesh, undo_, snap, applied_);
+        return revertMapEditEmptyOk(mesh, undo_, applied_);
     }
 }
 
@@ -256,7 +253,6 @@ class UvMirror : Command {
 class UvRotate : Command {
     private float        angle_ = 90.0f;
     private string       pivot_ = "centroid";
-    private MeshSnapshot snap;      // the hatch's arm only
     private RecordedUndo undo_;
     /// The forward SUCCEEDED. NOT derivable from `undo_`/`snap`, and the three
     /// shipped cells that caught the attempt say why: these commands' `revert()`
@@ -305,7 +301,7 @@ class UvRotate : Command {
         // history entry, and nothing to roll back.
         if (loops.length == 0) return false;
 
-        applied_ = runMapEdit(mesh, undo_, snap, MeshEditScope.Material,
+        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Material,
                           (ref MeshEditBatch ed) => kernel(ed, loops));
         return applied_;
     }
@@ -336,7 +332,7 @@ class UvRotate : Command {
     }
 
     override bool revert() {
-        return revertMapEditEmptyOk(mesh, undo_, snap, applied_);
+        return revertMapEditEmptyOk(mesh, undo_, applied_);
     }
 }
 

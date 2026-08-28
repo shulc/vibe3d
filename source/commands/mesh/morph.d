@@ -5,8 +5,7 @@ import mesh;
 import math : Vec3;
 import view;
 import editmode;
-import snapshot : MeshSnapshot;
-import mesh_edit_delta : MeshEditScope, MeshOpEntry, undoTrackerEnabled;
+import mesh_edit_delta : MeshEditScope, MeshOpEntry;
 import mesh_morph : morphApply;
 import morph_target;
 import params : Param;
@@ -39,8 +38,9 @@ import std.array : uninitializedArray;
 // UNDO IS A RECORDED DELTA SINCE TASK 1903 STAGE L1-a, and this file is the
 // kind's FIRST production caller. Five of the six mutating commands record
 // `MeshOpEntry.Kind.MapValueDelta`; `mesh.morph.apply` records `Kind.SetPos`,
-// because it writes POSITIONS and leaves the map alone. `MeshSnapshot` stays
-// as the escape hatch's arm (`VIBE3D_UNDO_TRACKER=0`) and dies with the hatch.
+// because it writes POSITIONS and leaves the map alone. The escape hatch's
+// `MeshSnapshot` arm died with the hatch at task 1903 Stage N; the recorded
+// delta is the only undo image these six commands have.
 //
 // WHY THIS FILE WENT FIRST OF THE FOUR L1 GROUPS. Five things are true here and
 // of no other group in the family, and each one is a failure the other three
@@ -150,7 +150,6 @@ private MeshMap* morphMapOrNull(Mesh* m, string name) {
 class MorphCreate : Command {
     private string       name_;
     private string       kind_ = "relative";
-    private MeshSnapshot snap;      // the hatch's arm only
     private RecordedUndo undo_;
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo (task 2230). The
@@ -196,7 +195,7 @@ class MorphCreate : Command {
         // ceiling, and re-implementing either test here would be a second,
         // unnamed guard in front of the named one. The kernel therefore
         // returns false and `runMapEdit` closes the batch; nothing was written.
-        if (!runMapEdit(mesh, undo_, snap, MeshEditScope.Maps,
+        if (!runMapEdit(mesh, undo_, MeshEditScope.Maps,
                         (ref MeshEditBatch ed) => createKernel(ed, kind)))
             return false;
         return true;
@@ -247,7 +246,7 @@ class MorphCreate : Command {
     }
 
     override bool revert() {
-        if (!revertMapEdit(mesh, undo_, snap)) return false;
+        if (!revertMapEdit(mesh, undo_)) return false;
         // The NON-MESH tail, and no plane dump can see it: the target named a
         // map that no longer exists after the restore. Unchanged by the
         // migration, and it runs AFTER the mesh half in both paths.
@@ -258,7 +257,6 @@ class MorphCreate : Command {
 
 class MorphRemove : Command {
     private string       name_;
-    private MeshSnapshot snap;      // the hatch's arm only
     private RecordedUndo undo_;
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo — see MorphCreate.
@@ -282,7 +280,7 @@ class MorphRemove : Command {
         if (morphMapOrNull(mesh, name_) is null)
             throw new Exception(
                 "mesh.morph.remove: morph map '" ~ name_ ~ "' not found");
-        return runMapEdit(mesh, undo_, snap, MeshEditScope.Maps, &removeKernel);
+        return runMapEdit(mesh, undo_, MeshEditScope.Maps, &removeKernel);
     }
 
     private bool removeKernel(ref MeshEditBatch ed) {
@@ -329,14 +327,13 @@ class MorphRemove : Command {
         // back. Recorded here so the asymmetry with `create` and `rename`
         // reads as pre-existing behaviour rather than as something this
         // migration lost.
-        return revertMapEdit(mesh, undo_, snap);
+        return revertMapEdit(mesh, undo_);
     }
 }
 
 class MorphRename : Command {
     private string       from_;
     private string       to_;
-    private MeshSnapshot snap;      // the hatch's arm only
     private RecordedUndo undo_;
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo — see MorphCreate.
@@ -367,7 +364,7 @@ class MorphRename : Command {
         if (mesh.meshMap(to_) !is null)
             throw new Exception(
                 "mesh.morph.rename: target name '" ~ to_ ~ "' already exists");
-        return runMapEdit(mesh, undo_, snap, MeshEditScope.Maps, &renameKernel);
+        return runMapEdit(mesh, undo_, MeshEditScope.Maps, &renameKernel);
     }
 
     private bool renameKernel(ref MeshEditBatch ed) {
@@ -392,7 +389,7 @@ class MorphRename : Command {
     }
 
     override bool revert() {
-        if (!revertMapEdit(mesh, undo_, snap)) return false;
+        if (!revertMapEdit(mesh, undo_)) return false;
         // The NON-MESH tail, and it reads the mesh AFTER the restore — so the
         // order of these two statements is load-bearing on both paths.
         if (morphTargetName() == to_) setMorphTarget(from_, mesh.mapKind(from_));
@@ -499,7 +496,6 @@ class MorphSet : Command {
     private string       name_;
     private int          vert_ = -1;
     private float        x_ = 0.0f, y_ = 0.0f, z_ = 0.0f;
-    private MeshSnapshot snap;      // the hatch's arm only
     private RecordedUndo undo_;
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo — see MorphCreate.
@@ -534,7 +530,7 @@ class MorphSet : Command {
         if (vert_ < 0 || cast(size_t) vert_ >= mesh.vertices.length)
             throw new Exception(
                 "mesh.morph.set: vert out of range");
-        if (!runMapEdit(mesh, undo_, snap, MeshEditScope.Maps, &setKernel))
+        if (!runMapEdit(mesh, undo_, MeshEditScope.Maps, &setKernel))
             // UNREACHABLE, and named as such: `setMorphValue` refuses on a
             // missing map, a non-morph kind or an out-of-range vertex, and all
             // three are pre-checked above. The pre-2230 code restored its
@@ -581,7 +577,7 @@ class MorphSet : Command {
     }
 
     override bool revert() {
-        return revertMapEdit(mesh, undo_, snap);
+        return revertMapEdit(mesh, undo_);
     }
 }
 
@@ -592,7 +588,6 @@ class MorphSet : Command {
 /// kind they are different states on the wire.
 class MorphClear : Command {
     private string       name_;
-    private MeshSnapshot snap;      // the hatch's arm only
     private RecordedUndo undo_;
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo — see MorphCreate.
@@ -622,7 +617,7 @@ class MorphClear : Command {
         // selection — clearing a whole map is a coherent, reversible request,
         // and `selectedVertexIndicesVertices` is the same operand set every
         // other vertex-domain command uses.
-        return runMapEdit(mesh, undo_, snap, MeshEditScope.Maps, &clearKernel);
+        return runMapEdit(mesh, undo_, MeshEditScope.Maps, &clearKernel);
     }
 
     private bool clearKernel(ref MeshEditBatch ed) {
@@ -684,7 +679,7 @@ class MorphClear : Command {
     }
 
     override bool revert() {
-        return revertMapEdit(mesh, undo_, snap);
+        return revertMapEdit(mesh, undo_);
     }
 }
 
@@ -694,7 +689,6 @@ class MorphClear : Command {
 class MorphApplyCmd : Command {
     private string       name_;
     private float        amount_ = 1.0f;
-    private MeshSnapshot snap;      // the hatch's arm only
     // `PositionUndo`, NOT the map holder the five siblings use — and it is the
     // same TYPE under a different alias (`commands/mesh/position_undo.d`). The
     // spelling is the point: this command's payload is `Kind.SetPos`, not
@@ -750,16 +744,9 @@ class MorphApplyCmd : Command {
             ed.close();
             return true;
         }
-        if (undoTrackerEnabled()) {
-            auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
-            applyKernel(ed, kind);
-            undo_.arm(ed.close());
-            return true;
-        }
-        snap = MeshSnapshot.capture(*mesh);
-        auto ed = MeshEditBatch.unrecorded(*mesh, MeshEditScope.Position);
+        auto ed = MeshEditBatch(*mesh, MeshEditScope.Position);
         applyKernel(ed, kind);
-        ed.close();
+        undo_.arm(ed.close());
         return true;
     }
 
@@ -802,7 +789,7 @@ class MorphApplyCmd : Command {
     }
 
     override bool revert() {
-        return revertMapEdit(mesh, undo_, snap);
+        return revertMapEdit(mesh, undo_);
     }
 }
 

@@ -5,7 +5,6 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
 import commands.mesh.position_undo : RecordedUndo;
 import commands.mesh.map_edit_undo : runMapEdit, revertMapEditEmptyOk;
@@ -34,7 +33,6 @@ import commands.mesh.map_edit_undo : runMapEdit, revertMapEditEmptyOk;
 /// side by side in ONE cell.
 class MeshFlip : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;      // the hatch's arm only
     private RecordedUndo     undo_;
     /// The forward SUCCEEDED. NOT derivable from `undo_`/`snap` — see
     /// `revert()` below, and `map_edit_undo.revertMapEditEmptyOk`'s note on
@@ -86,7 +84,7 @@ class MeshFlip : Command, Operator {
         // This command is NOT one of the four that `snap.restore` on a kernel
         // refusal (`polygon_align`, `split_face`, `vertex_split`,
         // `make_polygon` are), so the L8 pre-flight rule costs it nothing.
-        applied_ = runMapEdit(mesh, undo_, snap, MeshEditScope.Geometry,
+        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Geometry,
                               (ref MeshEditBatch ed) => runKernel(ed) != 0);
         return applied_;
     }
@@ -107,6 +105,6 @@ class MeshFlip : Command, Operator {
         // a `false` here does not "decline to undo" — it silently destroys
         // every older entry. The `if (!snap.filled) return false;` this
         // replaces was deleted, not translated.
-        return revertMapEditEmptyOk(mesh, undo_, snap, applied_);
+        return revertMapEditEmptyOk(mesh, undo_, applied_);
     }
 }

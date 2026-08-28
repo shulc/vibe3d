@@ -5,7 +5,6 @@ import mesh            : Mesh, MapDomain, MapKind, MeshMap, MeshEditBatch,
                          kindInfo, kUvMapName, MAX_MESH_MAPS;
 import view            : View;
 import editmode        : EditMode;
-import snapshot        : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope, MeshOpEntry;
 import params          : Param;
 import commands.mesh.position_undo : RecordedUndo;
@@ -22,8 +21,8 @@ import commands.mesh.map_edit_undo : runMapEdit, revertMapEdit, mapSlotOf;
 //   uv.clear   {name="uv"}         — zero a UV map's values
 //
 // UNDO IS A RECORDED `MeshOpEntry.Kind.MapValueDelta` SINCE TASK 1903 STAGE
-// L1-b. Each of the four records one entry and `MeshSnapshot` survives only as
-// the escape hatch's arm (`VIBE3D_UNDO_TRACKER=0`). The three arms are
+// L1-b. Each of the four records one entry; the escape hatch's `MeshSnapshot`
+// arm died with the hatch at task 1903 Stage N. The two arms are
 // `commands/mesh/map_edit_undo.runMapEdit`, shared with `morph.d`, `weightmap.d`
 // and the five UV value files.
 //
@@ -82,7 +81,6 @@ private MeshMap* requireUvMap(Mesh* mesh, string name) {
 
 class UvDelete : Command {
     private string       name_ = kUvMapName;
-    private MeshSnapshot snap;      // the hatch's arm only
     private RecordedUndo undo_;
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo (task 2250). A
@@ -107,7 +105,7 @@ class UvDelete : Command {
 
     protected override bool applyImpl() {
         requireUvMap(mesh, name_);   // throws if absent or not a UV map
-        return runMapEdit(mesh, undo_, snap, MeshEditScope.Material, &deleteKernel);
+        return runMapEdit(mesh, undo_, MeshEditScope.Material, &deleteKernel);
     }
 
     private bool deleteKernel(ref MeshEditBatch ed) {
@@ -141,7 +139,7 @@ class UvDelete : Command {
     }
 
     override bool revert() {
-        return revertMapEdit(mesh, undo_, snap);
+        return revertMapEdit(mesh, undo_);
     }
 }
 
@@ -152,7 +150,6 @@ class UvDelete : Command {
 class UvRename : Command {
     private string       from_ = kUvMapName;
     private string       to_;
-    private MeshSnapshot snap;      // the hatch's arm only
     private RecordedUndo undo_;
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo — see UvDelete.
@@ -184,7 +181,7 @@ class UvRename : Command {
         if (mesh.meshMap(to_) !is null)
             throw new Exception(
                 "uv.rename: target name '" ~ to_ ~ "' already exists");
-        return runMapEdit(mesh, undo_, snap, MeshEditScope.Material, &renameKernel);
+        return runMapEdit(mesh, undo_, MeshEditScope.Material, &renameKernel);
     }
 
     private bool renameKernel(ref MeshEditBatch ed) {
@@ -204,7 +201,7 @@ class UvRename : Command {
     }
 
     override bool revert() {
-        return revertMapEdit(mesh, undo_, snap);
+        return revertMapEdit(mesh, undo_);
     }
 }
 
@@ -220,7 +217,6 @@ class UvRename : Command {
 class UvCopy : Command {
     private string       from_ = kUvMapName;
     private string       to_;
-    private MeshSnapshot snap;      // the hatch's arm only
     private RecordedUndo undo_;
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo — see UvDelete.
@@ -258,7 +254,7 @@ class UvCopy : Command {
         if (mesh.meshMaps.length >= MAX_MESH_MAPS)
             throw new Exception(
                 "uv.copy: this mesh already carries the maximum number of maps");
-        return runMapEdit(mesh, undo_, snap, MeshEditScope.Material, &copyKernel);
+        return runMapEdit(mesh, undo_, MeshEditScope.Material, &copyKernel);
     }
 
     private bool copyKernel(ref MeshEditBatch ed) {
@@ -290,7 +286,7 @@ class UvCopy : Command {
     }
 
     override bool revert() {
-        return revertMapEdit(mesh, undo_, snap);
+        return revertMapEdit(mesh, undo_);
     }
 }
 
@@ -301,7 +297,6 @@ class UvCopy : Command {
 
 class UvClear : Command {
     private string       name_ = kUvMapName;
-    private MeshSnapshot snap;      // the hatch's arm only
     private RecordedUndo undo_;
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo — see UvDelete.
@@ -321,7 +316,7 @@ class UvClear : Command {
 
     protected override bool applyImpl() {
         requireUvMap(mesh, name_);   // throws if absent or not UV
-        return runMapEdit(mesh, undo_, snap, MeshEditScope.Material, &clearKernel);
+        return runMapEdit(mesh, undo_, MeshEditScope.Material, &clearKernel);
     }
 
     private bool clearKernel(ref MeshEditBatch ed) {
@@ -362,6 +357,6 @@ class UvClear : Command {
     }
 
     override bool revert() {
-        return revertMapEdit(mesh, undo_, snap);
+        return revertMapEdit(mesh, undo_);
     }
 }

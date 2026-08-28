@@ -12,8 +12,8 @@ module commands.mesh.uv_unwrap;
 /// UNDO IS A RECORDED `MeshOpEntry.Kind.MapValueDelta` SINCE TASK 1903 STAGE
 /// L1-b. Like `uv.project` this is a HYBRID and records one of two shapes: a
 /// `MapOp.Create` in the `WholeArray` spelling when it created the map, and a
-/// post-hoc `MapOp.Values` diff when it did not. `MeshSnapshot` is the escape
-/// hatch's arm only.
+/// post-hoc `MapOp.Values` diff when it did not. Task 1903 Stage N deleted the
+/// escape hatch; the delta is the only undo image left.
 ///
 /// THE ONE PLACE IN THE WHOLE L1 FAMILY WHERE A REFUSAL FOLLOWS A WRITE, and
 /// it is why this file does not read like `uv.relax`. `uvUnwrap` is called
@@ -53,7 +53,6 @@ import mesh            : Mesh, MeshMap, MapDomain, MeshEditBatch, kUvMapName,
 import math            : Vec3;
 import view            : View;
 import editmode        : EditMode;
-import snapshot        : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
 import params          : Param;
 import commands.mesh.position_undo : RecordedUndo;
@@ -70,7 +69,6 @@ class UvUnwrap : Command {
     private int    iter_   = 30;
     private string seams_  = "selected";
 
-    private MeshSnapshot snap;      // the hatch's arm only
     private RecordedUndo undo_;
     /// The forward SUCCEEDED. NOT derivable from `undo_`/`snap`, and the three
     /// shipped cells that caught the attempt say why: these commands' `revert()`
@@ -198,7 +196,7 @@ class UvUnwrap : Command {
                 throw new Exception("uv.unwrap: UV map data out of sync with loop count");
         }
 
-        applied_ = runMapEdit(mesh, undo_, snap, MeshEditScope.Material,
+        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Material,
                           (ref MeshEditBatch ed) =>
                               kernel(ed, affected, mode, axis, ctr, sz));
         return applied_;
@@ -312,7 +310,7 @@ class UvUnwrap : Command {
     }
 
     override bool revert() {
-        return revertMapEditEmptyOk(mesh, undo_, snap, applied_);
+        return revertMapEditEmptyOk(mesh, undo_, applied_);
     }
 }
 

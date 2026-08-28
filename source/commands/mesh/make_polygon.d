@@ -5,7 +5,6 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import snapshot : MeshSnapshot;
 import params : Param;
 import selection_product : repointToFaces;
 import mesh_edit_delta : MeshEditScope;
@@ -54,7 +53,6 @@ import commands.mesh.selection_undo : DenseSelectionUndo;
 /// than an undo one.
 class MeshMakePolygon : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;      // the hatch's arm only
     private RecordedUndo     undo_;
     private DenseSelectionUndo preSel_;
     /// The forward SUCCEEDED — see `commands/mesh/flip.d`.
@@ -132,7 +130,7 @@ class MeshMakePolygon : Command, Operator {
         // `snap.restore(*mesh)` this replaces was rolling back a mutation that
         // cannot happen. The kernel below may simply answer false from inside
         // the batch.
-        applied_ = runMapEdit(mesh, undo_, snap, MeshEditScope.Geometry,
+        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Geometry,
                               (ref MeshEditBatch ed) => runKernel(ed, ordered));
         return applied_;
     }
@@ -164,7 +162,7 @@ class MeshMakePolygon : Command, Operator {
     override bool revert() {
         // `…EmptyOk`, and the `if (!snap.filled) return false;` this replaces
         // was DELETED rather than translated (regression 0099).
-        if (!revertMapEditEmptyOk(mesh, undo_, snap, applied_)) return false;
+        if (!revertMapEditEmptyOk(mesh, undo_, applied_)) return false;
         // ONLY on the delta arm — the hatch's snapshot already restored every
         // selection plane. The selection TYPE comes back on NEITHER, as the
         // class note says.

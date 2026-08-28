@@ -15,8 +15,8 @@ module commands.mesh.uv_relax;
 /// L1-b, through the post-hoc door `MeshEditBatch.recordMapValueDiff` —
 /// `uvRelax` takes a `const ref Mesh` plus the map pointer and writes through
 /// it, so the command holds a pre-op image and the DIFF is the record. The
-/// kernel signature is UNCHANGED. `MeshSnapshot` is the escape hatch's arm
-/// (`VIBE3D_UNDO_TRACKER=0`) only.
+/// kernel signature is UNCHANGED. Task 1903 Stage N deleted the escape hatch,
+/// so the recorded delta is now the only undo image this file has.
 ///
 /// THE REFUSAL ARM IS SAFE TO TAKE FROM INSIDE THE BATCH, and that is a
 /// property of the kernel rather than an assumption: every `return false` in
@@ -30,7 +30,6 @@ import command;
 import mesh            : Mesh, MapDomain, MeshEditBatch, kUvMapName;
 import view            : View;
 import editmode        : EditMode;
-import snapshot        : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
 import params          : Param;
 import commands.mesh.position_undo : RecordedUndo;
@@ -40,7 +39,6 @@ import uv_relax        : uvRelax;
 class UvRelax : Command {
     private int          iter_ = 5;
     private float        strn_ = 0.5f;
-    private MeshSnapshot snap;      // the hatch's arm only
     private RecordedUndo undo_;
     /// The forward SUCCEEDED. NOT derivable from `undo_`/`snap`, and the three
     /// shipped cells that caught the attempt say why: these commands' `revert()`
@@ -93,7 +91,7 @@ class UvRelax : Command {
         // selected; null = whole-map mode (no selection restriction).
         const bool[] cp = buildCornerPinned(*mesh);
 
-        applied_ = runMapEdit(mesh, undo_, snap, MeshEditScope.Material,
+        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Material,
                           (ref MeshEditBatch ed) => kernel(ed, cp));
         return applied_;
     }
@@ -121,7 +119,7 @@ class UvRelax : Command {
     }
 
     override bool revert() {
-        return revertMapEditEmptyOk(mesh, undo_, snap, applied_);
+        return revertMapEditEmptyOk(mesh, undo_, applied_);
     }
 }
 

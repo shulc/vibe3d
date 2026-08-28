@@ -4,7 +4,6 @@ import command;
 import mesh;
 import view;
 import editmode;
-import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope, MeshOpEntry;
 import params : Param;
 import commands.mesh.position_undo : RecordedUndo;
@@ -21,9 +20,9 @@ import commands.mesh.map_edit_undo : runMapEdit, revertMapEdit, mapSlotOf;
 //   mesh.weightmap.set     {name, vert, weight}— set one vertex's weight
 //
 // UNDO IS A RECORDED `MeshOpEntry.Kind.MapValueDelta` SINCE TASK 1903 STAGE
-// L1-b. All four mutating commands record one entry; `MeshSnapshot` survives
-// only as the escape hatch's arm (`VIBE3D_UNDO_TRACKER=0`) and dies with the
-// hatch. The three arms (redo / recorded / hatch) are
+// L1-b. All four mutating commands record one entry; the escape hatch's
+// `MeshSnapshot` arm died with the hatch at task 1903 Stage N, so the delta is
+// the only undo image left. The two arms (redo / recorded) are
 // `commands/mesh/map_edit_undo.runMapEdit`, shared with `morph.d` and the five
 // UV groups; the empty-edit answer stays in each `revert()` per
 // `position_undo.d`'s measured rule.
@@ -71,7 +70,6 @@ import commands.mesh.map_edit_undo : runMapEdit, revertMapEdit, mapSlotOf;
 
 class WeightmapCreate : Command {
     private string       name_;
-    private MeshSnapshot snap;      // the hatch's arm only
     private RecordedUndo undo_;
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo (task 2250). The
@@ -109,7 +107,7 @@ class WeightmapCreate : Command {
             throw new Exception(
                 "mesh.weightmap.create: this mesh already carries the maximum "
               ~ "number of maps");
-        return runMapEdit(mesh, undo_, snap, MeshEditScope.Material, &createKernel);
+        return runMapEdit(mesh, undo_, MeshEditScope.Material, &createKernel);
     }
 
     private bool createKernel(ref MeshEditBatch ed) {
@@ -133,13 +131,12 @@ class WeightmapCreate : Command {
     }
 
     override bool revert() {
-        return revertMapEdit(mesh, undo_, snap);
+        return revertMapEdit(mesh, undo_);
     }
 }
 
 class WeightmapRemove : Command {
     private string       name_;
-    private MeshSnapshot snap;      // the hatch's arm only
     private RecordedUndo undo_;
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo — see WeightmapCreate.
@@ -163,7 +160,7 @@ class WeightmapRemove : Command {
         if (mesh.meshMap(name_) is null)
             throw new Exception(
                 "mesh.weightmap.remove: map '" ~ name_ ~ "' not found");
-        return runMapEdit(mesh, undo_, snap, MeshEditScope.Material, &removeKernel);
+        return runMapEdit(mesh, undo_, MeshEditScope.Material, &removeKernel);
     }
 
     private bool removeKernel(ref MeshEditBatch ed) {
@@ -202,14 +199,13 @@ class WeightmapRemove : Command {
     }
 
     override bool revert() {
-        return revertMapEdit(mesh, undo_, snap);
+        return revertMapEdit(mesh, undo_);
     }
 }
 
 class WeightmapRename : Command {
     private string       from_;
     private string       to_;
-    private MeshSnapshot snap;      // the hatch's arm only
     private RecordedUndo undo_;
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo — see WeightmapCreate.
@@ -240,7 +236,7 @@ class WeightmapRename : Command {
         if (mesh.meshMap(to_) !is null)
             throw new Exception(
                 "mesh.weightmap.rename: target name '" ~ to_ ~ "' already exists");
-        return runMapEdit(mesh, undo_, snap, MeshEditScope.Material, &renameKernel);
+        return runMapEdit(mesh, undo_, MeshEditScope.Material, &renameKernel);
     }
 
     private bool renameKernel(ref MeshEditBatch ed) {
@@ -260,7 +256,7 @@ class WeightmapRename : Command {
     }
 
     override bool revert() {
-        return revertMapEdit(mesh, undo_, snap);
+        return revertMapEdit(mesh, undo_);
     }
 }
 
@@ -268,7 +264,6 @@ class WeightmapSet : Command {
     private string       name_;
     private int          vert_   = -1;
     private float        weight_ = 0.0f;
-    private MeshSnapshot snap;      // the hatch's arm only
     private RecordedUndo undo_;
     version (unittest) {
         /// TEST-ONLY read-only view of the recorded undo — see WeightmapCreate.
@@ -308,7 +303,7 @@ class WeightmapSet : Command {
          || cast(size_t) vert_ * pre.dim + pre.dim > pre.data.length)
             throw new Exception(
                 "mesh.weightmap.set: out-of-range vertex index or type mismatch");
-        return runMapEdit(mesh, undo_, snap, MeshEditScope.Material, &setKernel);
+        return runMapEdit(mesh, undo_, MeshEditScope.Material, &setKernel);
     }
 
     private bool setKernel(ref MeshEditBatch ed) {
@@ -358,7 +353,7 @@ class WeightmapSet : Command {
     }
 
     override bool revert() {
-        return revertMapEdit(mesh, undo_, snap);
+        return revertMapEdit(mesh, undo_);
     }
 }
 

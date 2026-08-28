@@ -6,7 +6,6 @@ import mesh;
 import view;
 import editmode;
 import shader;
-import snapshot : MeshSnapshot;
 import params : Param;
 import selection_product : dropConsumedFaces;
 import mesh_edit_delta : MeshEditScope;
@@ -65,7 +64,6 @@ import commands.mesh.selection_undo : DenseSelectionUndo;
 /// one and no count, no geometry compare and no `opInverse` bit could see it.
 class MeshSplitFace : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;      // the hatch's arm only
     private RecordedUndo     undo_;
     /// The pre-op selection — `dropConsumedFaces` clears the two halves' Select
     /// bits and the op-log has nothing that puts them back. See
@@ -193,7 +191,7 @@ class MeshSplitFace : Command, Operator {
         // down; clear the whole polygon layer). The second of them also says
         // the reference does NOT clear the polygon layer on a vertex-mode
         // select, which is why this lives here and not in the select path.
-        applied_ = runMapEdit(mesh, undo_, snap, MeshEditScope.Geometry,
+        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Geometry,
                               (ref MeshEditBatch ed) => runKernel(ed, faceIdx, vA, vB));
         return applied_;
     }
@@ -232,7 +230,7 @@ class MeshSplitFace : Command, Operator {
         // `…EmptyOk`, and the `if (!snap.filled) return false;` this replaces
         // was DELETED rather than translated — a `false` from a Model entry's
         // `revert()` truncates the undo stack (regression 0099).
-        if (!revertMapEditEmptyOk(mesh, undo_, snap, applied_)) return false;
+        if (!revertMapEditEmptyOk(mesh, undo_, applied_)) return false;
         // ONLY on the delta arm — the hatch's snapshot already restored every
         // selection plane.
         if (undo_.armed()) preSel_.restore(*mesh);

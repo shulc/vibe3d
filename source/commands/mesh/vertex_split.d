@@ -5,7 +5,6 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import snapshot : MeshSnapshot;
 import selection_product : repointToNothing;
 import mesh_edit_delta : MeshEditScope;
 import commands.mesh.position_undo  : RecordedUndo;
@@ -41,7 +40,6 @@ import commands.mesh.selection_undo : DenseSelectionUndo;
 /// would be a payload nobody reads.
 class MeshVertexSplit : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;      // the hatch's arm only
     private RecordedUndo     undo_;
     /// The pre-op selection — `repointToNothing` clears all three domains and
     /// the op-log has nothing that puts it back. See
@@ -87,7 +85,7 @@ class MeshVertexSplit : Command, Operator {
         // pre-image of the face array, so nothing downstream could detect a
         // half-revert, and a `false` from a Model entry's `revert()` truncates
         // the undo stack (plan §L2.4, regression 0099).
-        applied_ = runMapEdit(mesh, undo_, snap, MeshEditScope.Geometry,
+        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Geometry,
                               (ref MeshEditBatch ed) => runKernel(ed, sel));
         return applied_;
     }
@@ -112,7 +110,7 @@ class MeshVertexSplit : Command, Operator {
     override bool revert() {
         // `…EmptyOk`, and the `if (!snap.filled) return false;` this replaces
         // was DELETED rather than translated (regression 0099).
-        if (!revertMapEditEmptyOk(mesh, undo_, snap, applied_)) return false;
+        if (!revertMapEditEmptyOk(mesh, undo_, applied_)) return false;
         // ONLY on the delta arm — the hatch's snapshot already restored every
         // selection plane.
         if (undo_.armed()) preSel_.restore(*mesh);

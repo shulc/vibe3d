@@ -15,8 +15,9 @@ module commands.mesh.uv_pack;
 ///   - Undo: a recorded `MeshOpEntry.Kind.MapValueDelta` since task 1903
 ///     Stage L1-b, through `MeshEditBatch.recordMapValueDiff` — the kernels
 ///     (`applyUvAffine`) take the map pointer and write it, so the command
-///     holds a pre-op image and the DIFF is the record. `MeshSnapshot` is the
-///     escape hatch's arm only. Mode C: two whole images of the map, ~6.10 MB
+///     holds a pre-op image and the DIFF is the record. Task 1903 Stage N
+///     deleted the escape hatch, so the delta is the only undo image left.
+///     Mode C: two whole images of the map, ~6.10 MB
 ///     against a 20.81 MB whole-mesh capture, ratio 3.4x and scale-invariant
 ///     (task 2210).
 ///   - commitChange(MeshEditScope.Material) — UV is a material-domain edit.
@@ -29,7 +30,6 @@ import command;
 import mesh            : Mesh, MeshMap, MapDomain, MeshEditBatch, kUvMapName;
 import view            : View;
 import editmode        : EditMode;
-import snapshot        : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
 import params          : Param;
 import commands.mesh.position_undo : RecordedUndo;
@@ -61,7 +61,6 @@ private MeshMap* validateUvMap(Mesh* mesh, string cmdName) {
 
 class UvFit : Command {
     private string       keepAspect_ = "fill";
-    private MeshSnapshot snap_;     // the hatch's arm only
     private RecordedUndo undo_;
     /// The forward SUCCEEDED. NOT derivable from `undo_`/`snap`, and the three
     /// shipped cells that caught the attempt say why: these commands' `revert()`
@@ -103,7 +102,7 @@ class UvFit : Command {
         // nothing written that would need rolling back.
         if (loops.length == 0) return false;
 
-        applied_ = runMapEdit(mesh, undo_, snap_, MeshEditScope.Material,
+        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Material,
                           (ref MeshEditBatch ed) => kernel(ed, loops));
         return applied_;
     }
@@ -130,7 +129,7 @@ class UvFit : Command {
     }
 
     override bool revert() {
-        return revertMapEditEmptyOk(mesh, undo_, snap_, applied_);
+        return revertMapEditEmptyOk(mesh, undo_, applied_);
     }
 }
 
@@ -140,7 +139,6 @@ class UvFit : Command {
 
 class UvPack : Command {
     private float        gutter_ = 0.0f;
-    private MeshSnapshot snap_;     // the hatch's arm only
     private RecordedUndo undo_;
     /// The forward SUCCEEDED. NOT derivable from `undo_`/`snap`, and the three
     /// shipped cells that caught the attempt say why: these commands' `revert()`
@@ -175,7 +173,7 @@ class UvPack : Command {
         auto loops = collectAffectedUvLoops(*mesh);
         if (loops.length == 0) return false;
 
-        applied_ = runMapEdit(mesh, undo_, snap_, MeshEditScope.Material,
+        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Material,
                           (ref MeshEditBatch ed) => kernel(ed, loops));
         return applied_;
     }
@@ -226,6 +224,6 @@ class UvPack : Command {
     }
 
     override bool revert() {
-        return revertMapEditEmptyOk(mesh, undo_, snap_, applied_);
+        return revertMapEditEmptyOk(mesh, undo_, applied_);
     }
 }

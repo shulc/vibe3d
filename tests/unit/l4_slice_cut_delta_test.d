@@ -455,13 +455,22 @@ unittest
 
     // THE POSITIVE CONTROL. The predicate must still FIND a snapshot where one
     // really is, or "no file holds one" is a claim about a predicate that
-    // matches nothing. `mesh.split_edge` is snapshot-backed and is not in this
-    // family; if task 1903 ever migrates it, re-base this control onto another
-    // holder rather than deleting it.
+    // matches nothing.
+    //
+    // RE-BASED AT TASK 1903 STAGE N, and the new anchor is chosen to be the
+    // last one that can move. It was `mesh.split_edge`, which held a
+    // `private MeshSnapshot` for ONE reason — to feed the undo hatch's third
+    // arm in `map_edit_undo.runMapEdit` — and Stage N deleted that arm together
+    // with the field, which reddened this control exactly as it is written to.
+    // `mesh.paste` is a §6.6 DECLINE, not a pending migration: its payload
+    // comes from outside the document, so a whole-mesh capture IS its
+    // semantics and no delta can replace it. If even that is ever migrated,
+    // re-base again — `grep -rn 'private MeshSnapshot' source/commands/` —
+    // never delete this block.
     {
-        immutable ctl = readText(buildPath(repo, "source/commands/mesh/split_edge.d"));
+        immutable ctl = readText(buildPath(repo, "source/commands/mesh/paste.d"));
         assert(ctl.count("private MeshSnapshot") >= 1,
-            "the CONTROL moved: source/commands/mesh/split_edge.d no longer "
+            "the CONTROL moved: source/commands/mesh/paste.d no longer "
           ~ "declares a `private MeshSnapshot`, so the predicate above matches "
           ~ "nothing and every one of the four assertions passes for free. "
           ~ "Re-base this control onto another snapshot holder — "

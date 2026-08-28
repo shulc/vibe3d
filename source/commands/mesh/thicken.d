@@ -6,7 +6,6 @@ import mesh;
 import view;
 import editmode;
 import params : Param;
-import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
 import mesh_ops.bridge : kBridgeEditScope;
 import commands.mesh.position_undo  : RecordedUndo;
@@ -43,7 +42,6 @@ import commands.mesh.selection_undo : DenseSelectionUndo;
 /// for that reason, and so does the unit cell.
 class MeshThicken : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;      // the hatch's arm only
     private RecordedUndo     undo_;
     /// The pre-op selection — `thickenSurface`'s `syncSelection` resizes every
     /// selection plane over a doubled mesh. See
@@ -89,7 +87,7 @@ class MeshThicken : Command, Operator {
         // a below-epsilon thickness and for a CLOSED surface (no boundary loop
         // to bridge), and both are decided in its step 1, before its first
         // mutation. Nothing to hoist and nothing to roll back.
-        applied_ = runMapEdit(mesh, undo_, snap, kBridgeEditScope,
+        applied_ = runMapEdit(mesh, undo_, kBridgeEditScope,
                               (ref MeshEditBatch ed) => runKernel(ed));
         return applied_;
     }
@@ -105,7 +103,7 @@ class MeshThicken : Command, Operator {
     override bool revert() {
         // `…EmptyOk`, and the `if (!snap.filled) return false;` this replaces
         // was DELETED rather than translated (regression 0099).
-        if (!revertMapEditEmptyOk(mesh, undo_, snap, applied_)) return false;
+        if (!revertMapEditEmptyOk(mesh, undo_, applied_)) return false;
         // ONLY on the delta arm — the hatch's snapshot already restored every
         // selection plane.
         if (undo_.armed()) preSel_.restore(*mesh);

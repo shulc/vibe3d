@@ -30,7 +30,6 @@ import std.conv   : to;
 import mesh       : Mesh, MeshMap, MapDomain, makeCube, kUvMapName;
 import view       : View;
 import editmode   : EditMode;
-import snapshot   : MeshSnapshot;
 import commands.mesh.uv_transform;
 import std.net.curl : post, get;
 
@@ -337,13 +336,72 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// Test 7: revert without apply returns false (no filled snapshot).
+// Test 7: revert without apply returns false.
+//
+// THE PAIR THIS CELL IS ONE HALF OF, and why both halves exist (task 1903
+// Stage N). `revertMapEditEmptyOk` has to separate two states that look
+// identical from the inside — "the forward refused or never ran" and "the
+// forward SUCCEEDED and moved nothing a bitwise diff can see" — because a
+// `false` from a Model entry's `revert()` makes `CommandHistory.undo` discard
+// that entry AND its whole trailing suffix (regression 0099). Both states are
+// `!undo_.armed()`, so only the command's own `applied_` bit tells them apart.
+// This cell pins the FALSE half; Test 7b below pins the TRUE half. Deleting
+// either leaves the other green over a helper that answers one constant.
+//
+// Before Stage N the FALSE half also read "no filled snapshot" — the hatch's
+// `MeshSnapshot` arm. There is no snapshot on any arm now; the predicate is
+// `!undo_.armed()` alone and the answer comes from `applied_`.
 // ---------------------------------------------------------------------------
 unittest {
     auto m = makeCubeWithUv();
     View view = new View(0, 0, 800, 600);
     auto cmd = new UvFlip(&m, view, EditMode.Vertices);
     assert(!cmd.revert(), "revert without apply must return false");
+}
+
+// ---------------------------------------------------------------------------
+// Test 7b: a forward that SUCCEEDED and moved NOTHING must answer TRUE.
+//
+// The stand is chosen so the identity is BITWISE and not merely numeric —
+// `recordMapValueDiff` compares bits, so a single-ulp drift would arm the
+// holder and this cell would silently become an ordinary armed-revert test.
+// `makeRotate(0)` builds lin = [[1, -0], [0, 1]] and
+// trans = pivot - lin·pivot = 0, so `applyUvAffine` computes
+// `u*1 + v*(-0.0) + 0.0`, which returns every non-negative u unchanged bit for
+// bit. The non-vacuity assert below is what makes that a fact rather than a
+// hope: it reads the recorded delta and requires it to be EMPTY.
+// ---------------------------------------------------------------------------
+unittest {
+    auto m = makeCubeWithUv();
+    auto map = m.meshMap(kUvMapName);
+    foreach (i; 0 .. m.loops.length) {
+        map.data[i * 2]     = 0.25f;
+        map.data[i * 2 + 1] = 0.75f;
+    }
+    auto before = map.data.dup;
+
+    View view = new View(0, 0, 800, 600);
+    auto cmd = new UvRotate(&m, view, EditMode.Vertices);
+    setStrParam(cmd, "pivot", "unit");
+    setFloatParam(cmd, "angle", 0.0f);
+
+    assert(cmd.apply(), "a 0-degree rotate is a SUCCESSFUL forward — if it "
+                      ~ "started refusing, this cell measures the refusal arm "
+                      ~ "and Test 7 already covers that");
+    assert(m.meshMap(kUvMapName).data == before,
+        "the 0-degree rotate moved a UV value — the stand is no longer the "
+      ~ "bitwise identity this cell needs");
+    // NON-VACUITY. Without this the cell is green over an ordinary armed
+    // revert, which is what every other cell in this file already tests.
+    assert(cmd.recordedUndo().delta().isEmpty,
+        "the 0-degree rotate recorded a NON-EMPTY delta, so this cell is "
+      ~ "exercising the armed path and says nothing about the empty-delta "
+      ~ "answer it was written for");
+    assert(cmd.revert(),
+        "a forward that SUCCEEDED and moved nothing must answer TRUE from "
+      ~ "revert. A false here makes CommandHistory.undo discard this entry "
+      ~ "AND every older one (regression 0099) — see "
+      ~ "commands/mesh/map_edit_undo.revertMapEditEmptyOk");
 }
 
 // ---------------------------------------------------------------------------

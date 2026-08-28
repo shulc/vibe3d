@@ -5,7 +5,6 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
 import commands.mesh.position_undo  : RecordedUndo;
 import commands.mesh.map_edit_undo  : runMapEdit, revertMapEditEmptyOk;
@@ -41,7 +40,6 @@ import commands.mesh.map_edit_undo  : runMapEdit, revertMapEditEmptyOk;
 /// either.
 class MeshAlign : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;      // the hatch's arm only
     private RecordedUndo     undo_;
     /// The forward SUCCEEDED — see `commands/mesh/flip.d`.
     private bool             applied_;
@@ -82,7 +80,7 @@ class MeshAlign : Command, Operator {
         // cannot happen. Plan §L2.4 listed this command among the four that
         // might need an explicit `delta.revert` on refusal; measured, none of
         // the four does.
-        applied_ = runMapEdit(mesh, undo_, snap, MeshEditScope.Position,
+        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Position,
                               (ref MeshEditBatch ed) => ed.mesh.alignFacesByMask(sel) != 0);
         return applied_;
     }
@@ -94,6 +92,6 @@ class MeshAlign : Command, Operator {
         // write whose result is bit-identical to what is already there, and a
         // displacement that clears `eps` while its three products underflow to
         // zero produces a successful forward with an EMPTY delta.
-        return revertMapEditEmptyOk(mesh, undo_, snap, applied_);
+        return revertMapEditEmptyOk(mesh, undo_, applied_);
     }
 }

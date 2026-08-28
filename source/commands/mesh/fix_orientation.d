@@ -5,7 +5,6 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
-import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
 import commands.mesh.position_undo : RecordedUndo;
 import commands.mesh.map_edit_undo : runMapEdit, revertMapEditEmptyOk;
@@ -37,7 +36,6 @@ import commands.mesh.map_edit_undo : runMapEdit, revertMapEditEmptyOk;
 /// by this commit and cannot be green both before and after.
 class MeshFixOrientation : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;      // the hatch's arm only
     private RecordedUndo     undo_;
     /// The forward SUCCEEDED — see `MeshFlip.applied_` for why the bit is not
     /// derivable from the two images.
@@ -79,7 +77,7 @@ class MeshFixOrientation : Command, Operator {
         // on an empty one. So answering false from inside the batch is atomic
         // and no roll-back is owed. See `MeshFlip.evaluate` for the four
         // commands that are NOT in that position.
-        applied_ = runMapEdit(mesh, undo_, snap, kCleanupEditScope,
+        applied_ = runMapEdit(mesh, undo_, kCleanupEditScope,
                               (ref MeshEditBatch ed) => ed.fixFaceOrientation() != 0);
         return applied_;
     }
@@ -88,6 +86,6 @@ class MeshFixOrientation : Command, Operator {
         // `…EmptyOk` for the same reason as `mesh.flip`: a face that is its own
         // reverse records nothing, and a `false` from `revert()` truncates the
         // undo stack rather than declining one step (regression 0099).
-        return revertMapEditEmptyOk(mesh, undo_, snap, applied_);
+        return revertMapEditEmptyOk(mesh, undo_, applied_);
     }
 }

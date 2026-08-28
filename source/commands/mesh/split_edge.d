@@ -6,7 +6,6 @@ import mesh;
 import view;
 import editmode;
 import shader;
-import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
 import commands.mesh.position_undo  : RecordedUndo;
 import commands.mesh.map_edit_undo  : runMapEdit, revertMapEditEmptyOk;
@@ -28,7 +27,6 @@ import commands.mesh.selection_undo : DenseSelectionUndo;
 /// the measurement that settled that.
 class MeshSplitEdge : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;      // the hatch's arm only
     private RecordedUndo     undo_;
     /// The pre-op selection of all three domains — `resetSelection()` destroys
     /// it and the op-log has nothing that puts it back.
@@ -108,7 +106,7 @@ class MeshSplitEdge : Command, Operator {
         // above — and for a `t` outside (0, 1), a literal here, and it refuses
         // before its first mutation. So the kernel cannot refuse after
         // mutating and nothing has to be hoisted.
-        applied_ = runMapEdit(mesh, undo_, snap, MeshEditScope.Geometry,
+        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Geometry,
                               (ref MeshEditBatch ed) => runKernel(ed, cast(uint)ei));
         return applied_;
     }
@@ -138,7 +136,7 @@ class MeshSplitEdge : Command, Operator {
         // was DELETED rather than translated — a `false` from a Model entry's
         // `revert()` truncates the undo stack instead of declining one step
         // (regression 0099).
-        if (!revertMapEditEmptyOk(mesh, undo_, snap, applied_)) return false;
+        if (!revertMapEditEmptyOk(mesh, undo_, applied_)) return false;
         // ONLY on the delta arm — the hatch's snapshot already restored every
         // selection plane.
         if (undo_.armed()) preSel_.restore(*mesh);

@@ -1,4 +1,4 @@
-// map_edit_undo — the three arms every migrated MAP command shares
+// map_edit_undo — the two arms every migrated MAP command shares
 // (task 1903 Stage L1).
 //
 // EXTRACTED FROM `morph.d` AT STAGE L1-b, NOT RE-WRITTEN. Stage L1-a spelled
@@ -10,11 +10,21 @@
 //
 // WHAT LIVES HERE AND WHAT DELIBERATELY DOES NOT.
 //
-// Here: the ARM DISPATCH — redo, recorded, hatch — and the mesh half of the
-// revert. Those three arms are identical for every map command in the family
-// and getting one of them wrong (recording a second delta over the first on a
+// Here: the ARM DISPATCH — redo, then recorded — and the mesh half of the
+// revert. Both arms are identical for every map command in the family and
+// getting one of them wrong (recording a second delta over the first on a
 // redo; paying a `.dup` on an unrecorded path) is a defect that reads the same
 // in all of them.
+//
+// TASK 1903 STAGE N — THERE WERE THREE ARMS AND THE THIRD ONE IS GONE. Until
+// this stage a `VIBE3D_UNDO_TRACKER=0` arm captured a whole-mesh
+// `MeshSnapshot` into a `ref MeshSnapshot snap` this function took, and
+// twenty caller files declared a field for no other purpose (each commented
+// `// the hatch's arm only`). That third arm is why Stages L1 and L2 could not
+// use a `MeshSnapshot` DECLARATION census as their closing gate — the count
+// was immovable, green on the migrated and the unmigrated file alike (card
+// 2290). Deleting it is what makes that observable honest, and the census it
+// enables is worth more than the flag it deletes.
 //
 // NOT here: the answer to an EMPTY edit. Each command's `revert()` keeps its
 // own arm, next to the guard that makes it reachable or not — the rule
@@ -38,7 +48,7 @@
 // TASK 1903 STAGE L2-a — THE NAME IS NOW HISTORICAL, AND DELIBERATELY NOT
 // CHANGED. Stage L2's `mesh.flip`, `mesh.fixOrientation` and `mesh.spinEdge`
 // take `runMapEdit` / `revertMapEditEmptyOk` unchanged: nothing in either body
-// is about MAPS — the arm dispatch is the same three arms for any family, and
+// is about MAPS — the arm dispatch is the same two arms for any family, and
 // `declared` is the caller's scope, here `MeshEditScope.Geometry` rather than
 // `Material`. A private copy in a geometry file would be the SECOND
 // implementation of one mechanism, which is what this module's own header
@@ -50,12 +60,10 @@
 module commands.mesh.map_edit_undo;
 
 import mesh            : Mesh, MeshEditBatch;
-import snapshot        : MeshSnapshot;
-import mesh_edit_delta : undoTrackerEnabled;
 import commands.mesh.position_undo : RecordedUndo;
 
-/// Run `kernel` under whichever of the three arms applies, and leave the
-/// command's undo image in `undo` (tracker) or `snap` (hatch).
+/// Run `kernel` under whichever of the two arms applies, and leave the
+/// command's undo image in `undo`.
 ///
 /// `declared` is the batch's `MeshEditScope`. Each group passes what its
 /// commands ALREADY published before the migration — `Material` for the UV and
@@ -65,7 +73,7 @@ import commands.mesh.position_undo : RecordedUndo;
 /// effect. See `mesh_edit_delta.MeshEditScope.Maps`, whose own doc says the
 /// pre-existing `setMeshMapValue` publishers keep `Material` so that no
 /// existing consumer changes behaviour.
-bool runMapEdit(Mesh* mesh, ref RecordedUndo undo, ref MeshSnapshot snap,
+bool runMapEdit(Mesh* mesh, ref RecordedUndo undo,
                 uint declared, scope bool delegate(ref MeshEditBatch) kernel)
 {
     // REDO: `CommandHistory.redo` re-runs `apply()`, so a second `evaluate`
@@ -77,31 +85,24 @@ bool runMapEdit(Mesh* mesh, ref RecordedUndo undo, ref MeshSnapshot snap,
         ed.close();
         return ok;
     }
-    if (undoTrackerEnabled()) {
-        auto ed = MeshEditBatch(*mesh, declared);
-        const ok = kernel(ed);
-        undo.arm(ed.close());
-        if (!ok) { undo.disarm(); return false; }
-        return true;
-    }
-    // THE HATCH (`VIBE3D_UNDO_TRACKER=0`). The same kernel through an
-    // UNRECORDED batch, so a migrated file's commit seam is identical on both
-    // paths and only the undo IMAGE differs.
-    snap = MeshSnapshot.capture(*mesh);
-    auto ed = MeshEditBatch.unrecorded(*mesh, declared);
+    auto ed = MeshEditBatch(*mesh, declared);
     const ok = kernel(ed);
-    ed.close();
-    if (!ok) snap = MeshSnapshot.init;
-    return ok;
+    undo.arm(ed.close());
+    if (!ok) { undo.disarm(); return false; }
+    return true;
 }
 
 /// The mesh half of every migrated `revert()`. The command's own non-mesh tail
 /// stays at the call site.
-bool revertMapEdit(Mesh* mesh, ref RecordedUndo undo, ref MeshSnapshot snap) {
+bool revertMapEdit(Mesh* mesh, ref RecordedUndo undo) {
     if (undo.armed()) return undo.revert(*mesh);
-    if (!snap.filled) return false;
-    snap.restore(*mesh);
-    return true;
+    // NOT ARMED. Before Stage N this arm restored the hatch's whole-mesh
+    // `MeshSnapshot`; with the hatch gone the only way to get here is a
+    // `revert()` that nobody's `apply()` preceded — the mis-ordered-caller
+    // case `RecordedUndo.revert` exists to make loud — or a forward that
+    // recorded nothing. The second is what `revertMapEditEmptyOk` is for, and
+    // the split between the two spellings is unchanged by this stage.
+    return false;
 }
 
 /// The map's index in `Mesh.meshMaps`, or `uint.max` when it is not there.
@@ -151,16 +152,23 @@ uint mapSlotOf(Mesh* m, string name) {
 /// ("revert without apply must return false"), `test_uv_pack.d` and
 /// `test_uv_project.d` all assert a FALSE revert after a forward that refused
 /// or never ran. "The forward refused" and "the forward succeeded and moved
-/// nothing" are BOTH `!armed && !filled`, so a helper that reads only those
-/// two would answer true for a command nobody applied — the mis-ordered-caller
-/// case `RecordedUndo.revert` exists to make loud. The caller therefore holds
-/// a bit its own `applyImpl` sets, and the two answers stay separate.
+/// nothing" are BOTH `!undo.armed()`, so a helper that read only that would
+/// answer true for a command nobody applied — the mis-ordered-caller case
+/// `RecordedUndo.revert` exists to make loud. The caller therefore holds a bit
+/// its own `applyImpl` sets, and the two answers stay separate.
+///
+/// TASK 1903 STAGE N sharpened this rather than changing it. The predicate was
+/// `!undo.armed() && !snap.filled`; with the hatch's `snap` gone the second
+/// conjunct is vacuously true and drops out. The BEHAVIOUR is unchanged on the
+/// default path, where `snap` was never filled — which is exactly why the
+/// gate for this commit is a plane diff and an empty-delta pair, not a
+/// signature diff.
 ///
 /// The first draft of this function did NOT take it, went green in lane U on
 /// every cell written for it, and reddened only in lane S. Recorded here
 /// because "no delta and no snapshot" reads like one state and is two.
-bool revertMapEditEmptyOk(Mesh* mesh, ref RecordedUndo undo, ref MeshSnapshot snap,
+bool revertMapEditEmptyOk(Mesh* mesh, ref RecordedUndo undo,
                           bool forwardSucceeded) {
-    if (!undo.armed() && !snap.filled) return forwardSucceeded;
-    return revertMapEdit(mesh, undo, snap);
+    if (!undo.armed()) return forwardSucceeded;
+    return revertMapEdit(mesh, undo);
 }

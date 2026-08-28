@@ -7,7 +7,6 @@ import view;
 import editmode;
 import shader;
 import params : Param;
-import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
 import commands.mesh.position_undo  : RecordedUndo;
 import commands.mesh.map_edit_undo  : runMapEdit, revertMapEditEmptyOk;
@@ -30,7 +29,6 @@ import commands.mesh.selection_undo : DenseSelectionUndo;
 /// `finalize`→`buildLoops` — the loud half of §5.3's two failure shapes.
 class MeshAddPoint : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;      // the hatch's arm only
     private RecordedUndo     undo_;
     /// The pre-op selection, restored on the delta arm — see
     /// `commands/mesh/selection_undo.d`. This command does not TOUCH the
@@ -96,7 +94,7 @@ class MeshAddPoint : Command, Operator {
         // mutation. So the kernel below cannot refuse after mutating, and this
         // command is not one of the four that `snap.restore` on a kernel
         // refusal.
-        applied_ = runMapEdit(mesh, undo_, snap, MeshEditScope.Geometry,
+        applied_ = runMapEdit(mesh, undo_, MeshEditScope.Geometry,
                               (ref MeshEditBatch ed) => runKernel(ed, cast(uint)ei));
         return applied_;
     }
@@ -119,10 +117,14 @@ class MeshAddPoint : Command, Operator {
         // from a Model entry's `revert()` makes `CommandHistory.undo` discard
         // that entry AND its whole trailing suffix (regression 0099), so it
         // does not decline one step — it destroys every older one.
-        if (!revertMapEditEmptyOk(mesh, undo_, snap, applied_)) return false;
-        // ONLY on the delta arm: the hatch's `MeshSnapshot.restore` already put
-        // every selection plane back, and a second writer over a correct plane
-        // is how a restore starts disagreeing with itself.
+        if (!revertMapEditEmptyOk(mesh, undo_, applied_)) return false;
+        // Guarded on `armed()` because the unarmed arm restored nothing here
+        // to begin with: before task 1903 Stage N that arm was the hatch's
+        // `MeshSnapshot.restore`, which put every selection plane back by
+        // itself, and a second writer over a correct plane is how a restore
+        // starts disagreeing with itself. With the hatch gone the unarmed arm
+        // is the "nothing was recorded" case, which owns no selection image
+        // either — so the guard stays, and it stays for the same reason.
         if (undo_.armed()) preSel_.restore(*mesh);
         return true;
     }

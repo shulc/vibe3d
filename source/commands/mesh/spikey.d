@@ -6,7 +6,6 @@ import mesh;
 import view;
 import editmode;
 import params : Param;
-import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
 import commands.mesh.position_undo  : RecordedUndo;
 import commands.mesh.map_edit_undo  : runMapEdit, revertMapEditEmptyOk;
@@ -30,7 +29,6 @@ import commands.mesh.selection_undo : DenseSelectionUndo;
 /// constructor — in the suite lane, not the unit one.
 class MeshSpikey : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;      // the hatch's arm only
     private RecordedUndo     undo_;
     /// The pre-op selection — the kernel SELECTS every appended fan triangle
     /// and `syncSelection` resizes the planes; the op-log has nothing that
@@ -82,7 +80,7 @@ class MeshSpikey : Command, Operator {
         // CONSTRUCTION: `spikeFacesByMask` counts its eligible faces before its
         // first `addVertex` and answers 0 from there, so the kernel below
         // cannot refuse after mutating and no snapshot has to be dropped.
-        applied_ = runMapEdit(mesh, undo_, snap, kPolyBevelEditScope,
+        applied_ = runMapEdit(mesh, undo_, kPolyBevelEditScope,
                               (ref MeshEditBatch ed) => runKernel(ed, mask));
         return applied_;
     }
@@ -98,7 +96,7 @@ class MeshSpikey : Command, Operator {
     override bool revert() {
         // `…EmptyOk`, and the `if (!snap.filled) return false;` this replaces
         // was DELETED rather than translated (regression 0099).
-        if (!revertMapEditEmptyOk(mesh, undo_, snap, applied_)) return false;
+        if (!revertMapEditEmptyOk(mesh, undo_, applied_)) return false;
         // ONLY on the delta arm — the hatch's snapshot already restored every
         // selection plane.
         if (undo_.armed()) preSel_.restore(*mesh);

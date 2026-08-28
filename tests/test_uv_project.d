@@ -28,7 +28,6 @@ import mesh     : Mesh, MeshMap, MapDomain, makeCube, kUvMapName;
 import math     : Vec3;
 import view     : View;
 import editmode : EditMode;
-import snapshot : MeshSnapshot;
 import commands.mesh.uv_project : UvProject;
 import uv_project : UvProjMode, UvProjAxis, projectUv, dominantAxis;
 import std.net.curl : post, get;
@@ -239,7 +238,7 @@ unittest {
 // Test 5: Empty mesh → apply() returns false, no orphan UV map created.
 //
 // This is the critical ordering check: affected.length == 0 is detected BEFORE
-// MeshSnapshot.capture and before addMeshMap, so the mesh stays clean.
+// the batch opens and before addMeshMap, so the mesh stays clean.
 // ---------------------------------------------------------------------------
 unittest {
     // Zero-face mesh: one isolated vertex, no faces → zero loops.
@@ -254,7 +253,7 @@ unittest {
     View view = new View(0, 0, 800, 600);
     auto cmd = new UvProject(&m, view, EditMode.Vertices);
     assert(!cmd.apply(),  "apply on zero-face mesh must return false");
-    assert(!cmd.revert(), "revert after false-apply must return false (no snapshot)");
+    assert(!cmd.revert(), "revert after false-apply must return false");
 
     // The critical contract: no orphan map was created.
     assert(m.meshMap(kUvMapName) is null,
