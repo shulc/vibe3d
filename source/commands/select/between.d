@@ -76,23 +76,21 @@ private:
     }
 
     bool applyPolygons() {
-        if (mesh.selectedFaces.length < mesh.faces.length)
+        // Write precondition for the `selectFace` sweep at the bottom, spelled
+        // on `faceMarks.length` rather than on `mesh.selectedFaces.length`:
+        // the two are always equal (the @property allocates a `bool[]` of
+        // exactly `faceMarks.length`), but the property MATERIALIZES that whole
+        // array on every read and this file was the one the task-0388 sweep
+        // missed — three branches, two reads each, six mesh-sized `bool[]` per
+        // apply for a number already on hand.
+        if (mesh.faceMarks.length < mesh.faces.length)
             mesh.resizeFaceSelection();
         if (mesh.faceSelectionOrder.length < mesh.faces.length)
             mesh.faceSelectionOrder.length = mesh.faces.length;
 
-        int lastFace = -1, secondLastFace = -1, lastOrd = 0, secondLastOrd = 0;
-        foreach (i; 0 .. mesh.selectedFaces.length) {
-            if (i >= mesh.faceSelectionOrder.length) break;
-            int ord = mesh.faceSelectionOrder[i];
-            if (ord <= 0) continue;
-            if (ord > lastOrd) {
-                secondLastFace = lastFace; secondLastOrd = lastOrd;
-                lastFace       = cast(int)i; lastOrd = ord;
-            } else if (ord > secondLastOrd) {
-                secondLastFace = cast(int)i; secondLastOrd = ord;
-            }
-        }
+        // ONE reader — see `Mesh.lastSelectedInSelectionOrder` (task 2440).
+        const sel = mesh.lastSelectedInSelectionOrder(EditMode.Polygons);
+        immutable int lastFace = sel.last, secondLastFace = sel.secondLast;
         if (lastFace < 0 || secondLastFace < 0) return true;
 
         int[]  fRow    = new int[](mesh.faces.length);
@@ -149,21 +147,11 @@ private:
     }
 
     bool applyEdges() {
-        if (mesh.selectedEdges.length < mesh.edges.length)
+        if (mesh.edgeMarks.length < mesh.edges.length)
             mesh.resizeEdgeSelection();
 
-        int lastEdge = -1, secondLastEdge = -1, lastOrd = 0, secondLastOrd = 0;
-        foreach (i; 0 .. mesh.selectedEdges.length) {
-            if (i >= mesh.edgeSelectionOrder.length) break;
-            int ord = mesh.edgeSelectionOrder[i];
-            if (ord <= 0) continue;
-            if (ord > lastOrd) {
-                secondLastEdge = lastEdge; secondLastOrd = lastOrd;
-                lastEdge       = cast(int)i; lastOrd = ord;
-            } else if (ord > secondLastOrd) {
-                secondLastEdge = cast(int)i; secondLastOrd = ord;
-            }
-        }
+        const sel = mesh.lastSelectedInSelectionOrder(EditMode.Edges);
+        immutable int lastEdge = sel.last, secondLastEdge = sel.secondLast;
         if (lastEdge < 0 || secondLastEdge < 0) return true;
 
         int   bestPos  = int.max;
@@ -197,21 +185,11 @@ private:
     }
 
     bool applyVertices() {
-        if (mesh.selectedVertices.length < mesh.vertices.length)
+        if (mesh.vertexMarks.length < mesh.vertices.length)
             mesh.resizeVertexSelection();
 
-        int lastVert = -1, secondLastVert = -1, lastOrd = 0, secondLastOrd = 0;
-        foreach (i; 0 .. mesh.selectedVertices.length) {
-            if (i >= mesh.vertexSelectionOrder.length) break;
-            int ord = mesh.vertexSelectionOrder[i];
-            if (ord <= 0) continue;
-            if (ord > lastOrd) {
-                secondLastVert = lastVert; secondLastOrd = lastOrd;
-                lastVert       = cast(int)i; lastOrd = ord;
-            } else if (ord > secondLastOrd) {
-                secondLastVert = cast(int)i; secondLastOrd = ord;
-            }
-        }
+        const sel = mesh.lastSelectedInSelectionOrder(EditMode.Vertices);
+        immutable int lastVert = sel.last, secondLastVert = sel.secondLast;
         if (lastVert < 0 || secondLastVert < 0) return true;
 
         // Try every neighbour of secondLastVert as a loop direction.

@@ -20,38 +20,29 @@ class SelectLess : Command {
     override string name() const { return "select.less"; }
 
     protected override bool applyImpl() {
-        // Perf (task 0388): use the lock-step `Xmarks.length` for the loop
-        // bound rather than `mesh.selectedX.length` — the latter is a @property
-        // that rebuilds a whole `bool[]` snapshot just to read its length. The
-        // loop body reads only `XSelectionOrder` (a plain field).
+        // ONE reader for "which element was selected last", shared with
+        // `select.more` and `select.between`: `Mesh.lastSelectedInSelectionOrder`
+        // (task 2440). The three files held nine hand-written copies of this
+        // scan and none of them filtered by "is this element still selected"
+        // first, so a stale stamp left behind by `bevel_vertex` / `extrude`
+        // made this command spend its one deselect on an element that was not
+        // in the selection at all — visibly a no-op. See the method's own
+        // comment for the measured state and for why an UNSTAMPED selected
+        // element is deliberately not a candidate.
+        //
+        // NO SELECTION-PLANE RESIZE HERE, unlike the two siblings, and that is
+        // not the missing half of this change. Their guard is a precondition
+        // of the WRITE they go on to make (`selectFace` indexes `faceMarks`
+        // and `faceSelectionOrder` raw, at an index their loop walk produced,
+        // which can sit past either plane). This command only DESELECTS, and
+        // only at an index the reader above proved is inside both planes.
         snap = SelectionSnapshot.capture(*mesh);
-        if (editMode == EditMode.Polygons) {
-            int last = -1, lastOrd = 0;
-            foreach (i; 0 .. mesh.faceMarks.length) {
-                if (i >= mesh.faceSelectionOrder.length) break;
-                int ord = mesh.faceSelectionOrder[i];
-                if (ord > lastOrd) { lastOrd = ord; last = cast(int)i; }
-            }
-            if (last < 0) return true;
-            mesh.deselectFace(last);
-        } else if (editMode == EditMode.Edges) {
-            int last = -1, lastOrd = 0;
-            foreach (i; 0 .. mesh.edgeMarks.length) {
-                if (i >= mesh.edgeSelectionOrder.length) break;
-                int ord = mesh.edgeSelectionOrder[i];
-                if (ord > lastOrd) { lastOrd = ord; last = cast(int)i; }
-            }
-            if (last < 0) return true;
-            mesh.deselectEdge(last);
-        } else if (editMode == EditMode.Vertices) {
-            int last = -1, lastOrd = 0;
-            foreach (i; 0 .. mesh.vertexMarks.length) {
-                if (i >= mesh.vertexSelectionOrder.length) break;
-                int ord = mesh.vertexSelectionOrder[i];
-                if (ord > lastOrd) { lastOrd = ord; last = cast(int)i; }
-            }
-            if (last < 0) return true;
-            mesh.deselectVertex(last);
+        const sel = mesh.lastSelectedInSelectionOrder(editMode);
+        if (sel.last < 0) return true;
+        final switch (editMode) {
+            case EditMode.Polygons: mesh.deselectFace(sel.last);   break;
+            case EditMode.Edges:    mesh.deselectEdge(sel.last);   break;
+            case EditMode.Vertices: mesh.deselectVertex(sel.last); break;
         }
         return true;
     }

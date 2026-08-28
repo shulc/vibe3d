@@ -9909,9 +9909,13 @@ struct Mesh {
     }
     /// L1 funnel (doc/hide_geometry_plan.md §3.2) — the single home the "empty
     /// selection ⇒ whole mesh" convention collapses into once hidden geometry
-    /// exists. NOT wired into any caller yet (that is Stage 1/3 work); added
-    /// now so the derivation law and the fallback subtraction live in one
-    /// place from the start.
+    /// exists. Stage 1/3 wired it up and it is now the funnel it was written to
+    /// be: ELEVEN production call sites (`commands/mesh/` jitter, delete,
+    /// remove, smooth, quantize, magnet, vertex_extrude, vertex_bevel;
+    /// `tools/alignment/align_kernels.d`; `tools/edit/` vertex_extrude_tool and
+    /// vertex_bevel_tool), plus two in `tests/unit/`. Counted 2026-08-28,
+    /// task 2440 — the sentence this replaces still read "NOT wired into any
+    /// caller yet".
     ///
     /// Returns the vertices touched by `mode`'s current selection — vertex
     /// selection directly, or the vertices touched by the selected edges /
@@ -9972,6 +9976,19 @@ struct Mesh {
         auto m = new bool[](vertices.length);
         foreach (i; 0 .. vertices.length) if (!isVertexHidden(i)) m[i] = true;
         return m;
+    }
+
+    /// The index-list twin of `visibleVertexMask` above: the same "the whole
+    /// mesh means the VISIBLE mesh" fallback in the `int[]` shape the three
+    /// `selectedVertexIndices{Vertices,Edges,Faces}` accessors return. It was
+    /// open-coded byte-identically in all three of them (task 2440); one body
+    /// now, so the hide subtraction cannot be fixed in one accessor and left
+    /// wrong in the other two.
+    private int[] visibleVertexIndices_() const {
+        int[] idx;
+        foreach (i; 0 .. vertices.length)
+            if (!isVertexHidden(i)) idx ~= cast(int) i;
+        return idx;
     }
     bool[] visibleEdgeMask() const {
         auto m = new bool[](edges.length);
@@ -13713,8 +13730,7 @@ struct Mesh {
             foreach (i; 0 .. vertices.length)
                 if (isVertexSelected(i)) idx ~= cast(int)i;
         } else {
-            foreach (i; 0 .. vertices.length)
-                if (!isVertexHidden(i)) idx ~= cast(int)i;
+            idx = visibleVertexIndices_();
         }
         return idx;
     }
@@ -14001,8 +14017,7 @@ struct Mesh {
                 if (!added[edge[1]]) { added[edge[1]] = true; idx ~= cast(int)edge[1]; }
             }
         } else {
-            foreach (i; 0 .. vertices.length)
-                if (!isVertexHidden(i)) idx ~= cast(int)i;
+            idx = visibleVertexIndices_();
         }
         return idx;
     }
@@ -14022,8 +14037,7 @@ struct Mesh {
                     if (!added[vi]) { added[vi] = true; idx ~= cast(int)vi; }
             }
         } else {
-            foreach (i; 0 .. vertices.length)
-                if (!isVertexHidden(i)) idx ~= cast(int)i;
+            idx = visibleVertexIndices_();
         }
         return idx;
     }
@@ -14060,6 +14074,99 @@ struct Mesh {
             return ox != oy ? ox < oy : x < y;
         });
         return sel;
+    }
+
+    /// The one or two most recently selected elements of `mode`'s plane, by
+    /// the 1-based `*SelectionOrder` rank stamp. `last` is the SELECTED
+    /// element carrying the highest stamp, `secondLast` the SELECTED element
+    /// carrying the next-highest; either is `-1` when the plane holds fewer
+    /// than that many *stamped* selected elements.
+    ///
+    /// The third home of the "read the selection in click order" law, beside
+    /// `selectedFaceIndicesInSelectionOrder` directly above and
+    /// `selectedVerticesBySelectionOrder`, and it exists because
+    /// `select.less` / `select.more` / `select.between` wanted only the top
+    /// one or two and had NINE hand-written copies of this scan between them
+    /// (task 2440). They had drifted three ways, and the first way was a
+    /// defect: none of the nine applied the SELECTED-FIRST filter.
+    ///
+    /// SELECTED FIRST, THEN THE STAMP — the same order the two readers above
+    /// spell, for the reason stated there: a stale non-zero stamp on an
+    /// UNSELECTED element is a known state, not a corruption. Two kernels
+    /// produce it on purpose (`mesh_ops/bevel_vertex.d:382`,
+    /// `mesh_ops/extrude.d:2467`): both re-mask the face marks word with
+    /// `~Marks.Select` and zero the stamp only over the *newly created* face
+    /// range, so every SURVIVING face keeps the stamp its last click gave it
+    /// while losing its Select bit — `faceSelectionOrder` is a carried plane
+    /// (`mesh_planes.kFacePlanes`), so the head of the rewrite keeps its
+    /// values. Measured on `makeGridPlane(4)` with faces 0..3 clicked and two
+    /// vertices bevelled: the selection is `[16, 17]` (the two caps, stamps
+    /// 1 and 2) over an order plane still reading `[1, 2, 3, 4, 0 … 0, 1, 2]`.
+    /// Scanning that for "the highest stamp" answers face 3, which is not
+    /// selected at all, and `select.less` then spends its one deselect on a
+    /// face nobody can see — a silent no-op. `snapshot.d:452-462` and
+    /// `commands/mesh/selection_undo.d:174-208` scrub these stamps on the
+    /// paths they own, which is why the state is survivable rather than
+    /// endemic; a reader must not assume it has been scrubbed.
+    ///
+    /// AN UNSTAMPED SELECTED ELEMENT IS NOT A CANDIDATE, and that is the one
+    /// place this reader deliberately parts company with the two above. They
+    /// sort a whole selection and give stamp `0` the value `int.max` so it
+    /// sorts LAST; taking their last entry would make an element the user
+    /// never clicked — an RMB lasso, a `.v3d` load, `select.invert` — answer
+    /// "most recently selected". These three commands have always required a
+    /// positive stamp (their loops started `lastOrd = 0` and only took
+    /// `ord > lastOrd`), and `tests/test_select_derived_order.d` pins the
+    /// consequence for `select.fill.insideLoop`: a fully unstamped selection
+    /// leaves `select.less` with nothing to drop. That behaviour is carried
+    /// over unchanged; only the missing filter is fixed.
+    ///
+    /// BOUNDS: the loop is over the ELEMENT count, not over the marks array,
+    /// and both plane reads are guarded — `is*Selected` bounds-checks the
+    /// marks word itself and a stamp past the end of `*SelectionOrder` reads
+    /// as 0, i.e. as "unstamped", and is skipped. `resizeFaceSelection`
+    /// deliberately does not grow `faceSelectionOrder` (`:5773`), so the
+    /// short-plane state is reachable and a raw index here would `RangeError`
+    /// on exactly the face that reaches past it. A consequence the callers
+    /// rely on: `last`/`secondLast` are always < `faceMarks.length` AND <
+    /// `faceSelectionOrder.length`, so `deselect*` — which indexes both raw —
+    /// is safe on whatever this returns.
+    static struct LastSelectedPair {
+        int last       = -1;
+        int secondLast = -1;
+    }
+
+    LastSelectedPair lastSelectedInSelectionOrder(EditMode mode) const {
+        final switch (mode) {
+            case EditMode.Vertices:
+                return topTwoByOrder_(vertexMarks, vertexSelectionOrder, vertices.length);
+            case EditMode.Edges:
+                return topTwoByOrder_(edgeMarks, edgeSelectionOrder, edges.length);
+            case EditMode.Polygons:
+                return topTwoByOrder_(faceMarks, faceSelectionOrder, faces.length);
+        }
+    }
+
+    /// The plane-agnostic body of `lastSelectedInSelectionOrder`. Reads the
+    /// Select bit exactly as `is*Selected` does (`i < marks.length &&
+    /// (marks[i] & Marks.Select)`) rather than calling it, so the three planes
+    /// share ONE loop instead of three that could drift apart again.
+    private static LastSelectedPair topTwoByOrder_(
+            const uint[] marks, const int[] order, size_t elementCount) {
+        LastSelectedPair r;
+        int lastOrd = 0, secondOrd = 0;
+        foreach (i; 0 .. elementCount) {
+            if (i >= marks.length || (marks[i] & Marks.Select) == 0) continue;
+            const int ord = (i < order.length) ? order[i] : 0;
+            if (ord <= 0) continue;
+            if (ord > lastOrd) {
+                r.secondLast = r.last;      secondOrd = lastOrd;
+                r.last       = cast(int) i; lastOrd   = ord;
+            } else if (ord > secondOrd) {
+                r.secondLast = cast(int) i; secondOrd = ord;
+            }
+        }
+        return r;
     }
 
     /// Return the centroid of the current vertex selection (or all vertices if none selected).

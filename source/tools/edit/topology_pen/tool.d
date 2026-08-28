@@ -5555,11 +5555,21 @@ public:
     // coincident) whose diagonal is 0, so that a background re-snap of a
     // coincident cluster is still recorded rather than divided into nothing.
     //
-    // Deliberately NOT applied to the sibling guards: `kMoveEps` (2906),
-    // `kSlideEps` (2957), `kSmoothLoopEps`, and `kMoveLoopEps` all sit on
-    // paths whose laws this change did not touch and whose displacement is
-    // drag-proportional, so an absolute threshold remains correct for them.
+    // Deliberately NOT applied to the sibling guards: `kMoveEps`, `kNetEps`,
+    // `kSlideEps` and `kMoveLoopEps` all judge a SCREEN-driven displacement
+    // (a background re-snap of a shifted pixel, or a rail step whose length is
+    // a pixel delta through the drag Jacobian), so an absolute threshold is
+    // wrong for them in a DIFFERENT way and a bbox-relative one would not fix
+    // it — see `applySmoothLoopPasses` for the measured numbers and for why
+    // the honest replacement there is pixel-relative rather than this.
     // `kSmoothEps` had no reader outside this function.
+    //
+    // `kSmoothLoopEps` USED TO BE ON THAT LIST AND IS NOT ANY MORE (task 2440).
+    // It was listed as drag-proportional; it is not. `inverseEdgeLenRelax`
+    // carries a fixed `kStrength = 1.0f` and never reads `smoothStrength_`, so
+    // the Smooth+Loop displacement is the loop's own irregularity in world
+    // units — the same kind of quantity this function scales, judged by the
+    // same "the real no-op is EXACTLY zero" argument. It now calls this.
     private static float smoothNoOpEps(const(Vec3)[] verts) {
         enum float kRel   = 1e-6f;    // fraction of the bbox diagonal
         enum float kFloor = 1e-9f;    // degenerate (zero-extent) mesh
@@ -5851,7 +5861,48 @@ public:
         // the only ones this gesture could possibly have touched (mirrors
         // `applySmoothPasses`'s own whole-mesh guard, narrowed to this
         // gesture's actual write set).
-        enum float kSmoothLoopEps = 1e-4f;   // mirrors applySmoothPasses's own eps guard
+        //
+        // SCALE-RELATIVE, THE SAME `smoothNoOpEps` THE WHOLE-MESH SMOOTH USES
+        // (task 2440). It was `1e-4f` absolute, and `smoothNoOpEps`'s own
+        // comment listed it among the four guards deliberately left alone
+        // because "their displacement is drag-proportional". MEASURED, and
+        // that premise is false for this one: `inverseEdgeLenRelax` never
+        // reads `smoothStrength_` at all — it carries a hard-coded
+        // `kStrength = 1.0f` ("V1 fixed, full relax") — so one pass moves a
+        // loop vertex ALL THE WAY to its inverse-edge-length neighbour mean.
+        // The displacement is therefore the loop's own local irregularity, in
+        // world units, and it is not drag-proportional in any sense.
+        //
+        // Measured 2026-08-28 on an 8x8 grid, one middle-row vertex pushed off
+        // the row by `kink`, one pass: the displacement IS `kink`, and it is
+        // INDEPENDENT of edge length (0.07-unit and 0.007-unit rigs cliff at
+        // the same place). Against the old absolute constant, `kink = 2e-4`
+        // recorded and `kink = 1e-4` was discarded whole — mesh restored, no
+        // undo entry, no feedback of any kind. That is not a mesh-scale corner:
+        // at a camera framed on a 0.007-extent model (`haulWorldPerPixel`
+        // 1.93e-5) a 1e-4 world displacement is FIVE PIXELS of visible motion.
+        //
+        // The sixth guard's relative form is the right one here because it is
+        // the same law and the same argument: the cases this guard exists to
+        // catch — a disconnected patch with no usable neighbours, or a
+        // perfectly regular loop, which is an exact fixed point of this
+        // relaxation — produce EXACTLY zero, so the threshold only ever has to
+        // clear float round-trip noise, and that noise scales with the model.
+        // The bbox is the WHOLE mesh's, as `applySmoothPasses` passes it, so
+        // two gestures on one model cannot disagree about the model's size.
+        //
+        // Deliberately NOT extended to `kMoveEps` / `kNetEps` / `kSlideEps` /
+        // `kMoveLoopEps`: those four judge a SCREEN-driven displacement, and a
+        // bbox-relative threshold is the wrong RELATION for them in both
+        // directions — it would not remove their cliff (which is camera-zoom
+        // driven: a legal 3-pixel drag falls under 1e-4 once
+        // `haulWorldPerPixel` drops below 3.33e-5, whatever the model's size)
+        // and it would manufacture one at large model scale (a 1000-unit model
+        // would get a 1e-3 threshold and swallow a real sub-millimetre drag).
+        // Their correct threshold is PIXEL-relative, which three of the four
+        // sites cannot spell — `commitSlide` takes no viewport at all. Left as
+        // a named follow-up rather than half-done here.
+        immutable float kSmoothLoopEps = smoothNoOpEps(before.vertices);
         bool changed = false;
         foreach (vi; verts)
             if ((m.vertices[vi] - before.vertices[vi]).length > kSmoothLoopEps) { changed = true; break; }

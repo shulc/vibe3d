@@ -615,6 +615,16 @@ private auto polyBevelOnce(alias kernel, Args...)(ref Mesh m, auto ref Args args
                 assert(v != 0, "C8e / shape A (" ~ name ~ "): vertex 0 is hidden and "
                     ~ "must not be in the whole-mesh operand set");
         }
+
+        // ONE BODY, ASSERTED AS ONE ANSWER (task 2440). The three fallbacks
+        // used to be three byte-identical `else` branches and are now one
+        // `visibleVertexIndices_`; the counts above would stay green if a
+        // future edit gave one accessor a different fallback that happened to
+        // return 7 elements, so the lists themselves are compared.
+        assert(b.selectedVertexIndicesVertices() == b.selectedVertexIndicesEdges()
+            && b.selectedVertexIndicesEdges()    == b.selectedVertexIndicesFaces(),
+            "shape A: the three empty-selection fallbacks must return the SAME "
+            ~ "visible-vertex list, element for element — they share one body");
     }
 
     // §3.3 — the backstop. A hand-built mask that reaches a `*ByMask` kernel

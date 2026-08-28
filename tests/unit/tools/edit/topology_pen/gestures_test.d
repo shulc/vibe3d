@@ -6227,6 +6227,101 @@ unittest { // applySmoothLoopPasses — a gesture that nets to ZERO movement
     assert(!history.canUndo(), "a no-op Smooth+Loop gesture must record NO undo entry");
 }
 
+unittest { // applySmoothLoopPasses — the no-op guard is SCALE-RELATIVE, so a
+           // real but small relax is recorded instead of being discarded whole
+           // (task 2440).
+           //
+           // WHAT THIS CATCHES. The guard was `1e-4f` ABSOLUTE, and
+           // `smoothNoOpEps`'s own comment excused it on the ground that this
+           // gesture's displacement is "drag-proportional". It is not:
+           // `inverseEdgeLenRelax` carries a fixed `kStrength = 1.0f` and never
+           // reads `smoothStrength_`, so one pass pulls a loop vertex ALL THE
+           // WAY to its neighbour mean and the displacement is the loop's own
+           // irregularity in world units. Measured on this exact rig: `kink`
+           // 2e-4 recorded, `kink` 1e-4 discarded — mesh restored, no undo
+           // entry, no feedback of any kind, exactly the cliff task 1930's note
+           // at `smoothNoOpEps` describes for the whole-mesh Smooth. The value
+           // is not a corner case at close range: at a camera framed on a
+           // 0.007-extent model (`haulWorldPerPixel` 1.93e-5) 1e-4 world units
+           // is five pixels of visible motion.
+           //
+           // THE TWO ARMS ARE BOTH LOAD-BEARING. The second is the anti-vacuity
+           // control: making the guard vacuous (eps 0, or deleting it) would
+           // green the first arm and RED the second, so neither arm alone can
+           // be satisfied by simply removing the check.
+    import view : View;
+    import editmode : EditMode;
+    import mesh : makeGridPlane;
+    import snap : setBackgroundSnapSources;
+    import std.format : format;
+
+    setBackgroundSnapSources(null, null);   // test-isolation, not a production call site
+
+    // An 8x8 grid scaled to 0.07-unit edges — the detail-modelling spacing the
+    // `smoothNoOpEps` note records its own measurement at — with ONE middle-row
+    // vertex pushed off its row by `kink`. One relax pass pulls it back by
+    // exactly `kink`, which is what makes the expected displacement an EXACT
+    // term rather than a tolerance.
+    static float relaxOnce(float kink, out bool recorded) {
+        enum int   N    = 8;
+        enum float edge = 0.07f;
+        auto t       = new TopologyPenTool();
+        auto view    = new View(0, 0, 100, 100);
+        auto history = new CommandHistory();
+        t.history_               = history;
+        t.smoothLoopEditFactory_ = () => new MeshSessionEdit(t.meshSrc_(), view, EditMode.Vertices,
+                                                             "mesh.topoPen_smoothloop", "Topology Smooth Loop",
+                                                             MeshEditScope.Position);
+        Mesh m = makeGridPlane(N);
+        foreach (ref v; m.vertices) v = v * (edge * N / 2.0f);
+        enum uint side = cast(uint)(N + 1);
+        enum uint mid  = cast(uint)((N / 2) * side + (N / 2));
+        m.vertices[mid].y += kink;
+        m.buildLoops();
+        m.syncSelection();
+        t.meshSrc_ = () => &m;
+
+        const uint seed = m.edgeIndex(mid, mid + 1);
+        assert(seed != ~0u, "fixture: the scaled grid has no edge across the middle row");
+        t.smoothLoopSeed_  = cast(int) seed;
+        t.smoothLoopVerts_ = TopologyPenTool.uniqueRingVerts(&m, seed);
+
+        auto before = MeshSnapshot.capture(m);
+        t.applySmoothLoopPasses(1);
+        recorded = history.canUndo();
+        float maxd = 0;
+        foreach (i; 0 .. m.vertices.length) {
+            const d = (m.vertices[i] - before.vertices[i]).length;
+            if (d > maxd) maxd = d;
+        }
+        return maxd;
+    }
+
+    // ARM 1 — a 1e-4 kink is a real relax and must be recorded.
+    bool recorded;
+    const moved = relaxOnce(1.0e-4f, recorded);
+    assert(recorded,
+        "Smooth+Loop discarded a 1e-4 relax whole — no undo entry, mesh " ~
+        "restored. That is the absolute-threshold cliff `smoothNoOpEps` was " ~
+        "written to remove for the whole-mesh Smooth; this gesture's guard has " ~
+        "gone back to a world-unit constant.");
+    assert(moved > 0.9e-4f && moved < 1.1e-4f,
+        format("Smooth+Loop moved %g, expected the kink itself (1e-4): one pass " ~
+               "is a FULL relax to the neighbour mean, so the displacement is " ~
+               "the irregularity", moved));
+
+    // ARM 2 — the guard is still a guard: a mesh with NO irregularity nets to
+    // exactly zero and must still record nothing.
+    bool recordedFlat;
+    const flat = relaxOnce(0.0f, recordedFlat);
+    assert(flat == 0.0f,
+        format("fixture: the un-kinked grid must be an exact fixed point of the " ~
+               "relaxation, moved %g", flat));
+    assert(!recordedFlat,
+        "the no-op guard has been made vacuous — a gesture that moved nothing " ~
+        "recorded an undo entry");
+}
+
 // ---------------------------------------------------------------------------
 // onSmoothLoopRmbDown — ARM + CONSUME on a valid seed edge; MISS does not
 // consume/arm (doc/topopen_p12_smoothloop_plan.md "RMB-dispatch resolution":

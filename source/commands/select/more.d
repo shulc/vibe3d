@@ -38,29 +38,27 @@ private:
     }
 
     bool applyPolygons() {
-        // Perf (task 0388): `mesh.selectedFaces` is a @property that rebuilds a
-        // whole `bool[]` per read, so its `.length` and per-element indexing use
-        // the lock-step `faceMarks.length` / `isFaceSelected` scalar accessors
-        // instead — the find-last loop below reads only `faceSelectionOrder`
-        // (a plain field), so this keeps the command O(mesh) without any
-        // per-call array materialization.
+        // The two resizes are preconditions of the WRITE at the bottom of this
+        // method, not of the scan: `selectFace` indexes `faceMarks` and
+        // `faceSelectionOrder` raw, and `bestNext` comes out of a face-loop
+        // walk over `mesh.faces`, which can name a face past either plane.
+        // `resizeFaceSelection` deliberately does not grow the pick-order
+        // array (`mesh.d:5773`), so both lines are needed and neither is
+        // redundant with the other. `select.less` has no such guard because it
+        // never selects; see its own comment.
         if (mesh.faceMarks.length < mesh.faces.length)
             mesh.resizeFaceSelection();
         if (mesh.faceSelectionOrder.length < mesh.faces.length)
             mesh.faceSelectionOrder.length = mesh.faces.length;
 
-        int lastFace = -1, secondLastFace = -1, lastOrd = 0, secondLastOrd = 0;
-        foreach (i; 0 .. mesh.faceMarks.length) {
-            if (i >= mesh.faceSelectionOrder.length) break;
-            int ord = mesh.faceSelectionOrder[i];
-            if (ord <= 0) continue;
-            if (ord > lastOrd) {
-                secondLastFace = lastFace; secondLastOrd = lastOrd;
-                lastFace = cast(int)i;    lastOrd = ord;
-            } else if (ord > secondLastOrd) {
-                secondLastFace = cast(int)i; secondLastOrd = ord;
-            }
-        }
+        // ONE reader for "the last two elements selected" — see
+        // `Mesh.lastSelectedInSelectionOrder` (task 2440). It filters by the
+        // Select bit BEFORE it ranks, which the hand-written scan this
+        // replaced did not: a stale stamp left by `bevel_vertex` / `extrude`
+        // gave this command a PHANTOM pair of unselected faces to extrapolate
+        // from.
+        const sel = mesh.lastSelectedInSelectionOrder(EditMode.Polygons);
+        immutable int lastFace = sel.last, secondLastFace = sel.secondLast;
         if (lastFace < 0 || secondLastFace < 0) return true;
         if (mesh.faces[lastFace].length != 4 || mesh.faces[secondLastFace].length != 4) return true;
 
@@ -86,21 +84,14 @@ private:
     }
 
     bool applyEdges() {
+        // Write precondition, as in `applyPolygons` — `selectEdge` indexes
+        // `edgeMarks` raw at an index the loop walk produced. Unlike the face
+        // plane, `resizeEdgeSelection` DOES grow `edgeSelectionOrder` too.
         if (mesh.edgeMarks.length < mesh.edges.length)
             mesh.resizeEdgeSelection();
 
-        int lastEdge = -1, secondLastEdge = -1, lastOrd = 0, secondLastOrd = 0;
-        foreach (i; 0 .. mesh.edgeMarks.length) {
-            if (i >= mesh.edgeSelectionOrder.length) break;
-            int ord = mesh.edgeSelectionOrder[i];
-            if (ord <= 0) continue;
-            if (ord > lastOrd) {
-                secondLastEdge = lastEdge; secondLastOrd = lastOrd;
-                lastEdge = cast(int)i;     lastOrd = ord;
-            } else if (ord > secondLastOrd) {
-                secondLastEdge = cast(int)i; secondLastOrd = ord;
-            }
-        }
+        const sel = mesh.lastSelectedInSelectionOrder(EditMode.Edges);
+        immutable int lastEdge = sel.last, secondLastEdge = sel.secondLast;
         if (lastEdge < 0 || secondLastEdge < 0) return true;
 
         // Try both adjacent faces of secondLastEdge (each gives one loop direction).
@@ -124,21 +115,12 @@ private:
     }
 
     bool applyVertices() {
+        // Write precondition, as in `applyPolygons`.
         if (mesh.vertexMarks.length < mesh.vertices.length)
             mesh.resizeVertexSelection();
 
-        int lastVert = -1, secondLastVert = -1, lastOrd = 0, secondLastOrd = 0;
-        foreach (i; 0 .. mesh.vertexMarks.length) {
-            if (i >= mesh.vertexSelectionOrder.length) break;
-            int ord = mesh.vertexSelectionOrder[i];
-            if (ord <= 0) continue;
-            if (ord > lastOrd) {
-                secondLastVert = lastVert; secondLastOrd = lastOrd;
-                lastVert = cast(int)i;     lastOrd = ord;
-            } else if (ord > secondLastOrd) {
-                secondLastVert = cast(int)i; secondLastOrd = ord;
-            }
-        }
+        const sel = mesh.lastSelectedInSelectionOrder(EditMode.Vertices);
+        immutable int lastVert = sel.last, secondLastVert = sel.secondLast;
         if (lastVert < 0 || secondLastVert < 0) return true;
 
         // Try every neighbor of secondLastVert as a possible loop direction.
