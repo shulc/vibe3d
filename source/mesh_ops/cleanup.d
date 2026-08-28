@@ -491,6 +491,29 @@ size_t fixFaceOrientation(ref MeshEditBatch ed) {
 /// `boundaryLoops`/`buildEdgeFaces`. Does NOT call `buildLoops()` itself
 /// (that would require a non-`const` receiver); `fixFaceOrientation` calls
 /// it explicitly before reaching here.
+///
+/// Task 2561 — unlike `fixFaceOrientation`, whose only caller is itself (its
+/// own `ed.buildLoops()` closes the precondition unconditionally), this
+/// function's only external caller is `mesh_analysis.inconsistentWindingFaces`
+/// (live: reached from `ai.analysis.analyzeMesh`, `/api/ai/analyze`), which
+/// cannot call `buildLoops()` on its own `const ref Mesh` receiver either.
+/// The two-parameter overload below guards with `m.assertLoopsValid()` when
+/// `m.faces.length > 0` — this closes the CRUDER of two desync classes: a
+/// structural edit through a real mutator (`addFace`/`rebuildEdgesFromFaces`/
+/// …) that bumps `structVersion` without a following `buildLoops()`. It does
+/// **not** close the finer class task 1909 demonstrated for the mutating
+/// twin: a direct `faces[fi] = …` element write moves neither `structVersion`
+/// nor `loopsStamp` (see `structVersion`'s own doc comment, `source/mesh.d`),
+/// so `loopsValid()` keeps reading true while `loops` is genuinely stale —
+/// `assertLoopsValid()` cannot see that case by construction. Closing it in
+/// full would mean `inconsistentWindingFaces` taking a non-`const` `Mesh` and
+/// calling `buildLoops()` itself, which breaks the "read-only, no side
+/// effects" contract documented at its own call site
+/// (`source/http_server.d`'s `/api/ai/analyze` provider comment) and this
+/// module's own header ("every detector here is READ-ONLY … never
+/// mutates") — judged not worth that cost; see the task card for the
+/// reasoning in full. A named partial guard against the cruder class beats
+/// leaving both open.
 bool[] computeOrientationFlipMask(ref const(Mesh) m) {
     // Mutating fixFaceOrientation() historically restricts to the selection
     // when faces are selected. The read-only Topology detector wants the
@@ -507,6 +530,16 @@ bool[] computeOrientationFlipMask(ref const(Mesh) m, bool restrictToSelection) {
     const size_t nf = m.faces.length;
     bool[] flipMask = new bool[](nf); // final flip decision
     if (nf == 0) return flipMask;
+    // Task 2561: guard the class `loopsValid()` CAN see (a real structural
+    // mutator ran since the last `buildLoops()`) before Pass 1 reads
+    // `m.faceLoop[fi]`/`m.loops[...]` below. Placed AFTER the `nf == 0`
+    // return on purpose: a brand-new, never-`buildLoops()`'d empty mesh
+    // (e.g. a freshly-created `ItemKind.Mesh` layer, `source/document.d`)
+    // is a real, reachable state with nothing to walk, and it must keep
+    // returning `[]` exactly as it always has — not start throwing on a
+    // case that was never actually stale. See the doc comment above for
+    // what this does and does not close.
+    m.assertLoopsValid();
 
     bool[] partitioned   = new bool[](nf); // assigned to a component yet?
     bool[] flipComputed  = new bool[](nf); // flip parity decided?

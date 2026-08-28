@@ -434,3 +434,97 @@ unittest {
             ~ loops[0].length.to!string);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Task 2561 (follow-up to 1909's fixFaceOrientation stand) --
+// `inconsistentWindingFaces`'s only precondition-carrying dependency,
+// `mesh_ops.cleanup.computeOrientationFlipMask`, read `m.loops`/`m.faceLoop`
+// directly with NO guard and no way to self-heal (its own doc comment: "Does
+// NOT call buildLoops() itself -- that would require a non-const receiver").
+// Unlike `fixFaceOrientation`, whose only caller is itself (closes the gap
+// with its own internal `buildLoops()`), `inconsistentWindingFaces`'s only
+// external caller is a REAL, LIVE, SINGULAR one -- `ai.analysis.analyzeMesh`'s
+// Topology category, reached from `/api/ai/analyze` -- and until this task it
+// carried no guard at all, unlike its own neighbor detector two blocks above
+// this one, `nakedBoundaryLoopEdges` (task 0833's `assertEdgeMapValid()`
+// witness, immediately above).
+//
+// The guard added (`source/mesh_ops/cleanup.d`, top of the two-parameter
+// `computeOrientationFlipMask` overload -- the only real implementation, the
+// one-parameter overload delegates to it) is `m.assertLoopsValid()`, which is
+// `structVersion`-keyed. MEASURED before writing it (`source/mesh.d`'s
+// `structVersion` doc comment): this closes a CRUDER class than the one 1909
+// demonstrated for the mutating twin -- a structural edit through a REAL
+// mutator (here, `rebuildEdgesFromFaces()`) that bumps `structVersion`
+// without a following `buildLoops()`. It does NOT close 1909's own class (a
+// direct `faces[fi] = ...` element write, which moves neither `structVersion`
+// nor `loopsStamp`) -- see the task card (`doc/tasks/*/2561-...md`) for the
+// measurement and the reasoning for stopping here rather than changing
+// `inconsistentWindingFaces` to a non-`const` receiver.
+//
+// Not a cube -- two open triangles sharing edge (0,2), same shape 1909's
+// `openTriPairStand_` uses: a closed solid makes every candidate orientation
+// rule agree, which is how the parent gap survived undetected in the first
+// place.
+// ---------------------------------------------------------------------------
+unittest {
+    debug {
+        import core.exception : AssertError;
+        import std.exception  : assertThrown;
+
+        static Mesh openTriPairStand2561_() {
+            Mesh m;
+            m.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0)];
+            // Two triangles sharing edge (0,2), consistently wound: face 0
+            // traverses the shared edge 2->0, face 1 traverses it 0->2 --
+            // opposite directions (the healthy invariant).
+            m.faces = [[0u, 1u, 2u], [0u, 2u, 3u]];
+            m.rebuildEdgesFromFaces();
+            m.buildLoops();
+            m.resetSelection();
+            return m;
+        }
+
+        // Ground truth: corrupt face 1's winding (reverse [0,2,3] -> [3,2,0],
+        // which makes both faces traverse the shared edge (0,2) in the SAME
+        // direction -- the corruption signature), resync loops, THEN read.
+        Mesh control = openTriPairStand2561_();
+        control.faces[1] = [3u, 2u, 0u];
+        control.buildLoops();
+        auto controlWinding = inconsistentWindingFaces(control);
+        assert(controlWinding.length == 1,
+            "sanity: the corrupted stand must name exactly one inconsistent "
+            ~ "face once resynced -- the rig discriminates nothing otherwise, got "
+            ~ controlWinding.length.to!string);
+
+        // Subject: the IDENTICAL corruption, but resync `structVersion`
+        // through a REAL structural primitive -- `rebuildEdgesFromFaces()`
+        // -- WITHOUT a following `buildLoops()`. Unlike a bare
+        // `faces[fi] = ...` write (1909's own rig, which `structVersion`
+        // never sees at all), `rebuildEdgesFromFaces()` DOES bump
+        // `structVersion`, so `loopsValid()` correctly reads false here --
+        // this is exactly the class the new guard is built to catch.
+        Mesh subject = openTriPairStand2561_();
+        subject.faces[1] = [3u, 2u, 0u];
+        subject.rebuildEdgesFromFaces();
+        assert(!subject.loopsValid(),
+            "setup sanity: rebuildEdgesFromFaces() must leave loops stale "
+            ~ "relative to the bumped structVersion -- if this reads true the "
+            ~ "rig proves nothing about the guard");
+
+        assertThrown!AssertError(inconsistentWindingFaces(subject),
+            "inconsistentWindingFaces must refuse a mesh whose loops are "
+            ~ "stale relative to structVersion -- if this stops throwing, "
+            ~ "computeOrientationFlipMask's assertLoopsValid() guard has "
+            ~ "been removed or the precondition has become decoration");
+
+        // ...and the SAME call succeeds, and matches the freshly-resynced
+        // control, once the caller resyncs loops itself.
+        subject.buildLoops();
+        assert(subject.loopsValid(), "setup: buildLoops() must restore validity");
+        auto subjectWinding = inconsistentWindingFaces(subject);
+        assert(subjectWinding == controlWinding,
+            "once resynced, the subject must name the identical inconsistent "
+            ~ "face(s) as the freshly-resynced control");
+    }
+}
