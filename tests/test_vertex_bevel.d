@@ -292,7 +292,7 @@ unittest { // mesh.vertexBevel runs the whole chamfer inside ONE batch
     cmdArg("select.typeFrom vertex");
     postSelect("vertices", []);
     auto c0 = parseJSON(get("http://localhost:8080/api/changes"));
-    postCommand(kBatchlessControlJson);
+    foreach (c; kBatchlessControlSeq) postCommand(c);
     auto c1 = parseJSON(get("http://localhost:8080/api/changes"));
     immutable long ctrl = c1["unbatchedGeometryCommits"].integer
                         - c0["unbatchedGeometryCommits"].integer;

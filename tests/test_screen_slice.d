@@ -246,7 +246,7 @@ unittest { // mesh.screenSlice runs its cut inside ONE edit batch
     // or the zero below is the zero of a dead counter (task 1903 §3.2 L2,
     // M-DM).
     auto c0 = getChanges();
-    postCmd("/api/command", kBatchlessControlJson);
+    foreach (c; kBatchlessControlSeq) postCmd("/api/command", c);
     auto c1 = getChanges();
     const long ctrl = c1["unbatchedGeometryCommits"].integer
                     - c0["unbatchedGeometryCommits"].integer;

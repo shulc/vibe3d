@@ -17558,6 +17558,14 @@ struct Mesh {
             result.cutVertA = insertEdgePoint(edgeA, tA, isCutVert, eps);
             result.cutVertB = insertEdgePoint(edgeB, tB, isCutVert, eps);
             clearFaceSelectionResize();
+            // Same corner declaration, same reason, as the KEEP+FINALIZE arm
+            // below (task 1903 Stage L4-P1): two splices changed the corner
+            // total and this branch runs the finalize tail by hand, so without
+            // it `buildLoops` reaches `resizePolyVertexMaps`' undeclared
+            // branch. Not reachable from the `mesh.edgeSlice` COMMAND (it
+            // exposes no `splitPolygons` param) but it is a public kernel arm,
+            // and the fix is one line in both places rather than one.
+            dropCornerProvenance(CornerDrop.ChordSplitNoSource);
             rebuildEdges();
             clearEdgeSelectionResize();
             buildLoops();
@@ -17642,6 +17650,37 @@ struct Mesh {
             // the same finalize tail a successful split gets. Leave
             // cutVertA/cutVertB as insertEdgePoint returned them — a real
             // caller-visible result, not a no-op sentinel.
+            //
+            // TASK 1903 STAGE L4-P1 — THE CORNER DECLARATION THIS TAIL OWED.
+            //
+            // Pass 1's splice changed the mesh's TOTAL corner count, and the
+            // thing that CONSUMES a corner declaration is `buildLoops`. On the
+            // split arm the declaration is made for us: `rebuildFacesWithChordSplits`
+            // ends in `dropCornerProvenance(CornerDrop.ChordSplitNoSource)`.
+            // This arm is the one path where that function early-returns at
+            // `nSplit == 0` and the tail is run BY HAND, so nothing declared —
+            // and `Mesh.resizePolyVertexMaps` then took its undeclared branch:
+            // it repaired the plane (length-correct, zeroed) and fired its
+            // `debug assert`. MEASURED on `makeTaggedGridFull(3)` (a stand that
+            // carries a PolyVertex map): SIXTEEN operands over face 0's four
+            // edges and a 3x3 t-grid reach this arm, and every one of them
+            // aborted the unit lane. `tests/unit/mesh_ops/cut_test.d`'s cut
+            // stand carries no map, which is why nothing had ever exercised it.
+            //
+            // THE DECLARATION IS THE DROP AND NOT A RELOCATE, deliberately.
+            // `Mesh.addEdgePoint` relocates because it makes exactly ONE
+            // `insertEdgePoint` call and can build the map; this arm sits after
+            // a whole `cutEdges` loop and tracks no old-corner correspondence,
+            // which is the same position `rebuildFacesWithChordSplits` is in.
+            // Declaring a RICHER outcome here than the split arm manages would
+            // make the degenerate tail carry UVs that a real chord split loses.
+            //
+            // THE SHIPPED FORWARD IS UNCHANGED OUTSIDE `-debug`: the undeclared
+            // branch already zeroed a length-wrong plane and the assert compiles
+            // out under `-release`. What changes is that the unit lane stops
+            // aborting and the loss is now STATED at its site rather than
+            // repaired by an insurance branch.
+            dropCornerProvenance(CornerDrop.ChordSplitNoSource);
             rebuildEdges();
             clearEdgeSelectionResize();
             buildLoops();

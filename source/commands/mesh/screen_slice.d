@@ -6,8 +6,9 @@ import mesh;
 import view;
 import editmode;
 import params : Param;
-import snapshot : MeshSnapshot;
 import math : Vec3, cameraPlaneFromScreenLine;
+import mesh_edit_delta : MeshEditDelta, MeshEditScope, acceptRecordedEdit;
+import commands.mesh.selection_undo : DenseSelectionUndo;
 
 // ---------------------------------------------------------------------------
 // MeshScreenSlice — cut the mesh with the camera plane defined by a dragged
@@ -27,15 +28,22 @@ import math : Vec3, cameraPlaneFromScreenLine;
 //   - screen endpoints closer than 1 px  → no-op (no snapshot, no undo entry)
 //   - cross-product of rays near-zero    → no-op (numerical backstop)
 //
-// If the plane is valid but misses every face, the snapshot is restored and
-// the command returns false (same behaviour as mesh.axisSlice).
+// If the plane is valid but misses every face, the recorded delta is reverted
+// and the command returns false (same behaviour as mesh.axisSlice).
 //
-// Undo = MeshSnapshot (full topology restore); no snapshot taken when
-// nothing is cut.
+// UNDO IS THE OPERATION-LOG DELTA (task 1903 Stage L4-b). Same kernel, same
+// publishers and the same two belts as `MeshAxisSlice` — the reasoning for
+// both, and the measurement that chose them, is at the head of
+// `commands/mesh/axis_slice.d` and is deliberately not copied here: this
+// class differs from that one only in how the plane is derived.
 // ---------------------------------------------------------------------------
 class MeshScreenSlice : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;
+
+    private MeshEditDelta      delta_;
+    private DenseSelectionUndo preSel_;
+    private MeshMap[]          preMaps_;
+    private bool               recorded_;
 
     private float ax_ = 0, ay_ = 0, bx_ = 0, by_ = 0;
 
@@ -45,6 +53,25 @@ class MeshScreenSlice : Command, Operator {
 
     override string name()  const { return "mesh.screenSlice"; }
     override string label() const { return "Screen Slice"; }
+
+    /// As `MeshAxisSlice.editScope` — the same kernel through a camera plane.
+    override MeshEditScope editScope() const {
+        return MeshEditScope.Geometry | MeshEditScope.Marks;
+    }
+
+    override bool isOperationInverse() const { return recorded_; }
+
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded op-log, for the KIND
+        /// SEQUENCE assertions in `tests/unit/l4_slice_cut_delta_test.d`.
+        /// A LENGTH is satisfied by a broken log: stage J made the
+        /// `[MeshMapDelta, <face entry>]` ADJACENCY contractual, and an
+        /// interposed entry unpairs the corner restore SILENTLY while the
+        /// geometry still round-trips.
+        public ref const(MeshEditDelta) recordedDelta() const return {
+            return delta_;
+        }
+    }
 
     override Param[] params() {
         return [
@@ -69,33 +96,60 @@ class MeshScreenSlice : Command, Operator {
         if (!cameraPlaneFromScreenLine(vp, ax_, ay_, bx_, by_, p, n))
             return false;
 
-        // Capture snapshot and cut.
-        snap = MeshSnapshot.capture(*mesh);
+        // REDO: re-run the cut in an UNRECORDED batch from the restored
+        // pre-op state — the delta already holds the first run.
+        if (recorded_) {
+            size_t rn;
+            {
+                auto ed = MeshEditBatch.unrecorded(*mesh, editScope());
+                rn = ed.cutByPlane(p, n);
+                ed.close();
+            }
+            return rn != 0;
+        }
+
+        preSel_.capture(*mesh);
+        preMaps_ = new MeshMap[](mesh.meshMaps.length);
+        foreach (i, ref m; mesh.meshMaps) preMaps_[i] = m.dup;
+
         // The batch spans the kernel call and nothing else (task 1903 Stage
-        // E3): inside it every `commitChange` the cut makes DEFERS, so one
-        // screen slice stamps, derives and delivers once at `close()` instead
-        // of once per inserted crossing vertex and once per face rebuild.
-        // UNRECORDED because this command's undo is still the whole-mesh
-        // `snap` above; Stage L4 flips it to the recording constructor.
+        // E3, made RECORDING at L4-b): inside it every `commitChange` the cut
+        // makes DEFERS, so one screen slice stamps, derives and delivers once
+        // at `close()` instead of once per inserted crossing vertex and once
+        // per face rebuild — and the log it collects is this command's undo.
         size_t nSplit;
         {
-            auto ed = MeshEditBatch.unrecorded(*mesh, kCutEditScope);
+            auto ed = MeshEditBatch(*mesh, editScope());   // RECORDING
             nSplit = ed.cutByPlane(p, n);
-            ed.close();
+            delta_ = ed.close();
         }
 
-        if (nSplit == 0) {
-            snap.restore(*mesh);
-            snap = MeshSnapshot.init;
+        // The post-close ruling and the explicit revert-on-refusal — see the
+        // twin block in `MeshAxisSlice.evaluate`. The degenerate-line guard
+        // above is PRE-FLIGHT and needs none of this; `nSplit == 0` is decided
+        // only after the kernel and does.
+        if (!acceptRecordedEdit(nSplit, delta_)) {
+            if (nSplit == 0) {
+                delta_.revert(*mesh);
+                preSel_.restore(*mesh);
+            }
+            delta_   = MeshEditDelta.init;
+            preSel_  = DenseSelectionUndo.init;
+            preMaps_ = null;
             return false;
         }
-
+        recorded_ = true;
         return true;
     }
 
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
+        if (!recorded_) return false;
+        delta_.revert(*mesh);
+        if (preMaps_.length) {
+            mesh.meshMaps.length = preMaps_.length;
+            foreach (i, ref m; preMaps_) mesh.meshMaps[i] = m.dup;
+        }
+        preSel_.restore(*mesh);
         return true;
     }
 }

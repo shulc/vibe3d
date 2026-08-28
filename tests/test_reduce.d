@@ -234,10 +234,15 @@ unittest { // reduce runs inside an edit batch, and publishes the Position class
     // run. (Measured on this build before that: triple +2, reduce +4 before
     // the D2 conversion and +0 after.)
     auto c0 = getChanges();
-    // POSTS THE BODY, NOT THE BARE ID — see tests/test_axis_slice.d's copy of
-    // this note and `kBatchlessControlJson`'s own doc comment: the sixth
-    // re-base landed on a command that REFUSES without parameters.
-    postCommand(kBatchlessControlJson);
+    // POSTS EVERY ELEMENT OF THE SEQUENCE — see tests/test_axis_slice.d's copy
+    // of this note and `kBatchlessControlSeq`'s own doc comment: the seventh
+    // re-base landed on `mesh.paste`, which refuses on an empty clipboard.
+    //
+    // THIS SITE IS ONE OF THE TWO THAT DOES NOT RELOAD AFTERWARDS — `mesh.reduce`
+    // below runs on whatever mesh the control left. That is why the sequence
+    // ends in `history.undo`: measured, it leaves the default cube byte-restored
+    // at V 8 / F 6, where the sixth control (`mesh.edgeSlice`) left it sliced.
+    foreach (c; kBatchlessControlSeq) postCommand(c);
     auto c1 = getChanges();
     const long ctrl = c1["unbatchedGeometryCommits"].integer
                     - c0["unbatchedGeometryCommits"].integer;

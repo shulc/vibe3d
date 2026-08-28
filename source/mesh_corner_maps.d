@@ -169,6 +169,17 @@ enum CornerDrop : ubyte {
     /// which old face each chord fragment came from. The LAW is known (it is the
     /// same edge-split lerp Loop Slice uses); what is missing is the source, so
     /// this reason marks work that is available, not a measurement gap.
+    ///
+    /// ALSO THE TWO ARMS OF `Mesh.edgeSliceEx` THAT SPLIT NO FACE (task 1903
+    /// Stage L4-P1): the points-only branch, and the KEEP+FINALIZE arm where
+    /// Pass 1 spliced a real vertex into the incident windings and Pass 2's
+    /// adjacent-hit guard then refused to split anything. Both run the finalize
+    /// tail BY HAND, so `rebuildFacesWithChordSplits`' own declaration never
+    /// runs; both changed the corner TOTAL, so `buildLoops` owes a declaration.
+    /// They declare the same drop for the same reason — no old-corner
+    /// correspondence was tracked across the splice loop — and declaring
+    /// anything richer there than the split arm itself manages would make the
+    /// degenerate tail carry UVs that a real chord split loses.
     ChordSplitNoSource,
 
     /// A vertex merge / weld rewrote the windings without recording which old

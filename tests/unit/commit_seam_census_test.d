@@ -3397,11 +3397,28 @@ unittest // every §2.6 widening this stage made still has the caller it names
 //     and `applyHeadless`'s — that its own comment says must stay in lockstep,
 //     and no suite test reaches the preview one (a mutation there was INERT).
 //     Each guard is pinned to its exact spelling; a drift in either reddens.
-// (b) `axis_slice.d`'s two ladder blocks open ONE batch before the `foreach`
-//     over the cuts. A batch opened INSIDE the loop is byte-identical on every
-//     /api/changes counter (measured — delivery coalesces per frame), so the
-//     only pins are `cut_test.d`'s mutationVersion ladder cell (unit-level,
-//     never calls axis_slice.d) and this text order.
+// (b) `axis_slice.d`'s ladders run inside ONE batch each. A batch opened
+//     INSIDE the loop is byte-identical on every /api/changes counter
+//     (measured — delivery coalesces per frame), so the only pins are
+//     `cut_test.d`'s mutationVersion ladder cell (unit-level, never calls
+//     axis_slice.d), the frozen `slice_cut.json` cells, and this text order.
+//
+//     TASK 1903 STAGE L4-b/L4-c CHANGED WHAT THIS ROW GUARDS, twice over.
+//     The batches are RECORDING now, not `unrecorded` — they carry the two
+//     classes' undo — so the spelling pinned below moved with them. And
+//     `MeshJulienne` no longer opens a batch inside `sliceAlongAxis` at all:
+//     `evaluate` calls that helper TWICE, once per axis, and a `Command` holds
+//     ONE `MeshEditDelta`, so a batch per call left the undo entry describing
+//     the SECOND axis alone. The handle is hoisted into `evaluate` and the
+//     helper takes `ref MeshEditBatch`.
+//
+//     THE HALF-DONE LIFT IS WHY THE HELPER'S SIGNATURE IS PINNED HERE AND NOT
+//     ONLY BEHAVIOURALLY. Hoisting the handle and leaving `sliceAlongAxis`
+//     opening its own gives NESTED opens, which `changeBus.nestedBatchOpens`
+//     does see — but the fully-broken shape (two SEQUENTIAL opens, the state
+//     before the lift) ticks NOTHING: not `nestedBatchOpens`, not
+//     `batchLeaks`, not any count, and not `opInverse`. A text pin on the
+//     receiver is what closes that at the source.
 // ---------------------------------------------------------------------------
 unittest {
     import std.algorithm : countUntil;
@@ -3415,19 +3432,61 @@ unittest {
       ~ "keep it in lockstep with the interactive guard above");
 
     immutable ax = stripCommentsAndStrings(readText(buildPath(repoRoot, "source/commands/mesh/axis_slice.d")));
-    size_t pos = 0;
-    foreach (which; ["MeshAxisSlice ladder", "MeshJulienne ladder"]) {
-        auto rest = ax[pos .. $];
-        immutable open = rest.countUntil("MeshEditBatch.unrecorded(");
-        assert(open >= 0, which ~ ": no MeshEditBatch.unrecorded( found");
-        immutable loop = rest.countUntil("foreach (k; 0 ..");
-        assert(loop >= 0, which ~ ": no ladder foreach found");
-        assert(open < loop, which ~ ": the batch must be opened BEFORE the ladder "
-            ~ "foreach — one batch for the whole ladder. A batch per cut reads "
-            ~ "identically on every /api/changes counter, so this order and "
-            ~ "cut_test.d's mutationVersion cell are its only pins (task 1903 E3 "
-            ~ "review round 2)");
-        pos += loop + 1;
+
+    // (b1) `MeshAxisSlice` — the RECORDING open precedes its ladder `foreach`.
+    // Two ladders exist in the class now (the first run and the redo re-run),
+    // so the check is anchored on the recording one specifically: the redo arm
+    // is deliberately `unrecorded` and pinning "the first open" would accept a
+    // recording batch that had migrated below the loop.
+    {
+        immutable open = ax.countUntil("auto ed = MeshEditBatch(*mesh, editScope());");
+        assert(open >= 0,
+            "MeshAxisSlice: no RECORDING `MeshEditBatch(*mesh, editScope())` "
+          ~ "found. Stage L4-b turned the ladder's transitional `unrecorded` "
+          ~ "batch into the one that carries this command's undo; an "
+          ~ "`unrecorded` ladder here means the delta is empty and every cut "
+          ~ "is unrecoverable (task 1903 Stage L4-b).");
+        immutable loop = ax[open .. $].countUntil("foreach (k; 0 ..");
+        assert(loop >= 0, "MeshAxisSlice: no ladder foreach after the recording open");
+        // …and the CLOSE that harvests the delta comes after the loop, not
+        // inside it: `delta_ = ed.close()` inside the `foreach` would leave
+        // the entry describing the LAST plane only.
+        immutable close = ax[open .. $].countUntil("delta_ = ed.close();");
+        assert(close > loop,
+            "MeshAxisSlice: `delta_ = ed.close()` appears BEFORE the ladder "
+          ~ "foreach — one batch, one close, for the whole ladder. A close per "
+          ~ "cut overwrites the delta with the last plane's and reads "
+          ~ "identically on every /api/changes counter (task 1903 Stage L4-b).");
+    }
+
+    // (b2) `MeshJulienne` — the lift. The helper takes the caller's frame by
+    // `ref` and opens NOTHING of its own.
+    assert(countOccurrences(ax, "private size_t sliceAlongAxis(ref MeshEditBatch ed, int axis, int count)") == 1,
+        "MeshJulienne.sliceAlongAxis no longer takes `ref MeshEditBatch ed` as "
+      ~ "its first parameter. `evaluate` calls it TWICE, once per axis, and a "
+      ~ "`Command` holds ONE MeshEditDelta — a helper that opens its own batch "
+      ~ "leaves the undo entry describing the SECOND axis alone, which moves "
+      ~ "NO /api/changes counter (the two opens are sequential, not nested) "
+      ~ "and no count, and is visible only in the frozen "
+      ~ "`slice_cut.json` cell `mesh.julienne/xz` (task 1903 Stage L4-c).");
+    {
+        // The helper body must be batch-free. Bounded by the next declaration
+        // after it, so a batch opened anywhere inside it reddens.
+        immutable start = ax.countUntil("private size_t sliceAlongAxis(ref MeshEditBatch ed");
+        assert(start >= 0, "MeshJulienne.sliceAlongAxis not found");
+        immutable rest  = ax[start .. $];
+        immutable end   = rest.countUntil("private float axisCoord(");
+        assert(end > 0, "MeshJulienne.sliceAlongAxis: no following declaration "
+                      ~ "to bound the body scan — the census would otherwise "
+                      ~ "scan to end-of-file and answer about the wrong code");
+        assert(countOccurrences(rest[0 .. end], "MeshEditBatch") == 1,
+            "MeshJulienne.sliceAlongAxis opens a MeshEditBatch of its own "
+          ~ "again (the only `MeshEditBatch` its body may name is the `ref` "
+          ~ "PARAMETER). Hoisting the handle into `evaluate` and leaving this "
+          ~ "one behind is the HALF-DONE lift: those opens are NESTED, so "
+          ~ "`changeBus.nestedBatchOpens` moves — a different failure from the "
+          ~ "un-lifted shape and one that reddens a different instrument "
+          ~ "(task 1903 Stage L4-c).");
     }
 }
 

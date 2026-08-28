@@ -955,14 +955,37 @@ unittest { // the plane-cut op-log NAMES ITS FACE CHANGE, and its revert WORKS
                countKind(d, MeshOpEntry.Kind.SetPos)));
 
     // …and NOTHING about the marks either, though the delta DECLARES them.
-    // Pinned as an equality on the incomplete state, so a Marks publisher added
-    // anywhere on this path reddens the line — which is the whole point of
-    // pinning a gap rather than asserting its absence loosely.
+    //
+    // STAGE L4 DID NOT FLIP THIS, AND THAT IS THE RULING RATHER THAN A
+    // DEFERRAL. This line used to read "STAGE L4 FLIPS THIS", on the reading
+    // that a declared `Marks` scope with no `Kind.SelectionDelta` entry was a
+    // gap the migrating stage owed a publisher for. L4 measured it instead of
+    // building it, and the gap is not one:
+    //
+    //   * `Kind.FaceReindex` carries ALL FIVE face planes by construction —
+    //     `faceSelectionOrder`, `faceMaterial`, `facePart`, `faceSetMask` and
+    //     the marks word (Select + Subpatch + Hide together). That is exactly
+    //     why stage L2-d routed the chord rebuild through `rewriteFaces` under
+    //     an arming rather than emitting `recordAddFaces` + `recordReshapeFaces`.
+    //   * The revert BELOW is the proof, not this count: it compares the WHOLE
+    //     plane dump and the only difference is the one recorded normalisation.
+    //   * A `SelectionDelta` publisher here would be a SECOND writer over a
+    //     plane `FaceReindex` already owns, which is the shape a restore ORDER
+    //     exists to prevent (`selection_undo.d`'s header makes the same
+    //     argument for the loop-slice family, where the answer came out the
+    //     same way).
+    //
+    // So the equality STAYS, and it now pins a decision instead of a gap: a
+    // `SelectionDelta` appearing on this path means someone added that second
+    // writer, and this line is where they should argue for it.
     assert(countKind(d, MeshOpEntry.Kind.SelectionDelta) == 0,
-        format("STAGE L4 FLIPS THIS. The op-log carries %d SelectionDelta "
-             ~ "entr(ies); at Stage E3 it carries none, even though the delta "
-             ~ "declares MeshEditScope.Marks and the chord rebuild rewrites "
-             ~ "every mark plane onto the emitted slots (task 1903 Stage E3).",
+        format("the plane cut's op-log carries %d SelectionDelta entr(ies), "
+             ~ "expected 0. `Kind.FaceReindex` already carries every face "
+             ~ "plane the chord rebuild reinstalls — including the marks word "
+             ~ "— so a SelectionDelta here is a SECOND writer over the same "
+             ~ "plane, and the revert comparison below is what says the first "
+             ~ "one is sufficient (task 1903 Stage L4: measured, not "
+             ~ "deferred).",
                countKind(d, MeshOpEntry.Kind.SelectionDelta)));
 
     // `revert()` IS CALLED NOW, AND CALLING IT IS THE CHECK. Until stage L2 it

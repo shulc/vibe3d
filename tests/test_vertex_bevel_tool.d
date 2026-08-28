@@ -137,7 +137,7 @@ unittest {
     // POSITIVE CONTROL: the same counter, moved by a deliberately batchless
     // command, so a dead counter cannot pass the assertion below for free.
     auto c0 = parseJSON(cast(string)get("http://localhost:8080/api/changes"));
-    postCommand(kBatchlessControlJson);
+    foreach (c; kBatchlessControlSeq) postCommand(c);
     auto c1 = parseJSON(cast(string)get("http://localhost:8080/api/changes"));
     immutable long ctrl = c1["unbatchedGeometryCommits"].integer
                         - c0["unbatchedGeometryCommits"].integer;

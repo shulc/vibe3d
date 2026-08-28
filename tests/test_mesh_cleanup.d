@@ -393,7 +393,7 @@ unittest { // both commands run their kernel inside ONE edit batch
     // lives in tests/batchless_control_helpers.d because the answer has moved
     // five times, most recently when stage L10-P0 gave mesh.triple a batch.
     auto c0 = getChanges();
-    postCommand(kBatchlessControlJson);
+    foreach (c; kBatchlessControlSeq) postCommand(c);
     auto c1 = getChanges();
     const long ctrl = c1["unbatchedGeometryCommits"].integer
                     - c0["unbatchedGeometryCommits"].integer;

@@ -232,7 +232,7 @@ unittest {
     assert(s["status"].str == "ok", "clear select failed: " ~ s.toString);
 
     auto b = changes();
-    cmd(kBatchlessControlJson);
+    foreach (c; kBatchlessControlSeq) cmd(c);
     auto a = changes();
 
     immutable long ctrl = a["unbatchedGeometryCommits"].integer

@@ -280,11 +280,16 @@ unittest { // both slice commands run every cut of the ladder inside ONE batch
     // lives in tests/batchless_control_helpers.d because the answer has moved
     // five times, most recently when stage L10-P0 gave mesh.triple a batch.
     auto c0 = getChanges();
-    // POSTS THE BODY, NOT THE BARE ID. The sixth re-base (stage L6-P0 gave
-    // `mesh.clone` a batch) landed on `mesh.edgeSlice`, which REFUSES without
-    // a two-element `edges` list — and a refused command ticks nothing, so the
-    // bare-id form would leave this control silently dead.
-    runCommandWith(kBatchlessControlJson);
+    // POSTS EVERY ELEMENT OF THE SEQUENCE, NOT JUST THE ONE THAT TICKS. The
+    // SEVENTH re-base (stage L4-P0 gave a batch to `mesh.edgeSlice`, which was
+    // the sixth) landed on `mesh.paste`, and `mesh.paste` REFUSES on an empty
+    // clipboard — so the control is now an ordered `select.typeFrom polygon`,
+    // `mesh.copy`, `mesh.paste`, `history.undo`. A site that posts only the
+    // paste measures a REFUSED command, which ticks nothing and leaves this
+    // control silently dead. The whole reasoning, and the measurement that
+    // says `mesh.paste` is the LAST batchless Geometry command in the tree, is
+    // in `kBatchlessControlSeq`'s own doc comment.
+    foreach (c; kBatchlessControlSeq) runCommandWith(c);
     auto c1 = getChanges();
     const long ctrl = c1["unbatchedGeometryCommits"].integer
                     - c0["unbatchedGeometryCommits"].integer;

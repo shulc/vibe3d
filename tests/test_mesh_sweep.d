@@ -382,7 +382,7 @@ unittest { // mesh.sweep runs its kernel inside ONE caller-held edit batch
     immutable long leaks0    = busCounter("batchLeaks");
     immutable long refusals0 = busCounter("batchUpgradeRefusals");
     immutable long ctl0 = busCounter("unbatchedGeometryCommits");
-    cmd(kBatchlessControlJson);
+    foreach (c; kBatchlessControlSeq) cmd(c);
     immutable long ctrl = busCounter("unbatchedGeometryCommits") - ctl0;
     assert(ctrl > 0,
         kBatchlessControlWhy ~ ctrl.to!string ~ kBatchlessControlFix);

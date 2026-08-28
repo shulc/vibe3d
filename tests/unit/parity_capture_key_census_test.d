@@ -152,7 +152,7 @@ unittest // THE CENSUS
 
     // Vacuity floor FIRST, so a glob that matched nothing is diagnosed as
     // that and not as "every check passed".
-    assert(readers.length >= 11, format(
+    assert(readers.length >= 12, format(
         "the parity-key census found %d reader(s) under %s — the tree has at "
       ~ "least eleven "
       ~ "(`undo_parity_l0/l1/l2/l3/l5/l6/l7/l7d/l8/l9/l10_test.d`; L6 and L7d "

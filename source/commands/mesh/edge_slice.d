@@ -6,7 +6,8 @@ import mesh;
 import view;
 import editmode;
 import params : Param;
-import snapshot : MeshSnapshot;
+import mesh_edit_delta : MeshEditDelta, MeshEditScope, acceptRecordedEdit;
+import commands.mesh.selection_undo : DenseSelectionUndo;
 
 // ---------------------------------------------------------------------------
 // MeshEdgeSlice — cut a strip of edges through the mesh between two given edges.
@@ -25,11 +26,92 @@ import snapshot : MeshSnapshot;
 // inserted once and referenced by both adjacent path sub-faces by the same
 // vertex index, identical to mesh.axisSlice.
 //
-// Undo = MeshSnapshot; no snapshot is taken when nothing is cut (returns false).
+// ---------------------------------------------------------------------------
+// UNDO IS THE OPERATION-LOG DELTA (task 1903 Stage L4-a), not a whole-mesh
+// `MeshSnapshot`. The kernel's own publishers do all the work — the family
+// built none:
+//
+//   `Mesh.insertEdgePoint`             AddVerts + ReshapeFaces (Stage L2-c)
+//   `Mesh.rebuildFacesWithChordSplits` FaceReindex             (Stage L2-d)
+//
+// so a recording batch around `edgeSliceEx` comes back with a log that
+// `revert()` replays. Two belts sit beside it and both were chosen by
+// MEASUREMENT rather than by copying a neighbour — see `revert()`.
+//
+// THIS CLASS GOES FIRST AMONG THE FAMILY'S MIGRATIONS, and the reason is its
+// kernel's THREE outcome arms. It is the only member whose kernel contains its
+// OWN rollback, and therefore the only place in the family where "the mesh is
+// byte-identical to entry and the delta is NOT empty" is even expressible:
+//
+//   (i)   `facesSplit > 0`                      — a real chord split.
+//   (ii)  `facesSplit == 0`, a vertex ADDED     — KEEP + FINALIZE. Pass 1
+//         spliced a real vertex into the incident windings and Pass 2's
+//         adjacent-hit guard then split nothing. `meshChanged` is TRUE and the
+//         edit must be RECORDED. Op-log `[AddVerts, MeshMapDelta,
+//         ReshapeFaces]` — the one place in this family where appends occur
+//         with NO `FaceReindex`.
+//   (iii) `facesSplit == 0`, no vertex added    — the TRUE no-op. The kernel
+//         restores `faces` and `vertices` itself and `meshChanged` is FALSE.
+//
+// GATE ON `meshChanged`, NEVER ON `facesSplit`, and that is not style. Arm (ii)
+// has `facesSplit == 0` and is a successful edit; an `affected = facesSplit`
+// would hand `acceptRecordedEdit` a zero over a NON-EMPTY delta, which reads as
+// the honest-refusal arm — so the command would answer `false`, revert a real
+// edit, and record nothing, on an operand a user reaches with two clicks.
+// (Fuzz found this arm once already; it is the same trap from the undo side.)
+//
+// AND ARM (iii) NEEDS NO UN-RECORD, MEASURED. `mesh.d`'s rollback used to carry
+// a note saying a future batched caller "must add a matching un-record here".
+// This is that caller. Read under the arm's own guard the hazard cannot happen
+// — the arm is entered only when `vertices.length == vertsBeforePass1`, i.e.
+// when no `addVertex` ran, and `recordAddVert` fires only from `addVertex`.
+// Measured with a RECORDING batch around the kernel at `tA = 0, tB = 1`: the
+// op-log is EMPTY and `revert()` answers true. The note in `mesh.d` was
+// corrected in the same commit, and `tests/unit/undo_parity_l4_test.d`'s
+// refusal block is the standing assertion on it.
 // ---------------------------------------------------------------------------
 class MeshEdgeSlice : Command, Operator {
     mixin OperatorActrCommon;
-    private MeshSnapshot     snap;
+
+    /// The undo entry: the operation-log delta plus the two belts below.
+    private MeshEditDelta      delta_;
+
+    /// The three selection domains, their ORDER arrays and the edge selection
+    /// keyed by ENDPOINT PAIR. Load-bearing: measured, dropping it leaves
+    /// `faceMarks` diverging from what `MeshSnapshot.restore` produced.
+    ///
+    /// `DenseSelectionUndo` and not a bare `SelectionSnapshot`, which is what
+    /// stage L3's two commands hold: the dense image copies the three
+    /// selection-ORDER arrays back wholesale after `SelectionSnapshot`'s tail
+    /// has re-zeroed the stamps of everything unselected, so an order stamp on
+    /// an unselected element survives an undo here. With the bare snapshot
+    /// this family would have needed a standing per-plane exception in its
+    /// parity reader for `faceSelectionOrder`, exactly as L3 and L5 carry; the
+    /// dense image costs one import and removes the licence.
+    private DenseSelectionUndo preSel_;
+
+    /// The mesh-map set, deep-copied by value. ALSO load-bearing, and this one
+    /// is the family's own finding rather than an inherited belt.
+    ///
+    /// The plane cuts are in the documented per-corner DROP set
+    /// (`Mesh.addEdgePoint`'s comment). A splice changes the mesh's TOTAL
+    /// corner count while the PolyVertex maps are still the pre-op ones, so
+    /// after the FIRST splice `recordPolyVertexPayload` finds the maps out of
+    /// step with `faces` and DECLINES for the rest of the batch — visible in
+    /// the op-log as one `MeshMapDelta` on the first face entry and none on
+    /// the later ones. The FORWARD then zeroes the whole UV plane (measured:
+    /// 96 values, 0 non-zero after one cut) and a bare delta replay cannot
+    /// invent it back. `MeshSnapshot` restored it, so without this belt the
+    /// migration would be a REGRESSION against the shipped path rather than a
+    /// gap. Redo needs no "after" copy: it re-runs the kernel, which carries
+    /// the map itself.
+    private MeshMap[]          preMaps_;
+
+    /// Set once `evaluate` has recorded a delta — the redo discriminator and
+    /// `revert()`'s guard, the job `snap.filled` used to do. `evaluate` runs
+    /// again on redo and must re-run the kernel BATCHLESS, or the second run
+    /// records a second delta on top of the first.
+    private bool               recorded_;
 
     private uint[] edges_; // IntArray: the two edge indices
     private float  tA_   = 0.5f;
@@ -42,6 +124,28 @@ class MeshEdgeSlice : Command, Operator {
 
     override string name()  const { return "mesh.edgeSlice"; }
     override string label() const { return "Edge Slice"; }
+
+    /// Geometry (vertices spliced in, faces chord-split) + Marks (the kernel
+    /// re-derives the selection planes). NOT `kCutEditScope`'s `Position`:
+    /// `edgeSliceEx` moves no existing vertex — only `cutByPlaneEx`'s Gap
+    /// option does, and this class cannot reach it.
+    override MeshEditScope editScope() const {
+        return MeshEditScope.Geometry | MeshEditScope.Marks;
+    }
+
+    override bool isOperationInverse() const { return recorded_; }
+
+    version (unittest) {
+        /// TEST-ONLY read-only view of the recorded op-log, for the KIND
+        /// SEQUENCE assertions in `tests/unit/l4_slice_cut_delta_test.d`.
+        /// A LENGTH is satisfied by a broken log: stage J made the
+        /// `[MeshMapDelta, <face entry>]` ADJACENCY contractual, and an
+        /// interposed entry unpairs the corner restore SILENTLY while the
+        /// geometry still round-trips.
+        public ref const(MeshEditDelta) recordedDelta() const return {
+            return delta_;
+        }
+    }
 
     override Param[] params() {
         return [
@@ -56,27 +160,77 @@ class MeshEdgeSlice : Command, Operator {
         if (vts.get!SubjectPacket() is null) return false;
         if (edges_.length != 2) return false;
 
-        snap = MeshSnapshot.capture(*mesh);
-
-        // Mesh-robustness batch (fuzz-found): gate on `!r.meshChanged`, NOT
-        // `facesSplit==0` — a chain that degenerates to a plain edge-split
-        // (a real vertex kept and finalized by the kernel, facesSplit==0 but
-        // meshChanged==true) must be recorded as a successful edit, not
-        // force-reverted. Only a TRUE no-op (meshChanged==false) rolls back.
-        auto r = mesh.edgeSliceEx(edges_[0], edges_[1], tA_, tB_);
-
-        if (!r.meshChanged) {
-            snap.restore(*mesh);
-            snap = MeshSnapshot.init;
-            return false;
+        // REDO: the delta already recorded the first run; re-run the kernel
+        // inside an UNRECORDED batch (Ph1 hooks take their
+        // `editRecorder_ is null` first line, so nothing is recorded twice)
+        // from the restored pre-op state. The batch itself is kept because
+        // stage L4-P0 measured what it is worth: without it this kernel makes
+        // FOUR unbatched geometry commits per run.
+        if (recorded_) {
+            Mesh.EdgeSliceResult rr;
+            {
+                auto ed = MeshEditBatch.unrecorded(*mesh, editScope());
+                rr = ed.edgeSliceEx(edges_[0], edges_[1], tA_, tB_);
+                ed.close();
+            }
+            return rr.meshChanged;
         }
 
+        preSel_.capture(*mesh);
+        preMaps_ = new MeshMap[](mesh.meshMaps.length);
+        foreach (i, ref m; mesh.meshMaps) preMaps_[i] = m.dup;
+
+        Mesh.EdgeSliceResult r;
+        {
+            auto ed = MeshEditBatch(*mesh, editScope());   // RECORDING
+            r = ed.edgeSliceEx(edges_[0], edges_[1], tA_, tB_);
+            delta_ = ed.close();
+        }
+
+        // THE POST-CLOSE RULING, shared with `mesh.delete` / `mesh.remove` /
+        // `mesh.cleanup` / `mesh.bevel` (Stage L3-a, ruling Q-K6). The
+        // `affected` count is `meshChanged`, NOT `facesSplit` — see the class
+        // comment's arm (ii).
+        //
+        // `!r.meshChanged` is the kernel's TRUE no-op arm, and it has ALREADY
+        // put `faces` and `vertices` back itself. The delta is empty there
+        // (measured), so `delta_.revert` is a BELT over nothing; the belt that
+        // is NOT redundant is `preSel_.restore`, because the kernel's rollback
+        // does not touch the selection planes and `clearFaceSelectionResize` /
+        // `syncSelection` may have run on the way in. Where the pre-flight
+        // could not be done — the outcome is only known after the kernel — the
+        // L2/L8 pre-flight-atomic rule's second branch applies: revert the
+        // delta explicitly and answer `false`. Never `snap.restore` (there is
+        // no snapshot any more) and never a `false` out of `revert()`, which
+        // would pop the entry off BOTH history stacks.
+        if (!acceptRecordedEdit(r.meshChanged ? 1 : 0, delta_)) {
+            if (!r.meshChanged) {
+                delta_.revert(*mesh);
+                preSel_.restore(*mesh);
+            }
+            delta_   = MeshEditDelta.init;
+            preSel_  = DenseSelectionUndo.init;
+            preMaps_ = null;
+            return false;
+        }
+        recorded_ = true;
         return true;
     }
 
     override bool revert() {
-        if (!snap.filled) return false;
-        snap.restore(*mesh);
+        // An instance whose `evaluate` refused holds an empty delta and every
+        // pre-image cleared; replaying it would run the belts over a mesh they
+        // were never sized against. This is what `if (!snap.filled) return
+        // false;` did before the migration.
+        if (!recorded_) return false;
+        delta_.revert(*mesh);     // LIFO inverse replay restores geometry
+        // Then the maps, sized against the restored geometry…
+        if (preMaps_.length) {
+            mesh.meshMaps.length = preMaps_.length;
+            foreach (i, ref m; preMaps_) mesh.meshMaps[i] = m.dup;
+        }
+        // …and last the selection, which touches no map.
+        preSel_.restore(*mesh);
         return true;
     }
 }

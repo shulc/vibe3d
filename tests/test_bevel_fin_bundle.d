@@ -117,8 +117,8 @@ unittest { // the fin-bundle path runs inside ONE batch, and it is the OUTERMOST
     loadCube();
     ok(postJson("/api/select", `{"mode":"vertices","indices":[]}`), "/api/select");
     auto c0 = changes();
-    ok(postJson("/api/command", kBatchlessControlJson),
-       kBatchlessControlCommand);
+    foreach (c; kBatchlessControlSeq)
+        ok(postJson("/api/command", c), kBatchlessControlCommand);
     auto c1 = changes();
     immutable long ctrl = c1["unbatchedGeometryCommits"].integer
                         - c0["unbatchedGeometryCommits"].integer;

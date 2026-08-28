@@ -183,8 +183,11 @@ unittest { // mesh.fixOrientation runs its kernel inside ONE edit batch
     // `mesh.triple` 0, `mesh.quadruple` 0, `mesh.detriangulate` 0, against a
     // `mesh.clone` of 2 and a `mesh.mirror` of 7. So the fifth pick is
     // `mesh.clone`, whose tick was measured at 2 on a fresh reset with face 0
-    // selected — recorded here so the sixth re-base knows what it is replacing
-    // rather than re-deriving it.
+    // selected — recorded here so the next re-base knows what it is replacing
+    // rather than re-deriving it. The sixth pick was `mesh.edgeSlice` and the
+    // SEVENTH, at stage L4-P0, is the `mesh.paste` SEQUENCE: `mesh.paste` is
+    // the last batchless Geometry-class command in the tree and it cannot be
+    // driven by one POST, so every site now posts `kBatchlessControlSeq` whole.
     //
     // WHAT CHANGED THE SECOND TIME is the ORDER, so the next re-base is a
     // one-word edit instead of a re-think: the control now runs on a FRESH
@@ -197,7 +200,7 @@ unittest { // mesh.fixOrientation runs its kernel inside ONE edit batch
     postReset();
     selectFaces([0]);
     auto c0 = getChanges();
-    postCommand(kBatchlessControlJson);
+    foreach (c; kBatchlessControlSeq) postCommand(c);
     auto c1 = getChanges();
     const long ctrl = c1["unbatchedGeometryCommits"].integer
                     - c0["unbatchedGeometryCommits"].integer;
