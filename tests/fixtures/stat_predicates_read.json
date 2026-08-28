@@ -1,0 +1,751 @@
+{
+ "name": "stat_predicates_read",
+ "description": "Four laws read STATICALLY off the reference's own unstripped libraries -- no engine boot, no display, no behavioural stand: the Edge Statistics Coplanar predicate, the Vertex Statistics Colinear predicate, the selection-rollover pick-flag word, and the topological-symmetry seam selection-set name. Two of these rows had behavioural evidence that COULD NOT COME OUT DIFFERENTLY, and each block below names that defect in its own cells.",
+ "source": "Static disassembly of the reference editor's shipped libraries (objdump/nm over the unstripped symbol tables). Zero boots.",
+ "tolerance": 1e-12,
+ "read_from": "Each block was read at the reference's own compute site: the predicate routine itself, the routine that supplies its default tolerance, and the start-up writer that installs that default. The routine names, the libraries they live in and their addresses are recorded in the PRIVATE toolcards for this task -- they are the reference's own identifiers and deliberately do not cross into this tree. What is reproducible from here is the LAW; what is auditable is the private card beside it.",
+ "coplanar_edge": {
+  "law": "An edge is coplanar iff it has EXACTLY TWO incident polygons and max |dot(p - a, n)| over every vertex of BOTH rings except the edge's own two endpoints, divided by the LARGEST axis extent of the bounding box of both rings, is <= the tolerance. `n` is the ring-index-0 corner-triangle normal of the FIRST incident polygon; `a` is the edge's first vertex. A zero distance or a zero extent returns coplanar without reaching the comparison.",
+  "tolerance_default": 0.005,
+  "tolerance_is_relative": true,
+  "tolerance_source": "a global preference, not a literal in the predicate",
+  "tolerance_is_command_argument_0": true,
+  "comparison_inclusive": true,
+  "requires_exactly_two_incident_polygons": true,
+  "plane_anchor": "edge_first_vertex",
+  "plane_normal": "ring_index_0_corner_triangle_of_first_incident_polygon",
+  "endpoints_excluded_from_distance": true,
+  "endpoints_included_in_bounding_box": true,
+  "cells": [
+   {
+    "name": "flat_box_split_THE_INERT_CELL",
+    "note": "The only cell the register ever had: a straight box split. Both rings are exactly coplanar, so max_plane_distance is 0 and the routine RETURNS EARLY -- the tolerance comparison is never executed. This cell cannot separate any two tolerances, or a relative rule from an absolute one, because it never reaches either.",
+    "ring0": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ],
+    "ring1": [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      -1.0,
+      0.0
+     ],
+     [
+      1.0,
+      -1.0,
+      0.0
+     ]
+    ],
+    "edge": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "incident_polygon_count": 2,
+    "normal": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "max_plane_distance": 0.0,
+    "bbox_extent": [
+     1.0,
+     2.0,
+     0.0
+    ],
+    "denominator": 2.0,
+    "ratio": 0.0,
+    "path": "early_out_zero_distance",
+    "expected": true
+   },
+   {
+    "name": "tilt_below_tolerance",
+    "note": "0.009 / 2.0 = 0.0045 <= 0.005.",
+    "ring0": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ],
+    "ring1": [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      -1.0,
+      0.009
+     ],
+     [
+      1.0,
+      -1.0,
+      0.009
+     ]
+    ],
+    "edge": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "incident_polygon_count": 2,
+    "normal": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "max_plane_distance": 0.009,
+    "bbox_extent": [
+     1.0,
+     2.0,
+     0.009
+    ],
+    "denominator": 2.0,
+    "ratio": 0.0045,
+    "path": "ratio_compare",
+    "expected": true
+   },
+   {
+    "name": "tilt_exactly_at_tolerance",
+    "note": "0.010 / 2.0 == 0.005 exactly in binary64; the comparison is INCLUSIVE (cmplesd), so this is coplanar.",
+    "ring0": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ],
+    "ring1": [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      -1.0,
+      0.01
+     ],
+     [
+      1.0,
+      -1.0,
+      0.01
+     ]
+    ],
+    "edge": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "incident_polygon_count": 2,
+    "normal": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "max_plane_distance": 0.01,
+    "bbox_extent": [
+     1.0,
+     2.0,
+     0.01
+    ],
+    "denominator": 2.0,
+    "ratio": 0.005,
+    "path": "ratio_compare",
+    "expected": true
+   },
+   {
+    "name": "tilt_above_tolerance",
+    "note": "0.011 / 2.0 = 0.0055 > 0.005.",
+    "ring0": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ],
+    "ring1": [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      -1.0,
+      0.011
+     ],
+     [
+      1.0,
+      -1.0,
+      0.011
+     ]
+    ],
+    "edge": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "incident_polygon_count": 2,
+    "normal": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "max_plane_distance": 0.011,
+    "bbox_extent": [
+     1.0,
+     2.0,
+     0.011
+    ],
+    "denominator": 2.0,
+    "ratio": 0.0055,
+    "path": "ratio_compare",
+    "expected": false
+   },
+   {
+    "name": "scaled_up_100x_RELATIVE_DISCRIMINATOR",
+    "note": "The SAME shape at 100x. Out-of-plane distance 0.9 world units, divided by the largest bbox extent 200 -> 0.0045 <= 0.005, so COPLANAR. A port with an ABSOLUTE epsilon answers false here (0.9 > 0.005). This is the cell the flat box split could never provide.",
+    "ring0": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      100.0,
+      0.0,
+      0.0
+     ],
+     [
+      100.0,
+      100.0,
+      0.0
+     ],
+     [
+      0.0,
+      100.0,
+      0.0
+     ]
+    ],
+    "ring1": [
+     [
+      100.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      -100.0,
+      0.9
+     ],
+     [
+      100.0,
+      -100.0,
+      0.9
+     ]
+    ],
+    "edge": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      100.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "incident_polygon_count": 2,
+    "normal": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "max_plane_distance": 0.9,
+    "bbox_extent": [
+     100.0,
+     200.0,
+     0.9
+    ],
+    "denominator": 200.0,
+    "ratio": 0.0045000000000000005,
+    "path": "ratio_compare",
+    "expected": true
+   },
+   {
+    "name": "boundary_edge_one_polygon",
+    "note": "The incident-polygon count is tested FIRST, and a count other than two returns false before any geometry is read. A boundary edge is never coplanar -- the opposite of the natural port, which treats an edge with nothing to disagree with as flat.",
+    "ring0": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ],
+    "ring1": [],
+    "edge": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "incident_polygon_count": 1,
+    "expected": false,
+    "path": "polygon_count_gate"
+   },
+   {
+    "name": "nonplanar_first_polygon_NORMAL_CONVENTION",
+    "note": "Polygon 0 is itself non-planar and its OWN corners are measured against its OWN plane, so a non-planar face makes its own edge non-coplanar. The plane is the RING-INDEX-0 corner triangle of the FIRST incident polygon, anchored at the edge's first vertex -- not Newell and not an average of the two face normals.",
+    "ring0": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      1.0,
+      0.3
+     ],
+     [
+      0.0,
+      1.0,
+      0.0
+     ]
+    ],
+    "ring1": [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      -1.0,
+      0.0
+     ],
+     [
+      1.0,
+      -1.0,
+      0.0
+     ]
+    ],
+    "edge": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "incident_polygon_count": 2,
+    "normal": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "max_plane_distance": 0.3,
+    "bbox_extent": [
+     1.0,
+     2.0,
+     0.3
+    ],
+    "denominator": 2.0,
+    "ratio": 0.15,
+    "path": "ratio_compare",
+    "expected": false,
+    "newell_normal_of_ring0": [
+     -0.14673479641335554,
+     -0.14673479641335554,
+     0.978231976089037
+    ],
+    "max_plane_distance_under_newell": 0.14673479641335554
+   }
+  ]
+ },
+ "colinear_vertex": {
+  "law": "Per POLYGON, over its own ring with indices taken modulo the ring count, a window is grown greedily while the maximum point-to-SEGMENT distance from every interior vertex to the chord between the window's two ends stays <= the tolerance; the interior of each accepted run is marked. A marked vertex is then SELECTED only if its neighbouring-vertex list has exactly TWO entries. Ring counts below 3 produce nothing.",
+  "tolerance_default": 1e-06,
+  "tolerance_is_relative": false,
+  "tolerance_source": "a literal in the command's own default callback",
+  "tolerance_clamped_to_zero_below": true,
+  "comparison_inclusive": true,
+  "metric": "distance_point_to_segment",
+  "chord": "the run's two bracketing ring vertices, not adjacent neighbours",
+  "ring_indices_wrap": true,
+  "position_precision": "float32 promoted to double",
+  "second_conjunct": "neighbour_vertex_count == 2",
+  "min_ring_count": 3,
+  "cells": [
+   {
+    "name": "valence_three_THE_UNFALSIFIABLE_CELL",
+    "chord": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "point": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "distance_to_segment": 0.0,
+    "distance_to_infinite_line": 0.0,
+    "neighbour_vertex_count": 3,
+    "geometric_half": true,
+    "expected_selected": false,
+    "note": "A perfectly colinear midpoint whose vertex has THREE neighbours. The geometric half is TRUE and the answer is still EMPTY, because the selection carries a second, structural conjunct: exactly two neighbouring vertices. Every stand the register ever built was of this shape -- no 2-valent vertex anywhere -- so its empty result was equally consistent with 'the predicate works' and 'the predicate never fires'. It measured its own rig."
+   },
+   {
+    "name": "valence_two_selected",
+    "chord": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "point": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "distance_to_segment": 0.0,
+    "distance_to_infinite_line": 0.0,
+    "neighbour_vertex_count": 2,
+    "geometric_half": true,
+    "expected_selected": true,
+    "note": "The same geometry with a genuinely 2-valent midpoint: selected."
+   },
+   {
+    "name": "offset_below_tolerance",
+    "chord": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "point": [
+     1.0,
+     0.0,
+     5e-07
+    ],
+    "distance_to_segment": 5e-07,
+    "distance_to_infinite_line": 5e-07,
+    "neighbour_vertex_count": 2,
+    "geometric_half": true,
+    "expected_selected": true,
+    "note": "5e-07 <= 1e-06."
+   },
+   {
+    "name": "offset_exactly_at_tolerance",
+    "chord": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "point": [
+     1.0,
+     0.0,
+     1e-06
+    ],
+    "distance_to_segment": 1e-06,
+    "distance_to_infinite_line": 1e-06,
+    "neighbour_vertex_count": 2,
+    "geometric_half": true,
+    "expected_selected": true,
+    "note": "comisd tol, d with a jb exit: the test is tol >= d, INCLUSIVE."
+   },
+   {
+    "name": "offset_above_tolerance",
+    "chord": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "point": [
+     1.0,
+     0.0,
+     2e-06
+    ],
+    "distance_to_segment": 2e-06,
+    "distance_to_infinite_line": 2e-06,
+    "neighbour_vertex_count": 2,
+    "geometric_half": false,
+    "expected_selected": false,
+    "note": "2e-06 > 1e-06. Note the tolerance is ABSOLUTE world units here, unlike the coplanar predicate's relative ratio -- the two Statistics predicates do NOT share a convention."
+   },
+   {
+    "name": "beyond_the_chord_SEGMENT_NOT_LINE",
+    "chord": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "point": [
+     2.0,
+     0.0,
+     0.0
+    ],
+    "distance_to_segment": 1.0,
+    "distance_to_infinite_line": 0.0,
+    "neighbour_vertex_count": 2,
+    "geometric_half": false,
+    "expected_selected": false,
+    "note": "The point sits exactly ON the infinite line through the chord but one unit BEYOND its end. DistancePointLineSegment clamps to the segment, so the distance is 1.0 and the point is NOT colinear. A port measuring distance to the infinite LINE answers 0.0 and selects it."
+   }
+  ]
+ },
+ "pick_flags": {
+  "law": "Every hit-test site computes one track-flag word from the rollover mode. The three extra bits the `closest` mode sets are the three COMPONENT-TYPE bits -- vertex, edge and polygon -- and the vendor's own published interface header names those three bit values as exactly that. `closest` therefore means 'consider all three component types', NOT a search radius.",
+  "manual_or_none": "0x8001",
+  "closest": "0x8701",
+  "extra_bits": "0x0700",
+  "decomposition": {
+   "0x0001": "pointer move",
+   "0x0100": "component type: vertex",
+   "0x0200": "component type: edge",
+   "0x0400": "component type: polygon",
+   "0x8000": "active"
+  },
+  "mode_enum": {
+   "none": 0,
+   "manual": 1,
+   "closest": 2
+  },
+  "preference_default": 1,
+  "forced_closest_when": "auto-component mode is on AND the topmost selection type is one of vertex/edge/polygon AND that type currently has ZERO selected elements -- the preference is not consulted at all on that path",
+  "hit_test_sites": 3,
+  "tool_active_path": "with a tool armed the word comes from the tool's own track flags OR 1, and the rollover preference is never read",
+  "note_on_the_registers_own_proposed_capture": "The register proposed parking the pointer a few pixels off an edge and reading which element pre-highlights. That stand cannot separate the modes, because the difference is not a radius: it is which COMPONENT TYPES the hit test may return. The separating cell needs elements of DIFFERENT types competing under the cursor while the current selection type is not the winner's."
+ },
+ "symmetry_seam_set_name": {
+  "law": "The topological-symmetry seam is an ordinary selection set whose name is built with sprintf(\"%s %c\", \"topological symmetry\", 'x' + axis) and assigned through the edit-set command. It is one family with a per-axis letter, not three unrelated reserved names.",
+  "format": "%s %c",
+  "prefix": "topological symmetry",
+  "letter_expression": "'x' + axis",
+  "axis_enum": {
+   "x": 0,
+   "y": 1,
+   "z": 2,
+   "arbitrary": 3
+  },
+  "names": {
+   "0": "topological symmetry x",
+   "1": "topological symmetry y",
+   "2": "topological symmetry z"
+  },
+  "axis_default": "the current symmetry plane axis",
+  "assigned_through": "the selection edit-set command",
+  "note_on_arbitrary": "axis 3 (arbitrary) would carry the letter '{' through the same expression; whether that path is reachable was NOT read and must not be assumed either way."
+ },
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "static-read",
+  "captured_utc": "2026-08-28",
+  "harness": "tools/local/fixture_gen/stat_predicates/gen.py (objdump/nm over the shipped unstripped libraries; no process was started)",
+  "task": "2680",
+  "notes": "INSTRUMENT: static disassembly. Every number here was read off a named routine's own compute site or off the start-up writer that installs it -- see `read_from` for the symbol and the library of each block. No engine was launched, no display opened, no pointer injected and no trace recorded; there is no behavioural fit anywhere in this file, so none of it can be an artefact of which stands happened to get built. The numeric cells are this generator EVALUATING the read formula on rigs chosen to separate the candidates; they are predictions of the read law, not measurements of the reference, and the cells say so in their own names. Two of the four blocks replace earlier behavioural evidence that could not have come out differently: the coplanar stand never reached its own comparison, and the colinear stand had no 2-valent vertex to test."
+ }
+}
