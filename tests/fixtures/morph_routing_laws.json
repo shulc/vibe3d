@@ -1,0 +1,69 @@
+{
+ "name": "morph_routing_laws",
+ "description": "Four routing laws read off the reference's own compute sites: where a falloff samples its weight during a routed edit, what a snap targets, how an ABSOLUTE map behaves under a topology change, and what applying a map does to the map.",
+ "source": "ref-editor@11.2v3",
+ "falloff_weight_position": {
+  "row": "53b",
+  "answer": "routed",
+  "mechanism": "There is exactly ONE per-element read in the reference's generic element-transform driver, and it returns the ROUTED position: base plus the stored delta for a relative map, the stored value for an absolute one. The driver hands that same buffer, unmodified, straight to the falloff's evaluate entry point and then to the tool's own transform. So the weight is sampled where the element is drawn, never at the base.",
+  "same_buffer_for_weight_and_transform": true,
+  "element_id_passed_to_the_falloff": null,
+  "zero_weight_skips_the_transform_call": true,
+  "note_base_is_also_published": "The driver's side packet carries BOTH positions -- routed and base -- so a reader who stopped at the packet layout could not tell which one the falloff gets. Following the call is what settles it.",
+  "refuted": [
+   "base"
+  ]
+ },
+ "snap_target_position": {
+  "row": "57",
+  "answer": "drawn",
+  "mechanism": "The snap candidate scan does not read the edit cage. It takes its mesh from the 3D view and reads plain vertex positions off THAT mesh; selecting a morph map makes it the mesh's primary morph, and the evaluated surface the view holds applies it. So the candidates are the drawn points.",
+  "reads_the_view_mesh": true,
+  "reads_the_edit_cage": false,
+  "composed_with_an_already_frozen_law": "This is a composition of a static read (the scan's source of positions) with the already-measured law that the reference draws base+delta. It is NOT a driven snap gesture -- that still needs a live pointer -- and is recorded as a read, not a drag.",
+  "refuted": [
+   "base"
+  ]
+ },
+ "absolute_view_under_topology_change": {
+  "row": "52",
+  "answer": "same_rule_as_relative",
+  "mechanism": "The subdivision has a second, map-domain pass that runs the SAME stencil as the position pass, but over positions read through the map's own view. A vertex with no entry in the map contributes its BASE position -- one shared fallback, taken identically for the relative and the absolute encodings. The two encodings therefore differ only in how a value is read and stored, never in the stencil and never in the missing-value convention.",
+  "missing_entry_contributes": "base_position",
+  "missing_entry_contributes_zero": false,
+  "one_code_path_parameterised_by_the_view": true,
+  "consequence": "The earlier measurement, which drove subdivision only against the relative view, generalises. The row was open because nobody had checked that; it is not a second law.",
+  "refuted": [
+   "absolute_has_its_own_rule",
+   "missing_entry_is_zero"
+  ]
+ },
+ "apply_the_routing_target": {
+  "row": "53",
+  "answer": "map_untouched_base_moves",
+  "mechanism": "Applying a morph map with no destination map writes the BASE geometry -- base plus weight times the stored offset -- and never writes the source map. The verb takes its source from its own argument, so which map is currently the routing target plays no part. A value written while the map was the routing target therefore survives the apply verbatim, and the drawn surface moves by the offset a second time.",
+  "writes_the_source_map": false,
+  "writes_the_base": true,
+  "depends_on_the_current_selection": false,
+  "with_a_destination_map": "When a destination IS given the verb accumulates onto the destination's current value rather than replacing it, so naming the source as its own destination doubles the stored offset. An absolute source is converted to an offset against the base first, and an absolute destination is stored back as an absolute.",
+  "refuted": [
+   "map_is_cleared",
+   "map_is_rewritten"
+  ]
+ },
+ "parameters": {
+  "schema": 1,
+  "state": "none",
+  "why": "provenance.method is 'static-read': every statement here was decoded from the reference's own shipped, unstripped libraries under objdump. No engine was launched, no tool was armed and no gesture was delivered, so there is no tool parameter any of it could have been captured at. This is an ANSWER -- 'no parameters exist' -- and is deliberately different from an absent block, which would mean nobody had looked (task 3010)."
+ },
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "static-read",
+  "captured_utc": "2026-08-29",
+  "harness": "tools/local/fixture_gen/vmap_policy/gen.py (objdump/nm over the shipped unstripped libraries; no process was started)",
+  "task": "3190",
+  "notes": "INSTRUMENT: static disassembly, zero boots, zero traces. All four rows were scheduled for the command lane on the ground that a policy question has no formula to read. Three of the four are not policy at all once the site is opened -- they are one read each -- and the fourth (the snap target) is a composition of one read with a law this corpus had already frozen. Two of them could not have been settled behaviourally at the price the register assumed: the falloff position needs a live drag under a radial falloff, and the snap target needs a live pointer. The private toolcard records the routine names, libraries and addresses; they are the reference's own identifiers and deliberately do not cross into this tree."
+ }
+}

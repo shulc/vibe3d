@@ -1,0 +1,112 @@
+{
+ "name": "vertex_map_selection_rename",
+ "description": "Whether the reference's current vertex-map selection follows a rename of the map it names.",
+ "source": "ref-editor@11.2v3",
+ "law": {
+  "answer": "does_not_follow",
+  "binding": "by_name",
+  "mechanism": "The current-map selection stores a (map kind, NAME) pair, not a handle, and every consumer re-resolves it against the mesh by that name with creation disabled. The rename verb only rewrites the map object's own public name; it never touches the selection. So after a rename the stored name resolves to nothing and there is no current map.",
+  "falls_back_to_another_map_of_the_kind": false,
+  "in_session_memo_caveat": "The read also shows a per-kind memo beside the by-name lookup, invalidated on a map-selection or item-selection event but NOT by a rename. An in-session consumer that hits the warm memo can therefore still be handed the renamed map OBJECT until the next such event, even though the selection itself is already dangling. The selection list -- which is what the cells below read -- shows the dangling state immediately. This caveat is a READ result; no behavioural cell here exhibits it.",
+  "refuted": [
+   "follows_the_rename",
+   "falls_back_to_first_map_of_kind"
+  ]
+ },
+ "stand": {
+  "why": "TWO maps of the same kind exist on purpose. With only one, 'the selection followed the rename' and 'the selection fell back to the only map of that kind' are the SAME observation -- the stand could not separate them.",
+  "maps": [
+   {
+    "name": "W1",
+    "kind": "weight"
+   },
+   {
+    "name": "W2",
+    "kind": "weight"
+   }
+  ]
+ },
+ "cells": [
+  {
+   "cell": "rename_the_CURRENT_map_DISCRIMINATING",
+   "discriminating": true,
+   "select": "W1",
+   "rename": {
+    "old": "W1",
+    "new": "W1b"
+   },
+   "current_before": [
+    "W1"
+   ],
+   "current_after": [],
+   "current_after_a_selection_event": [],
+   "maps_after": [
+    "W1b",
+    "W2"
+   ]
+  },
+  {
+   "cell": "rename_a_NON_current_map_CONTROL_cannot_separate",
+   "discriminating": false,
+   "why_it_cannot_separate": "Renaming a map that is not current leaves the current map alone under every candidate.",
+   "select": "W1",
+   "rename": {
+    "old": "W2",
+    "new": "W2b"
+   },
+   "current_before": [
+    "W1"
+   ],
+   "current_after": [
+    "W1"
+   ],
+   "maps_after": [
+    "W1",
+    "W2b"
+   ]
+  }
+ ],
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "generator",
+  "cells": [
+   {
+    "cell": "rename_the_CURRENT_map_DISCRIMINATING",
+    "drove": [
+     {
+      "op": "vertex_map_rename",
+      "values": {
+       "old": "W1",
+       "new": "W1b",
+       "kind": "weight"
+      }
+     }
+    ]
+   },
+   {
+    "cell": "rename_a_NON_current_map_CONTROL_cannot_separate",
+    "drove": [
+     {
+      "op": "vertex_map_rename",
+      "values": {
+       "old": "W2",
+       "new": "W2b",
+       "kind": "weight"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-08-29",
+  "harness": "tools/local/fixture_gen/vmap_policy/gen.py (headless command lane, 3 boots incl. one read-back probe, a fresh isolated HOME per boot)",
+  "task": "3190",
+  "notes": "The rename verb and the current-map resolver were BOTH read statically before any cell was run; the read named the two candidates the cells then had to separate, and named the memo cache that would have made a single naive cell answer 'it followed'. The read-back is the only one that works headless: the map-selection query has no query form and the obvious layer-service spellings all fail argument parsing, so membership is read per map index."
+ }
+}

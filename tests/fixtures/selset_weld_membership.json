@@ -1,0 +1,224 @@
+{
+ "name": "selset_weld_membership",
+ "description": "What happens to EDGE selection-set membership when a vertex weld collapses two separately-tagged edges into one survivor. Read out of the reference's own edge-map copy routine first, then confirmed by two behavioural cells.",
+ "source": "ref-editor@11.2v3",
+ "law": {
+  "answer": "union",
+  "mechanism": "Membership is not a policy the reference decides on collision. Each selection set is its OWN named map over the edge domain, and the weld's re-key copies, per named map, from the old edge onto the new one. The copy only ever SETS: it never clears the destination and never consults what is already there. Two edges tagged into two DIFFERENT sets therefore land in two different maps on the same surviving key, and the survivor is in both.",
+  "carried_per_map_by_name": true,
+  "copy_clears_destination": false,
+  "both_edge_orientations_carried": true,
+  "collapsed_to_a_point_is_dropped": "An edge whose two endpoints weld to the SAME survivor is skipped entirely and its membership is dropped with the edge -- the copy is guarded on the two new endpoints being distinct.",
+  "refuted": [
+   "drop",
+   "first_wins",
+   "orientation_dependent"
+  ]
+ },
+ "stand": {
+  "why": "A 2-quad strip whose two END edges sit 2 mm apart, so a fixed-distance weld folds it into a closed band and collapses exactly those two edges into one. A closed ring, or two coincident copies of the same quad, would NOT separate the candidates: there the two tagged edges are already one edge before the weld.",
+  "vertices": [
+   [
+    0.0,
+    0.0,
+    0.0
+   ],
+   [
+    1.0,
+    0.0,
+    0.0
+   ],
+   [
+    0.002,
+    0.0,
+    0.0
+   ],
+   [
+    0.0,
+    1.0,
+    0.0
+   ],
+   [
+    1.0,
+    1.0,
+    0.0
+   ],
+   [
+    0.002,
+    1.0,
+    0.0
+   ]
+  ],
+  "faces": [
+   [
+    0,
+    1,
+    4,
+    3
+   ],
+   [
+    1,
+    2,
+    5,
+    4
+   ]
+  ],
+  "tagged_edges": {
+   "a": [
+    0,
+    3
+   ],
+   "b": [
+    2,
+    5
+   ]
+  },
+  "weld": {
+   "mode": "fixed_distance",
+   "distance": 0.01
+  },
+  "after_counts": {
+   "vertices": 4,
+   "edges": 4,
+   "faces": 2
+  },
+  "surviving_edge_positions": [
+   [
+    0.001,
+    0.0,
+    0.0
+   ],
+   [
+    0.001,
+    1.0,
+    0.0
+   ]
+  ]
+ },
+ "cells": [
+  {
+   "cell": "two_sets_DISCRIMINATING",
+   "discriminating": true,
+   "why_it_separates": "union answers both names, drop answers neither, first-wins answers exactly one.",
+   "sets_before": {
+    "S1": [
+     [
+      0,
+      3
+     ]
+    ],
+    "S2": [
+     [
+      2,
+      5
+     ]
+    ]
+   },
+   "sets_after_by_position": {
+    "S1": [
+     [
+      [
+       0.001,
+       0.0,
+       0.0
+      ],
+      [
+       0.001,
+       1.0,
+       0.0
+      ]
+     ]
+    ],
+    "S2": [
+     [
+      [
+       0.001,
+       0.0,
+       0.0
+      ],
+      [
+       0.001,
+       1.0,
+       0.0
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "cell": "one_set_CONTROL_cannot_separate",
+   "discriminating": false,
+   "why_it_cannot_separate": "Both edges are tagged into the SAME set, so union, first-wins and drop-on-collision all answer identically. Frozen on purpose: a mutation of the law must leave THIS cell green, which is what proves the discriminating cell was chosen rather than fitted.",
+   "sets_before": {
+    "S1": [
+     [
+      0,
+      3
+     ],
+     [
+      2,
+      5
+     ]
+    ]
+   },
+   "sets_after_by_position": {
+    "S1": [
+     [
+      [
+       0.001,
+       0.0,
+       0.0
+      ],
+      [
+       0.001,
+       1.0,
+       0.0
+      ]
+     ]
+    ]
+   }
+  }
+ ],
+ "tolerance": 1e-06,
+ "parameters": {
+  "schema": 1,
+  "state": "recorded",
+  "derived_from": "generator",
+  "cells": [
+   {
+    "cell": "two_sets_DISCRIMINATING",
+    "drove": [
+     {
+      "op": "vert_merge",
+      "values": {
+       "range": "fixed",
+       "distance": 0.01
+      }
+     }
+    ]
+   },
+   {
+    "cell": "one_set_CONTROL_cannot_separate",
+    "drove": [
+     {
+      "op": "vert_merge",
+      "values": {
+       "range": "fixed",
+       "distance": 0.01
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-08-29",
+  "harness": "tools/local/fixture_gen/vmap_policy/gen.py (headless command lane, 2 boots, a fresh isolated HOME per boot)",
+  "task": "3190",
+  "notes": "TWO INSTRUMENTS, IN THIS ORDER. The law was first read out of the reference's own edge-map copy routine and the weld's re-key loop by static disassembly -- zero boots -- which is what settles the MECHANISM: the copy is per named map and only ever sets, so a union is structural rather than a chosen collision policy. The two cells below then confirmed it behaviourally, 2 boots. The register had this row scheduled for the command lane on the ground that 'a policy has no formula to read'; it did have one, and the read is the stronger half -- a behavioural cell can show the ANSWER is union but cannot show that drop and first-wins were never candidates."
+ }
+}
