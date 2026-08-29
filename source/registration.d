@@ -95,7 +95,7 @@ import tools.edit.reduce : ReductionTool;
 import tools.alignment.clone_tool : CloneTool;
 import tools.alignment.array_tool : ArrayTool;
 import tools.edit.tack : TackTool;
-import tools.edit.bridge_tool : BridgeTool, BridgeEditFactory;
+import tools.edit.bridge_tool : BridgeTool;
 import tools.edit.vert_merge_tool : VertexMergeTool;
 import tools.edit.vertex_bevel_tool : VertexBevelTool;
 import tools.edit.vertex_extrude_tool : VertexExtrudeTool;
@@ -520,7 +520,7 @@ private void registerGeneratorTools(EditorApp app) {
     // undo path, same ToolHeadlessCommand one-shot wiring.
     reg.toolFactories["mesh.tack"] = () {
         auto t = new TackTool(() => &mesh(), &gpu(), litShader);
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
     reg.commandFactories["mesh.tack"] = () => cast(Command)
@@ -601,7 +601,7 @@ private void registerGeneratorTools(EditorApp app) {
     // as Mirror/Tack above.
     reg.toolFactories["mesh.bridgeTool"] = () {
         auto t = new BridgeTool(() => &mesh(), &gpu(), litShader, &editMode());
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
     reg.commandFactories["mesh.bridgeTool"] = () => cast(Command)
@@ -737,7 +737,7 @@ private void registerEditTools(EditorApp app) {
     // entry per completed gesture. Gated to Vertices mode.
     reg.toolFactories["mesh.dragWeld"] = () {
         auto t = new DragWeldTool(() => &mesh(), &gpu(), litShader);
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
 
@@ -758,7 +758,7 @@ private void registerEditTools(EditorApp app) {
     // Gated to Polygons mode by PolyExtrudeTool.supportedModes().
     reg.toolFactories["poly.extrude"] = () {
         auto t = new PolyExtrudeTool(() => &mesh(), &gpu(), &editMode(), litShader);
-        t.setUndoBindings(history, polyExtrudeEditFactory);
+        t.setGestureBindings(history, polyExtrudeEditFactory);
         return cast(Tool)t;
     };
 
@@ -804,7 +804,7 @@ private void registerEditTools(EditorApp app) {
     // tool: reuses bevelEditFactory (MeshSessionEdit snapshot undo). Gated to Polygons.
     reg.toolFactories["poly.bevel"] = () {
         auto t = new PolyBevelTool(() => &mesh(), &gpu(), &editMode(), litShader);
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
     // Polygon Inset — interactive (task 0359 promotion of the one-shot
@@ -815,7 +815,7 @@ private void registerEditTools(EditorApp app) {
     // above. Gated to Polygons.
     reg.toolFactories["mesh.polyInsetTool"] = () {
         auto t = new PolyInsetTool(() => &mesh(), &gpu(), &editMode(), litShader);
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
 
@@ -853,7 +853,7 @@ private void registerEditTools(EditorApp app) {
     // reuses bevelEditFactory (MeshSessionEdit snapshot undo). Gated to Edges mode.
     reg.toolFactories["edge.bevel"] = () {
         auto t = new EdgeBevelTool(() => &mesh(), &gpu(), &editMode(), litShader);
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
 
@@ -866,7 +866,7 @@ private void registerEditTools(EditorApp app) {
     // mesh.mirrorTool elsewhere in this file. Gated to Vertices mode.
     reg.toolFactories["mesh.vertexBevel"] = () {
         auto t = new VertexBevelTool(() => &mesh(), &gpu(), &editMode(), litShader);
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
 
@@ -878,7 +878,7 @@ private void registerEditTools(EditorApp app) {
     // mesh.vertexBevel above). Gated to Vertices mode.
     reg.toolFactories["mesh.vertexExtrude"] = () {
         auto t = new VertexExtrudeTool(() => &mesh(), &gpu(), &editMode(), litShader);
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
 
@@ -890,7 +890,7 @@ private void registerEditTools(EditorApp app) {
     // tools/vert_merge_tool.d's doc-comment). Gated to Vertices mode.
     reg.toolFactories["vert.merge"] = () {
         auto t = new VertexMergeTool(() => &mesh(), &gpu(), &editMode(), litShader);
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
 
@@ -935,7 +935,7 @@ private void registerEditTools(EditorApp app) {
     // Gated to Polygons mode (whole-mesh op, but surfaced in polygon mode).
     reg.toolFactories["mesh.reduceTool"] = () {
         auto t = new ReductionTool(() => &mesh(), &gpu(), &editMode(), litShader);
-        t.setUndoBindings(history, reduceEditFactory);
+        t.setGestureBindings(history, reduceEditFactory);
         return cast(Tool)t;
     };
 

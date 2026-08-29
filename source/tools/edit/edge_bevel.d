@@ -25,8 +25,6 @@ import std.math : abs, sqrt;
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
 
-alias EdgeBevelEditFactory = MeshSessionEdit delegate();
-
 // ---------------------------------------------------------------------------
 // EdgeBevelTool — interactive Edge Bevel (factory id `edge.bevel`).
 //
@@ -46,9 +44,6 @@ private:
     GpuMesh*         gpu;
     EditMode*        editMode;
     LitShader        litShader;
-
-
-    EdgeBevelEditFactory factory;
 
     float width_      = 0.0f;
     int   roundLevel_ = 0;
@@ -97,11 +92,6 @@ public:
 
     void destroy() {
         if (widthArrow !is null) widthArrow.destroy();
-    }
-
-    void setUndoBindings(CommandHistory h, EdgeBevelEditFactory f) {
-        this.history = h;
-        this.factory = f;
     }
 
     override string name() const { return "Edge Bevel"; }
@@ -411,12 +401,13 @@ private:
     }
 
     void commitEdit() {
-        if (history is null || factory is null) return;
+        if (history is null || gestureFactory is null) return;
         if (!before.filled) return;
-        auto cmd  = factory();
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(before, post, "Edge Bevel");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     void cancelLiveEdit() {

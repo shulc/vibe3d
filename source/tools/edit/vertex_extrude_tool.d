@@ -23,10 +23,6 @@ import std.math : abs, sqrt;
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
 
-// Reuses the generic before/after-snapshot record command (MeshSessionEdit),
-// same as tools/poly_bevel.d and tools/vertex_bevel_tool.d.
-alias VertexExtrudeEditFactory = MeshSessionEdit delegate();
-
 // ---------------------------------------------------------------------------
 // VertexExtrudeTool — interactive Vertex Extrude (factory id
 // `mesh.vertexExtrude`, task 0360 promotion of the one-shot
@@ -63,9 +59,6 @@ private:
     GpuMesh*         gpu;
     EditMode*        editMode;
     LitShader        litShader;
-
-
-    VertexExtrudeEditFactory factory;
 
     float shift_ = 0.0f;
     float width_ = 0.0f;
@@ -109,11 +102,6 @@ public:
     void destroy() {
         if (shiftArrow !is null) shiftArrow.destroy();
         if (widthArrow !is null) widthArrow.destroy();
-    }
-
-    void setUndoBindings(CommandHistory h, VertexExtrudeEditFactory f) {
-        this.history = h;
-        this.factory = f;
     }
 
     override string name() const { return "Vertex Extrude"; }
@@ -362,12 +350,13 @@ private:
     }
 
     void commitEdit() {
-        if (history is null || factory is null) return;
+        if (history is null || gestureFactory is null) return;
         if (!before.filled) return;
-        auto cmd  = factory();
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(before, post, "Vertex Extrude");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     void cancelLiveEdit() {

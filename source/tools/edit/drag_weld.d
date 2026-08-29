@@ -14,8 +14,6 @@ import display_sync : refreshDisplay;
 import editmode : EditMode;
 import operator : VectorStack;
 
-alias VertexEditFactory = MeshSessionEdit delegate();
-
 // Pixel pick radius for DragWeldTool source/target vertex selection.
 // A vertex must project within this many pixels of the mouse to be
 // considered a candidate. vibe3d-divergence: reference snap radius not
@@ -52,9 +50,6 @@ private:
     GpuMesh*         gpu_;
     LitShader        litShader_;
 
-
-    VertexEditFactory factory_;
-
     // The WORLD-space viewport `draw()` was handed. Named `vpWorld_` (task
     // 0619) so a use that needs the AIMING space — layer-local geometry
     // projected through the item transform — cannot pick this up by
@@ -71,11 +66,6 @@ public:
         this.meshSrc_   = meshSrc;
         this.gpu_       = gpu;
         this.litShader_ = litShader;
-    }
-
-    void setUndoBindings(CommandHistory h, VertexEditFactory f) {
-        history = h;
-        factory_ = f;
     }
 
     override string name() const { return "Drag Weld"; }
@@ -181,11 +171,19 @@ public:
         gpu_.upload(*mesh);
 
         // Record one snapshot-undo entry per completed gesture.
-        if (history !is null && factory_ !is null && pre.filled) {
-            auto cmd  = factory_();
-            auto post = MeshSnapshot.capture(*mesh);
-            cmd.setSnapshots(pre, post, "Weld Vertices");
-            history.record(cmd);
+        if (history !is null && gestureFactory !is null && pre.filled) {
+            // The ONE G4 record INLINED in an event handler rather than in a
+            // commit body — the gesture ends with the button, so there is no
+            // later `deactivate` to write from. The refusal is an `else`, not
+            // an early return: the handler still owes its caller the selection
+            // sync and the display refresh below.
+            auto cmd = cast(MeshSessionEdit) gestureFactory();
+            if (cmd is null) noteGestureCarrierMismatch();
+            else {
+                auto post = MeshSnapshot.capture(*mesh);
+                cmd.setSnapshots(pre, post, "Weld Vertices");
+                recordGestureEdit(cmd, GestureRecordMode.Plain);
+            }
         }
 
         // Refresh selection / picking caches (mirrors vertex_place.d:174-187).

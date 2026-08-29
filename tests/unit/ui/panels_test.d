@@ -79,7 +79,7 @@ import tools.edit.reduce : ReductionTool;
 import tools.alignment.clone_tool : CloneTool;
 import tools.alignment.array_tool : ArrayTool;
 import tools.edit.tack : TackTool;
-import tools.edit.bridge_tool : BridgeTool, BridgeEditFactory;
+import tools.edit.bridge_tool : BridgeTool;
 import tools.edit.vert_merge_tool : VertexMergeTool;
 import tools.edit.vertex_bevel_tool : VertexBevelTool;
 import tools.edit.vertex_extrude_tool : VertexExtrudeTool;

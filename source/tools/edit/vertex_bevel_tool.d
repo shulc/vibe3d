@@ -23,13 +23,6 @@ import std.math : abs, sqrt;
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
 
-// Reuses the generic before/after-snapshot record command (MeshSessionEdit),
-// same as tools/edge_bevel.d and tools/poly_bevel.d — see those modules'
-// comments. The undo LABEL is set per-session via setSnapshots(...,
-// "Vertex Bevel"), so the history entry reads distinctly even though the
-// underlying command class name stays "mesh.bevel_edit".
-alias VertexBevelEditFactory = MeshSessionEdit delegate();
-
 // ---------------------------------------------------------------------------
 // VertexBevelTool — interactive Vertex Bevel (factory id `mesh.vertexBevel`,
 // task 0360 promotion of the one-shot `mesh.vertexBevel` command).
@@ -74,9 +67,6 @@ private:
     EditMode*        editMode;
     LitShader        litShader;
 
-
-    VertexBevelEditFactory  factory;
-
     float inset_ = 0.0f;
 
     bool         active;
@@ -112,11 +102,6 @@ public:
 
     void destroy() {
         if (insetArrow !is null) insetArrow.destroy();
-    }
-
-    void setUndoBindings(CommandHistory h, VertexBevelEditFactory f) {
-        this.history = h;
-        this.factory = f;
     }
 
     override string name() const { return "Vertex Bevel"; }
@@ -376,12 +361,13 @@ private:
     }
 
     void commitEdit() {
-        if (history is null || factory is null) return;
+        if (history is null || gestureFactory is null) return;
         if (!before.filled) return;
-        auto cmd  = factory();
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(before, post, "Vertex Bevel");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     void cancelLiveEdit() {

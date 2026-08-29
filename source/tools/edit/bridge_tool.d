@@ -19,12 +19,6 @@ import std.json : JSONValue;
 
 version (unittest) import std.conv : to;
 
-// Reuses the same generic (pre, post) MeshSnapshot pair as Mirror/Tack
-// (MeshSessionEdit / bevelEditFactory) — see tools/mirror.d's
-// MirrorEditFactory doc comment. Despite the name, it's a fully generic
-// snapshot-diff undo command, not bevel-specific.
-alias BridgeEditFactory = MeshSessionEdit delegate();
-
 // ---------------------------------------------------------------------------
 // BridgeParams — single source of truth for the Bridge tool (task 0357),
 // mirrors MirrorParams / TackParams. Every drag / panel edit / headless
@@ -239,7 +233,6 @@ private:
     LitShader        litShader;
     EditMode*        editModePtr;
 
-    BridgeEditFactory  bridgeEditFactory;
 
     BridgeParams params_;
 
@@ -304,11 +297,6 @@ public:
     }
 
     void destroy() {}
-
-    void setUndoBindings(CommandHistory h, BridgeEditFactory factory) {
-        this.history           = h;
-        this.bridgeEditFactory = factory;
-    }
 
     override string name() const { return "Bridge"; }
 
@@ -404,11 +392,12 @@ public:
     }
 
     private void commitBridgeEdit(MeshSnapshot pre) {
-        if (history is null || bridgeEditFactory is null) return;
-        auto cmd  = bridgeEditFactory();
+        if (history is null || gestureFactory is null) return;
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(pre, post, "Bridge");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     // ----- Params / panel ----------------------------------------------

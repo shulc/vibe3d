@@ -18,8 +18,6 @@ import mesh_edit_delta : MeshEditScope;
 import std.math : lround;
 import perf_probe : g_perf, Cat;
 
-alias MeshReduceEditFactory = MeshSessionEdit delegate();
-
 // ---------------------------------------------------------------------------
 // ReductionTool — interactive polygon reduction (factory id `mesh.reduceTool`).
 //
@@ -45,9 +43,6 @@ private:
     EditMode*        editMode;
     LitShader        litShader;
 
-
-    MeshReduceEditFactory factory;
-
     float ratio_  = 0.5f;
     bool  pb_     = true;
 
@@ -61,11 +56,6 @@ public:
         this.gpu       = gpu;
         this.editMode  = editMode;
         this.litShader = litShader;
-    }
-
-    void setUndoBindings(CommandHistory h, MeshReduceEditFactory f) {
-        this.history = h;
-        this.factory = f;
     }
 
     override string name() const { return "mesh.reduceTool"; }
@@ -218,11 +208,12 @@ private:
 
     // Record the interactive session as one snapshot-pair undo entry.
     void commitEdit() {
-        if (history is null || factory is null) return;
+        if (history is null || gestureFactory is null) return;
         if (!before.filled) return;
-        auto cmd  = factory();
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(before, post, "Reduce");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 }

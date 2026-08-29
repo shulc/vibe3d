@@ -25,8 +25,6 @@ import std.math : abs, sqrt;
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
 
-alias PolyBevelEditFactory = MeshSessionEdit delegate();
-
 // ---------------------------------------------------------------------------
 // PolyBevelTool — interactive Polygon Bevel (factory id `poly.bevel`).
 //
@@ -47,9 +45,6 @@ private:
     GpuMesh*         gpu;
     EditMode*        editMode;
     LitShader        litShader;
-
-
-    PolyBevelEditFactory factory;
 
     float inset_    = 0.0f;
     float shift_    = 0.0f;
@@ -112,11 +107,6 @@ public:
     void destroy() {
         if (shiftArrow !is null) shiftArrow.destroy();
         if (insetArrow !is null) insetArrow.destroy();
-    }
-
-    void setUndoBindings(CommandHistory h, PolyBevelEditFactory f) {
-        this.history = h;
-        this.factory = f;
     }
 
     override string name() const { return "Poly Bevel"; }
@@ -495,12 +485,13 @@ private:
     }
 
     void commitEdit() {
-        if (history is null || factory is null) return;
+        if (history is null || gestureFactory is null) return;
         if (!before.filled) return;
-        auto cmd  = factory();
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(before, post, "Poly Bevel");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     void cancelLiveEdit() {

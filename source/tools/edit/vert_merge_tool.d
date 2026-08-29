@@ -18,12 +18,6 @@ import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import perf_probe : g_perf, Cat;
 
-// Reuses the generic before/after-snapshot record command (MeshSessionEdit),
-// same as tools/poly_inset_tool.d / tools/mirror.d / tools/tack.d — see
-// those modules' comments. The undo LABEL is set per-session via
-// setSnapshots(..., "Merge Vertices").
-alias VertMergeEditFactory = MeshSessionEdit delegate();
-
 // ---------------------------------------------------------------------------
 // VertexMergeTool — interactive Vertex Merge (factory id `vert.merge`,
 // task 0360 promotion of the one-shot `vert.merge` command).
@@ -69,9 +63,6 @@ private:
     EditMode*        editMode;
     LitShader        litShader;
 
-
-    VertMergeEditFactory factory;
-
     // Reference default (task 0360 toolcard: live-confirmed bit-exact
     // 1mm), matching vibe3d's pre-existing one-shot command default
     // (dist_ = 0.001f).
@@ -98,11 +89,6 @@ public:
         this.gpu       = gpu;
         this.editMode  = editMode;
         this.litShader = litShader;
-    }
-
-    void setUndoBindings(CommandHistory h, VertMergeEditFactory f) {
-        this.history = h;
-        this.factory = f;
     }
 
     override string name() const { return "Vertex Merge"; }
@@ -269,12 +255,13 @@ private:
     }
 
     void commitEdit() {
-        if (history is null || factory is null) return;
+        if (history is null || gestureFactory is null) return;
         if (!before.filled) return;
-        auto cmd  = factory();
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(before, post, "Merge Vertices");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     void cancelLiveEdit() {

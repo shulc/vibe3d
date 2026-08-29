@@ -17,13 +17,6 @@ import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import perf_probe : g_perf, Cat;
 
-// Reuses the generic before/after-snapshot record command (MeshSessionEdit),
-// same as tools/mirror.d and tools/tack.d — see those modules' comments.
-// The undo LABEL is set per-session via setSnapshots(..., "Inset"), so the
-// history entry reads "Inset" even though the underlying command class name
-// stays "mesh.bevel_edit".
-alias PolyInsetEditFactory = MeshSessionEdit delegate();
-
 // ---------------------------------------------------------------------------
 // PolyInsetTool — interactive Polygon Inset (factory id `mesh.polyInsetTool`,
 // task 0359 promotion of the one-shot `mesh.poly_inset` command).
@@ -75,9 +68,6 @@ private:
     EditMode*        editMode;
     LitShader        litShader;
 
-
-    PolyInsetEditFactory   factory;
-
     // Reference default (task 0359 toolcard: bit-exact 0.0). Deliberately
     // NOT changed to a safe non-zero value like the one-shot command
     // (commands/mesh/poly_inset.d) — this 0.0 is only ever a TRANSIENT
@@ -109,11 +99,6 @@ public:
         this.gpu       = gpu;
         this.editMode  = editMode;
         this.litShader = litShader;
-    }
-
-    void setUndoBindings(CommandHistory h, PolyInsetEditFactory f) {
-        this.history = h;
-        this.factory = f;
     }
 
     override string name() const { return "Polygon Inset"; }
@@ -320,12 +305,13 @@ private:
     }
 
     void commitEdit() {
-        if (history is null || factory is null) return;
+        if (history is null || gestureFactory is null) return;
         if (!before.filled) return;
-        auto cmd  = factory();
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(before, post, "Inset");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     void cancelLiveEdit() {

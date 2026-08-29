@@ -21,11 +21,6 @@ import document : primaryModelSpace;
 
 version (unittest) import std.conv : to;
 
-// Reuses the same generic (pre, post) MeshSnapshot pair as Mirror/Box
-// (MeshSessionEdit / bevelEditFactory) — see tools/mirror.d's
-// MirrorEditFactory doc comment.
-alias TackEditFactory = MeshSessionEdit delegate();
-
 // ---------------------------------------------------------------------------
 // computeTackTransform / applyTackTransform — the captured alignment rule
 // (task 0126, doc/tack_tool_plan.md "Phase-0 CAPTURE RESULTS", RFB-injection
@@ -204,7 +199,6 @@ private:
     GpuMesh*  gpu;
     LitShader litShader;
 
-    TackEditFactory tackEditFactory;
 
     TackParams params_;
 
@@ -244,11 +238,6 @@ public:
     }
 
     void destroy() {}
-
-    void setUndoBindings(CommandHistory h, TackEditFactory factory) {
-        this.history         = h;
-        this.tackEditFactory = factory;
-    }
 
     override string name() const { return "Tack"; }
 
@@ -440,10 +429,11 @@ public:
     }
 
     private void commitTackEdit(MeshSnapshot pre) {
-        if (history is null || tackEditFactory is null) return;
-        auto cmd  = tackEditFactory();
+        if (history is null || gestureFactory is null) return;
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(pre, post, "Tack");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 }

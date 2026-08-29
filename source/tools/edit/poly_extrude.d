@@ -23,10 +23,6 @@ import std.math : abs, sqrt;
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
 
-/// The interactive tool reuses the dedicated MeshSessionEdit record command
-/// (a before/after MeshSnapshot pair) — mirroring EdgeExtrudeTool's pattern.
-alias FaceExtrudeEditFactory = MeshSessionEdit delegate();
-
 // ---------------------------------------------------------------------------
 // PolyExtrudeTool — interactive Face Extrude (factory id `poly.extrude`).
 //
@@ -55,9 +51,6 @@ private:
     GpuMesh*         gpu;
     EditMode*        editMode;
     LitShader        litShader;
-
-
-    FaceExtrudeEditFactory factory;
 
     // Parameters.
     float distance_ = 0.0f;
@@ -102,12 +95,6 @@ public:
 
     void destroy() {
         if (extrudeArrow !is null) extrudeArrow.destroy();
-    }
-
-    /// Inject undo plumbing — called by app.d after construction.
-    void setUndoBindings(CommandHistory h, FaceExtrudeEditFactory f) {
-        this.history = h;
-        this.factory = f;
     }
 
     override string name() const { return "Face Extrude"; }
@@ -341,12 +328,13 @@ private:
     }
 
     void commitEdit() {
-        if (history is null || factory is null) return;
+        if (history is null || gestureFactory is null) return;
         if (!before.filled) return;
-        auto cmd  = factory();
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(before, post, "Face Extrude");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     void refreshCaches() {
