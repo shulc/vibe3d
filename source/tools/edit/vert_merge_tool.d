@@ -70,7 +70,6 @@ private:
     LitShader        litShader;
 
 
-    CommandHistory       history;
     VertMergeEditFactory factory;
 
     // Reference default (task 0360 toolcard: live-confirmed bit-exact

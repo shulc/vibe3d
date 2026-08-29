@@ -83,11 +83,6 @@ import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 
 import std.math : abs, sqrt;
 
-/// Shared snapshot-pair edit factory — every primitive create-tool uses the
-/// identical delegate signature (was duplicated per-tool as CylinderEditFactory
-/// / ConeEditFactory / ... / TorusEditFactory / TubeEditFactory).
-alias PrimitiveEditFactory = MeshSessionEdit delegate();
-
 // ---------------------------------------------------------------------------
 // PrimitiveCreateTool — infra shared by every primitive create-tool: mesh/
 // gpu/history plumbing, preview mesh + commit-on-deactivate, the mover
@@ -103,8 +98,6 @@ protected:
     GpuMesh*    gpu;
     LitShader   litShader;
 
-    CommandHistory      history;
-    PrimitiveEditFactory factory;
 
     Mesh    previewMesh;
     GpuMesh previewGpu;
@@ -158,11 +151,6 @@ public:
 
     void destroy() {
         mover.destroy();
-    }
-
-    void setUndoBindings(CommandHistory history, PrimitiveEditFactory factory) {
-        this.history = history;
-        this.factory = factory;
     }
 
     // ----- Points of extension (hook table, task 0414 plan sec 1) ----------
@@ -491,13 +479,18 @@ protected:
         gpu.upload(*mesh);
     }
 
+    // THE create family's ONE commit body — nine leaf tools share it (task
+    // 1905 G1). The record itself is the base seam's; what stays here is what
+    // only this family knows: which carrier to fill, with which pair of
+    // snapshots, under which label.
     void commitEdit(MeshSnapshot pre) {
-        if (history is null || factory is null) return;
+        if (history is null || gestureFactory is null) return;
         if (!pre.filled) return;
-        auto cmd  = factory();
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(pre, post, commitLabel());
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     // ----- Mover-only grab/release/drag (tube uses these directly; --------

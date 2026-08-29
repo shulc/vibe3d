@@ -53,7 +53,6 @@ private:
     LitShader        litShader_;
 
 
-    CommandHistory    history_;
     VertexEditFactory factory_;
 
     // The WORLD-space viewport `draw()` was handed. Named `vpWorld_` (task
@@ -75,7 +74,7 @@ public:
     }
 
     void setUndoBindings(CommandHistory h, VertexEditFactory f) {
-        history_ = h;
+        history = h;
         factory_ = f;
     }
 
@@ -182,11 +181,11 @@ public:
         gpu_.upload(*mesh);
 
         // Record one snapshot-undo entry per completed gesture.
-        if (history_ !is null && factory_ !is null && pre.filled) {
+        if (history !is null && factory_ !is null && pre.filled) {
             auto cmd  = factory_();
             auto post = MeshSnapshot.capture(*mesh);
             cmd.setSnapshots(pre, post, "Weld Vertices");
-            history_.record(cmd);
+            history.record(cmd);
         }
 
         // Refresh selection / picking caches (mirrors vertex_place.d:174-187).

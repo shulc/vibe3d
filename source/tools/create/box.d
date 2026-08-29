@@ -16,6 +16,7 @@ import shader : Shader, LitShader, drawLitPreview;
 import command : Command, CmdFlags;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
+import commands.mesh.gesture_payload : GesturePayload;
 import snapshot : MeshSnapshot;
 import tools.create.create_common : pickWorkplane, BuildPlane,
                               pickWorkplaneFrame, WorkplaneFrame,
@@ -33,13 +34,6 @@ import ImGui = d_imgui;
 import d_imgui.imgui_h;
 
 import std.math : abs, sqrt, sin, cos, PI;
-
-// Reuses the generic session-edit command — both tools record a (pre, post)
-// MeshSnapshot pair via MeshSessionEdit, just with a different label. (This
-// alias predates MeshSessionEdit: the class used to be bevel-named for
-// legacy reasons with a "rename once a third caller appears" TODO — task
-// 0408 / campaign 0407 §A.D1 completed that rename.)
-alias BoxEditFactory = MeshSessionEdit delegate();
 
 // Task 0719 (T8) — the mesh GENERATORS (`BoxParams` plus the cuboid /
 // rounded-cube / rounded-plane builders) moved to `mesh_ops/box_geom.d`;
@@ -191,8 +185,6 @@ private:
     // in deactivate() right before commitBase / commitCuboid mutates the
     // cage; post-state is captured immediately after, and one
     // MeshSessionEdit lands on history. Both nullable for legacy / tests.
-    CommandHistory  history;
-    BoxEditFactory  boxEditFactory;
 
     bool     liveRunActive;
     int      liveUndoDepth;
@@ -226,13 +218,6 @@ public:
         mover.destroy();
         foreach (h; edgeH) h.destroy();
         foreach (h; heightH) h.destroy();
-    }
-
-    /// Inject undo plumbing — called by app.d after construction.
-    /// commitBoxEdit() is a no-op when these aren't bound.
-    void setUndoBindings(CommandHistory h, BoxEditFactory factory) {
-        this.history        = h;
-        this.boxEditFactory = factory;
     }
 
     override string name() const { return "Box"; }
@@ -324,16 +309,24 @@ public:
         resetTransientDragState();
     }
 
+    // THE ONE TOOL IN THE TREE THAT WALKS ALL THREE RECORD MODES, which is why
+    // it is group G1's flagship: `ReplaceRunTail` here, `InSession` in
+    // `recordLiveEdit`, `Plain` on the branch below. The fork is on the tool's
+    // OWN `liveRunActive` flag — not on `history.runOpen()` — and it has to
+    // stay that way: `ensureLiveRun` calls `nextRun()`, which does NOT raise
+    // `_runOpen`, so a mode derived from history state could never pick either
+    // in-session arm (task 1905, D11's impossibility argument).
     private void commitBoxEdit(MeshSnapshot pre) {
-        if (history is null || boxEditFactory is null) return;
+        if (history is null || gestureFactory is null) return;
         if (!pre.filled) return;
-        auto cmd  = boxEditFactory();
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(pre, post, "Create Box");
         if (liveRunActive)
-            history.replaceInSessionTailWith(history.currentRunId, cmd);
+            recordGestureEdit(cmd, GestureRecordMode.ReplaceRunTail);
         else
-            history.record(cmd);
+            recordGestureEdit(cmd, GestureRecordMode.Plain);
         clearLiveEditTracking();
     }
 
@@ -961,6 +954,16 @@ private:
         return as == bs && a == b;
     }
 
+    // The FOURTH payload form: a parametric tool-state edit, built by
+    // constructor from this tool's own fields — neither a snapshot pair nor a
+    // vertex delta, and reachable from a factory closure by no spelling at
+    // all. It is the reason the seam takes a FILLED command (task 1905, Б2).
+    //
+    // The `sameLiveEdit` early return stays AHEAD of `ensureLiveRun()` and is
+    // not delegated to the recorder's belt: it also guards the run-opening and
+    // the ladder counter, which the belt knows nothing about. The belt is a
+    // second line behind it, and `BoxLiveEditCommand.hasGesturePayload()` is
+    // the same comparison, so the two cannot disagree.
     void recordLiveEdit(BoxParams before, BoxState beforeState,
                         BoxParams after, BoxState afterState) {
         if (history is null) return;
@@ -968,8 +971,13 @@ private:
         ensureLiveRun();
         if (!liveRunActive) return;
         auto cmd = new BoxLiveEditCommand(this, before, beforeState, after, afterState);
-        history.recordInSession(cmd, history.currentRunId);
-        ++liveUndoDepth;
+        // The ladder counter follows the record: if the belt ever refused, an
+        // unconditional `++` would leave `liveUndoDepth` one step ahead of the
+        // stack and the interactive undo ladder would pop an entry that is not
+        // there. Unreachable today (the guard above already returned), and
+        // written this way so it stays unreachable rather than merely unlikely.
+        if (recordGestureEdit(cmd, GestureRecordMode.InSession))
+            ++liveUndoDepth;
     }
 
     void captureLiveDragStart() {
@@ -1519,7 +1527,7 @@ private:
     }
 }
 
-private final class BoxLiveEditCommand : Command {
+private final class BoxLiveEditCommand : Command, GesturePayload {
 private:
     BoxTool tool_;
     BoxParams before_;
@@ -1540,6 +1548,13 @@ public:
         // constructor just took, and the tool pushes this straight to
         // `history.record(cmd)` without ever calling `apply()`.
         noteUndoRecorded();
+    }
+
+    /// GesturePayload (task 1905) — the same comparison `BoxTool.sameLiveEdit`
+    /// makes before it opens a live run. "Nothing to roll back" for this
+    /// carrier is not an empty array; it is a before/after pair that is equal.
+    override bool hasGesturePayload() const {
+        return !(before_ == after_ && beforeState_ == afterState_);
     }
 
     override string name() const { return "prim.cube.live"; }

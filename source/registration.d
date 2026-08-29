@@ -623,7 +623,7 @@ private void registerPrimitiveTools(EditorApp app) {
 
     reg.toolFactories["prim.cube"] = () {
         auto t = new BoxTool(() => &mesh(), &gpu(), litShader);
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
     reg.commandFactories["prim.cube"] = () => cast(Command)
@@ -632,7 +632,7 @@ private void registerPrimitiveTools(EditorApp app) {
 
     reg.toolFactories["prim.sphere"] = () {
         auto t = new SphereTool(() => &mesh(), &gpu(), litShader);
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
     reg.commandFactories["prim.sphere"] = () => cast(Command)
@@ -641,7 +641,7 @@ private void registerPrimitiveTools(EditorApp app) {
 
     reg.toolFactories["prim.ellipsoid"] = () {
         auto t = new SphereTool(() => &mesh(), &gpu(), litShader, /*ellipsoidMode=*/true);
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
     reg.commandFactories["prim.ellipsoid"] = () => cast(Command)
@@ -650,7 +650,7 @@ private void registerPrimitiveTools(EditorApp app) {
 
     reg.toolFactories["prim.cylinder"] = () {
         auto t = new CylinderTool(() => &mesh(), &gpu(), litShader);
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
     reg.commandFactories["prim.cylinder"] = () => cast(Command)
@@ -659,7 +659,7 @@ private void registerPrimitiveTools(EditorApp app) {
 
     reg.toolFactories["prim.tube"] = () {
         auto t = new TubeTool(() => &mesh(), &gpu(), litShader);
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
     reg.commandFactories["prim.tube"] = () => cast(Command)
@@ -668,7 +668,7 @@ private void registerPrimitiveTools(EditorApp app) {
 
     reg.toolFactories["prim.cone"] = () {
         auto t = new ConeTool(() => &mesh(), &gpu(), litShader);
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
     reg.commandFactories["prim.cone"] = () => cast(Command)
@@ -677,7 +677,7 @@ private void registerPrimitiveTools(EditorApp app) {
 
     reg.toolFactories["prim.capsule"] = () {
         auto t = new CapsuleTool(() => &mesh(), &gpu(), litShader);
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
     reg.commandFactories["prim.capsule"] = () => cast(Command)
@@ -686,7 +686,7 @@ private void registerPrimitiveTools(EditorApp app) {
 
     reg.toolFactories["prim.torus"] = () {
         auto t = new TorusTool(() => &mesh(), &gpu(), litShader);
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
     reg.commandFactories["prim.torus"] = () => cast(Command)
@@ -695,7 +695,7 @@ private void registerPrimitiveTools(EditorApp app) {
 
     reg.toolFactories["prim.arc"] = () {
         auto t = new ArcTool(() => &mesh(), &gpu(), litShader);
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
     reg.commandFactories["prim.arc"] = () => cast(Command)
@@ -706,7 +706,7 @@ private void registerPrimitiveTools(EditorApp app) {
     // only; no commandFactories entry. See doc/pen_plan.md.
     reg.toolFactories["pen"] = () {
         auto t = new PenTool(() => &mesh(), &gpu(), litShader);
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
 
@@ -715,7 +715,7 @@ private void registerPrimitiveTools(EditorApp app) {
     // (task 0131).
     reg.toolFactories["prim.vertex"] = () {
         auto t = new VertexTool(() => &mesh(), &gpu(), litShader);
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
     }
@@ -748,7 +748,7 @@ private void registerEditTools(EditorApp app) {
     // EdgeExtrudeTool.supportedModes().
     reg.toolFactories["edge.extrude"] = () {
         auto t = new EdgeExtrudeTool(() => &mesh(), &gpu(), &editMode(), litShader);
-        t.setUndoBindings(history, edgeExtrudeEditFactory);
+        t.setGestureBindings(history, edgeExtrudeEditFactory);
         return cast(Tool)t;
     };
 
@@ -795,7 +795,7 @@ private void registerEditTools(EditorApp app) {
     // (MeshSessionEdit). Gated to Edges mode by EdgeExtendTool.supportedModes().
     reg.toolFactories["edge.extend"] = () {
         auto t = new EdgeExtendTool(() => &mesh(), &gpu(), &editMode(), litShader);
-        t.setUndoBindings(history, edgeExtendEditFactory);
+        t.setGestureBindings(history, edgeExtendEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
         return cast(Tool)t;
     };
@@ -831,9 +831,21 @@ private void registerEditTools(EditorApp app) {
         t.setUndoBindings(history, smoothShiftEditFactory);
         return cast(Tool)t;
     };
+    // TASK 1905 G1 — `vxEditFactory` is bound at FOURTEEN sites and this is the
+    // only one that has moved to the base seam; the other thirteen are the
+    // transform zone, still on their own `setUndoBindings` overload. So one
+    // factory now feeds TWO binding interfaces at once. That is legal (the
+    // parameter types differ, the overloads are distinct) and it is also
+    // exactly the site where "unify the factory alias" looks tempting and
+    // silently RE-TYPES the transform tools: `VertexEditFactory` is one name
+    // for two different delegate types in this tree (`MeshSessionEdit
+    // delegate()` in two tool modules, `MeshVertexEdit delegate()` in two
+    // others), and a factory called through `factory_()` with no named type in
+    // the body keeps compiling after the swap. The split is resolved when the
+    // app-level factory closures collapse (group G8), not before.
     reg.toolFactories["xfrm.magnet"] = () {
         auto t = new MagnetTool(() => &mesh(), &gpu(), &editMode());
-        t.setUndoBindings(history, vxEditFactory);
+        t.setGestureBindings(history, vxEditFactory);
         return cast(Tool)t;
     };
 

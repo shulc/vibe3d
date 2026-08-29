@@ -115,7 +115,6 @@ private:
     LitShader        litShader;
 
 
-    CommandHistory       history;
     EdgeSliceEditFactory factory;
 
     // Panel params (sticky — NOT reset by reinitSession/activate, matching

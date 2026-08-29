@@ -29,9 +29,12 @@ alias VertexNewFactory = MeshVertexNew delegate();
 
 /// Factory the tool calls ONCE PER BUILD GESTURE to obtain a fresh,
 /// primary-bound `MeshSessionEdit` (P3, doc/topopen_p3_plan.md) — the
-/// generic before/after-snapshot undo command (`tools.create.pen`'s
-/// `PenEditFactory` shape, same idiom as every other interactive tool's
-/// `bevelEditFactory`). Binding happens at CALL time, so the build's undo
+/// generic before/after-snapshot undo command — the same idiom as every
+/// other interactive tool's `bevelEditFactory`. (The pen's own
+/// `PenEditFactory` alias it used to be named after is gone as of task 1905
+/// phase B; the create family binds through `Tool.setGestureBindings`, whose
+/// parameter is a plain `Command delegate()`. The pen's thirteen factories
+/// migrate with group G7.) Binding happens at CALL time, so the build's undo
 /// entry targets whichever layer is primary when the gesture commits.
 alias TopoPenBuildFactory = MeshSessionEdit delegate();
 

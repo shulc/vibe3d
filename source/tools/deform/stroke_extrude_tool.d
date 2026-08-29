@@ -82,7 +82,6 @@ private:
     LitShader        litShader;
 
 
-    CommandHistory           history;
     StrokeExtrudeEditFactory factory;
 
     // Params — captured defaults (see class doc comment).

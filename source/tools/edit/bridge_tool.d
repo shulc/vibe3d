@@ -239,7 +239,6 @@ private:
     LitShader        litShader;
     EditMode*        editModePtr;
 
-    CommandHistory     history;
     BridgeEditFactory  bridgeEditFactory;
 
     BridgeParams params_;

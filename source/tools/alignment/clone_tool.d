@@ -51,7 +51,6 @@ private:
     GpuMesh*         gpu;
     EditMode*        editMode;
 
-    CommandHistory       history;
     MeshCloneEditFactory factory;
 
     bool         active;

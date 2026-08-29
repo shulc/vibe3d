@@ -57,7 +57,6 @@ private:
     LitShader        litShader;
 
 
-    CommandHistory         history;
     FaceExtrudeEditFactory factory;
 
     // Parameters.

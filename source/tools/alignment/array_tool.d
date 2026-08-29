@@ -94,7 +94,6 @@ private:
     EditMode*        editMode;
 
 
-    CommandHistory     history;
     ArrayEditFactory   factory;
 
     // Source (Clone Effector "Source" enum) — only Active is functional,

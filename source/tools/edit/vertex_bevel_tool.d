@@ -75,7 +75,6 @@ private:
     LitShader        litShader;
 
 
-    CommandHistory          history;
     VertexBevelEditFactory  factory;
 
     float inset_ = 0.0f;

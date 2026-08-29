@@ -284,7 +284,6 @@ private:
     // drag / param edit / headless attr write).
     bool engaged;
 
-    CommandHistory         history;
     RadialSweepEditFactory editFactory;
 
     // ----- Handles: 0 = axis start point, 1 = axis end point (drag either

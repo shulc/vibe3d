@@ -23,8 +23,6 @@ import document : primaryModelSpace;
 import std.math : sqrt;
 import perf_probe : g_perf, Cat;
 
-alias MeshVertexEditFactory = MeshVertexEdit delegate();
-
 /// Convergent attraction deformer tool (`xfrm.magnet`).
 ///
 /// Workflow:
@@ -46,8 +44,6 @@ private:
     EditMode*        editMode;
 
 
-    CommandHistory        history;
-    MeshVertexEditFactory factory;
 
     // Gesture state.
     bool         active;
@@ -96,11 +92,6 @@ public:
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
-    }
-
-    void setUndoBindings(CommandHistory h, MeshVertexEditFactory f) {
-        this.history = h;
-        this.factory = f;
     }
 
     override string name() const { return "Magnet"; }
@@ -304,7 +295,7 @@ private:
     }
 
     void commitEdit() {
-        if (history is null || factory is null) return;
+        if (history is null || gestureFactory is null) return;
         if (!built || touchedIdx_.length == 0) return;
         // ... and the document mesh must still be the one those indices came
         // from. Without this the read below indexed a mesh a scene reset had
@@ -320,9 +311,14 @@ private:
         after.length = touchedIdx_.length;
         foreach (k; 0 .. touchedIdx_.length)
             after[k] = mesh.vertices[touchedIdx_[k]];
-        auto cmd = factory();
+        // The ONE non-wrapper tool on the vertex-delta carrier: `setEdit` is a
+        // THIRD install form, expressible by neither of the snapshot spellings
+        // — which is why the seam takes a FILLED command rather than an
+        // installer set (task 1905, round 2 / Б2).
+        auto cmd = cast(MeshVertexEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
         cmd.setEdit(touchedIdx_.dup, touchedPrev_.dup, after, "Magnet");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
         built               = false;
         touchedIdx_.length  = 0;
         touchedPrev_.length = 0;

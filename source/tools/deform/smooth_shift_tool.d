@@ -84,7 +84,6 @@ private:
     LitShader        litShader;
 
 
-    CommandHistory         history;
     SmoothShiftEditFactory factory;
 
     // Params — captured defaults (task 0358 toolcard, live panel reads):

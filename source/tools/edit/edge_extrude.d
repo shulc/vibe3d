@@ -25,13 +25,12 @@ import std.math : abs, sqrt;
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
 
-/// The interactive tool reuses the dedicated MeshSessionEdit record
-/// command (a before/after MeshSnapshot pair) — analogous to how BoxTool
-/// reuses MeshSessionEdit via `alias BoxEditFactory = MeshSessionEdit delegate();`.
-/// A dedicated class (rather than reusing the bevel edit) keeps the undo label
-/// reading "Edge Extrude".
-alias EdgeExtrudeEditFactory = MeshSessionEdit delegate();
-
+/// The interactive tool records into `MeshSessionEdit` — a before/after
+/// `MeshSnapshot` pair, or an operation-log `MeshEditDelta` — with the label
+/// reading "Edge Extrude". Its `EdgeExtrudeEditFactory` alias is gone as of
+/// task 1905 phase B (as are `BoxEditFactory` and the rest of the create
+/// family's): the carrier is built through `Tool.gestureFactory`, a plain
+/// `Command delegate()`, and this file downcasts to the class it fills.
 // ---------------------------------------------------------------------------
 // EdgeExtrudeTool — interactive Edge Extrude (factory id `edge.extrude`).
 //
@@ -86,8 +85,6 @@ private:
     EditMode*        editMode;
     LitShader        litShader;
 
-    CommandHistory         history;
-    EdgeExtrudeEditFactory factory;
 
     // Parameters — exposed via params() so both the Tool Properties panel
     // and the headless tool.attr path write into them.
@@ -165,13 +162,6 @@ public:
     void destroy() {
         if (extrudeArrow !is null) extrudeArrow.destroy();
         if (widthArrow   !is null) widthArrow.destroy();
-    }
-
-    /// Inject undo plumbing — called by app.d after construction.
-    /// commitEdit() is a no-op when these aren't bound.
-    void setUndoBindings(CommandHistory h, EdgeExtrudeEditFactory f) {
-        this.history = h;
-        this.factory = f;
     }
 
     override string name() const { return "Edge Extrude"; }
@@ -559,9 +549,10 @@ private:
     }
 
     void commitEdit() {
-        if (history is null || factory is null) return;
+        if (history is null || gestureFactory is null) return;
         if (!before.filled) return;
-        auto cmd = factory();
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
 
         // Delta path. Re-run the kernel ONCE inside a Mesh edit batch so the
         // committed extrude self-records an operation-log delta. This adds one
@@ -605,7 +596,7 @@ private:
 
         if (!delta.isEmpty) {
             cmd.setDelta(delta, "Edge Extrude");
-            history.record(cmd);
+            recordGestureEdit(cmd, GestureRecordMode.Plain);
             return;
         }
 
@@ -636,7 +627,7 @@ private:
         // not leave it as it stands.
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(before, post, "Edge Extrude");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     void refreshCaches() {

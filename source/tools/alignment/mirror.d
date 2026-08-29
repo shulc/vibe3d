@@ -22,8 +22,11 @@ import eventlog : queryMouse;
 version (unittest) import std.conv : to;
 
 // Reuses the BevelTool factory type — a generic (pre, post) MeshSnapshot
-// pair via MeshSessionEdit, matching BoxTool/SphereTool's commit path
-// (box.d's BoxEditFactory alias).
+// pair via MeshSessionEdit, matching BoxTool/SphereTool's commit path. (Their
+// own `BoxEditFactory`/`PrimitiveEditFactory` aliases are gone as of task
+// 1905 phase B: the create family binds through `Tool.setGestureBindings`,
+// whose parameter is a plain `Command delegate()`. This one survives until
+// group G2 migrates.)
 alias MirrorEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
@@ -194,7 +197,6 @@ private:
     // an accidental mirror when the tool is picked and dropped untouched.
     bool engaged;
 
-    CommandHistory    history;
     MirrorEditFactory mirrorEditFactory;
 
     // ----- Center handle (M2) — reuse MoveHandler exactly as BoxTool does

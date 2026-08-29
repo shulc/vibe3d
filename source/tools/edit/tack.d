@@ -204,7 +204,6 @@ private:
     GpuMesh*  gpu;
     LitShader litShader;
 
-    CommandHistory  history;
     TackEditFactory tackEditFactory;
 
     TackParams params_;

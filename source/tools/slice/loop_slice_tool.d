@@ -190,7 +190,6 @@ private:
     LitShader        litShader;
 
 
-    CommandHistory       history;
     LoopSliceEditFactory factory;
 
     static immutable IntEnumEntry[3] editTable = [

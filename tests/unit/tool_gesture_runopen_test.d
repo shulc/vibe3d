@@ -136,9 +136,17 @@ unittest {
     auto h = new CommandHistory();
 
     auto t = new ProbeCreateTool(() => &m, null, null);
-    t.setUndoBindings(h, () => new MeshSessionEdit(&m, v, EditMode.Vertices,
-                                                  "probe.session_edit", "Probe",
-                                                  MeshEditScope.Geometry));
+    // TASK 1905 PHASE B — the binding call moved to the base seam
+    // (`Tool.setGestureBindings`, a `Command delegate()`); the create family's
+    // own `setUndoBindings` is gone. Nothing else in this cell changed, and
+    // the mutation it answers to is now
+    //     recordGestureEdit(cmd, GestureRecordMode.Plain);
+    // ->  recordGestureEdit(cmd, GestureRecordMode.InSession);
+    // in the same `commitEdit`. It reddens the same assertion, with the same
+    // message, for the same reason.
+    t.setGestureBindings(h, () => new MeshSessionEdit(&m, v, EditMode.Vertices,
+                                                     "probe.session_edit", "Probe",
+                                                     MeshEditScope.Geometry));
 
     immutable size_t before = h.undoEntriesVisible().length;
     auto pre = MeshSnapshot.capture(m);

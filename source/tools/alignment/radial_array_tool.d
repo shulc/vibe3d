@@ -151,7 +151,6 @@ private:
     LitShader        litShader;
 
 
-    CommandHistory          history;
     RadialArrayEditFactory  factory;
 
     // Parameters — captured defaults (see the captured spec).

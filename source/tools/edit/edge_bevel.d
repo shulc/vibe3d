@@ -48,7 +48,6 @@ private:
     LitShader        litShader;
 
 
-    CommandHistory      history;
     EdgeBevelEditFactory factory;
 
     float width_      = 0.0f;

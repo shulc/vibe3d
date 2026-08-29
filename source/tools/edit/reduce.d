@@ -46,7 +46,6 @@ private:
     LitShader        litShader;
 
 
-    CommandHistory        history;
     MeshReduceEditFactory factory;
 
     float ratio_  = 0.5f;

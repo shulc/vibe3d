@@ -21,8 +21,6 @@ import snap : SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 import operator : VectorStack;
 
-alias VertexEditFactory = MeshSessionEdit delegate();
-
 // ---------------------------------------------------------------------------
 // VertexTool — interactive single-vertex placement.
 //
@@ -51,8 +49,6 @@ private:
     LitShader         litShader_;
 
 
-    CommandHistory    history_;
-    VertexEditFactory factory_;
 
     // Construction-plane state — refreshed on each click by choosePlane_.
     // planeNormal_ is in LOCAL workplane coordinates (one of ±X/Y/Z).
@@ -73,11 +69,6 @@ public:
         this.meshSrc_   = meshSrc;
         this.gpu_       = gpu;
         this.litShader_ = litShader;
-    }
-
-    void setUndoBindings(CommandHistory h, VertexEditFactory f) {
-        history_ = h;
-        factory_ = f;
     }
 
     override string name() const { return "Vertex"; }
@@ -155,12 +146,19 @@ public:
         // no-op here — omitting it mirrors vertex_new.d (task 0131).
         gpu_.upload(*mesh);
 
-        // Record one undo entry per click (not per session).
-        if (history_ !is null && factory_ !is null && pre.filled) {
-            auto cmd  = factory_();
-            auto post = MeshSnapshot.capture(*mesh);
-            cmd.setSnapshots(pre, post, "Add Vertex");
-            history_.record(cmd);
+        // Record one undo entry per click (not per session). The record sits
+        // in the RAW EVENT HANDLER, not in a commit method — this tool has no
+        // commit method at all and reports `hasUncommittedEdit() == false`
+        // unconditionally. The seam moves the record; it does NOT move that
+        // trigger (task 1905 §2).
+        if (history !is null && gestureFactory !is null && pre.filled) {
+            auto cmd = cast(MeshSessionEdit) gestureFactory();
+            if (cmd is null) noteGestureCarrierMismatch();
+            else {
+                auto post = MeshSnapshot.capture(*mesh);
+                cmd.setSnapshots(pre, post, "Add Vertex");
+                recordGestureEdit(cmd, GestureRecordMode.Plain);
+            }
         }
 
         // Refresh selection / picking caches (same pattern as pen.d:910-913).

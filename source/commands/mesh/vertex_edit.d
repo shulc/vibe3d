@@ -10,6 +10,7 @@ import change_bus : MeshEditScope;
 import view;
 import editmode;
 import math : Vec3;
+import commands.mesh.gesture_payload : GesturePayload;
 
 /// Records a vertex-position edit that has ALREADY happened (the
 /// "record" flavor — apply already ran via the tool's fast in-place
@@ -18,7 +19,7 @@ import math : Vec3;
 ///
 /// Used by MoveTool / RotateTool / ScaleTool to land each drag (or each
 /// Tool Properties slider release) on the undo stack as one entry.
-class MeshVertexEdit : Command, Operator {
+class MeshVertexEdit : Command, Operator, GesturePayload {
     mixin OperatorActrCommon;
 
     private uint[] indices;
@@ -72,6 +73,11 @@ class MeshVertexEdit : Command, Operator {
     }
 
     bool isEmpty() const { return indices.length == 0; }
+
+    /// GesturePayload (task 1905) — see `commands/mesh/gesture_payload.d`.
+    /// The existing index-count predicate, inverted: a vertex edit with no
+    /// indices moved nothing and has nothing for undo to restore.
+    override bool hasGesturePayload() const { return !isEmpty(); }
 
     /// Coalescing predicate (Phase 2 op-merge). A new MeshVertexEdit is a
     /// CONTINUATION of the previous one — and therefore mergeable into a single

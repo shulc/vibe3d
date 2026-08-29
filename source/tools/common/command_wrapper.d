@@ -70,7 +70,6 @@ abstract class CommandWrapperTool : Tool, RefireClient {
 
     // Undo plumbing — same shape as TransformTool. Optional: tests /
     // older callers can leave these null and skip history recording.
-    private CommandHistory     history;
     private VertexEditFactory  vertexEditFactory;
 
     // Drag bookkeeping.

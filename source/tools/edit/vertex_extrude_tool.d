@@ -65,7 +65,6 @@ private:
     LitShader        litShader;
 
 
-    CommandHistory           history;
     VertexExtrudeEditFactory factory;
 
     float shift_ = 0.0f;

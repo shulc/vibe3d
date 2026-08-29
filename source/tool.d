@@ -8,6 +8,10 @@ import shader;
 import params : Param, ParamProvider;
 import editmode : EditMode;
 import operator : VectorStack;
+import command : Command;
+import command_history : CommandHistory;
+import commands.mesh.gesture_payload : GesturePayload;
+import change_bus : changeBus;
 import std.json : JSONValue;
 import tool_input : ToolAction, PassThrough, InputPhase, InputButton, InputMod,
                     ResetScope, InputBinding, resolveToolAction, resolveResetScope;
@@ -50,6 +54,46 @@ enum ToolFlag : uint {
     HoverEdges    = 1u << 4,
     HoverPolygons = 1u << 5,
 }
+
+// ---------------------------------------------------------------------------
+// GestureRecordMode — WHICH history primitive a gesture's record goes through.
+//
+// THREE MEMBERS BECAUSE THERE ARE THREE PRIMITIVES, not because a third call
+// site turned up. Read out of `command_history.d`, each doing something the
+// other two do not to an OPEN in-session run:
+//
+//   Plain           `record(cmd)`                        — COLLAPSES an open
+//                   run first (`consolidateOpenRunIfForeign`, the foreign-
+//                   append guard), then appends.
+//   InSession       `recordInSession(cmd, currentRunId)` — appends INSIDE the
+//                   run and RAISES `_runOpen`.
+//   ReplaceRunTail  `replaceInSessionTailWith(runId, cmd)` — CLOSES the run
+//                   (`scope(exit) _runOpen = false`) and splices its whole
+//                   tail down to one entry.
+//
+// `Tool.recordGestureEdit` takes this WITHOUT A DEFAULT, and that is the
+// point of the type rather than a strictness preference. The precedent is
+// verbatim: `pushEntry`'s `fireHook` is "a REQUIRED argument, deliberately
+// without a default … that answer should be forced out of the next caller too
+// rather than inherited from whichever default someone picked"
+// (`command_history.d`). Two arguments for it here, and the second is the
+// stronger:
+//
+//   1. RISK — deriving the mode from history state would INVERT behaviour on
+//      every site that records `Plain` while a run happens to be open:
+//      `record` collapses that run, `recordInSession` extends it.
+//   2. IMPOSSIBILITY — `InSession` is needed on the record that OPENS the run,
+//      and at that instant `_runOpen` is still false. No derivation from state
+//      can ever produce `InSession`, under any implementation.
+//
+// A `Plain` default reproduced the original defect in a new costume: the
+// live-box site would compile as `recordGestureEdit(cmd)`, land WITHOUT the
+// `InSession` flag, and the following splice would scan for a tail that was
+// never in the run — landing in `replaceInSessionTailWith`'s APPEND arm and
+// leaving N+1 entries where one was intended. Compiles; silent; no depth cell
+// on that tool to notice.
+// ---------------------------------------------------------------------------
+enum GestureRecordMode { Plain, InSession, ReplaceRunTail }
 
 // ---------------------------------------------------------------------------
 // Tool — base class for all editing tools.
@@ -416,6 +460,162 @@ class Tool : ParamProvider {
     // that edit; the invariant is postcondition hasUncommittedEdit()==true
     // BEFORE and, after the driver's follow-up resyncSession(), ==false.
     bool commitUncommittedEdit() { return false; }
+
+    // ----- THE GESTURE RECORDING SEAM (task 1905, phase B) -----------------
+    //
+    // WHAT MOVED AND WHAT DID NOT. Three things about a tool's commit were
+    // per-file; exactly one of them belongs here:
+    //
+    //   WHAT to record (carrier, label, baseline) — stays per tool. It is the
+    //       tool's own knowledge, and the four payload forms in the tree
+    //       (`setSnapshots` / `setDelta` / `setEdit` / a four-argument
+    //       constructor) have nothing in common to hoist.
+    //   WHEN to record (deactivate / mouse-up / mouse-down / Shift+apply /
+    //       panel edit) — stays per tool. `commitUncommittedEdit` has exactly
+    //       ONE production caller (`edit_session.d`'s apply-and-continue), so
+    //       a seam built on it would have re-plumbed 17 overrides and left
+    //       every real commit exactly where it was.
+    //   HOW to record — THIS. One site, three modes, one refusal belt, two
+    //       counters.
+    //
+    // These two members are `final` on purpose: `tool.d`'s virtual-surface
+    // whitelist (`kToolVirtualWhitelist` + the `static assert` at the bottom
+    // of this module) is task 0428's moratorium enforced as a build error, and
+    // `final` members are not virtual, so the seam adds nothing to that
+    // surface. It is also the right shape independent of the assert — a tool
+    // that wants a different HOW does not want this seam, it wants a bug.
+
+    /// The undo stack this tool records into. Bound by `setGestureBindings`
+    /// at registration.
+    ///
+    /// ON THE BASE, AND THE NAME IS NOT ARBITRARY (task 1905). Thirty-two
+    /// tool classes declared this field themselves; twenty-nine spelled it
+    /// `history` and three `history_`. It moves here under the DOMINANT
+    /// spelling so that the twenty-nine change no read site at all — they
+    /// only lose a declaration — and so the call-surface census that guards
+    /// this seam (`history{,_}.<NAME>(`) keeps keying on the same term.
+    ///
+    /// `protected` rather than `private` or `package`: the two narrower cases
+    /// in the tree were `private` (`tools/common/command_wrapper.d`) and
+    /// `package` (`tools/edit/topology_pen/tool.d`, whose `history_` had no
+    /// reader outside its own module), and `protected` covers both without
+    /// losing anyone access.
+    ///
+    /// WHY EVERY SUBCLASS DECLARATION HAD TO GO IN THE SAME COMMIT: D lets a
+    /// derived class declare a field of the same name and SILENTLY SHADOWS the
+    /// base one. A half-migrated tool would therefore compile, read its own
+    /// never-bound field, and record into null — the exact failure mode this
+    /// seam exists to make impossible.
+    protected CommandHistory history;
+
+    /// Builds this tool's undo carrier. Bound by `setGestureBindings`.
+    ///
+    /// TYPED `Command delegate()`, NOT `GesturePayload delegate()`, and this
+    /// was verified against the compiler rather than reasoned about: delegate
+    /// covariance in D reaches a base CLASS and stops at an INTERFACE.
+    /// `VertEdit delegate()` converts to `Base delegate()` and does NOT
+    /// convert to `Payload delegate()` ("cannot pass argument … of type
+    /// `VertEdit delegate()` to parameter `Payload delegate() f`"). All three
+    /// carriers are `Command` subclasses, so `Command delegate()` accepts
+    /// every registration closure unchanged; the interface spelling would have
+    /// demanded a wrapper lambda at each factory site instead.
+    ///
+    /// The price is that the carrier's CLASS is not checked here — the tool
+    /// casts to the concrete type it is about to fill, and a null from that
+    /// cast is a counted refusal (`noteGestureCarrierMismatch`), never a
+    /// silent return.
+    protected Command delegate() gestureFactory;
+
+    /// Bind this tool's history and undo-carrier factory. Replaces the
+    /// per-tool `setUndoBindings` declarations family by family.
+    public final void setGestureBindings(CommandHistory h, Command delegate() f) {
+        history        = h;
+        gestureFactory = f;
+    }
+
+    /// Record one finished gesture. `cmd` is ALREADY FILLED by the tool.
+    ///
+    /// Returns true when a history primitive was actually dispatched to. It
+    /// does NOT promise the stack grew: the primitives have their own gates
+    /// (lockout, suspend state, an open command block), and those are theirs,
+    /// not this seam's.
+    ///
+    /// THE BELT IS A BELT, NOT A POLICY. It refuses a carrier that was never
+    /// filled — a programming error — and it deliberately does NOT answer
+    /// "the gesture changed nothing". By the time this runs the mesh is
+    /// already mutated and only the TOOL still holds the pre-image, so that
+    /// second question stays where it is today (see the delta / snapshot fork
+    /// in `tools/edit/edge_extend.d`). The belt is expected to be UNREACHABLE
+    /// in production, which is why it has a unit cell of its own
+    /// (`tests/unit/gesture_record_belt_test.d`) rather than a comment.
+    protected final bool recordGestureEdit(Command cmd, GestureRecordMode mode) {
+        if (history is null) return false;   // nothing bound; no run of ours
+
+        if (cmd is null) return refuseGestureRecord(mode);
+
+        auto payload = cast(GesturePayload) cmd;
+        if (payload is null) {
+            ++changeBus.gestureCarrierMismatch;
+            return refuseGestureRecord(mode);
+        }
+        if (!payload.hasGesturePayload()) {
+            ++changeBus.gestureRecordEmptyPayload;
+            return refuseGestureRecord(mode);
+        }
+
+        final switch (mode) {
+            case GestureRecordMode.Plain:
+                history.record(cmd);
+                break;
+            case GestureRecordMode.InSession:
+                history.recordInSession(cmd, history.currentRunId);
+                break;
+            case GestureRecordMode.ReplaceRunTail:
+                history.replaceInSessionTailWith(history.currentRunId, cmd);
+                break;
+        }
+        return true;
+    }
+
+    /// Every refusal above lands here, and it exists for ONE mode.
+    ///
+    /// `replaceInSessionTailWith` closes the run on EVERY early return of its
+    /// own — its first statement is `scope(exit) _runOpen = false`. A belt
+    /// that refuses BEFORE that call therefore skips the only site that was
+    /// going to close the run, and a run opened by this same gesture's earlier
+    /// live records (`recordInSession` raises `_runOpen`) is left standing
+    /// open: the next foreign `record` would then be consolidated INTO a
+    /// gesture that was never committed.
+    ///
+    /// `consolidate` is an existing public primitive and is documented safe on
+    /// exactly the degenerate shapes reachable here — an empty stack and "no
+    /// matching tail" are both early no-ops, and a single matching entry has
+    /// its `InSession`/`Refire` tags stripped without an append. So no
+    /// reachable path here moves the stack; it only closes or re-tags what is
+    /// already on it, which is what keeps the belt's own contract ("empty
+    /// payload ⇒ the stack did not move") true.
+    ///
+    /// REJECTED ALTERNATIVE: skip the belt entirely for `ReplaceRunTail` and
+    /// always call the primitive. On "no matching tail" that primitive takes
+    /// its APPEND arm and pushes an entry — moving the stack on an empty
+    /// payload, i.e. breaking the very contract the belt is here to hold.
+    private final bool refuseGestureRecord(GestureRecordMode mode) {
+        if (mode == GestureRecordMode.ReplaceRunTail)
+            history.consolidate(history.currentRunId);
+        return false;
+    }
+
+    /// The tool's cast to its own carrier class came back null: the factory
+    /// bound at registration builds a DIFFERENT command than this tool fills.
+    ///
+    /// Counted, never silent. The mesh is already mutated when a tool reaches
+    /// its commit, so "return quietly" here means an edit with no undo entry —
+    /// and a mis-bound factory is precisely the failure a positional
+    /// registration table invites (see `registration.d`'s own warning about
+    /// the thirteen positionally-bound pen factories).
+    protected final void noteGestureCarrierMismatch() {
+        ++changeBus.gestureCarrierMismatch;
+    }
 
     // Refire (record-once, re-evaluate panel-edit sessions, undo/redo
     // migration P4) moved to the optional RefireClient interface in

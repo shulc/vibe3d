@@ -632,7 +632,6 @@ private:
     LitShader        litShader;
 
 
-    CommandHistory   history;
     SliceEditFactory factory;
 
     // The slice line, in world space. Bound to the startX..endZ params. The

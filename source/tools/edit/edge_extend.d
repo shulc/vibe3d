@@ -26,12 +26,12 @@ import tools.transform.scale : ScaleTool;
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
 
-/// The interactive tool reuses the dedicated MeshSessionEdit record command
-/// (a before/after MeshSnapshot pair OR an operation-log MeshEditDelta) — the
-/// same plumbing EdgeExtrudeTool uses for MeshSessionEdit. A dedicated class
-/// keeps the undo label reading "Edge Extend".
-alias EdgeExtendEditFactory = MeshSessionEdit delegate();
-
+/// The interactive tool records into `MeshSessionEdit` — a before/after
+/// `MeshSnapshot` pair OR an operation-log `MeshEditDelta`, the same carrier
+/// `EdgeExtrudeTool` uses, with the label reading "Edge Extend". Its
+/// `EdgeExtendEditFactory` alias is gone as of task 1905 phase B: the carrier
+/// is built through `Tool.gestureFactory`, a plain `Command delegate()`, and
+/// this file downcasts to the class it is about to fill.
 // ---------------------------------------------------------------------------
 // EdgeExtendTool — interactive Edge Extend (factory id `edge.extend`).
 //
@@ -109,8 +109,6 @@ private:
     LitShader        litShader;
 
 
-    CommandHistory        history;
-    EdgeExtendEditFactory factory;
 
     // Embedded transform gizmo. WHICH of its banks render + hit-test is driven
     // by the bank params below through syncBankFlags(); the wrapper never owns
@@ -216,13 +214,6 @@ public:
         // never activated already reports the right set.
         xfrm = new XfrmTransformTool(meshSrc, gpu, editMode);
         syncBankFlags();
-    }
-
-    /// Inject undo plumbing — called by app.d after construction. commitEdit()
-    /// is a no-op when these aren't bound.
-    void setUndoBindings(CommandHistory h, EdgeExtendEditFactory f) {
-        this.history = h;
-        this.factory = f;
     }
 
     /// Forward the app-level falloff gizmo host to the embedded transform
@@ -817,9 +808,10 @@ private:
     }
 
     void commitEdit() {
-        if (history is null || factory is null) return;
+        if (history is null || gestureFactory is null) return;
         if (!before.filled) return;
-        auto cmd = factory();
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
 
         // Delta path. Re-run the kernel ONCE inside a Mesh edit batch so the
         // committed extend self-records an operation-log delta. before.restore
@@ -855,7 +847,7 @@ private:
 
         if (!delta.isEmpty) {
             cmd.setDelta(delta, "Edge Extend");
-            history.record(cmd);
+            recordGestureEdit(cmd, GestureRecordMode.Plain);
             return;
         }
 
@@ -872,7 +864,7 @@ private:
         // consulted — see the comment at its capture site.
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(before, post, "Edge Extend");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     void refreshCaches() {

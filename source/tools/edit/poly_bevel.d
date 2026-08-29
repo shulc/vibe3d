@@ -49,7 +49,6 @@ private:
     LitShader        litShader;
 
 
-    CommandHistory       history;
     PolyBevelEditFactory factory;
 
     float inset_    = 0.0f;

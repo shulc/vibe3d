@@ -175,8 +175,10 @@ private:
     HoverTarget         lastTarget_;
 
     // --- P2 placement deps (doc/topopen_p2_plan.md) — wired by
-    // registration.d, mirroring VertexTool's ctor/setUndoBindings shape
-    // (tools/create/vertex_place.d). All may be left unset (test/no-app
+    // registration.d, mirroring the ctor/binding shape VertexTool had
+    // (tools/create/vertex_place.d — whose own `setUndoBindings` is gone as of
+    // task 1905 phase B; it now binds through `Tool.setGestureBindings`, and
+    // this family follows in group G7). All may be left unset (test/no-app
     // construction); `placeVertexAt` degrades to a no-op rather than
     // crashing when `addVertexFactory_` is null.
     package Mesh* delegate() meshSrc_;
@@ -190,7 +192,28 @@ private:
     // internals / the app's own hover-pick instance.
     BvhPick removePick_;
 
-    package CommandHistory    history_;
+    // TASK 1905 PHASE B — the pen's `package CommandHistory history_;` field is
+    // gone; `history` now lives on `Tool` (see its declaration there for why
+    // every subclass copy had to go in one commit). This setter keeps the
+    // FORMER SPELLING reachable for the in-package rig, and it is a bridge with
+    // a measured reason rather than a courtesy:
+    //
+    //   * `tests/unit/tools/edit/topology_pen/gestures_test.d` names itself
+    //     `module tools.edit.topology_pen.gestures_test` ON PURPOSE — its own
+    //     header says so — precisely to be granted this class's `package`
+    //     members, and it binds this one 86 times.
+    //   * `protected` on the base does NOT reach it: `protected` grants derived
+    //     classes and the same MODULE, never a sibling module in the same
+    //     package. The plan's round 4 checked for outside readers with a grep
+    //     confined to `source/tools/edit/topology_pen/` and concluded there
+    //     were none; the readers are in `tests/unit/`, and this is the
+    //     correction.
+    //
+    // A setter and not a second field: a field would be the silent shadow the
+    // whole one-commit rule exists to prevent. There is one storage location,
+    // on `Tool`.
+    package void history_(CommandHistory h) { history = h; }
+
     VertexNewFactory  addVertexFactory_;
 
     // --- Per-gesture undo factories (P3..P12 + Fill, task 0494) — grouped
@@ -1187,7 +1210,7 @@ public:
                         TopoPenFillFactory flf = null,
                         TopoPenRemoveEdgeFactory ref_ = null,
                         TopoPenRemoveVertexFactory rvf = null) {
-        history_           = h;
+        history           = h;
         addVertexFactory_  = f;
         factories_.build         = bf;
         factories_.move          = mf;
@@ -5280,7 +5303,7 @@ public:
     // the real `MeshVertexNew` through its Operator interface
     // (`cmd.evaluate(vts)`, using the TOOL's own vts so the command's
     // internal `SubjectPacket` guard is satisfied) and records it
-    // POST-apply via `history_.record(cmd)` — no re-apply, one
+    // POST-apply via `history.record(cmd)` — no re-apply, one
     // non-coalescing undo entry per click (mirrors the precedent at
     // `tools/common/command_wrapper.d`'s `applyWithLivePipeline`, NOT
     // VertexTool's snapshot-diff path: `addVertexFactory_` binds `&mesh()`
@@ -5306,7 +5329,7 @@ public:
         cmd.setPos(pointLocal);
         if (!cmd.evaluate(vts)) return -1;
 
-        if (history_ !is null) history_.record(cmd);   // non-coalescing -> one undo entry
+        if (history !is null) history.record(cmd);   // non-coalescing -> one undo entry
 
         if (gpu_ !is null) gpu_.upload(*mesh);
         mesh.syncSelection();
@@ -5323,7 +5346,7 @@ public:
     // would leave an applied-but-un-undoable edit — the same hazard
     // `placeVertexAt`'s own guard documents).
     private bool commitReady(MeshSessionEdit delegate() factory) {
-        return meshSrc_ !is null && history_ !is null && factory !is null;
+        return meshSrc_ !is null && history !is null && factory !is null;
     }
 
     // The shared undo tail every snapshot-bracketed commit below ends with
@@ -5338,7 +5361,7 @@ public:
         MeshSnapshot after = MeshSnapshot.capture(*m);
         auto cmd = factory();
         cmd.setSnapshots(before, after, label);
-        history_.record(cmd);
+        history.record(cmd);
     }
 
     // P7 (doc/topopen_p7_slide_plan.md Phase 3): commit the armed Slide
@@ -5635,7 +5658,7 @@ public:
     //       back into the next iteration's neighbour reads, which is a
     //       different trajectory (and, with N>1, a visibly different result)
     //       from relaxing freely and constraining the outcome once.
-    //   (3) COMMIT ONLY THE LAST EVALUATION — one `history_.record` for the
+    //   (3) COMMIT ONLY THE LAST EVALUATION — one `history.record` for the
     //       whole gesture, which this already did.
     //
     // The iteration loop is pure arithmetic on a local `double` array, so
@@ -6241,7 +6264,7 @@ public:
     // (silent wrong-face delete on that build's eventual release) unless
     // invalidated here — `resyncSession()` is called on SUCCESS, in the
     // SAME position `removeFaceAt` above calls it (right after
-    // `history_.record`, before `syncSelection`/the display tail), for the
+    // `history.record`, before `syncSelection`/the display tail), for the
     // identical reason (the tool never overrides `isDragging()`, so a
     // Shift+MMB Add Loop CAN fire mid-build/mid-move on a different
     // button). No `resizeVertexSelection` needed here — `insertEdgeLoops`

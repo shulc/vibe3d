@@ -17,10 +17,6 @@ import editmode : EditMode;
 
 import std.math : sin, cos, PI;
 
-// Reuses the generic snapshot-pair edit factory (same convention as
-// CylinderTool / SphereTool).
-alias ArcEditFactory = MeshSessionEdit delegate();
-
 // ---------------------------------------------------------------------------
 // ArcParams — wire schema for prim.arc headless invocation.
 //
@@ -128,8 +124,6 @@ private:
     LitShader      litShader;
 
     ArcParams      params_;
-    CommandHistory history;
-    ArcEditFactory factory;
 
     ArcState       state;
     WorkplaneFrame frame;
@@ -142,11 +136,6 @@ public:
     }
 
     void destroy() {}
-
-    void setUndoBindings(CommandHistory history, ArcEditFactory factory) {
-        this.history = history;
-        this.factory = factory;
-    }
 
     override string name() const { return "Arc"; }
 
@@ -244,12 +233,17 @@ private:
             m.vertices[i] = transformPoint(frame.toWorld, m.vertices[i]);
     }
 
+    // Commit trigger is mouse-UP, not a standing edit: `hasUncommittedEdit()`
+    // is hard `false` here, so this body is reached from the raw handler and
+    // never from the session's apply-and-continue hook. The seam does not move
+    // that trigger (task 1905 §2) — only the record.
     void commitArcEdit(MeshSnapshot pre) {
-        if (history is null || factory is null) return;
+        if (history is null || gestureFactory is null) return;
         if (!pre.filled) return;
-        auto cmd  = factory();
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(pre, post, "Create Arc");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 }

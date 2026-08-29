@@ -36,8 +36,6 @@ import std.math : abs;
 private enum uint guideBits =
     SnapType.WorldAxis | SnapType.StraightLine | SnapType.RightAngle;
 
-alias PenEditFactory = MeshSessionEdit delegate();
-
 // ---------------------------------------------------------------------------
 // PenParams — vibe3d's pen tool wire schema.
 //
@@ -107,8 +105,6 @@ private:
 
 
     PenParams        params_;
-    CommandHistory   history;
-    PenEditFactory   factory;
 
     PenState         state;
     Vec3[]           vertices_;     // LOCAL workplane positions of the in-progress sequence
@@ -157,11 +153,6 @@ public:
 
     void destroy() {
         clearVertHandlers();
-    }
-
-    void setUndoBindings(CommandHistory h, PenEditFactory f) {
-        this.history = h;
-        this.factory = f;
     }
 
     override string name() const { return "Pen"; }
@@ -918,11 +909,14 @@ private:
         if (state != PenState.Drawing || vertices_.length < minCommitVerts()) return;
         MeshSnapshot pre = MeshSnapshot.capture(*mesh);
         commitPolygon();
-        if (history !is null && factory !is null && pre.filled) {
-            auto cmd  = factory();
-            auto post = MeshSnapshot.capture(*mesh);
-            cmd.setSnapshots(pre, post, "Pen Polygon");
-            history.record(cmd);
+        if (history !is null && gestureFactory !is null && pre.filled) {
+            auto cmd = cast(MeshSessionEdit) gestureFactory();
+            if (cmd is null) noteGestureCarrierMismatch();
+            else {
+                auto post = MeshSnapshot.capture(*mesh);
+                cmd.setSnapshots(pre, post, "Pen Polygon");
+                recordGestureEdit(cmd, GestureRecordMode.Plain);
+            }
         }
         // Refresh selection/picking caches so the new face is hover-pickable
         // and selection arrays match the grown geometry.

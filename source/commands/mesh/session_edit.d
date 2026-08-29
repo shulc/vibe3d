@@ -7,6 +7,7 @@ import view;
 import editmode;
 import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditDelta, MeshEditScope;
+import commands.mesh.gesture_payload : GesturePayload;
 
 /// Generic record-flavor command for an interactive mesh-editing session
 /// (see e.g. BevelTool, EdgeExtrudeTool, ArrayTool, LoopSliceTool, ...). The
@@ -55,7 +56,7 @@ enum string kNoSessionReason =
     "no recorded edit session: this command carries a tool session's "
     ~ "before/after snapshots and cannot run on its own";
 
-class MeshSessionEdit : Command, Operator {
+class MeshSessionEdit : Command, Operator, GesturePayload {
     mixin OperatorActrCommon;
 
     private MeshSnapshot before;
@@ -123,6 +124,16 @@ class MeshSessionEdit : Command, Operator {
         noteUndoRecorded();
     }
 
+    /// Does this carrier hold an image to replay? TWO arms, and the second is
+    /// load-bearing: the delta path (`setDelta`, edge_extend / edge_extrude)
+    /// never writes `after` at all, so `after.filled` alone answers "empty" on
+    /// a perfectly good delta carrier. Read by `evaluate()` and by
+    /// `hasGesturePayload()`; ONE expression, on purpose (task 1905 D15).
+    private bool hasPayload() const { return useDelta_ || after.filled; }
+
+    /// GesturePayload — see `commands/mesh/gesture_payload.d`.
+    override bool hasGesturePayload() const { return hasPayload(); }
+
     bool evaluate(ref VectorStack vts) {
         import toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
@@ -135,7 +146,14 @@ class MeshSessionEdit : Command, Operator {
         // (delete the last face) and `capture(emptyMesh)` is `filled` and
         // MUST still redo. The `useDelta_` term is load-bearing: the delta
         // path (edge_extrude / edge_extend) never sets `after` at all.
-        if (!useDelta_ && !after.filled) {
+        //
+        // TASK 1905 (D15): the expression itself now lives in `hasPayload()`
+        // below, and `hasGesturePayload()` — the gesture recorder's belt —
+        // reads the SAME function. It is not "the same predicate written
+        // twice on purpose": two copies drift, and the drift's worst state is
+        // a command the recorder ACCEPTED and this method then refuses, i.e.
+        // an undo entry that dies on redo.
+        if (!hasPayload()) {
             // Written into the base field rather than through an
             // `override refusalReason()`: `Command.apply()` writes
             // `kNoEditTargetReason` into the same field and clears it on the

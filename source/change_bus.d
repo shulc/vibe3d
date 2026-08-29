@@ -401,6 +401,36 @@ struct ChangeBus {
     /// an existing number makes that number unreadable.
     ulong emptyDeltaOverMutation;
 
+    /// TASK 1905 — the gesture recorder's belt refused: the tool handed
+    /// `Tool.recordGestureEdit` a carrier that DECLARES `GesturePayload` and
+    /// answers `false` to it, i.e. a command built and never filled.
+    ///
+    /// Expected to stay 0 in production. The belt exists because the mesh is
+    /// already mutated by the time a tool commits, so the alternative to a
+    /// counted refusal is an edit with no undo entry and nothing that says so.
+    /// Its own witness is a unit cell rather than a suite assertion, because a
+    /// counter pinned at zero by an unreachable branch is a check that cannot
+    /// come out differently — the cell drives the branch on a hand-built
+    /// carrier and reads BOTH halves (counter moved, stack did not).
+    ulong gestureRecordEmptyPayload;
+
+    /// TASK 1905 — the carrier handed to the gesture recorder is the WRONG
+    /// CLASS. Two detection points, ONE disease ("the factory bound at
+    /// registration does not build what this tool fills"):
+    ///
+    ///   * the tool's own `cast(<its carrier>) gestureFactory()` came back
+    ///     null (`Tool.noteGestureCarrierMismatch`);
+    ///   * the command reached `recordGestureEdit` without implementing
+    ///     `GesturePayload` at all.
+    ///
+    /// SEPARATE from `gestureRecordEmptyPayload` deliberately, per the ruling
+    /// this file already applies to the map counters: "a mis-bound factory"
+    /// and "an unfilled carrier" are different faults with different fixes,
+    /// and summing them makes the number unreadable. Treating a null cast as
+    /// "empty" would be the worst outcome available — the mesh is mutated and
+    /// the history is silent.
+    ulong gestureCarrierMismatch;
+
     // Per-class running totals — how many flushes carried each mesh class.
     ulong totalPosition;
     ulong totalPoints;

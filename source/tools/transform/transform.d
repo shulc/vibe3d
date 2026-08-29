@@ -147,7 +147,6 @@ protected:
     // builds a MeshVertexEdit pre-wired to the same gpu/caches the tool
     // mutates. Both are nullable for tests / older callers; tools must
     // handle the null case as "skip undo recording".
-    CommandHistory     history;
     VertexEditFactory  vertexEditFactory;
     MorphEditFactory   morphEditFactory;
 

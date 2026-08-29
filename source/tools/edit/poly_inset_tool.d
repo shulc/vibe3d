@@ -76,7 +76,6 @@ private:
     LitShader        litShader;
 
 
-    CommandHistory         history;
     PolyInsetEditFactory   factory;
 
     // Reference default (task 0359 toolcard: bit-exact 0.0). Deliberately
