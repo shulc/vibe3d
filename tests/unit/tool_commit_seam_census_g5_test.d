@@ -248,7 +248,11 @@ private enum DirRow[] kSliceDir = [
     DirRow("edge_slide.d", "G6 (command wrapper)",
         "a CommandWrapperTool: it records through CommandWrapperTool.commitNow "
       ~ "in tools/common/, not from this file, and its measured history surface "
-      ~ "here is empty. G6 is the last family on the schedule (plan D7)"),
+      ~ "here is empty. G6 LANDED 2026-08-29 and that changed nothing on this "
+      ~ "side — commitNow moved onto the seam, so the record this file does not "
+      ~ "make is now made by `Tool.recordGestureEdit`. The file is rostered by "
+      ~ "`tests/unit/tool_commit_seam_census_g6_test.d`; both zeros below stay "
+      ~ "zeros, and that is what makes them a check rather than a coincidence"),
 ];
 
 private enum string[] kG5Sites = [
@@ -502,9 +506,11 @@ unittest {
         if (calls != 0)
             problems ~= "    · " ~ rel ~ " names the seam " ~ calls.to!string
                       ~ " time(s) and is not a G5 site. `edge_slide.d` is a "
-                      ~ "CommandWrapperTool and belongs to G6, the LAST family "
-                      ~ "on the schedule; if G6 has landed, move this file's "
-                      ~ "row deliberately rather than letting the count drift";
+                      ~ "CommandWrapperTool and belongs to G6, which landed "
+                      ~ "2026-08-29 WITHOUT adding a seam call here: its record "
+                      ~ "lives in `CommandWrapperTool.commitNow`. A non-zero "
+                      ~ "count means this file grew its own, which is a "
+                      ~ "deliberate move to make in the G6 roster, not a drift";
     }
 
     if (totalCalls < 4)

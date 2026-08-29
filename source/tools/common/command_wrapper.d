@@ -8,7 +8,7 @@ import view    : View;
 import editmode : EditMode;
 import seltype  : SelType;
 import display_sync : refreshDisplay;
-import tool   : Tool;
+import tool   : Tool, GestureRecordMode;
 import edit_session : RefireClient;
 import params : Param;
 import math   : Vec3, Viewport;
@@ -17,7 +17,6 @@ import shader : Shader;
 import handler : ClickPointHandler;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
-import tools.transform.transform : VertexEditFactory;
 import toolpipe.packets : FalloffPacket, SubjectPacket;
 import operator        : Operator, Task, VectorStack, PacketKind;
 import pipe_gizmo_host : PipeGizmoHost;
@@ -47,10 +46,12 @@ import ImGui = d_imgui;
 ///
 /// Commit semantics (matching `TransformTool.deactivate` →
 /// `commitEdit("Move")` pattern in source/tools/transform/move.d):
-///  - `setUndoBindings(history, vxEditFactory)` injects the undo
-///    plumbing at construction time. The factory builds a fresh
+///  - `setGestureBindings(history, vxEditFactory)` — the BASE binder
+///    (`Tool.setGestureBindings`, task 1905 group G6) — injects the
+///    undo plumbing at construction time. The factory builds a fresh
 ///    `MeshVertexEdit` pre-wired to the same gpu/caches the inner
-///    Command mutates.
+///    Command mutates; it arrives typed as `Command delegate()` and is
+///    cast back at each of the two build sites.
 ///  - `deactivate()` builds a `MeshVertexEdit(before=baseline,
 ///    after=current)` and records it on history. Spacebar →
 ///    `setActiveTool(null)` → here. Tool switches and tab close hit
@@ -70,7 +71,6 @@ abstract class CommandWrapperTool : Tool, RefireClient {
 
     // Undo plumbing — same shape as TransformTool. Optional: tests /
     // older callers can leave these null and skip history recording.
-    private VertexEditFactory  vertexEditFactory;
 
     // Drag bookkeeping.
     private bool   dragging;
@@ -147,14 +147,28 @@ abstract class CommandWrapperTool : Tool, RefireClient {
         return inner.paramEnabled(name);
     }
 
-    /// Wire undo plumbing. Called by app.d after construction so the
-    /// factory delegate captures the right gpu / caches. No-op if
-    /// either argument is null — tools without history support can
-    /// skip recording.
-    public void setUndoBindings(CommandHistory h, VertexEditFactory f) {
-        this.history           = h;
-        this.vertexEditFactory = f;
-    }
+    // THE BINDER IS THE BASE'S (task 1905, group G6). `CommandWrapperTool`
+    // used to declare its own `setUndoBindings(CommandHistory,
+    // VertexEditFactory)` and its own `vertexEditFactory` field; both are gone,
+    // and the four registrations (xfrm.smooth / xfrm.jitter / xfrm.quantize /
+    // edge.slide) now call `Tool.setGestureBindings`, which is `final`.
+    //
+    // WHY THIS FAMILY MIGRATED AT ALL, since the plan (§6, D7) says its present
+    // form "is already the target and a migration would prove nothing new".
+    // That sentence is true of `commitNow`'s CONTRACT — seven early exits and
+    // "true iff it really committed" — and it is preserved below untouched.
+    // It was NOT true of the record CALL. `commitNow` used to reach the undo
+    // stack directly, and that was the last writing history primitive under
+    // `source/tools/**` outside the transform zone — sitting in no census
+    // population at all. (The primitive is deliberately NOT spelled out in this
+    // sentence: a comment that names its own needle is the self-matching grep
+    // the plan had to repair at `app.d:3618`.) Measured, not argued: an
+    // unrostered call on the history surface added to this file left
+    // `dub test --config=tests` at 383/383 GREEN, while the identical line in
+    // `source/tools/deform/magnet.d` reddened `tool_commit_seam_census_g1_test`
+    // and `_g3_test`, each naming the file and the line. The site was unwatched;
+    // it is now on the seam and rostered by
+    // `tests/unit/tool_commit_seam_census_g6_test.d`.
 
     /// Inject the app-level persistent falloff gizmo host (mirror of
     /// setUndoBindings / XfrmTransformTool.setPipeGizmoHost). app.d calls
@@ -300,10 +314,10 @@ abstract class CommandWrapperTool : Tool, RefireClient {
     // ----- Refire hooks (undo/redo migration P4) ---------------------------
     //
     // Opt in iff the undo plumbing is wired (history + vertex-edit factory).
-    // Tests / older callers that skip setUndoBindings() leave history null and
-    // fall back to the legacy preview-then-commit path.
+    // Tests / older callers that skip setGestureBindings() leave history null
+    // and fall back to the legacy preview-then-commit path.
     public override bool wantsRefire() const {
-        return history !is null && vertexEditFactory !is null;
+        return history !is null && gestureFactory !is null;
     }
 
     // Build the MeshVertexEdit representing the CURRENT param state. Re-runs the
@@ -315,7 +329,7 @@ abstract class CommandWrapperTool : Tool, RefireClient {
     // the LAST one as a single entry. Returns null when the params produce a
     // no-op (empty diff) so the driver skips the fire() for that tick.
     public override Command buildRefireCommand() {
-        if (meshPtr is null || history is null || vertexEditFactory is null)
+        if (meshPtr is null || history is null || gestureFactory is null)
             return null;
         if (baseline.length != meshPtr.vertices.length) return null;
 
@@ -351,7 +365,12 @@ abstract class CommandWrapperTool : Tool, RefireClient {
 
         if (indices.length == 0) return null;
 
-        auto cmd = vertexEditFactory();
+        // The carrier's CLASS is not checked by the base binder (it takes a
+        // `Command delegate()` so every registration closure converts without a
+        // wrapper lambda), so the cast is ours and a null from it is a COUNTED
+        // refusal, never a silent drop. Same shape as `tools/deform/magnet.d`.
+        auto cmd = cast(MeshVertexEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return null; }
         cmd.setEdit(indices, before, after_, name());
         return cast(Command)cmd;
     }
@@ -607,7 +626,7 @@ abstract class CommandWrapperTool : Tool, RefireClient {
         if (!dirty)              return false;
         if (meshPtr is null)     return false;
         if (history is null)     return false;
-        if (vertexEditFactory is null) return false;
+        if (gestureFactory is null) return false;
         // Build the diff: only verts whose position actually changed.
         // For Smooth/Jitter/Quantize the inner Command can touch every
         // vert (with empty selection = whole mesh), so scanning is
@@ -636,10 +655,21 @@ abstract class CommandWrapperTool : Tool, RefireClient {
             dirty = false;
             return false;
         }
-        auto cmd = vertexEditFactory();
+        auto cmd = cast(MeshVertexEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return false; }
         cmd.setEdit(indices, before, after_,
                     label.length > 0 ? label : name());
-        history.record(cmd);
+        // THE EIGHTH EARLY EXIT, and it keeps the invariant this method is the
+        // model for. `recordGestureEdit` is false only when the seam's belt
+        // refused (a carrier with nothing in it) — unreachable from here,
+        // because `indices.length == 0` already returned above and
+        // `MeshVertexEdit.hasGesturePayload()` is `!isEmpty()` over exactly
+        // that array. Unreachable is not the same as absent: answering `true`
+        // on a refusal would rebaseline over geometry with no undo entry, which
+        // is the precise failure the T7 follow-up below tests for on the refire
+        // latch. `dirty` deliberately stays SET on this path — there is still
+        // an uncommitted edit.
+        if (!recordGestureEdit(cmd, GestureRecordMode.Plain)) return false;
 
         // Promote post-commit state to the new baseline so subsequent
         // drags compose on top of it. On Apply the current action is
@@ -849,7 +879,7 @@ unittest {
     View view = new View(0, 0, 800, 600);
     auto hist = new CommandHistory();
     auto t = new XfrmSmoothTool(&m, view, EditMode.Vertices, null);
-    t.setUndoBindings(hist, () => new MeshVertexEdit(&m, view, EditMode.Vertices));
+    t.setGestureBindings(hist, () => new MeshVertexEdit(&m, view, EditMode.Vertices));
 
     // Count entries through the history's own record hook, throughout. task
     // 0685 T2: `canUndo()` only proves "the stack is non-empty" — it stays
@@ -884,13 +914,107 @@ unittest {
     // bites: it clears `dirty` and records NOTHING, so answering true there
     // makes the caller consume the click and rebaseline over geometry that has
     // no undo entry.
+    //
+    // THE ORDER OF THE NEXT TWO LINES IS THE WHOLE CELL, and it was WRONG here
+    // until task 1905 phase D measured it. This block used to latch the refire
+    // AFTER setting `dirty`, and `onRefireCommitted()`'s last statement is
+    // `dirty = false`. So `commitUncommittedEdit()` refused at its OWN first
+    // guard (`if (!hasUncommittedEdit()) return false;`) and `commitNow` was
+    // never entered: the latch branch this cell is named after was not
+    // reached, and both assertions below were satisfied by a second, unnamed
+    // guard. Proved by mutation, not by reading — turning the latch branch's
+    // `return false` into `return true` (the exact defect the comment above
+    // describes) left `dub test --config=tests` at 386/386 GREEN.
+    //
+    // Latching FIRST and re-dirtying after is also the reachable production
+    // state, not a contrivance: a refire session commits (latch set, `dirty`
+    // cleared), the user drags again (`dirty` true, latch still standing
+    // because only `commitNow` consumes it), and Shift+LMB then arrives with
+    // BOTH true. That is the one shape in which answering `true` makes
+    // `applyAndContinue` consume the click and `resyncSession` rebaseline over
+    // an edit with no undo entry.
     recorded = 0;
 
     t.baseline = m.vertices.dup;
     m.vertices[1] = m.vertices[1] + Vec3(0, 0.25f, 0);
-    t.dirty = true;
-    t.onRefireCommitted();            // latches refireCommitted_
+    t.onRefireCommitted();            // latches refireCommitted_, clears dirty
+    t.dirty = true;                   // ... and the NEXT drag reopens the session
+    assert(t.hasUncommittedEdit(),
+           "control: the latch branch is only reachable while the session is "
+         ~ "open — without this the assertion below is answered by "
+         ~ "commitUncommittedEdit's own !dirty guard and cannot fail");
     assert(!t.commitUncommittedEdit(),
            "a commit that recorded nothing must not report success");
     assert(recorded == 0, "the latched path must not record an entry");
+}
+
+// task 1905 criterion 3 — the SAME drill over the other two wrapper tools
+// declared in this module. The cell above proves the contract for ONE of the
+// four (XfrmSmooth); measured 2026-08-29, `xfrm.jitter` and `xfrm.quantize`
+// appear in ZERO tests under `tests/` (`grep -rln 'xfrm.jitter' tests/*.d` is
+// empty), so before this block their half of "closed by construction" rested on
+// inheritance alone.
+//
+// Inheritance IS the mechanism and it is asserted exactly, at compile time, in
+// `tests/unit/wrapper_shift_apply_inheritance_test.d` — including the case that
+// file's own probe showed a single assertion cannot see (the family's override
+// deleted, all four falling back to `Tool`'s opt-out TOGETHER). What that
+// cannot show is that the inherited body still RUNS to a recorded entry for a
+// tool whose `inner` command is a different one, which is what this block adds.
+//
+// EdgeSlideTool is deliberately absent: it lives in `tools/slice/edge_slide.d`
+// and importing it here would close an import cycle. It is covered by the
+// compile-time file above, and the gap is named in card 3330 rather than
+// pretended away.
+unittest {
+    import mesh : makeCube;
+    import command_history : CommandHistory;
+    import commands.mesh.vertex_edit : MeshVertexEdit;
+    import std.meta : AliasSeq;
+
+    static foreach (TWrap; AliasSeq!(XfrmJitterTool, XfrmQuantizeTool)) {{
+        Mesh m = makeCube();
+        m.buildLoops();
+        View view = new View(0, 0, 800, 600);
+        auto hist = new CommandHistory();
+        auto t = new TWrap(&m, view, EditMode.Vertices, null);
+        t.setGestureBindings(hist, () => new MeshVertexEdit(&m, view, EditMode.Vertices));
+
+        size_t recorded = 0;
+        hist.onRecord = (string, uint) { ++recorded; };
+
+        // Idle: the opt-out contract.
+        assert(!t.commitUncommittedEdit(),
+            TWrap.stringof ~ ": no open edit must return false");
+        assert(recorded == 0,
+            TWrap.stringof ~ ": idle commit must not record");
+
+        // A live wrapper drag's leftovers, by hand (same module ⇒ private).
+        t.baseline = m.vertices.dup;
+        m.vertices[0] = m.vertices[0] + Vec3(0.25f, 0, 0);
+        t.dirty = true;
+
+        assert(t.commitUncommittedEdit(),
+            TWrap.stringof ~ ": dirty wrapper session must commit in place");
+        assert(recorded == 1,
+            TWrap.stringof ~ ": in-place commit must record exactly ONE entry");
+        assert(!t.hasUncommittedEdit(),
+            TWrap.stringof ~ ": commit must close the open edit");
+
+        // And the invariant, on the path that actually bites. Latch FIRST,
+        // re-dirty after — see the long note in the cell above: the other
+        // order is refused by `commitUncommittedEdit`'s own `!dirty` guard and
+        // never enters `commitNow` at all.
+        recorded = 0;
+        t.baseline = m.vertices.dup;
+        m.vertices[1] = m.vertices[1] + Vec3(0, 0.25f, 0);
+        t.onRefireCommitted();
+        t.dirty = true;
+        assert(t.hasUncommittedEdit(),
+            TWrap.stringof ~ ": control — the latch branch needs an open session");
+        assert(!t.commitUncommittedEdit(),
+            TWrap.stringof ~ ": a commit that recorded nothing must not report success");
+        assert(recorded == 0,
+            TWrap.stringof ~ ": the latched path must not record an entry");
+    }}
 }

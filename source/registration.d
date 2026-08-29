@@ -452,25 +452,25 @@ private void registerTransformTools(EditorApp app) {
     // follow-up; the tool surface is the prerequisite.
     reg.toolFactories["xfrm.smooth"] = () {
         auto t = new XfrmSmoothTool(&mesh(), cameraView, editMode, &gpu());
-        t.setUndoBindings(history, vxEditFactory);
+        t.setGestureBindings(history, vxEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
         return cast(Tool)t;
     };
     reg.toolFactories["xfrm.jitter"] = () {
         auto t = new XfrmJitterTool(&mesh(), cameraView, editMode, &gpu());
-        t.setUndoBindings(history, vxEditFactory);
+        t.setGestureBindings(history, vxEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
         return cast(Tool)t;
     };
     reg.toolFactories["edge.slide"] = () {
         auto t = new EdgeSlideTool(&mesh(), cameraView, editMode, &gpu());
-        t.setUndoBindings(history, vxEditFactory);
+        t.setGestureBindings(history, vxEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
         return cast(Tool)t;
     };
     reg.toolFactories["xfrm.quantize"] = () {
         auto t = new XfrmQuantizeTool(&mesh(), cameraView, editMode, &gpu());
-        t.setUndoBindings(history, vxEditFactory);
+        t.setGestureBindings(history, vxEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
         return cast(Tool)t;
     };

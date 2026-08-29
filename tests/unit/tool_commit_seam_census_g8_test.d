@@ -713,10 +713,24 @@ unittest {
 // ---------------------------------------------------------------------------
 // 5. THE `setUndoBindings` RESIDUE IS ENUMERATED, NOT MERELY PERMITTED.
 //
-//    Phases B, C and D moved thirty of the thirty-three declarations onto
-//    `Tool.setGestureBindings`. THREE survive, for two reasons the plan states
-//    and this roster repeats so that a fourth cannot be born green under
-//    somebody else's note.
+//    Phases B, C and D moved thirty-ONE of the thirty-three declarations onto
+//    `Tool.setGestureBindings`. TWO survive, for one reason the plan states and
+//    this roster repeats so that a third cannot be born green under somebody
+//    else's note.
+//
+//    THE THIRD SURVIVOR LEFT ON 2026-08-29 (group G6), and the row that
+//    described it was WRONG ON A LOAD-BEARING WORD, which is worth recording
+//    because the word was what kept it. It called the four registrations that
+//    reached `CommandWrapperTool` (xfrm.smooth, xfrm.jitter, xfrm.quantize,
+//    edge.slide) "transform-zone registrations". They are not: the transform
+//    zone is enumerated in §6 of the plan and `tools/common/command_wrapper.d`
+//    is not in it, nor is it among the three sites §8 rejects with a reason
+//    (`transform.d:501`, `transform.d:503`, `xfrm_transform.d:5666`). So the
+//    twelve `setUndoBindings` call sites were never 4+4+4 transform-zone; they
+//    were EIGHT transform-zone (four `XfrmTransformTool` + xfrm.push, xfrm.bend,
+//    xfrm.linearAlignTool, xfrm.radialAlignTool) and FOUR command-wrapper. The
+//    mislabel put a G6 file behind decision D1's out-of-scope wall, where
+//    nothing was going to move it.
 //
 //    THE NEEDLE, because the anchored one is blind. The predicate card 3200
 //    used, `^\s*(private|protected|public|package )?void setUndoBindings`,
@@ -733,12 +747,10 @@ unittest {
 private struct BinderRow { string path; size_t count; string why; }
 
 private enum BinderRow[] kBinderRoster = [
-    // The twelve surviving transform-zone bindings split FOUR / FOUR / FOUR
-    // across these three declarations, and the split matters: it is why none
-    // of the three is idle, and why the third one is not "waiting for G6" in
-    // the sense of having nothing to do meanwhile.
+    // The EIGHT surviving transform-zone bindings split FOUR / FOUR across
+    // these two declarations, and the split matters: it is why neither is idle.
     BinderRow("source/tools/transform/transform.d", 1,
-        "`TransformTool`'s own binder, reached by FOUR of the twelve "
+        "`TransformTool`'s own binder, reached by FOUR of the eight "
       ~ "transform-zone registrations (xfrm.push, xfrm.bend, "
       ~ "xfrm.linearAlignTool, xfrm.radialAlignTool). The transform zone is "
       ~ "OUT OF task 1905's scope by decision D1, and group G8 does NOT close "
@@ -748,13 +760,6 @@ private enum BinderRow[] kBinderRoster = [
         "an `override` of the above, reached by the other FOUR "
       ~ "`XfrmTransformTool` registrations (move / rotate / scale / "
       ~ "xfrm.transform) and forwarding to its three composed sub-tools"),
-    BinderRow("source/tools/common/command_wrapper.d", 1,
-        "`CommandWrapperTool`'s own binder — group G6, which the plan "
-      ~ "schedules LAST among the families (§6, D7) because its present form "
-      ~ "is already the target shape and a migration would prove nothing new. "
-      ~ "It is reached by the REMAINING FOUR transform-zone registrations "
-      ~ "(xfrm.smooth, xfrm.jitter, xfrm.quantize, edge.slide), so it is not "
-      ~ "idle while G6 waits"),
 ];
 
 unittest {
@@ -775,7 +780,7 @@ unittest {
         if (!listed) {
             problems ~= "    · UNROSTERED binder declaration: `void "
                       ~ "setUndoBindings` x " ~ n.to!string ~ " in " ~ rel
-                      ~ ". Every tool in groups G1-G5 and G7 binds through "
+                      ~ ". Every tool in groups G1-G7 binds through "
                       ~ "`Tool.setGestureBindings`, whose declaration is "
                       ~ "`final`. A second binder is a second place to forget, "
                       ~ "and a tool bound through neither is SILENT — the mesh "
@@ -802,11 +807,12 @@ unittest {
     if (total < kBinderRoster.length)
         problems ~= "    · NON-VACUITY: the walk of `source/` found "
                   ~ total.to!string ~ " `void setUndoBindings` declaration(s) "
-                  ~ "across " ~ filesRead.to!string ~ " file(s); three survive "
-                  ~ "by design. A number below three means either the reader "
-                  ~ "returned nothing — in which case every row above is "
-                  ~ "vacuous — or a survivor was deleted, which is good news "
-                  ~ "that still has to be recorded by removing its roster row";
+                  ~ "across " ~ filesRead.to!string ~ " file(s); two survive "
+                  ~ "by design, both in the transform zone. A number below two "
+                  ~ "means either the reader returned nothing — in which case "
+                  ~ "every row above is vacuous — or a survivor was deleted, "
+                  ~ "which is good news that still has to be recorded by "
+                  ~ "removing its roster row";
 
     assert(problems.length == 0,
         "G8 census: the `setUndoBindings` residue moved.\n" ~ joinLines(problems));
