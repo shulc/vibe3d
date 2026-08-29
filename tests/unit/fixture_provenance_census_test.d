@@ -49,18 +49,25 @@
 //
 // CORRECTION, measured 2026-08-29 (task 3300): the delegation above USED to
 // read "that is the authoritative check for THAT question", and for one shape
-// it is not. The private dictionary's patterns are word-boundary-anchored on
-// purpose (so they do not fire on `modeling` / `modOk`), which means a banned
-// token followed immediately by a DIGIT inside the version suffix --
-// `ref-editor@<token><digit>...` -- carries no boundary and is NOT matched;
-// verified with `neutrality_lint.sh --paths` against three probe files, where
-// the hyphenated and the free-prose forms both FAIL and that one form reports
-// 0 findings. `provenance.reference_is_neutral` (private) catches it via an
-// always-on substring test and is the only checker that does -- and it runs
-// in no routine lane. The gap is recorded at `provenance_check.py`'s head and
-// carded; this module still does not embed the denylist, for the reason
-// above, so the honest statement is "shape here, content elsewhere AND
-// currently unwitnessed for one shape", not "covered".
+// it was not, for one shape, between 2026-08-29's measurement and the same
+// day's fix. The private dictionary's patterns were anchored with `\b`, whose
+// word class is [A-Za-z0-9_], so a banned token followed immediately by a
+// DIGIT inside the version suffix -- `ref-editor@<token><digit>...` -- carried
+// no boundary and was NOT matched; verified with `neutrality_lint.sh --paths`
+// against three probe files, where the hyphenated and the free-prose forms
+// both FAIL and that one form reported 0 findings. `provenance.
+// reference_is_neutral` (private) caught it via an always-on substring test
+// and was the only checker that did, in no routine lane.
+//
+// CLOSED by task 3301: the dictionary boundary is now
+// `(^|[^A-Za-z])TOKEN($|[^A-Za-z])`, which treats a digit and an `_` as the
+// delimiters they are while still keeping `modeling` / `modOk` / `lineDrawn`
+// quiet, and the BOUNDARY itself now has a witness in this same lane --
+// `tests/unit/neutrality_boundary_test.d`, which proves the match/no-match
+// table on a SYNTHETIC token because a public test may not carry a real one.
+// So the delegation is honest again: SHAPE here, CONTENT in the private
+// dictionary, and the RULE that dictionary matches by is pinned publicly.
+// This module still does not embed the denylist, for the reason above.
 //
 // THE INLINE-.d POPULATION IS A SMALL, ENUMERATED SET, DELIBERATELY, mirroring
 // `provenance_check.py`'s `INLINE_D_FILES` (private repo) so the two
