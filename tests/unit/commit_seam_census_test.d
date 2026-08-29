@@ -22,6 +22,13 @@ import std.file   : readText, exists;
 import std.format : format;
 import std.path   : buildPath, dirName;
 
+// Task 3280 — the attribute-chain predicate lives in ONE place now. See
+// tests/unit/decl_needle.d for why a per-census prefix rule kept failing
+// silently, and for the fixture that pins it.
+import tests.unit.decl_needle : declaresVarOfType, declaredVarName,
+                                hasUnknownDeclPrefix,
+                                funcDeclAttrChains, narrowsVisibility;
+
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 // ---------------------------------------------------------------------------
@@ -370,7 +377,21 @@ unittest // no batch state on struct Mesh
     // `editRecorder_` survives as an ACCESSOR over the stack, never as a
     // pointer field: a `*mesh = result` mid-batch would otherwise swap in the
     // new value's empty tracker and orphan the one the caller is recording to.
-    assert(countOccurrences(src, "private MeshEditTracker* editRecorder_;") == 0,
+    // TASK 3280 — KEYED ON THE FIELD, NOT ON ONE SPELLING OF IT. The needle
+    // this replaced was the literal `private MeshEditTracker* editRecorder_;`,
+    // so the likeliest regression of all — putting the field back with NO
+    // visibility keyword, which inside a `struct` is PUBLIC — read as zero and
+    // this row stayed green over exactly the state it exists to refuse. So did
+    // `package`, `protected`, `private static`, `private __gshared`, and a tab
+    // where the space is.
+    size_t recorderFields = 0;
+    {
+        import std.array : split;
+        foreach (line; src.split('\n'))
+            if (declaredVarName(line, "MeshEditTracker") == "editRecorder_")
+                ++recorderFields;
+    }
+    assert(recorderFields == 0,
         "`Mesh.editRecorder_` is a FIELD again — it must be a private accessor "
       ~ "over `g_editBatchStack`, or a wholesale `*mesh = …` mid-batch orphans "
       ~ "the recorder (task 1903 §2.2a item 2).");
@@ -3327,6 +3348,39 @@ unittest // every §2.6 widening this stage made still has the caller it names
                  ~ "sees a private name for free; a free function in "
                  ~ "`source/mesh_ops/` does not (plan §2.6, §4.3).",
                    w.name, w.why));
+        // TASK 3280 — THE SAME QUESTION, ASKED SO IT CANNOT BE DODGED. The
+        // row above is one SPELLING of "private again", and a spelling is a
+        // weaker claim than the question: `private static float
+        // smoothstep01(` re-privatises the name and reads ZERO against it,
+        // and — measured, not supposed — the `publicDecl == 1` row below
+        // reads ONE at the same time, because the public spelling is a
+        // SUBSTRING of the private one. Both halves of the pair are therefore
+        // green over a re-privatised name. This term reads the declaration's
+        // whole attribute CHAIN instead, so `private`, `private static`,
+        // `@safe private`, `protected` and `package` all answer alike. On
+        // today's tree the two agree; what separates them is the mutation
+        // recorded in task 3280's card.
+        {
+            import std.string : lastIndexOf;
+            immutable ptrdiff_t dot  = w.name.lastIndexOf('.');
+            immutable string    bare = dot >= 0 ? w.name[dot + 1 .. $] : w.name;
+            auto chains = funcDeclAttrChains(dsrc, bare);
+            assert(chains.length >= 1,
+                format("the §2.6 visibility term cannot FIND a declaration of "
+                     ~ "`%s` in %s. A term that finds nothing reports nothing, "
+                     ~ "which is the shape of the defect it was added to close "
+                     ~ "— fix the scanner in tests/unit/decl_needle.d, do not "
+                     ~ "drop the row.", bare, w.declFile));
+            foreach (ch; chains)
+                assert(!narrowsVisibility(ch),
+                    format("`%s` is declared in %s with the attribute chain "
+                         ~ "%s, which NARROWS its visibility below public. It "
+                         ~ "is %s Task 1903 §2.6 widened it for a caller in "
+                         ~ "`source/mesh_ops/`: a mixin body is instantiated "
+                         ~ "in mesh.d's scope and sees a private name for "
+                         ~ "free, a free function does not.",
+                           bare, w.declFile, ch, w.why));
+        }
         assert(countOccurrences(dsrc, w.publicDecl) == 1,
             format("%s no longer declares `%s` as `%s` — count %d, "
                  ~ "expected 1. If the signature changed, update this row and "
@@ -4483,17 +4537,44 @@ unittest // Stage M — the closing MeshSnapshot count for source/commands
     // that counts `ref MeshSnapshot` parameters, `MeshSnapshot.init` and the
     // type name in a doc line, and the number would move for reasons that are
     // not a holder appearing.
-    static size_t declCount(string code) {
+    //
+    // THE ATTRIBUTE TERM IS NOT WRITTEN HERE ANY MORE (task 3280). Until then
+    // this scanner stripped exactly one leading attribute and exactly the word
+    // `private`, so `protected MeshSnapshot snap;` — or `public`, `package`,
+    // `static`, `__gshared`, `private static`, an `@`-attribute, or
+    // `MeshSnapshot[] snaps;` — read as NOT A DECLARATION. Every term below
+    // then failed the same way and failed QUIETLY: the file never entered
+    // `found`, so TERM 1 saw no new holder, TERM 2 never visited it, and TERM
+    // 3's 19-in-14 stayed exactly 19 in 14. A command going back to a
+    // whole-mesh undo in any spelling but `private` was born green. Measured
+    // on this tree the two needles agree — every holder today IS spelled
+    // `private` or bare — so the delta is not a number, it is the mutation:
+    // add `protected MeshSnapshot snap;` to an unrostered command and the old
+    // needle stays green while this one names the file.
+    //
+    // `hasUnknownDeclPrefix` is the second half and the reason this is a
+    // repair rather than a bigger list: an attribute the shared table has
+    // never seen makes the line REPORTABLE instead of invisible.
+    static size_t declCountRaw(string code, out string[] unknownPrefixes) {
         size_t n = 0;
         foreach (line; code.split('\n')) {
-            auto t = line.strip;
-            if (t.startsWith("private ")) t = t["private ".length .. $].strip;
-            if (!t.startsWith("MeshSnapshot ")) continue;
-            auto rest = t["MeshSnapshot ".length .. $].strip;
-            if (rest.length == 0) continue;
-            immutable char c = rest[0];
-            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') ++n;
+            if (declaresVarOfType(line, "MeshSnapshot")) { ++n; continue; }
+            if (hasUnknownDeclPrefix(line, "MeshSnapshot"))
+                unknownPrefixes ~= line.strip;
         }
+        return n;
+    }
+
+    static size_t declCount(string code) {
+        string[] unknown;
+        immutable size_t n = declCountRaw(code, unknown);
+        assert(unknown.length == 0,
+            format("a `MeshSnapshot` declaration sits behind an attribute "
+                 ~ "chain tests/unit/decl_needle.d does not know: %s\n"
+                 ~ "  This is the LOUD half of task 3280's repair. Widen "
+                 ~ "`kVarAttrKeywords` there (and the fixture beside it), "
+                 ~ "never this census — a per-census attribute list is the "
+                 ~ "thing that went wrong four lanes running.", unknown));
         return n;
     }
 

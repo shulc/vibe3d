@@ -55,6 +55,10 @@ import mesh_ops.cleanup;
 import mesh_ops.revolve;
 import mesh_ops.bevel_vertex : bevelVerticesByMask, kBevelVertexEditScope;
 import editmode : EditMode;
+// Task 3280 — the one attribute-chain predicate; see
+// tests/unit/decl_needle.d for the four lanes that each rediscovered
+// this blindness and wrote it down differently.
+import tests.unit.decl_needle : kAttrChainRe, stripDeclAttrs;
 import tests.unit.fixtures : makeTaggedGridFull, makeTaggedGridWeldSets,
                              dumpMeshPlanes, diffMeshPlanes,
                              explainMeshPlaneDiff;
@@ -987,12 +991,30 @@ private string[] scanArmSites(string rel, string text)
     // name. Deliberately anchored and deliberately NOT matching a statement:
     // the blacklist below is the second half of that, because
     // `size_t n = f(x)` and `assert(...)` both parse as "identifier, paren".
-    enum declRe = ctRegex!(`^(?: {4})?(?:private |public |package |static |final |override |const |inout )*`
+    // TASK 3280 — the attribute chain is `kAttrChainRe`, not a list written
+    // here. The eight this file used to spell (`private public package static
+    // final override const inout`) MEASURED WRONG on today's tree: TWENTY-ONE
+    // lines in the scanned set are read differently by a complete chain —
+    // four `@property`, three `pragma(inline, true)`, two `ref` returns and
+    // twelve `version (unittest) [private] …` helpers. One of the twenty-one
+    // is not merely missed but MIS-READ: `ref inout(Mesh) mesh() inout
+    // return` in `source/mesh.d` records its owner as `inout`, a name that
+    // is not a function at all.
+    // A missed declaration leaves `owner` at the PREVIOUS name, so an arm
+    // added inside one is attributed to a kernel that does not hold it —
+    // measured: `pragma(inline, true)` in front of `triangulateFacesByMask`
+    // moves its arm onto `tripleRingCorners` under the old chain, and the
+    // census then reddens saying an arm moved when only an attribute did.
+    enum declRe = ctRegex!(`^(?: {4})?` ~ kAttrChainRe
                          ~ `[A-Za-z_][A-Za-z0-9_.!\[\]\(\)]*[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(`);
     static immutable string[] notADecl = [
         "if", "assert", "foreach", "foreach_reverse", "while", "switch",
         "return", "catch", "version", "debug", "scope", "with", "cast",
         "enforce", "format", "static",
+        // Task 3280: with the chain widened, `__gshared bool delegate(…) g_x;`
+        // parses as "type `bool`, name `delegate`". A VARIABLE of function-
+        // pointer type is not an owner.
+        "delegate", "function",
     ];
 
     // NESTING IS RESOLVED BY BRACE DEPTH, NOT BY INDENT, and that is not
@@ -1006,7 +1028,13 @@ private string[] scanArmSites(string rel, string text)
     // A declaration counts as an OWNER only at depth 0 (a module-level free
     // function) or depth 1 (a member of a module-level aggregate). Anything
     // deeper is a nested helper and is skipped.
-    enum aggRe = ctRegex!(`^(?:private |public |package |static |final |abstract |extern\S* )*`
+    // Same chain, same reason (task 3280). `extern\S* ` here could not even
+    // match `extern (C) struct` — the space between the keyword and its
+    // parenthesis — and `protected`, `deprecated`, `immutable`, `shared`,
+    // `align(1)` and every UDA were absent. A missed aggregate head leaves
+    // `aggregateAtTop` false, and then every method of that aggregate
+    // resolves to `<unresolved>`.
+    enum aggRe = ctRegex!(`^` ~ kAttrChainRe
                         ~ `(?:struct|class|union|interface|template)[ \t]`);
 
     string[] out_;
@@ -1301,7 +1329,12 @@ private string codeOutsideStrings(string line)
 private bool isFlagWriteLine(string line)
 {
     import std.regex : ctRegex, matchFirst;
-    enum declRe  = ctRegex!(`^\s*(?:private |public |package )?bool\s+wantsFaceReindex\b`);
+    // TASK 3280 — a CHAIN, not one optional visibility. The `?` here meant
+    // `static bool wantsFaceReindex`, `shared bool …`, `@safe bool …` and
+    // `public static bool …` all failed the exclusion, so the field's own
+    // DECLARATION would have been reported as a write from outside its owner
+    // — the loud direction, but a false finding on a clean tree.
+    enum declRe  = ctRegex!(`^\s*` ~ kAttrChainRe ~ `bool\s+wantsFaceReindex\b`);
     enum writeRe = ctRegex!(`\bwantsFaceReindex\s*=[^=]`);
 
     immutable string s = line.strip;
@@ -1318,7 +1351,12 @@ private size_t[2][] flagOwnerRanges(string[] lines)
     foreach (i, line; lines) {
         immutable string t = line.strip;
         if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) continue;
-        immutable bool isOwner = t.startsWith("struct FaceReindexArm")
+        // TASK 3280 — the aggregate head is found behind its attribute chain.
+        // `startsWith("struct FaceReindexArm")` missed `static struct
+        // FaceReindexArm`, which is the likeliest edit a nested struct ever
+        // gets; losing the range then pushes the destructor's own restore
+        // into the findings AND drops `insideTotal` to 1.
+        immutable bool isOwner = stripDeclAttrs(t).startsWith("struct FaceReindexArm")
                               || t.indexOf("FaceReindexArm faceReindexScope()") >= 0;
         if (!isOwner) continue;
         int depth = 0;

@@ -98,6 +98,9 @@ private enum size_t kBgAddr = 0x00_DBFF_0000;   // never born, never published
 // declaration either — `mesh_dirty.d` already spells `g_births` that way.
 // ---------------------------------------------------------------------------
 
+// Task 3280 — the one attribute-chain predicate lives here now.
+import tests.unit.decl_needle : stripDeclAttrs;
+
 private bool isDeclIdentChar(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
         || (c >= '0' && c <= '9') || c == '_';
@@ -105,19 +108,20 @@ private bool isDeclIdentChar(char c) {
 
 /// Drop leading attributes so the `__gshared` / `alias` keyword can be found
 /// at the head of the statement whatever decorates it.
+///
+/// TASK 3280 — THE TABLE MOVED OUT OF THIS FILE. It used to be eight literals
+/// here (`private `, `public `, `package `, `protected `, `export `,
+/// `static `, `deprecated `, `shared `), which is a list every later author
+/// has to widen and whose feedback for forgetting is SILENCE: a watcher
+/// declared `@safe __gshared MeshDirtyEpochs g_x;` — or `final`, `immutable`,
+/// `extern (C)`, `align(64)`, `deprecated("…")`, or any UDA — never entered
+/// `declared`, so the `allWatchers()` cross-check below never ran on it and
+/// `resetMeshDirtyStateForTest()` left it dirty between cells with nothing
+/// red to say so. That is the same escape task 2007 finding #6 built for the
+/// ALIAS axis, still open on the ATTRIBUTE axis. One shared predicate now,
+/// pinned by its own fixture in `tests/unit/decl_needle.d`.
 private string stripLeadingAttrs(string t) {
-    import std.string : startsWith, strip;
-    static immutable string[] kAttrs = [
-        "private ", "public ", "package ", "protected ", "export ",
-        "static ", "deprecated ", "shared ",
-    ];
-    bool moved = true;
-    while (moved) {
-        moved = false;
-        foreach (a; kAttrs)
-            if (t.startsWith(a)) { t = t[a.length .. $].strip; moved = true; break; }
-    }
-    return t;
+    return stripDeclAttrs(t);
 }
 
 /// The bare type NAME behind a type token: drop a module qualification
@@ -180,9 +184,18 @@ private string[] gsharedDeclsOfType(string src, string typeName) {
     auto aliases = aliasMapOf(src);
     string[] found;
     foreach (ln; src.splitLines) {
-        auto t = stripLeadingAttrs(ln.strip);
-        if (!t.startsWith("__gshared ")) continue;
-        auto rest = t["__gshared ".length .. $].strip;
+        // TASK 3280 — `__gshared` is looked for IN THE CHAIN, not at the head
+        // of what is left of it. The old rule wanted it first, so
+        // `shared __gshared`, `static __gshared`, `@safe __gshared` and
+        // `immutable __gshared` all fell out; and because the chain walker
+        // stopped at the first unknown word, so did every attribute AFTER it
+        // (`__gshared immutable MeshDirtyEpochs g_x;` read its type as
+        // `immutable`). Both directions were silent.
+        string[] attrs;
+        auto rest = stripDeclAttrs(ln.strip, attrs).strip;
+        bool gshared = false;
+        foreach (a; attrs) if (a == "__gshared") { gshared = true; break; }
+        if (!gshared) continue;
         // <type> <name>
         size_t e = 0;
         while (e < rest.length && rest[e] != ' ' && rest[e] != '\t') ++e;

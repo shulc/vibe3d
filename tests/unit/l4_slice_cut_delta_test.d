@@ -28,6 +28,9 @@ import math : Vec3;
 import mesh_edit_delta : MeshEditDelta, MeshOpEntry;
 
 import tests.unit.fixtures : makeTaggedGridFull;
+// Task 3280 — the one attribute-chain predicate; see
+// tests/unit/decl_needle.d for why a `private `-only needle went green.
+import tests.unit.decl_needle : declaresVarOfType;
 
 import commands.mesh.axis_slice   : MeshAxisSlice, MeshJulienne;
 import commands.mesh.screen_slice : MeshScreenSlice;
@@ -411,7 +414,7 @@ unittest
     import std.file : readText;
     import std.path : dirName, buildPath;
     import std.algorithm : sort, uniq, count;
-    import std.array : array;
+    import std.array : array, split;
 
     // `__FILE_FULL_PATH__`-rooted, never cwd-rooted: the unit lane's working
     // directory is the project root today, and a census that quietly finds
@@ -436,9 +439,19 @@ unittest
     foreach (rel; kFiles) {
         immutable text = readText(buildPath(repo, rel));
         scanned += text.length;
-        immutable size_t nSnap = text.count("private MeshSnapshot");
+        // TASK 3280 — THE NEEDLE IS THE DECLARATION, NOT ONE SPELLING OF IT.
+        // This row counted the literal `private MeshSnapshot`, so a class
+        // that came back with `MeshSnapshot snap;` (no keyword: inside a
+        // `class` that is PUBLIC, and it is what a hurried re-add writes),
+        // or `protected`, `package`, `private static`, or `MeshSnapshot[]`,
+        // read ZERO and this assert was green over the exact regression it
+        // names. The count is now over DECLARATIONS, whatever chain stands
+        // in front of them.
+        size_t nSnap = 0;
+        foreach (line; text.split('\n'))
+            if (declaresVarOfType(line, "MeshSnapshot")) ++nSnap;
         assert(nSnap == 0, format(
-            "%s still declares %d `private MeshSnapshot` field(s). Task 1903 "
+            "%s still declares %d `MeshSnapshot` field(s). Task 1903 "
           ~ "stage L4 moved all five classes in this family onto a "
           ~ "`MeshEditDelta`; a surviving whole-mesh capture means either a "
           ~ "class was missed or one was quietly put back, and the second "
@@ -469,9 +482,12 @@ unittest
     // never delete this block.
     {
         immutable ctl = readText(buildPath(repo, "source/commands/mesh/paste.d"));
-        assert(ctl.count("private MeshSnapshot") >= 1,
+        size_t ctlSnaps = 0;
+        foreach (line; ctl.split('\n'))
+            if (declaresVarOfType(line, "MeshSnapshot")) ++ctlSnaps;
+        assert(ctlSnaps >= 1,
             "the CONTROL moved: source/commands/mesh/paste.d no longer "
-          ~ "declares a `private MeshSnapshot`, so the predicate above matches "
+          ~ "declares a `MeshSnapshot` field, so the predicate above matches "
           ~ "nothing and every one of the four assertions passes for free. "
           ~ "Re-base this control onto another snapshot holder — "
           ~ "`grep -rn 'private MeshSnapshot' source/commands/` — never delete "
