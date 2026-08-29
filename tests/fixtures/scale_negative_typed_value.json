@@ -1,0 +1,385 @@
+{
+  "name": "scale_negative_typed_value",
+  "description": "What a NUMERIC ('typed') negative scale value does while the negative-scale option is OFF. The reference ACCEPTS the write and stores max(0, value): not a refusal, not |v|, not a clamp to 1 or to the smallest positive float, and not the pass-through its own shipped documentation promises. The option is consumed at the WRITE and never on the apply path, so the stored value is the whole law; and it is consumed only for the scale axes -- a translate value written at the same option state is stored verbatim. The discriminating input is a TYPED value: a handle drag is clipped on its own layer by a separate copy of the same rule, so a drag agrees with every candidate and cannot separate them. vibe3d has TWO write paths and they disagree: the live-session path implements this law, the numeric tool.attr + doApply path skips the floor entirely. That gap is recorded per case in vibe3d_current and is what this fixture exists to hold still.",
+  "source": "Reference side: headless command-lane readback of the transform tool's own scale attribute after a numeric write, one isolated profile, plus a static read of the shipped binaries at the setter's own compute site (the private toolcard carries the routine names and addresses). vibe3d side: live drive of this build over the HTTP test API, both write paths, read back from /api/model.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "command",
+    "captured_utc": "2026-08-29",
+    "harness": "headless command lane, isolated profile; commands and raw transcripts live in the private toolcard",
+    "task": "3023",
+    "notes": "INSTRUMENT: two arms, and both are load-bearing. (1) A STATIC READ of the reference's own shipped, unstripped libraries located the scale-axis setter, showed the clamp is a max against +0.0 gated on the option's stored integer, showed the three drag entry points carry their own separate copies of it, and showed the apply path never reads the option at all -- which is why the stored value is sufficient to determine the geometry. (2) The NUMBERS in this file are behavioural: each `reference.stored` is the value the reference printed when asked for that attribute back, in a run whose option state was also read back rather than assumed. `method` records the arm the numbers came from; the enum the D-side gate accepts has no value for a hybrid, and inventing one is worse than recording the static arm here in prose (the same choice mirror_coincident_face_policy.json made). WHAT IS DERIVED, NAMED: the reference's own post-apply GEOMETRY was not captured -- its numeric apply does not commit without a viewport -- so no vertex coordinate here is a reference measurement. The test derives the expected coordinate from `reference.stored` in one visible line (scale: base.x * stored; translate: base.x + stored), which is sound precisely because the static arm showed the apply path does not consult the option. The reference's own user documentation states the OPPOSITE of this result on eight separate pages ('when disabled, you can always input negative values in any of the input fields directly'); the measurement is what this fixture records."
+  },
+  "parameters": {
+    "schema": 1,
+    "state": "recorded",
+    "derived_from": "replay-steps",
+    "cells": [
+      {
+        "cell": "neg_on_typed_minus3",
+        "drove": [
+          {
+            "op": "tool.attr scale",
+            "values": {
+              "negScale": 1,
+              "SX.pre": 2.5,
+              "SX": -3.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "neg_off_typed_minus3",
+        "drove": [
+          {
+            "op": "tool.attr scale",
+            "values": {
+              "negScale": 0,
+              "SX.pre": 2.5,
+              "SX": -3.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "neg_off_typed_minus_075",
+        "drove": [
+          {
+            "op": "tool.attr scale",
+            "values": {
+              "negScale": 0,
+              "SX.pre": 2.5,
+              "SX": -0.75
+            }
+          }
+        ]
+      },
+      {
+        "cell": "neg_on_typed_minus_075",
+        "drove": [
+          {
+            "op": "tool.attr scale",
+            "values": {
+              "negScale": 1,
+              "SX.pre": 2.5,
+              "SX": -0.75
+            }
+          }
+        ]
+      },
+      {
+        "cell": "neg_off_typed_positive",
+        "drove": [
+          {
+            "op": "tool.attr scale",
+            "values": {
+              "negScale": 0,
+              "SX.pre": 2.5,
+              "SX": 0.25
+            }
+          }
+        ]
+      },
+      {
+        "cell": "neg_off_translate_minus3",
+        "drove": [
+          {
+            "op": "tool.attr move",
+            "values": {
+              "negScale": 0,
+              "TX.pre": 1.0,
+              "TX": -3.0
+            }
+          }
+        ]
+      },
+      {
+        "cell": "shipped_default_is_option_off",
+        "drove": [
+          {
+            "op": "tool.attr scale",
+            "values": {
+              "SX.pre": 2.5,
+              "SX": -3.0
+            }
+          }
+        ]
+      }
+    ],
+    "notes": "Every cell drives the operation under test with a TYPED numeric value; `<attr>.pre` is the value written immediately before it, and it is part of the operation, not the stand -- it is what makes 'refuses and keeps the previous value' a separable candidate. The default cell deliberately carries NO negScale value: the absence is the parameter under test."
+  },
+  "tolerance": 0.0001,
+  "law": {
+    "statement": "On a NUMERIC/typed write of a scale axis: the write is accepted (it reports success) and the value stored is max(0, value) when the negative-scale option is off, and value when it is on. Non-scale attributes are stored verbatim at either option state.",
+    "consumed_at": "the write. The apply path never reads the option, so the stored value alone determines the geometry.",
+    "refuted_candidates": [
+      {
+        "candidate": "applies the typed value, ignoring the option",
+        "predicted_stored": -3.0,
+        "refuted_by": "the reference read the attribute back as 0.0. This is the candidate the reference's OWN shipped help predicts, on eight pages, which is why it had to be measured rather than looked up."
+      },
+      {
+        "candidate": "refuses the edit and leaves the previous value",
+        "predicted_stored": 2.5,
+        "refuted_by": "the readback is 0.0, not the 2.5 written immediately before; and the command reported success, so no refusal occurred."
+      },
+      {
+        "candidate": "stores the absolute value",
+        "predicted_stored": 3.0,
+        "refuted_by": "the readback is 0.0."
+      },
+      {
+        "candidate": "clamps to 1",
+        "predicted_stored": 1.0,
+        "refuted_by": "the readback is 0.0."
+      },
+      {
+        "candidate": "clamps to the smallest positive representable value",
+        "predicted_stored": 1.1754944e-38,
+        "refuted_by": "the readback is exactly 0.0. NOTE THE DEGENERACY: this candidate and the selected one are indistinguishable in GEOMETRY at any usable tolerance; only the value readback separates them, which is why the reference column of this fixture is a stored value and not a coordinate."
+      }
+    ]
+  },
+  "reference_readbacks": [
+    {
+      "attr": "SX",
+      "negScale": 1,
+      "typed": 2.5,
+      "accepted": true,
+      "stored": 2.5
+    },
+    {
+      "attr": "SX",
+      "negScale": 1,
+      "typed": -3.0,
+      "accepted": true,
+      "stored": -3.0
+    },
+    {
+      "attr": "SX",
+      "negScale": 0,
+      "typed": 2.5,
+      "accepted": true,
+      "stored": 2.5
+    },
+    {
+      "attr": "SX",
+      "negScale": 0,
+      "typed": -3.0,
+      "accepted": true,
+      "stored": 0.0
+    },
+    {
+      "attr": "SY",
+      "negScale": 0,
+      "typed": -0.75,
+      "accepted": true,
+      "stored": 0.0
+    },
+    {
+      "attr": "SZ",
+      "negScale": 0,
+      "typed": -1e-06,
+      "accepted": true,
+      "stored": 0.0
+    },
+    {
+      "attr": "SY",
+      "negScale": 0,
+      "typed": 0.25,
+      "accepted": true,
+      "stored": 0.25
+    },
+    {
+      "attr": "TX",
+      "negScale": 0,
+      "typed": -3.0,
+      "accepted": true,
+      "stored": -3.0
+    },
+    {
+      "attr": "absX",
+      "negScale": 0,
+      "typed": -3.0,
+      "accepted": true,
+      "stored": -3.0
+    },
+    {
+      "attr": "SX",
+      "negScale": 1,
+      "typed": -3.0,
+      "accepted": true,
+      "stored": -3.0
+    }
+  ],
+  "reference_readbacks_note": "Every row is a value the reference printed when asked for that attribute back, in a single run whose option state was read back before each group. The SZ row at -0.000001 is the one that separates a floor at zero from a clamp on the magnitude, and it is deliberately NOT a driven case below: at float precision our geometry witness cannot tell 0.0 from -0.5 * -1e-6. `absX` is the reference's absolute-size attribute; vibe3d has no equivalent, so it is recorded and not driven.",
+  "reference_defaults": {
+    "negScale": 1,
+    "note": "The reference ships the negative-scale option ON. vibe3d ships it OFF, and that is a DECIDED product divergence (task 0332 resolved scope), not an unmeasured guess -- it preserves the pre-0332 clamp-at-zero behaviour unless a user opts in. The default is recorded here so the divergence is visible; the case `shipped_default_is_option_off` below pins OUR default, which is the half a regression can break."
+  },
+  "default_case": {
+    "name": "shipped_default_is_option_off",
+    "tool": "scale",
+    "attr": "SX",
+    "kind": "scale",
+    "pre_value": 2.5,
+    "typed_value": -3.0,
+    "vibe3d_current": {
+      "session": {
+        "vertex0_x": 0.0
+      },
+      "numeric": {
+        "vertex0_x": 1.5
+      }
+    },
+    "note": "No negScale value is written at all. The session path floors, which is the observable signature of our shipped default being OFF. Recorded as a driven cell rather than as prose so that a change of default reddens something."
+  },
+  "cases": [
+    {
+      "name": "neg_on_typed_minus3",
+      "kind": "scale",
+      "tool": "scale",
+      "attr": "SX",
+      "negScale": 1,
+      "pre_value": 2.5,
+      "typed_value": -3.0,
+      "reference": {
+        "accepted": true,
+        "stored": -3.0
+      },
+      "vibe3d_current": {
+        "numeric": {
+          "vertex0_x": 1.5,
+          "matches_reference": true
+        },
+        "session": {
+          "vertex0_x": 1.5,
+          "matches_reference": true
+        }
+      },
+      "note": "Option ON, typed -3: stored verbatim. Both of our paths agree with the reference here, so this case alone proves nothing about the option -- it is the CONTROL that shows the rig can produce a non-floored answer."
+    },
+    {
+      "name": "neg_off_typed_minus3",
+      "kind": "scale",
+      "tool": "scale",
+      "attr": "SX",
+      "negScale": 0,
+      "pre_value": 2.5,
+      "typed_value": -3.0,
+      "reference": {
+        "accepted": true,
+        "stored": 0.0
+      },
+      "vibe3d_current": {
+        "numeric": {
+          "vertex0_x": 1.5,
+          "matches_reference": false
+        },
+        "session": {
+          "vertex0_x": 0.0,
+          "matches_reference": true
+        }
+      },
+      "note": "THE DISCRIMINATING CELL. Option OFF, typed -3. The reference ACCEPTS the write (it answers ok) and stores 0. The prior value was deliberately 2.5, not the 1.0 default, so 'refuses and keeps the previous value' would have read 2.5 and is refuted, not merely unlikely."
+    },
+    {
+      "name": "neg_off_typed_minus_075",
+      "kind": "scale",
+      "tool": "scale",
+      "attr": "SX",
+      "negScale": 0,
+      "pre_value": 2.5,
+      "typed_value": -0.75,
+      "reference": {
+        "accepted": true,
+        "stored": 0.0
+      },
+      "vibe3d_current": {
+        "numeric": {
+          "vertex0_x": 0.375,
+          "matches_reference": false
+        },
+        "session": {
+          "vertex0_x": 0.0,
+          "matches_reference": true
+        }
+      },
+      "note": "Same law at a second magnitude: the floor is at zero, not at -1 and not on |v|. Also separates the floor from any 'snap to the nearest legal value' reading, which would have kept 0.75."
+    },
+    {
+      "name": "neg_on_typed_minus_075",
+      "kind": "scale",
+      "tool": "scale",
+      "attr": "SX",
+      "negScale": 1,
+      "pre_value": 2.5,
+      "typed_value": -0.75,
+      "reference": {
+        "accepted": true,
+        "stored": -0.75
+      },
+      "vibe3d_current": {
+        "numeric": {
+          "vertex0_x": 0.375,
+          "matches_reference": true
+        },
+        "session": {
+          "vertex0_x": 0.375,
+          "matches_reference": true
+        }
+      },
+      "note": "The same magnitude with the option ON: stored verbatim. Paired with the row above, the ONLY thing that changed is the option, which is what makes the pair evidence about the option rather than about the value."
+    },
+    {
+      "name": "neg_off_typed_positive",
+      "kind": "scale",
+      "tool": "scale",
+      "attr": "SX",
+      "negScale": 0,
+      "pre_value": 2.5,
+      "typed_value": 0.25,
+      "reference": {
+        "accepted": true,
+        "stored": 0.25
+      },
+      "vibe3d_current": {
+        "numeric": {
+          "vertex0_x": -0.125,
+          "matches_reference": true
+        },
+        "session": {
+          "vertex0_x": -0.125,
+          "matches_reference": true
+        }
+      },
+      "note": "Option OFF, a POSITIVE typed value: stored verbatim. Refutes 'while the option is off the numeric field is refused/ignored altogether' -- the write lands, it is only the sign that is clipped. Both our paths agree here, so the divergence below is specific to a negative value."
+    },
+    {
+      "name": "neg_off_translate_minus3",
+      "kind": "translate",
+      "tool": "move",
+      "attr": "TX",
+      "negScale": 0,
+      "pre_value": 1.0,
+      "typed_value": -3.0,
+      "reference": {
+        "accepted": true,
+        "stored": -3.0
+      },
+      "vibe3d_current": {
+        "numeric": {
+          "vertex0_x": -3.5,
+          "matches_reference": true
+        },
+        "session": {
+          "vertex0_x": -3.5,
+          "matches_reference": true
+        }
+      },
+      "note": "Option OFF, a negative TRANSLATE: stored verbatim. The floor is specific to the scale axes; it is not a blanket 'no negative numbers while the option is off'. The reference stores an absolute-size value the same way (see reference_readbacks), which vibe3d has no equivalent of and so does not drive."
+    }
+  ]
+}
