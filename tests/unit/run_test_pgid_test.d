@@ -58,7 +58,7 @@ import std.exception : collectException, enforce;
 import std.file      : exists, remove, tempDir;
 import std.format    : format;
 import std.path      : buildPath, dirName;
-import std.process   : execute, thisProcessID;
+import std.process   : environment, execute, thisProcessID;
 
 private enum repoRoot   = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 private enum runnerPath = buildPath(repoRoot, "run_test.d");
@@ -77,7 +77,15 @@ unittest
         "compiling %s with -unittest failed (status %d):\n%s",
         runnerPath, build.status, build.output));
 
-    auto run = execute([outBin]);
+    // See tests/unit/harness_log_isolation_census_test.d: a runner spawned by a
+    // test must not append to this host's load log (task 3260). Harmless here
+    // today — druntime runs run_test.d's own unittests and skips main, so no
+    // record is written — but "which exits log" is a property of run_test.d,
+    // not of this test, and it is not this test's business to depend on it.
+    string[string] env;
+    foreach (k, v; environment.toAA) env[k] = v;
+    env["VIBE3D_HARNESS_LOG"] = "off";
+    auto run = execute([outBin], env);
     enforce(run.status == 0, format(
         "%s's own unittest block failed (status %d):\n%s\n" ~
         "This is run_test.d's `shouldKillGroup` witness (task 2001): the " ~

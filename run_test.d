@@ -59,7 +59,7 @@ import core.stdc.stdlib   : exit;
 import core.sys.posix.signal : signal, kill, SIGINT, SIGTERM, SIGKILL;
 import core.sys.posix.unistd : isatty, STDOUT_FILENO, close, getpid, ftruncate,
                                setpgid, getpgrp;
-import core.sys.posix.fcntl  : open, O_RDWR, O_CREAT;
+import core.sys.posix.fcntl  : open, O_RDWR, O_CREAT, O_WRONLY, O_APPEND;
 import core.sys.posix.sys.types : ssize_t;
 
 // flock(2) is not surfaced by this druntime's posix bindings; declare it.
@@ -415,7 +415,19 @@ bool acquireRunLock(int timeoutSec) {
         return true;
     }
     // Fast path: grab it immediately if free.
-    if (flock(runLockFd, LOCK_EX | LOCK_NB) == 0) return recordLockHolder();
+    if (flock(runLockFd, LOCK_EX | LOCK_NB) == 0) {
+        g_harness.lockWaitSeconds = 0;
+        g_lockAcquiredMs = nowUnixMs();
+        return recordLockHolder();
+    }
+
+    // Read the holder BEFORE recordLockHolder() overwrites the file with ours:
+    // "who were we waiting for" is the one field that turns a wait into a
+    // collision between two named lanes.
+    try {
+        auto held = readText(runLockPath()).strip;
+        if (held.startsWith("pid ")) g_harness.lockHolderPid = held[4 .. $].strip.to!int;
+    } catch (Exception) {}
 
     writeln(yellow("another test run is in progress on this host — waiting "
         ~ "(another agent may be running ./run_test.d)..."));
@@ -425,6 +437,8 @@ bool acquireRunLock(int timeoutSec) {
         waited += 1;
         if (flock(runLockFd, LOCK_EX | LOCK_NB) == 0) {
             writeln(green(format("  acquired run lock after %ds", waited)));
+            g_harness.lockWaitSeconds = waited;
+            g_lockAcquiredMs = nowUnixMs();
             return recordLockHolder();
         }
         if (waited % 15 == 0)
@@ -447,6 +461,8 @@ bool acquireRunLock(int timeoutSec) {
                               runLockPath())));
     close(runLockFd);
     runLockFd = -1;
+    g_harness.lockWaitSeconds = timeoutSec;
+    g_harness.lockTimedOut    = true;
     return false;
 }
 
@@ -464,6 +480,187 @@ void releaseRunLock() {
         flock(runLockFd, LOCK_UN);
         close(runLockFd);
         runLockFd = -1;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Harness load log (task 3260)
+// ---------------------------------------------------------------------------
+//
+// One JSON line per invocation, appended to a HOST-WIDE file, so the load this
+// workstation carries can be READ rather than reconstructed.
+//
+// Reconstruction was tried first, off the agent transcripts, and was wrong
+// three times running, each time plausibly:
+//
+//   * `grep -n run_test.d run_test.d` counted as a suite run;
+//   * one lock wait was counted again on every `cat` of the log it had been
+//     printed into;
+//   * `./run_test.d --no-build > /tmp/x` parsed as a NARROW run, because the
+//     redirect target read as a test name.
+//
+// Worse than the errors: the two facts that decide everything -- how long a run
+// waited for the lock, and whether it ran AT ALL -- live only on stdout, and
+// stdout goes to a file in most invocations. Across 2 970 reconstructed runs
+// the lock wait was legible in about 200. This runner knows both exactly.
+//
+// WHERE, and why not tempDir(): /tmp on this host is a 32 GiB tmpfs (task
+// 2080), so a log there would cost RAM and vanish at reboot -- the two things a
+// longitudinal record must not do. It is host-wide for the same reason the LOCK
+// is host-wide: every worktree shares one slot, so a per-checkout log would
+// hide precisely the contention it exists to show.
+//
+// IT NEVER FAILS THE RUN. Every write is best-effort under a catch-all: a full
+// disk or a read-only home leaves the log incomplete, never the suite red.
+// `VIBE3D_HARNESS_LOG=off` disables it; any other value is used as the path.
+
+enum kHarnessLogVersion = 1;
+
+// Where this invocation STOPPED. The load report's first question is not "did
+// it pass" but "did it run", and those are unrelated: a run refused by the
+// stale-binary guard, or one that gave up waiting for the lock, measured
+// nothing while still spending a lane's attention. Every value except `ran` is
+// an invocation that produced NO verdict -- the "the run never happened" class
+// this project keeps paying for, finally counted instead of inferred.
+enum HarnessStage : string {
+    started      = "started",        // logged only if we died between arming and every known exit
+    spaceRefused = "space_refused",
+    noTests      = "no_tests",
+    gateRefused  = "gate_refused",
+    buildFailed  = "build_failed",
+    staleRefused = "stale_refused",
+    lockTimeout  = "lock_timeout",
+    noSuchTest   = "no_such_test",
+    noBinary     = "no_binary",
+    ran          = "ran",
+}
+
+// THE ONE GAP, named rather than papered over: a run killed by SIGINT/SIGTERM
+// leaves NO record. `onSignal` is `nothrow @nogc` and reaches the process
+// through `core.stdc.stdlib.exit`, which unwinds nothing -- so neither the
+// `scope(exit)` below nor any allocating writer can run there, and making the
+// handler allocate to fix it would trade a missing row for a deadlock risk in
+// the handler. Consequence for the reader: a missing row is NOT evidence that
+// nothing ran, and a slot can be busy with no record open. The report says so
+// on its face rather than quietly averaging over it.
+
+struct HarnessRecord {
+    string kind = "suite";       // the dub shim writes "dub" into the same file
+    long   startMs, endMs;
+    string host, root, branch, sha;
+    int    pid;
+    string mode = "full";        // "full" = no test named on the command line
+    int    testsSelected;
+    int    j;
+    bool   noBuild;
+    double buildSeconds     = 0;
+    int    lockWaitSeconds  = -1;   // -1 = this invocation never reached the lock
+    int    lockHolderPid    = 0;    // who held it while we waited
+    bool   lockTimedOut     = false;
+    double serviceSeconds   = 0;    // wall time the lock was actually HELD
+    int    total, passed, failed, timedOut;
+    string stage = HarnessStage.started;
+    int    rc = -1;
+}
+
+__gshared HarnessRecord g_harness;
+__gshared bool          g_harnessArmed;      // false => meta invocation, log nothing
+__gshared long          g_lockAcquiredMs;
+
+long nowUnixMs() {
+    import std.datetime.systime : Clock;
+    // currStdTime is hnsecs since 1 Jan 0001; 621_355_968_000_000_000 of those
+    // are the Unix epoch.
+    return (Clock.currStdTime - 621_355_968_000_000_000L) / 10_000L;
+}
+
+private string harnessHostName() {
+    try {
+        auto h = environment.get("HOSTNAME", "");
+        if (h.length) return h;
+        if (exists("/etc/hostname")) return readText("/etc/hostname").strip;
+    } catch (Exception) {}
+    return "unknown";
+}
+
+private string gitOneLine(string cmd) {
+    try {
+        auto r = executeShell("git " ~ cmd ~ " 2>/dev/null");
+        if (r.status != 0) return "";
+        return r.output.strip;
+    } catch (Exception) { return ""; }
+}
+
+private string jstr(string s_) {
+    auto b = appender!string;
+    b.put('"');
+    foreach (char c; s_) {
+        switch (c) {
+            case '"':  b.put(`\"`); break;
+            case '\\': b.put(`\\`); break;
+            case '\n': b.put(`\n`); break;
+            case '\r': b.put(`\r`); break;
+            case '\t': b.put(`\t`); break;
+            default:
+                if (c < 0x20) b.put(format(`\u%04x`, cast(int)c));
+                else b.put(c);
+        }
+    }
+    b.put('"');
+    return b.data;
+}
+
+/// The record as ONE line. Pure, so it is testable without a filesystem: the
+/// writer below can then only fail by not being CALLED, which is exactly the
+/// mutation `tests/test_harness_load_log.d` drives.
+string harnessRecordLine(in HarnessRecord r) {
+    return format(
+        `{"v":%d,"kind":%s,"stage":%s,"start_ms":%d,"end_ms":%d,"host":%s,`
+      ~ `"pid":%d,"root":%s,"branch":%s,"sha":%s,"mode":%s,"tests_selected":%d,`
+      ~ `"j":%d,"no_build":%s,"build_s":%.3f,"lock_wait_s":%d,`
+      ~ `"lock_holder_pid":%d,"lock_timeout":%s,"service_s":%.3f,"total":%d,`
+      ~ `"passed":%d,"failed":%d,"timed_out":%d,"rc":%d}`,
+        kHarnessLogVersion, jstr(r.kind), jstr(r.stage), r.startMs, r.endMs,
+        jstr(r.host), r.pid, jstr(r.root), jstr(r.branch), jstr(r.sha),
+        jstr(r.mode), r.testsSelected, r.j, r.noBuild ? "true" : "false",
+        r.buildSeconds, r.lockWaitSeconds, r.lockHolderPid,
+        r.lockTimedOut ? "true" : "false", r.serviceSeconds,
+        r.total, r.passed, r.failed, r.timedOut, r.rc);
+}
+
+/// "" = do not log (either switched off, or no HOME to log under).
+string harnessLogPath() {
+    auto env = environment.get("VIBE3D_HARNESS_LOG", "");
+    if (env == "off") return "";
+    if (env.length) return env;
+    auto home = environment.get("HOME", "");
+    if (!home.length) return "";
+    return buildPath(home, ".local", "state", "vibe3d", "harness.jsonl");
+}
+
+void writeHarnessRecord() {
+    if (!g_harnessArmed) return;
+    try {
+        string path = harnessLogPath();
+        if (!path.length) return;
+        g_harness.endMs = nowUnixMs();
+        if (g_lockAcquiredMs > 0)
+            g_harness.serviceSeconds = (g_harness.endMs - g_lockAcquiredMs) / 1000.0;
+        auto line = harnessRecordLine(g_harness) ~ "\n";
+        // One write(2) of a line shorter than PIPE_BUF onto an O_APPEND fd is
+        // atomic on Linux -- which is what lets several lanes share one file
+        // with no lock of their own. An over-long record is DROPPED rather than
+        // torn: a half-written line would poison the reader for every run after
+        // it, and a missing row is a smaller lie than a corrupt one.
+        if (line.length >= 4096) return;
+        mkdirRecurse(dirName(path));
+        import std.string : toStringz;
+        int fd = open(path.toStringz, O_WRONLY | O_CREAT | O_APPEND, octal!"644");
+        if (fd < 0) return;
+        c_write(fd, line.ptr, line.length);
+        close(fd);
+    } catch (Exception) {
+        // Best-effort by design -- see this section's header.
     }
 }
 
@@ -640,6 +837,13 @@ string[] resolveTests(string[] args) {
         string p = normalize(a);
         if (!exists(p) || !isFile(p)) {
             stderr.writefln("no such test: %s (resolved %s)", a, p);
+            // `exit` is core.stdc's: it unwinds NOTHING, so main's
+            // `scope(exit) writeHarnessRecord()` will not fire here. Write the
+            // record by hand instead of losing the invocation. Unlike
+            // `onSignal`, this is ordinary code, so allocating is fine.
+            g_harness.stage = HarnessStage.noSuchTest;
+            g_harness.rc    = 2;
+            writeHarnessRecord();
             exit(2);
         }
         paths ~= p;
@@ -784,6 +988,8 @@ void killStaleVibe(ushort port) {
 bool dubBuild() {
     write("Building vibe3d... ");
     stdout.flush();
+    auto sw = StopWatch(AutoStart.yes);
+    scope(exit) g_harness.buildSeconds = sw.peek.total!"msecs" / 1000.0;
     auto r = executeShell("dub build 2>&1");
     if (r.status != 0) {
         writeln(red("FAIL"));
@@ -1704,6 +1910,11 @@ void printSummary(TestResult[] results) {
         case TestStatus.timedOut: timedOut++; break;
     }
 
+    g_harness.total    = cast(int) results.length;
+    g_harness.passed   = passed;
+    g_harness.failed   = failed;
+    g_harness.timedOut = timedOut;
+
     writeln();
     writeln(dim("─────────────────────────────────────"));
     // Three DISJOINT counters that sum to Total: a timed-out test is counted
@@ -1782,6 +1993,7 @@ int main(string[] args) {
     int j = defaultJobs();
     int attach = 0;
     string[] exclude;
+    int lockTimeoutSec = 600;
     auto helpInfo = getopt(args,
         config.bundling,
         "v|verbose",  "stream test output instead of summarizing on failure", &verbose,
@@ -1821,6 +2033,10 @@ int main(string[] args) {
                     ~ "forces -j1, leaves the endpoint running",              &attach,
         "exclude",    "skip a test by name (repeatable). Same name forms as "
                     ~ "the positional args: bevel | test_bevel | tests/test_bevel.d", &exclude,
+        "lock-timeout", "seconds to wait for this host's run lock before "
+                    ~ "giving up with NO TESTS RAN (default 600). Lowered by "
+                    ~ "tests/test_harness_load_log.d, which needs the give-up "
+                    ~ "path to be reachable in a bounded time",              &lockTimeoutSec,
         "timeout",    "seconds one test may run before its process tree is "
                     ~ "killed and it is reported as TIMEOUT (default 600; "
                     ~ "0 = no cap; --attach defaults to no cap)",             &timeoutSec);
@@ -1943,6 +2159,27 @@ int main(string[] args) {
         return 2;
     }
 
+    // Arm the load log. Everything ABOVE this line is a meta invocation
+    // (--print-scratch, --check-gate, --sweep-*, --help) that does no work by
+    // design and would only dilute the record; everything BELOW is an attempt
+    // to run tests, including the attempts that are refused.
+    //
+    // `scope(exit)` at FUNCTION scope, deliberately never under an `if`: a
+    // scope guard nested in a conditional fires when that STATEMENT is left,
+    // which is immediately -- the shape that left prefs.json unsaved for
+    // months. Every `return` below therefore writes exactly one record.
+    g_harness.startMs = nowUnixMs();
+    g_harness.pid     = getpid();
+    g_harness.host    = harnessHostName();
+    g_harness.root    = getcwd();
+    g_harness.branch  = gitOneLine("rev-parse --abbrev-ref HEAD");
+    g_harness.sha     = gitOneLine("rev-parse --short HEAD");
+    g_harness.mode    = args.length > 1 ? "narrow" : "full";
+    g_harness.j       = j;
+    g_harness.noBuild = noBuild;
+    g_harnessArmed    = true;
+    scope(exit) writeHarnessRecord();
+
     // Disk-space preflight (task 2080), MANDATORY on every real run — before
     // the build, before the run lock, before anything expensive. See the
     // "Disk-space preflight" section above for the incident this guards
@@ -1952,6 +2189,8 @@ int main(string[] args) {
         const root = tempDir();
         if (auto msg = spacePreflightMessage(freeBytes(root), kMinPreflightFreeBytes, root)) {
             stderr.writeln(red(msg));
+            g_harness.stage = HarnessStage.spaceRefused;
+            g_harness.rc = 1;
             return 1;
         }
     }
@@ -1977,8 +2216,12 @@ int main(string[] args) {
         tests = kept;
     }
 
+    g_harness.testsSelected = cast(int) tests.length;
+
     if (tests.empty) {
         writeln(yellow("no tests found"));
+        g_harness.stage = HarnessStage.noTests;
+        g_harness.rc = 0;
         return 0;
     }
 
@@ -2004,11 +2247,17 @@ int main(string[] args) {
         if (violations.length) {
             stderr.writeln(red("test-liveness barrier: refusing to build this set."));
             foreach (v; violations) stderr.writeln(red("  " ~ v));
+            g_harness.stage = HarnessStage.gateRefused;
+            g_harness.rc = 2;
             return 2;
         }
     }
 
-    if (!noBuild && !dubBuild()) return 1;
+    if (!noBuild && !dubBuild()) {
+        g_harness.stage = HarnessStage.buildFailed;
+        g_harness.rc = 1;
+        return 1;
+    }
 
     // --no-build reuses ./vibe3d as-is, so the whole run is only meaningful if
     // that binary was built from the sources on disk NOW. Task 0678 shipped a
@@ -2019,6 +2268,8 @@ int main(string[] args) {
         import std.file : timeLastModified;
         if (!exists("./vibe3d")) {
             stderr.writeln(red("--no-build: ./vibe3d does not exist — drop --no-build"));
+            g_harness.stage = HarnessStage.noBinary;
+            g_harness.rc = 1;
             return 1;
         }
         string why;
@@ -2037,7 +2288,11 @@ int main(string[] args) {
         if (why.length) {
             stderr.writeln(red("--no-build refused: " ~ why));
             stderr.writeln(dim("    rebuild (`dub build`), or pass --stale-ok to measure it anyway"));
-            if (!staleOk) return 1;
+            if (!staleOk) {
+                g_harness.stage = HarnessStage.staleRefused;
+                g_harness.rc = 1;
+                return 1;
+            }
             stderr.writeln(yellow("--stale-ok given: proceeding against a binary that may not match"));
         }
     }
@@ -2046,7 +2301,12 @@ int main(string[] args) {
     // scratch / vibe3d — concurrent runs mutually kill each other's instances
     // (killStaleVibe by port) and share the scratch dir, causing spurious
     // "Could not connect" / "No such file" failures. Wait up to 10 min.
-    if (!acquireRunLock(600)) return 1;
+    if (!acquireRunLock(lockTimeoutSec)) {
+        g_harness.stage = HarnessStage.lockTimeout;
+        g_harness.rc = 1;
+        return 1;
+    }
+    g_harness.stage = HarnessStage.ran;
 
     // Per-CHECKOUT scratch tree; see scratchDirFor / prepareScratchDir above for
     // why it is keyed that way and what happens to a leftover one.
@@ -2221,5 +2481,6 @@ int main(string[] args) {
 
     int rc = failed == 0 ? 0 : 1;
 
+    g_harness.rc = rc;
     return rc;
 }

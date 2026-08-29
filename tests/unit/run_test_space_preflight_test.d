@@ -65,6 +65,13 @@ private Run rdmd(string script, string[] rest, string[string] extraEnv = null, s
     string[string] env;
     foreach (k, v; environment.toAA) env[k] = v;
     foreach (k, v; extraEnv)          env[k] = v;
+    // A runner spawned BY A TEST is not this host's load: without this the
+    // record would land in ~/.local/state/vibe3d/harness.jsonl and be counted
+    // by tools/local/harness-report.py as a real invocation (task 3260). It
+    // is set here rather than at each call site so a new case cannot forget;
+    // tests/unit/harness_log_isolation_census_test.d refuses a spawn that has
+    // no such neutralisation at all.
+    env["VIBE3D_HARNESS_LOG"] = "off";
     auto r = execute(["rdmd", script] ~ rest, env, Config.none, size_t.max,
                       cwd is null ? repoRoot : cwd);
     return Run(r.status, r.output);
@@ -217,7 +224,12 @@ unittest
     // for the wrong reason — see the mutation note in the task card).
     const script = format(
         "mount -t tmpfs -o size=16m tmpfs %s || exit 99\n"
-      ~ "TMPDIR=%s rdmd %s selection 2>&1; echo RUNNER_EXIT=$?\n"
+      // VIBE3D_HARNESS_LOG=off, not a flag: the assertion below is that the
+      // runner is invoked "exactly as a caller would ... no diagnostic flags",
+      // and an env var does not change the path under test. Without it this
+      // synthetic refusal is appended to the HOST's load log on every gate run
+      // and read back as a real one (task 3260).
+      ~ "TMPDIR=%s VIBE3D_HARNESS_LOG=off rdmd %s selection 2>&1; echo RUNNER_EXIT=$?\n"
       ~ "TMPDIR=%s DISPLAY= rdmd %s preflight 2>&1; echo LANE_EXIT=$?\n",
         mp, mp, runnerPath, mp, lanePath);
     auto r = execute(["unshare", "--mount", "--map-root-user", "bash", "-c", script]);

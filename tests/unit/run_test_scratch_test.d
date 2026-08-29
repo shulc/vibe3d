@@ -78,6 +78,13 @@ private string askScratch(string cwd, string[string] extraEnv = null)
     string[string] env;
     foreach (k, v; environment.toAA) env[k] = v;
     foreach (k, v; extraEnv)          env[k] = v;
+    // A runner spawned BY A TEST is not this host's load: without this the
+    // record would land in ~/.local/state/vibe3d/harness.jsonl and be counted
+    // by tools/local/harness-report.py as a real invocation (task 3260). It
+    // is set here rather than at each call site so a new case cannot forget;
+    // tests/unit/harness_log_isolation_census_test.d refuses a spawn that has
+    // no such neutralisation at all.
+    env["VIBE3D_HARNESS_LOG"] = "off";
 
     auto r = execute(["rdmd", runnerPath, "--print-scratch"],
                      env, Config.none, size_t.max, cwd);
