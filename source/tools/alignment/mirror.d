@@ -21,14 +21,6 @@ import eventlog : queryMouse;
 
 version (unittest) import std.conv : to;
 
-// Reuses the BevelTool factory type — a generic (pre, post) MeshSnapshot
-// pair via MeshSessionEdit, matching BoxTool/SphereTool's commit path. (Their
-// own `BoxEditFactory`/`PrimitiveEditFactory` aliases are gone as of task
-// 1905 phase B: the create family binds through `Tool.setGestureBindings`,
-// whose parameter is a plain `Command delegate()`. This one survives until
-// group G2 migrates.)
-alias MirrorEditFactory = MeshSessionEdit delegate();
-
 // ---------------------------------------------------------------------------
 // rebuildMirrorPreview — the non-cumulative preview recompute (impl plan
 // §2.2). Free function (not a method) so a module unittest can exercise it
@@ -197,8 +189,6 @@ private:
     // an accidental mirror when the tool is picked and dropped untouched.
     bool engaged;
 
-    MirrorEditFactory mirrorEditFactory;
-
     // ----- Center handle (M2) — reuse MoveHandler exactly as BoxTool does
     // (box.d:1857/1896), with the three plane-corner circles AND the three
     // axis arrows hidden (task 0233: reference gizmo is 2 boxes + plane, no
@@ -256,13 +246,6 @@ public:
     /// base snapshot before every `mirrorFaces` call.
     void rebuildPreviewMesh() {
         rebuildMirrorPreview(baseSnap, previewMesh, baseMask, params_);
-    }
-
-    /// Inject undo plumbing — called by app.d after construction (mirrors
-    /// BoxTool.setUndoBindings, box.d:1915).
-    void setUndoBindings(CommandHistory h, MirrorEditFactory factory) {
-        this.history           = h;
-        this.mirrorEditFactory = factory;
     }
 
     override string name() const { return "Mirror"; }
@@ -338,12 +321,19 @@ public:
     /// during interaction so this matches what was captured at activate()).
     private bool[] commitMask() const { return buildMaskFromSelection(); }
 
+    // Records through the base seam (task 1905 phase C, group G2). The
+    // trigger is NOT moved: this body is still reached from `deactivate()`,
+    // which is why the cell's `liveEntryNames` is empty and its `entryNames`
+    // only fills at the drop. The preview this commit closes is written into
+    // the tool's OWN `previewMesh`, so neither change-bus channel sees it —
+    // see `tests/test_tool_gesture_g2.d`'s two-span band.
     private void commitMirrorEdit(MeshSnapshot pre) {
-        if (history is null || mirrorEditFactory is null) return;
-        auto cmd  = mirrorEditFactory();
+        if (history is null || gestureFactory is null) return;
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(pre, post, "Mirror");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     // ----- Params / panel (§1.2-1.3 of the impl plan) -----------------------

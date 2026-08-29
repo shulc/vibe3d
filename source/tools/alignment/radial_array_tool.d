@@ -24,11 +24,6 @@ import std.math : sin, cos, atan2, PI;
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
 
-/// The interactive tool reuses the dedicated MeshSessionEdit record
-/// command (a before/after MeshSnapshot pair) — mirroring PolyExtrudeTool's
-/// pattern.
-alias RadialArrayEditFactory = MeshSessionEdit delegate();
-
 // ---------------------------------------------------------------------------
 // RadialArrayTool — interactive port of the reference editor's "Radial
 // Array" duplicate preset (factory id `mesh.radialArrayTool`).
@@ -151,8 +146,6 @@ private:
     LitShader        litShader;
 
 
-    RadialArrayEditFactory  factory;
-
     // Parameters — captured defaults (see the captured spec).
     int    count_  = 24;
     string axis_   = "Y";
@@ -194,12 +187,6 @@ public:
     void destroy() {
         if (offsetArrow !is null) offsetArrow.destroy();
         if (angleCube   !is null) angleCube.destroy();
-    }
-
-    /// Inject undo plumbing — called by app.d after construction.
-    void setUndoBindings(CommandHistory h, RadialArrayEditFactory f) {
-        this.history = h;
-        this.factory = f;
     }
 
     override string name() const { return "Radial Array"; }
@@ -538,13 +525,16 @@ private:
         refreshCaches();
     }
 
+    // Records through the base seam (task 1905 phase C, group G2). Trigger
+    // unchanged — reached from `deactivate()`.
     void commitEdit() {
-        if (history is null || factory is null) return;
+        if (history is null || gestureFactory is null) return;
         if (!before.filled) return;
-        auto cmd  = factory();
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(before, post, "Radial Array");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     void refreshCaches() {

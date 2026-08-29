@@ -56,7 +56,6 @@ version (unittest) import std.conv : to;
 //     profile-preset library in vibe3d).
 // ---------------------------------------------------------------------------
 
-alias RadialSweepEditFactory = MeshSessionEdit delegate();
 
 /// RadialSweepParams — single source of truth for the tool (mirrors
 /// MirrorParams, tools/mirror.d). Every handle drag and panel edit writes
@@ -284,8 +283,6 @@ private:
     // drag / param edit / headless attr write).
     bool engaged;
 
-    RadialSweepEditFactory editFactory;
-
     // ----- Handles: 0 = axis start point, 1 = axis end point (drag either
     // to reposition/reorient the free 3D axis line — the OTHER endpoint
     // stays planted, standard two-endpoint line-edit UX; the reference
@@ -399,19 +396,17 @@ public:
         evaluate();
     }
 
-    /// Inject undo plumbing — called by app.d after construction (mirrors
-    /// MirrorTool.setUndoBindings).
-    void setUndoBindings(CommandHistory h, RadialSweepEditFactory factory) {
-        this.history     = h;
-        this.editFactory = factory;
-    }
-
+    // Records through the base seam (task 1905 phase C, group G2). Trigger
+    // unchanged — reached from `deactivate()`. Its preview goes into the
+    // tool's OWN `previewMesh` under an UNRECORDED batch, so, like Mirror,
+    // neither change-bus channel can see the drag half of the gesture.
     private void commitSweepEdit(MeshSnapshot pre) {
-        if (history is null || editFactory is null) return;
-        auto cmd  = editFactory();
+        if (history is null || gestureFactory is null) return;
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(pre, post, "Radial Sweep");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     // ----- Profile capture — shared by activate()/resyncSession() (which

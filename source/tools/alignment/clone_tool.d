@@ -15,7 +15,6 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 
-alias MeshCloneEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // CloneTool — interactive drag-clone (factory id `mesh.clone`).
@@ -51,7 +50,6 @@ private:
     GpuMesh*         gpu;
     EditMode*        editMode;
 
-    MeshCloneEditFactory factory;
 
     bool         active;
     bool         built;       // true when a preview is baked into the live mesh
@@ -76,11 +74,6 @@ public:
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
-    }
-
-    void setUndoBindings(CommandHistory h, MeshCloneEditFactory f) {
-        this.history = h;
-        this.factory = f;
     }
 
     override string name() const { return "Clone"; }
@@ -213,13 +206,16 @@ private:
         refreshCaches();
     }
 
+    // Records through the base seam (task 1905 phase C, group G2). Trigger
+    // unchanged — `onMouseButtonUp`, inside the gesture.
     void commitEdit() {
-        if (history is null || factory is null) return;
+        if (history is null || gestureFactory is null) return;
         if (!before.filled) return;
-        auto cmd  = factory();
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(before, post, "Clone");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     void cancelLiveEdit() {

@@ -17,7 +17,6 @@ import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import perf_probe : g_perf, Cat;
 
-alias ArrayEditFactory = MeshSessionEdit delegate();
 
 // ---------------------------------------------------------------------------
 // ArrayTool — interactive Array (factory id `mesh.arrayTool`, task 0355).
@@ -94,7 +93,6 @@ private:
     EditMode*        editMode;
 
 
-    ArrayEditFactory   factory;
 
     // Source (Clone Effector "Source" enum) — only Active is functional,
     // see the module doc comment. Kept as a real param for panel/schema
@@ -148,11 +146,6 @@ public:
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
-    }
-
-    void setUndoBindings(CommandHistory h, ArrayEditFactory f) {
-        this.history = h;
-        this.factory = f;
     }
 
     override string name() const { return "Array"; }
@@ -366,13 +359,19 @@ private:
         refreshCaches();
     }
 
+    // The record is the base seam's (task 1905 phase C, group G2); what stays
+    // here is what only this tool knows — which carrier, which snapshot pair,
+    // which label. The trigger is unchanged: this body is reached from
+    // `onMouseButtonUp`, INSIDE the gesture, which is why the cell's
+    // `liveEntryNames` is already filled at the drop.
     void commitEdit() {
-        if (history is null || factory is null) return;
+        if (history is null || gestureFactory is null) return;
         if (!before.filled) return;
-        auto cmd  = factory();
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(before, post, "Array");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     void cancelLiveEdit() {

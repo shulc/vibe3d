@@ -489,7 +489,7 @@ private void registerGeneratorTools(EditorApp app) {
     with (app) {
     reg.toolFactories["mesh.mirrorTool"] = () {
         auto t = new MirrorTool(() => &mesh(), &gpu(), litShader);
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
     reg.commandFactories["mesh.mirrorTool"] = () => cast(Command)
@@ -508,7 +508,7 @@ private void registerGeneratorTools(EditorApp app) {
     // (source/mesh_ops/revolve.d — free functions since task 1903 Stage E2).
     reg.toolFactories["mesh.radialSweepTool"] = () {
         auto t = new RadialSweepTool(() => &mesh(), &gpu(), &editMode(), litShader);
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
     reg.commandFactories["mesh.radialSweepTool"] = () => cast(Command)
@@ -771,7 +771,7 @@ private void registerEditTools(EditorApp app) {
     // factory (MeshSessionEdit, snapshot-only undo).
     reg.toolFactories["mesh.radialArrayTool"] = () {
         auto t = new RadialArrayTool(() => &mesh(), &gpu(), &editMode(), litShader);
-        t.setUndoBindings(history, radialArrayEditFactory);
+        t.setGestureBindings(history, radialArrayEditFactory);
         return cast(Tool)t;
     };
 
@@ -945,7 +945,7 @@ private void registerEditTools(EditorApp app) {
     // vibe3d-divergence (no reference tool-model; uses planeDragDelta).
     reg.toolFactories["mesh.clone"] = () {
         auto t = new CloneTool(() => &mesh(), &gpu(), &editMode());
-        t.setUndoBindings(history, cloneEditFactory);
+        t.setGestureBindings(history, cloneEditFactory);
         return cast(Tool)t;
     };
 
@@ -955,7 +955,7 @@ private void registerEditTools(EditorApp app) {
     // selection-or-whole-mesh convention as mesh.array/mesh.mirror).
     reg.toolFactories["mesh.arrayTool"] = () {
         auto t = new ArrayTool(() => &mesh(), &gpu(), &editMode());
-        t.setUndoBindings(history, arrayEditFactory);
+        t.setGestureBindings(history, arrayEditFactory);
         return cast(Tool)t;
     };
     }
