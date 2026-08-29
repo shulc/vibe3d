@@ -28,11 +28,6 @@ import tools.create.create_common : currentWorkplaneFrame, pickWorkplaneFrame, W
 // uses, so Slice's Ctrl constraint is byte-consistent with Move's, not reinvented.
 import tools.transform.move : chooseConstraintAxis;
 
-// The interactive Slice commit reuses the generic before/after snapshot edit
-// command (the same MeshSessionEdit the mirror / tack / primitive tools reuse for
-// their one-shot snapshot undo), labelled "Slice".
-alias SliceEditFactory = MeshSessionEdit delegate();
-
 // ---------------------------------------------------------------------------
 // SliceAxis (task 0269, S3; owner-revised task 0284) — the OVERRIDE that sets the
 // cut plane's EXTRUSION DIRECTION to a world axis (`X`/`Y`/`Z`) or the user-supplied
@@ -632,8 +627,6 @@ private:
     LitShader        litShader;
 
 
-    SliceEditFactory factory;
-
     // The slice line, in world space. Bound to the startX..endZ params. The
     // defaults are neutral round numbers (a unit line on X through the origin);
     // headless tests always set them explicitly, so the exact idle defaults are
@@ -944,11 +937,6 @@ public:
         this.gpu       = gpu;
         this.editMode  = editMode;
         this.litShader = litShader;
-    }
-
-    void setUndoBindings(CommandHistory h, SliceEditFactory f) {
-        this.history = h;
-        this.factory = f;
     }
 
     override string name() const { return "Slice"; }
@@ -1812,11 +1800,12 @@ private:
         if (!previewLive_ || !haveBefore_ || !before_.filled) return;
         // recorded remainder (1906 §3.6): `mutationVersion` — an IDENTITY guard, not a cache; see the `armedKey_` field note.
         if (!armedKey_.matches(*mesh)) return;   // mesh swapped since last preview — drop
-        if (history is null || factory is null) return;
-        auto cmd  = factory();
+        if (history is null || gestureFactory is null) return;
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(before_, post, "Slice");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     // The work-plane normal the interactive path builds the cut plane from.

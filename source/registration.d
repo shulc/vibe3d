@@ -785,7 +785,7 @@ private void registerEditTools(EditorApp app) {
     // by StrokeExtrudeTool.supportedModes().
     reg.toolFactories["tool.strokeExtrude"] = () {
         auto t = new StrokeExtrudeTool(() => &mesh(), &gpu(), litShader);
-        t.setUndoBindings(history, strokeExtrudeEditFactory);
+        t.setGestureBindings(history, strokeExtrudeEditFactory);
         return cast(Tool)t;
     };
 
@@ -828,7 +828,7 @@ private void registerEditTools(EditorApp app) {
     // forced, not a separate tool — see config/buttons.yaml.
     reg.toolFactories["mesh.smoothShiftTool"] = () {
         auto t = new SmoothShiftTool(() => &mesh(), &gpu(), &editMode(), litShader);
-        t.setUndoBindings(history, smoothShiftEditFactory);
+        t.setGestureBindings(history, smoothShiftEditFactory);
         return cast(Tool)t;
     };
     // TASK 1905 G1 — `vxEditFactory` is bound at FOURTEEN sites and this is the
@@ -900,7 +900,7 @@ private void registerEditTools(EditorApp app) {
     // one MeshSessionEdit undo entry PER committed cut. Gated to Edges mode.
     reg.toolFactories["mesh.loopSliceTool"] = () {
         auto t = new LoopSliceTool(() => &mesh(), &gpu(), &editMode(), litShader);
-        t.setUndoBindings(history, loopSliceEditFactory);
+        t.setGestureBindings(history, loopSliceEditFactory);
         return cast(Tool)t;
     };
 
@@ -911,7 +911,16 @@ private void registerEditTools(EditorApp app) {
     // Distinct from the camera-plane one-shot mesh.screenSlice command.
     reg.toolFactories["mesh.sliceTool"] = () {
         auto t = new SliceTool(() => &mesh(), &gpu(), &editMode(), litShader);
-        t.setUndoBindings(history, bevelEditFactory);
+        // TASK 1905 G5 — `bevelEditFactory` is bound at THIRTEEN sites and these
+        // two (slice, edge slice) are the first to move to the base seam; the
+        // rest still take their tool's own `setUndoBindings` overload. One
+        // factory therefore feeds TWO binding interfaces at once until the
+        // app-level closures collapse in group G8. That is legal — the parameter
+        // types differ, the overloads are distinct — and it is also why the two
+        // wire ids below both record under the SAME wire name `mesh.bevel_edit`,
+        // which is why G5's "exactly one cell reddens" mutations key on the
+        // plane dumps rather than on `entryNames` for this pair.
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
 
@@ -926,7 +935,7 @@ private void registerEditTools(EditorApp app) {
     // Gated to Edges mode.
     reg.toolFactories["mesh.edgeSliceTool"] = () {
         auto t = new EdgeSliceTool(() => &mesh(), &gpu(), &editMode(), litShader);
-        t.setUndoBindings(history, bevelEditFactory);
+        t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
 

@@ -28,8 +28,6 @@ import display_sync : refreshDisplay;
 import document : primaryModelSpace;
 import perf_probe : g_perf, Cat;
 
-alias LoopSliceEditFactory = MeshSessionEdit delegate();
-
 /// The Loop Slice Slider HUD readout string. `position` is the authoritative
 /// 0..1 slice offset; the slider shows it as a TRUE PERCENT (0.13 -> "13.00 %",
 /// 0.9 -> "90.00 %"), matching the live reference slider (captured task 0246 —
@@ -189,8 +187,6 @@ private:
     EditMode*        editMode;
     LitShader        litShader;
 
-
-    LoopSliceEditFactory factory;
 
     static immutable IntEnumEntry[3] editTable = [
         IntEnumEntry(cast(int)Edit.Move,   "move",   "Move"),
@@ -380,11 +376,6 @@ public:
         // `positions_` field comment. Must stay in the ctor (not a field
         // initializer) so no two tool instances ever share it.
         positions_     = [0.5f];
-    }
-
-    void setUndoBindings(CommandHistory h, LoopSliceEditFactory f) {
-        this.history = h;
-        this.factory = f;
     }
 
     override string name() const { return "Loop Slice"; }
@@ -1606,7 +1597,7 @@ private:
     }
 
     void commitEdit() {
-        if (history is null || factory is null || !before_.filled) return;
+        if (history is null || gestureFactory is null || !before_.filled) return;
         // recorded remainder (1906 §3.6): `mutationVersion` — an IDENTITY guard, not a cache; see the `armedKey_` field note.
         if (!armedKey_.matches(*mesh)) {
             // The mesh underneath us was swapped/clobbered (scene reset,
@@ -1617,10 +1608,11 @@ private:
             dropArmedPreview();
             return;
         }
-        auto cmd  = factory();
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); dropArmedPreview(); return; }
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(before_, post, "Loop Slice");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
         // Re-arm: the just-committed state becomes the new idle baseline so
         // the tool is ready for another cut (each cut its own undo entry).
         before_ = post;

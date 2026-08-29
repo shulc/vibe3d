@@ -27,11 +27,6 @@ import document : primaryModelSpace;
 import overlay_space : OverlaySpace;
 import perf_probe : g_perf, Cat;
 
-// The interactive commit reuses the generic before/after snapshot edit command
-// (the same MeshSessionEdit the mirror / tack / Slice tools reuse for their
-// one-shot snapshot undo), labelled "Edge Slice".
-alias EdgeSliceEditFactory = MeshSessionEdit delegate();
-
 /// The `t = %` HUD readout string — mirrors `loopSliceHudLabel`
 /// (loop_slice_tool.d) so both slice-family tools print the same shape.
 string edgeSliceHudLabel(float t) {
@@ -114,8 +109,6 @@ private:
     EditMode*        editMode;
     LitShader        litShader;
 
-
-    EdgeSliceEditFactory factory;
 
     // Panel params (sticky — NOT reset by reinitSession/activate, matching
     // Slice/Loop-Slice's other tool options).
@@ -210,11 +203,6 @@ public:
         this.gpu       = gpu;
         this.editMode  = editMode;
         this.litShader = litShader;
-    }
-
-    void setUndoBindings(CommandHistory h, EdgeSliceEditFactory f) {
-        this.history = h;
-        this.factory = f;
     }
 
     override string name() const { return "Edge Slice"; }
@@ -985,7 +973,7 @@ private:
     // LATCHED polyline — a pending (hover-derived, un-latched) tip is dropped
     // (bakeChainFrom re-cuts from chainBefore_ using latchedPoints_ alone).
     void commitChain() {
-        if (history is null || factory is null || !chainBefore_.filled) {
+        if (history is null || gestureFactory is null || !chainBefore_.filled) {
             dropArmedPreview();
             return;
         }
@@ -1017,10 +1005,21 @@ private:
             cancelLiveEdit();
             return;
         }
-        auto edit = factory();
+        auto edit = cast(MeshSessionEdit) gestureFactory();
+        if (edit is null) {
+            // The factory bound at registration builds a different command than
+            // this tool fills. Counted, never silent — and the chain is ALREADY
+            // baked into the mesh at this point, so the preview is torn down the
+            // way the success path below does it rather than leaving the tool
+            // armed over an edit nothing can undo.
+            noteGestureCarrierMismatch();
+            dropArmedPreview();
+            refreshCaches();
+            return;
+        }
         auto post = MeshSnapshot.capture(*mesh);
         edit.setSnapshots(chainBefore_, post, "Edge Slice");
-        history.record(edit);   // EXACTLY ONE entry for the whole chain
+        recordGestureEdit(edit, GestureRecordMode.Plain);   // EXACTLY ONE entry for the whole chain
         dropArmedPreview();     // clears latchedPoints_/chainBefore_ — next
                                  // chain recaptures chainBefore_ at its own
                                  // first latch/armChain.

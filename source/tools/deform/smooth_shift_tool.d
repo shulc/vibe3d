@@ -23,11 +23,6 @@ import std.math : abs, sqrt;
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
 
-/// The interactive tool reuses the dedicated MeshSessionEdit record
-/// command (a before/after MeshSnapshot pair) — mirroring PolyExtrudeTool /
-/// PolyBevelTool's pattern.
-alias SmoothShiftEditFactory = MeshSessionEdit delegate();
-
 // ---------------------------------------------------------------------------
 // SmoothShiftTool — interactive Smooth Shift + Thicken (factory id
 // `mesh.smoothShiftTool`, task 0358).
@@ -83,8 +78,6 @@ private:
     EditMode*        editMode;
     LitShader        litShader;
 
-
-    SmoothShiftEditFactory factory;
 
     // Params — captured defaults (task 0358 toolcard, live panel reads):
     // shift=0, scale=1.0 (100%), maxAngle=89.5° (the tool's OWN factory
@@ -144,12 +137,6 @@ public:
     void destroy() {
         if (offsetArrow !is null) offsetArrow.destroy();
         if (scaleArrow  !is null) scaleArrow.destroy();
-    }
-
-    /// Inject undo plumbing — called by app.d after construction.
-    void setUndoBindings(CommandHistory h, SmoothShiftEditFactory f) {
-        this.history = h;
-        this.factory = f;
     }
 
     override string name() const { return "Smooth Shift"; }
@@ -430,12 +417,13 @@ private:
     }
 
     void commitEdit() {
-        if (history is null || factory is null) return;
+        if (history is null || gestureFactory is null) return;
         if (!before.filled) return;
-        auto cmd  = factory();
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(before, post, "Smooth Shift");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     void cancelLiveEdit() {

@@ -15,8 +15,6 @@ import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import document : primaryModelSpace;
 
-alias StrokeExtrudeEditFactory = MeshSessionEdit delegate();
-
 // ---------------------------------------------------------------------------
 // StrokeExtrudeTool — interactive port of the reference editor's "Sketch
 // Extrude" (task 0323, factory id `tool.strokeExtrude`). BASIC/captured
@@ -82,8 +80,6 @@ private:
     LitShader        litShader;
 
 
-    StrokeExtrudeEditFactory factory;
-
     // Params — captured defaults (see class doc comment).
     bool alignToPath_ = true;   // reference "Align to Path", default ON
     int  precisionPx_ = 30;     // reference "Precision" (px/span), default 30
@@ -120,12 +116,6 @@ public:
     }
 
     void destroy() {}
-
-    /// Inject undo plumbing — called by app.d after construction.
-    void setUndoBindings(CommandHistory h, StrokeExtrudeEditFactory f) {
-        this.history = h;
-        this.factory = f;
-    }
 
     override string name() const { return "Stroke Extrude"; }
 
@@ -331,12 +321,13 @@ private:
     }
 
     void commitEdit() {
-        if (history is null || factory is null) return;
+        if (history is null || gestureFactory is null) return;
         if (!before.filled) return;
-        auto cmd  = factory();
+        auto cmd = cast(MeshSessionEdit) gestureFactory();
+        if (cmd is null) { noteGestureCarrierMismatch(); return; }
         auto post = MeshSnapshot.capture(*mesh);
         cmd.setSnapshots(before, post, "Stroke Extrude");
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     void refreshCaches() {

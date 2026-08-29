@@ -436,6 +436,24 @@ private size_t planeCutCore(ref MeshEditBatch ed, Vec3 p, Vec3 n, bool clipped,
     // the face still carries a single cut vert and is copied whole by Pass-2;
     // it is also excluded from the split mask so the doubled B never triggers
     // a chord split.
+    //
+    // A PROSPECTIVE HAZARD, recorded at the place rather than fixed here (task
+    // 1905, group G5). The splice below writes the face array by RAW INDEX
+    // (`ed.faces[rec.faceIdx] = …`), which goes past the edit tracker: under a
+    // RECORDING batch this write would be missing from the delta, and the undo
+    // built from that delta would restore a face the splice had replaced.
+    // Today that is latent, not broken, and the argument is transitive rather
+    // than local: the clipped entry point `cutByPlaneClipped` has exactly three
+    // callers in the tree, all in `tools/slice/slice_tool.d`, all inside nested
+    // `cutAt(ref MeshEditBatch ed, …)` helpers that TAKE a batch instead of
+    // opening one — and every batch that file opens is
+    // `MeshEditBatch.unrecorded` (eight of them, none recording). Nothing is
+    // recorded, so nothing is dropped. The day a slice tool opens a RECORDING batch, this
+    // has to be routed through the batch's own face mutator FIRST. G5's census
+    // (`tests/unit/tool_commit_seam_census_g5_test.d`, member 5) holds that
+    // precondition as a two-sided row — the unrecorded count AND a recording
+    // count pinned at zero — precisely because one assertion of the form
+    // "cut.d is fine" would have been green over either failure.
     bool[] termFace;
     if (termini.length) {
         termFace.length = ed.faces.length;
