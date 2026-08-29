@@ -162,6 +162,11 @@ enum string kFrozen = import("fixtures/tool_gesture/g2.json");
 /// `writtenBy`, so a second writer has to change the field and be seen.
 enum string kWrittenBy = "tests/test_tool_gesture_g2.d";
 
+/// The recipe this fixture records, hoisted out of `fixtureJson` (task 3370)
+/// so the `provenance` block's own prose quotes THE SAME text the `recipe`
+/// key is emitted from, instead of a second copy able to drift from it.
+enum string kRecipe = "stand -> gesture (/api/play-events) -> drop -> undo -> redo";
+
 // ---------------------------------------------------------------------------
 // HTTP
 // ---------------------------------------------------------------------------
@@ -471,6 +476,96 @@ string parametersJson(in Cell[] cells) {
     return s.data;
 }
 
+// ---------------------------------------------------------------------------
+// Provenance capture (task 3370) — the `provenance` block (schema 1, task 0366).
+//
+// WHY THIS LIVES HERE, for exactly the reason `parametersJson` above does.
+// Task 3140 hand-inserted a `provenance` block into all six of this family's
+// fixtures — a surgical edit of the JSON FILE — but `fixtureJson()` never
+// learned to emit one, so the next capture through this arm would silently
+// drop it. This family's presence rule is ON (3140 enabled it immediately,
+// unlike `parameters`'), so that drop does not wait: it reddens the ROUTINE
+// lane, `dub test --config=tests` ->
+// `tests/unit/fixture_provenance_census_test.d`, as "MISSING provenance
+// block", and the private `provenance_check.py` names the file too.
+//
+// THE TRIAD, AND WHY `method` IS `self-drive` RATHER THAN `unknown`.
+// `provenance.method` names the CHANNEL the frozen numbers were read
+// through, and the vocabulary's own definitions
+// (`tools/local/fixture_gen/provenance.py`, private) make almost every other
+// value a REFERENCE read channel: `capture-drag`, `gui-gesture` and
+// `command` each denote driving the reference editor (by pointer, by GUI
+// gesture, by its command port); `from-trace`, `rr-memory`, `static-read`
+// and `debug-live` each denote reading the reference's own execution or its
+// shipped binary. Not one of them can be true of a fixture whose
+// `reference` is `vibe3d-selfgen`. `closed-form` and `hand` are the two
+// NON-EXECUTION answers — we derived the value analytically, or a human
+// wrote it down — and both are false here: every number in the cells below
+// came back over HTTP from a live vibe3d process this test itself started,
+// armed and drove. What remains, and what the corpus already carries on all
+// 22 of its `vibe3d-selfgen` fixtures without exception (13 `undo_parity/*`,
+// 3 `loop_slice*`, and these 6), is `self-drive`: the harness drove the
+// engine under test through the engine's own scripted interface.
+//
+// `unknown` would be the WRONG answer, not the cautious one. It is the
+// schema's honest sentinel for "the record does not settle this" — and this
+// producer is the one participant that cannot say that truthfully. It IS the
+// driver; at the instant it emits the block it knows which endpoint it drove.
+// Writing `unknown` here would erase a distinction the vocabulary keeps
+// deliberately (the same harm backlog 3302 / task 3340 was filed for, where
+// a stale list would have advised `unknown` over a VALID value).
+//
+// `captured_utc` IS THIS RUN'S WALL CLOCK, and it is the one field whose
+// MEANING changes with this task. 3140 was labelling files captured days
+// earlier and had no capture time to read, so it took the commit date of
+// each file's own `producedBy` SHA out of git. A live generator has the real
+// answer, and the schema names this exact path: `make_provenance`'s
+// docstring says `captured_utc`, when omitted, "auto-fills to UTC-now (the
+// live-generator path)" and is passed explicitly only "for a back-filled
+// historical entry whose real capture time isn't known".
+enum string kProvSource    = "simulated";       // no reference editor was read
+enum string kProvReference = "vibe3d-selfgen";  // the engine driven IS vibe3d
+enum string kProvMethod    = "self-drive";      // see the argument above
+enum string kProvTask      = "1905";            // the lane that froze this family
+
+/// This capture run's own time, UTC, in the `YYYY-MM-DDTHH:MM:SSZ` shape the
+/// rest of the corpus uses. Built field by field rather than through
+/// `toISOExtString` so the seconds-precision, `Z`-suffixed form is explicit.
+string capturedUtcNow() {
+    import std.datetime.systime  : Clock;
+    import std.datetime.timezone : UTC;
+    auto t = Clock.currTime(UTC());
+    return format("%04d-%02d-%02dT%02d:%02d:%02dZ",
+                  t.year, cast(int) t.month, t.day, t.hour, t.minute, t.second);
+}
+
+/// Render this run's `provenance` block. Every prose field is DERIVED from
+/// the same constants the fixture's other keys are written from — `kWrittenBy`
+/// (which also fills `writtenBy`, and which the compare arm asserts against)
+/// and `kRecipe` (which also fills `recipe`) — never retyped, so the block
+/// cannot come to describe a producer or a recipe other than the one that
+/// actually wrote the file it sits in.
+string provenanceJson() {
+    auto s = appender!string();
+    s ~= "{\n";
+    s ~= "    \"schema\": 1,\n";
+    s ~= "    \"source\": \"" ~ kProvSource ~ "\",\n";
+    s ~= "    \"reference\": \"" ~ kProvReference ~ "\",\n";
+    s ~= "    \"method\": \"" ~ kProvMethod ~ "\",\n";
+    s ~= "    \"captured_utc\": \"" ~ capturedUtcNow() ~ "\",\n";
+    s ~= "    \"harness\": \"" ~ kWrittenBy ~ ", driven over /api/play-events "
+       ~ "against vibe3d's own running instance -- no reference editor "
+       ~ "involved (recipe: " ~ kRecipe ~ ")\",\n";
+    s ~= "    \"task\": \"" ~ kProvTask ~ "\",\n";
+    s ~= "    \"notes\": \"emitted by this producer at capture time (task "
+       ~ "3370), from its own `kWrittenBy`/`kRecipe`; `captured_utc` is the "
+       ~ "wall clock of the capture run itself. Before 3370 the block was a "
+       ~ "hand insert (task 3140) that any re-capture would have dropped, and "
+       ~ "`captured_utc` was the commit date of the `producedBy` SHA.\"\n";
+    s ~= "  }";
+    return s.data;
+}
+
 string fixtureJson(in Cell[] cells) {
     auto s = appender!string();
     s ~= "{\n";
@@ -479,7 +574,8 @@ string fixtureJson(in Cell[] cells) {
     s ~= "  \"writtenBy\": \"" ~ kWrittenBy ~ "\",\n";
     s ~= "  \"producedBy\": \"" ~ environment.get("VIBE3D_TOOL_GESTURE_SHA", "unknown") ~ "\",\n";
     s ~= "  \"stand\": \"per-cell; see each cell's drive in the producer\",\n";
-    s ~= "  \"recipe\": \"stand -> gesture (/api/play-events) -> drop -> undo -> redo\",\n";
+    s ~= "  \"recipe\": \"" ~ kRecipe ~ "\",\n";
+    s ~= "  \"provenance\": " ~ provenanceJson() ~ ",\n";
     s ~= "  \"cells\": [\n";
     foreach (i, ref c; cells) {
         s ~= "    {\n";
