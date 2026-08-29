@@ -584,8 +584,16 @@ private void registerGeneratorTools(EditorApp app) {
     // would compile and silently label one op as another.
     reg.toolFactories["mesh.topoPen"] = () {
         auto t = new TopologyPenTool(() => &mesh(), &gpu());
-        t.setUndoBindings(history, () => new MeshVertexNew(&mesh(), cameraView, editMode),
-                         topoPenBuildEditFactory, topoPenMoveEditFactory,
+        // Task 1905 phase D: history + the RAW site's carrier through the ONE
+        // base binder; the thirteen `MeshSessionEdit` factories through the
+        // tool's own, which no longer takes a `CommandHistory` at all. TWO
+        // calls where there was one, and the second is not optional — a pen
+        // registered without it compiles and every gesture but placement then
+        // finds a null factory and commits nothing. Member 5 of
+        // `tests/unit/tool_commit_seam_census_g7_test.d` requires exactly one
+        // of each in this block.
+        t.setGestureBindings(history, () => new MeshVertexNew(&mesh(), cameraView, editMode));
+        t.setPenFactories(topoPenBuildEditFactory, topoPenMoveEditFactory,
                          topoPenRemoveEditFactory, topoPenAddLoopEditFactory,
                          topoPenSlideEditFactory, topoPenSmoothEditFactory,
                          topoPenSplitEditFactory, topoPenMoveLoopEditFactory,

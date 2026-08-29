@@ -17,22 +17,23 @@
 // WHAT MAKES G7 ITS OWN FAMILY, MEASURED ON THIS TREE
 // ---------------------------------------------------------------------------
 //
-// TWO RECORD SITES, not one. `TopologyPenTool.placeVertexAt` calls
-// `history_.record` on a `MeshVertexNew` directly; every other gesture goes
-// through the shared tail `TopologyPenTool.recordSnapshotUndo`, reached from
-// THIRTEEN call sites. The whole package's history call surface is exactly two
-// `history_.record(` and nothing else (measured with comments stripped; the
-// pin lives in `tests/unit/tool_gesture_runopen_g7_test.d`).
+// TWO RECORD SITES, not one. `TopologyPenTool.placeVertexAt` records a
+// `MeshVertexNew` raw; every other gesture goes through the shared tail
+// `TopologyPenTool.recordSnapshotUndo`, reached from THIRTEEN call sites. As of
+// task 1905 phase D both go through `Tool.recordGestureEdit(cmd,
+// GestureRecordMode.Plain)`, and the whole package's own history call surface is
+// exactly ZERO (measured with comments stripped; the pin lives in
+// `tests/unit/tool_commit_seam_census_g7_test.d`, members 2 and 3).
 //
-// THIRTEEN FACTORIES BOUND POSITIONALLY. `TopologyPenTool.setUndoBindings`
+// THIRTEEN FACTORIES BOUND POSITIONALLY. `TopologyPenTool.setPenFactories`
 // takes the thirteen `MeshSessionEdit delegate()` factories as thirteen
 // structurally IDENTICAL defaulted parameters, and `source/registration.d`
 // passes them by position; the declaration's own comment says a mis-ordered
 // argument "would compile and silently label one op as another". Nothing in
-// the tree checked that order. This file checks four of the thirteen
-// behaviourally (`build`, `move`, `remove`, `dupLoop`) and
-// `tests/unit/tool_gesture_runopen_g7_test.d` closes the other nine with a
-// composed position -> field -> factory-identifier roster.
+// the tree checked that order until lane G0-G7. This file checks four of the
+// thirteen behaviourally (`build`, `move`, `remove`, `dupLoop`) and
+// `tests/unit/tool_commit_seam_census_g7_test.d` (member 7) closes the other
+// nine with a composed position -> field -> factory-identifier roster.
 //
 // G7 DOES NOT SHARE THE SINGLE-WIRE-NAME PROPERTY — BUT IT HAS A HARDER ONE.
 // The G0-G1 lane found the create family recording every entry under one wire

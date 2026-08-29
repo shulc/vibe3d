@@ -185,11 +185,11 @@ private:
 
     // --- P2 placement deps (doc/topopen_p2_plan.md) — wired by
     // registration.d, mirroring the ctor/binding shape VertexTool had
-    // (tools/create/vertex_place.d — whose own `setUndoBindings` is gone as of
-    // task 1905 phase B; it now binds through `Tool.setGestureBindings`, and
-    // this family follows in group G7). All may be left unset (test/no-app
-    // construction); `placeVertexAt` degrades to a no-op rather than
-    // crashing when `addVertexFactory_` is null.
+    // (tools/create/vertex_place.d — whose own `setUndoBindings` went in task
+    // 1905 phase B; it binds through `Tool.setGestureBindings`, and this family
+    // followed in group G7, phase D). All may be left unset (test/no-app
+    // construction); `placeVertexAt` degrades to a no-op rather than crashing
+    // when the base's `gestureFactory` is null.
     package Mesh* delegate() meshSrc_;
     @property Mesh* mesh() { return meshSrc_(); }
     GpuMesh*         gpu_;
@@ -223,7 +223,16 @@ private:
     // on `Tool`.
     package void history_(CommandHistory h) { history = h; }
 
-    VertexNewFactory  addVertexFactory_;
+    // TASK 1905 PHASE D — the pen's own `VertexNewFactory addVertexFactory_;`
+    // is gone with it. The base's single `gestureFactory` slot
+    // (`Command delegate()`, bound by `setGestureBindings`) now carries it, and
+    // the RAW record site is the right occupant of that one slot: it is the
+    // only G7 gesture whose carrier is not a `MeshSessionEdit`, so it is the
+    // only one whose class the base's untyped delegate has to be cast back to
+    // — and that cast's null arm is a COUNTED refusal
+    // (`noteGestureCarrierMismatch`), see `placeVertexAt`. The other thirteen
+    // stay in `factories_` below, typed, because the seam deliberately has ONE
+    // slot and widening it per carrier is the shape plan §3 rejected.
 
     // --- Per-gesture undo factories (P3..P12 + Fill, task 0494) — grouped
     // into `TopoPenFactories` (see its own doc comment for each field's
@@ -1205,8 +1214,25 @@ public:
     // difference is the wire name they were built with, so a mis-ordered
     // argument would silently label an edge dissolve as a face removal rather
     // than fail to compile.
-    void setUndoBindings(CommandHistory h, VertexNewFactory f,
-                        TopoPenBuildFactory bf = null,
+    // TASK 1905 PHASE D — WHAT THIS METHOD LOST, AND WHY IT STILL EXISTS.
+    // It used to lead with `(CommandHistory h, VertexNewFactory f, …)` and was
+    // called `setUndoBindings`. Both leaders are gone: history and the RAW
+    // site's carrier factory are bound by `Tool.setGestureBindings`, the one
+    // binder of the whole tool tree, so this class can no longer bind a history
+    // at all — which is the point. A per-tool method that takes a
+    // `CommandHistory` is a second place to forget, whatever it is called.
+    //
+    // What is left is the thirteen, and they stay POSITIONAL on purpose. The
+    // seam holds exactly ONE factory slot by design (plan §3 rejected an
+    // installer set that grows a member per carrier), and re-shaping these
+    // thirteen into a named struct would be a different change with a different
+    // witness — the roster that pins this order lives in
+    // `tests/unit/tool_commit_seam_census_g7_test.d` (member 7) and composes
+    // registration position -> parameter name -> `factories_.<field>` -> the
+    // wire name `app.d` built that identifier with. Dropping the two leaders
+    // does NOT renumber it: it numbers the FACTORY list, which starts at `bf`
+    // either way.
+    void setPenFactories(TopoPenBuildFactory bf = null,
                         TopoPenMoveFactory mf = null,
                         TopoPenRemoveFactory rf = null,
                         TopoPenAddLoopFactory alf = null,
@@ -1219,8 +1245,6 @@ public:
                         TopoPenFillFactory flf = null,
                         TopoPenRemoveEdgeFactory ref_ = null,
                         TopoPenRemoveVertexFactory rvf = null) {
-        history           = h;
-        addVertexFactory_  = f;
         factories_.build         = bf;
         factories_.move          = mf;
         factories_.remove        = rf;
@@ -5312,33 +5336,47 @@ public:
     // the real `MeshVertexNew` through its Operator interface
     // (`cmd.evaluate(vts)`, using the TOOL's own vts so the command's
     // internal `SubjectPacket` guard is satisfied) and records it
-    // POST-apply via `history.record(cmd)` — no re-apply, one
+    // POST-apply through `Tool.recordGestureEdit` — no re-apply, one
     // non-coalescing undo entry per click (mirrors the precedent at
     // `tools/common/command_wrapper.d`'s `applyWithLivePipeline`, NOT
-    // VertexTool's snapshot-diff path: `addVertexFactory_` binds `&mesh()`
-    // = primary at CALL time, so the command targets whichever layer is
-    // primary right now, and its own `MeshSnapshot`-based `revert()`
-    // handles undo). Returns the new vertex's index (`-1` on a no-op —
-    // missing factory or a rejected `evaluate`), for P3's chain-building to
-    // reuse (doc/topopen_p2_plan.md §Extension); this tool itself does not
-    // use the return value yet.
+    // VertexTool's snapshot-diff path: the bound `gestureFactory` builds
+    // `new MeshVertexNew(&mesh(), …)` at CALL time, so the command targets
+    // whichever layer is primary right now, and its own `MeshSnapshot`-based
+    // `revert()` handles undo). Returns the new vertex's index (`-1` on a
+    // no-op — missing factory, a carrier of the wrong class, or a rejected
+    // `evaluate`), for P3's chain-building to reuse
+    // (doc/topopen_p2_plan.md §Extension); this tool itself does not use the
+    // return value yet.
+    //
+    // TASK 1905 PHASE D — the return value of `recordGestureEdit` is
+    // DELIBERATELY not branched on. `false` means "no history was bound", and
+    // this method's three tail statements (GPU upload, selection sync, display
+    // refresh) must run in that case exactly as they did when the pre-seam site
+    // read `if (history !is null)`. An early return here would silently change
+    // what an un-bound rig sees on screen — the same trap G4's `drag_weld` site
+    // recorded, in the other direction.
     /// `pointLocal` is a PRIMARY-LAYER LOCAL coordinate (task 0619): the
     /// command writes it straight into `mesh.vertices[]`, so a caller
     /// holding a world hit converts BEFORE calling, not after.
     private int placeVertexAt(Vec3 pointLocal, ref VectorStack vts) {
         // Guard BOTH prerequisites BEFORE creating/applying the command
-        // (review NIT): meshSrc_/gpu_/vc_/ec_/fc_ are wired together with
-        // addVertexFactory_ (registration.d), so a partially-constructed tool
-        // (e.g. no-arg ctor + setUndoBindings only) must bail HERE — above
-        // cmd.evaluate() — so it never mutates-then-fails-to-record (which
-        // would leave an applied-but-un-undoable edit).
-        if (addVertexFactory_ is null || meshSrc_ is null) return -1;
+        // (review NIT): meshSrc_/gpu_/vc_/ec_/fc_ are wired together with the
+        // base's `gestureFactory` (registration.d), so a partially-constructed
+        // tool (e.g. no-arg ctor + `setPenFactories` only) must bail HERE —
+        // above cmd.evaluate() — so it never mutates-then-fails-to-record
+        // (which would leave an applied-but-un-undoable edit).
+        if (gestureFactory is null || meshSrc_ is null) return -1;
 
-        auto cmd = addVertexFactory_();   // binds &mesh() = primary NOW
+        // The seam's slot is typed `Command delegate()`, so the class comes
+        // back here. A null cast means the factory bound at registration builds
+        // something other than a `MeshVertexNew` — a COUNTED refusal, never a
+        // silent one, and taken BEFORE any mutation for the reason above.
+        auto cmd = cast(MeshVertexNew) gestureFactory();   // binds &mesh() = primary NOW
+        if (cmd is null) { noteGestureCarrierMismatch(); return -1; }
         cmd.setPos(pointLocal);
         if (!cmd.evaluate(vts)) return -1;
 
-        if (history !is null) history.record(cmd);   // non-coalescing -> one undo entry
+        recordGestureEdit(cmd, GestureRecordMode.Plain);   // non-coalescing -> one undo entry
 
         if (gpu_ !is null) gpu_.upload(*mesh);
         mesh.syncSelection();
@@ -5365,12 +5403,21 @@ public:
     // baked into the factory at app.d's construction site, per every
     // factory alias's doc comment above), pair the two snapshots under the
     // gesture's label, and record ONE non-coalescing entry.
+    //
+    // TASK 1905 PHASE D — this is the second and last of G7's record sites, and
+    // it takes NO cast. Its `factory` parameter is typed `MeshSessionEdit
+    // delegate()` all the way from `setPenFactories`, so the carrier class is
+    // the compiler's problem here and there is nothing for
+    // `noteGestureCarrierMismatch` to catch; what the thirteen call sites CAN
+    // still get wrong is WHICH of the thirteen they pass, and that is a wire
+    // name, not a class (member 7 of `tool_commit_seam_census_g7_test.d` plus
+    // the `entryNames` of `tests/fixtures/tool_gesture/g7.json`).
     private void recordSnapshotUndo(Mesh* m, MeshSnapshot before,
                                     MeshSessionEdit delegate() factory, string label) {
         MeshSnapshot after = MeshSnapshot.capture(*m);
         auto cmd = factory();
         cmd.setSnapshots(before, after, label);
-        history.record(cmd);
+        recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     // P7 (doc/topopen_p7_slide_plan.md Phase 3): commit the armed Slide

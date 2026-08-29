@@ -12,6 +12,7 @@ import mesh_edit_delta : MeshEditScope;
 import commands.mesh.position_undo  : RecordedUndo;
 import commands.mesh.map_edit_undo  : runMapEdit;
 import commands.mesh.selection_undo : DenseSelectionUndo;
+import commands.mesh.gesture_payload : GesturePayload;
 
 /// Add one isolated vertex at an absolute position and auto-select it.
 ///
@@ -26,7 +27,7 @@ import commands.mesh.selection_undo : DenseSelectionUndo;
 /// adds is the half the op-log does not carry — the SELECTION this command
 /// destroys (`clearVertexSelection` + `selectVertex`), held densely beside the
 /// delta; see `commands/mesh/selection_undo.d`.
-class MeshVertexNew : Command, Operator {
+class MeshVertexNew : Command, Operator, GesturePayload {
     mixin OperatorActrCommon;
     private RecordedUndo     undo_;
     private DenseSelectionUndo preSel_;
@@ -49,6 +50,30 @@ class MeshVertexNew : Command, Operator {
 
     /// See `MeshFlip.isOperationInverse` — a cheap tell, not the observable.
     override bool isOperationInverse() const { return undo_.armed(); }
+
+    /// GesturePayload (task 1905, group G7) — the FOURTH carrier class to
+    /// implement it, and the one the seam's own header predicted would turn up
+    /// ("a fifth payload form implements one method and breaks nothing",
+    /// `commands/mesh/gesture_payload.d`). `TopologyPenTool.placeVertexAt`
+    /// hands this command to `Tool.recordGestureEdit`; without this method the
+    /// recorder's `cast(GesturePayload)` comes back null, the belt refuses, and
+    /// the placed vertex would stay on the mesh with no undo entry.
+    ///
+    /// TWO ARMS, and the second one is a BELT rather than a measured need —
+    /// said plainly so nobody reads it as a discovered case. `undo_` is armed
+    /// only when `runMapEdit` came back with a NON-EMPTY delta; `preSel_` is
+    /// filled by the recording arm of `runKernel` BEFORE the mutation. A
+    /// carrier that was built and never `evaluate`d answers false on both,
+    /// which is the programming error the belt exists for. `Mesh.addVertex`
+    /// always appends, so no path I can name reaches "evaluated, delta empty"
+    /// — but if one ever did, this command would still own the selection it
+    /// destroyed (`clearVertexSelection` + `selectVertex`), so undo would still
+    /// have work to do. The pre-seam site recorded UNCONDITIONALLY; a
+    /// single-arm predicate would make the seam strictly stricter than what it
+    /// replaced, which is a behaviour change smuggled inside a migration.
+    override bool hasGesturePayload() const {
+        return undo_.armed() || preSel_.filled();
+    }
 
     /// Aim the command at an absolute world position before firing it —
     /// topology-pen P2 (doc/topopen_p2_plan.md): `pos_` is private (only

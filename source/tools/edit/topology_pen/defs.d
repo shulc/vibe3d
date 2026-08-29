@@ -14,18 +14,19 @@
 // `private` to `package` -- the pen's package, not one module wider.
 module tools.edit.topology_pen.defs;
 
-import commands.mesh.vertex_new   : MeshVertexNew;
 import commands.mesh.session_edit : MeshSessionEdit;
 import tool_input                 : ToolAction, PassThrough, InputButton, InputMod,
                                     InputBinding, ResetScope;
 
-/// Factory the tool calls PER CLICK to obtain a fresh, primary-bound
-/// `MeshVertexNew` (P2, doc/topopen_p2_plan.md REV-1) — mirrors
-/// `tools.create.vertex_place`'s `VertexEditFactory` alias shape. Binding
-/// happens at CALL time (`() => new MeshVertexNew(&mesh(), ...)` at the
-/// registration.d wiring site), so each click's command targets whichever
-/// layer is primary AT THAT MOMENT.
-alias VertexNewFactory = MeshVertexNew delegate();
+// The pen's `alias VertexNewFactory = MeshVertexNew delegate();` is gone as of
+// task 1905 phase D (group G7). The per-click, primary-bound `MeshVertexNew`
+// factory the RAW record site calls now lives in the base's single
+// `gestureFactory` slot (`Command delegate()`, bound by
+// `Tool.setGestureBindings` at the registration.d wiring site); binding still
+// happens at CALL time, so each click's command still targets whichever layer
+// is primary AT THAT MOMENT. The alias was deleted rather than left behind
+// because a public alias with no value built from it points the next reader at
+// a pattern the tree no longer has.
 
 /// Factory the tool calls ONCE PER BUILD GESTURE to obtain a fresh,
 /// primary-bound `MeshSessionEdit` (P3, doc/topopen_p3_plan.md) — the
