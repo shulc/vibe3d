@@ -839,18 +839,36 @@ private void registerEditTools(EditorApp app) {
         t.setGestureBindings(history, smoothShiftEditFactory);
         return cast(Tool)t;
     };
-    // TASK 1905 G1 — `vxEditFactory` is bound at FOURTEEN sites and this is the
-    // only one that has moved to the base seam; the other thirteen are the
+    // TASK 1905 — `vxEditFactory` is spent at THIRTEEN sites in this file and
+    // this is the only one on the base seam; the other TWELVE are the
     // transform zone, still on their own `setUndoBindings` overload. So one
-    // factory now feeds TWO binding interfaces at once. That is legal (the
-    // parameter types differ, the overloads are distinct) and it is also
-    // exactly the site where "unify the factory alias" looks tempting and
-    // silently RE-TYPES the transform tools: `VertexEditFactory` is one name
-    // for two different delegate types in this tree (`MeshSessionEdit
-    // delegate()` in two tool modules, `MeshVertexEdit delegate()` in two
-    // others), and a factory called through `factory_()` with no named type in
-    // the body keeps compiling after the swap. The split is resolved when the
-    // app-level factory closures collapse (group G8), not before.
+    // factory feeds TWO binding interfaces at once. That is legal (the
+    // parameter types differ, the overloads are distinct).
+    //
+    // THE G1 NOTE HERE SAID "FOURTEEN … the other thirteen", AND SAID THE
+    // SPLIT WOULD BE RESOLVED WHEN THE APP-LEVEL CLOSURES COLLAPSED IN GROUP
+    // G8. Both halves were wrong and group G8 re-measured them (2026-08-29).
+    // The count was thirteen before phase B too — twelve transform sites plus
+    // this one — and the closures collapsing changes nothing about which
+    // binder the transform tools DECLARE.
+    //
+    // WHAT G8 DID SETTLE. The temptation the note warned about was "unify the
+    // factory alias", and what made it dangerous was that `VertexEditFactory`
+    // named TWO different delegate types in this tree (`MeshSessionEdit
+    // delegate()` in `vertex_place.d` / `drag_weld.d`, `MeshVertexEdit
+    // delegate()` in `transform.d` / `xfrm_transform.d`), so a swap re-typed
+    // two tools and both kept compiling. Phases B and C deleted both
+    // `MeshSessionEdit` spellings along with the binders that used them: two
+    // declarations remain and both name `MeshVertexEdit delegate()`. There is
+    // nothing left to unify — and nothing in the compiler keeps it that way,
+    // so member 4 of `tests/unit/tool_commit_seam_census_g8_test.d` does: a
+    // third alias naming a different type reddens there by file and line.
+    //
+    // WHAT IS LEFT IS NOT THIS TASK'S. The twelve transform bindings stay on
+    // `setUndoBindings` because the transform zone is OUT of task 1905's scope
+    // by decision D1; they move when that zone does. Until then the count
+    // above is pinned by member 6 of the same census and the surviving binder
+    // declarations by member 5, so neither can grow in silence.
     reg.toolFactories["xfrm.magnet"] = () {
         auto t = new MagnetTool(() => &mesh(), &gpu(), &editMode());
         t.setGestureBindings(history, vxEditFactory);
@@ -919,15 +937,22 @@ private void registerEditTools(EditorApp app) {
     // Distinct from the camera-plane one-shot mesh.screenSlice command.
     reg.toolFactories["mesh.sliceTool"] = () {
         auto t = new SliceTool(() => &mesh(), &gpu(), &editMode(), litShader);
-        // TASK 1905 G5 — `bevelEditFactory` is bound at THIRTEEN sites and these
-        // two (slice, edge slice) are the first to move to the base seam; the
-        // rest still take their tool's own `setUndoBindings` overload. One
-        // factory therefore feeds TWO binding interfaces at once until the
-        // app-level closures collapse in group G8. That is legal — the parameter
-        // types differ, the overloads are distinct — and it is also why the two
-        // wire ids below both record under the SAME wire name `mesh.bevel_edit`,
-        // which is why G5's "exactly one cell reddens" mutations key on the
-        // plane dumps rather than on `entryNames` for this pair.
+        // TASK 1905 — `bevelEditFactory` is spent at TWENTY-FOUR sites in this
+        // file and ALL twenty-four are on the base seam; ZERO are left on a
+        // tool's own `setUndoBindings` overload (measured 2026-08-29 by group
+        // G8). The G5 note here said "THIRTEEN … the rest still take their
+        // tool's own overload, so one factory feeds TWO binding interfaces at
+        // once until the app-level closures collapse in group G8" — the count
+        // matched no state of this file, and the second half stopped being
+        // true when phase C landed. It is deleted rather than carried, because
+        // a parked promise nobody re-measures is how a comment becomes a lie.
+        //
+        // THE LOAD-BEARING HALF IS UNCHANGED: all twenty-four record under the
+        // SAME wire name `mesh.bevel_edit`, so the two wire ids below are
+        // indistinguishable in undo history and in a replay, which is why G5's
+        // "exactly one cell reddens" mutations key on the plane dumps rather
+        // than on `entryNames` for this pair. The count is pinned by member 6
+        // of `tests/unit/tool_commit_seam_census_g8_test.d`.
         t.setGestureBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };

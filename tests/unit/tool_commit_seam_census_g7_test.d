@@ -932,9 +932,20 @@ unittest {
     }
 
     // (ii) `source/app.d` factory identifier -> the wire name it was built with.
+    //
+    // RE-POINTED BY GROUP G8 (task 3270). This used to read
+    // `auto X = () => new MeshSessionEdit(…, "wire", …)`, one hand-written
+    // closure per factory. G8 collapsed all twenty-four onto one parameterised
+    // builder, so the rows are now `auto X = sessionEditFactory("wire", …)`.
+    // The old needle matched nothing on the collapsed file and the CONTROL row
+    // below caught it — `identToWire` came back EMPTY and every `wire` column
+    // became a placeholder, which is exactly the failure that control exists
+    // for and the reason this member did not simply go quiet. The frozen
+    // roster in `tests/unit/tool_commit_seam_census_g8_test.d` holds the same
+    // twenty-four strings from the other side.
     string[string] identToWire;
     foreach (mt; appSrc.matchAll(regex(
-            `auto\s+(topoPen\w*EditFactory)\s*=\s*\(\)\s*=>\s*new\s+MeshSessionEdit\([^;]*?"([^"]+)"\s*,`)))
+            `auto\s+(topoPen\w*EditFactory)\s*=\s*sessionEditFactory\(\s*"([^"]+)"\s*,`)))
         identToWire[mt[1]] = mt[2];
 
     // (iii) the registration call's argument identifiers, IN ORDER. The base

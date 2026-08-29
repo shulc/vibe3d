@@ -3607,173 +3607,102 @@ void main(string[] args) {
     // consistency with every other *EditFactory closure here.
     import commands.layer.xform_edit : LayerXformEdit;
     auto layerXformEditFactory = () => new LayerXformEdit(&mesh(), cameraView, editMode);
-    // The TWENTY-FOUR `*EditFactory` closures below all build the same generic
-    // MeshSessionEdit (task 0408 / campaign 0407 §A.D1) — a (pre, post)
-    // MeshSnapshot-pair record command — differing only in wireName /
-    // defaultLabel / editScope. wireName MUST stay byte-identical to each
-    // class's former hardcoded name() string: undo history / event-log
-    // replay / macros dispatch on it.
+    // ONE BUILDER, TWENTY-FOUR ROWS (task 1905, group G8). Every factory below
+    // builds the same generic `MeshSessionEdit` (task 0408 / campaign 0407
+    // §A.D1) — a (pre, post) MeshSnapshot-pair record command — and the ONLY
+    // thing that differs between them is the triple
+    // `(wireName, defaultLabel, editScope)`. Until G8 that triple was carried
+    // by twenty-four separately written lambdas, each repeating
+    // `&mesh(), cameraView, editMode` verbatim, and one of them getting that
+    // live context wrong would have read exactly like the other twenty-three.
+    // There is one lambda now — `sessionEditFactory`'s — and the rest is a
+    // table.
     //
-    // THE NUMBER WAS "eleven" UNTIL TASK 1903 STAGE M CORRECTED IT (2026-08-28)
-    // — measured, `grep -c 'EditFactory = () => new MeshSessionEdit' source/app.d`
-    // reads 24. Thirteen of the 24 are the Topology Pen's, bound POSITIONALLY
-    // to fourteen gestures (registration.d flags the mis-order hazard at its
-    // own site), which is why that family migrates as its own family and never
-    // "with the other tools". A fourteenth, `bevelEditFactory`, is bound by 24
-    // separate tool registrations under ONE wire name (`mesh.bevel_edit`), so
-    // anything done to it lands on all 24 at once and it goes LAST.
-    // Deleting these 24 is task 1905's — the session boundary is what replaces
-    // them, and 1903 could not build it (plan §6.5).
+    // WIRE NAMES ARE FROZEN. `MeshSessionEdit.name()` returns `wireName_`
+    // verbatim, and undo history / event-log replay / macros all dispatch on
+    // it, so each string here MUST stay byte-identical to the one the former
+    // per-tool command class returned from its own `name()`. The roster lives
+    // in `tests/unit/tool_commit_seam_census_g8_test.d`; a changed string
+    // reddens there by name, with the old string and the new one.
+    //
+    // THE COUNT, AND THE GREP THAT USED TO COUNT ITSELF. The comment this
+    // replaced said "measured, `grep -c 'EditFactory = () => new
+    // MeshSessionEdit' source/app.d` reads 24" — but that quotation was itself
+    // a match, so the command printed 25, and had done since the day it was
+    // written. A prose number that cannot be re-measured by the command beside
+    // it is worse than no number: the census row is the count now, and this
+    // paragraph deliberately does not spell the new needle.
+    //
+    // TWO GROUPS INSIDE THE TABLE ARE NOT SAFE TO REORDER OR MERGE:
+    //   * the thirteen `topoPen*` rows are passed to `setPenFactories`
+    //     POSITIONALLY (`registration.d`'s `mesh.topoPen` block), and three of
+    //     them (`_remove` / `_removeedge` / `_removevertex`) differ ONLY by
+    //     wire name — a swapped argument compiles and silently labels one
+    //     gesture's undo entry with another's. That chain is pinned position by
+    //     position by member 7 of `tool_commit_seam_census_g7_test.d`, which
+    //     reads the wire name straight out of the rows below.
+    //   * `bevelEditFactory` is bound by TWENTY-FOUR separate tool
+    //     registrations under the ONE wire name `mesh.bevel_edit`, so anything
+    //     done to that row lands on all twenty-four at once.
     import mesh_edit_delta : MeshEditScope;
     enum sessionGeomMarks = MeshEditScope.Geometry | MeshEditScope.Marks;
-    auto bevelEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                     "mesh.bevel_edit", "Bevel");
-    auto loopSliceEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                             "mesh.loop_slice_edit", "Loop Slice");
-    auto reduceEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                      "mesh.reduce_edit", "Reduce");
-    auto cloneEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                    "mesh.clone_edit", "Clone");
-    auto arrayEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                    "mesh.array_edit", "Array");
-    auto edgeExtrudeEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                     "mesh.edge_extrude_edit", "Edge Extrude", sessionGeomMarks);
-    // Edge Extend's typed edit factory (Phase 4 interactive tool consumer). The
-    // one-shot mesh.edge_extend command undoes via its own MeshSnapshot; this
-    // factory exists now so the Phase-4 EdgeExtendTool can bind it, mirroring
-    // edgeExtrudeEditFactory.
-    auto edgeExtendEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                     "mesh.edge_extend_edit", "Edge Extend", sessionGeomMarks);
-    auto polyExtrudeEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                     "mesh.face_extrude_edit", "Face Extrude", sessionGeomMarks);
-    // Radial Array's typed edit factory (interactive-tool consumer). The
-    // one-shot mesh.radial_array command undoes via its own MeshSnapshot;
-    // this factory exists so RadialArrayTool can bind it, mirroring
-    // polyExtrudeEditFactory / edgeExtendEditFactory.
-    auto radialArrayEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                     "mesh.radial_array_edit", "Radial Array", sessionGeomMarks);
-    // Smooth Shift + Thicken's typed edit factory (task 0358 interactive tool
-    // consumer), mirroring polyExtrudeEditFactory. The one-shot mesh.smooth_shift
-    // / mesh.thicken commands keep undoing via their own MeshSnapshot.
-    auto smoothShiftEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                     "mesh.smooth_shift_edit", "Smooth Shift");
-    // Stroke Extrude's typed edit factory (task 0323 interactive tool
-    // consumer). The one-shot mesh.strokeExtrude command undoes via its
-    // own MeshSnapshot; this factory exists so StrokeExtrudeTool can bind
-    // it, mirroring radialArrayEditFactory / smoothShiftEditFactory. Wire
-    // name is "mesh.strokeExtrude_edit" (camelCase, NOT snake_case like its
-    // siblings) — a pre-existing irregularity, preserved byte-for-byte since
-    // undo history / replay dispatch on it.
-    auto strokeExtrudeEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                     "mesh.strokeExtrude_edit", "Stroke Extrude", sessionGeomMarks);
-    // Topology Pen P3's drag-build gesture (task 0477, doc/topopen_p3_plan.md):
-    // its own typed edit factory, distinct wire name so undo history / replay
-    // dispatch describes the op rather than reusing bevelEditFactory's
-    // "mesh.bevel_edit" the way most of the tools above do.
-    auto topoPenBuildEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                     "mesh.topoPen_build", "Topology Build", sessionGeomMarks);
-    // Topology Pen P4's Move gesture (task 0477, doc/topopen_p4_plan.md,
-    // OBJ-3 FOLDED): its OWN typed edit factory, distinct from
-    // `topoPenBuildEditFactory` — a grab-and-re-snap move never adds/removes
-    // geometry, so its wire name is "mesh.topoPen_move" and its editScope is
-    // Position-only, not Geometry|Marks.
-    auto topoPenMoveEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                     "mesh.topoPen_move", "Topology Move", MeshEditScope.Position);
-    // Topology Pen P5's Remove gesture (task 0477, doc/topopen_p5_remove_plan.md,
-    // opponent KILLER-1): its OWN typed edit factory, distinct from BOTH
-    // `topoPenBuildEditFactory` and `topoPenMoveEditFactory` — a single-face
-    // delete IS a topology change (wire name "mesh.topoPen_remove", editScope
-    // Geometry), so reusing either sibling factory would corrupt undo
-    // history / event-log replay / macros with the wrong wire name.
-    auto topoPenRemoveEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                     "mesh.topoPen_remove", "Topology Remove", MeshEditScope.Geometry);
-    // Topology Pen P6's Add Loop gesture (task 0477, doc/topopen_p6_addloop_plan.md,
-    // REV1 factory precedent): its OWN typed edit factory, distinct from
-    // `topoPenBuildEditFactory`/`topoPenMoveEditFactory`/`topoPenRemoveEditFactory`
-    // — a loop cut IS a topology change (wire name "mesh.topoPen_addloop",
-    // editScope Geometry|Marks — the cut resizes selection arrays, same
-    // scope as `topoPenBuildEditFactory`), so reusing any sibling factory
-    // would corrupt undo history / event-log replay / macros with the
-    // wrong wire name.
-    auto topoPenAddLoopEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                     "mesh.topoPen_addloop", "Topology Add Loop", sessionGeomMarks);
-    // Topology Pen P7's Slide gesture (task 0477, doc/topopen_p7_slide_plan.md,
-    // REV1): its OWN typed edit factory, distinct from EVERY sibling above —
-    // a constrained-edge slide never adds/removes geometry (Position-only
-    // editScope, same as `topoPenMoveEditFactory`), but reusing that factory
-    // would bake the wrong wire name ("mesh.topoPen_move" on a slide),
-    // corrupting undo history / event-log replay / macros.
-    auto topoPenSlideEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                     "mesh.topoPen_slide", "Topology Slide", MeshEditScope.Position);
-    // Topology Pen P8's Smooth gesture (task 0477, doc/topopen_p8_smooth_plan.md):
-    // its OWN typed edit factory, distinct from EVERY sibling above — a
-    // relax+re-snap pass never adds/removes geometry (Position-only
-    // editScope, same as `topoPenMoveEditFactory`/`topoPenSlideEditFactory`),
-    // but reusing either would bake the wrong wire name ("mesh.topoPen_move"/
-    // "mesh.topoPen_slide" on a multi-pass smooth), corrupting undo history /
-    // event-log replay / macros.
-    auto topoPenSmoothEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                     "mesh.topoPen_smooth", "Topology Smooth", MeshEditScope.Position);
-    // Topology Pen P9's Split gesture (task 0477, doc/topopen_p9_split_plan.md):
-    // its OWN typed edit factory, distinct from EVERY sibling above — a
-    // vertex-to-vertex polygon split IS a topology change (wire name
-    // "mesh.topoPen_split", editScope Geometry, same scope as
-    // `topoPenRemoveEditFactory`), so reusing any sibling factory would
-    // corrupt undo history / event-log replay / macros with the wrong wire
-    // name.
-    auto topoPenSplitEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                     "mesh.topoPen_split", "Topology Split", MeshEditScope.Geometry);
-    // Topology Pen P10's Move Loop gesture (task 0477, doc/topopen_p10_moveloop_plan.md):
-    // its OWN typed edit factory, distinct from EVERY sibling above — a
-    // per-vertex loop re-snap never adds/removes geometry (wire name
-    // "mesh.topoPen_moveloop", editScope Position-only, same scope as
-    // `topoPenMoveEditFactory`/`topoPenSlideEditFactory`/
-    // `topoPenSmoothEditFactory`), but reusing any of them would bake the
-    // wrong wire name on a loop drag, corrupting undo history / event-log
-    // replay / macros.
-    auto topoPenMoveLoopEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                     "mesh.topoPen_moveloop", "Topology Move Loop", MeshEditScope.Position);
-    // Topology Pen P11's Dup Loop gesture (task 0477, doc/topopen_p11_duploop_plan.md):
-    // its OWN typed edit factory, distinct from EVERY sibling above —
-    // duplicating an edge loop into a new bridge ring IS a topology change
-    // (wire name "mesh.topoPen_duploop", editScope Geometry|Marks — the
-    // extrude resizes selection arrays, same scope as
-    // `topoPenAddLoopEditFactory`), so reusing any sibling factory would
-    // corrupt undo history / event-log replay / macros with the wrong wire
-    // name.
-    auto topoPenDupLoopEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                     "mesh.topoPen_duploop", "Topology Duplicate Loop", sessionGeomMarks);
-    // Topology Pen P12's Smooth+Loop gesture (task 0477, doc/topopen_p12_smoothloop_plan.md):
-    // its OWN typed edit factory, distinct from EVERY sibling above — a 1-D
-    // loop-restricted relax+re-snap never adds/removes geometry (wire name
-    // "mesh.topoPen_smoothloop", editScope Position-only, same scope as
-    // `topoPenMoveLoopEditFactory`/`topoPenMoveEditFactory`/
-    // `topoPenSlideEditFactory`/`topoPenSmoothEditFactory`), but reusing any
-    // of them would bake the wrong wire name on a loop smooth, corrupting
-    // undo history / event-log replay / macros.
-    auto topoPenSmoothLoopEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                     "mesh.topoPen_smoothloop", "Topology Smooth Loop", MeshEditScope.Position);
-    // Topology Pen Fill mode V1 (task 0477 continuation, doc/topopen_fill_plan.md):
-    // its OWN typed edit factory, distinct from EVERY sibling above —
-    // capping a gap cell with one quad IS a topology change (wire name
-    // "mesh.topoPen_fill", editScope Geometry, same scope as
-    // `topoPenSplitEditFactory`), so reusing any sibling factory would
-    // corrupt undo history / event-log replay / macros with the wrong wire
-    // name.
-    auto topoPenFillEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                     "mesh.topoPen_fill", "Topology Fill", MeshEditScope.Geometry);
-    // Topology Pen Remove's OTHER two primitives (task 0494): Remove picks its
-    // mesh operation from the CLASS of the element the press latched, and an
-    // edge-latched press dissolves (merging the two incident polygons) while a
-    // vertex-latched press merges the whole incident fan and drops the vertex —
-    // neither of which removes a face. Same Geometry editScope as
-    // `topoPenRemoveEditFactory`, so the wire name is the ONLY thing keeping
-    // the three apart in undo history / event-log replay / macros; that is
-    // exactly why each gets its own.
-    auto topoPenRemoveEdgeEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                     "mesh.topoPen_removeedge", "Topology Remove Edge", MeshEditScope.Geometry);
-    auto topoPenRemoveVertexEditFactory = () => new MeshSessionEdit(&mesh(), cameraView, editMode,
-                                                     "mesh.topoPen_removevertex", "Topology Remove Vertex", MeshEditScope.Geometry);
+    // The builder. `&mesh()` / `cameraView` / `editMode` are read when the
+    // RETURNED delegate is called, not when it is built — the same live-context
+    // rule the twenty-four lambdas carried, kept in one place instead of
+    // twenty-four. `editScope` defaults to `MeshEditScope.None`, which is what
+    // the rows that name no scope used to get from the constructor's own
+    // default.
+    MeshSessionEdit delegate() sessionEditFactory(
+            string wireName, string defaultLabel,
+            MeshEditScope editScope = MeshEditScope.None) {
+        return () => new MeshSessionEdit(&mesh(), cameraView, editMode,
+                                         wireName, defaultLabel, editScope);
+    }
+
+    // --- the interactive mesh tools -----------------------------------------
+    auto bevelEditFactory       = sessionEditFactory("mesh.bevel_edit", "Bevel");
+    auto loopSliceEditFactory   = sessionEditFactory("mesh.loop_slice_edit", "Loop Slice");
+    auto reduceEditFactory      = sessionEditFactory("mesh.reduce_edit", "Reduce");
+    auto cloneEditFactory       = sessionEditFactory("mesh.clone_edit", "Clone");
+    auto arrayEditFactory       = sessionEditFactory("mesh.array_edit", "Array");
+    auto edgeExtrudeEditFactory = sessionEditFactory("mesh.edge_extrude_edit", "Edge Extrude", sessionGeomMarks);
+    // Edge Extend / Radial Array / Smooth Shift + Thicken / Stroke Extrude each
+    // have a one-shot command of their own that keeps undoing via its own
+    // MeshSnapshot; these rows exist so the INTERACTIVE tool can bind a typed
+    // edit factory instead.
+    auto edgeExtendEditFactory  = sessionEditFactory("mesh.edge_extend_edit", "Edge Extend", sessionGeomMarks);
+    auto polyExtrudeEditFactory = sessionEditFactory("mesh.face_extrude_edit", "Face Extrude", sessionGeomMarks);
+    auto radialArrayEditFactory = sessionEditFactory("mesh.radial_array_edit", "Radial Array", sessionGeomMarks);
+    auto smoothShiftEditFactory = sessionEditFactory("mesh.smooth_shift_edit", "Smooth Shift");
+    // "mesh.strokeExtrude_edit" is camelCase where every sibling is snake_case
+    // — a pre-existing irregularity, preserved byte for byte because undo
+    // history and replay dispatch on the string, not on its shape.
+    auto strokeExtrudeEditFactory = sessionEditFactory("mesh.strokeExtrude_edit", "Stroke Extrude", sessionGeomMarks);
+
+    // --- the Topology Pen's thirteen (task 0477 P3-P12 + Fill + task 0494) ---
+    // One row per GESTURE, never one per edit shape: several of these carry the
+    // identical editScope and differ only in the wire name, which is the whole
+    // reason each gesture gets its own row rather than reusing a sibling's.
+    // Geometry|Marks = the op resizes the selection arrays; Position = a
+    // re-snap that adds and removes nothing; Geometry = a topology change that
+    // does not touch selection width.
+    auto topoPenBuildEditFactory      = sessionEditFactory("mesh.topoPen_build", "Topology Build", sessionGeomMarks);
+    auto topoPenMoveEditFactory       = sessionEditFactory("mesh.topoPen_move", "Topology Move", MeshEditScope.Position);
+    auto topoPenRemoveEditFactory     = sessionEditFactory("mesh.topoPen_remove", "Topology Remove", MeshEditScope.Geometry);
+    auto topoPenAddLoopEditFactory    = sessionEditFactory("mesh.topoPen_addloop", "Topology Add Loop", sessionGeomMarks);
+    auto topoPenSlideEditFactory      = sessionEditFactory("mesh.topoPen_slide", "Topology Slide", MeshEditScope.Position);
+    auto topoPenSmoothEditFactory     = sessionEditFactory("mesh.topoPen_smooth", "Topology Smooth", MeshEditScope.Position);
+    auto topoPenSplitEditFactory      = sessionEditFactory("mesh.topoPen_split", "Topology Split", MeshEditScope.Geometry);
+    auto topoPenMoveLoopEditFactory   = sessionEditFactory("mesh.topoPen_moveloop", "Topology Move Loop", MeshEditScope.Position);
+    auto topoPenDupLoopEditFactory    = sessionEditFactory("mesh.topoPen_duploop", "Topology Duplicate Loop", sessionGeomMarks);
+    auto topoPenSmoothLoopEditFactory = sessionEditFactory("mesh.topoPen_smoothloop", "Topology Smooth Loop", MeshEditScope.Position);
+    auto topoPenFillEditFactory       = sessionEditFactory("mesh.topoPen_fill", "Topology Fill", MeshEditScope.Geometry);
+    // Remove's OTHER two primitives (task 0494): an edge-latched press
+    // dissolves, a vertex-latched press merges the incident fan — neither
+    // removes a face, and all three share the Geometry scope, so the wire name
+    // is the ONLY thing keeping them apart in history, replay and macros.
+    auto topoPenRemoveEdgeEditFactory   = sessionEditFactory("mesh.topoPen_removeedge", "Topology Remove Edge", MeshEditScope.Geometry);
+    auto topoPenRemoveVertexEditFactory = sessionEditFactory("mesh.topoPen_removevertex", "Topology Remove Vertex", MeshEditScope.Geometry);
 
     // ----- Tool Pipe singleton (phase 7.0). Initialised here, exposed
     // globally via toolpipe.g_pipeCtx. Phase 7.1 registers the
