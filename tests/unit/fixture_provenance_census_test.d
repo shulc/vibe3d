@@ -43,9 +43,24 @@
 // checker would then carry the very tokens it exists to forbid). The general
 // neutrality gate (`tools/local/neutrality_lint.sh`) already scans this
 // entire public tree, fixture JSON content included, for those tokens on
-// every commit -- that is the authoritative check for THAT question. This
-// module owns structural shape only: is `provenance` present, and if present,
-// does every field hold a value from its own vocabulary.
+// every commit. This module owns structural shape only: is `provenance`
+// present, and if present, does every field hold a value from its own
+// vocabulary.
+//
+// CORRECTION, measured 2026-08-29 (task 3300): the delegation above USED to
+// read "that is the authoritative check for THAT question", and for one shape
+// it is not. The private dictionary's patterns are word-boundary-anchored on
+// purpose (so they do not fire on `modeling` / `modOk`), which means a banned
+// token followed immediately by a DIGIT inside the version suffix --
+// `ref-editor@<token><digit>...` -- carries no boundary and is NOT matched;
+// verified with `neutrality_lint.sh --paths` against three probe files, where
+// the hyphenated and the free-prose forms both FAIL and that one form reports
+// 0 findings. `provenance.reference_is_neutral` (private) catches it via an
+// always-on substring test and is the only checker that does -- and it runs
+// in no routine lane. The gap is recorded at `provenance_check.py`'s head and
+// carded; this module still does not embed the denylist, for the reason
+// above, so the honest statement is "shape here, content elsewhere AND
+// currently unwitnessed for one shape", not "covered".
 //
 // THE INLINE-.d POPULATION IS A SMALL, ENUMERATED SET, DELIBERATELY, mirroring
 // `provenance_check.py`'s `INLINE_D_FILES` (private repo) so the two
@@ -59,7 +74,14 @@
 //     value) => named by file and offending value;
 //   * add a fixture with NO provenance block one directory deeper than the
 //     old flat globs reached (e.g. under `tool_gesture/`) => this module's
-//     RECURSIVE scan catches it where a flat glob would not.
+//     RECURSIVE scan catches it where a flat glob would not;
+//   * narrow the SCANNER ITSELF (`SpanMode.depth` -> `SpanMode.shallow`, or
+//     any walk that stops descending) => the nested floor in unittest 1.
+//     Task 3140 ran its mutations against the already-built binary with
+//     mutated FIXTURE DATA, which is legitimate for a census that reads the
+//     corpus at run time but leaves this module's own CODE unmutated; run
+//     2026-08-29 (task 3300), the shallow walk was GREEN at 381 modules
+//     before that floor existed.
 // Removing the LAST `provenance` block from the corpus, or the removal of
 // every `live-capture`/`simulated`/`analytic` entry, would fire the
 // anti-vacuity assertions below (both branches must be exercised on real
@@ -74,8 +96,9 @@ import std.algorithm : canFind;
 import std.file      : dirEntries, exists, isFile, readText, SpanMode;
 import std.format    : format;
 import std.json      : JSONException, JSONType, JSONValue, parseJSON;
-import std.path      : buildPath, dirName, extension, relativePath;
+import std.path      : buildPath, dirName, dirSeparator, extension, relativePath;
 import std.regex     : matchAll, regex;
+import std.string    : indexOf;
 
 private enum unitDir     = dirName(__FILE_FULL_PATH__);      // tests/unit
 private enum testsDir    = dirName(unitDir);                 // tests
@@ -115,6 +138,8 @@ private struct Scanned
     size_t files;                                    /// items scanned (fixture files + inline blocks)
     size_t withBlock;                                 /// items carrying a `provenance` key
     size_t parity, smokeSimulated, smokeAnalytic, unknownSource;
+    size_t nested;                                    /// fixture files found BELOW `tests/fixtures/`
+    bool[string] nestedDirs;                          /// their distinct first path segments
 }
 
 /// True for `provenance.reference` iff it is one of the three neutral
@@ -229,6 +254,14 @@ private Scanned scanCorpus()
                 continue;
             const rel = relativePath(entry.name, fixturesDir);
             s.files++;
+            // Record the DESCENT, not merely the count -- see the nested floor
+            // in unittest 1 for why a total alone cannot see a walk that
+            // stopped recursing.
+            if (rel.canFind(dirSeparator))
+            {
+                s.nested++;
+                s.nestedDirs[rel[0 .. rel.indexOf(dirSeparator)]] = true;
+            }
             JSONValue fx;
             try
                 fx = parseJSON(readText(entry.name));
@@ -284,6 +317,33 @@ unittest
                   ~ "because it looked at nothing is this repository's "
                   ~ "most-paid-for defect", s.files, fixturesDir,
                   kInlineDFiles.length));
+
+    // ...AND IT RECURSED. The total above cannot see this, which was measured,
+    // not reasoned: swapping `SpanMode.depth` for `SpanMode.shallow` in
+    // `scanCorpus` drops all 24 fixtures living below `tests/fixtures/` out of
+    // the population -- every file under `edge_extend/`, `stages/`,
+    // `tool_gesture/`, `undo_parity/`, `weightmap_display/`, which is EXACTLY
+    // the set backlog 3080 was filed about -- and `dub test --config=tests`
+    // still reports "381 modules passed unittests", exit 0 (measured
+    // 2026-08-29, task 3300). 166 top-level files + 5 inline blocks = 171,
+    // comfortably over the 150 floor, so the floor is satisfied by the blind
+    // scanner too: a check that cannot come out differently.
+    //
+    // This module's header claims its recursive population is what keeps it
+    // from repeating 3080's defect in a fourth form. That claim was an
+    // untested comment until this assertion; the walk is now held to the
+    // DESCENT, not just to a total. Floors carry slack (24 nested files in 5
+    // directories on disk today) for the same reason the 150 does: several
+    // lanes add fixtures concurrently and an exact count is a rebase conflict
+    // per lane for no gain.
+    assert(s.nested >= 10 && s.nestedDirs.length >= 3,
+           format("fixture_provenance_census: the scan reached %d item(s) but "
+                  ~ "only %d of them below %s, in %d subdirector(y/ies) -- the "
+                  ~ "file walk is not recursing. Every fixture in a "
+                  ~ "subdirectory is then outside the population and this "
+                  ~ "module goes green over a corpus it never opened, which is "
+                  ~ "the defect (backlog 3080) it exists to prevent",
+                  s.files, s.nested, fixturesDir, s.nestedDirs.length));
 }
 
 // 2 — the validator has been exercised on real data, in more than one
