@@ -757,6 +757,85 @@ void runStep(JSONValue step, string name, string phase, size_t i) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// THE `provenance` VOCABULARY — the ONE public-tree copy (task 3340, item C;
+// backlog 3302).
+//
+// AUTHORITY vs COPIES. `tools/local/fixture_gen/provenance.py` (PRIVATE tree)
+// is the authority: it is what stamps a block at generation time, so a value
+// it does not know cannot be written by the generator at all. A public test
+// lane must not shell out to a private script — that was task 1063's reason
+// for a D-side copy, and it still holds. What did NOT hold was the NUMBER of
+// copies. Measured 2026-08-29 there were THREE lists for one field:
+//
+//     tools/local/fixture_gen/provenance.py      METHOD_VALUES   11  authority
+//     tests/unit/fixture_provenance_census_test.d kMethodValues  11  in step
+//     this file (inside `requireProvenance`)                      8  THREE BEHIND
+//
+// and the third had been behind for ELEVEN DAYS, over five fixtures already
+// carrying `static-read` / `gui-gesture` / `debug-live` (measured on the
+// corpus: 3 / 1 / 1 of 191 `method` values). It was not red only because none
+// of those five is read through `runFixture`. The first one that was would
+// have reddened on a VALID value, advising `"unknown"` — erasing a measured
+// distinction to satisfy a stale list.
+//
+// WHY THE FIX IS "ONE HAND-TYPED PUBLIC LIST", NOT "ONE SHARED D MODULE".
+// A shared module was tried first and MEASURED to be unavailable, which is
+// worth recording so nobody re-tries it blind:
+//
+//   * this file is compiled by `run_test.d`'s plain lane
+//     (`dmd -unittest -J=tests -I=<scratch> -I=tests <helpers> <test>`), with
+//     no `-i`, and it is COPIED into a per-worker scratch dir when the port is
+//     rewritten — so it can neither link a module that is not on that command
+//     line nor root anything on `__FILE_FULL_PATH__`;
+//   * the census is compiled by `dub test --config=tests`, whose `sourcePaths`
+//     are `source` + `tests/unit` and whose `importPaths` are `source` +
+//     `tools/perf`. Adding `"tests"` to those `importPaths` — the obvious way
+//     to let the census import a module under `tests/` — CHANGES THE MODULE
+//     NAMES DUB DERIVES for every `tests/unit/**` file that declares no
+//     `module` statement (most of them), and `dub test --config=tests` then
+//     fails to build with `module `mesh_stats_test` … must be imported with
+//     'import mesh_stats_test;'`. Measured on this branch.
+//
+// So the two lanes cannot share a compiled symbol without changing a build
+// file for one of them. What they CAN share is this text: the census PARSES
+// the two arrays below out of this file, and pins them by VALUE NAME to the
+// private Python authority. Result: two hand-typed lists in the world (one
+// public here, one private there), each named by the other's checker when
+// they disagree — instead of three lists and no checker at all.
+//
+// ADDING A VALUE is therefore a two-file edit, deliberately: here, and in
+// `tools/local/fixture_gen/provenance.py`. Doing one without the other reddens
+// `tests/unit/fixture_provenance_census_test.d` naming the value and the side.
+//
+// The two array literals are parsed by that census — keep them as plain
+// one-line-per-chunk string literals, and do not build either from another
+// expression.
+// ---------------------------------------------------------------------------
+
+/// `provenance.source`. Mirrors `provenance.py`'s `SOURCE_VALUES`.
+static immutable string[] kProvenanceSourceValues = [
+    "live-capture", "simulated", "analytic", "unknown",
+];
+
+/// `provenance.method`. Mirrors `provenance.py`'s `METHOD_VALUES`.
+///
+/// The three task 3302 found missing here, and why none is interchangeable
+/// with an incumbent:
+///   static-read  (2026-08-28, task 2680) decoded from a static artefact, with
+///                no process running at all;
+///   gui-gesture  (2026-08-28, task 2920) a live pointer gesture in the
+///                reference's own graphical interface — `capture-drag` no
+///                longer denotes that;
+///   debug-live   (2026-08-28, task 2920) read out of a live process under a
+///                debugger.
+/// Folding any of them into `unknown` to satisfy a short list is the exact
+/// harm backlog 3302 was filed for.
+static immutable string[] kProvenanceMethodValues = [
+    "capture-drag", "command", "from-trace", "rr-memory", "self-drive",
+    "closed-form", "hand", "static-read", "gui-gesture", "debug-live", "unknown",
+];
+
 /// task 0366: assert a golden fixture carries a `provenance` block before
 /// the runner trusts it as a parity/smoke check. A bare (pre-0366, or a
 /// hand-added fixture that forgot the block) fixture is a coding mistake,
@@ -777,14 +856,13 @@ void requireProvenance(JSONValue fx, string name) {
     // outside the vocabulary — three of them through review and both gate
     // lanes — because the offline Python checker that would have caught it is
     // in NEITHER lane, and this assertion, which IS in both, was not looking.
-    // The two vocabularies are duplicated here on purpose: a test lane must
-    // not shell out to a private script, and a fixture whose provenance the
-    // two sides disagree about is exactly the case worth failing on.
+    //
+    // THE LISTS MOVED TO MODULE SCOPE IN TASK 3340 and this function now reads
+    // them from there — see `kProvenanceSourceValues` / `kProvenanceMethodValues`
+    // above for why one field had THREE vocabularies and what pins them now.
     auto prov = fx["provenance"];
-    static immutable string[] kSources = ["live-capture", "simulated", "analytic", "unknown"];
-    static immutable string[] kMethods = ["capture-drag", "command", "from-trace",
-                                          "rr-memory", "self-drive", "closed-form",
-                                          "hand", "unknown"];
+    alias kSources = kProvenanceSourceValues;
+    alias kMethods = kProvenanceMethodValues;
     void requireOneOf(string field, const string[] allowed) {
         assert(field in prov,
             format("%s: provenance is missing '%s'", name, field));
@@ -795,10 +873,20 @@ void requireProvenance(JSONValue fx, string name) {
         bool ok = false;
         foreach (a; allowed) if (v == a) { ok = true; break; }
         assert(ok, format(
-            "%s: provenance.%s is %s, which is not one of %s. If the real "
-            ~ "value is genuinely unknown, write \"unknown\" — every "
-            ~ "vocabulary carries it deliberately. Prose belongs in 'notes'; "
-            ~ "putting it here is the exact mistake task 1063 was filed for.",
+            "%s: provenance.%s is %s, which is not one of %s. TWO different "
+            ~ "faults land here and the fix is NOT the same:\n"
+            ~ "  (a) the value is prose, or a guess. Prose belongs in 'notes'; "
+            ~ "if the real value is genuinely unknown write \"unknown\" — "
+            ~ "every vocabulary carries it deliberately. This is the mistake "
+            ~ "task 1063 was filed for.\n"
+            ~ "  (b) the value is a REAL, measured method this list has not "
+            ~ "caught up with. Then \"unknown\" is the wrong answer: it "
+            ~ "erases the distinction that was measured. Add the value to "
+            ~ "kProvenanceMethodValues in tests/fixture_helpers.d AND to "
+            ~ "tools/local/fixture_gen/provenance.py — the census "
+            ~ "(tests/unit/fixture_provenance_census_test.d) pins those two to "
+            ~ "each other by name. Backlog 3302 is this list having been three "
+            ~ "values behind for eleven days.",
             name, field, prov[field].toString, allowed));
     }
     requireOneOf("source", kSources);

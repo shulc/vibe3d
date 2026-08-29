@@ -96,6 +96,54 @@ enum ToolFlag : uint {
 enum GestureRecordMode { Plain, InSession, ReplaceRunTail }
 
 // ---------------------------------------------------------------------------
+// THE CARRIER-CLASS DOOR OF `Tool.setGestureBindings` (task 3340, item B).
+//
+// Three tiny templates, kept at module scope so the `static assert` in the
+// method body reads as one line and the REFUSAL TEXT lives where it can be
+// read without opening the class. See that method for the measured background;
+// what is here is only the mechanism.
+// ---------------------------------------------------------------------------
+
+/// The carrier class that gesture factory `F` STATICALLY produces.
+///
+/// Falls back to `Command` for an `F` that is not callable at all (e.g. a bare
+/// `null` literal, whose `typeof` is `typeof(null)`): there is no carrier class
+/// to judge in that case, and answering "unknown" as the permissive value keeps
+/// the door from refusing something the OLD signature accepted. A null factory
+/// is already the runtime belt's business — `recordGestureEdit` returns false
+/// on a null `cmd` and counts it.
+private template GestureCarrierOf(F) {
+    import std.traits : ReturnType;
+    static if (__traits(compiles, ReturnType!F))
+        alias GestureCarrierOf = ReturnType!F;
+    else
+        alias GestureCarrierOf = Command;
+}
+
+/// May `F` be bound as a gesture factory? Either its carrier implements
+/// `GesturePayload`, or the caller erased the static type down to `Command`
+/// itself and thereby took the runtime refusal on purpose.
+private enum bool gestureCarrierDeclaresPayload(F) =
+    is(GestureCarrierOf!F == Command) || is(GestureCarrierOf!F : GesturePayload);
+
+/// The refusal text. NAMES THE CLASS — a `static assert` that only says
+/// "constraint not satisfied" sends the reader to the wrong file, and this
+/// mistake's whole shape is that it looks correct at the call site.
+private enum string gestureCarrierRefusal(F) =
+    "setGestureBindings: the carrier class `" ~ GestureCarrierOf!F.stringof
+  ~ "` does not implement `GesturePayload` "
+  ~ "(source/commands/mesh/gesture_payload.d), so this binding CANNOT be "
+  ~ "recorded. It would compile and then drop every routed gesture SILENTLY: "
+  ~ "`Tool.recordGestureEdit`'s `cast(GesturePayload)` comes back null, the "
+  ~ "belt refuses and ticks `changeBus.gestureCarrierMismatch`, and the "
+  ~ "gesture keeps working with NO undo entry behind it — the mesh is already "
+  ~ "mutated by the time the recorder runs. FIX: implement "
+  ~ "`bool hasGesturePayload() const` on that carrier (one method; see the "
+  ~ "four that already do). If you really mean an unchecked carrier — only "
+  ~ "the belt's own probe does — erase the type yourself with "
+  ~ "`() => cast(Command) f()` and own the counted runtime refusal.";
+
+// ---------------------------------------------------------------------------
 // Tool — base class for all editing tools.
 //
 // The base owns four surfaces (task 0428 boundary):
@@ -528,7 +576,41 @@ class Tool : ParamProvider {
 
     /// Bind this tool's history and undo-carrier factory. Replaces the
     /// per-tool `setUndoBindings` declarations family by family.
-    public final void setGestureBindings(CommandHistory h, Command delegate() f) {
+    ///
+    /// TEMPLATED SO THE ONE MISTAKE THIS SEAM INVITES CANNOT COMPILE (task
+    /// 3340). The parameter used to be a plain `Command delegate()`, and
+    /// delegate covariance made EVERY carrier class fit it — including the two
+    /// that do not implement `GesturePayload`. So the literal next step of the
+    /// 1905 migration, `t.setGestureBindings(history, morphEditFactory)`,
+    /// compiled, and then `recordGestureEdit`'s `cast(GesturePayload)` came
+    /// back null: the gesture still worked, the mesh was still mutated, and the
+    /// undo entry silently vanished. Measured on this branch (task 3340, group
+    /// B): of the carrier classes the factory table hands out, FOUR implement
+    /// the interface (`MeshSessionEdit`, `MeshVertexEdit`, `MeshVertexNew`,
+    /// `BoxLiveEditCommand`) and TWO do not (`MeshMorphEdit` via
+    /// `morphEditFactory`, `LayerXformEdit` via `layerXformEditFactory`).
+    /// The G7 lane hit exactly this and caught it BY HAND.
+    ///
+    /// WHY A TEMPLATE AND NOT `GesturePayload delegate()` AS THE PARAMETER —
+    /// the same compiler fact this seam's own field comment records: delegate
+    /// covariance reaches a base CLASS and stops at an INTERFACE, so
+    /// `MeshSessionEdit delegate()` does NOT convert to
+    /// `GesturePayload delegate()` and every one of the ~40 registration sites
+    /// would have needed a wrapper lambda. A template keeps the call sites
+    /// byte-identical and moves the check to the STATIC return type, which is
+    /// the thing the mistake actually gets wrong.
+    ///
+    /// THE ESCAPE HATCH IS DELIBERATE AND NARROW. An `F` whose static return
+    /// type is exactly `Command` passes — that is a caller who ERASED the type
+    /// on purpose (`() => cast(Command) …`), which only the belt's own probe
+    /// does, and the runtime belt still refuses and COUNTS such a carrier
+    /// (`changeBus.gestureCarrierMismatch`). Static refusal for the literal
+    /// mistake, counted runtime refusal for the deliberate one; neither is
+    /// silent.
+    public final void setGestureBindings(F)(CommandHistory h, F f)
+        if (is(F : Command delegate()))
+    {
+        static assert(gestureCarrierDeclaresPayload!F, gestureCarrierRefusal!F);
         history        = h;
         gestureFactory = f;
     }

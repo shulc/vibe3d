@@ -75,6 +75,17 @@
 // 3080 §4 names exactly that divergence as the next form of this family's
 // defect if nobody keeps the two lists in step by hand.
 //
+// TASK 3340 (backlog 3302) ADDED THE FOURTH UNITTEST AND DELETED TWO LISTS.
+// `provenance.method` had THREE vocabularies for one field -- the private
+// Python authority, this module, and `tests/fixture_helpers.d`'s
+// `requireProvenance` -- and the third had been three values behind for eleven
+// days over five fixtures that already carried the missing values. This module
+// now PARSES its `source` / `method` lists out of `tests/fixture_helpers.d`
+// (`loadVocabularies`) instead of retyping them, so the census and the runner
+// cannot disagree; unittest 4 then pins that one public list to
+// `tools/local/fixture_gen/provenance.py` BY VALUE NAME. Two hand-typed lists
+// in the world, one checker between them, instead of three and none.
+//
 // MUTATIONS THAT REDDEN IT (task 3140's card records them run):
 //   * strip the `provenance` key from a compliant fixture => named by file;
 //   * corrupt a present block (`"source": "live-capture"` -> a bad enum
@@ -124,20 +135,94 @@ private immutable string[] kInlineDFiles = [
 /// the JSON body's own newlines are matched by `.`.
 private enum string kJsonBlockPattern = "enum\\s+string\\s+json\\s*=\\s*`(.*?)`\\s*;";
 
-/// The vocabularies, kept in step with `tools/local/fixture_gen/provenance.py`
-/// (private). A value added there and not here reddens this module with the
-/// offending value printed, which is the intended way to find out.
 private enum int kProvenanceSchema = 1;
-private immutable string[] kSourceValues = [
-    "live-capture", "simulated", "analytic", "unknown",
-];
-private immutable string[] kMethodValues = [
-    "capture-drag", "command", "from-trace", "rr-memory", "self-drive",
-    "closed-form", "hand", "static-read", "gui-gesture", "debug-live", "unknown",
-];
+
+/// Path of the ONE public-tree copy of the `source` / `method` vocabularies.
+/// `__FILE_FULL_PATH__`-rooted, never cwd-rooted, for the same reason the
+/// corpus scan below is.
+private enum string kVocabFile = buildPath(testsDir, "fixture_helpers.d");
+
+/// Path of the PRIVATE authority. Reachable through the gitignored
+/// `tools/local` symlink in a normal working checkout; absent in a bare
+/// public clone, which unittest 4 handles explicitly rather than silently.
+private enum string kPyAuthority =
+    buildPath(dirName(testsDir), "tools", "local", "fixture_gen", "provenance.py");
+
+/// The string literals of a `<name> = [ ... ];` D array, in file order.
+/// Deliberately a text read and not an import: `tests/fixture_helpers.d`
+/// cannot be imported from this configuration (its header records the two
+/// build-system facts that make a shared module impossible without changing a
+/// build file), so the text IS the seam. A parse that finds nothing is caught
+/// by the anti-vacuity floors at every call site.
+private string[] dArrayLiterals(string src, string name)
+{
+    auto m = matchAll(src, regex(name ~ r"\s*=\s*\[([^\]]*)\]", "s"));
+    if (m.empty) return null;
+    string[] vals;
+    foreach (v; matchAll(m.front[1], regex("\"([^\"]*)\"")))
+        vals ~= v[1];
+    return vals;
+}
+
+/// The string literals of a `<name> = ( ... )` Python tuple, in file order.
+private string[] pyTupleLiterals(string src, string name)
+{
+    auto m = matchAll(src, regex(name ~ r"\s*=\s*\(([^)]*)\)", "s"));
+    if (m.empty) return null;
+    string[] vals;
+    foreach (v; matchAll(m.front[1], regex("\"([^\"]*)\"")))
+        vals ~= v[1];
+    return vals;
+}
+
+/// The vocabularies. THEY WERE RETYPED HERE UNTIL TASK 3340, AND THAT IS THE
+/// POINT OF THE CHANGE. One field, `provenance.method`, had THREE lists — the
+/// private Python authority, this module, and `tests/fixture_helpers.d`'s
+/// `requireProvenance` — and the third had been three values behind for eleven
+/// days with nothing looking (backlog 3302). Retyping a fourth would have been
+/// the same defect with a bigger number.
+///
+/// These two are now READ OUT of `tests/fixture_helpers.d` at run time, so
+/// this module cannot disagree with the runner's own check by construction;
+/// unittest 4 then pins that one public list to the private authority BY VALUE
+/// NAME. Two hand-typed lists in the world, one checker between them.
+private string[] kSourceValues;
+private string[] kMethodValues;
+
+/// The neutral `reference` literals. NOT derived: `fixture_helpers.d` does not
+/// check this field at all, so there is no second copy to drift from — the
+/// duplication this module is fixing is the one that exists, not every one
+/// that could.
 private immutable string[] kNeutralReferenceLiterals = [
     "vibe3d-selfgen", "analytic", "unknown",
 ];
+
+/// Load the derived vocabularies once, and refuse loudly if the read or the
+/// parse produced nothing: an empty vocabulary makes `lintProvenance` reject
+/// EVERY fixture, which would at least be visible — but an empty one on the
+/// comparison side of unittest 4 would silently make that check vacuous.
+private void loadVocabularies()
+{
+    if (kMethodValues.length) return;
+    assert(exists(kVocabFile) && isFile(kVocabFile),
+        format("the public vocabulary file is not at %s. This module reads its "
+             ~ "`source` / `method` lists out of it rather than retyping them "
+             ~ "(backlog 3302); with the file gone there is nothing to check "
+             ~ "against.", kVocabFile));
+    immutable src = readText(kVocabFile);
+    kSourceValues = dArrayLiterals(src, "kProvenanceSourceValues");
+    kMethodValues = dArrayLiterals(src, "kProvenanceMethodValues");
+    assert(kSourceValues.length >= 4,
+        format("could not parse `kProvenanceSourceValues` out of %s — got %d "
+             ~ "value(s). The array was renamed or reshaped (it must stay a "
+             ~ "plain `= [ \"a\", \"b\" ];` literal); every check in this "
+             ~ "module is measuring nothing until it parses.",
+               kVocabFile, kSourceValues.length));
+    assert(kMethodValues.length >= 8,
+        format("could not parse `kProvenanceMethodValues` out of %s — got %d "
+             ~ "value(s). Same defect as the row above.",
+               kVocabFile, kMethodValues.length));
+}
 
 private struct Scanned
 {
@@ -251,6 +336,7 @@ private void checkBlock(string rel, const JSONValue fx, ref Scanned s)
 
 private Scanned scanCorpus()
 {
+    loadVocabularies();   // the lists this scan judges against are DERIVED
     Scanned s;
 
     if (exists(fixturesDir))
@@ -399,4 +485,115 @@ unittest
                   ~ "smoke-analytic / %d unknown-source):%s",
                   s.problems.length, s.files, s.withBlock, s.parity,
                   s.smokeSimulated, s.smokeAnalytic, s.unknownSource, joined));
+}
+
+// ---------------------------------------------------------------------------
+// 4 — THE CROSS-LANGUAGE PIN (task 3340, item C; backlog 3302).
+//
+// After this task the public tree carries exactly ONE hand-typed copy of this
+// vocabulary — `tests/fixture_helpers.d`, which this module PARSES rather than
+// retypes (see `loadVocabularies`). The remaining pair is public-D against the
+// private Python AUTHORITY, `tools/local/fixture_gen/provenance.py`, and no
+// public file may depend on that tree existing. So the two are pinned here, by
+// VALUE NAME: this block parses the Python tuples and compares them as SETS
+// with the parsed D lists, saying which side is missing which value.
+//
+// WHY THIS DOES NOT CLOSE THE LOOP WITH ONE COMPILER SYMBOL, measured rather
+// than assumed. The two public readers are built by two different systems:
+// `tests/fixture_helpers.d` by `run_test.d`'s plain `dmd … -I=tests` line (no
+// `-i`, and the file is COPIED into a per-worker scratch dir), this module by
+// `dub test --config=tests` (`sourcePaths` = `source` + `tests/unit`,
+// `importPaths` = `source` + `tools/perf`). Adding `"tests"` to those
+// `importPaths` so a shared module could be imported CHANGES THE MODULE NAMES
+// DUB DERIVES for every `tests/unit/**` file that declares no `module`
+// statement — most of them — and the lane then fails to build with
+// `module `mesh_stats_test` … must be imported with 'import mesh_stats_test;'`.
+// Tried on this branch, reverted, recorded here so it is not re-tried blind.
+//
+// WHAT "IT SKIPS IN A BARE PUBLIC CLONE" IS WORTH, said plainly rather than
+// buried: a skip is normally the shape this project distrusts most. It is
+// defensible in exactly this case because the check runs in every environment
+// where the drift it guards can be AUTHORED — `provenance.py` cannot be edited
+// without the private tree, and with the private tree present the
+// `tools/local` symlink resolves and this block runs. The skip is also not
+// silent: it prints the path it looked for.
+//
+// MUTATIONS THAT REDDEN IT:
+//   * delete one value from `kProvenanceMethodValues` in
+//     `tests/fixture_helpers.d` (e.g. `static-read`) => this block names that
+//     value as present in Python and absent in D. That is the exact state the
+//     tree was in for eleven days;
+//   * add a value to `METHOD_VALUES` in the private module and not here
+//     => the mirror-image message;
+//   * rename either array so the parse finds nothing => the anti-vacuity
+//     floors redden instead, with a different message on purpose: a
+//     comparison against an EMPTY set would otherwise report "the other side
+//     is missing everything" and send the reader to the wrong file.
+// ---------------------------------------------------------------------------
+unittest
+{
+    import std.algorithm : canFind, sort;
+    import std.array     : join;
+    import std.stdio     : writeln;
+
+    loadVocabularies();
+
+    if (!exists(kPyAuthority) || !isFile(kPyAuthority))
+    {
+        writeln("[fixture_provenance_census] cross-language pin SKIPPED: the "
+              ~ "private authority is not reachable at " ~ kPyAuthority
+              ~ " (bare public checkout). It cannot be edited from here "
+              ~ "either, so nothing this block guards can drift in this "
+              ~ "environment.");
+        return;
+    }
+
+    immutable py = readText(kPyAuthority);
+    auto pySources = pyTupleLiterals(py, "SOURCE_VALUES");
+    auto pyMethods = pyTupleLiterals(py, "METHOD_VALUES");
+
+    // Anti-vacuity floors FIRST — see the header. An unparsed tuple must say
+    // "I could not read the authority", not "the authority is missing every
+    // value D has".
+    assert(pySources.length >= 4,
+        format("could not parse `SOURCE_VALUES` out of %s — got %d value(s). "
+             ~ "The tuple was renamed or reshaped; this block is comparing "
+             ~ "against nothing, and a vocabulary drift would pass unseen.",
+               kPyAuthority, pySources.length));
+    assert(pyMethods.length >= 8,
+        format("could not parse `METHOD_VALUES` out of %s — got %d value(s). "
+             ~ "Same defect as the row above: an unparsed tuple makes this "
+             ~ "whole check vacuous.", kPyAuthority, pyMethods.length));
+
+    static string missing(const(string)[] a, const(string)[] b)
+    {
+        string[] r;
+        foreach (x; a) if (!b.canFind(x)) r ~= x;
+        r.sort();
+        return r.length == 0 ? "" : r.join(", ");
+    }
+
+    void pin(string field, const(string)[] dSide, const(string)[] pySide)
+    {
+        immutable onlyPy = missing(pySide, dSide);
+        immutable onlyD  = missing(dSide, pySide);
+        assert(onlyPy.length == 0 && onlyD.length == 0,
+            format("the `provenance.%s` vocabulary has DRIFTED between its two "
+                 ~ "homes.\n"
+                 ~ "  in %s but NOT in %s: %s\n"
+                 ~ "  in %s but NOT in %s: %s\n"
+                 ~ "  D has %d value(s), Python has %d.\n"
+                 ~ "This is backlog 3302 recurring: one field, more than one "
+                 ~ "list, and the shorter one refusing a VALID fixture with "
+                 ~ "advice ('write \"unknown\"') that would erase the "
+                 ~ "distinction somebody measured. Add the named value to "
+                 ~ "WHICHEVER side lacks it — never delete it from the other.",
+                   field,
+                   kPyAuthority, kVocabFile, onlyPy.length ? onlyPy : "(none)",
+                   kVocabFile, kPyAuthority, onlyD.length ? onlyD : "(none)",
+                   dSide.length, pySide.length));
+    }
+
+    pin("source", kSourceValues, pySources);
+    pin("method", kMethodValues, pyMethods);
 }

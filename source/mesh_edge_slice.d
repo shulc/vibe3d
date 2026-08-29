@@ -330,13 +330,50 @@ size_t rebuildFacesWithChordSplits(ref Mesh m,
         uint[] f1 = face[i .. j + 1].dup;
         uint[] f2 = (face[j .. $] ~ face[0 .. i + 1]).dup;
 
-        if (f1.length < 3 || f2.length < 3) {
-            // Degenerate — guard above should prevent this; keep whole.
-            newFacesArr ~= face.dup;
-            oldOfNew    ~= cast(uint) fi;
-            newSelected ~= seld;
-            continue;
-        }
+        // THIS WAS A SECOND `if` UNTIL TASK 3340, AND THAT IS WHY IT IS NOW AN
+        // `assert` (backlog 3241 — "a second, unnamed guard refuses first").
+        //
+        // The two predicates are not "one subsumes the other", they are
+        // EXACTLY EQUAL. Measured, not reasoned: over every ordered hit pair
+        // `0 <= i < j < n` at every winding length `n` in 2..4096 —
+        // 11 453 245 440 cells — `adj` and `f1.length < 3 || f2.length < 3`
+        // agreed on all of them, each firing on the same 8 390 654. The
+        // algebra closes the unbounded tail in two lines, both affine in `n`:
+        //   adj  => `j == i+1` gives `f1.length == 2`; `i == 0 && j == n-1`
+        //           gives `f2.length == (n-j) + (i+1) == 2`.
+        //   !adj => `j >= i+2` gives `f1.length >= 3`; and `f2.length >= 3`
+        //           because `i >= 1` contributes `i+1 >= 2` while `i == 0`
+        //           forces `j <= n-2`, i.e. `n-j >= 2`.
+        //
+        // So as an `if` this line was a branch NO CHECK COULD REDDEN, and its
+        // cost was not the dead statements: it SILENTLY REPAIRED every
+        // weakening of the guard above. Measured on this branch, in both
+        // directions: with the pre-task shape, `bool adj = false;` is GREEN at
+        // 384/384 modules; with the `assert`, the same mutation reddens here
+        // naming the face, the winding length and the hit pair. The cells that
+        // catch it already existed — `splitFaceByVertices: adjacent verts →
+        // no-op` in tests/unit/mesh_test.d drives BOTH arms (`j == i+1` and
+        // `i == 0 && j == n-1`), and tests/unit/mesh_edge_slice_test.d's kept
+        // degenerate-chain cell drives the guard through `edgeSliceEx`.
+        //
+        // ACCEPTED COST, stated rather than hidden: `assert` is dropped under
+        // `-release`, where an `if` would still have copied the face whole. A
+        // release binary can therefore only carry a weakened guard if the
+        // module-unittest lane was skipped — which is the trade this project
+        // makes everywhere else, and the reverse trade (a repair no test can
+        // see) is what backlog 3241 was filed against.
+        import std.format : format;   // compile-time only; the message below
+                                      // is evaluated ONLY when the assert fails
+        assert(f1.length >= 3 && f2.length >= 3,
+            format("rebuildFacesWithChordSplits: the adjacent-hit guard let a "
+                 ~ "DEGENERATE chord through — face %s, winding length %s, hits "
+                 ~ "at %s/%s, halves of %s and %s vertices. That pair is "
+                 ~ "unreachable while the guard reads "
+                 ~ "`(j == i + 1) || (i == 0 && j == n - 1)`, so the guard was "
+                 ~ "weakened. Restore it — do NOT re-add a second `if` here: as "
+                 ~ "an `if` this line repaired every such weakening silently and "
+                 ~ "made the guard's own mutation inert (backlog 3241).",
+                   fi, face.length, i, j, f1.length, f2.length));
 
         // f1 (replaces parent slot)
         newFacesArr ~= f1;
