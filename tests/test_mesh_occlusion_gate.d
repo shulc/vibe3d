@@ -30,7 +30,7 @@ import std.format : format;
 import std.math : PI, sqrt, fabs;
 
 import math : Vec3, Viewport, ModelSpace, lookAt, perspectiveMatrix;
-import mesh : Mesh;
+import mesh : Mesh, visibleVertices;
 
 void main() {}
 

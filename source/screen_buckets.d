@@ -4,7 +4,7 @@ module screen_buckets;
 // A screen-space bucket grid over axis-aligned pixel boxes — the broad phase
 // for "which of these N boxes can contain this pixel" (task 1351).
 //
-// WHAT IT IS FOR. `Mesh.VisibilityProbe` asks that question once per candidate
+// WHAT IT IS FOR. `VisibilityProbe` asks that question once per candidate
 // vertex against every front-facing face, which is O(candidates x faces): on a
 // 100 K-face sheet with the faces turned toward the eye, one snap query costs
 // ~8 SECONDS (measured, n = 316, 100 489 verts / 99 856 faces). A candidate and

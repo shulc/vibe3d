@@ -41,7 +41,8 @@ module tests.unit.snap_visibility_corpus_test;
 import std.math : PI, sin, sqrt;
 import math : Vec3, Viewport, ModelSpace, lookAt, perspectiveMatrix,
               orthographicMatrix;
-import mesh : Mesh, makeGridPlane, makeCube, subdivideCube, g_visCounters;
+import mesh : Mesh, makeGridPlane, makeCube, subdivideCube, g_visCounters,
+              visibilityProbe, visibleVertices;
 
 // ---------------------------------------------------------------------------
 // The dump format: one line per case, `key|nVerts|<mask as hex nibbles>`.
@@ -494,7 +495,7 @@ unittest {
         immutable long pairsBefore  = g_visCounters.pairsTested;
         foreach (ref cm; cams) {
             foreach (ref sp; spaces) {
-                bool[] vis = f.m.visibleVertices(cm.vp.eye, cm.vp, sp.ms);
+                bool[] vis = (*f.m).visibleVertices(cm.vp.eye, cm.vp, sp.ms);
                 dump.put(maskLine(format("%s/%s/%s", f.name, cm.name, sp.name), vis));
                 ++cases;
                 foreach (b; vis) { if (b) ++trueBits; else ++falseBits; }

@@ -118,7 +118,7 @@ enum Cat {
     //
     // WHAT IT DOES NOT COVER, said here because the obvious reading is wrong
     // and cost a gate: pass 2 — the occluder walk — is LAZY. It runs inside
-    // `Mesh.VisibilityProbe.visible`, which snap's gates call, i.e. OUTSIDE
+    // `VisibilityProbe.visible`, which snap's gates call, i.e. OUTSIDE
     // this scope. Measured (task 1351): disabling the occluder buckets
     // multiplies pairs tested by 806x and `snapQuery` by 19x while this
     // timer's median does not move. So it bounds the O(V)+O(F) FLOOR and
@@ -303,7 +303,7 @@ enum Cat {
     //
     //   snapVisVertexProbe — one per DISTINCT vertex the mask actually
     //                        evaluated, i.e. per memo MISS inside
-    //                        `Mesh.VisibilityProbe.visible`. This is the `k`
+    //                        `VisibilityProbe.visible`. This is the `k`
     //                        of the cost model: the mask's occlusion pass is
     //                        O(k x |front faces|), and before laziness `k` was
     //                        V whether anyone asked or not. It is NOT the same

@@ -11,7 +11,7 @@ import math : Vec3, Viewport, ModelSpace, projectionSpace, projectToWindowFull,
               closestPointOnLineToRay, isOrtho, viewPixelScale,
               perpendicularFrame, rayTriangleIntersect,
               closestPointOnTriangle2D, triangulatePolygonEarClip;
-import mesh : Mesh;
+import mesh : Mesh, VisibilityProbe, visibilityProbe;
 import mesh_dirty : MeshDirtyKey, g_geomEpochs, g_settledGeomEpochs;
 import toolpipe.packets : SnapPacket, SnapType, SnapMode;
 import toolpipe.guide   : SnapGuide, kGuidePrioritySeed;
@@ -766,9 +766,9 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         // struct's DEFAULT, so the `!needVis` path — where no probe is built at
         // all — admits everything without a second flag, exactly as
         // `vis.length == 0` used to.
-        Mesh.VisibilityProbe visStore;   // do NOT read directly — call `visMask()`
+        VisibilityProbe visStore;   // do NOT read directly — call `visMask()`
         bool   visReady;      // "`visStore` is the answer", NOT "it is default"
-        ref Mesh.VisibilityProbe visMask() {
+        ref VisibilityProbe visMask() {
             if (!visReady) {
                 if (needVis) {
                     // The one TIMER on this path, at REQUEST granularity: what

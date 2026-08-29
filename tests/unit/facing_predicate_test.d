@@ -30,7 +30,7 @@ import std.math : PI;
 
 import math : Vec3, Viewport, ModelSpace, lookAt, perspectiveMatrix,
               frontFacingLocal;
-import mesh : Mesh, makeCube;
+import mesh : Mesh, makeCube, visibleVertices;
 
 // ---------------------------------------------------------------------------
 // The three candidate rules, spelled out here so the assertions can name them.
