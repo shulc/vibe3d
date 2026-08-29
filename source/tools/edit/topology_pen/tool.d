@@ -34,7 +34,16 @@ import mesh                : Mesh, GpuMesh, MeshCacheKey, MeshEditBatch,
                              // free (памятка 34), so both the kernel this
                              // file's duplicate-edges gesture calls and its
                              // declared scope must be listed explicitly.
-                             extendEdgesByMask, kExtrudeEditScope;
+                             extendEdgesByMask, kExtrudeEditScope,
+                             // task 3240 (plan 2910 step 3) — the edge-slice
+                             // family is free functions now, same reason
+                             // again: `splitFaceByVertices` is reached
+                             // through UFCS on a `Mesh*` deref at the
+                             // triangle-fan gesture, and a SELECTIVE
+                             // `import mesh : …` does not see a
+                             // `public import`'s free names unless it
+                             // names them.
+                             splitFaceByVertices;
 import math               : Vec3, Viewport, projectToWindowFull, closestOnSegment2D,
                              screenPointToRay, closestPointOnSegmentToRay, dot,
                              pointInPolygon2D, rayPlaneIntersect,
@@ -6345,7 +6354,7 @@ public:
 
         MeshSnapshot before = MeshSnapshot.capture(*m);
 
-        size_t n = m.splitFaceByVertices(cast(uint)fi, cast(uint)a, cast(uint)c);
+        size_t n = (*m).splitFaceByVertices(cast(uint)fi, cast(uint)a, cast(uint)c);
         if (n == 0) return;   // defensive; `before` discarded, mesh unmutated
 
         recordSnapshotUndo(m, before, factories_.split, "Topology Split");

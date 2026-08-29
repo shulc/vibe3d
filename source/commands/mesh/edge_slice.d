@@ -162,7 +162,7 @@ class MeshEdgeSlice : Command, Operator {
         // stage L4-P0 measured what it is worth: without it this kernel makes
         // FOUR unbatched geometry commits per run.
         if (undoRecorded()) {
-            Mesh.EdgeSliceResult rr;
+            EdgeSliceResult rr;
             {
                 auto ed = MeshEditBatch.unrecorded(*mesh, editScope());
                 rr = ed.edgeSliceEx(edges_[0], edges_[1], tA_, tB_);
@@ -175,7 +175,7 @@ class MeshEdgeSlice : Command, Operator {
         preMaps_ = new MeshMap[](mesh.meshMaps.length);
         foreach (i, ref m; mesh.meshMaps) preMaps_[i] = m.dup;
 
-        Mesh.EdgeSliceResult r;
+        EdgeSliceResult r;
         {
             auto ed = MeshEditBatch(*mesh, editScope());   // RECORDING
             r = ed.edgeSliceEx(edges_[0], edges_[1], tA_, tB_);

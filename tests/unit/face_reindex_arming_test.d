@@ -1114,7 +1114,13 @@ unittest // the resolver itself, on hand-written text — it is the census's onl
 /// outside `Kind.RemoveFaces`, which is why the route is `FaceReindex` and not
 /// the cheaper `AddFaces` + `ReshapeFaces`.
 private static immutable string[] kArmedSites = [
-    "source/mesh.d:rebuildFacesWithChordSplits",
+    // task 3240 (plan 2910 step 3): the edge-slice family left `struct Mesh`
+    // for `source/mesh_edge_slice.d`. The kernel and its arm are byte-
+    // identical; only the file changed. `productionTargets()` below grew to
+    // include that file in the SAME commit — dropping the row instead would
+    // have left the only `Kind.FaceReindex` arm in the chord-split path
+    // unguarded while this census went green.
+    "source/mesh_edge_slice.d:rebuildFacesWithChordSplits",
     // Task 1903 Stage L10. The weld's OTHER apply half — the twin L5-a
     // deliberately left alone — reached by `weldVerticesByMask` (and so by
     // `collapse`, `vert_join`, `vert_merge` and `reduce`) and by
@@ -1170,6 +1176,17 @@ private string[] productionTargets()
     // would mean a replay re-recording its own entry.
     targets ~= buildPath(repoRoot, "source", "mesh_edit_delta.d");
     targets ~= buildPath(repoRoot, "source", "mesh_planes.d");
+    // The satellites plan 2910 is carving out of `struct Mesh`, one per step.
+    // `mesh_edge_slice.d` (step 3) holds `rebuildFacesWithChordSplits` and so
+    // holds a real arm; `mesh_visibility.d` (step 2) holds none and is listed
+    // so that the rule — every satellite is scanned — is what the list says,
+    // not an accident of where the arms happen to be today.
+    foreach (sat; ["mesh_visibility.d", "mesh_edge_slice.d"]) {
+        immutable satPath = buildPath(repoRoot, "source", sat);
+        assert(exists(satPath),
+               "the census cannot find the struct-Mesh satellite " ~ satPath);
+        targets ~= satPath;
+    }
     return targets;
 }
 

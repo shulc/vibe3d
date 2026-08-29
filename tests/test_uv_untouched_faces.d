@@ -25,7 +25,17 @@ import std.math : fabs;
 
 import mesh : Mesh, MeshMap, MapDomain, kUvMapName,
               MeshEditBatch, kPolyBevelEditScope, insetFacesByMask,
-              spikeFacesByMask;
+              spikeFacesByMask,
+              // task 3240 (plan 2910 step 3): `addEdgePoint` is a free
+              // function in `source/mesh_edge_slice.d` now, and a SELECTIVE
+              // `import mesh : …` does not pick up a `public import`'s names
+              // unless it names them — so `m.addEdgePoint(...)` below stops
+              // resolving without this line. (`edgeIndexOf` is NOT added on
+              // purpose: this file declares its own module-local helper of
+              // that exact name and signature at line 273, and a local
+              // declaration beats an imported one — naming it here would
+              // change which function the file's own call sites mean.)
+              addEdgePoint;
 // Task 1903 Stage F2: the polygon-bevel entries are free functions over
 // `ref MeshEditBatch` in `source/mesh_ops/poly_bevel.d`, so this test opens the
 // batch itself. UNRECORDED — the fixture compares MAP payloads, not an op-log.

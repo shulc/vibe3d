@@ -251,7 +251,7 @@ unittest // the stand can exhibit everything the roster claims to measure
         format("face 0 has %d corner(s); the edgeSlice cells address its edges "
              ~ "0..3 by index", m.faces[0].length));
     foreach (k; 0 .. 4)
-        assert(m.edgeIndexOfVerts(m.faces[0][k], m.faces[0][(k + 1) % 4]) == k,
+        assert((*m).edgeIndexOfVerts(m.faces[0][k], m.faces[0][(k + 1) % 4]) == k,
             format("face 0's edge %d is not at index %d — the edgeSlice cells "
                  ~ "name edge indices, and a re-numbered stand would silently "
                  ~ "drive different edges", k, k));

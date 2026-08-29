@@ -268,8 +268,8 @@ public:
         if (latchedPoints_.length > 0) {
             auto first = latchedPoints_[0];
             auto last  = latchedPoints_[$ - 1];
-            edgeAOut = cast(int)mesh.edgeIndexOf(first.v0, first.v1);
-            edgeBOut = cast(int)mesh.edgeIndexOf(last.v0, last.v1);
+            edgeAOut = cast(int)(*mesh).edgeIndexOf(first.v0, first.v1);
+            edgeBOut = cast(int)(*mesh).edgeIndexOf(last.v0, last.v1);
             tAOut    = effectiveT(first.t);
             tBOut    = effectiveT(last.t);
         }
@@ -511,7 +511,7 @@ public:
         // sentinel casts to -1, which can never coincide with `h` (already
         // guarded non-negative above); that safety was implicit in the
         // wraparound, not stated. Guard the sentinel by name instead.
-        uint lastEdge = mesh.edgeIndexOf(latchedPoints_[$ - 1].v0, latchedPoints_[$ - 1].v1);
+        uint lastEdge = (*mesh).edgeIndexOf(latchedPoints_[$ - 1].v0, latchedPoints_[$ - 1].v1);
         if (lastEdge != ~0u && lastEdge == cast(uint)h) return false;
         appendPoint(h, cast(float)e.x, cast(float)e.y);
         return true;
@@ -582,7 +582,7 @@ public:
         float pendingT = 0.0f;
         int h = g_hoveredEdge;
         if (h >= 0 && h < cast(int)mesh.edges.length) {
-            uint lastEdge = mesh.edgeIndexOf(latchedPoints_[$ - 1].v0, latchedPoints_[$ - 1].v1);
+            uint lastEdge = (*mesh).edgeIndexOf(latchedPoints_[$ - 1].v0, latchedPoints_[$ - 1].v1);
             if (cast(int)lastEdge != h) {
                 Vec3 r0 = mesh.vertices[mesh.edges[h][0]];
                 Vec3 r1 = mesh.vertices[mesh.edges[h][1]];
@@ -881,19 +881,19 @@ private:
 
         uint seed = ~0u;   // no seed for segment 0 — origin resolves via pts[0]
         foreach (k; 0 .. pts.length - 1) {
-            uint eB = mesh.edgeIndexOf(pts[k + 1].v0, pts[k + 1].v1);
+            uint eB = (*mesh).edgeIndexOf(pts[k + 1].v0, pts[k + 1].v1);
             if (eB == ~0u) return k;   // destination not a live baseline edge
 
-            Mesh.EdgeSliceResult r;
+            EdgeSliceResult r;
             if (k == 0) {
-                uint eA = mesh.edgeIndexOf(pts[0].v0, pts[0].v1);
+                uint eA = (*mesh).edgeIndexOf(pts[0].v0, pts[0].v1);
                 if (eA == ~0u) return k;
-                r = mesh.edgeSliceEx(eA, eB, effectiveT(pts[0].t), effectiveT(pts[1].t), split_);
+                r = (*mesh).edgeSliceEx(eA, eB, effectiveT(pts[0].t), effectiveT(pts[1].t), split_);
             } else {
                 uint sub = pickSeedSubEdge(seed, eB);
                 if (sub == ~0u) return k;
                 float endT = (mesh.edges[sub][0] == seed) ? 0.0f : 1.0f;
-                r = mesh.edgeSliceEx(sub, eB, endT, effectiveT(pts[k + 1].t), split_);
+                r = (*mesh).edgeSliceEx(sub, eB, endT, effectiveT(pts[k + 1].t), split_);
             }
             // S4 (mesh-robustness batch: gate on `!r.meshChanged`, not
             // `facesSplit==0`): in split mode, facesSplit==0 can be a KEPT
@@ -924,7 +924,7 @@ private:
     // seg-2 capture's shared-vertex reuse), not face-choice parity.
     //
     // W1 (perf): `reaches` used to be read back from a REAL
-    // `mesh.edgeSliceEx(sub, destEdge, ..., split_)` call wrapped in a
+    // `(*mesh).edgeSliceEx(sub, destEdge, ..., split_)` call wrapped in a
     // `MeshSnapshot.capture`/`restore` probe — a whole-mesh dup+restore PER
     // CANDIDATE, and `bakeChainFrom` calls this per chain segment on every
     // `onMouseMotion`/`rebuildPreview`, so it was O(segments*candidates)
@@ -955,7 +955,7 @@ private:
             bool reaches;
             if (sub == destEdge) reaches = false;            // same-edge no-op, any split_ setting
             else if (!split_)    reaches = true;              // points-only: unconditional success
-            else                 reaches = mesh.edgeSliceReachable(sub, destEdge);
+            else                 reaches = (*mesh).edgeSliceReachable(sub, destEdge);
 
             uint  other = mesh.edgeOtherVertex(sub, seed);
             float dist  = (mesh.vertices[other] - destMid).length();

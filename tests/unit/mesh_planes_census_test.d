@@ -694,7 +694,15 @@ private immutable AllowEntry[] kAllow = [
         "Mesh.clear() — whole-mesh reset, nothing to carry. count=2: the "
       ~ "scanner emits ONE violation per matched identifier (`faces` AND "
       ~ "`vertices` both match on this single line), not one per line", 2),
-    AllowEntry("source/mesh.d", "vertices.length = vertsBeforePass1;",
+    // MOVED FILE, NOT MOVED CODE (task 3240, plan 2910 step 3): the
+    // edge-slice family left `struct Mesh` for `source/mesh_edge_slice.d`,
+    // so this rollback's file and its receiver spelling both changed while
+    // the site itself is byte-identical. It is retargeted rather than
+    // deleted, and the scan root below GREW to include the new file in the
+    // same commit — deleting the entry would have turned this census green
+    // by removing the code from its field of view, which is the failure
+    // shape CLAUDE.md names first.
+    AllowEntry("source/mesh_edge_slice.d", "m.vertices.length = vertsBeforePass1;",
         "edgeSliceEx TRUE no-op rollback — restores the exact PRE-Pass-1 "
       ~ "vertex count, not a renumbering (`.length =` truncation class, "
       ~ "plan §6 Stage F's sibling: nothing to carry, nothing moved)", 1),
@@ -778,7 +786,25 @@ unittest // the gate: every hand-rolled faces/vertices rewrite in mesh.d + mesh_
     assert(exists(opsDir) && isDir(opsDir),
            "the gate cannot find source/mesh_ops/ at " ~ opsDir);
 
-    size_t filesScanned = 1;   // mesh.d, counted above
+    // THE SATELLITES THAT GREW OUT OF `struct Mesh` ARE SCANNED TOO
+    // (task 3240). Plan 2910 is moving families out of the struct into
+    // `source/mesh_*.d` one step at a time, and a site that leaves mesh.d
+    // for such a file would otherwise leave this census's field of view
+    // silently — the entry would redden as "DEAD" and the honest-looking
+    // fix (delete it) would be the vacuous one. Each future step must add
+    // its own file here in the same commit that moves the code.
+    // `mesh_visibility.d` (step 2) carries zero hits today and is listed so
+    // the rule is the list, not the hits.
+    foreach (sat; ["mesh_visibility.d", "mesh_edge_slice.d"]) {
+        immutable satPath = buildPath(repoRoot, "source", sat);
+        assert(exists(satPath),
+               "the gate cannot find the struct-Mesh satellite " ~ satPath
+             ~ " — if plan 2910's step that created it was reverted, remove "
+             ~ "it from this list in the same change");
+        targets ~= satPath;
+    }
+
+    size_t filesScanned = 3;   // mesh.d + the two satellites, counted above
     foreach (entry; dirEntries(opsDir, SpanMode.shallow)) {
         if (!entry.isFile || entry.name.length < 2
             || entry.name[$ - 2 .. $] != ".d") continue;

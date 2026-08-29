@@ -3036,6 +3036,16 @@ unittest // every §2.6 widening this stage made still has the caller it names
     immutable meshPath = buildPath(repoRoot, "source", "mesh.d");
     assert(exists(meshPath), "cannot find source/mesh.d at " ~ meshPath);
     immutable md = stripCommentsAndStrings(readText(meshPath));
+    // TASK 3240 (plan 2910 step 3): three of the rows below no longer declare
+    // in mesh.d. The edge-slice family moved to `source/mesh_edge_slice.d`,
+    // so each row now names its OWN declaring file and this block reads them
+    // all. The rows were retargeted rather than deleted: a widening is a door
+    // held open for a named caller, and the door did not close — it moved.
+    immutable esPath = buildPath(repoRoot, "source", "mesh_edge_slice.d");
+    assert(exists(esPath), "cannot find source/mesh_edge_slice.d at " ~ esPath);
+    immutable es = stripCommentsAndStrings(readText(esPath));
+    immutable string[string] declSrc = ["source/mesh.d":            md,
+                                        "source/mesh_edge_slice.d": es];
     immutable brPath = buildPath(repoRoot, "source", "mesh_ops", "bridge.d");
     assert(exists(brPath), "cannot find source/mesh_ops/bridge.d at " ~ brPath);
     immutable br = stripCommentsAndStrings(readText(brPath));
@@ -3078,8 +3088,12 @@ unittest // every §2.6 widening this stage made still has the caller it names
         string   opsFile;     // which mesh_ops file `callSite` is looked for in
         string   callSite;    // must appear at least once in that ops file
         string   scanNeedle;  // receiver-AGNOSTIC; what the source/** walk counts
-        string[] callerFiles; // every non-mesh.d file that contains scanNeedle
+        string[] callerFiles; // every non-declarer file that contains scanNeedle
         string   why;
+        // WHERE `publicDecl` MUST LIVE, and which file the caller walk skips
+        // as this row's declarer. Defaults to mesh.d, where every row was
+        // born; task 3240 moved three of them to `source/mesh_edge_slice.d`.
+        string   declFile = "source/mesh.d";
     }
     static immutable Widening[] kWidenings = [
         Widening("mesh.smoothstep01",
@@ -3116,7 +3130,7 @@ unittest // every §2.6 widening this stage made still has the caller it names
         // --- Stage E3's three, all reached by `mesh_ops/cut.d` -------------
         Widening("Mesh.edgeIndexOfVerts",
                  "private uint edgeIndexOfVerts(",
-                 "uint edgeIndexOfVerts(uint a, uint b)",
+                 "uint edgeIndexOfVerts(ref Mesh m, uint a, uint b)",
                  "source/mesh_ops/cut.d",
                  "ed.edgeIndexOfVerts(",
                  "edgeIndexOfVerts(",
@@ -3129,10 +3143,14 @@ unittest // every §2.6 widening this stage made still has the caller it names
                ~ "restrict-set edge marking, the concave-guard scan (there is "
                ~ "exactly ONE: `isConcaveFace` has a single call site) and the "
                ~ "clipped chord-crossing lookup — all of them after a "
-               ~ "buildLoops()."),
+               ~ "buildLoops(). TASK 3240: the declaration moved to "
+               ~ "source/mesh_edge_slice.d with the rest of the edge-slice "
+               ~ "family and gained a `ref Mesh` receiver; the widening and "
+               ~ "its caller are otherwise unchanged.",
+                 "source/mesh_edge_slice.d"),
         Widening("Mesh.insertEdgePoint",
                  "private uint insertEdgePoint(",
-                 "uint insertEdgePoint(uint ei, float t, ref bool[] isCutVert",
+                 "uint insertEdgePoint(ref Mesh m, uint ei, float t, ref bool[] isCutVert",
                  "source/mesh_ops/cut.d",
                  "ed.insertEdgePoint(",
                  "insertEdgePoint(",
@@ -3140,10 +3158,12 @@ unittest // every §2.6 widening this stage made still has the caller it names
                  "cutByPlane Pass-1: it splices one shared crossing vertex into "
                ~ "every face winding incident on a straddled edge, which is what "
                ~ "makes the cut T-junction-free. cut.d is its only caller "
-               ~ "outside mesh.d."),
+               ~ "outside the declaring file. TASK 3240: that file is now "
+               ~ "source/mesh_edge_slice.d.",
+                 "source/mesh_edge_slice.d"),
         Widening("Mesh.rebuildFacesWithChordSplits",
                  "private size_t rebuildFacesWithChordSplits(",
-                 "size_t rebuildFacesWithChordSplits(",
+                 "size_t rebuildFacesWithChordSplits(ref Mesh m,",
                  "source/mesh_ops/cut.d",
                  "ed.rebuildFacesWithChordSplits(",
                  "rebuildFacesWithChordSplits(",
@@ -3151,7 +3171,9 @@ unittest // every §2.6 widening this stage made still has the caller it names
                  "cutByPlane Pass-2 + finalize: it emits the two sub-faces per "
                ~ "chord-split face, carrying faceMaterial / the whole faceMarks "
                ~ "word / faceSelectionOrder onto both halves. cut.d is its only "
-               ~ "caller outside mesh.d."),
+               ~ "caller outside the declaring file. TASK 3240: that file is "
+               ~ "now source/mesh_edge_slice.d.",
+                 "source/mesh_edge_slice.d"),
         // --- Stage E4's two, and BOTH have callers that are still MIXINS ---
         // This is the first pair of rows whose `callerFiles` names a file the
         // conversion has NOT reached. `extrude.d` (Stage H) and `edge_bevel.d`
@@ -3290,7 +3312,12 @@ unittest // every §2.6 widening this stage made still has the caller it names
     ];
 
     foreach (w; kWidenings) {
-        assert(countOccurrences(md, w.privateDecl) == 0,
+        assert(w.declFile in declSrc,
+            format("row `%s` names declaring file `%s`, which this block does "
+                 ~ "not read — add it to `declSrc` above (task 3240).",
+                   w.name, w.declFile));
+        immutable string dsrc = declSrc[w.declFile];
+        assert(countOccurrences(dsrc, w.privateDecl) == 0,
             format("`%s` is `private` again in source/mesh.d. It is %s Task 1903 "
                  ~ "widened it — in the track-1 stage that converted its caller, "
                  ~ "which is the rule §2.6 settled on after the Stage A review "
@@ -3300,12 +3327,13 @@ unittest // every §2.6 widening this stage made still has the caller it names
                  ~ "sees a private name for free; a free function in "
                  ~ "`source/mesh_ops/` does not (plan §2.6, §4.3).",
                    w.name, w.why));
-        assert(countOccurrences(md, w.publicDecl) == 1,
-            format("source/mesh.d no longer declares `%s` as `%s` — count %d, "
+        assert(countOccurrences(dsrc, w.publicDecl) == 1,
+            format("%s no longer declares `%s` as `%s` — count %d, "
                  ~ "expected 1. If the signature changed, update this row and "
                  ~ "say why; if the name is gone, bridge.d's call is gone too "
                  ~ "and the widening should be reverted with it (task 1903 §2.6).",
-                   w.name, w.publicDecl, countOccurrences(md, w.publicDecl)));
+                   w.declFile, w.name, w.publicDecl,
+                   countOccurrences(dsrc, w.publicDecl)));
         // Look the ops file up BEFORE indexing: a row naming a file this block
         // did not read would otherwise die on a RangeError with no row name in
         // it, and the reader would be debugging the harness instead of the row.
@@ -3342,7 +3370,14 @@ unittest // every §2.6 widening this stage made still has the caller it names
             ++filesScanned;
             immutable src = stripCommentsAndStrings(readText(e.name));
             foreach (w; kWidenings)
-                if (countOccurrences(src, w.scanNeedle) >= 1)
+                // Skip the row's OWN declaring file: its internal calls are
+                // not what §2.6 asks about. mesh.d is skipped above for every
+                // row; this is the same rule for the three rows task 3240
+                // moved to `source/mesh_edge_slice.d`, whose `edgeIndexOf`
+                // wrapper and `edgeSliceEx`/`splitFaceByVertices` bodies call
+                // two of the three among themselves.
+                if (rel != w.declFile
+                    && countOccurrences(src, w.scanNeedle) >= 1)
                     callersOf[w.name] ~= rel;
         }
     }
