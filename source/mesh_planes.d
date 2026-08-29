@@ -398,6 +398,166 @@ static assert(countArrayShapedFields!Mesh == 34,
   ~ "too, the new field is a plain array — a plane candidate, classify it. If "
   ~ "ONLY the count above moved, it is a scalar or a wrapper type.");
 
+
+// ---------------------------------------------------------------------------
+// L1b — THE RATCHET, on `Mesh`'s member SURFACE rather than its fields
+// (task 3290, step 4 of `doc/tasks/work/2910-mesh-struct-seams.md`). It sits
+// HERE, beside the field pair above, because it is the same family: a number,
+// a journal of what that number used to be, and a message that says what to do
+// when it moves. dmd stops at the first failing static assert in this module,
+// so the four now read as one staged chain — see the table below.
+//
+// WHY. Audit №4 M9 recorded `source/mesh.d` at 17 970 → 30 636 → 16 654 →
+// 18 220 → 20 644 lines and drew the conclusion this block answers: there is no
+// holding mechanism BETWEEN the surges. Steps 1–3 of plan 2910 took
+// `struct Mesh` from 16 782 to 13 308 lines (2026-08-29); with nothing to hold
+// it, that is a one-off tidy the next feature undoes, and no test in the tree
+// would report it. The two asserts above cannot: `Mesh.tupleof.length` sat
+// still at 54 across the ENTIRE window M9 measured, while the struct gained and
+// shed thousands of lines of functions.
+//
+// WHAT EACH NUMBER SEES — measured with a four-cell probe on this tree (task
+// 3290 §Мутация), each cell added to `struct Mesh` alone and reverted:
+//
+//   ADDED TO `Mesh`                    tupleof array-shaped allMembers overloads
+//   uint[] dummy3290_;                   RED       RED         RED       green
+//   void dummy3290New() {}              green     green        RED        RED
+//   void rebuildEdges(void* d) {}       green     green       green       RED
+//     (a 2nd overload of a name `Mesh` already has)
+//   enum Dummy3290 { a }                green     green        RED       green
+//
+// Rows 2–4 are why this is NOT a duplicate of the pair above — the field
+// asserts cannot see a function, an overload or a nested type, and those are
+// what `struct Mesh` actually grows by. Rows 3 and 4 are why there are TWO
+// numbers here and not one: the overload count is not a subset of the name
+// count, it is an orthogonal axis, and each is blind to exactly the cell the
+// other catches.
+//
+// NON-VACUITY IS STRUCTURAL HERE, unlike `tests/unit/mesh_by_value_gate.d`,
+// which asserts `offenders.length == 0` and therefore needs an anchor guard to
+// prove it looked at anything. An assert of the form `== 363` cannot be
+// satisfied by looking at nothing: a scope with nothing in it answers 0.
+//
+// THE CEREMONY THIS COSTS, measured rather than argued (task 3290; plan 2910 §7 question 4),
+// because it is charged to every future feature that legitimately adds a `Mesh`
+// member. Adding one member function and taking it green: `dub build` fails in
+// 1.5 s naming the assert AND the number to write (both messages carry the LIVE
+// count — that is what `ctfeDec` below is for, so nobody has to re-run the
+// `pragma(msg)` probe); one digit changes; `dub build` fails in 1.6 s on the
+// second number; one digit changes; the build links in 7.3 s. Two one-digit
+// edits and 3.1 s of compiler time — a `static assert` is reached during
+// semantic analysis, so a red one never pays for codegen. The optional third
+// cost is a journal line above, under the single-current-figure rule: move the
+// retired numbers down, never leave two "current" ones.
+//
+// THE NAMED BLINDNESS, measured rather than assumed: an `unittest` block in the
+// struct BODY contributes ZERO members. Step 1 moved 50 of them out (counted at
+// depth 1 on both trees: 50 before, 0 after) and the struct fell 16 782 → 14 636
+// lines — its largest single drop of the whole plan — while NEITHER number below
+// moved: 377 / 307 on `b14cc214` before it and 377 / 307 on `e7faf2fe` after it,
+// both measured here. This ratchet holds the DECLARED surface. The counter that
+// sees unittest blocks is `tests/unit/census_gate.d`, and it sums them
+// TREE-WIDE, so putting fifty of them back inside `struct Mesh` moves nothing
+// anywhere — a named gap, not a claim this block covers it.
+//
+// Measured with plan §1.3's command — `dmd -o- -i -I=source -I=third_party`
+// plus the dub package import paths, `pragma(msg)` on
+// `__traits(allMembers, Mesh).length` and on the fold below — NOT a regex over
+// the source text, which is what answered 56 where the compiler answers 54 for
+// the pair above:
+//
+//   2026-08-29, task 3290, plan 2910 after step 3 (`fc55c13c`) — CURRENT:
+//     __traits(allMembers, Mesh).length  == 363
+//     countMemberOverloads!Mesh          == 295
+//
+//   2026-08-29, after step 2 (`f961b9f1`) — superseded: 374 / 305
+//                 (the `VisibilityProbe` group: 3 names, 2 functions)
+//   2026-08-29, after step 1 (`e7faf2fe`) — superseded: 377 / 307
+//   2026-08-28, before step 1 (`b14cc214`) — superseded: 377 / 307
+//
+// Every figure above was re-measured on its own tree by task 3290, not copied
+// from the step cards.
+//
+// THREE CONFIGURATION FACTS, all measured, because `==` on a count is only safe
+// if the count is the same in every lane that compiles this file:
+//   * `-unittest` does not change either number TODAY (363 / 295 with and
+//     without). It CAN: the same probe on `b14cc214` answered 377 / 307 plain
+//     and 382 / 311 under `-unittest`, the difference being the five
+//     `version (unittest)` fixture helpers `t_s1_*` that then lived in the
+//     struct — four functions and one manifest `enum`, +5 names / +4 overloads.
+//     So a `version (unittest)` MEMBER would make this assert red under
+//     `dub test --config=tests` and green under `dub build`. Declare such
+//     helpers at MODULE scope, which is where step 1 put those five.
+//   * `-version=WithAI` does not change them, and neither does
+//     `-version=WithRender` (363 / 295 under both) — `source/mesh.d` declares
+//     no `version` block that adds or removes a member outside `unittest`.
+//   * Both numbers count PRIVATE members, and answer the same from inside
+//     `mesh.d` as from this module — probed on a two-module fixture. That is
+//     what makes the ratchet useful to plan 2910 at all: the surface it moves
+//     is mostly private.
+// ---------------------------------------------------------------------------
+
+/// CTFE decimal, so a failing assert below can NAME the number to write rather
+/// than sending the reader off to re-run the `pragma(msg)` probe that produced
+/// the journal above. Measured reason (task 3290): the whole ceremony a new
+/// `Mesh` member costs is two one-digit edits, and it is only two SMALL edits
+/// if the compiler says what the digits are. Not `std.format.format` — this
+/// runs inside a `static assert` message on every compile of this module.
+private string ctfeDec(size_t n) {
+    if (n == 0) return "0";
+    string s;
+    while (n) { s = cast(char)('0' + (n % 10)) ~ s; n /= 10; }
+    return s;
+}
+
+/// Count of `T`'s member-function overloads. Deliberately NOT a subset of
+/// `__traits(allMembers, T).length`: a second overload of a name `T` already
+/// has adds one here and nothing there, which is the one growth shape the name
+/// count cannot see (row 3 of the table above).
+template countMemberOverloads(T) {
+    enum size_t countMemberOverloads = () {
+        size_t n = 0;
+        static foreach (name; __traits(allMembers, T))
+        {{
+            static if (__traits(compiles, __traits(getOverloads, T, name)))
+                static foreach (ov; __traits(getOverloads, T, name))
+                    n++;
+        }}
+        return n;
+    }();
+}
+
+static assert(__traits(allMembers, Mesh).length == 363,
+    "`struct Mesh` gained (or lost) a member NAME — a function, a nested type, "
+  ~ "an `enum`, an `alias` or a field. This is the step-4 RATCHET of "
+  ~ "`doc/tasks/work/2910-mesh-struct-seams.md`: the struct was 13 308 lines on "
+  ~ "2026-08-29 after three steps took 3 474 out of it, and the audit finding "
+  ~ "the plan answers is that it grows back unless something says so out loud. "
+  ~ "Before bumping this count, ask where the member belongs. A QUERY over the "
+  ~ "mesh has a home that is not the struct: a free function over `ref Mesh` / "
+  ~ "`const ref Mesh` in a satellite module (`mesh_visibility.d`, "
+  ~ "`mesh_edge_slice.d`, `mesh_selsets.d`, `mesh_corner_maps.d`, "
+  ~ "`mesh_topo.d`), re-exported by `public import` from `mesh.d`, so every "
+  ~ "call site keeps working through UFCS — and a satellite must carry "
+  ~ "`MeshByValueGate`, because a free function taking `Mesh` BY VALUE compiles "
+  ~ "everywhere and silently drops writes. If the member genuinely belongs to "
+  ~ "the struct, bump this count and say why in the commit message: one line of "
+  ~ "ceremony, on purpose. dmd stops at the FIRST failing static assert in this "
+  ~ "module, so if the field asserts above moved too you are reading this only "
+  ~ "after bumping them; bump this one, recompile, and read the overload assert "
+  ~ "below to learn whether a FUNCTION landed or a TYPE. THIS TREE HAS "
+  ~ ctfeDec(__traits(allMembers, Mesh).length) ~ " member names.");
+
+static assert(countMemberOverloads!Mesh == 295,
+    "`struct Mesh` gained (or lost) a member-function OVERLOAD. Read it with "
+  ~ "the name count above: if BOTH moved, a whole new function name landed. If "
+  ~ "ONLY the name count moved, what landed is a nested type, an `enum` or an "
+  ~ "`alias` — no function. If ONLY THIS ONE moved, it is a second overload of "
+  ~ "a name `Mesh` already had, which no other counter in this module can see: "
+  ~ "that cell is the reason this assert exists as well as the one above. Same "
+  ~ "question either way — a query belongs in a satellite module over "
+  ~ "`ref Mesh`, not in the struct. THIS TREE HAS "
+  ~ ctfeDec(countMemberOverloads!Mesh) ~ " member-function overloads.");
 // ---------------------------------------------------------------------------
 // The primitive.
 // ---------------------------------------------------------------------------
