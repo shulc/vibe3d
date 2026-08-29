@@ -4107,9 +4107,9 @@ unittest // task 2310 — source/mesh.d, the zone the write census never scanned
     // so a new write cannot hide inside a number that merely did not change.
     string firstHit;
     immutable size_t raw = countRawPositionWrites(src, firstHit);
-    assert(raw == 46,
+    assert(raw == 32,
         format("source/mesh.d holds %d raw position write(s) under §5.7's "
-             ~ "predicate, expected 46. First hit: `%s`.\n"
+             ~ "predicate, expected 32. First hit: `%s`.\n"
              ~ "  THIS IS A `kAllow` TOTAL, NOT A CLEAN ZERO, and the file is "
              ~ "the one place where that is right: the 46 are the position "
              ~ "DOORS themselves (`setVertexPositions` ×2, `addVertex`), the "
@@ -4118,7 +4118,20 @@ unittest // task 2310 — source/mesh.d, the zone the write census never scanned
              ~ "just built (`facetedSubdivide`'s `result`, the grid/cube/preview "
              ~ "builders), and this module's own `unittest` fixtures. It was 49 "
              ~ "before task 2310 took the three LIVE-SUBJECT writes named in the "
-             ~ "roster above.\n"
+             ~ "roster above, and 46 until task 3160.\n"
+             ~ "  WHY 46 BECAME 32 (task 3160, step 1 of "
+             ~ "doc/tasks/work/2910-mesh-struct-seams.md). The row counts the "
+             ~ "FILE, and the file lost fourteen writes when thirty-two "
+             ~ "`unittest` blocks left the body of `struct Mesh` for "
+             ~ "tests/unit/. All fourteen are FIXTURE writes on a mesh the "
+             ~ "block had just constructed -- ten in "
+             ~ "tests/unit/mesh_hide_derive_batch_test.d, two in "
+             ~ "mesh_edge_slice_test.d, two in mesh_vertex_remap_test.d -- and "
+             ~ "they are classified, not lost: the zone this row guards is a "
+             ~ "raw write on the LIVE SUBJECT inside a recording batch, which "
+             ~ "a fixture builder is not. Not one production write moved; the "
+             ~ "three-row retired/replacement pair above is untouched and "
+             ~ "still pins every live-subject site.\n"
              ~ "  A NEW raw write here must be classified in the SAME commit: if "
              ~ "it is on a mesh the caller has just constructed, say so and move "
              ~ "this number; if it is on the live subject, it belongs behind "
