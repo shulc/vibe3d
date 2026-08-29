@@ -3802,31 +3802,72 @@ public:
         }
     }
 
+    // Tasks 3023 (capture) / 3310 (fix) — THE negScale FLOOR, in one place
+    // because it has TWO doors into geometry, and neither is reachable from
+    // the other:
+    //
+    //   * `applyScaleAbsoluteFromRun` below — the live/panel door;
+    //   * `applyHeadless` — the numeric door (`tool.attr SX …` +
+    //     `tool.doApply`), which until task 3310 had no floor at all.
+    //
+    // The law is MEASURED, not designed (fixture
+    // `tests/fixtures/scale_negative_typed_value.json`, gap-registry row 85):
+    // a numeric write of a scale AXIS is ACCEPTED — it reports success — and
+    // the value that gets STORED is `max(+0.0, v)` while the option is off,
+    // and `v` verbatim while it is on. The option is consumed at the WRITE and
+    // never on the apply path, so the stored value is the whole law. It is
+    // specific to the scale axes: a translate value written at the same option
+    // state is stored verbatim.
+    private Vec3 floorNegativeScale(Vec3 s) const {
+        if (negScale) return s;
+        if (s.x < 0.0f) s.x = 0.0f;
+        if (s.y < 0.0f) s.y = 0.0f;
+        if (s.z < 0.0f) s.z = 0.0f;
+        return s;
+    }
+
     public void applyScaleAbsoluteFromRun(Vec3 scaleAccum) {
         prepareRunAbsoluteApply();
-        // Task 0332 — this is the WRAPPED role's single choke point that
-        // drives geometry from `run.s` (reached via
-        // `ScaleTool.applyScaleFromActivationCpuOnly`'s wrapped branch, i.e.
-        // any panel-value / live-session `tool.attr` write that lands on
-        // `reEvaluate()` -> `applyScalePanelValue`). `ScaleTool`'s own clamp
-        // on its LOCAL `factors` copy never reaches actual geometry here —
-        // this method re-reads `wrap.publishedScale()`/`run.s` fresh — so
-        // negScale must gate the same clamp-at-0 floor here too, or a
-        // live-session panel/attr write bypasses the interactive drag path's
-        // clamp entirely. Mirrors `ScaleTool.clampScaleFactor`'s two-step
-        // rule: reject non-finite to identity 1.0 UNCONDITIONALLY, then
-        // floor at 0 per-axis only when `!negScale`.
+        // Task 0332 / 3310 — one of the TWO doors that drive geometry from
+        // `run.s`; the other is `applyHeadless`. Reached from
+        // `ScaleTool.applyScaleAbsoluteCpuOnly`'s wrapped branch, which has
+        // two callers of its own:
+        //
+        //   (a) `applyScalePanelValue` — the panel / live-session `tool.attr`
+        //       write, via `reEvaluate()`. It carries its OWN copy of this
+        //       floor, applied to the `factors` it then hands us, so on THIS
+        //       path the two floors are in series.
+        //   (b) `applyScaleFromActivationCpuOnly` — the idle falloff-refire
+        //       arm, which passes `wrap.publishedScale()` (i.e. `run.s`)
+        //       straight through and never touches scale.d's floor.
+        //
+        // WHAT WAS MEASURED, task 3310, and say it whole: removing THIS floor
+        // alone reddens nothing, and removing scale.d's alone reddens nothing;
+        // removing BOTH reddens `test_xfrm_negscale` Case 4 and the session
+        // column of `test_fixture_negscale_typed_value`. So caller (b) is a
+        // static reason this floor is not redundant, and it has NO test — do
+        // not read "not redundant" as "witnessed".
+        //
+        // The comment that used to stand here claimed this was "the WRAPPED
+        // role's single choke point" and that scale.d's clamp "never reaches
+        // actual geometry here — this method re-reads `wrap.publishedScale()`
+        // / `run.s` fresh". Both halves are FALSE and were measured false in
+        // task 3310: there is a second door (`applyHeadless`), and this method
+        // re-reads nothing — it takes the caller's value as `scaleAccum` and
+        // WRITES `run.s` from it, so on path (a) it is scale.d's already-
+        // floored copy that arrives. Editing only scale.d is therefore a
+        // NO-OP, which is exactly the wrong place to send the next reader.
+        //
+        // Two steps, in this order: reject non-finite to the identity 1.0
+        // UNCONDITIONALLY (`ScaleTool.clampScaleFactor`'s first step; the
+        // reference's own setter lets a NaN through, so this half is OURS and
+        // is not part of the measured law), then the measured floor.
         import std.math : isFinite;
         float rejectNonFinite(float f) { return isFinite(f) ? f : 1.0f; }
         scaleAccum.x = rejectNonFinite(scaleAccum.x);
         scaleAccum.y = rejectNonFinite(scaleAccum.y);
         scaleAccum.z = rejectNonFinite(scaleAccum.z);
-        if (!negScale) {
-            if (scaleAccum.x < 0.0f) scaleAccum.x = 0.0f;
-            if (scaleAccum.y < 0.0f) scaleAccum.y = 0.0f;
-            if (scaleAccum.z < 0.0f) scaleAccum.z = 0.0f;
-        }
-        run.s = scaleAccum;
+        run.s = floorNegativeScale(scaleAccum);
         bool pureScalePreset = flagS && !flagT && !flagR;
         applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
                  /*samplePipeFromBaseline=*/pureScalePreset);
@@ -3877,6 +3918,16 @@ public:
         // reads run.r. The Euler slot is the only numeric rotate input (the
         // view-ring has no numeric attr), so matrixFromEulerZYX is the exact truth.
         run.r = matrixFromEulerZYX(headlessRotate);
+        // Task 3310 — the NUMERIC door's floor. `SX`/`SY`/`SZ` are Params bound
+        // straight to `&run.s.{x,y,z}`, so a `tool.attr` write lands in the run
+        // state with nothing between it and the fold: before this line a typed
+        // `SX -3` with the option OFF mirrored the mesh, while the same write
+        // inside a live session floored to 0. The reference floors BOTH (it
+        // floors at the setter, so the stored value is the whole law — see
+        // `floorNegativeScale`), and it is our numeric path that was wrong.
+        // Written back into `run.s` rather than clamped in a local, because the
+        // stored value is what the law is about and what a later refire re-reads.
+        run.s = floorNegativeScale(run.s);
         // Task 1069 — a headless apply supplies its OWN fresh baseline
         // (`mesh.vertices.dup`), so it is its own one-shot run and must NOT
         // inherit a `dragMorphBaseline` captured by some earlier gizmo drag.

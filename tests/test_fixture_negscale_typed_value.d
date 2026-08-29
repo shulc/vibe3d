@@ -40,12 +40,20 @@
 //      e.g. dropping the `if (!negScale)` guard in applyScaleAbsoluteFromRun —
 //      reddens `neg_off_typed_minus3` / `neg_off_typed_minus_075` here.
 //   2. Every case's NUMERIC path (a bare attr write plus doApply) reproduces
-//      the number recorded in `vibe3d_current.numeric`. That path currently
-//      SKIPS the floor, which is a known open gap; the fixture records it per
-//      case as `matches_reference: false` and this test checks the gap is still
-//      exactly that wide. Closing it — i.e. fixing the numeric path — reddens
-//      item 3 with "the declared divergence has closed", which is the signal to
-//      re-freeze the fixture rather than a regression.
+//      the number recorded in `vibe3d_current.numeric`. That path SKIPPED the
+//      floor when this file was written — a gap the fixture recorded per case
+//      as `matches_reference: false`, with a second arm here asserting the gap
+//      was still exactly that wide. Task 3310 CLOSED it, by flooring the stored
+//      scale in `XfrmTransformTool.applyHeadless`; both arms fired on the way
+//      (the frozen-number assert first, then the divergence-closed one), the
+//      fixture was re-frozen, and every case now records
+//      `matches_reference: true`. The divergence arm is KEPT below because it
+//      is the mechanism for recording the next gap honestly, not because one is
+//      open — with none declared it simply does not run.
+//      Breaking the numeric floor — deleting the `run.s = floorNegativeScale(run.s)`
+//      line in `applyHeadless` — reddens `neg_off_typed_minus3` /
+//      `neg_off_typed_minus_075` on the NUMERIC path here while their session
+//      column stays green, which is what separates the two doors.
 //   3. The fixture's own frozen numbers obey the stated law. `reference.stored`
 //      and every row of `reference_readbacks` are recomputed from
 //      `(negScale, typed value, is-this-a-scale-axis)` and must match, so a
@@ -181,7 +189,7 @@ unittest {
 
     // The corpus must actually contain a cell on each side of the option, or
     // items 1 and 2 below are testing one branch and calling it a law.
-    size_t negOffNegativeCells = 0, negOnNegativeCells = 0, divergentCells = 0;
+    size_t negOffNegativeCells = 0, negOnNegativeCells = 0;
 
     foreach (cs; fx["cases"].array) {
         immutable string cn   = suite ~ "/" ~ cs["name"].str;
@@ -237,8 +245,10 @@ unittest {
                     cn, pathName, got, neg, typed, stored, baseX, expectedX, tol));
             } else {
                 // The declared gap must still be exactly a gap. This arm is
-                // what reddens when somebody CLOSES the divergence.
-                divergentCells++;
+                // what reddens when somebody CLOSES the divergence — it did,
+                // for the numeric path, in task 3310. NO case declares a gap
+                // today, so this arm does not run; it is kept as the honest way
+                // to record the NEXT one rather than as a live check.
                 assert(fabs(got - expectedX) > tol, format(
                     "%s [%s path]: vertex0.x is %.6f, which now AGREES with the "
                     ~ "reference law's %.6f -- the divergence this fixture declares "
@@ -256,11 +266,14 @@ unittest {
         ~ "ON. Without at least one of each, every assertion above is satisfied by a "
         ~ "law that ignores the option entirely.",
         suite, negOffNegativeCells, negOnNegativeCells));
-    assert(divergentCells >= 1, format(
-        "%s: no case is marked as diverging, so the divergence arm of this test never "
-        ~ "ran. If the numeric path has genuinely been fixed everywhere, this file "
-        ~ "should become a plain parity fixture and this guard should go with it.",
-        suite));
+    // The guard that used to stand here demanded at least one DIVERGING case,
+    // so that the divergence arm above was known to have run. Task 3310 fixed
+    // the numeric path, every case became a parity case, and that guard's own
+    // message named the consequence: "this file should become a plain parity
+    // fixture and this guard should go with it." It went. What keeps this file
+    // honest now is the pair of assertions above — every case is checked
+    // against BOTH its frozen number and the reference law, on BOTH paths —
+    // plus the option-spanning anti-vacuity guard immediately above.
 
     // ---- 4. our shipped default for the option is OFF ------------------
     // No option value is written at all; the absence is the parameter under

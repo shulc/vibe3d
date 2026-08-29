@@ -1,6 +1,6 @@
 {
   "name": "scale_negative_typed_value",
-  "description": "What a NUMERIC ('typed') negative scale value does while the negative-scale option is OFF. The reference ACCEPTS the write and stores max(0, value): not a refusal, not |v|, not a clamp to 1 or to the smallest positive float, and not the pass-through its own shipped documentation promises. The option is consumed at the WRITE and never on the apply path, so the stored value is the whole law; and it is consumed only for the scale axes -- a translate value written at the same option state is stored verbatim. The discriminating input is a TYPED value: a handle drag is clipped on its own layer by a separate copy of the same rule, so a drag agrees with every candidate and cannot separate them. vibe3d has TWO write paths and they disagree: the live-session path implements this law, the numeric tool.attr + doApply path skips the floor entirely. That gap is recorded per case in vibe3d_current and is what this fixture exists to hold still.",
+  "description": "What a NUMERIC ('typed') negative scale value does while the negative-scale option is OFF. The reference ACCEPTS the write and stores max(0, value): not a refusal, not |v|, not a clamp to 1 or to the smallest positive float, and not the pass-through its own shipped documentation promises. The option is consumed at the WRITE and never on the apply path, so the stored value is the whole law; and it is consumed only for the scale axes -- a translate value written at the same option state is stored verbatim. The discriminating input is a TYPED value: a handle drag is clipped on its own layer by a separate copy of the same rule, so a drag agrees with every candidate and cannot separate them. vibe3d has TWO write paths. When this fixture was first frozen they disagreed -- the live-session path implemented this law and the numeric tool.attr + doApply path skipped the floor entirely -- and the gap was recorded per case in vibe3d_current. Task 3310 closed it by flooring the stored scale in XfrmTransformTool.applyHeadless, the numeric path's own door into the fold, so both paths now match the reference and this file is a plain parity fixture. The per-path vibe3d_current columns are kept because they are what would show WHICH door regressed.",
   "source": "Reference side: headless command-lane readback of the transform tool's own scale attribute after a numeric write, one isolated profile, plus a static read of the shipped binaries at the setter's own compute site (the private toolcard carries the routine names and addresses). vibe3d side: live drive of this build over the HTTP test API, both write paths, read back from /api/model.",
   "provenance": {
     "schema": 1,
@@ -231,10 +231,10 @@
         "vertex0_x": 0.0
       },
       "numeric": {
-        "vertex0_x": 1.5
+        "vertex0_x": 0.0
       }
     },
-    "note": "No negScale value is written at all. The session path floors, which is the observable signature of our shipped default being OFF. Recorded as a driven cell rather than as prose so that a change of default reddens something."
+    "note": "No negScale value is written at all. Both paths floor, which is the observable signature of our shipped default being OFF -- if the default flipped to ON both columns would read 1.5. Recorded as a driven cell rather than as prose so that a change of default reddens something. RE-FROZEN 2026-08-29 (task 3310): the numeric column was 1.5 only because the numeric path had no floor at all, so before the fix this cell measured the missing floor and not the default; now the two columns agree and the default is the only thing left that can move them."
   },
   "cases": [
     {
@@ -275,15 +275,15 @@
       },
       "vibe3d_current": {
         "numeric": {
-          "vertex0_x": 1.5,
-          "matches_reference": false
+          "vertex0_x": 0.0,
+          "matches_reference": true
         },
         "session": {
           "vertex0_x": 0.0,
           "matches_reference": true
         }
       },
-      "note": "THE DISCRIMINATING CELL. Option OFF, typed -3. The reference ACCEPTS the write (it answers ok) and stores 0. The prior value was deliberately 2.5, not the 1.0 default, so 'refuses and keeps the previous value' would have read 2.5 and is refuted, not merely unlikely."
+      "note": "THE DISCRIMINATING CELL. Option OFF, typed -3. The reference ACCEPTS the write (it answers ok) and stores 0. The prior value was deliberately 2.5, not the 1.0 default, so 'refuses and keeps the previous value' would have read 2.5 and is refuted, not merely unlikely. RE-FROZEN 2026-08-29 (task 3310): the numeric column was 1.5 (matches_reference false) when this fixture was first captured, because the numeric path applied the raw -3. The floor added to XfrmTransformTool.applyHeadless closed that gap; 0.0 is now measured on BOTH paths and this is the cell that reddens if either door loses its floor."
     },
     {
       "name": "neg_off_typed_minus_075",
@@ -299,15 +299,15 @@
       },
       "vibe3d_current": {
         "numeric": {
-          "vertex0_x": 0.375,
-          "matches_reference": false
+          "vertex0_x": 0.0,
+          "matches_reference": true
         },
         "session": {
           "vertex0_x": 0.0,
           "matches_reference": true
         }
       },
-      "note": "Same law at a second magnitude: the floor is at zero, not at -1 and not on |v|. Also separates the floor from any 'snap to the nearest legal value' reading, which would have kept 0.75."
+      "note": "Same law at a second magnitude: the floor is at zero, not at -1 and not on |v|. Also separates the floor from any 'snap to the nearest legal value' reading, which would have kept 0.75. RE-FROZEN 2026-08-29 (task 3310): the numeric column was 0.375 (matches_reference false); the applyHeadless floor closed it."
     },
     {
       "name": "neg_on_typed_minus_075",

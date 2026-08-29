@@ -9,17 +9,28 @@
 //     not a bug). This is flag-independent: it is the geometry LAW for any
 //     negative scale factor that reaches the kernel, regardless of how it
 //     got there.
-//   - Clamp gate: `negScale` (default OFF) gates the scale-factor clamp at
-//     TWO layers — source/tools/scale.d's `clampScaleFactor` + the panel
-//     post-write clamps, and source/tools/xfrm_transform.d's uniform-slider
-//     post-write clamp. Both only fire on the INTERACTIVE paths (gizmo drag
-//     / ImGui panel widget). The headless numeric attr + `tool.doApply`
-//     path (`XfrmTransformTool.applyHeadless` -> `applyTRS`) reads
-//     `run.s.x/y/z` directly with NO clamp at all, on either side of this
-//     flag — Case 1 below deliberately drives THAT path to pin the
-//     flag-independent geometry law; Cases 2/3 drive an actual interactive
-//     gizmo drag (the only path the clamp gates) to prove the flag toggles
-//     clamp-at-zero vs. cross-zero-to-mirror.
+//   - Clamp gate: `negScale` (default OFF) gates the scale-factor floor on
+//     EVERY path that can reach the kernel — source/tools/transform/scale.d's
+//     `clampScaleFactor` (gizmo drag) and `applyScalePanelValue` (panel
+//     write), source/tools/transform/xfrm_transform.d's uniform-slider
+//     post-write clamp and `applyScaleAbsoluteFromRun` (live/panel door), and
+//     since task 3310 `applyHeadless` (the NUMERIC door: `tool.attr SX …` +
+//     `tool.doApply`).
+//
+//     TASK 3310 CHANGED WHAT CASE 1 CAN SAY. Until then the numeric door read
+//     `run.s.x/y/z` with NO floor at all, so Case 1 could drive a negative
+//     factor through it at either flag state and pin the W1 geometry law
+//     flag-independently. That was a DIVERGENCE, not a design: the reference
+//     accepts a typed negative scale and stores `max(+0.0, v)` while the
+//     option is off — measured 2026-08-29, frozen as
+//     `tests/fixtures/scale_negative_typed_value.json`, gap-registry row 85.
+//     With the numeric door floored, a typed `SX -1` at the DEFAULT flag state
+//     no longer mirrors; it collapses to the pivot. So W1 is now exercised with
+//     the option explicitly ON (Case 1), and the floor the fix installed is
+//     exercised with it OFF (Case 1b) — the same input, the flag the only thing
+//     that varies, which is what makes the pair evidence about the flag.
+//     Cases 2/3 drive an actual interactive gizmo drag, and Cases 4/5 the
+//     live-session panel write.
 //
 // No reference-editor names appear in this file (project neutrality
 // convention) — the frozen capture that settled the W1/clamp verdicts is
@@ -83,10 +94,13 @@ void assertApprox(double actual, double expected, double tol, string msg) {
 // ---------------------------------------------------------------------------
 // Case 1 — geometry law (W1): SX=-1 mirrors X through the origin pivot,
 // polygon vertex-index order is byte-identical before/after (winding
-// unchanged). Drives the UNCLAMPED headless numeric path
-// (`tool.attr` + `tool.doApply`) — this path never gates on `negScale`, by
-// design (see file header) — so this case is flag-independent and pins the
-// geometry law alone.
+// unchanged). Drives the headless numeric path (`tool.attr` + `tool.doApply`)
+// with `negScale` explicitly ON, which is the only flag state under which a
+// negative factor still reaches the kernel from that door (task 3310 — see the
+// file header; before it, this case drove the same path with the flag OFF and
+// the mirror happened only because the floor was missing). W1 itself is
+// flag-independent: it is the law for ANY negative factor that reaches the
+// kernel, however it got there — the flag only decides whether one does.
 // ---------------------------------------------------------------------------
 unittest {
     reset();
@@ -99,6 +113,10 @@ unittest {
     // moving set, ACEN pivot at (0,0,0) (same assumption test_uniform_scale.d
     // makes for its analytic uniform-scale cases).
     cmd("tool.set scale on");
+    // negScale is per-activation tool state: set it INSIDE this activation,
+    // after `tool.set` and before the value writes (same rule
+    // dragCenterDiscThroughZero documents below).
+    cmd("tool.attr scale negScale true");
     cmd("tool.attr scale SX -1");
     cmd("tool.attr scale SY 1");
     cmd("tool.attr scale SZ 1");
@@ -125,6 +143,68 @@ unittest {
             format("face %d vertex order changed after SX=-1 (winding must stay "
                 ~ "UNCHANGED per the W1 capture verdict): before=%s after=%s",
                 fi, facesBefore[fi], idx));
+}
+
+// ---------------------------------------------------------------------------
+// Case 1b — the NUMERIC door's floor (task 3310). The SAME typed write as Case
+// 1, through the SAME path, with `negScale` OFF instead of ON: the stored scale
+// is floored at +0.0, so every vertex's X collapses onto the pivot instead of
+// mirroring. The measured law is in
+// `tests/fixtures/scale_negative_typed_value.json` (gap-registry row 85); this
+// case is the local witness for the line that implements it,
+// `XfrmTransformTool.applyHeadless`'s `run.s = floorNegativeScale(run.s)`.
+//
+// Case 1 and Case 1b differ in the FLAG and in nothing else, which is what
+// makes the pair evidence about the flag rather than about the value. The
+// second half below writes a POSITIVE value at the same flag state and requires
+// it to pass through untouched — without it, a "floor" that clamped every axis
+// to zero unconditionally would satisfy the first half.
+// ---------------------------------------------------------------------------
+unittest {
+    reset();
+    auto before = dumpVerts();
+    assert(before.length == 8, "expected 8-vertex cube, got "
+        ~ before.length.to!string);
+    foreach (i, v; before)
+        assert(fabs(v[0]) > 0.1,
+            format("stand is degenerate: vert[%d].x is %.6f, so a collapse to the "
+                ~ "pivot would be indistinguishable from no change at all", i, v[0]));
+
+    cmd("tool.set scale on");
+    cmd("tool.attr scale negScale false");
+    cmd("tool.attr scale SX -1");
+    cmd("tool.attr scale SY 1");
+    cmd("tool.attr scale SZ 1");
+    cmd("tool.doApply");
+    cmd("tool.set scale off");
+
+    auto after = dumpVerts();
+    assert(after.length == before.length, "vertex count changed after SX=-1");
+    enum double tol = 1e-4;
+    foreach (i, v; after) {
+        assertApprox(v[0], 0.0, tol,
+            format("negScale-off numeric vert[%d].x must FLOOR to the pivot, not "
+                ~ "mirror", i));
+        assertApprox(v[1], before[i][1], tol, format("vert[%d].y unchanged", i));
+        assertApprox(v[2], before[i][2], tol, format("vert[%d].z unchanged", i));
+    }
+
+    // Anti-vacuity: a POSITIVE typed value at the same flag state is stored
+    // verbatim. The floor is on the SIGN, not on the write.
+    reset();
+    auto posBefore = dumpVerts();
+    cmd("tool.set scale on");
+    cmd("tool.attr scale negScale false");
+    cmd("tool.attr scale SX 2");
+    cmd("tool.attr scale SY 1");
+    cmd("tool.attr scale SZ 1");
+    cmd("tool.doApply");
+    cmd("tool.set scale off");
+    auto posAfter = dumpVerts();
+    foreach (i, v; posAfter)
+        assertApprox(v[0], posBefore[i][0] * 2.0, tol,
+            format("negScale-off numeric vert[%d].x: a POSITIVE typed value must "
+                ~ "pass through the floor untouched", i));
 }
 
 // ---- shared camera/projection helpers for the drag cases (duplicated

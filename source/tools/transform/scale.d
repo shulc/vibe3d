@@ -1324,6 +1324,22 @@ public:
         // Absolute value-driven: the panel value IS scaleAccum (clamped >= 0
         // unless task 0332's negScale is on for the wrapper — see
         // negScaleAllowed()).
+        //
+        // Task 3310 — READ THIS BEFORE EDITING THIS CLAMP. On the only caller
+        // this method has in the shipped build (`XfrmTransformTool.reEvaluate`
+        // -> `scaleSub.applyScalePanelValue(run.s)`, always in the WRAPPED
+        // role) the value below is handed on to
+        // `XfrmTransformTool.applyScaleAbsoluteFromRun`, which floors it AGAIN.
+        // The two are in series and each one alone suffices, so REMOVING THIS
+        // CLAMP CHANGES NOTHING THAT ANY TEST CAN SEE — measured, task 3310.
+        // It is kept because it is the only floor on the STANDALONE role
+        // (`wrapperRef is null`, the unit-test construction), whose branch of
+        // `applyScaleAbsoluteCpuOnly` goes to the kernel directly; that role
+        // has no caller of this method today, so this clamp has no witness of
+        // its own and a mutation of it stays green. The floor that does carry
+        // a witness the other cannot is the one in
+        // `applyScaleAbsoluteFromRun`, and the NUMERIC door's is in
+        // `applyHeadless`.
         if (!negScaleAllowed()) {
             if (factors.x < 0) factors.x = 0;
             if (factors.y < 0) factors.y = 0;
