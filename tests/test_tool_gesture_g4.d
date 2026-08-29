@@ -99,7 +99,7 @@
 // resolves in either tree.
 //
 // LANE: `./run_test.d --no-build test_tool_gesture_g4`.
-import std.algorithm : sort, canFind;
+import std.algorithm : sort, canFind, startsWith, endsWith;
 import std.array     : appender, array;
 import std.conv      : to;
 import std.format    : format;
@@ -107,6 +107,7 @@ import std.json;
 import std.math      : abs, sqrt;
 import std.net.curl  : get, post;
 import std.process   : environment;
+import std.string    : split;
 import core.thread   : Thread;
 import core.time     : dur;
 
@@ -141,6 +142,7 @@ void cmd(string line) {
     assert(r["status"].str == "ok" || r["status"].str == "success",
         "/api/command '" ~ line ~ "' failed: " ~ r.toString
       ~ " — the stand this cell measures was never built");
+    recordToolLineIfDrive(line);
 }
 
 /// The ONLY input that sets `interactiveParamEdit`, and therefore the only one
@@ -150,6 +152,95 @@ void interactiveAttr(string line) {
     auto r = postJ("/api/script?interactive=true", line ~ "\n");
     assert(r["status"].str == "ok" || r["status"].str == "success",
         "/api/script?interactive=true '" ~ line ~ "' failed: " ~ r.toString);
+    recordToolLineIfDrive(line);
+}
+
+// Task 3091: every `tool.set` / `tool.attr` WRITE this cell issues (through
+// EITHER `cmd()` or `interactiveAttr()` — the reduce cell's panel write goes
+// through the latter, since `/api/command` hard-codes `interactiveParamEdit`
+// false) IS a captured parameter (schema 3010) — recorded off the SAME string
+// that drove the wire command. A trailing `?` is a READ (`attrOf` above reads
+// through a bare `postJ`, never through either wrapper; the guard stays here
+// too so a future read-through-wrapper cannot be mistaken for a drive).
+void recordToolLineIfDrive(string line) {
+    if ((line.startsWith("tool.set ") || line.startsWith("tool.attr "))
+        && !line.endsWith(" ?"))
+        gDrove ~= parseToolLine(line);
+}
+
+// ---------------------------------------------------------------------------
+// Parameter capture (task 3091) — the `parameters` block (schema 3010). See
+// tests/test_tool_gesture_g1.d for the full rationale.
+struct Drove { string op; string values; }
+
+Drove[] gDrove;
+
+string jsonScalar(string raw) {
+    if (raw == "true" || raw == "false") return raw;
+    bool numeric = raw.length > 0;
+    bool sawDot = false;
+    foreach (i, ch; raw) {
+        if (ch == '-' && i == 0) continue;
+        if (ch == '.' && !sawDot) { sawDot = true; continue; }
+        if (ch < '0' || ch > '9') { numeric = false; break; }
+    }
+    return numeric ? raw : (`"` ~ raw ~ `"`);
+}
+
+Drove parseToolLine(string line) {
+    auto toks = line.split();
+    assert(toks.length >= 2, "parseToolLine: too short: " ~ line);
+    string id = toks[1];
+    if (id.length >= 2 && id[0] == '"' && id[$ - 1] == '"') id = id[1 .. $ - 1];
+    if (toks[0] == "tool.set") {
+        if (toks.length >= 3 && toks[2] == "on")  return Drove("tool.set " ~ id, `{"on": true}`);
+        if (toks.length >= 3 && toks[2] == "off") return Drove("tool.set " ~ id, `{"off": true}`);
+        return Drove("tool.set " ~ id, "{}");
+    }
+    assert(toks.length >= 4, "parseToolLine: tool.attr needs name+value: " ~ line);
+    return Drove("tool.attr " ~ id,
+        `{"` ~ toks[2] ~ `": ` ~ jsonScalar(toks[3]) ~ `}`);
+}
+
+Drove driveDrag(int dxPx, int dyPx, int steps = 16, int button = 1, int mod = 0,
+                bool hover = false) {
+    return Drove("gesture.drag", format(
+        `{"dx_px": %d, "dy_px": %d, "steps": %d, "button": %d, "mod": %d, "hover": %s}`,
+        dxPx, dyPx, steps, button, mod, hover));
+}
+
+/// `gesture.drag` where the arm carries a `/api/tool/handles` part index.
+Drove driveDragHandle(int dxPx, int dyPx, int handlePart, int steps = 16,
+                       int button = 1, int mod = 0, bool hover = false) {
+    return Drove("gesture.drag", format(
+        `{"dx_px": %d, "dy_px": %d, "steps": %d, "button": %d, "mod": %d, "hover": %s, "handle_part": %d}`,
+        dxPx, dyPx, steps, button, mod, hover, handlePart));
+}
+
+/// `gesture.drag` where only the drag LENGTH is a literal — every `axisDrag`
+/// call resolves BOTH the direction and axis of motion from a runtime
+/// projection.
+Drove driveDragMagOnly(int dragPx, int steps = 16, int button = 1, int mod = 0,
+                        bool hover = false) {
+    return Drove("gesture.drag", format(
+        `{"drag_px": %d, "steps": %d, "button": %d, "mod": %d, "hover": %s}`,
+        dragPx, steps, button, mod, hover));
+}
+
+/// `gesture.drag` where BOTH endpoints are projections of STAND geometry
+/// (drag.weld's source/target vertices) — no offset of any kind is a literal.
+Drove driveDragNoOffset(int steps = 16, int button = 1, int mod = 0,
+                         bool hover = false) {
+    return Drove("gesture.drag", format(
+        `{"steps": %d, "button": %d, "mod": %d, "hover": %s}`,
+        steps, button, mod, hover));
+}
+
+/// `gesture.click` where the pixel is a projection of STAND geometry (tack's
+/// hovered target face) — no x_px/y_px is a literal.
+Drove driveClickNoOffset(int button = 1, int mod = 0, bool hover = false) {
+    return Drove("gesture.click", format(
+        `{"button": %d, "mod": %d, "hover": %s}`, button, mod, hover));
 }
 
 double attrOf(string tool, string name) {
@@ -236,6 +327,7 @@ struct Cell {
     string   preOp, postCommit, postUndo, postRedo;
     string[] undoResidual;    // planes where postUndo differs from preOp
     string[] redoResidual;    // planes where postRedo differs from postCommit
+    Drove[]  drove;           // task 3091: this cell's captured `parameters` drive
 }
 
 /// Drive one gesture and score it. `stand` builds the scene AND clears history;
@@ -248,6 +340,7 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     c.name = name; c.tool = tool; c.recordSite = recordSite;
     c.mode = mode; c.payload = payload;
 
+    gDrove = [];   // task 3091: this cell's own (stand, gesture, drop) drive
     stand();
     immutable long u0 = undoLen();
     assert(u0 == 0,
@@ -265,6 +358,7 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     c.postCommit = planes();
     c.entryNames = historyNames();
     c.undoDelta  = undoLen() - u0;
+    c.drove      = gDrove;   // task 3091: captured after stand+gesture+drop
 
     // ANTI-VACUITY, BEFORE anything is compared. A gesture that moved no plane
     // makes every assertion below satisfiable by an undo that does nothing —
@@ -303,10 +397,39 @@ Cell runCell(string name, string tool, string recordSite, string mode,
 // Compare against the frozen oracle — or capture
 // ---------------------------------------------------------------------------
 
+/// Render this run's captured `parameters` block (schema 3010, task 3091).
+/// `derived_from` is "generator": this producer IS the generator that emits
+/// the fixture, and it built this block from `gDrove` — its own live drive
+/// record — not by re-reading a previous fixture's copy.
+string parametersJson(in Cell[] cells) {
+    auto s = appender!string();
+    s ~= "{\n";
+    s ~= "    \"schema\": 1,\n";
+    s ~= "    \"state\": \"recorded\",\n";
+    s ~= "    \"derived_from\": \"generator\",\n";
+    s ~= "    \"cells\": [\n";
+    foreach (i, ref c; cells) {
+        s ~= format("      {\"cell\": \"%s\", \"drove\": [", c.name);
+        foreach (j, ref d; c.drove) {
+            s ~= format(`{"op": "%s", "values": %s}`, d.op, d.values);
+            if (j + 1 < c.drove.length) s ~= ", ";
+        }
+        s ~= (i + 1 < cells.length) ? "]},\n" : "]}\n";
+    }
+    s ~= "    ],\n";
+    s ~= "    \"notes\": \"collected live by this producer's own runCell/cmd()/"
+       ~ "interactiveAttr() instrumentation (task 3091): tool.set/tool.attr "
+       ~ "values are parsed off the wire argstring actually sent; gesture "
+       ~ "magnitudes are recorded at their own driving call site\"\n";
+    s ~= "  }";
+    return s.data;
+}
+
 string fixtureJson(in Cell[] cells) {
     auto s = appender!string();
     s ~= "{\n";
     s ~= "  \"family\": \"tool_gesture_g4\",\n";
+    s ~= "  \"parameters\": " ~ parametersJson(cells) ~ ",\n";
     s ~= "  \"writtenBy\": \"" ~ kWrittenBy ~ "\",\n";
     s ~= "  \"producedBy\": \"" ~ environment.get("VIBE3D_TOOL_GESTURE_SHA", "unknown") ~ "\",\n";
     s ~= "  \"stand\": \"per-cell; see each cell's `drive`\",\n";
@@ -557,6 +680,10 @@ void axisDrag(Vec3 anchor, Vec3 axis, double pixels, bool hoverFirst) {
     dragPixels(cast(int) pxx, cast(int) pyy,
                cast(int)(pxx + dx / len * pixels),
                cast(int)(pyy + dy / len * pixels), 16);
+    // Every call in this file resolves BOTH the direction and the axis of
+    // motion from a runtime projection, and grabs no handle part — only the
+    // drag LENGTH and `hoverFirst` are literals.
+    gDrove ~= driveDragMagOnly(cast(int) pixels, 16, 1, 0, hoverFirst);
 }
 
 /// The cube edge whose midpoint is (mx,my,mz) — the operand of the edge cell.
@@ -679,6 +806,7 @@ unittest {
         {
             int hx, hy; handlePx(0, hx, hy);
             dragPixels(hx, hy, hx + 70, hy - 40, 16);
+            gDrove ~= driveDragHandle(70, -40, 0, 16);
             assert(getJ("/api/tool/state")["built"].type == JSONType.true_,
                 "poly.bevel: the Shift haul left `built` false — the kernel "
               ~ "touched no face, so the drop will record nothing");
@@ -698,6 +826,7 @@ unittest {
             immutable int cx = cam.vpX + cam.width / 2;
             immutable int cy = cam.vpY + cam.height / 2;
             dragPixels(cx, cy, cx, cy - 60, 12);
+            gDrove ~= driveDrag(0, -60, 12);
             assert(attrOf("mesh.polyInsetTool", "inset") > 1e-4,
                 "poly.inset: the 60 px haul left `inset` at zero — the press "
               ~ "fell outside the viewport the haul is anchored in");
@@ -732,6 +861,7 @@ unittest {
             int hx, hy; handlePx(0, hx, hy);
             hover(hx, hy);
             dragPixels(hx, hy, hx + 70, hy - 50, 16);
+            gDrove ~= driveDragHandle(70, -50, 0, 16, 1, 0, true);
             assert(getJ("/api/tool/state")["built"].type == JSONType.true_,
                 "edge.bevel: the Width drag left `built` false — the kernel "
               ~ "chamfered no edge and the drop will record nothing");
@@ -773,9 +903,11 @@ unittest {
             int wx, wy; handlePx(1, wx, wy);       // Width
             hover(wx, wy);
             dragPixels(wx, wy, wx + 70, wy - 50, 16);
+            gDrove ~= driveDragHandle(70, -50, 1, 16, 1, 0, true);
             int sx, sy; handlePx(0, sx, sy);       // Extrude (shift)
             hover(sx, sy);
             dragPixels(sx, sy, sx + 70, sy - 50, 16);
+            gDrove ~= driveDragHandle(70, -50, 0, 16, 1, 0, true);
             assert(vertexCount() > v0,
                 "vertex.extrude: the two handle drags added no vertex (still "
               ~ v0.to!string ~ "). This is exactly the non-gesture the shipped "
@@ -803,6 +935,7 @@ unittest {
             immutable int cx = cam.vpX + cam.width / 2;
             immutable int cy = cam.vpY + cam.height / 2;
             dragPixels(cx, cy + 200, cx, cy - 200, 16);
+            gDrove ~= driveDrag(0, -400, 16);
             assert(vertexCount() < v0,
                 "vert.merge: the haul merged nothing (still " ~ v0.to!string
               ~ " vertices) even though `dist` reads "
@@ -853,6 +986,7 @@ unittest {
             assert(projectToWindow(Vec3(-0.5f, 0, 0), vp, tx, ty),
                 "drag.weld: target vertex projects off-screen");
             dragPixels(cast(int) sx, cast(int) sy, cast(int) tx, cast(int) ty, 20);
+            gDrove ~= driveDragNoOffset(20);
         },
         { cmd("tool.set mesh.dragWeld off"); });
 
@@ -882,6 +1016,7 @@ unittest {
                 "tack: the hover did not settle on the target face — the click "
               ~ "would then tack nothing: " ~ st.toString);
             click(cast(int) sx, cast(int) sy);
+            gDrove ~= driveClickNoOffset(1, 0, true);
         },
         { cmd("tool.set mesh.tack off"); });
 
@@ -903,6 +1038,7 @@ unittest {
             immutable int cx = cam.vpX + cam.width / 2;
             immutable int cy = cam.vpY + cam.height / 2;
             dragPixels(cx, cy, cx + 60, cy, 12);
+            gDrove ~= driveDrag(60, 0, 12);
             auto st = getJ("/api/tool/state");
             assert(st["valid"].type == JSONType.true_ &&
                    st["engaged"].type == JSONType.true_,

@@ -134,7 +134,7 @@
 // resolves in either tree.
 //
 // LANE: `./run_test.d --no-build test_tool_gesture_g2`.
-import std.algorithm : sort, canFind;
+import std.algorithm : sort, canFind, startsWith, endsWith;
 import std.array     : appender;
 import std.conv      : to;
 import std.format    : format;
@@ -142,6 +142,7 @@ import std.json;
 import std.math      : abs, sqrt;
 import std.net.curl  : get, post;
 import std.process   : environment;
+import std.string    : split;
 import core.thread   : Thread;
 import core.time     : dur;
 
@@ -177,6 +178,75 @@ void cmd(string line) {
     assert(r["status"].str == "ok" || r["status"].str == "success",
         "/api/command '" ~ line ~ "' failed: " ~ r.toString
       ~ " — the stand this cell measures was never built");
+    // Task 3091: every `tool.set` / `tool.attr` WRITE this cell issues IS a
+    // captured parameter (schema 3010) — recorded off the SAME string that
+    // drives the wire command. A trailing `?` is a READ (this file's `mirror`
+    // cell reads `center` through a bare `postJ`, never through `cmd()`, but
+    // the guard stays here too so a future read-through-`cmd()` cannot be
+    // mistaken for a drive). Any other `cmd()` line is stand and unrecorded.
+    if ((line.startsWith("tool.set ") || line.startsWith("tool.attr "))
+        && !line.endsWith(" ?"))
+        gDrove ~= parseToolLine(line);
+}
+
+// ---------------------------------------------------------------------------
+// Parameter capture (task 3091) — the `parameters` block (schema 3010). See
+// tests/test_tool_gesture_g1.d for the full rationale; this is the same
+// mechanism: `cmd()` above records every tool.set/tool.attr WRITE off its own
+// argstring, `runCell` resets `gDrove` before `stand()` and reads it into
+// `Cell.drove` right after `drop()`, and each gesture call site below appends
+// its own `gesture.drag` entry using the SAME literal already driving that
+// call (or the magnitude only, where `dragAlongProjectedAxis` resolves the
+// screen direction from a runtime projection).
+struct Drove { string op; string values; }
+
+Drove[] gDrove;
+
+string jsonScalar(string raw) {
+    if (raw == "true" || raw == "false") return raw;
+    bool numeric = raw.length > 0;
+    bool sawDot = false;
+    foreach (i, ch; raw) {
+        if (ch == '-' && i == 0) continue;
+        if (ch == '.' && !sawDot) { sawDot = true; continue; }
+        if (ch < '0' || ch > '9') { numeric = false; break; }
+    }
+    return numeric ? raw : (`"` ~ raw ~ `"`);
+}
+
+/// Parse a `cmd()` argstring already known to start `tool.set `/`tool.attr `
+/// into its normalised drove entry. A quoted tool id is unquoted.
+Drove parseToolLine(string line) {
+    auto toks = line.split();
+    assert(toks.length >= 2, "parseToolLine: too short: " ~ line);
+    string id = toks[1];
+    if (id.length >= 2 && id[0] == '"' && id[$ - 1] == '"') id = id[1 .. $ - 1];
+    if (toks[0] == "tool.set") {
+        if (toks.length >= 3 && toks[2] == "on")  return Drove("tool.set " ~ id, `{"on": true}`);
+        if (toks.length >= 3 && toks[2] == "off") return Drove("tool.set " ~ id, `{"off": true}`);
+        return Drove("tool.set " ~ id, "{}");
+    }
+    assert(toks.length >= 4, "parseToolLine: tool.attr needs name+value: " ~ line);
+    return Drove("tool.attr " ~ id,
+        `{"` ~ toks[2] ~ `": ` ~ jsonScalar(toks[3]) ~ `}`);
+}
+
+Drove driveDrag(int dxPx, int dyPx, int steps = 16, int button = 1, int mod = 0,
+                bool hover = false) {
+    return Drove("gesture.drag", format(
+        `{"dx_px": %d, "dy_px": %d, "steps": %d, "button": %d, "mod": %d, "hover": %s}`,
+        dxPx, dyPx, steps, button, mod, hover));
+}
+
+/// `gesture.drag` where only the drag LENGTH is a literal — used at every
+/// `dragAlongProjectedAxis` call, whose screen direction (and therefore its
+/// resolved dx/dy, INCLUDING which axis carries the motion) is resolved from
+/// a runtime projection.
+Drove driveDragMagOnly(int dragPx, int steps = 16, int button = 1, int mod = 0,
+                        bool hover = false) {
+    return Drove("gesture.drag", format(
+        `{"drag_px": %d, "steps": %d, "button": %d, "mod": %d, "hover": %s}`,
+        dragPx, steps, button, mod, hover));
 }
 
 double attrOf(string tool, string name) {
@@ -271,6 +341,7 @@ struct Cell {
     string   preOp, postCommit, postUndo, postRedo;
     string[] undoResidual;    // planes where postUndo differs from preOp
     string[] redoResidual;    // planes where postRedo differs from postCommit
+    Drove[]  drove;           // task 3091: this cell's captured `parameters` drive
 }
 
 /// Drive one gesture and score it. `stand` builds the scene AND clears history;
@@ -283,6 +354,7 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     c.name = name; c.tool = tool; c.recordSite = recordSite;
     c.mode = mode; c.payload = payload; c.previewSubject = previewSubject;
 
+    gDrove = [];   // task 3091: this cell's own (stand, gesture, drop) drive
     stand();
     immutable long u0 = undoLen();
     assert(u0 == 0,
@@ -308,6 +380,7 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     c.postCommit = planes();
     c.entryNames = historyNames();
     c.undoDelta  = undoLen() - u0;
+    c.drove      = gDrove;   // task 3091: captured after stand+gesture+drop
 
     // ANTI-VACUITY, BEFORE anything is compared. A gesture that moved no plane
     // makes every assertion below satisfiable by an undo that does nothing —
@@ -370,10 +443,39 @@ Cell runCell(string name, string tool, string recordSite, string mode,
 // Compare against the frozen oracle — or capture
 // ---------------------------------------------------------------------------
 
+/// Render this run's captured `parameters` block (schema 3010, task 3091).
+/// `derived_from` is "generator": this producer IS the generator that emits
+/// the fixture, and it built this block from `gDrove` — its own live drive
+/// record — not by re-reading a previous fixture's copy.
+string parametersJson(in Cell[] cells) {
+    auto s = appender!string();
+    s ~= "{\n";
+    s ~= "    \"schema\": 1,\n";
+    s ~= "    \"state\": \"recorded\",\n";
+    s ~= "    \"derived_from\": \"generator\",\n";
+    s ~= "    \"cells\": [\n";
+    foreach (i, ref c; cells) {
+        s ~= format("      {\"cell\": \"%s\", \"drove\": [", c.name);
+        foreach (j, ref d; c.drove) {
+            s ~= format(`{"op": "%s", "values": %s}`, d.op, d.values);
+            if (j + 1 < c.drove.length) s ~= ", ";
+        }
+        s ~= (i + 1 < cells.length) ? "]},\n" : "]}\n";
+    }
+    s ~= "    ],\n";
+    s ~= "    \"notes\": \"collected live by this producer's own runCell/cmd() "
+       ~ "instrumentation (task 3091): tool.set/tool.attr values are parsed "
+       ~ "off the wire argstring cmd() actually sent; gesture magnitudes are "
+       ~ "recorded at their own driving call site\"\n";
+    s ~= "  }";
+    return s.data;
+}
+
 string fixtureJson(in Cell[] cells) {
     auto s = appender!string();
     s ~= "{\n";
     s ~= "  \"family\": \"tool_gesture_g2\",\n";
+    s ~= "  \"parameters\": " ~ parametersJson(cells) ~ ",\n";
     s ~= "  \"writtenBy\": \"" ~ kWrittenBy ~ "\",\n";
     s ~= "  \"producedBy\": \"" ~ environment.get("VIBE3D_TOOL_GESTURE_SHA", "unknown") ~ "\",\n";
     s ~= "  \"stand\": \"per-cell; see each cell's drive in the producer\",\n";
@@ -582,6 +684,9 @@ void dragAlongProjectedAxis(Vec3 from, Vec3 anchor, Vec3 axis, double pixels,
     dragPixels(cast(int) fx, cast(int) fy,
                cast(int)(fx + dx / len * pixels),
                cast(int)(fy + dy / len * pixels), steps);
+    // Every call in this file resolves BOTH the direction and the axis of
+    // motion from a runtime projection — only the drag LENGTH is a literal.
+    gDrove ~= driveDragMagOnly(cast(int) pixels, steps);
 }
 
 // ---------------------------------------------------------------------------
@@ -781,6 +886,7 @@ unittest {
             immutable int cx = cam.vpX + cam.width / 2;
             immutable int cy = cam.vpY + cam.height / 2;
             dragPixels(cx, cy, cx + 70, cy - 40, 12);
+            gDrove ~= driveDrag(70, -40, 12);
             assert(vertexCount() > 8,
                 "array: the haul left " ~ vertexCount().to!string ~ " vertices, "
               ~ "expected more than the cube's 8. The shipped drive of this "
@@ -805,6 +911,7 @@ unittest {
             immutable int cx = cam.vpX + cam.width / 2;
             immutable int cy = cam.vpY + cam.height / 2;
             dragPixels(cx, cy, cx + 70, cy - 40, 12);
+            gDrove ~= driveDrag(70, -40, 12);
             assert(vertexCount() == 12,
                 "clone: the haul left " ~ vertexCount().to!string ~ " vertices, "
               ~ "expected 12 (the cube's 8 plus one 4-corner copy of face 4). "

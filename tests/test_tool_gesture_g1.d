@@ -60,7 +60,7 @@
 // resolves in either tree.
 //
 // LANE: `./run_test.d --no-build test_tool_gesture_g1`.
-import std.algorithm : sort, canFind;
+import std.algorithm : sort, canFind, startsWith;
 import std.array     : appender, array;
 import std.conv      : to;
 import std.format    : format;
@@ -68,6 +68,7 @@ import std.json;
 import std.math      : abs;
 import std.net.curl  : get, post;
 import std.process   : environment;
+import std.string    : split;
 import core.thread   : Thread;
 import core.time     : dur;
 
@@ -102,6 +103,107 @@ void cmd(string line) {
     assert(r["status"].str == "ok" || r["status"].str == "success",
         "/api/command '" ~ line ~ "' failed: " ~ r.toString
       ~ " — the stand this cell measures was never built");
+    // Task 3091: every `tool.set` / `tool.attr` line this cell issues IS a
+    // captured parameter (schema 3010) — recorded here, off the SAME string
+    // that drives the wire command, never a hand-duplicated literal. Any
+    // OTHER `cmd()` line (`history.clear`, …) is stand and is not recorded.
+    if (line.startsWith("tool.set ") || line.startsWith("tool.attr "))
+        gDrove ~= parseToolLine(line);
+}
+
+// ---------------------------------------------------------------------------
+// Parameter capture (task 3091) — the `parameters` block (schema 3010).
+//
+// WHY THIS LIVES HERE AND NOT AS A COPY OF THE FIXTURE'S OWN BLOCK. Task 3090
+// hand-transcribed a `parameters` block into every one of this family's six
+// fixtures by READING this file — but `fixtureJson()` never learned to emit
+// one, so the next capture (VIBE3D_TOOL_GESTURE_CAPTURE_G1=…) would silently
+// drop it (recorded in that block's own `notes` as a named HAZARD). Copying
+// that JSON text forward here would make a regenerated fixture assert its own
+// history rather than what this run actually drove, so instead the same two
+// sources 3090 read BY HAND are read by the CODE that drives them:
+//   - every `tool.set` / `tool.attr` line is parsed off the wire argstring in
+//     `cmd()` above, the instant it is sent — `parseToolLine` below;
+//   - every `gesture.*` (drag / click / key) entry is appended at its own
+//     call site, in `gDrove`, using the SAME literal already driving that
+//     call (or omitted, matching 3090's judgement, where the pixel endpoint
+//     is a projection of STAND geometry rather than a driven magnitude).
+// `runCell` resets `gDrove` before `stand()` and reads it into `Cell.drove`
+// right after `drop()` — so a cell's drove list is exactly what THAT cell's
+// (stand, gesture, drop) triple issued, in the order it issued it.
+struct Drove { string op; string values; }
+
+Drove[] gDrove;
+
+/// A JSON scalar for a bare token off a wire argstring: `true`/`false` and a
+/// plain int/float pass through unquoted; anything else (`point`, `move`, an
+/// enum name) is a string and gets quoted.
+string jsonScalar(string raw) {
+    if (raw == "true" || raw == "false") return raw;
+    bool numeric = raw.length > 0;
+    bool sawDot = false;
+    foreach (i, ch; raw) {
+        if (ch == '-' && i == 0) continue;
+        if (ch == '.' && !sawDot) { sawDot = true; continue; }
+        if (ch < '0' || ch > '9') { numeric = false; break; }
+    }
+    return numeric ? raw : (`"` ~ raw ~ `"`);
+}
+
+/// Parse a `cmd()` argstring already known to start `tool.set `/`tool.attr `
+/// into its normalised drove entry. A quoted tool id (`"prim.vertex"`) is
+/// unquoted; a trailing extra positional (the inert `0` in the prim.vertex
+/// and pen arms below) is ignored, matching source/commands/tool/set.d's own
+/// wire format — only positional[1] == "off" is read there.
+Drove parseToolLine(string line) {
+    auto toks = line.split();
+    assert(toks.length >= 2, "parseToolLine: too short: " ~ line);
+    string id = toks[1];
+    if (id.length >= 2 && id[0] == '"' && id[$ - 1] == '"') id = id[1 .. $ - 1];
+    if (toks[0] == "tool.set") {
+        if (toks.length >= 3 && toks[2] == "on")  return Drove("tool.set " ~ id, `{"on": true}`);
+        if (toks.length >= 3 && toks[2] == "off") return Drove("tool.set " ~ id, `{"off": true}`);
+        return Drove("tool.set " ~ id, "{}");
+    }
+    assert(toks.length >= 4, "parseToolLine: tool.attr needs name+value: " ~ line);
+    return Drove("tool.attr " ~ id,
+        `{"` ~ toks[2] ~ `": ` ~ jsonScalar(toks[3]) ~ `}`);
+}
+
+/// One `gesture.drag`, full-precision two-axis form.
+Drove driveDrag(int dxPx, int dyPx, int steps = 16, int button = 1, int mod = 0,
+                bool hover = false) {
+    return Drove("gesture.drag", format(
+        `{"dx_px": %d, "dy_px": %d, "steps": %d, "button": %d, "mod": %d, "hover": %s}`,
+        dxPx, dyPx, steps, button, mod, hover));
+}
+
+/// `gesture.drag` where only the drag LENGTH is a literal and the sign/axis
+/// is resolved from a runtime projection — `dy_px` here is still a genuine
+/// literal (the two endpoints share one screen row by construction).
+Drove driveDragMag(int dragPx, int dyPx, int steps = 16, int button = 1,
+                    int mod = 0, bool hover = false) {
+    return Drove("gesture.drag", format(
+        `{"drag_px": %d, "dy_px": %d, "steps": %d, "button": %d, "mod": %d, "hover": %s}`,
+        dragPx, dyPx, steps, button, mod, hover));
+}
+
+/// `gesture.drag` where the arm carries a `/api/tool/handles` part index.
+Drove driveDragHandle(int dxPx, int dyPx, int handlePart, int steps = 16,
+                       int button = 1, int mod = 0, bool hover = false) {
+    return Drove("gesture.drag", format(
+        `{"dx_px": %d, "dy_px": %d, "steps": %d, "button": %d, "mod": %d, "hover": %s, "handle_part": %d}`,
+        dxPx, dyPx, steps, button, mod, hover, handlePart));
+}
+
+Drove driveClick(int xPx, int yPx, int button = 1, int mod = 0) {
+    return Drove("gesture.click", format(
+        `{"x_px": %d, "y_px": %d, "button": %d, "mod": %d, "hover": false}`,
+        xPx, yPx, button, mod));
+}
+
+Drove driveKey(int sym, int mod = 0) {
+    return Drove("gesture.key", format(`{"sym": %d, "mod": %d}`, sym, mod));
 }
 
 /// The PLANE-COMPLETE readback. `/api/model` is not a substitute: it carries no
@@ -178,6 +280,7 @@ struct Cell {
     string   preOp, postCommit, postUndo, postRedo;
     string[] undoResidual;    // planes where postUndo differs from preOp
     string[] redoResidual;    // planes where postRedo differs from postCommit
+    Drove[]  drove;           // task 3091: this cell's captured `parameters` drive
 }
 
 /// Drive one gesture and score it. `stand` builds the scene AND clears history;
@@ -190,6 +293,7 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     c.name = name; c.tool = tool; c.recordSite = recordSite;
     c.mode = mode; c.payload = payload;
 
+    gDrove = [];   // task 3091: this cell's own (stand, gesture, drop) drive
     stand();
     immutable long u0 = undoLen();
     assert(u0 == 0,
@@ -207,6 +311,7 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     c.postCommit = planes();
     c.entryNames = historyNames();
     c.undoDelta  = undoLen() - u0;
+    c.drove      = gDrove;   // task 3091: captured after stand+gesture+drop
 
     // ANTI-VACUITY, BEFORE anything is compared. A gesture that moved no plane
     // makes every assertion below satisfiable by an undo that does nothing —
@@ -244,10 +349,40 @@ Cell runCell(string name, string tool, string recordSite, string mode,
 // Compare against the frozen oracle — or capture
 // ---------------------------------------------------------------------------
 
+/// Render this run's captured `parameters` block (schema 3010, task 3091).
+/// `derived_from` is "generator": this producer IS the generator that emits
+/// the fixture, and it built this block from `gDrove` — its own live drive
+/// record captured in `cmd()` and at each gesture call site — never by
+/// re-reading a previous fixture's copy of the block.
+string parametersJson(in Cell[] cells) {
+    auto s = appender!string();
+    s ~= "{\n";
+    s ~= "    \"schema\": 1,\n";
+    s ~= "    \"state\": \"recorded\",\n";
+    s ~= "    \"derived_from\": \"generator\",\n";
+    s ~= "    \"cells\": [\n";
+    foreach (i, ref c; cells) {
+        s ~= format("      {\"cell\": \"%s\", \"drove\": [", c.name);
+        foreach (j, ref d; c.drove) {
+            s ~= format(`{"op": "%s", "values": %s}`, d.op, d.values);
+            if (j + 1 < c.drove.length) s ~= ", ";
+        }
+        s ~= (i + 1 < cells.length) ? "]},\n" : "]}\n";
+    }
+    s ~= "    ],\n";
+    s ~= "    \"notes\": \"collected live by this producer's own runCell/cmd() "
+       ~ "instrumentation (task 3091): tool.set/tool.attr values are parsed "
+       ~ "off the wire argstring cmd() actually sent; gesture magnitudes are "
+       ~ "recorded at their own driving call site\"\n";
+    s ~= "  }";
+    return s.data;
+}
+
 string fixtureJson(in Cell[] cells) {
     auto s = appender!string();
     s ~= "{\n";
     s ~= "  \"family\": \"tool_gesture_g1\",\n";
+    s ~= "  \"parameters\": " ~ parametersJson(cells) ~ ",\n";
     s ~= "  \"writtenBy\": \"" ~ kWrittenBy ~ "\",\n";
     s ~= "  \"producedBy\": \"" ~ environment.get("VIBE3D_TOOL_GESTURE_SHA", "unknown") ~ "\",\n";
     s ~= "  \"stand\": \"per-cell; see each cell's `drive`\",\n";
@@ -568,8 +703,8 @@ unittest {
         { resetEmpty(); cmd("history.clear"); setOrbitCamera(); cmd("tool.set prim.sphere"); },
         {
             int cx, cy; px(Vec3(0, 0, 0), cx, cy);
-            dragPixels(cx, cy, cx + 140, cy + 130);
-            dragPixels(cx, cy, cx, cy - 90);
+            dragPixels(cx, cy, cx + 140, cy + 130); gDrove ~= driveDrag(140, 130);
+            dragPixels(cx, cy, cx, cy - 90);        gDrove ~= driveDrag(0, -90);
         },
         { cmd("tool.set prim.sphere off"); });
 
@@ -582,7 +717,7 @@ unittest {
         { resetEmpty(); cmd("history.clear"); setOrbitCamera(); cmd("tool.set prim.cube"); },
         {
             int cx, cy; px(Vec3(0, 0, 0), cx, cy);
-            dragPixels(cx, cy, cx + 150, cy + 140);
+            dragPixels(cx, cy, cx + 150, cy + 140); gDrove ~= driveDrag(150, 140);
         },
         { cmd("tool.set prim.cube off"); });
 
@@ -603,8 +738,8 @@ unittest {
         { resetEmpty(); cmd("history.clear"); setOrbitCamera(); cmd("tool.set prim.cube"); },
         {
             int cx, cy; px(Vec3(0, 0, 0), cx, cy);
-            dragPixels(cx, cy, cx + 150, cy + 140);
-            dragPixels(cx, cy, cx, cy - 100);
+            dragPixels(cx, cy, cx + 150, cy + 140); gDrove ~= driveDrag(150, 140);
+            dragPixels(cx, cy, cx, cy - 100);       gDrove ~= driveDrag(0, -100);
         },
         { cmd("tool.set prim.cube off"); });
 
@@ -619,7 +754,7 @@ unittest {
         { resetEmpty(); cmd("history.clear"); setOrbitCamera(); cmd("tool.set prim.arc"); },
         {
             int cx, cy; px(Vec3(0, 0, 0), cx, cy);
-            dragPixels(cx, cy, cx + 150, cy + 120);
+            dragPixels(cx, cy, cx + 150, cy + 120); gDrove ~= driveDrag(150, 120);
         },
         { cmd("tool.set prim.arc off"); });
 
@@ -634,7 +769,11 @@ unittest {
             setOrbitCamera(0.0, 0.2, 3.0);
             cmd(`tool.set "prim.vertex" on 0`);
         },
-        { playAndWait(kClickHeader ~ "\n" ~ clickAt(100, 350, 280), BASE); settle(); },
+        {
+            playAndWait(kClickHeader ~ "\n" ~ clickAt(100, 350, 280), BASE);
+            gDrove ~= driveClick(350, 280);
+            settle();
+        },
         { cmd(`tool.set "prim.vertex" off 0`); });
 
     // --- (f) PenTool: three clicks and Enter. A standing edit with NO commit
@@ -655,6 +794,10 @@ unittest {
                       ~ `{"t":400,"type":"SDL_KEYDOWN","sym":13,"scan":0,"mod":0,"repeat":0}` ~ "\n"
                       ~ `{"t":410,"type":"SDL_KEYUP","sym":13,"scan":0,"mod":0,"repeat":0}`,
                         BASE);
+            gDrove ~= driveClick(350, 280);
+            gDrove ~= driveClick(430, 280);
+            gDrove ~= driveClick(390, 340);
+            gDrove ~= driveKey(13, 0);
             settle();
         },
         { cmd(`tool.set "pen" off 0`); });
@@ -669,6 +812,7 @@ unittest {
         {
             int x0, y0; px(Vec3(0.5f, 0.5f, 0.5f), x0, y0);
             hoverDrag(x0, y0, x0 + 100, y0);
+            gDrove ~= driveDrag(100, 0, 20, 1, 0, true);
         },
         { cmd("tool.set xfrm.magnet off"); });
 
@@ -706,6 +850,10 @@ unittest {
               ~ "for this drag to separate the arrow branch from the free one");
             dragPixels(cast(int) pxx, cast(int) pyy,
                        cast(int) pxx + (sdx > 0 ? 80 : -80), cast(int) pyy, 16);
+            // `sdx`'s SIGN flips the drag's screen direction at runtime; its
+            // magnitude (80) and the flat `dy_px` (0, the two endpoints share
+            // one screen row by construction) are the only literals.
+            gDrove ~= driveDragMag(80, 0, 16);
         },
         { cmd("tool.set edge.extend off"); });
 
@@ -733,8 +881,10 @@ unittest {
         {
             int wx, wy; handlePx(1, wx, wy);          // width box
             dragPixels(wx, wy, wx - 40, wy, 12);
+            gDrove ~= driveDragHandle(-40, 0, 1, 12);
             int ex, ey; handlePx(0, ex, ey);          // extrude arrow
             dragPixels(ex, ey, ex + 70, ey, 12);
+            gDrove ~= driveDragHandle(70, 0, 0, 12);
             auto st = getJ("/api/tool/state");
             assert(st["built"].type == JSONType.true_,
                 "edge.extrude: the two handle drags left `built` false — the "

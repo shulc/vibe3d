@@ -120,7 +120,7 @@
 // resolves in either tree.
 //
 // LANE: `./run_test.d --no-build test_tool_gesture_g5`.
-import std.algorithm : sort, canFind;
+import std.algorithm : sort, canFind, startsWith, endsWith;
 import std.array     : appender, array;
 import std.conv      : to;
 import std.format    : format;
@@ -128,6 +128,7 @@ import std.json;
 import std.math      : abs, sqrt;
 import std.net.curl  : get, post;
 import std.process   : environment;
+import std.string    : split;
 import core.thread   : Thread;
 import core.time     : dur;
 
@@ -162,6 +163,66 @@ void cmd(string line) {
     assert(r["status"].str == "ok" || r["status"].str == "success",
         "/api/command '" ~ line ~ "' failed: " ~ r.toString
       ~ " — the stand this cell measures was never built");
+    // Task 3091: every `tool.set` / `tool.attr` WRITE this cell issues IS a
+    // captured parameter (schema 3010) — recorded off the SAME string that
+    // drives the wire command. A trailing `?` is a READ (`attrOf` above reads
+    // through a bare `postJ`, never through `cmd()`; the guard stays here too
+    // so a future read-through-`cmd()` cannot be mistaken for a drive).
+    if ((line.startsWith("tool.set ") || line.startsWith("tool.attr "))
+        && !line.endsWith(" ?"))
+        gDrove ~= parseToolLine(line);
+}
+
+// ---------------------------------------------------------------------------
+// Parameter capture (task 3091) — the `parameters` block (schema 3010). See
+// tests/test_tool_gesture_g1.d for the full rationale.
+struct Drove { string op; string values; }
+
+Drove[] gDrove;
+
+string jsonScalar(string raw) {
+    if (raw == "true" || raw == "false") return raw;
+    bool numeric = raw.length > 0;
+    bool sawDot = false;
+    foreach (i, ch; raw) {
+        if (ch == '-' && i == 0) continue;
+        if (ch == '.' && !sawDot) { sawDot = true; continue; }
+        if (ch < '0' || ch > '9') { numeric = false; break; }
+    }
+    return numeric ? raw : (`"` ~ raw ~ `"`);
+}
+
+Drove parseToolLine(string line) {
+    auto toks = line.split();
+    assert(toks.length >= 2, "parseToolLine: too short: " ~ line);
+    string id = toks[1];
+    if (id.length >= 2 && id[0] == '"' && id[$ - 1] == '"') id = id[1 .. $ - 1];
+    if (toks[0] == "tool.set") {
+        if (toks.length >= 3 && toks[2] == "on")  return Drove("tool.set " ~ id, `{"on": true}`);
+        if (toks.length >= 3 && toks[2] == "off") return Drove("tool.set " ~ id, `{"off": true}`);
+        return Drove("tool.set " ~ id, "{}");
+    }
+    assert(toks.length >= 4, "parseToolLine: tool.attr needs name+value: " ~ line);
+    return Drove("tool.attr " ~ id,
+        `{"` ~ toks[2] ~ `": ` ~ jsonScalar(toks[3]) ~ `}`);
+}
+
+/// `gesture.click` where the pixel is a projection of STAND geometry (an edge
+/// midpoint, the viewport centre) — no x_px/y_px is a literal.
+Drove driveClickNoOffset(int button = 1, int mod = 0, bool hover = false) {
+    return Drove("gesture.click", format(
+        `{"button": %d, "mod": %d, "hover": %s}`, button, mod, hover));
+}
+
+/// `gesture.drag` where both endpoints are projections of a runtime plane
+/// basis, but the OFFSET each is placed at along that basis (here `u * ±0.6`)
+/// is a world-space literal — recorded under its own name rather than
+/// disguised as a pixel quantity it is not.
+Drove driveDragWorldOffset(double endpointOffsetWorld, int steps = 16,
+                            int button = 1, int mod = 0, bool hover = false) {
+    return Drove("gesture.drag", format(
+        `{"steps": %d, "button": %d, "mod": %d, "hover": %s, "endpoint_offset_world": %g}`,
+        steps, button, mod, hover, endpointOffsetWorld));
 }
 
 double attrOf(string tool, string name) {
@@ -248,6 +309,7 @@ struct Cell {
     string   preOp, postCommit, postUndo, postRedo;
     string[] undoResidual;    // planes where postUndo differs from preOp
     string[] redoResidual;    // planes where postRedo differs from postCommit
+    Drove[]  drove;           // task 3091: this cell's captured `parameters` drive
 }
 
 /// Drive one gesture and score it. `stand` builds the scene AND clears history;
@@ -260,6 +322,7 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     c.name = name; c.tool = tool; c.recordSite = recordSite;
     c.mode = mode; c.payload = payload;
 
+    gDrove = [];   // task 3091: this cell's own (stand, gesture, drop) drive
     stand();
     immutable long u0 = undoLen();
     assert(u0 == 0,
@@ -277,6 +340,7 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     c.postCommit = planes();
     c.entryNames = historyNames();
     c.undoDelta  = undoLen() - u0;
+    c.drove      = gDrove;   // task 3091: captured after stand+gesture+drop
 
     // ANTI-VACUITY, BEFORE anything is compared. A gesture that moved no plane
     // makes every assertion below satisfiable by an undo that does nothing —
@@ -315,10 +379,39 @@ Cell runCell(string name, string tool, string recordSite, string mode,
 // Compare against the frozen oracle — or capture
 // ---------------------------------------------------------------------------
 
+/// Render this run's captured `parameters` block (schema 3010, task 3091).
+/// `derived_from` is "generator": this producer IS the generator that emits
+/// the fixture, and it built this block from `gDrove` — its own live drive
+/// record — not by re-reading a previous fixture's copy.
+string parametersJson(in Cell[] cells) {
+    auto s = appender!string();
+    s ~= "{\n";
+    s ~= "    \"schema\": 1,\n";
+    s ~= "    \"state\": \"recorded\",\n";
+    s ~= "    \"derived_from\": \"generator\",\n";
+    s ~= "    \"cells\": [\n";
+    foreach (i, ref c; cells) {
+        s ~= format("      {\"cell\": \"%s\", \"drove\": [", c.name);
+        foreach (j, ref d; c.drove) {
+            s ~= format(`{"op": "%s", "values": %s}`, d.op, d.values);
+            if (j + 1 < c.drove.length) s ~= ", ";
+        }
+        s ~= (i + 1 < cells.length) ? "]},\n" : "]}\n";
+    }
+    s ~= "    ],\n";
+    s ~= "    \"notes\": \"collected live by this producer's own runCell/cmd() "
+       ~ "instrumentation (task 3091): tool.set/tool.attr values are parsed "
+       ~ "off the wire argstring cmd() actually sent; gesture magnitudes are "
+       ~ "recorded at their own driving call site\"\n";
+    s ~= "  }";
+    return s.data;
+}
+
 string fixtureJson(in Cell[] cells) {
     auto s = appender!string();
     s ~= "{\n";
     s ~= "  \"family\": \"tool_gesture_g5\",\n";
+    s ~= "  \"parameters\": " ~ parametersJson(cells) ~ ",\n";
     s ~= "  \"writtenBy\": \"" ~ kWrittenBy ~ "\",\n";
     s ~= "  \"producedBy\": \"" ~ environment.get("VIBE3D_TOOL_GESTURE_SHA", "unknown") ~ "\",\n";
     s ~= "  \"stand\": \"per-cell; see each cell's `drive`\",\n";
@@ -674,6 +767,7 @@ unittest {
                 "edge.slice: operand edge B projects behind the camera");
 
             click(cast(int) ax, cast(int) ay);
+            gDrove ~= driveClickNoOffset();
             auto s1 = getJ("/api/tool/state");
             assert(s1["edgeA"].integer == eA,
                 "edge.slice: the first click latched edge "
@@ -684,6 +778,7 @@ unittest {
               ~ "cell refuses instead: " ~ s1.toString);
 
             click(cast(int) bx, cast(int) by);
+            gDrove ~= driveClickNoOffset();
             auto s2 = getJ("/api/tool/state");
             assert(s2["built"].type == JSONType.true_ &&
                    s2["chainSegments"].integer == 1,
@@ -712,6 +807,7 @@ unittest {
         {
             auto cam = fetchCamera(BASE);
             click(cam.vpX + cam.width / 2, cam.vpY + cam.height / 2);
+            gDrove ~= driveClickNoOffset();
             auto st = getJ("/api/tool/state");
             assert(st["armed"].type == JSONType.true_ &&
                    st["built"].type == JSONType.true_,
@@ -740,6 +836,7 @@ unittest {
                    projectToWindow(u *  0.6f, vp, bx, by),
                 "slice: the line endpoints project behind the camera");
             dragPixels(cast(int) ax, cast(int) ay, cast(int) bx, cast(int) by, 20);
+            gDrove ~= driveDragWorldOffset(0.6, 20);
             auto st = getJ("/api/tool/state");
             assert(st["lineDrawn"].type == JSONType.true_,
                 "slice: the drag drew no line (lineDrawn=false), so the drop "

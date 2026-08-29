@@ -141,7 +141,7 @@
 // resolves in either tree.
 //
 // LANE: `./run_test.d --no-build test_tool_gesture_g7`.
-import std.algorithm : sort, canFind;
+import std.algorithm : sort, canFind, startsWith, endsWith;
 import std.array     : appender;
 import std.conv      : to;
 import std.format    : format;
@@ -149,6 +149,7 @@ import std.json;
 import std.math      : abs, sqrt;
 import std.net.curl  : get, post;
 import std.process   : environment;
+import std.string    : split;
 import core.thread   : Thread;
 import core.time     : dur;
 
@@ -201,6 +202,63 @@ void cmdLine(string line) {
     assert(r["status"].str == "ok" || r["status"].str == "success",
         "/api/command '" ~ line ~ "' failed: " ~ r.toString
       ~ " — the stand this cell measures was never built");
+    // Task 3091: every `tool.set` / `tool.attr` WRITE this cell issues IS a
+    // captured parameter (schema 3010) — recorded off the SAME string that
+    // drives the wire command. A trailing `?` is a READ (no reader in this
+    // file uses one through `cmdLine()`; the guard stays here anyway so a
+    // future read cannot be mistaken for a drive).
+    if ((line.startsWith("tool.set ") || line.startsWith("tool.attr "))
+        && !line.endsWith(" ?"))
+        gDrove ~= parseToolLine(line);
+}
+
+// ---------------------------------------------------------------------------
+// Parameter capture (task 3091) — the `parameters` block (schema 3010). See
+// tests/test_tool_gesture_g1.d for the full rationale.
+struct Drove { string op; string values; }
+
+Drove[] gDrove;
+
+string jsonScalar(string raw) {
+    if (raw == "true" || raw == "false") return raw;
+    bool numeric = raw.length > 0;
+    bool sawDot = false;
+    foreach (i, ch; raw) {
+        if (ch == '-' && i == 0) continue;
+        if (ch == '.' && !sawDot) { sawDot = true; continue; }
+        if (ch < '0' || ch > '9') { numeric = false; break; }
+    }
+    return numeric ? raw : (`"` ~ raw ~ `"`);
+}
+
+Drove parseToolLine(string line) {
+    auto toks = line.split();
+    assert(toks.length >= 2, "parseToolLine: too short: " ~ line);
+    string id = toks[1];
+    if (id.length >= 2 && id[0] == '"' && id[$ - 1] == '"') id = id[1 .. $ - 1];
+    if (toks[0] == "tool.set") {
+        if (toks.length >= 3 && toks[2] == "on")  return Drove("tool.set " ~ id, `{"on": true}`);
+        if (toks.length >= 3 && toks[2] == "off") return Drove("tool.set " ~ id, `{"off": true}`);
+        return Drove("tool.set " ~ id, "{}");
+    }
+    assert(toks.length >= 4, "parseToolLine: tool.attr needs name+value: " ~ line);
+    return Drove("tool.attr " ~ id,
+        `{"` ~ toks[2] ~ `": ` ~ jsonScalar(toks[3]) ~ `}`);
+}
+
+/// `gesture.drag` — this family's presses carry no hover phase, so (unlike
+/// every other producer in this task) there is no `hover` field to record.
+Drove driveDrag(int dxPx, int dyPx, int steps = 16, int button = 1, int mod = 0) {
+    return Drove("gesture.drag", format(
+        `{"dx_px": %d, "dy_px": %d, "steps": %d, "button": %d, "mod": %d}`,
+        dxPx, dyPx, steps, button, mod));
+}
+
+/// `gesture.press` — a single down+up at one pixel (`pressReleaseLog`), the
+/// pixel itself always a projection of STAND geometry (a vertex, an edge
+/// midpoint, a face centroid, or the viewport centre) and never a literal.
+Drove drivePress(int button = 1, int mod = 0) {
+    return Drove("gesture.press", format(`{"button": %d, "mod": %d}`, button, mod));
 }
 
 /// The PLANE-COMPLETE readback. `/api/model` is not a substitute: it carries no
@@ -307,6 +365,7 @@ struct Cell {
     string   preOp, postCommit, postUndo, postRedo;
     string[] undoResidual;    // planes where postUndo differs from preOp
     string[] redoResidual;    // planes where postRedo differs from postCommit
+    Drove[]  drove;           // task 3091: this cell's captured `parameters` drive
 }
 
 /// Drive one gesture and score it. `stand` builds the scene AND clears history;
@@ -319,6 +378,7 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     c.name = name; c.tool = tool; c.recordSite = recordSite;
     c.mode = mode; c.payload = payload;
 
+    gDrove = [];   // task 3091: this cell's own (stand, gesture, drop) drive
     stand();
     immutable long u0 = undoLen();
     assert(u0 == 0,
@@ -337,6 +397,7 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     c.entryNames  = historyNames();
     c.entryLabels = historyLabels();
     c.undoDelta   = undoLen() - u0;
+    c.drove       = gDrove;   // task 3091: captured after stand+gesture+drop
 
     // ANTI-VACUITY, BEFORE anything is compared. A gesture that moved no plane
     // makes every assertion below satisfiable by an undo that does nothing.
@@ -373,10 +434,39 @@ Cell runCell(string name, string tool, string recordSite, string mode,
 // Compare against the frozen oracle — or capture
 // ---------------------------------------------------------------------------
 
+/// Render this run's captured `parameters` block (schema 3010, task 3091).
+/// `derived_from` is "generator": this producer IS the generator that emits
+/// the fixture, and it built this block from `gDrove` — its own live drive
+/// record — not by re-reading a previous fixture's copy.
+string parametersJson(in Cell[] cells) {
+    auto s = appender!string();
+    s ~= "{\n";
+    s ~= "    \"schema\": 1,\n";
+    s ~= "    \"state\": \"recorded\",\n";
+    s ~= "    \"derived_from\": \"generator\",\n";
+    s ~= "    \"cells\": [\n";
+    foreach (i, ref c; cells) {
+        s ~= format("      {\"cell\": \"%s\", \"drove\": [", c.name);
+        foreach (j, ref d; c.drove) {
+            s ~= format(`{"op": "%s", "values": %s}`, d.op, d.values);
+            if (j + 1 < c.drove.length) s ~= ", ";
+        }
+        s ~= (i + 1 < cells.length) ? "]},\n" : "]}\n";
+    }
+    s ~= "    ],\n";
+    s ~= "    \"notes\": \"collected live by this producer's own runCell/cmdLine() "
+       ~ "instrumentation (task 3091): tool.set/tool.attr values are parsed "
+       ~ "off the wire argstring cmdLine() actually sent; gesture magnitudes "
+       ~ "are recorded at their own driving call site\"\n";
+    s ~= "  }";
+    return s.data;
+}
+
 string fixtureJson(in Cell[] cells) {
     auto s = appender!string();
     s ~= "{\n";
     s ~= "  \"family\": \"tool_gesture_g7\",\n";
+    s ~= "  \"parameters\": " ~ parametersJson(cells) ~ ",\n";
     s ~= "  \"writtenBy\": \"" ~ kWrittenBy ~ "\",\n";
     s ~= "  \"producedBy\": \"" ~ environment.get("VIBE3D_TOOL_GESTURE_SHA", "unknown") ~ "\",\n";
     s ~= "  \"stand\": \"per-cell; see each cell's `drive`\",\n";
@@ -762,6 +852,7 @@ unittest {
               ~ vertexCount().to!string ~ " vertices");
             auto c = fetchCamera(BASE);
             play(pressReleaseLog(c.vpX + c.width / 2, c.vpY + c.height / 2, 0, 1));
+            gDrove ~= drivePress(1, 0);
             assert(vertexCount() == 1,
                 "place: the centre-pixel click placed " ~ vertexCount().to!string
               ~ " vertices, expected exactly 1. The sphere's centre is on the "
@@ -791,6 +882,7 @@ unittest {
             immutable size_t v0 = vertexCount(), e0 = edgeCount();
             int hx, hy; vertexPx(0, hx, hy);
             play(dragLog(hx, hy, hx + 80, hy + 40, kLShift, 1));
+            gDrove ~= driveDrag(80, 40, 16, 1, kLShift);
             assert(vertexCount() == v0 + 1 && edgeCount() == e0 + 1,
                 "build: the Shift+LMB drag from the hub produced "
               ~ vertexCount().to!string ~ "v/" ~ edgeCount().to!string ~ "e, "
@@ -813,6 +905,7 @@ unittest {
         {
             int ex, ey; quadEdge01Px(ex, ey);
             play(dragLog(ex, ey, ex + 45, ey + 30, kLShift, 1));
+            gDrove ~= driveDrag(45, 30, 16, 1, kLShift);
             assert(vertexCount() == 6 && edgeCount() == 7 && faceCount() == 2,
                 "dup-edge: duplicating one edge must give 6v/7e/2f (+2 vertices, "
               ~ "+3 edges, +1 bridge quad); got " ~ vertexCount().to!string ~ "v/"
@@ -832,6 +925,7 @@ unittest {
         {
             int ex, ey; quadEdge01Px(ex, ey);
             play(dragLog(ex, ey, ex + 45, ey + 30, kLShift, 3));
+            gDrove ~= driveDrag(45, 30, 16, 3, kLShift);
             assert(vertexCount() == 6 && edgeCount() == 7 && faceCount() == 2,
                 "dup-loop: on a lone quad the gathered loop trims to the pressed "
               ~ "edge alone, so the kernel must produce the SAME 6v/7e/2f as the "
@@ -857,6 +951,7 @@ unittest {
             immutable size_t v0 = vertexCount(), f0 = faceCount();
             int hx, hy; vertexPx(0, hx, hy);
             play(dragLog(hx, hy, hx - 40, hy + 30, 0, 1));
+            gDrove ~= driveDrag(-40, 30, 16, 1, 0);
             immutable auto p1 = vertexAt(0);
             immutable double d = sqrt((p1[0] - p0[0]) * (p1[0] - p0[0])
                                     + (p1[1] - p0[1]) * (p1[1] - p0[1])
@@ -887,6 +982,7 @@ unittest {
             immutable size_t f0 = faceCount();
             int fx, fy; quadFacePx(fx, fy);
             play(pressReleaseLog(fx, fy, kLCtrl, 2));
+            gDrove ~= drivePress(2, kLCtrl);
             assert(faceCount() == f0 - 1,
                 "remove: the Ctrl+MMB press left " ~ faceCount().to!string
               ~ " faces, expected " ~ (f0 - 1).to!string ~ ". A press that "

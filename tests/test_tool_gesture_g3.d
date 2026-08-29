@@ -104,7 +104,7 @@
 // resolves in either tree.
 //
 // LANE: `./run_test.d --no-build test_tool_gesture_g3`.
-import std.algorithm : sort, canFind;
+import std.algorithm : sort, canFind, startsWith, endsWith;
 import std.array     : appender, array;
 import std.conv      : to;
 import std.format    : format;
@@ -112,6 +112,7 @@ import std.json;
 import std.math      : abs, sqrt;
 import std.net.curl  : get, post;
 import std.process   : environment;
+import std.string    : split;
 import core.thread   : Thread;
 import core.time     : dur;
 
@@ -146,6 +147,63 @@ void cmd(string line) {
     assert(r["status"].str == "ok" || r["status"].str == "success",
         "/api/command '" ~ line ~ "' failed: " ~ r.toString
       ~ " — the stand this cell measures was never built");
+    // Task 3091: every `tool.set` / `tool.attr` WRITE this cell issues IS a
+    // captured parameter (schema 3010) — recorded off the SAME string that
+    // drives the wire command. A trailing `?` is a READ (`attrOf` below reads
+    // through a bare `postJ`, never through `cmd()`; the guard stays here too
+    // so a future read-through-`cmd()` cannot be mistaken for a drive).
+    if ((line.startsWith("tool.set ") || line.startsWith("tool.attr "))
+        && !line.endsWith(" ?"))
+        gDrove ~= parseToolLine(line);
+}
+
+// ---------------------------------------------------------------------------
+// Parameter capture (task 3091) — the `parameters` block (schema 3010). See
+// tests/test_tool_gesture_g1.d for the full rationale.
+struct Drove { string op; string values; }
+
+Drove[] gDrove;
+
+string jsonScalar(string raw) {
+    if (raw == "true" || raw == "false") return raw;
+    bool numeric = raw.length > 0;
+    bool sawDot = false;
+    foreach (i, ch; raw) {
+        if (ch == '-' && i == 0) continue;
+        if (ch == '.' && !sawDot) { sawDot = true; continue; }
+        if (ch < '0' || ch > '9') { numeric = false; break; }
+    }
+    return numeric ? raw : (`"` ~ raw ~ `"`);
+}
+
+Drove parseToolLine(string line) {
+    auto toks = line.split();
+    assert(toks.length >= 2, "parseToolLine: too short: " ~ line);
+    string id = toks[1];
+    if (id.length >= 2 && id[0] == '"' && id[$ - 1] == '"') id = id[1 .. $ - 1];
+    if (toks[0] == "tool.set") {
+        if (toks.length >= 3 && toks[2] == "on")  return Drove("tool.set " ~ id, `{"on": true}`);
+        if (toks.length >= 3 && toks[2] == "off") return Drove("tool.set " ~ id, `{"off": true}`);
+        return Drove("tool.set " ~ id, "{}");
+    }
+    assert(toks.length >= 4, "parseToolLine: tool.attr needs name+value: " ~ line);
+    return Drove("tool.attr " ~ id,
+        `{"` ~ toks[2] ~ `": ` ~ jsonScalar(toks[3]) ~ `}`);
+}
+
+Drove driveDrag(int dxPx, int dyPx, int steps = 16, int button = 1, int mod = 0,
+                bool hover = false) {
+    return Drove("gesture.drag", format(
+        `{"dx_px": %d, "dy_px": %d, "steps": %d, "button": %d, "mod": %d, "hover": %s}`,
+        dxPx, dyPx, steps, button, mod, hover));
+}
+
+/// `gesture.drag` where the arm carries a `/api/tool/handles` part index.
+Drove driveDragHandle(int dxPx, int dyPx, int handlePart, int steps = 16,
+                       int button = 1, int mod = 0, bool hover = false) {
+    return Drove("gesture.drag", format(
+        `{"dx_px": %d, "dy_px": %d, "steps": %d, "button": %d, "mod": %d, "hover": %s, "handle_part": %d}`,
+        dxPx, dyPx, steps, button, mod, hover, handlePart));
 }
 
 double attrOf(string tool, string name) {
@@ -232,6 +290,7 @@ struct Cell {
     string   preOp, postCommit, postUndo, postRedo;
     string[] undoResidual;    // planes where postUndo differs from preOp
     string[] redoResidual;    // planes where postRedo differs from postCommit
+    Drove[]  drove;           // task 3091: this cell's captured `parameters` drive
 }
 
 /// Drive one gesture and score it. `stand` builds the scene AND clears history;
@@ -244,6 +303,7 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     c.name = name; c.tool = tool; c.recordSite = recordSite;
     c.mode = mode; c.payload = payload;
 
+    gDrove = [];   // task 3091: this cell's own (stand, gesture, drop) drive
     stand();
     immutable long u0 = undoLen();
     assert(u0 == 0,
@@ -261,6 +321,7 @@ Cell runCell(string name, string tool, string recordSite, string mode,
     c.postCommit = planes();
     c.entryNames = historyNames();
     c.undoDelta  = undoLen() - u0;
+    c.drove      = gDrove;   // task 3091: captured after stand+gesture+drop
 
     // ANTI-VACUITY, BEFORE anything is compared. A gesture that moved no plane
     // makes every assertion below satisfiable by an undo that does nothing —
@@ -299,10 +360,39 @@ Cell runCell(string name, string tool, string recordSite, string mode,
 // Compare against the frozen oracle — or capture
 // ---------------------------------------------------------------------------
 
+/// Render this run's captured `parameters` block (schema 3010, task 3091).
+/// `derived_from` is "generator": this producer IS the generator that emits
+/// the fixture, and it built this block from `gDrove` — its own live drive
+/// record — not by re-reading a previous fixture's copy.
+string parametersJson(in Cell[] cells) {
+    auto s = appender!string();
+    s ~= "{\n";
+    s ~= "    \"schema\": 1,\n";
+    s ~= "    \"state\": \"recorded\",\n";
+    s ~= "    \"derived_from\": \"generator\",\n";
+    s ~= "    \"cells\": [\n";
+    foreach (i, ref c; cells) {
+        s ~= format("      {\"cell\": \"%s\", \"drove\": [", c.name);
+        foreach (j, ref d; c.drove) {
+            s ~= format(`{"op": "%s", "values": %s}`, d.op, d.values);
+            if (j + 1 < c.drove.length) s ~= ", ";
+        }
+        s ~= (i + 1 < cells.length) ? "]},\n" : "]}\n";
+    }
+    s ~= "    ],\n";
+    s ~= "    \"notes\": \"collected live by this producer's own runCell/cmd() "
+       ~ "instrumentation (task 3091): tool.set/tool.attr values are parsed "
+       ~ "off the wire argstring cmd() actually sent; gesture magnitudes are "
+       ~ "recorded at their own driving call site\"\n";
+    s ~= "  }";
+    return s.data;
+}
+
 string fixtureJson(in Cell[] cells) {
     auto s = appender!string();
     s ~= "{\n";
     s ~= "  \"family\": \"tool_gesture_g3\",\n";
+    s ~= "  \"parameters\": " ~ parametersJson(cells) ~ ",\n";
     s ~= "  \"writtenBy\": \"" ~ kWrittenBy ~ "\",\n";
     s ~= "  \"producedBy\": \"" ~ environment.get("VIBE3D_TOOL_GESTURE_SHA", "unknown") ~ "\",\n";
     s ~= "  \"stand\": \"per-cell; see each cell's `drive`\",\n";
@@ -597,6 +687,7 @@ unittest {
             int hx, hy; handlePx(0, hx, hy);
             hover(hx, hy);
             dragPixels(hx, hy, hx, hy - 80, 16);
+            gDrove ~= driveDragHandle(0, -80, 0, 16, 1, 0, true);
             assert(vertexCount() > v0,
                 "smooth.shift: the Offset haul added no vertex (still "
               ~ v0.to!string ~ ") even though `shift` reads "
@@ -629,6 +720,7 @@ unittest {
               ~ "tool consumes nothing");
             hover(cast(int) cx, cast(int) cy);
             dragPixels(cast(int) cx, cast(int) cy, cast(int) cx, cast(int) cy - 180, 16);
+            gDrove ~= driveDrag(0, -180, 16, 1, 0, true);
             assert(vertexCount() > v0,
                 "stroke.extrude: the 180 px stroke added no vertex (still "
               ~ v0.to!string ~ "). This tool publishes no `built` flag and no "
