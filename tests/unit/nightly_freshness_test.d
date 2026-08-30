@@ -58,6 +58,20 @@
 //   9. Drift as a quantity (task 2580, item 2): the six real data points
 //      the card names reproduced through the CLI, asserting the exact
 //      median/max the tool prints beside term 2's verdict.
+// EVERY BLOCK BUT 4 IS OFFLINE, AND STAYS OFFLINE ONLY IF IT SILENCES ALL
+// THREE TERMS. Each term has its own fetch and its own offline seam
+// (`--last-run-iso`/`--fake-no-runs`, `--schedule-run-isos`/
+// `--fake-no-schedule-runs`, `--verdict-run-isos`/`--fake-no-verdict-runs`),
+// and ONE unsilenced term is enough to make the tool resolve OWNER/REPO from
+// `origin` and call `gh`. That resolution is not merely slow — it FAILS, with
+// "could not resolve OWNER/REPO", in any tree whose `origin` is absent or not
+// a github.com URL (exported tarball, mirror, a worktree whose remote is
+// named otherwise), so an unsilenced term turns a logic test into a red on
+// the checkout's remote name. Blocks 1, 3, 5, 6, 7 and 9 therefore carry a
+// seam for all three terms; only block 4 deliberately goes out. The seams do
+// not blunt what those blocks test: terms 2 and 3 are REPORT-ONLY unless
+// --gate-schedule-health / --gate-verdict-freshness is passed, so the exit
+// codes those blocks assert on are still produced by the term under test.
 module tests.unit.nightly_freshness_test;
 
 import std.conv        : to;
@@ -89,15 +103,25 @@ unittest
 
     // GREEN: last run 7 hours ago against the default (1-missed-night)
     // threshold — nowhere near stale. `--fake-no-schedule-runs` (task 2580)
-    // keeps this block's original no-network guarantee: without it, term 2
-    // (added by task 2580) would fall through to a REAL `gh run list` call
-    // since no schedule-side offline seam is otherwise given here, quietly
-    // reintroducing a network dependency this block never had before.
+    // and `--fake-no-verdict-runs` (term 3) keep this block's original
+    // no-network guarantee: without them, term 2 / term 3 would fall through
+    // to a REAL `gh run list` call since no schedule- or verdict-side offline
+    // seam is otherwise given here, quietly reintroducing a network dependency
+    // this block never had before — and, worse, a dependency on the REMOTE
+    // NAME: `defaultRepoSlug()` refuses outright in any tree whose `origin`
+    // is not a github.com URL (an exported tarball, a mirror, a worktree with
+    // a differently-named remote), so the block reddened there with
+    // "could not resolve OWNER/REPO" and not with anything it is about.
+    // Both seams are REPORT-ONLY for their own terms, so they silence the
+    // fetch WITHOUT touching the exit code this block asserts on: term 1 is
+    // the only term that gates unless --gate-schedule-health /
+    // --gate-verdict-freshness is passed, and this block passes neither.
     {
         auto r = rdmd([
             "--last-run-iso", "2026-08-28T02:00:00Z",
             "--now-iso",       "2026-08-28T09:00:00Z",
             "--fake-no-schedule-runs",
+            "--fake-no-verdict-runs",
         ]);
         assert(r.status == 0, "a 7h-old run was refused as stale:\n" ~ r.output);
         assert(r.output.indexOf("fresh") >= 0,
@@ -113,6 +137,7 @@ unittest
             "--last-run-iso", "2026-08-26T02:09:00Z",
             "--now-iso",       "2026-08-28T09:00:00Z",
             "--fake-no-schedule-runs",
+            "--fake-no-verdict-runs",
         ]);
         assert(r.status == 1, "a stale run (task 2040's own incident date) did "
             ~ "not redden — exit " ~ r.status.to!string ~ ":\n" ~ r.output);
@@ -134,6 +159,7 @@ unittest
             "--last-run-iso", "2026-08-27T00:00:00Z",
             "--now-iso",       "2026-08-28T12:00:00Z",  // exactly 36h
             "--fake-no-schedule-runs",
+            "--fake-no-verdict-runs",
         ]);
         assert(atBoundary.status == 0, "exactly-at-threshold was refused:\n" ~ atBoundary.output);
 
@@ -141,6 +167,7 @@ unittest
             "--last-run-iso", "2026-08-26T23:59:59Z",
             "--now-iso",       "2026-08-28T12:00:00Z",  // 36h + 1s
             "--fake-no-schedule-runs",
+            "--fake-no-verdict-runs",
         ]);
         assert(pastBoundary.status == 1,
             "one second past threshold was NOT refused:\n" ~ pastBoundary.output);
@@ -186,9 +213,13 @@ unittest
     // ever" branch directly. A workflow that has genuinely never fired is a
     // REAL, distinct answer (not a parse error, not "fresh" by omission),
     // and it must read as stale/missing like any other absence.
-    // --fake-no-schedule-runs (task 2580) keeps this block network-free too:
-    // --fake-no-runs alone only silences TERM 1's fetch.
-    auto r = rdmd(["--fake-no-runs", "--fake-no-schedule-runs"]);
+    // --fake-no-schedule-runs (task 2580) and --fake-no-verdict-runs (term 3)
+    // keep this block network-free too: --fake-no-runs alone only silences
+    // TERM 1's fetch, and the other two would still resolve OWNER/REPO and
+    // call out. Both are report-only, so the exit-1 asserted below is still
+    // term 1's own verdict.
+    auto r = rdmd(["--fake-no-runs", "--fake-no-schedule-runs",
+                   "--fake-no-verdict-runs"]);
     assert(r.status == 1, "a workflow with zero recorded runs was not treated "
         ~ "as missing:\n" ~ r.output);
     assert(r.output.indexOf("NO recorded runs") >= 0,
@@ -258,6 +289,7 @@ unittest
             "--last-run-iso", dispatchIso,
             "--schedule-run-isos", scheduleIso,
             "--now-iso", maskedNowIso,
+            "--fake-no-verdict-runs",
         ]);
         assert(r.status == 0, "default (report-only) must not fail the process "
             ~ "on a stale schedule alone:\n" ~ r.output);
@@ -278,6 +310,7 @@ unittest
             "--schedule-run-isos", scheduleIso,
             "--now-iso", maskedNowIso,
             "--gate-schedule-health",
+            "--fake-no-verdict-runs",
         ]);
         assert(r.status == 1, "gated mode must redden on a stopped schedule "
             ~ "even though term 1 (any event) is fresh:\n" ~ r.output);
@@ -292,6 +325,7 @@ unittest
             "--last-run-iso", dispatchIso,
             "--schedule-run-isos", scheduleIso,
             "--now-iso", "2026-08-27T14:00:00Z",
+            "--fake-no-verdict-runs",
         ]);
         assert(r.status == 0, r.output);
         assert(r.output.indexOf("— fresh.") >= 0, r.output);
@@ -313,6 +347,7 @@ unittest
         "--last-run-iso", "2026-08-27T12:00:00Z",   // term 1 not under test here
         "--schedule-run-isos", "2026-08-26T00:00:00Z",
         "--now-iso", "2026-08-27T12:00:00Z",         // exactly 36h
+        "--fake-no-verdict-runs",
     ]);
     assert(atBoundary.output.indexOf("— delivering.") >= 0,
         "exactly-at-threshold schedule run was refused:\n" ~ atBoundary.output);
@@ -321,6 +356,7 @@ unittest
         "--last-run-iso", "2026-08-27T12:00:00Z",
         "--schedule-run-isos", "2026-08-25T23:59:59Z",
         "--now-iso", "2026-08-27T12:00:00Z",         // 36h + 1s
+        "--fake-no-verdict-runs",
     ]);
     assert(pastBoundary.output.indexOf("CRON STOPPED") >= 0,
         "one second past term 2's threshold was NOT refused:\n" ~ pastBoundary.output);
@@ -335,6 +371,7 @@ unittest
 {
     auto r = rdmd([
         "--fake-no-schedule-runs",
+        "--fake-no-verdict-runs",
         "--last-run-iso", "2026-08-28T00:00:00Z",
         "--now-iso",       "2026-08-28T01:00:00Z",
     ]);
@@ -345,6 +382,7 @@ unittest
 
     auto rGated = rdmd([
         "--fake-no-schedule-runs",
+        "--fake-no-verdict-runs",
         "--last-run-iso", "2026-08-28T00:00:00Z",
         "--now-iso",       "2026-08-28T01:00:00Z",
         "--gate-schedule-health",
@@ -404,6 +442,7 @@ unittest
         "2026-08-24T02:08:00Z,2026-08-23T02:10:00Z,2026-08-22T02:01:00Z",
         "--now-iso",       "2026-08-27T11:00:00Z",
         "--fake-no-runs",  // term 1 irrelevant to this assertion; keep fully offline
+        "--fake-no-verdict-runs",   // and term 3, same reason
     ]);
     assert(r.output.indexOf("median 98.5min") >= 0,
         "drift median wrong or missing:\n" ~ r.output);

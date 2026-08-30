@@ -458,6 +458,169 @@ string parityDiff(string path, in JSONValue a, in JSONValue b)
     }
 }
 
+// ===========================================================================
+// THE TOLERANCE'S OWN WITNESS — the cell the family did not have.
+//
+// WHY IT IS HERE, stated as the measurement that demanded it. `kParityRelTol`
+// / `kParityAbsTol` guard the FLOATING leaf of `parityDiff`, and until this
+// block nothing in the `undo_parity_*` family observed that branch. The
+// control mutation says exactly that: with BOTH constants set to `1.0` — a
+// hundred per cent, a budget wider than any coordinate these unit-scale
+// stands hold — the family ran GREEN and its log came out byte-identical.
+// The mutations that DO redden this file arrive from
+// `compareWithExceptions`'s "now AGREES" guard, and both land on
+// `faceSelectionOrder`, an INTEGER plane, which `parityDiff` routes down the
+// exact-compare arm before a tolerance is ever consulted. So the bound was
+// unwitnessed from both ends and could have been any number at all.
+//
+// WHY THE STAND IS SYNTHETIC. Two dumps built in memory, never a doctored
+// fixture. The files under `tests/fixtures/undo_parity/` are the PROVENANCE
+// of a measurement (this module's header, on `producedBy`), and a test that
+// perturbs one to score a comparator forges the record it is the oracle for.
+// These two objects claim no provenance; they exist to be compared. They are
+// shaped like a real `meshPlanesJson` dump — a skipped `provenance`, an
+// integer `counts` plane, a floating `vertices` plane — so the walk that
+// reaches the leaf is the reader's own `comparePlanes`, not a shortcut past
+// it into `parityDiff`.
+//
+// BOTH ENDS OF THE BOUND, because one alone leaves it free at the other:
+//   * a 1e-3 gap in a floating plane must be REPORTED. That is three decades
+//     above the budget and is the scale at which a wrong revert actually
+//     moves a unit-scale stand — the thing the tolerance must never swallow.
+//   * a TWO-ULP-OF-`float` gap must be PASSED. That is the toolchain noise
+//     the budget exists to absorb (ldc2 2/389 vs dmd 389/389, above), and it
+//     is derived with `nextUp` on the STORAGE type rather than typed in as a
+//     literal, so it cannot drift away from what an ulp actually is. The
+//     control carries the gap at TWO scales on purpose: 0.37 clears on the
+//     absolute arm, 37.0 cannot (7.63e-06 > 9.54e-07) and clears only on the
+//     relative one, so neither arm can be deleted without this cell noticing.
+//
+// MUTATIONS, one at a time — druntime stops a module at its first failure:
+//   * kParityAbsTol = kParityRelTol = 1.0  -> the REPORTED cell reddens;
+//   * kParityAbsTol = kParityRelTol = 0.0  -> the PASSED control reddens.
+// ===========================================================================
+
+/// One synthetic plane dump shaped like `meshPlanesJson`'s output, with two
+/// floating coordinates under the caller's control: one at unit scale and one
+/// two orders up, so a single cell can exercise both tolerance arms.
+private string syntheticPlaneDump(double unitScale, double bigScale)
+{
+    return format(`{"provenance": {"producedBy": "synthetic (no fixture was `
+                ~ `touched to build this)"}, "counts": {"vertices": 4, `
+                ~ `"faces": 1}, "vertices": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], `
+                ~ `[0.5, %.17g, 0.0], [%.17g, 0.0, 0.0]]}`,
+                  unitScale, bigScale);
+}
+
+/// The message `comparePlanes` refused with, or `""` when it did not refuse.
+/// The reader signals a difference by ASSERTING, so a witness of the numeric
+/// branch has to catch that rather than read a return value.
+private string refusalOf(scope void delegate() dg)
+{
+    import core.exception : AssertError;
+    try { dg(); } catch (AssertError e) { return e.msg.idup; }
+    return "";
+}
+
+/// Unit scale, and the same magnitude as `l0Stand`'s own perturbation.
+private enum float kWitnessUnit = 0.37f;
+/// Two decades up, chosen so two ulps of it exceed the ABSOLUTE budget.
+private enum float kWitnessBig  = 37.0f;
+
+/// `float` -> `double` THROUGH A RUNTIME PARAMETER, and that is not a
+/// flourish. A bare `cast(double) kWitnessUnit` on a `float` enum is folded by
+/// the compiler at `real` precision and yields 0.37 EXACTLY — never the
+/// `float` 0.37f the storage type actually holds. The control below would then
+/// measure 2.16 ulps while claiming two, i.e. its own comment would be the
+/// only evidence for its number. Passing through a `float` parameter forces
+/// the rounding to happen, so the gap is exactly what the ulp arithmetic says.
+private double asDouble(float v) { return v; }
+
+/// Two ulps up in the STORAGE type.
+private float twoUlpsUp(float v) { import std.math : nextUp; return nextUp(nextUp(v)); }
+
+// ---------------------------------------------------------------------------
+// REPORTED: a 1e-3 divergence in a floating plane. This is the cell that
+// reddens when the budget is widened.
+// ---------------------------------------------------------------------------
+unittest
+{
+    import std.string : indexOf;
+
+    immutable frozenText = syntheticPlaneDump(asDouble(kWitnessUnit),
+                                              asDouble(kWitnessBig));
+    immutable freshText  = syntheticPlaneDump(asDouble(kWitnessUnit) + 1e-3,
+                                              asDouble(kWitnessBig));
+    auto frozen = parseJSON(frozenText);
+
+    immutable msg = refusalOf({
+        comparePlanes("<synthetic tolerance witness>", "float-plane-1e-3",
+                      "postOp", frozen, freshText);
+    });
+
+    assert(msg.length > 0,
+        "a 1e-3 divergence in a FLOATING plane was swallowed by the parity "
+      ~ "tolerance. The budget is 8 ulps of float (~9.54e-07 relative); 1e-3 "
+      ~ "is three decades above it and is the order a wrong revert moves a "
+      ~ "unit-scale stand by. A comparator that passes this cell has no bound "
+      ~ "at all, and every numeric assertion in this family is then satisfied "
+      ~ "by an undo that lands anywhere.");
+    assert(msg.indexOf("vertices[2][1]") >= 0,
+        "the divergence was reported, but not at the coordinate that moved — "
+      ~ "the message must NAME the leaf or a reader cannot act on it:\n" ~ msg);
+}
+
+// ---------------------------------------------------------------------------
+// PASSED: two ulps of `float`, at both arms' scales. This is the cell that
+// reddens when the budget is taken away — a false positive on legitimate
+// toolchain noise.
+// ---------------------------------------------------------------------------
+unittest
+{
+    import std.math : fabs, nextUp;   // `format` is already at module scope
+
+    immutable double baseUnit  = asDouble(kWitnessUnit);
+    immutable double baseBig   = asDouble(kWitnessBig);
+    immutable double noisyUnit = asDouble(twoUlpsUp(kWitnessUnit));
+    immutable double noisyBig  = asDouble(twoUlpsUp(kWitnessBig));
+
+    immutable double ulpUnit = asDouble(nextUp(kWitnessUnit)) - baseUnit;
+    immutable double ulpBig  = asDouble(nextUp(kWitnessBig))  - baseBig;
+
+    // THE GAPS ARE MEASURED, not asserted in prose. A control whose only
+    // evidence for "two ulps" is its own comment is a control that can drift
+    // to zero gap — and a zero gap passes under any budget including none,
+    // which is exactly the vacuity this whole block exists to remove.
+    assert(fabs(noisyUnit - baseUnit - 2 * ulpUnit) < ulpUnit * 0.01
+        && fabs(noisyBig  - baseBig  - 2 * ulpBig)  < ulpBig  * 0.01,
+        format("the control's gap is not two ulps of `float`: unit %.6g vs "
+             ~ "2*%.6g, big %.6g vs 2*%.6g", noisyUnit - baseUnit, ulpUnit,
+               noisyBig - baseBig, ulpBig));
+    // ...and the BIG one must be out of reach of the ABSOLUTE arm, or this
+    // cell would clear on `d <= kParityAbsTol` alone and the relative arm
+    // could be deleted with nothing noticing.
+    assert(noisyBig - baseBig > kParityAbsTol,
+        format("the big-scale control (%.6g) fits inside the absolute budget "
+             ~ "(%.6g) — it then says nothing about the RELATIVE arm",
+               noisyBig - baseBig, kParityAbsTol));
+
+    immutable frozenText = syntheticPlaneDump(baseUnit,  baseBig);
+    immutable freshText  = syntheticPlaneDump(noisyUnit, noisyBig);
+    auto frozen = parseJSON(frozenText);
+
+    immutable msg = refusalOf({
+        comparePlanes("<synthetic tolerance witness>", "float-plane-2ulp",
+                      "postOp", frozen, freshText);
+    });
+
+    assert(msg.length == 0,
+        "two ulps of `float` — the toolchain noise this budget exists to "
+      ~ "absorb, the ldc2-vs-dmd difference measured in this module's header — "
+      ~ "was reported as a divergence. A budget that cannot pass this cell "
+      ~ "turns every compiler change into a fixture re-freeze, which destroys "
+      ~ "the oracle:\n" ~ msg);
+}
+
 /// One plane, on one cell, on one of the two dumps, where the migrated path is
 /// KNOWN and ARGUED to differ from the frozen snapshot oracle.
 ///
