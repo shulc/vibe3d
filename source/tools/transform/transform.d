@@ -515,10 +515,19 @@ protected:
         // WHY HERE. This is the single chokepoint every transform
         // `commitEdit` override routes through (base, Rotate, Scale and the
         // wrapper's item branch all end in `recordCommit`), and it is reached
-        // only when a real edit was built — a no-op gesture returns before it,
-        // which is right: nothing moved, nothing to settle. The cancel path
-        // never comes here and does not need to; it ends in
-        // `commitChange(Position)`, which is unconfined already.
+        // only when a real edit was built — a no-op gesture returns before it.
+        // FOR THIS PUBLISH that is right: nothing moved, so there is nothing
+        // for the settled-geometry caches to re-derive. It is NOT a
+        // justification for the early return itself, and this comment used to
+        // read as one. The reference RECORDS a committed zero-delta transform
+        // gesture — two undo entries, mesh byte-identical, transform channel
+        // never written (measured, task 2640) — where we record none. That is
+        // gap row 86 in `doc/behavior_gap_registry.md`, pinned live by
+        // `tests/test_gesture_zero_delta_undo_divergence.d`; porting it is an
+        // open owner decision, and it would move the RECORD without touching
+        // the settle argument above. The cancel path never comes here and does
+        // not need to; it ends in `commitChange(Position)`, which is
+        // unconfined already.
         //
         // WHY `publishChange` AND NOT `commitChange`. A version bump here
         // would move `XfrmTransformTool.lastAppliedGestureMutationVersion`
