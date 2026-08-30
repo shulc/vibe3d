@@ -45,7 +45,7 @@
 module tests.unit.undo_parity_l0_test;
 
 import std.format : format;
-import std.json   : JSONValue, parseJSON;
+import std.json   : JSONValue, JSONType, parseJSON;
 
 import command;
 import mesh;
@@ -257,11 +257,9 @@ void compareOrCapture(string leaf, string family, string sha, string stand,
 /// SHA, which is different by construction, and comparing it would redden every
 /// cell for the one reason that is not a finding.
 void comparePlanes(string file, string cell, string which,
-                   const ref JSONValue frozenDump, string freshText)
+                   const ref JSONValue frozenDump, const ref JSONValue fresh)
 {
     import std.algorithm.sorting : sort;
-
-    auto fresh = parseJSON(freshText);
 
     string[] keys;
     foreach (k, _; frozenDump.objectNoRef) keys ~= k;
@@ -279,11 +277,184 @@ void comparePlanes(string file, string cell, string which,
         assert(pn !is null,
                format("%s [%s/%s]: plane '%s' is GONE from the dump", file,
                       cell, which, k));
-        immutable a = pf.toString();
-        immutable b = pn.toString();
-        assert(a == b,
+        immutable string d = parityDiff(k, *pf, *pn);
+        assert(d.length == 0,
                format("%s [%s/%s]: plane '%s' differs from the frozen "
-                    ~ "capture%s", file, cell, which, k, contrast(a, b)));
+                    ~ "capture\n    %s", file, cell, which, k, d));
+    }
+}
+
+/// The `string`-fresh spelling, kept because every reader in the family calls
+/// it. It parses and delegates, so there is still ONE walk.
+void comparePlanes(string file, string cell, string which,
+                   const ref JSONValue frozenDump, string freshText)
+{
+    auto fresh = parseJSON(freshText);
+    comparePlanes(file, cell, which, frozenDump, fresh);
+}
+
+// ===========================================================================
+// THE LEAF COMPARISON IS NUMERIC, NOT TEXTUAL — and the tolerance below is
+// derived from the STORAGE TYPE, never from a difference we have observed.
+//
+// WHAT WENT WRONG WITH TEXT. `JSONValue.toString()` equality asked the frozen
+// capture and the fresh dump to agree DIGIT FOR DIGIT. Measured on
+// `7a5ef294`, one tree, one `--config=tests --build=check-unit`, 389 modules
+// on both sides: under ldc2 1.42.0 `2/389 modules FAILED`, under dmd 2.112.1
+// `389 modules passed`. Nothing about the geometry differed between those two
+// runs; the last digits of a rendered float did. A comparator that cannot
+// separate those two things reports a COMPILER as a regression — and, the
+// worse half, teaches the reader to re-freeze a fixture to silence it, which
+// destroys the oracle the fixture exists to be.
+//
+// WHY A TOLERANCE IS LEGITIMATE HERE, AND WHAT SETS IT. These are not doubles
+// that happen to print long. `math.Vec3` stores `float`, and
+// `http_json.meshPlanesJson` widens with `cast(double)` at the serialiser and
+// renders `%.9g` — nine digits being float32's round-trip width. So every
+// coordinate in these fixtures is the end of a chain of SINGLE-PRECISION
+// operations. Two compilers are each entitled to reassociate that chain and to
+// contract `a*b + c` into an FMA; LLVM and DMD's backend make different
+// choices even at -O0, and each such choice costs O(1) ulps OF THE STORAGE
+// TYPE. The floor below which a difference is toolchain noise rather than
+// geometry is therefore a small multiple of `float.epsilon`, relative.
+//
+// THE NUMBER IS NOT FITTED TO THE FAILURE, and the order of work is the
+// evidence. The budget is eight ulps of `float` — written as
+// `8 * float.epsilon` so the derivation travels with the constant instead of
+// arriving as a magic `1e-6`. Eight is the ordinary slack for a short kernel
+// chain: a neighbour average, a fit-and-project and a matrix multiply are each
+// a handful of roundings deep. It was chosen from the SHAPE of the pipeline,
+// and the two failing cells were then checked to fall inside it — in that
+// order. Had they fallen outside, the finding would have been a real
+// divergence and this comparator would not have been the fix. Sizing the
+// threshold to the measurement it is meant to judge is the defect this file's
+// own header warns about; it is avoided by deriving the bound from the type,
+// which knows nothing about our two cells.
+//
+// WHAT THE TOLERANCE MUST NOT SWALLOW, and does not. Anything a wrong undo
+// produces. A revert that restores the wrong vertex, loses a delta or applies
+// an op twice moves a coordinate by a fraction of the stand's own scale —
+// order 1e-3 and up on these unit-scale stands, three to five DECADES above
+// this floor. And integers never enter the numeric path at all: two
+// integer-valued nodes are compared EXACTLY, so an index, a count or an id
+// cannot be tolerated by a budget meant for coordinates.
+
+/// Eight ulps of the STORAGE type. `float`, not `double`: the `double` in the
+/// JSON is a widening applied at the serialiser, and comparing tighter than
+/// the type that actually held the value compares rendering, not geometry.
+enum double kParityRelTol = 8 * float.epsilon;   // ~9.54e-07
+
+/// The near-zero arm, for a coordinate whose exact value is 0 and which a
+/// chain of cancelling floats lands beside — there is no relative scale to
+/// measure against there. Same ulp budget taken against unit scale, which is
+/// the scale these stands are built at.
+enum double kParityAbsTol = 8 * float.epsilon;
+
+/// Structural JSON comparison: identical shape, EXACT non-numeric and
+/// integer leaves, floating leaves within the budget above.
+///
+/// Returns "" when the two agree, else a message naming the JSON PATH of the
+/// first disagreement together with both values, the measured gap and the
+/// budget it broke. The path is what the old character-offset window was
+/// reaching for: `vertices[7][1]` says which coordinate of which vertex moved,
+/// where "first difference at character 4213" did not.
+///
+/// `a` is the FROZEN side and `b` the FRESH one; the messages say so, because
+/// a reader who has them the wrong way round re-freezes in the wrong
+/// direction.
+string parityDiff(string path, in JSONValue a, in JSONValue b)
+{
+    import std.math : fabs, isNaN;
+
+    static bool isInt(JSONType t) {
+        return t == JSONType.integer || t == JSONType.uinteger;
+    }
+    static bool isNum(JSONType t) {
+        return isInt(t) || t == JSONType.float_;
+    }
+    static long asLong(in JSONValue v) {
+        return v.type == JSONType.uinteger ? cast(long) v.uinteger : v.integer;
+    }
+    static double asNum(in JSONValue v) {
+        if (v.type == JSONType.float_) return v.floating;
+        return cast(double) asLong(v);
+    }
+
+    // --- numeric leaves: the ONLY place a tolerance exists ------------------
+    if (isNum(a.type) && isNum(b.type)) {
+        // Two integer-valued nodes compare EXACTLY. Indices, counts, ids and
+        // flags live here, and a tolerance over them would let an off-by-one
+        // through — the loosening this change must not become.
+        if (isInt(a.type) && isInt(b.type)) {
+            immutable long ia = asLong(a), ib = asLong(b);
+            if (ia != ib)
+                return format("%s: frozen %d, now %d — integers compare "
+                            ~ "exactly, no tolerance applies", path, ia, ib);
+            return "";
+        }
+        immutable double x = asNum(a), y = asNum(b);
+        if (isNaN(x) || isNaN(y)) {
+            if (isNaN(x) && isNaN(y)) return "";
+            return format("%s: frozen %.17g, now %.17g — exactly one side is "
+                        ~ "NaN", path, x, y);
+        }
+        immutable double d     = fabs(x - y);
+        immutable double scale = fabs(x) > fabs(y) ? fabs(x) : fabs(y);
+        if (d <= kParityAbsTol) return "";
+        if (d <= kParityRelTol * scale) return "";
+        return format("%s: frozen %.17g, now %.17g"
+                    ~ "\n      gap    abs %.6g, rel %.6g"
+                    ~ "\n      budget abs %.6g, rel %.6g  (8 ulps of float — "
+                    ~ "a toolchain cannot move a value this far)",
+                      path, x, y, d, scale > 0 ? d / scale : d,
+                      kParityAbsTol, kParityRelTol);
+    }
+
+    if (a.type != b.type)
+        return format("%s: node type frozen %s, now %s", path, a.type, b.type);
+
+    switch (a.type) {
+        case JSONType.object: {
+            import std.algorithm.sorting : sort;
+            string[] keys;
+            foreach (k, _; a.objectNoRef) keys ~= k;
+            foreach (k, _; b.objectNoRef)
+                if ((k in a.objectNoRef) is null) keys ~= k;
+            keys.sort();
+            foreach (k; keys) {
+                auto pa = k in a.objectNoRef;
+                auto pb = k in b.objectNoRef;
+                if (pa is null)
+                    return format("%s.%s: NEW — absent from the frozen capture",
+                                  path, k);
+                if (pb is null)
+                    return format("%s.%s: GONE — present in the frozen capture",
+                                  path, k);
+                immutable string d = parityDiff(path ~ "." ~ k, *pa, *pb);
+                if (d.length) return d;
+            }
+            return "";
+        }
+        case JSONType.array: {
+            auto aa = a.arrayNoRef, ba = b.arrayNoRef;
+            if (aa.length != ba.length)
+                return format("%s: length frozen %d, now %d", path,
+                              aa.length, ba.length);
+            foreach (i; 0 .. aa.length) {
+                immutable string d =
+                    parityDiff(format("%s[%d]", path, i), aa[i], ba[i]);
+                if (d.length) return d;
+            }
+            return "";
+        }
+        case JSONType.string:
+            if (a.str != b.str)
+                return format("%s: string differs%s", path,
+                              contrast(a.str, b.str));
+            return "";
+        default:
+            // true_ / false_ / null_ — the type equality above settled them.
+            return "";
     }
 }
 
@@ -329,7 +500,10 @@ void compareWithExceptions(string file, string cell, string which,
         assert((e.plane in frozen.objectNoRef) !is null,
             format("%s [%s/%s]: exception names plane '%s', which the frozen "
                  ~ "dump does not carry", file, cell, which, e.plane));
-        assert(frozen[e.plane].toString() != fresh[e.plane].toString(),
+        // Routed through `parityDiff`, not through text: if this file had
+        // two definitions of "differs", an exception could stay alive on a
+        // plane that agrees to every digit that means anything.
+        assert(parityDiff(e.plane, frozen[e.plane], fresh[e.plane]).length != 0,
             format("%s [%s/%s]: plane '%s' now AGREES with the frozen oracle, "
                  ~ "but this reader carries a standing exception for it (%s). "
                  ~ "The divergence was fixed — RETIRE THE EXCEPTION in the "
@@ -340,7 +514,7 @@ void compareWithExceptions(string file, string cell, string which,
         fresh.object.remove(e.plane);
     }
 
-    comparePlanes(file, cell, which, frozen, fresh.toString());
+    comparePlanes(file, cell, which, frozen, fresh);
 }
 
 /// The shared well-formedness gate on ONE reader's exception table.
@@ -378,7 +552,10 @@ void assertExceptionTableWellFormed(string family, in PlaneException[] table,
     }
 }
 
-/// The two renderings, WINDOWED ON THE FIRST CHARACTER THAT DIFFERS.
+/// The two renderings of ONE STRING LEAF, WINDOWED ON THE FIRST CHARACTER
+/// THAT DIFFERS. (It used to window whole planes; `parityDiff` now walks the
+/// structure and reports a JSON path, so this is reached only for a genuine
+/// string-valued leaf — where a path alone still would not say what changed.)
 ///
 /// A leading clip is the wrong instrument for these planes and this is not a
 /// style point. `meshMaps` renders as one string tens of kilobytes long whose
