@@ -578,6 +578,15 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
         throw new Exception(
             "HTTP endpoint wiring is incomplete — nothing installed: "
             ~ unwired.join(", "));
+
+    // Task 1740 — the wiring is complete, so say so ONCE, here, and nowhere
+    // else. Placed AFTER the completeness check above rather than before it
+    // so the two cannot disagree: if a domain stopped being wired, this line
+    // is unreachable and the server keeps answering 503 instead of claiming
+    // readiness it does not have. The other half of the predicate (the main
+    // loop has drained the bridges at least once) is set by `tickAll`; until
+    // both hold, every `/api/*` route answers 503.
+    httpServer.markProvidersWired();
 }
 
 

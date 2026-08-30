@@ -1426,11 +1426,87 @@ bool waitForHttpReady(string logPath, ushort port) {
     }
     string lastStatus;
     if (httpProbe(port, 300, 5, &lastStatus)) return true;
-    stderr.writefln(red("  :%d listened but never answered 200 (last status: %s). "
-                        ~ "500 = still wiring providers, so startup outran the "
-                        ~ "probe budget; 000 = connected but no reply, i.e. wedged."),
-                    port, lastStatus);
+    stderr.writefln(red("  :%d listened but never answered 200. %s"),
+                    port, diagnoseProbeFailure(port, lastStatus));
     return false;
+}
+
+// Turn the last probe sample into a sentence that says WHICH investigation to
+// open (task 1740). The message this replaces enumerated two outcomes, 500 and
+// 000, and CI then failed with a third — `curl-rc=52` — on four workers of
+// four, for a day, with the instances perfectly healthy: their logs carried
+// not one `Received request` line, because the probe had never reached them.
+//
+// The rule the runner now applies, and the reason it is a CODE and not a body:
+//   503  the app is up and says it is still wiring (the ONLY "keep waiting"
+//        answer; `http_server.d`'s readiness gate). Seeing it here means the
+//        budget was genuinely outrun.
+//   200  ready.
+//   anything else — another HTTP code, or curl failing to complete at all —
+//        is a REFUSAL, and the probe stops rather than spending 30 s
+//        re-confirming it.
+//
+// The curl exit codes are spelled out because each one names a different
+// place to look, and they were measured rather than recalled (task 1740,
+// `scratch/curlcodes.py`): 52 is produced by exactly ONE server shape —
+// accepted the connection, read the request, closed it without writing a
+// byte — which our own listener cannot do at any point in its startup.
+string diagnoseProbeFailure(ushort port, string lastStatus) {
+    string proxyNote() {
+        // The measured cause of the 2026-08-30 CI failure. A GitHub Actions
+        // self-hosted runner exports its proxy configuration into every
+        // step's environment, and curl honours `http_proxy` for
+        // `http://localhost:PORT` too unless `no_proxy` says otherwise — so
+        // the probe talks to the proxy, the proxy has nothing to forward to,
+        // and the app never sees a request.
+        foreach (v; ["http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"]) {
+            auto p = environment.get(v, "");
+            if (!p.length) continue;
+            auto np = environment.get("no_proxy", environment.get("NO_PROXY", ""));
+            if (np.canFind("localhost") && np.canFind("127.0.0.1")) continue;
+            return format("\n  %s=%s is set and no_proxy=%s does not exempt "
+                        ~ "localhost — curl is sending this probe to the PROXY, "
+                        ~ "not to :%d. That is a probe-transport failure, not a "
+                        ~ "server failure.",
+                        v, p, np.length ? np : "<unset>", port);
+        }
+        return "";
+    }
+    switch (lastStatus) {
+        case "503":
+            return format("last status 503 — the app is alive and still wiring "
+                        ~ "its providers, so startup outran the %d s probe "
+                        ~ "budget. Widen the budget or find what made startup "
+                        ~ "slow; the server itself is healthy.", 30);
+        case "curl-rc=7":
+            return "curl could not connect (rc=7): nothing is listening on "
+                 ~ "that port any more — the process died after logging "
+                 ~ "\"HTTP server started\"." ~ proxyNote();
+        case "curl-rc=28":
+            return "curl timed out with no reply (rc=28): the connection was "
+                 ~ "completed by the kernel's listen backlog but the accept "
+                 ~ "loop never answered — a wedged server (cf. task 0652)."
+                 ~ proxyNote();
+        case "curl-rc=52":
+            return "curl got an EMPTY reply (rc=52): something accepted the "
+                 ~ "connection, read the request and closed it without "
+                 ~ "answering. Our listener has no such state at any point in "
+                 ~ "startup — check the instance's log for `Received request` "
+                 ~ "lines first: if there are NONE, the probe never reached "
+                 ~ "the app." ~ proxyNote();
+        case "curl-rc=56":
+            return "curl's connection was RESET (rc=56): the peer aborted "
+                 ~ "mid-request — the listening socket was closed while this "
+                 ~ "request was in flight." ~ proxyNote();
+        default:
+            if (lastStatus.startsWith("curl-rc="))
+                return format("curl failed to complete the request (%s) — this "
+                            ~ "is a probe-transport failure, not an answer from "
+                            ~ "the app.%s", lastStatus, proxyNote());
+            return format("last status %s. Only 503 means \"still starting\"; "
+                        ~ "any other code is a refusal from something that "
+                        ~ "answered.%s", lastStatus, proxyNote());
+    }
 }
 
 // Poll /api/camera until it answers 200 (or we give up). Used after we spawn
@@ -1454,8 +1530,20 @@ bool waitForHttpReady(string logPath, ushort port) {
 // `lastStatus` exists so the NEXT such failure is diagnosable from one
 // line. Without it the log shows a healthy-looking startup and then
 // silence, which reads as a hang and cost three misdirected attempts to
-// tell apart from a real one: 500 means "still starting", 000 means the
-// connection never completed, and those want opposite investigations.
+// tell apart from a real one.
+//
+// TASK 1740 — WHAT COUNTS AS "KEEP WAITING" IS NOW A CODE, NOT A GUESS.
+// `http_server.d` answers 503 on every `/api/*` route until it is ready, and
+// 503 is the ONLY status this loop treats as "not yet". Everything else is a
+// refusal and ends the loop on the spot, because re-asking 299 more times
+// cannot change a refusal and costs 30 s of a lane's turn. The old loop spun
+// the full budget over `curl-rc=52` — a code the failure message did not even
+// enumerate — and then blamed the app, whose log showed it had never been
+// asked anything. `diagnoseProbeFailure` above says which of those it was.
+//
+// The 500 the previous version waited on is now a REFUSAL, deliberately: with
+// the gate in place, 500 from `/api/camera` means the server is ready and
+// `cameraDataProvider` is genuinely absent, which no amount of waiting fixes.
 bool httpProbe(ushort port, int tries = 300, int timeoutSec = 5,
                string* lastStatus = null) {
     string probe = format("curl -s -o /dev/null --connect-timeout %d "
@@ -1468,6 +1556,18 @@ bool httpProbe(ushort port, int tries = 300, int timeoutSec = 5,
         auto r = executeShell(probe);
         seen = (r.status == 0) ? r.output.strip : format("curl-rc=%d", r.status);
         if (seen == "200") return true;
+        // 000 is what curl prints for `%{http_code}` when it exited non-zero;
+        // the rc branch above has already recorded the real reason.
+        //
+        // TWO states mean "ask again", and only two. 503 is the app saying it
+        // is still wiring. `curl-rc=7` is "nothing is listening yet", which is
+        // a real startup state for the `--attach` caller below (it waits for
+        // an endpoint that does not exist at first) and a bind race for the
+        // spawn caller. Every other answer is a refusal: re-asking cannot
+        // change it, and spending the remaining budget on it is how a
+        // transport failure got 30 s of a lane's turn and then a message
+        // blaming the app.
+        if (seen != "503" && seen != "curl-rc=7") return false;
         Thread.sleep(100.msecs);
     }
     return false;

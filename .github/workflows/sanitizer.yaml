@@ -279,11 +279,21 @@ jobs:
         # lands in that window fails a lane that had nothing wrong with it,
         # and the fuzz + coverage steps below never run.
         #
+        # That body no longer exists: task 1740 replaced it (and the 500 the
+        # other routes gave) with a single 503 on every /api/* route, so the
+        # window is now visible to a probe that reads only the status code.
+        # The transcript above is kept as the record of what it looked like.
+        #
         # This step's own comment already said readiness must be proven by a
         # real COMMAND rather than by a route answering; the loop simply was
         # not on the command. Now it is. The registry poll is kept as a cheap
         # first barrier so the command loop starts against a live socket
         # rather than against connection refused.
+        #
+        # TASK 1740 made that first barrier mean something. /api/registry is
+        # now gated like every other /api/* route and answers 503 (no
+        # "commands" key) until the app is wired, so this loop no longer
+        # sails straight through the startup window it was written beside.
         for i in $(seq 90); do
           curl -s --noproxy '*' -m 2 "http://127.0.0.1:$PORT/api/registry" \
             | grep -q '"commands"' && break
@@ -293,18 +303,25 @@ jobs:
         # ASan + xvfb reaches its wiring late, and the failure this replaces
         # happened ~4 s after the server bound its port.
         ok=""
+        code=""
         for i in $(seq 60); do
-          curl -s --noproxy '*' -m 60 -X POST "http://127.0.0.1:$PORT/api/command" \
-            -d '{"id":"mesh.subdivide","params":{}}' > fuzz-smoke.json 2>&1 || true
+          code=$(curl -s --noproxy '*' -m 60 -o fuzz-smoke.json -w '%{http_code}' \
+            -X POST "http://127.0.0.1:$PORT/api/command" \
+            -d '{"id":"mesh.subdivide","params":{}}' || true)
           if grep -q '"ok"' fuzz-smoke.json; then ok=1; break; fi
-          # "handler not set" is the app still booting and is worth waiting
-          # out. Anything else is a real refusal and waiting cannot fix it, so
-          # the loop stops and the diagnostics below print the actual reply.
-          grep -q 'command handler not set' fuzz-smoke.json || break
+          # TASK 1740 — THIS IS A CODE NOW, NOT A BODY. 503 is the app's one
+          # "still starting" answer and the only thing worth waiting out;
+          # anything else is a real refusal and waiting cannot fix it, so the
+          # loop stops and the diagnostics below print the actual reply. The
+          # string this used to grep for ('command handler not set') no longer
+          # exists on the wire -- had it been left here, this loop would break
+          # on its FIRST attempt and redden a healthy lane.
+          [ "$code" = "503" ] || break
           sleep 1
         done
         [ -n "$ok" ] || {
           echo "::error::the fuzz instance never answered a command -- the fuzzer would have exercised nothing"
+          echo "--- last status: ${code:-none} (503 = still wiring; anything else is a refusal) ---"
           echo "--- instance log ---"; tail -40 fuzz-instance.log || true
           echo "--- smoke reply (after $i attempt(s)) ---"; cat fuzz-smoke.json || true
           exit 1

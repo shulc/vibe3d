@@ -1283,19 +1283,27 @@ int findEditorPid(string bin, string port) {
 }
 
 /// How an instance is proven ready.
-///   command    — the exact signal: a POST to /api/command that comes back
-///                anything other than "command handler not set".
+///   command    — a POST to /api/command that comes back anything but 503.
 ///   bridgeFree — /api/camera answering 200, which is an httpThread route and
 ///                therefore involves NO main-thread bridge traffic at all.
 ///
 /// The second mode exists because the shutdown A/B needs an arm with ZERO
 /// bridge round trips, and the `command` probe is itself one — so proving the
 /// editor is up the ordinary way would destroy the very thing arm A measures.
-/// `/api/camera` works for this because its provider is installed inside
-/// wireHttpProviders (http_providers.d:973) BEFORE that same function installs
-/// the command handler (:2720), so a 200 there means the editor is past
-/// essentially all of its wiring, without a single bridged request. run_test.d
-/// already uses exactly this endpoint as its readiness probe.
+///
+/// TASK 1740 — BOTH MODES NOW READ A STATUS CODE. They used to read BODIES:
+/// mode `command` matched the string `command handler not set`, and a second
+/// string `timeout waiting for main thread` for the case where the wiring was
+/// done but no frame had drained the bridges. That was three readiness
+/// predicates in this file and a fourth in run_test.d, and it is exactly the
+/// divergence the card warned about — this lane and the runner could disagree
+/// about whether the same instance was ready. `http_server.d` now answers 503
+/// on EVERY `/api/*` route until both halves hold (providers wired AND the
+/// main loop has drained the bridges once), so 503 is the single "not yet"
+/// and there is nothing left to match on. Note that `/api/registry` is gated
+/// too — it is served from a static table and used to answer throughout the
+/// whole startup window, which is what made "the registry answers" a false
+/// readiness signal in the first place (the nightly it broke: task 1410).
 enum ReadyMode { command, bridgeFree }
 
 Instance spawnInstance(BuildTypeSpec spec, string tag,
@@ -1372,7 +1380,15 @@ Instance spawnInstance(BuildTypeSpec spec, string tag,
     string why = "never answered";
     foreach (i; 0 .. 180) {
         auto r = httpGet(ins.port, "/api/registry", 3);
-        if (!r.connected || !r.body_.canFind("\"commands\"")) {
+        if (!r.connected) {
+            why = "not listening on the port yet";
+        } else if (r.status == 503) {
+            // The one "keep waiting" answer (task 1740). Named separately from
+            // "no /api/registry" because they want opposite investigations: a
+            // 503 is a healthy instance mid-startup, an unparseable registry
+            // body is a broken one.
+            why = "listening, but still wiring its HTTP providers (503)";
+        } else if (!r.body_.canFind("\"commands\"")) {
             why = "no /api/registry";
         } else if (spec.hasSelfTest && !r.body_.canFind("selftest.fault")) {
             why = "registry answers but registerCommands() has not run "
@@ -1381,26 +1397,23 @@ Instance spawnInstance(BuildTypeSpec spec, string tag,
             auto c = httpGet(ins.port, "/api/camera", 20);
             if (!c.connected || c.status != 200)
                 why = format("registry ready but /api/camera answered %d "
-                           ~ "(500 = still wiring providers)", c.status);
+                           ~ "(503 = still wiring providers)", c.status);
             else { up = true; break; }
         } else {
-            // The EXACT signal, and it is exact rather than approximate: post
-            // an id that cannot exist. A wired dispatcher answers "unknown
-            // command id"; an unwired one answers "command handler not set",
-            // and those two strings are the difference between ready and
-            // half-ready. Nothing runs either way. Measured ordering in app.d:
-            // start() :1145, registerCommands() :3680, wireHttpProviders()
-            // :4372 — and it is the LAST of those that sets the command
-            // handler, so neither the port answering nor the registry being
-            // populated implies a command can run.
+            // Post an id that cannot exist: nothing runs either way, and the
+            // only thing being read is the STATUS. 503 is the server saying
+            // it is not ready; anything else means the dispatcher took the
+            // request, which is what this mode is here to establish. The two
+            // body strings this used to match on are gone from the wire — see
+            // the ReadyMode comment above.
             auto c = httpPost(ins.port, "/api/command",
                               `{"id":"lane.readiness.probe","params":{}}`, 20);
             if (!c.connected || c.status == 0)
                 why = "registry ready but /api/command did not answer";
-            else if (c.body_.canFind("command handler not set"))
-                why = "registry ready but the command handler is not wired yet";
-            else if (c.body_.canFind("timeout waiting for main thread"))
-                why = "registry ready but the main-thread bridge is not draining";
+            else if (c.status == 503)
+                why = "registry ready but the command path is not ready yet "
+                    ~ "(503 — providers unwired, or no frame has drained the "
+                    ~ "main-thread bridges)";
             else { up = true; break; }
         }
         Thread.sleep(1.seconds);

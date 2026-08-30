@@ -179,6 +179,53 @@ class HttpServer {
     // happens twice in a process lifetime, so there is nothing to buy by
     // weakening it and a real cost to reasoning about it.
     private shared bool isRunning;
+
+    // --- Readiness (task 1740) --------------------------------------------
+    //
+    // `start()` opens the port at app.d:1171. The provider/handler delegates
+    // are installed by `wireHttpProviders` ~3550 lines later. For the whole of
+    // that span the listener accepted connections and ANSWERED them: measured
+    // on a 32-core host, `--test`, plain `dub build` — 1196 replies of `500`
+    // on `GET /api/camera` and 1058 replies of `{"status":"error","message":
+    // "command handler not set"}` on `POST /api/command`, over a 202 ms
+    // window; 1504-2065 replies over ~1.5 s with four instances pinned to
+    // four cores under llvmpipe. So "the port answers" and even "the route
+    // answers" did not mean "the app is ready", and the difference was
+    // visible from outside ONLY by reading the response BODY.
+    //
+    // WHY A STATUS CODE AND NOT A `/api/ready` ROUTE. A second route would be
+    // a SECOND readiness signal beside the body of `/api/command`, and the
+    // tree already demonstrates where that ends: before this change there
+    // were three disagreeing predicates in-tree (`run_test.d` waited for 200
+    // on `/api/camera`, `tools/sanitizer/lane.d` had one mode matching the
+    // string `command handler not set` and another matching 200 on
+    // `/api/camera`, both behind `/api/registry` answering at all — and
+    // `/api/registry` is served from a static table, so it answers throughout
+    // the window). One code, on every `/api/*` route, is the only shape that
+    // cannot drift: a caller does not have to know WHICH endpoint carries the
+    // truth.
+    //
+    // WHY NOT SIMPLY MOVE `start()` BELOW THE WIRING. It is mechanically
+    // possible (nothing between the two points touches `httpServer`), and it
+    // is still the wrong trade: it replaces a diagnosable state (connect, get
+    // 503) with an ambiguous one (ECONNREFUSED), which is indistinguishable
+    // from "the process died", "the port is taken by a stale instance" and
+    // "the probe never reached us". A startup that HANGS — GL under a
+    // software rasteriser on a loaded VM is a real case — would then have no
+    // port to ask at all. It would also move the `HTTP server started on port
+    // N` log line ~3550 lines later, and `run_test.d`'s first wait leg keys on
+    // exactly that string.
+    //
+    // TWO flags, ONE signal. Providers wired is not sufficient: `/api/command`
+    // is an `Answered.mainThread` route, so between the wiring and the frame
+    // loop's first `tickAll()` a request is accepted, spins 5 s in
+    // `submitAndWait` and comes back as a timeout body — a third "not ready"
+    // shape, which `tools/sanitizer/lane.d` was matching by string as well.
+    // Readiness therefore means BOTH: the wiring completed AND the main loop
+    // has drained the bridges at least once.
+    private shared bool providersWired;
+    private shared bool mainLoopTicked;
+
     private ushort port;
     private Thread serverThread;
     private alias DetailedModelDataProvider = string delegate();
@@ -1904,6 +1951,27 @@ class HttpServer {
     }
 
     /**
+     * The ONE "not ready" answer this server ever gives (task 1740).
+     *
+     * 503 rather than a 200 carrying an error body, because the caller that
+     * has to act on it is a machine: a readiness probe must be able to tell
+     * "keep waiting" from "this is a refusal" WITHOUT parsing a body, and the
+     * failure that produced this task was exactly a probe that could not.
+     * `Retry-After: 0` states the retry is immediate — startup, not backoff.
+     *
+     * The body names the state rather than the missing slot, on purpose: a
+     * body that said which provider was absent would invite callers to match
+     * on THAT, and the whole point is that there is one thing to look at.
+     */
+    private static void respondNotReady(HttpResponse response) {
+        response.statusCode = 503;
+        response.headers["Retry-After"] = "0";
+        response.headers["Content-Type"] = "application/json";
+        response.body = `{"status":"starting","message":"the editor is still `
+                      ~ `wiring its HTTP providers — retry"}`;
+    }
+
+    /**
      * Parse an HTTP request from separate header and body strings.
      */
     private HttpRequest parseRequest(string headers, string body) {
@@ -1941,6 +2009,15 @@ class HttpServer {
      */
     private HttpResponse handleRequest(HttpRequest request) {
         HttpResponse response = new HttpResponse();
+
+        // Task 1740 — the readiness gate. Scoped to `/api/*` deliberately:
+        // the static index page is not a claim about application state, and
+        // gating it would make "is anything alive on this port" unanswerable,
+        // which is the one question the 503 exists to keep answerable.
+        if (!ready() && request.path.startsWith("/api/")) {
+            respondNotReady(response);
+            return response;
+        }
 
         static foreach (r; kRoutes) {
             if ((r.method.length == 0 || request.method == r.method)
@@ -3461,8 +3538,14 @@ class HttpServer {
 
     private void route_apiCommand(HttpRequest request, HttpResponse response) {
         if (commandHandler is null) {
-            response.statusCode = 200;
-            response.body = `{"status":"error","message":"command handler not set"}`;
+            // Unreachable while the readiness gate in `handleRequest` stands
+            // (a null handler means the wiring has not finished, and the gate
+            // refuses every `/api/*` route before this one is entered). Kept
+            // as the defensive arm it always was, but answering the SAME 503
+            // rather than the old `200 {"status":"error","message":"command
+            // handler not set"}`: one not-ready shape on the wire, or callers
+            // go back to matching bodies. Task 1740.
+            respondNotReady(response);
         } else {
             try {
                 string body_ = request.body;
@@ -3551,8 +3634,7 @@ class HttpServer {
             (parseQueryString(request.path, "interactive", "") == "true");
 
         if (commandHandler is null) {
-            response.statusCode = 200;
-            response.body = `{"status":"error","message":"command handler not set"}`;
+            respondNotReady(response);   // task 1740 — see route_apiCommand
         } else {
             import std.array  : Appender;
             import std.format : format;
@@ -3988,6 +4070,33 @@ class HttpServer {
      */
     public void tickAll() {
         foreach (b; bridges) b.tick();
+        // Second half of the readiness predicate (task 1740). Set AFTER the
+        // drain, not before: the claim being published is "a bridged request
+        // submitted from now on will be serviced", and that is only true once
+        // this loop has actually run. The plain load first keeps the steady
+        // state at one relaxed read per frame.
+        if (!atomicLoad(mainLoopTicked)) atomicStore(mainLoopTicked, true);
+    }
+
+    /**
+     * Declare the provider/handler wiring complete (task 1740).
+     *
+     * Called from ONE place: the end of `wireHttpProviders`, immediately after
+     * its `unwiredEndpoints()` completeness check. That placement is the whole
+     * point — the check already enumerates every slot from `this.tupleof`, so
+     * readiness is defined by the code that already knows what "wired" means
+     * instead of by a second list. If that check throws, this is never
+     * reached and the server never claims to be ready.
+     */
+    public void markProvidersWired() { atomicStore(providersWired, true); }
+
+    /**
+     * The single machine-readable readiness predicate: true once the wiring
+     * completed AND the main loop has drained the bridges at least once.
+     * While it is false every `/api/*` route answers 503 and nothing else.
+     */
+    public bool ready() const {
+        return atomicLoad(providersWired) && atomicLoad(mainLoopTicked);
     }
 
     /**
@@ -4280,6 +4389,12 @@ class HttpResponse {
 // ---------------------------------------------------------------------------
 unittest {
     auto srv = new HttpServer();                // testMode defaults false
+    // Task 1740: `handleRequest` now refuses every `/api/*` route with 503
+    // until the server is ready, and that gate sits ABOVE this one. Lift it
+    // first — a 503 here would be a true answer to a different question and
+    // would say nothing about the testMode gate this block exists to pin.
+    srv.markProvidersWired();
+    srv.tickAll();
     auto req = new HttpRequest("POST", "/api/test/layer", "HTTP/1.1");
     req.body = `{"kind":"empty"}`;
 
@@ -4300,6 +4415,91 @@ unittest {
     assert(resp2.body.canFind("handler not set"),
         "with no handler installed this must reach the null-handler "
         ~ "branch, not another refusal: " ~ resp2.body);
+}
+
+// ---------------------------------------------------------------------------
+// Task 1740 — the readiness gate.
+//
+// Measured before the gate existed, `--test`, plain `dub build`, raw sockets
+// polling from before the process was spawned: 1058 replies of
+// `{"status":"error","message":"command handler not set"}` on
+// `POST /api/command` and 1196 replies of `500` on `GET /api/camera`, over a
+// 202 ms window on a 32-core host; 1504-2065 replies over ~1.5 s with four
+// instances pinned to four cores under llvmpipe. The window is a property of
+// the ORDER in app.d (`start()` at :1171, `wireHttpProviders` at :4892), not
+// of a slow host.
+//
+// FOUR cells, and each one has to be able to fail on its own:
+//   1. before readiness, a bridged route (`/api/command`) answers 503 — not
+//      the old 200-with-an-error-body, which is what made the state invisible
+//      to anything that did not parse the body;
+//   2. before readiness, an httpThread route (`/api/camera`) answers 503 too
+//      — the gate is per-SERVER, not per-route, or callers must again know
+//      which endpoint carries the truth;
+//   3. after readiness the gate LIFTS. Without this cell a gate wired to
+//      `false` forever would satisfy 1 and 2 and pass;
+//   4. the gate is scoped to `/api/*`. Without this cell a gate that refused
+//      everything — including the "is anything alive on this port" question —
+//      would also pass 1-3.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.algorithm : canFind;
+
+    auto srv = new HttpServer();
+    srv.setTestMode(true);   // so cell 4's path is not refused for other reasons
+
+    assert(!srv.ready(),
+        "1740: a freshly constructed server must not claim readiness — "
+        ~ "nothing has been wired and no frame has drained the bridges");
+
+    auto cmd = new HttpRequest("POST", "/api/command", "HTTP/1.1");
+    cmd.body = `{"id":"vibe3d.readiness.probe","params":{}}`;
+    auto r1 = srv.handleRequest(cmd);
+    assert(r1.statusCode == 503,
+        "1740 cell 1: before readiness /api/command must answer 503, not a "
+        ~ "200 carrying `command handler not set` — a probe has to tell "
+        ~ "'still starting' from 'refused' by the CODE (got "
+        ~ to!string(r1.statusCode) ~ ": " ~ r1.body ~ ")");
+    assert(!r1.body.canFind("command handler not set"),
+        "1740 cell 1: the old body must be gone from the wire, or callers "
+        ~ "keep matching on it and there are two readiness signals again");
+
+    auto cam = new HttpRequest("GET", "/api/camera", "HTTP/1.1");
+    auto r2 = srv.handleRequest(cam);
+    assert(r2.statusCode == 503,
+        "1740 cell 2: the gate is per-server — an httpThread route must give "
+        ~ "the same 503 as a bridged one before readiness (got "
+        ~ to!string(r2.statusCode) ~ ")");
+
+    // Cell 3 — and it needs BOTH halves of the predicate, so check that each
+    // alone is insufficient. Wiring without a drained frame is exactly the
+    // state in which `/api/command` used to spin 5 s and return a timeout
+    // body: a third "not ready" shape, which is what this refuses to have.
+    srv.markProvidersWired();
+    assert(!srv.ready(),
+        "1740 cell 3a: providers wired is NOT ready — until the main loop has "
+        ~ "drained the bridges once, a bridged request times out instead of "
+        ~ "being serviced");
+    assert(srv.handleRequest(cmd).statusCode == 503,
+        "1740 cell 3a: and the gate must still stand in that state");
+
+    srv.tickAll();
+    assert(srv.ready(), "1740 cell 3b: wired + drained is ready");
+    auto r3 = srv.handleRequest(cam);
+    assert(r3.statusCode != 503,
+        "1740 cell 3b: the gate must LIFT — a gate that never lifts satisfies "
+        ~ "cells 1 and 2 and is useless (got " ~ to!string(r3.statusCode) ~ ")");
+
+    // Cell 4 — scope. Checked on a NOT-ready server, which is the only state
+    // in which the gate can be observed at all.
+    auto fresh = new HttpServer();
+    auto root = new HttpRequest("GET", "/", "HTTP/1.1");
+    auto r4 = fresh.handleRequest(root);
+    assert(r4.statusCode != 503,
+        "1740 cell 4: the gate is scoped to /api/* — refusing the index page "
+        ~ "too would make 'is anything alive on this port' unanswerable, "
+        ~ "which is the one question the 503 exists to keep answerable (got "
+        ~ to!string(r4.statusCode) ~ ")");
 }
 
 // Parse `?key=N` (or `&key=N`) from a request path. Returns `def` when the
@@ -4392,6 +4592,14 @@ unittest {
     // Production budgets are 5 s / 15 s; shrink them so this costs ~0.5 s.
     srv.clientIoTimeout    = 500.msecs;
     srv.clientReadDeadline = 1500.msecs;
+    // Task 1740: without this the well-behaved peer below is answered 503 by
+    // the readiness gate, not by the route. It would still be an ANSWER, so
+    // the accept-loop property under test would survive — but the assertion
+    // reads the status line, so it would fail for a reason that has nothing
+    // to do with 0652. Declare the server ready; this block is about the
+    // per-connection I/O budget, not about startup order.
+    srv.markProvidersWired();
+    srv.tickAll();
     srv.start();
     scope(exit) srv.stop();
 
