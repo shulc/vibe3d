@@ -117,6 +117,16 @@ unittest
     string[string] seam = [
         "VIBE3D_PERF_LOCK_PATH":         perfLock,
         "VIBE3D_PERF_RUNTEST_LOCK_PATH": lock,
+        // A runner spawned by a test is not this host's load, and this file
+        // both NAMES run_test.d and spawns a child, which is the shape
+        // `harness_log_isolation_census_test.d` refuses. The census is textual
+        // and cannot see that the child here is the wrapper script rather than
+        // the runner, so satisfy it the way the rule intends rather than by
+        // exempting the file: every child this test starts inherits a
+        // neutralised harness log, and if the wrapper ever grows a path into
+        // the runner, the isolation is already in place instead of being
+        // discovered by a polluted ~/.local/state/vibe3d/harness.jsonl.
+        "VIBE3D_HARNESS_LOG":            "off",
     ];
     scope(exit) foreach (f; [lock, perfLock, witness]) if (exists(f)) remove(f);
     if (exists(witness)) remove(witness);
