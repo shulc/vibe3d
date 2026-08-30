@@ -13,9 +13,25 @@
 //   recording decision keys on "did anything register an undoable action",
 //   not on "did the mesh change".
 //
-//   And its dual: ARMING A TOOL AND DROPPING IT WITHOUT ENGAGING IT REGISTERS
-//   NOTHING — in BOTH stack shapes, over a preceding model edit and over
-//   another armed-and-dropped region alike. There is no stack-shape term.
+//   And its dual, CORRECTED 2026-08-30 by a behavioural cross-check:
+//   ARMING A TOOL AND DROPPING IT WITHOUT EVER ENGAGING IT COSTS ONE UNDO
+//   STEP, AND THAT STEP IS BOUGHT BY THE ARM, NOT BY THE DROP — the drop of
+//   a never-engaged tool and the whole pointer path around it register
+//   nothing. It costs the SAME ONE in both stack shapes, over a preceding
+//   model edit and over another armed-and-dropped region alike, so there is
+//   still no stack-shape term.
+//
+//   THE 0/0 THIS FILE ASSERTED UNTIL 2026-08-30 WAS A WINDOW ARTEFACT, and
+//   it is worth knowing which instrument lied and why. The debugger channel
+//   attached by process id AFTER the arm command had already run, so its
+//   window contained the wake keystroke, the pointer move and the drop and
+//   never the arm; it read 0 and was RIGHT ABOUT WHAT IT BRACKETED. The
+//   behavioural walk brackets a region that BEGINS with the arm and reads 1.
+//   The fixture records the boundary at `decomposition.channel_boundary`,
+//   and the two channels still agree exactly on the half they both measured
+//   over the same region — 1 against 1 behaviourally, 0 against 0 on the
+//   direct counter, +4 against +4 headless — which is the finding that
+//   survived the correction: there is no stack-shape term.
 //
 // WE DIFFER TWICE, in opposite directions, and this file is the record of both.
 //
@@ -29,14 +45,29 @@
 //       implementations of the same wrong predicate, which is why a port is a
 //       policy change and not a one-site fix.
 //
-//   (B) THE SECOND STACK SHAPE, and here WE COST MORE. A transform tool's
-//       drop records a `HistoryFlags.ToolLifecycle` entry
-//       (`ToolDeactivationCommand`, emitted only for tools implementing
-//       `LifecycleUndoEmitter` — `XfrmTransformTool` is the sole implementor).
-//       `CommandHistory.undo`'s (R1) rule steps PAST such a tail transparently
-//       when a Model entry sits below it, and treats it as a HARD STEP when
-//       the entry below is another lifecycle one. So our SECOND arm-and-drop
-//       in a row costs the user one undo step where the reference costs none.
+//   (B) THE ARM-AND-DROP REGION, and here WE COST LESS — by exactly ONE
+//       step, once, from the first region onward. We record the same NUMBER
+//       of entries the reference does, one per region, but at the opposite
+//       end of the region and in a class the undo walk can hide:
+//         * our ARM records nothing at all (the reference charges the arm);
+//         * our DROP records a `HistoryFlags.ToolLifecycle` entry
+//           (`ToolDeactivationCommand`, emitted from `setActiveTool` only for
+//           tools implementing `LifecycleUndoEmitter` — `XfrmTransformTool`
+//           is the sole implementor, so a cutting tool's drop records
+//           nothing at all);
+//         * `CommandHistory.undo`'s (R1) rule makes a lifecycle TAIL
+//           transparent when a Model entry sits below it, and a HARD STEP
+//           otherwise.
+//       So the stand's own model entry absorbs exactly ONE region's entry
+//       and n regions cost us n-1 undo steps against the reference's n.
+//
+//       "OUR FIRST REGION IS FREE" IS NOT THE LAW and must not be written
+//       down as one — it is a property of what lies BELOW the region, not of
+//       the region. Measured on this tree 2026-08-30: with no model edit
+//       below it at all, the very FIRST region is a hard step and costs 1;
+//       and after a single region over the stand, the second undo
+//       RE-ACTIVATES the transform tool, which is the entry the first undo
+//       stepped past. The entry was always recorded; the walk hid it.
 //       Registry row 87.
 //
 // WHY A SIBLING FILE AND NOT MORE BLOCKS IN
@@ -58,7 +89,10 @@
 // `kStatusArmDrop` are each checked to be exactly "open" or "closed" (a typo
 // must not silently pick a branch), and each "closed" branch demands PARITY.
 // Porting either law is then a real two-line edit: flip the token and re-freeze
-// the matching `kOurs*` constant.
+// the matching `kOurs*` constant. `kStatusArmDrop` now guards BLOCK 2 (shape 1),
+// which is where the divergence moved on 2026-08-30; block 3 (shape 2) carries
+// no branch because it is INVARIANT under the port — charging the arm one step
+// per region leaves shape 2 at 1, which is what it already reads.
 //
 // THE INSTRUMENT IS THE CAPTURE'S OWN, AND THE ABSOLUTE INDEX IS NOT
 // COMPARABLE. The reading is `steps(N) = kB(N) - kB(control)`, where kB is the
@@ -68,15 +102,18 @@
 // independent quantity the fixture's `rig.reading` defines.
 //
 // THE STAND IS BUILT BY A COMMAND, NOT BY A DRAG, AND THAT IS FORCED BY (B).
-// `mesh.move_vertex` leaves a plain Model entry at the tail of the undo stack.
-// A drag-built stand would drop its own tool and leave a `ToolLifecycle` entry
-// there instead — and then the FIRST arm-and-drop of cell (B) would already be
-// "over another lifecycle region", the two stack shapes would collapse into
-// one, and the parity row would read 1 for a reason that has nothing to do
-// with the law. This is not a guess: a drag-built stand's tail is exactly the
-// tail cell `armdrop_over_model_edit` leaves behind (a Model entry with a
-// lifecycle entry on top of it), and the cost of one more arm-and-drop over
-// THAT tail is measured, at 1 — it is what block 3 reads.
+// `mesh.move_vertex` leaves a plain Model entry at the tail of the undo stack —
+// which is also the reference stand's own shape, whose one entry above the
+// second real edit is a SELECTION change ((R1) skips UiUndo entries on its way
+// down, so a selection between the model edit and the region changes nothing
+// here). A drag-built stand would drop its own tool and leave a `ToolLifecycle`
+// entry there instead — and then the FIRST arm-and-drop would already be "over
+// another lifecycle region", the two stack shapes would collapse into one, and
+// block 2 would read 1 for a reason that has nothing to do with the law. This
+// is not a guess: a drag-built stand's tail is exactly the tail cell
+// `armdrop_over_model_edit` leaves behind (a Model entry with a lifecycle entry
+// on top of it), and the cost of one more arm-and-drop over THAT tail is
+// measured, at 1 — it is what block 3 reads.
 //
 // ANTI-VACUITY, and it is the part that has already failed once on the sibling
 // file: every undo-step reading below is satisfied just as well by a gesture
@@ -99,6 +136,15 @@
 //   * the positive control must CUT and must cost at least one step — without
 //     it, "we record nothing" is a statement about an instrument that cannot
 //     see a recording at all.
+// The ARM-AND-DROP cells have the same hole and it is now the LOAD-BEARING one,
+// because block 2's divergence reading is ZERO and a region that never happened
+// reads zero too. Two things separate them:
+//   * `armsSeen` / `dropsSeen` — `/api/tool/state` reports `tool == "xfrm"`
+//     inside every region and answers `{}` after every drop. This is the tool
+//     saying it was armed, and it is the ONLY witness that reddens when the
+//     region body is deleted;
+//   * block 3, whose reading of 1 for the SECOND region is a positive count
+//     that the regions register something at all.
 //
 // WHAT IS NOT COVERED, and why — read this before adding to it.
 //   * Deforming, creating and painting families. The fixture's own
@@ -111,10 +157,13 @@
 //   * WHICH low-level blocks group into which user-visible undo step. The
 //     fixture's `decomposition.not_measured` says that channel counted blocks
 //     and could not separate the grouping.
-//   * The reference's kB for the two armed-and-dropped cells. The fixture's
-//     `not_measured` says that behavioural cross-check never ran, so its ZERO
-//     UNDO STEPS is an INFERENCE from ZERO ENTRIES RECORDED — sound (no entry
-//     can cost a step) but an inference, and block 3 says so in its message.
+//   * A cell that isolates the ARM on its own on the reference side. Charging
+//     its one step to the arm rests on ELIMINATION — the region logged exactly
+//     one command and the finer instrument priced every other act in it at
+//     zero — not on a region containing only the arm. The fixture's
+//     `not_measured` says so; block 2's message repeats it.
+//   * Whether OUR arm would be charged if it were driven as a bare keystroke
+//     rather than as `tool.set … on`. Every cell here drives the command.
 //
 // MUTATIONS THAT REDDEN IT: recorded at the bottom of this file.
 
@@ -122,6 +171,7 @@ import std.json;
 import std.net.curl : get, post;
 import std.format   : format;
 import std.math     : fabs, sqrt;
+import std.algorithm: canFind;
 import core.thread  : Thread;
 import core.time    : msecs;
 
@@ -149,8 +199,11 @@ enum long kOursCutPositiveSteps = 1;   // committed real cut
 
 /// Arm-and-drop of the TRANSFORM tool, relative to the cell with one fewer
 /// armed-and-dropped region. Shape 1 = over the stand's model entry.
-enum long kOursArmDropOverModelSteps     = 0;   // parity with the reference
-enum long kOursArmDropOverLifecycleSteps = 1;   // the reference costs 0
+/// The VALUES are unchanged by the 2026-08-30 correction and the ROLES are
+/// swapped: the reference now costs 1 for BOTH shapes, so shape 1 is the
+/// divergence (block 2) and shape 2 is the parity row (block 3).
+enum long kOursArmDropOverModelSteps     = 0;   // the reference costs 1
+enum long kOursArmDropOverLifecycleSteps = 1;   // parity with the reference
 
 /// The retirement switches. "open" — we still differ, assert the gap.
 /// "closed" — the law is ported, assert PARITY instead.
@@ -215,6 +268,16 @@ long deliveries() { return getJson("/api/changes")["deliveryCount"].integer; }
 /// The slice tool's own state. `lineDrawn` is the engagement witness; the
 /// start/end triples say whether the drawn line is degenerate.
 JSONValue sliceState() { return getJson("/api/tool/state"); }
+
+/// The ARMED tool's own id, or "" when nothing is armed — `/api/tool/state`
+/// answers a bare `{}` with no active tool and carries `"tool":"xfrm"` while
+/// a transform tool is up. This is the arm-and-drop cells' engagement witness,
+/// the counterpart of `lineDrawn` for the cutting cells: without it block 2's
+/// reading of ZERO is satisfied just as well by a region that never happened.
+string armedToolId() {
+    auto j = getJson("/api/tool/state");
+    return ("tool" in j) ? j["tool"].str : "";
+}
 
 // ---------------------------------------------------------------------------
 // The rig
@@ -397,6 +460,11 @@ struct ArmDropCell {
     long visibleDelta;
     long deliveryDelta;
     bool meshMoved;
+    /// How many of this cell's regions were seen ARMED (the tool reported
+    /// itself as `xfrm` after `tool.set move on`) and DROPPED (the endpoint
+    /// answered `{}` after `tool.set move off`). Both must equal `regions`.
+    int  armsSeen;
+    int  dropsSeen;
 }
 
 /// `regions` armings-and-droppings of the TRANSFORM tool over the stand, each
@@ -417,11 +485,16 @@ ArmDropCell runArmDropCell(string id, int regions) {
     foreach (i; 0 .. regions) {
         script("tool.set move on");
         settle();
+        // WITNESS, read INSIDE the region: the tool is up. Everything below
+        // reads zero for a region that never happened, so this is the line
+        // that separates the two.
+        if (armedToolId() == "xfrm") ++c.armsSeen;
         playAndWait(buildMoveLog(cam.vpX, cam.vpY, cam.width, cam.height,
                                  px, py, px, py, 8), BASE);
         settle();
         script("tool.set move off");
         settle();
+        if (armedToolId().length == 0) ++c.dropsSeen;
     }
     c.visibleDelta  = visibleUndoDepth() - vis0;
     c.deliveryDelta = deliveries() - del0;
@@ -550,21 +623,64 @@ unittest {
         ~ "evidence about an empty delta — flipping that flag would silently "
         ~ "turn a real-cut cell into a second empty-delta claim");
 
-    // The two stack shapes, and the fact that they agree.
+    // The two stack shapes, and the fact that they cost the SAME.
+    auto a0 = fixtureCase(fx, "baseline_no_region_at_all");
     auto a1 = fixtureCase(fx, "armed_and_dropped_over_a_model_edit");
     auto a2 = fixtureCase(fx, "armed_and_dropped_over_another_lifecycle_region");
-    assert(a1["entries_recorded"].integer == 0
-        && a2["entries_recorded"].integer == 0,
+    const long kbA0 = a0["undo_index_that_reverts_the_previous_edit"].integer;
+    const long kbA1 = a1["undo_index_that_reverts_the_previous_edit"].integer;
+    const long kbA2 = a2["undo_index_that_reverts_the_previous_edit"].integer;
+
+    assert(a1["entries_recorded"].integer == 1
+        && a2["entries_recorded"].integer == 1,
         format("the fixture's armed-and-dropped cells declare %d and %d "
-               ~ "entries; the measured law is that BOTH cost nothing, and it "
-               ~ "is what makes 'there is no stack-shape term' a measurement "
-               ~ "rather than an assumption",
+               ~ "entries. The CORRECTED law (cross-check, 2026-08-30) is "
+               ~ "that the DROP is free and the ARM is not: EACH "
+               ~ "armed-and-dropped region costs the reference exactly ONE "
+               ~ "entry. The 0/0 this assertion used to demand was a WINDOW "
+               ~ "artefact of the debugger channel — it attached AFTER the arm "
+               ~ "command had already run, so its window held the keystroke, "
+               ~ "the pointer path and the drop and never the arm itself. The "
+               ~ "behavioural walk brackets the arm and reads 1. What the two "
+               ~ "cells being EQUAL still buys is the original finding, "
+               ~ "untouched by the correction: there is no stack-shape term",
                a1["entries_recorded"].integer, a2["entries_recorded"].integer));
+
+    // Re-derive both numbers from the frozen undo indices, each against the
+    // baseline its own `entries_recorded_against` names. THIS IS THE CHECK
+    // THAT WAS MISSING when the 0/0 went in: the indices said 3 - 2 = 1 and
+    // 4 - 3 = 1 the whole time and nothing compared them against the declared
+    // 0. A fixture edited on one side only must fail HERE, exactly as the
+    // cutting cells above already do.
+    assert(a1["entries_recorded_against"].str.canFind("baseline_no_region_at_all"),
+        format("the shape-1 cell now measures itself against '%s'; the "
+               ~ "subtraction below assumes the never-armed baseline",
+               a1["entries_recorded_against"].str));
+    assert(a2["entries_recorded_against"].str.canFind("armed_and_dropped_over_a_model_edit"),
+        format("the shape-2 cell now measures itself against '%s'; the "
+               ~ "subtraction below assumes the single-region cell",
+               a2["entries_recorded_against"].str));
+    assert(a1["entries_recorded"].integer == kbA1 - kbA0,
+        format("the fixture contradicts itself: armed_and_dropped_over_a_"
+               ~ "model_edit declares entries_recorded %d, but its undo "
+               ~ "indices give %d - %d = %d. Re-measure; do not patch one side",
+               a1["entries_recorded"].integer, kbA1, kbA0, kbA1 - kbA0));
+    assert(a2["entries_recorded"].integer == kbA2 - kbA1,
+        format("the fixture contradicts itself: armed_and_dropped_over_"
+               ~ "another_lifecycle_region declares entries_recorded %d, but "
+               ~ "its undo indices give %d - %d = %d. Re-measure; do not patch "
+               ~ "one side",
+               a2["entries_recorded"].integer, kbA2, kbA1, kbA2 - kbA1));
+
     assert(a1["low_level_blocks_created"].integer == 0
         && a2["low_level_blocks_created"].integer == 0,
         "the fixture's armed-and-dropped cells no longer declare zero "
-        ~ "low-level blocks — the direct-counter channel is what makes the "
-        ~ "zero a measurement and not the absence of a reading");
+        ~ "low-level blocks. That zero is a real reading of a NARROWER region "
+        ~ "than the one entry count above — the debugger's window opens after "
+        ~ "the arm, so it prices the pointer path and the drop alone (see the "
+        ~ "fixture's decomposition.channel_boundary). It is what charges the "
+        ~ "one entry to the ARM by elimination, and it must not be edited to "
+        ~ "chase the corrected 1");
 
     assert(fx["verdict"].str == "b",
         format("the fixture's verdict is now '%s'. This file is built on (b) — "
@@ -667,84 +783,156 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// 2 — assertions_for_a_port[3], FIRST HALF, AND IT IS A PARITY ROW:
+// 2 — assertions_for_a_port[3], FIRST HALF, AND SINCE 2026-08-30 IT IS THE
+//     DIVERGENCE ROW:
 //     "A tool that was armed and dropped WITHOUT ever being engaged must cost
-//      NOTHING" — over a preceding MODEL edit.
+//      exactly ONE undo step, and that step must be charged to the ARM."
 //
-//     We agree with the reference here, and the agreement is load-bearing: a
-//     file whose every assertion is "we differ" passes just as well when the
-//     channel is broken. This row shows the channel CAN agree on the same
-//     read. Measured against a stand where the tool is never armed at all —
-//     not against the cell itself, which would be 0 by construction.
+//     Over a preceding MODEL edit we cost ZERO where the reference costs one.
+//     This block was the PARITY row until the cross-check overturned the
+//     reference's 0 (window artefact — see block 0 and the file header).
+//     Registry row 87, shape 1.
+//
+//     THE MECHANISM IS OURS, AND IT IS NOT "the first region is free". Every
+//     region records exactly one entry on our side too. Ours is a
+//     `HistoryFlags.ToolLifecycle` entry from the DROP (our ARM records
+//     nothing; the reference charges the arm and its drop is free), and
+//     `CommandHistory.undo`'s (R1) rule makes a lifecycle TAIL transparent
+//     when a Model entry sits directly below it — so the stand's own model
+//     entry absorbs exactly ONE region's entry, whichever region is first.
+//     Two measurements on this tree, 2026-08-30, say the freeness belongs to
+//     what lies BELOW and not to the region: with no model edit below it the
+//     very first region is a hard step and costs 1; and after ONE region over
+//     the stand, the first undo reverts the stand and the SECOND undo
+//     re-activates the transform tool — i.e. the entry existed all along and
+//     the walk stepped past it.
+//
+//     THE INCREMENT AGREEMENT IS A COINCIDENCE, NOT A MATCH. Both engines
+//     record one entry per region, so both accumulate at 1 per further
+//     region. They do it at opposite ends of the region, and only one of the
+//     two classes can be hidden by an undo rule. That is why the whole
+//     divergence is a CONSTANT one step, and why it shows up here rather than
+//     as a drift block 3 could see.
+//
+//     VACUITY IS THE LIVE RISK IN THIS BLOCK: it reads 0, and a region that
+//     NEVER HAPPENED reads 0 too. The arms/drops witness below is what
+//     separates them, and block 3's positive 1 is the second channel.
+//
+//     ON THE REFERENCE SIDE, the charge to the ARM rests on ELIMINATION (the
+//     region logged exactly one command; the finer instrument priced every
+//     other act in it at zero), not on a cell containing only an arm. The
+//     fixture's `not_measured` says so and this message repeats it.
 // ---------------------------------------------------------------------------
 unittest {
     auto m = measured();
     const long ours = m.ad1.kB - m.ad0.kB;
-    assert(ours == m.refArmDropModel,
-        format("arming and dropping the transform tool over a preceding MODEL "
-               ~ "edit cost %d undo steps (kB %d against the never-armed "
-               ~ "baseline's %d); the reference records %d entries for the "
-               ~ "same thing. This is the PARITY row — losing it means the "
-               ~ "read itself moved, not the law",
-               ours, m.ad1.kB, m.ad0.kB, m.refArmDropModel));
-    assert(ours == kOursArmDropOverModelSteps,
-        format("shape 1 now costs %d undo steps; this file froze %d",
-               ours, kOursArmDropOverModelSteps));
+
+    // THE WITNESS FIRST — the region HAPPENED. Everything below is satisfied
+    // by a deleted region body, so this is the assertion that must fail when
+    // the cell stops arming.
+    assert(m.ad1.armsSeen == 1 && m.ad1.dropsSeen == 1,
+        format("the single armed-and-dropped region reported %d arms and %d "
+               ~ "drops through /api/tool/state; it must report 1 and 1. The "
+               ~ "region never happened, so the ZERO undo steps this block "
+               ~ "reads below is about nothing at all — a deleted region body "
+               ~ "produces exactly the same reading",
+               m.ad1.armsSeen, m.ad1.dropsSeen));
+    assert(m.ad0.armsSeen == 0,
+        format("the never-armed BASELINE reported %d arms. It is the quiet "
+               ~ "end of this subtraction; if it arms anything, the "
+               ~ "difference is not the cost of a region",
+               m.ad0.armsSeen));
+
+    if (kStatusArmDrop == "open") {
+        assert(ours == kOursArmDropOverModelSteps && ours < m.refArmDropModel,
+            format("arming and dropping the transform tool over a preceding "
+                   ~ "MODEL edit cost %d undo steps (kB %d against the "
+                   ~ "never-armed baseline's %d); this file froze %d against "
+                   ~ "the reference's %d entries for the same region. A value "
+                   ~ "of %d means the divergence CLOSED: flip kStatusArmDrop "
+                   ~ "to \"closed\", re-freeze kOursArmDropOverModelSteps and "
+                   ~ "retire registry row 87. Any other number means it "
+                   ~ "CHANGED — re-measure, and re-measure the bare-stack and "
+                   ~ "tool-reactivation cells with it, because they are what "
+                   ~ "say the freeness belongs to the stand's tail and not to "
+                   ~ "the region",
+                   ours, m.ad1.kB, m.ad0.kB, kOursArmDropOverModelSteps,
+                   m.refArmDropModel, m.refArmDropModel));
+    } else {
+        assert(ours == m.refArmDropModel,
+            format("kStatusArmDrop says the law is ported, but an "
+                   ~ "armed-and-dropped region over a MODEL edit still costs "
+                   ~ "%d undo steps against the reference's %d",
+                   ours, m.refArmDropModel));
+    }
 }
 
 // ---------------------------------------------------------------------------
-// 3 — assertions_for_a_port[3], SECOND HALF, AND IT IS THE NEW DIVERGENCE:
-//     "…and NOTHING in BOTH stack shapes: over a preceding model edit and over
-//      another armed-and-dropped region alike."
+// 3 — assertions_for_a_port[3], SECOND HALF, AND SINCE 2026-08-30 IT IS THE
+//     PARITY ROW:
+//     "…and the number must be the SAME in both stack shapes: over a preceding
+//      model edit and over another armed-and-dropped region alike."
 //
-//     THE SECOND SHAPE IS WHERE WE COST MORE, and it is the reason task 2660
-//     re-drove this at all: task 2640 could only leave it as a caveated
-//     adjacent fact because it had driven one shape. Both shapes read zero on
-//     the reference, so the stack-shape term is OURS. Registry row 87.
+//     A SECOND arm-and-drop, stacked on the first, costs us ONE — which is
+//     what the reference costs for every region. We AGREE here, and the
+//     agreement is load-bearing twice over:
+//       * a file whose every assertion is "we differ" passes just as well when
+//         the channel is broken. This row shows the channel CAN agree on the
+//         same read;
+//       * it is a POSITIVE count. Block 2's divergence reading is zero and
+//         cannot tell a recorded-and-hidden entry from no entry at all; this
+//         one goes red the moment the regions stop registering anything.
+//
+//     NO RETIREMENT BRANCH, deliberately. `kStatusArmDrop` guards block 2
+//     because that is where the gap is. This row is INVARIANT under the port:
+//     charging one step per region leaves shape 2 at 1, which is what it
+//     already reads. If it ever moves, the law moved — re-measure.
 //
 //     A NOTE ON WHAT THE REFERENCE SIDE IS. The fixture's `not_measured` says
-//     the behavioural kB cross-check for these two cells never ran, so its
-//     zero UNDO STEPS is an inference from zero ENTRIES RECORDED. The
-//     inference is sound — an entry that does not exist cannot cost a step —
-//     and it is named here so nobody later cites it as a measured kB.
+//     no cell isolates the arm on its own, so "the step is bought by the ARM"
+//     is an inference by elimination. The NUMBER, 1 per region in both shapes,
+//     is measured on the behavioural walk (undo indices 2 → 3 → 4).
 // ---------------------------------------------------------------------------
 unittest {
     auto m = measured();
     const long ours = m.ad2.kB - m.ad1.kB;
 
-    if (kStatusArmDrop == "open") {
-        assert(ours == kOursArmDropOverLifecycleSteps && ours > m.refArmDropLifecycle,
-            format("a SECOND armed-and-dropped transform region now costs %d "
-                   ~ "undo steps (kB %d against the single region's %d); this "
-                   ~ "file froze %d against the reference's %d entries. A "
-                   ~ "value of %d means the divergence CLOSED: flip "
-                   ~ "kStatusArmDrop to \"closed\", re-freeze "
-                   ~ "kOursArmDropOverLifecycleSteps and retire registry "
-                   ~ "row 87. Any other number means it CHANGED — re-measure.",
-                   ours, m.ad2.kB, m.ad1.kB, kOursArmDropOverLifecycleSteps,
-                   m.refArmDropLifecycle, m.refArmDropLifecycle));
-        // The registry row claims EVERY further region costs another step, not
-        // just the second. Without this the row would be over-claiming from a
-        // single cell.
-        assert(m.ad3.kB - m.ad2.kB == ours,
-            format("the THIRD armed-and-dropped region cost %d undo steps "
-                   ~ "where the second cost %d. Registry row 87 says every "
-                   ~ "further region costs the same; one of the two is now "
-                   ~ "wrong", m.ad3.kB - m.ad2.kB, ours));
-    } else {
-        assert(ours == m.refArmDropLifecycle,
-            format("kStatusArmDrop says the law is ported, but a second "
-                   ~ "armed-and-dropped region still costs %d undo steps "
-                   ~ "against the reference's %d",
-                   ours, m.refArmDropLifecycle));
-    }
+    assert(m.ad2.armsSeen == 2 && m.ad2.dropsSeen == 2,
+        format("the two-region cell reported %d arms and %d drops through "
+               ~ "/api/tool/state; it must report 2 and 2, or the difference "
+               ~ "it contributes is not the cost of a second region",
+               m.ad2.armsSeen, m.ad2.dropsSeen));
+
+    assert(ours == m.refArmDropLifecycle,
+        format("a SECOND armed-and-dropped transform region cost %d undo "
+               ~ "steps (kB %d against the single region's %d); the reference "
+               ~ "records %d entries for the same region. This is the PARITY "
+               ~ "row — losing it means the read itself moved, not the law, "
+               ~ "and it takes block 2's only positive witness with it",
+               ours, m.ad2.kB, m.ad1.kB, m.refArmDropLifecycle));
+    assert(ours == kOursArmDropOverLifecycleSteps,
+        format("shape 2 now costs %d undo steps; this file froze %d",
+               ours, kOursArmDropOverLifecycleSteps));
+
+    // The registry row claims every FURTHER region costs another step, on both
+    // sides. Without this the row would be over-claiming from a single cell.
+    assert(m.ad3.kB - m.ad2.kB == ours,
+        format("the THIRD armed-and-dropped region cost %d undo steps where "
+               ~ "the second cost %d. Registry row 87 says every further "
+               ~ "region costs the same on our side, which is what makes the "
+               ~ "divergence a CONSTANT one step rather than a drift; one of "
+               ~ "the two is now wrong", m.ad3.kB - m.ad2.kB, ours));
 }
 
 // ---------------------------------------------------------------------------
 // 4 — THE INSTRUMENT THAT CANNOT SEE ROW 87, asserted so nobody writes the
 //     next test on it. `/api/history` filters `HistoryFlags.ToolLifecycle`, so
 //     its visible depth moves by ZERO across every armed-and-dropped cell
-//     while the undo walk reads a hard step. The WALK is the law's instrument.
+//     while the undo walk reads a hard step from the second region on. The
+//     WALK is the law's instrument. Note the shape this leaves: on shape 1
+//     the two instruments happen to AGREE at zero, which is exactly why the
+//     cheap one cannot be used — it agrees for the wrong reason (it cannot
+//     see the entry) with a reading that is itself a divergence.
 //
 //     The cutting cells are the control for this claim: there the two
 //     instruments must AGREE, because no lifecycle entry is born in them at
@@ -757,9 +945,9 @@ unittest {
     assert(m.ad2.visibleDelta == 0 && m.ad1.visibleDelta == 0,
         format("/api/history's visible undo depth moved by %d and %d across "
                ~ "the armed-and-dropped cells. It is supposed to be BLIND to "
-               ~ "lifecycle entries; if it can see them, block 3's divergence "
-               ~ "could have been written on the cheap instrument and this "
-               ~ "file's whole undo walk is unnecessary — re-read (R1)",
+               ~ "lifecycle entries; if it can see them, blocks 2 and 3 could "
+               ~ "have been written on the cheap instrument and this file's "
+               ~ "whole undo walk is unnecessary — re-read (R1)",
                m.ad1.visibleDelta, m.ad2.visibleDelta));
     assert(m.ad2.kB - m.ad1.kB != m.ad2.visibleDelta - m.ad1.visibleDelta,
         "the two instruments AGREE on the second armed-and-dropped region. "
@@ -905,13 +1093,73 @@ unittest {
 //           every 'we record nothing' reading below is about a gesture that
 //           did not happen"
 //
-//   M3 — CLOSE THE ROW-87 GAP IN THE PRODUCT. `CommandHistory.undo`'s (R1)
-//        block: `if (!foundModel)` -> `if (false)`, so a lifecycle tail is
-//        always transparent. Block 3 reddens:
-//          "a SECOND armed-and-dropped transform region now costs 0 undo steps
-//           (kB 1 against the single region's 1); this file froze 1 against
-//           the reference's 0 entries. A value of 0 means the divergence
-//           CLOSED: flip kStatusArmDrop to \"closed\" …"
+//   M5 — THE FIXTURE ARITHMETIC, and it is the check the 2026-08-30
+//        correction repaired. In
+//        `tests/fixtures/gesture_zero_delta_undo_second_form.json`, cell
+//        `armed_and_dropped_over_a_model_edit`: `"entries_recorded": 1` ->
+//        `0`, i.e. the refuted value this file used to demand. Block 0
+//        reddens, at tests/test_gesture_zero_delta_undo_second_form.d:592:
+//          "the fixture's armed-and-dropped cells declare 0 and 1 entries.
+//           The CORRECTED law (cross-check, 2026-08-30) is that the DROP is
+//           free and the ARM is not: EACH armed-and-dropped region costs the
+//           reference exactly ONE entry. …"
+//        The same edit ALSO contradicts the cell's own undo indices (3 - 2 =
+//        1), which the re-derivation added in block 0 now catches — that
+//        derivation is what was missing when the 0 first went in.
+//
+//   M5b — THE RE-DERIVATION IS NOT DEAD, run separately to prove the new
+//        block-0 arithmetic discriminates on its own: the same cell's
+//        `"undo_index_that_reverts_the_previous_edit": 3` -> `4`, leaving
+//        `entries_recorded` at the correct 1. Block 0 reddens one assertion
+//        further down, at tests/test_gesture_zero_delta_undo_second_form.d:663:
+//          "the fixture contradicts itself: armed_and_dropped_over_a_model_edit
+//           declares entries_recorded 1, but its undo indices give 4 - 2 = 2.
+//           Re-measure; do not patch one side"
+//
+//   M6 — DELETE THE REGION. The VACUITY mutation for the arm-and-drop half,
+//        and the one the brief demanded be proven: `runArmDropCell`'s
+//        `foreach (i; 0 .. regions)` body is emptied, so no tool is ever
+//        armed or dropped. EVERY undo-step reading in block 2 stays exactly
+//        as it was — `ad0.kB == ad1.kB == 1`, so `ours == 0 ==
+//        kOursArmDropOverModelSteps` and `0 < 1` both still hold — and the
+//        arms/drops witness is the only thing that reddens, at
+//        tests/test_gesture_zero_delta_undo_second_form.d:730:
+//          "the single armed-and-dropped region reported 0 arms and 0 drops
+//           through /api/tool/state; it must report 1 and 1. The region never
+//           happened, so the ZERO undo steps this block reads below is about
+//           nothing at all — a deleted region body produces exactly the same
+//           reading"
+//        This is the sibling file's M1 failure in its own shape: the reading
+//        block 2 makes is ZERO, and nothing about a zero can tell a hidden
+//        entry from an absent one.
+//
+//   M6b — THE VACUITY, MEASURED RATHER THAN ASSERTED. M6 again, with block
+//        2's and block 3's arms/drops witnesses DELETED as well. Block 2's
+//        divergence reading stays GREEN over a region that never happened —
+//        `ad0.kB == ad1.kB == 1`, so `ours == 0` and `0 < 1` both hold — and
+//        the first failure is block 3, the PARITY row, at
+//        tests/test_gesture_zero_delta_undo_second_form.d:875:
+//          "a SECOND armed-and-dropped transform region cost 0 undo steps (kB
+//           1 against the single region's 1); the reference records 1 entries
+//           for the same region. This is the PARITY row — losing it means the
+//           read itself moved, not the law, and it takes block 2's only
+//           positive witness with it"
+//        So the two channels are independent and both are needed: without
+//        the witness block 2 cannot fail on a deleted region, and block 3 is
+//        the only step reading in the file that a deleted region reddens.
+//
+//   M3 — MAKE EVERY LIFECYCLE TAIL TRANSPARENT IN THE PRODUCT.
+//        `CommandHistory.undo`'s (R1) block: `if (!foundModel)` -> `if
+//        (false)`. This does NOT close row 87 — it WIDENS it, which is worth
+//        knowing before anyone reaches for it as the port: shape 2 falls from
+//        1 to 0 while shape 1 stays at 0, so every region becomes free and we
+//        move further from the reference's one-per-region. Block 3, the
+//        PARITY row, reddens first:
+//          "a SECOND armed-and-dropped transform region cost 0 undo steps (kB
+//           1 against the single region's 1); the reference records 1 entries
+//           for the same region. This is the PARITY row — losing it means the
+//           read itself moved, not the law, and it takes block 2's only
+//           positive witness with it"
 //        Block 4 reddens on the same mutation for its own reason (the two
 //        instruments stop disagreeing), which is why the M2 run below removes
 //        blocks 3 AND 4.
@@ -933,7 +1181,10 @@ unittest {
 //        `ToolLifecycle` entry, which is the SAME stack tail that cell
 //        `armdrop_over_model_edit` leaves behind — and the cost of one further
 //        arm-and-drop over that tail is measured, at 1, by block 3 itself. So
-//        a drag-built stand would make block 2's PARITY row read 1, collapse
-//        the two stack shapes into one, and lose the parity for a reason that
+//        a drag-built stand would make block 2 read 1, collapse the two stack
+//        shapes into one, and lose the SHAPE-1 divergence for a reason that
 //        has nothing to do with the law. No separate run is needed to know
-//        that; block 3 is the measurement.
+//        that; block 3 is the measurement. Since 2026-08-30 this is also the
+//        cheapest statement of row 87's mechanism: what the region costs us
+//        is decided by the entry BELOW it, and (R1) hides exactly one
+//        lifecycle tail per Model entry.
