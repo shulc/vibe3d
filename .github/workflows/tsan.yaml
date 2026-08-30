@@ -54,14 +54,34 @@ name: nightly-tsan
 # takes protects nothing. The real hazard is the queue, so the arithmetic is
 # about cumulative occupancy:
 #
-#   17:00 + 100 (this)      = 18:40 worst end, before 19:00
+#   04:30 + 30 (this)       = 05:00 worst end, before 19:00
 #   19:00 + 270 (sanitizer) = 23:30            <=  00:30 (perf)
 #
 # The next lane has its OWN cron, so it starts at max(19:00, when this one lets
-# go of the runner) — the sum 17:00 + 100 + 270 that an earlier draft wrote
+# go of the runner) — the sum `this + 30 + 270` that an earlier draft wrote
 # down is only the worst case if this lane overruns past 19:00, which the guard
 # and timeout-minutes together prevent. `preflight-tsan` recomputes this and
 # fails if it stops closing.
+#
+# WHY 04:30 AND NOT THE 20:00 MSK THIS LANE SHIPPED WITH (owner, 2026-08-30).
+# Not taste, and not the median. GitHub's own schedule delivery drift for this
+# repository is measured — median 98.8 min, MAX 693.6 min (11.6 h), live run of
+# tools/ci/nightly_freshness.d — and the guard's accepted set is
+# {00:00} u [04:30, 19:30) u [23:30, 24:00). That set is the same whatever the
+# cron says; what the target decides is WHERE IN IT the drift lands. From
+# 17:00 the tolerated drift was [0, 2.5h) u [6.5h, 7h] u [11.5h, ...), a
+# nine-hour hole sitting right where the tail lives; from 04:30 it is fifteen
+# CONTIGUOUS hours, covering the measured maximum with 3.4 h to spare. The
+# cost is that a 30-minute instrumented lane can now land in the owner's
+# working day (~1.12 GiB under xvfb-run plus CPU), which is the trade the
+# owner made against a lane that was measuring nothing at all.
+#
+# 04:30 is also the EARLIEST target the occupancy model allows — it is exactly
+# perf's worst-case finish (00:30 + timeout-minutes 240), so 04:29 is refused
+# because perf may still be measuring. That zero margin is asserted, not
+# assumed: `lane.d preflight-tsan` (2a) puts the declared cron target through
+# the window guard's own verdict function and fails unless an ON-TIME delivery
+# is the quietest verdict there is.
 #
 # `lane.d window-guard` COMPUTES the allowed start interval from
 # kTsanTimeoutMin and the next lane's start rather than storing it, so raising
@@ -80,7 +100,7 @@ name: nightly-tsan
 
 on:
   schedule:
-    - cron: '0 17 * * *'   # 20:00 MSK; sanitizer 19:00 UTC, perf 00:30 UTC
+    - cron: '30 4 * * *'   # 07:30 MSK; sanitizer 19:00 UTC, perf 00:30 UTC
   workflow_dispatch:
     inputs:
       force:

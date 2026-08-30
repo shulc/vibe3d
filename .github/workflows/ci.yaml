@@ -130,10 +130,24 @@ jobs:
     #
     #   * THE LANE HALF. `nightly-tsan` ran its ThreadSanitizer tests for the
     #     last time on 2026-08-25. Nothing here was looking at it. The two
-    #     other scheduled nightlies (`tsan.yaml` 17:00, `sanitizer.yaml`
-    #     19:00) now get the same three terms as `perf.yaml`, each with its
-    #     own `--cron-target-utc` — nothing in the tool was ever
-    #     perf-specific.
+    #     other scheduled nightlies (`tsan.yaml`, `sanitizer.yaml` 19:00) now
+    #     get the same three terms as `perf.yaml`, each with its own
+    #     `--cron-target-utc` — nothing in the tool was ever perf-specific.
+    #
+    # THE TSAN TARGET MOVED 17:00 -> 04:30 on 2026-08-30 (owner's call; see
+    # `.github/workflows/tsan.yaml`). It is changed HERE too because the drift
+    # term is measured against the target this line declares, and a stale one
+    # measures nothing real. Two consequences worth knowing before reading the
+    # next fortnight's numbers:
+    #   * the historical deliveries in the window were all evening ones, so
+    #     against a 04:30 target they now read as +12h..+15h until the sample
+    #     rolls over. That is arithmetic, not a regression.
+    #   * it makes the figure TRUSTWORTHY for this lane for the first time.
+    #     `scheduleDriftMinutes` compares time-of-day, so a target the
+    #     deliveries wrap past midnight from produces large negative drifts and
+    #     a meaningless median — which is exactly what the tool's own doc
+    #     comment warns about for "the two evening lanes". A 04:30 target with
+    #     acceptance closing at 19:30 cannot wrap.
     #   * THE TERM HALF, and it is the one that matters. Terms 1 and 2 were
     #     BOTH GREEN throughout those five nights: the cron delivered, the
     #     runs existed, every one of them was `event: schedule`. They just
@@ -160,7 +174,7 @@ jobs:
         : > nightly_freshness_output.log
         worst=0
         for lane in "perf.yaml|nightly-perf|00:30" \
-                    "tsan.yaml|nightly-tsan|17:00" \
+                    "tsan.yaml|nightly-tsan|04:30" \
                     "sanitizer.yaml|nightly-sanitizer|19:00"; do
           wf=${lane%%|*}; rest=${lane#*|}; label=${rest%%|*}; target=${rest##*|}
           echo "--- $label ($wf, cron target $target UTC)" \

@@ -47,7 +47,13 @@
  *                           measured by sweeping all 1440 minutes:
  *                           {00:00} u [04:30, 19:30) u [23:30, 24:00), i.e.
  *                           931/1440 minutes against the 150 the old
- *                           membership test allowed
+ *                           membership test allowed. UNCHANGED by the
+ *                           2026-08-30 cron move to 04:30 — the guard never
+ *                           reads the cron — but from that target the set
+ *                           reads as 15 CONTIGUOUS hours of drift tolerance
+ *                           instead of 2.5h plus two islands, and
+ *                           [04:30, 17:00) is now a quiet `pass` rather than
+ *                           a loud `passOffSlot`
  *   tsan-selfcheck          GATE: the synthetic race must be reported exactly
  *                           once, and the suppression canary must both silence
  *                           it and print its Matched block
@@ -736,8 +742,10 @@ import std.datetime : Clock, UTC;
 // that lane's own 270 minutes then start later.
 //
 //   (1) latest allowed start + kTsanTimeoutMin <= kNextLaneStartUtcMin
-//       => with 30, the start window is [17:00, 18:30)
-//   (2) 17:00 + 30 (tsan) + 270 (sanitizer) = 22:00 <= 00:30 (perf)
+//       => with 30, the ideal start window closes at 18:30
+//   (2) 04:30 + 30 (tsan) = 05:00; the sanitizer lane starts at its own cron
+//       19:00 (not at 05:00 — see "cumulative occupancy" below) and runs
+//       270 to 23:30 <= 00:30 (perf)
 //
 // WHY 30 AND NOT 100 (changed 2026-08-19, after the first scheduled run).
 // 100 was a hang ceiling picked before this lane's cost was measured. It is
@@ -755,12 +763,56 @@ import std.datetime : Clock, UTC;
 // 90-minute window, which covers the observed drift with room, without
 // trading away the hang ceiling that a much larger cron shift would cost.
 enum int kTsanTimeoutMin       = 30;
-enum int kTsanWindowOpenUtcMin = 17 * 60;        // 17:00 UTC
+// 04:30 UTC = 07:30 MSK. MOVED FROM 17:00 on 2026-08-30 by the owner; the
+// cron in `.github/workflows/tsan.yaml` moved with it, and check (2) of
+// `cmdPreflightTsan` fails if the two ever disagree again.
+//
+// THIS EDGE IS THE ONLY ONE OF THE THREE THAT MOVED, and the reason is what
+// each edge is derived from:
+//
+//   * `tsanLatestStartUtcMin` = kNextLaneStartUtcMin - kTsanTimeoutMin = 18:30
+//     — the SANITIZER lane's cron and our own timeout. No term of ours.
+//   * `tsanHardLatestStartUtcMin` = kPerfStartUtcMin + 24h
+//     - kSanitizerDurationMin - kTsanTimeoutMin = 19:30 — the PERF lane's
+//     start against the sanitizer lane's budget. No term of ours.
+//   * this one had no derivation at all: it WAS the cron target, written a
+//     second time. So the interval does not translate as a block — its right
+//     edges are pinned by other lanes' budgets and stayed exactly where they
+//     were, and only the left edge follows the target.
+//
+// New nominal slot: [04:30, 19:30) — ideal [04:30, 18:30), drift tolerance
+// [18:30, 19:30). Measured by sweeping all 1440 minutes through
+// `cmdWindowGuard`, the ACCEPTED SET DID NOT CHANGE BY ONE MINUTE (the guard
+// never read the cron): it is {00:00} u [04:30, 19:30) u [23:30, 24:00) = 931
+// before and after. What changed is where the drift lands inside it — see the
+// contiguity argument under `kTsanAcceptSafeOffSlotStarts` — and the LABEL on
+// [04:30, 17:00), which was `passOffSlot` with a loud note and is now a quiet
+// `pass`.
+//
+// It stays a LITERAL and is deliberately NOT written `= kPerfEndUtcMin`, even
+// though it now lands exactly on perf's worst-case finish (measured: 04:29 is
+// the last refused minute, on `collidesWithPerf` alone). Deriving it would let
+// a change to the perf lane's timeout silently move the hour the owner's
+// workstation is borrowed, which is a product decision this file has no
+// standing to make. The coincidence is ASSERTED instead, by check (2c) of
+// `cmdPreflightTsan`: the declared cron target must itself be accepted by
+// `checkScheduleWindow`. Under the 17:00 target that was implied by the
+// membership test; at 04:30 the open ABUTS perf's occupancy with zero margin,
+// so it has to be checked outright.
+enum int kTsanWindowOpenUtcMin = 4 * 60 + 30;    // 04:30 UTC
 enum int kNextLaneStartUtcMin  = 19 * 60;        // sanitizer.yaml cron '0 19 * * *'
 enum int kNextLaneEndUtcMin    = 19 * 60 + 270;  // + timeout-minutes: 270 = 23:30
 enum int kPerfStartUtcMin      =  0 * 60 + 30;   // perf.yaml cron '30 0 * * *'
 enum int kPerfEndUtcMin        =  4 * 60 + 30;   // + timeout-minutes: 240
 enum int kSanitizerDurationMin = kNextLaneEndUtcMin - kNextLaneStartUtcMin;  // 270
+
+// The MEASURED maximum GitHub schedule-delivery drift for this repository:
+// 693.6 min = 11.56 h, rounded UP to the whole minute. Live run of
+// `tools/ci/nightly_freshness.d`, 2026-08-30 (median 98.8 min). This is the
+// number the 2026-08-30 cron move was argued against and the floor check (2d)
+// of `cmdPreflightTsan` holds the schedule to; it is a MEASUREMENT, so raise
+// it only from a newer run of that tool, never to make a check pass.
+enum int kMeasuredMaxDriftMin  = 694;
 
 int tsanLatestStartUtcMin() { return kNextLaneStartUtcMin - kTsanTimeoutMin; }
 
@@ -829,12 +881,18 @@ string hhmm(int m) { return format("%02d:%02d", m / 60, m % 60); }
 // nominal start, and the induced chain is max(19:00, 05:30) + 270 = 23:30,
 // an hour clear of perf. The guard refused it anyway, for being early.
 //
-// So [17:00, 19:30) keeps its exact meaning and its exact verdicts, and
+// So the nominal slot keeps its exact meaning and its exact verdicts, and
 // OUTSIDE it the decision moves to `occupancyHazard` below. Against the
 // measured maximum: 17:00 + 693.6min = 04:36, whose run window [04:36, 05:06)
 // clears perf's occupancy [00:30, 04:30) by six minutes and collides with
 // nothing — under the old rule it was refused for being "before 17:00", under
 // this one it RUNS. (04:29 still fails: perf may still be measuring.)
+//
+// That paragraph was written while the slot was [17:00, 19:30). Later the
+// same day the cron target moved to 04:30 and the slot's left edge moved with
+// it, so 04:36 is now INSIDE the slot and reaches this branch no longer — the
+// argument stands as the reason the off-slot branch exists, not as a live
+// worked example. See `kTsanWindowOpenUtcMin` for which edges moved and why.
 //
 // THE COST, AND IT IS THE OWNER'S TO ACCEPT OR REFUSE. This runner is a
 // workstation inside the owner's graphical session. An off-slot acceptance
@@ -847,23 +905,39 @@ string hhmm(int m) { return format("%02d:%02d", m / 60, m % 60); }
 // inside it, so `cmdPreflightTsan`'s selfcheck exercises BOTH values and the
 // refusing branch cannot rot into dead code.
 //
-// WHAT THIS DOES NOT FIX, AND IT IS THE OWNER'S CALL — the CRON TARGET.
+// THE CRON TARGET — NAMED HERE ON 2026-08-30 AND TAKEN THE SAME DAY.
 // Sweeping all 1440 minutes through `cmdWindowGuard` gives the accepted set
 // {00:00} u [04:30, 19:30) u [23:30, 24:00) = 931 minutes, against the 150
-// the membership test allowed. But the ACCEPTED SET IS NOT CONTIGUOUS FROM
-// 17:00: from a 17:00 cron the tolerated drift is [0, 2.5h) u [6.5h, 7h] u
+// the membership test allowed. But that set was NOT CONTIGUOUS FROM 17:00:
+// from a 17:00 cron the tolerated drift was [0, 2.5h) u [6.5h, 7h] u
 // [11.5h, ...) — the measured median (1.6h) and the measured maximum (11.6h
-// -> 04:33) both land in it, but a nine-hour hole sits between them, and a
-// delivery at, say, 21:00 is still refused because it genuinely collides.
-// The lever that closes the hole is the cron target, not this file: a cron at
-// 04:30 UTC yields FIFTEEN contiguous hours of drift tolerance ([04:30,
-// 19:30)), covering the measured maximum with 3.4h to spare. 04:30 UTC is
-// 07:30 MSK, i.e. it can put a 30-minute instrumented lane in the owner's
-// morning, which is a scheduling preference this file has no standing to
-// decide. NAMED HERE, NOT TAKEN: `.github/workflows/tsan.yaml`'s
-// `cron: '0 17 * * *'` is unchanged, and `cmdPreflightTsan` (2) still
-// requires the declared cron to sit inside the IDEAL window, so moving it is
-// a two-line change the owner makes deliberately.
+// -> 04:33) both landed in it, but a nine-hour hole sat between them, and a
+// delivery at, say, 21:00 was still refused because it genuinely collides.
+// The lever that closes the hole is the cron target, not this file. From a
+// 04:30 target the SAME accepted set reads as [0, 15h) contiguous, then a
+// hole [15h, 19h), then [19h, 19.5h] — measured, not predicted: the sweep
+// puts the last accepted minute of the contiguous run at 19:29, i.e. 900
+// minutes = FIFTEEN HOURS from 04:30, covering the measured maximum drift
+// (693.6min = 11.56h) with 206 minutes = 3.4h to spare.
+//
+// So the cron moved to `30 4 * * *` and `kTsanWindowOpenUtcMin` moved with
+// it. WHAT THAT DID TO THIS FLAG, because its argument above is now stale in
+// its central claim: with the open at 17:00 this switch governed 781 minutes,
+// including the whole of [04:30, 17:00) — every working hour of the owner's
+// day, which is what the cost paragraph is about. With the open at 04:30
+// those minutes are INSIDE the nominal slot and are accepted whatever this
+// flag says. Measured after the move, the flag governs 31 minutes and they
+// are all nocturnal: {00:00} u [23:30, 24:00), the gap between the sanitizer
+// lane's finish and the perf lane's start. Reaching them needs a delivery
+// 19h to 19.5h late, against a measured maximum of 11.6h.
+//
+// It is therefore LEFT AT `true` and reported rather than decided: after the
+// move it neither protects working hours (it no longer reaches them) nor
+// plausibly fires (no recorded delivery is that late), so flipping it would
+// be a change with no measured consequence, and that is not this file's call
+// to make. The selfcheck in `cmdPreflightTsan` (2c) exercises the `false`
+// branch at 23:30 — the cell it used to be exercised at, 04:36, is inside
+// the slot now and cannot reach this switch at all.
 enum bool kTsanAcceptSafeOffSlotStarts = true;
 
 /// Smallest `x >= from` with `x ≡ tod (mod 24h)`. Minute-of-day arithmetic
@@ -1030,9 +1104,15 @@ ScheduleCheck checkScheduleWindow(int now, int openMin, int idealLatest,
                 "scheduled start at %s UTC is outside the nominal slot [%s, %s). "
               ~ "It collides with NOTHING — run window [%s, %s), sanitizer "
               ~ "[%s, %s), perf [%s, %s) — but off-slot starts are refused by "
-              ~ "policy (kTsanAcceptSafeOffSlotStarts = false), because this "
-              ~ "runner is a workstation inside the owner's graphical session "
-              ~ "and an accepted off-slot start can land in working hours.",
+              ~ "policy (kTsanAcceptSafeOffSlotStarts = false). That policy "
+              ~ "was written on 2026-08-30 to keep this lane out of the "
+              ~ "owner's working day, when the nominal slot opened at 17:00 "
+              ~ "and off-slot meant the whole of [04:30, 17:00). Since the "
+              ~ "cron target moved to 04:30 the working day is INSIDE the "
+              ~ "slot and this branch no longer reaches it: measured, the "
+              ~ "region it now governs is {00:00} u [23:30, 24:00), 31 "
+              ~ "nocturnal minutes needing a delivery 19h+ late against a "
+              ~ "measured maximum of 11.6h.",
                 hhmm(now), hhmm(openMin), hhmm(hardLatest),
                 hhmm(now), hhmm((now + timeoutMin) % (24 * 60)),
                 hhmm(nextLaneStart), hhmm(nextLaneEnd % (24 * 60)),
@@ -1868,6 +1948,112 @@ void cmdPreflightTsan() {
               hhmm(kNextLaneStartUtcMin), hhmm(nextStart),
               hhmm(nextEnd % (24 * 60))));
 
+    // (2a) AN ON-TIME NIGHT MUST COLLIDE WITH NOTHING. Added with the
+    // 2026-08-30 move of the cron target to 04:30, because the membership
+    // test above stopped being sufficient the moment the window's open left
+    // the middle of the evening.
+    //
+    // The old open, 17:00, sat four hours clear of every other lane's
+    // occupancy, so "the cron is inside [open, idealLatest)" implied "the cron
+    // target collides with nothing". The new open ABUTS perf's worst-case
+    // finish with ZERO margin: 04:30 is the first accepted minute of the day
+    // and 04:29 is refused on `collidesWithPerf`. Raise `perf.yaml`'s
+    // `timeout-minutes` from 240 by one minute and the target sits inside
+    // perf's occupancy — the tsan job then queues behind a perf run that is
+    // still measuring, and the perf number it queued behind was taken beside
+    // whatever the runner was doing. `kPerfEndUtcMin` is not a term of the
+    // membership test, so nothing above can see it.
+    //
+    // IT ASKS `occupancyHazard` DIRECTLY, AND THAT IS THE WHOLE POINT. The
+    // first draft of this check ran the target through `checkScheduleWindow`
+    // and required `pass` — and was INERT, measured: with `kPerfEndUtcMin`
+    // mutated to 04:31 the whole preflight stayed green (rc=0). Inside
+    // `[open, hardLatest)` that function returns pass/passLate
+    // unconditionally and never consults the hazard, so asking it about a
+    // target that check (2) has just confirmed is inside its own slot can
+    // only ever answer yes. It was a second spelling of (2), wearing the
+    // clothes of a collision check.
+    {
+        const h = occupancyHazard(cronMin, kTsanTimeoutMin,
+            kNextLaneStartUtcMin, kNextLaneEndUtcMin,
+            kPerfStartUtcMin, kPerfEndUtcMin);
+        if (h.any) {
+            string[] why;
+            if (h.collidesWithSanitizer) why ~= "overlaps the sanitizer lane";
+            if (h.collidesWithPerf)      why ~= "overlaps the perf lane";
+            if (h.pushesSanitizerIntoPerf) why ~= "the induced chain reaches perf";
+            fail(format("%s crons at %s UTC, and a delivery ON TIME at that "
+                      ~ "target COLLIDES: %s. The run window is [%s, %s), "
+                      ~ "the sanitizer lane occupies [%s, %s) and perf "
+                      ~ "[%s, %s). This runner takes ONE job at a time, so a "
+                      ~ "target inside another lane's occupancy is not a "
+                      ~ "clash but a queue — and the guard will refuse every "
+                      ~ "on-time night, which is a red job that measured "
+                      ~ "NOTHING. Move the cron target (and "
+                      ~ "kTsanWindowOpenUtcMin with it), or give the open "
+                      ~ "back its margin.",
+                        kTsanWorkflow, hhmm(cronMin), why.join("; "),
+                        hhmm(cronMin), hhmm((cronMin + kTsanTimeoutMin) % (24 * 60)),
+                        hhmm(kNextLaneStartUtcMin), hhmm(kNextLaneEndUtcMin % (24 * 60)),
+                        hhmm(kPerfStartUtcMin), hhmm(kPerfEndUtcMin)));
+        }
+        ok(format("the declared cron target %s collides with nothing "
+                ~ "(perf's occupancy ends %s, so the open has %d min of "
+                ~ "margin)", hhmm(cronMin), hhmm(kPerfEndUtcMin),
+                  kTsanWindowOpenUtcMin - kPerfEndUtcMin));
+    }
+
+    // (2d) THE DRIFT TOLERANCE MUST COVER THE MEASURED MAXIMUM. This is the
+    // reason the cron target moved on 2026-08-30, kept as a check instead of
+    // a paragraph.
+    //
+    // The tolerance is `hardLatest - open`, and it is CONTIGUOUS by
+    // construction rather than by luck: inside `[open, hardLatest)`
+    // `checkScheduleWindow` returns `pass` or `passLate` unconditionally —
+    // that branch never consults `occupancyHazard`, deliberately (a start at
+    // 18:39 does overlap the sanitizer lane and is accepted anyway, which is
+    // what the drift-tolerance zone IS). So there are no holes to sweep for,
+    // and this check does not pretend to sweep. It was verified out of band
+    // all the same: all 1440 minute-of-day starts driven through
+    // `cmdWindowGuard` give the accepted set
+    // {00:00} u [04:30, 19:30) u [23:30, 24:00), whose run containing the
+    // target is [04:30, 19:29] = 900 minutes = exactly 15 hours, with 04:29
+    // refused below it (perf) and 19:30 refused above it (the chain).
+    //
+    // What this catches that (2a) cannot: (2a) asks whether an ON-TIME
+    // delivery is accepted, and stays green while the tolerance behind it
+    // collapses to a minute. This asks whether a delivery as late as any this
+    // repository has recorded is still accepted — the failure mode that made
+    // the lane silent from 2026-08-25, which was never a target that could
+    // not run, but a target with nowhere to drift TO.
+    {
+        const tolerance = tsanHardLatestStartUtcMin() - kTsanWindowOpenUtcMin;
+        if (tolerance < kMeasuredMaxDriftMin)
+            fail(format("the drift tolerance from the cron target is %d min "
+                      ~ "(%.1fh): the window opens %s and the hard ceiling is "
+                      ~ "%s. The MEASURED maximum schedule-delivery drift for "
+                      ~ "this repository is %d min (%.1fh, "
+                      ~ "tools/ci/nightly_freshness.d live 2026-08-30), so a "
+                      ~ "night that drifts as far as this project has already "
+                      ~ "seen would be REFUSED — and a refused window is a red "
+                      ~ "job that measured NOTHING, which is how this lane "
+                      ~ "went silent for five nights from 2026-08-25. Move the "
+                      ~ "cron target (and kTsanWindowOpenUtcMin with it) "
+                      ~ "earlier, or shorten kTsanTimeoutMin / the sanitizer "
+                      ~ "lane's budget to lift the ceiling.",
+                        tolerance, tolerance / 60.0,
+                        hhmm(kTsanWindowOpenUtcMin),
+                        hhmm(tsanHardLatestStartUtcMin()),
+                        kMeasuredMaxDriftMin, kMeasuredMaxDriftMin / 60.0));
+        ok(format("drift tolerance from the target %s is %d min (%.1fh), "
+                ~ "contiguous to the hard ceiling %s — covers the measured "
+                ~ "maximum %d min (%.1fh) with %d min to spare",
+                  hhmm(kTsanWindowOpenUtcMin), tolerance, tolerance / 60.0,
+                  hhmm(tsanHardLatestStartUtcMin()), kMeasuredMaxDriftMin,
+                  kMeasuredMaxDriftMin / 60.0,
+                  tolerance - kMeasuredMaxDriftMin));
+    }
+
     // (2b) The schedule-window verdict table (`checkScheduleWindow`),
     // exercised against FIXED inputs rather than the wall clock. The
     // mutation this catches — the drift-tolerance zone collapsing (SKIP
@@ -1887,7 +2073,10 @@ void cmdPreflightTsan() {
         static struct Case { int now; V want; string label; }
         const idealLatest = tsanLatestStartUtcMin();
         auto cases = [
-            Case(kTsanWindowOpenUtcMin, V.pass, "the window's open edge"),
+            Case(kTsanWindowOpenUtcMin, V.pass,
+                 "the window's open edge — and since the 2026-08-30 move it is "
+               ~ "also the FIRST minute after perf's worst-case finish, so the "
+               ~ "open abuts the hazard with zero margin"),
             Case(idealLatest - 1, V.pass, "one minute inside the ideal window"),
             Case(idealLatest, V.passLate, "the ideal window's close edge"),
             Case(19 * 60 + 2, V.passLate,
@@ -1895,24 +2084,45 @@ void cmdPreflightTsan() {
                ~ "created 19:02:02Z)"),
             Case(hardLatest - 1, V.passLate,
                  "one minute inside the hard ceiling"),
-            // OFF-SLOT, 2026-08-30. Everything below used to be a flat FAIL
-            // for being outside [17:00, 19:30); the verdict is now the
-            // OCCUPANCY, and each of the three hazard terms gets a cell in
-            // which it is the term that fires.
-            Case(kTsanWindowOpenUtcMin - 1, V.passOffSlot,
-                 "one minute before the nominal open — collides with nothing; "
-               ~ "refusing it was the defect, not the protection"),
-            Case(4 * 60 + 36, V.passOffSlot,
-                 "17:00 + the MEASURED MAXIMUM delivery drift (693.6min / "
-               ~ "11.6h, tools/ci/nightly_freshness.d live 2026-08-30) — the "
-               ~ "single cell this whole change is argued against"),
+            // THE CRON MOVE, 2026-08-30. These two used to be `passOffSlot`
+            // for being outside [17:00, 19:30) and are the acceptance the
+            // move buys: with the open back at 17:00 both go passOffSlot and
+            // this table reddens, which is what stops the constant and the
+            // workflow's cron from drifting apart in the quiet direction.
+            Case(11 * 60, V.pass,
+                 "11:00 — the middle of the owner's working day, now INSIDE "
+               ~ "the ideal window. This is what the move traded for: the "
+               ~ "runner is the owner's workstation, and a start here is "
+               ~ "~1.12 GiB under xvfb-run plus CPU, accepted deliberately"),
+            Case(16 * 60 + 4, V.pass,
+                 "the NEW 04:30 target + the MEASURED MAXIMUM delivery drift "
+               ~ "(693.6min / 11.6h, tools/ci/nightly_freshness.d live "
+               ~ "2026-08-30) — the single cell the move is argued against; "
+               ~ "146 min short of the ideal close, 206 min (3.4h) short of "
+               ~ "the hard ceiling"),
+            // OFF-SLOT, 2026-08-30. These used to be a flat FAIL for being
+            // outside the slot; the verdict is now the OCCUPANCY, and each of
+            // the three hazard terms gets a cell in which it is the term that
+            // fires.
             Case(23 * 60 + 30, V.passOffSlot,
                  "the sanitizer lane has just finished and perf is an hour "
-               ~ "away"),
+               ~ "away — after the cron move this is the ONLY region the "
+               ~ "off-slot switch still governs"),
             Case(hardLatest, V.fail, "the hard ceiling itself"),
+            // A LITERAL, deliberately, and NOT `kTsanWindowOpenUtcMin - 1`.
+            // Written relative to the constant it is meant to police, this
+            // cell moves with the mutation and can never come out
+            // differently: at open=04:00 it would ask about 03:59, which is
+            // outside the slot and refused, and the check would sail through
+            // the exact defect it exists for. Pinned to the minute perf's
+            // occupancy actually ends.
             Case(4 * 60 + 29, V.fail,
-                 "one minute before perf's occupancy ends — perf may still be "
-               ~ "measuring (collidesWithPerf is the ONLY term that fires)"),
+                 "04:29 — one minute before perf's occupancy ends AND, since "
+               ~ "the 2026-08-30 move, one minute before the nominal open; "
+               ~ "collidesWithPerf is the ONLY term that fires (decomposition "
+               ~ "asserted in (2c)). This is the cell that refuses an open "
+               ~ "moved EARLIER than 04:30: at open=04:00 it lands inside the "
+               ~ "slot and returns `pass` while perf may still be measuring"),
             Case(0 * 60 + 52, V.fail,
                  "the real 2026-08-2x delivery at 00:52 UTC — still refused, "
                ~ "and for the right reason now"),
@@ -1938,17 +2148,24 @@ void cmdPreflightTsan() {
         // ALSO pushes its chain into perf, so a mutation of one term would
         // hide behind the other. Synthetic lanes separate them.
         {
-            // The measured-maximum cell again, with off-slot acceptance
-            // TURNED OFF: same instant, same hazard (none), opposite verdict.
-            // This is what keeps `kTsanAcceptSafeOffSlotStarts = false` from
+            // A hazard-free OFF-SLOT instant with off-slot acceptance TURNED
+            // OFF: same instant, same hazard (none), opposite verdict. This
+            // is what keeps `kTsanAcceptSafeOffSlotStarts = false` from
             // rotting into unexecuted dead code.
-            auto refused = checkScheduleWindow(4 * 60 + 36, kTsanWindowOpenUtcMin,
+            //
+            // 23:30 and not the 04:36 this block used to drive: after the
+            // 2026-08-30 cron move 04:36 is INSIDE the nominal slot and never
+            // reaches the policy branch at all, so the old cell would have
+            // gone red for the right reason and been "fixed" by deleting the
+            // only exercise of the refusing arm. Measured after the move, the
+            // switch governs {00:00} u [23:30, 24:00) and nothing else.
+            auto refused = checkScheduleWindow(23 * 60 + 30, kTsanWindowOpenUtcMin,
                 idealLatest, hardLatest, kTsanTimeoutMin, kNextLaneStartUtcMin,
                 kNextLaneEndUtcMin, kPerfStartUtcMin, kPerfEndUtcMin,
                 /*acceptSafeOffSlot=*/false);
             if (refused.verdict != ScheduleVerdict.fail)
                 fail("off-slot policy selfcheck: with kTsanAcceptSafeOffSlot"
-                   ~ "Starts=false, 04:36 must be REFUSED, got "
+                   ~ "Starts=false, 23:30 must be REFUSED, got "
                    ~ refused.verdict.to!string ~ " — " ~ refused.message);
             if (!refused.message.canFind("collides with NOTHING"))
                 fail("off-slot policy selfcheck: the refusal must say it is a "
