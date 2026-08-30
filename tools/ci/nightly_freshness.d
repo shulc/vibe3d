@@ -180,6 +180,25 @@
  *   ./tools/ci/nightly_freshness.d --gate-schedule-health
  *       Fold term 2's verdict into this process's own exit code too (see
  *       "GATE OR REPORT" above).
+ *   ./tools/ci/nightly_freshness.d --verdict-run-isos TS1,TS2,... [--now-iso TS]
+ *       Offline/test seam for TERM 3 (2026-08-30): judge the newest of
+ *       TS1,... as the last schedule-triggered run that CONCLUDED success.
+ *       Independent of the other two seams — a test sets all three states
+ *       separately, which is how the "delivered but measured nothing" cell
+ *       is written down at all.
+ *   ./tools/ci/nightly_freshness.d --print-verdict-threshold
+ *   ./tools/ci/nightly_freshness.d --fake-no-verdict-runs
+ *   ./tools/ci/nightly_freshness.d --gate-verdict-freshness
+ *
+ * THREE LANES, NOT ONE (2026-08-30). `ci.yaml` now runs this once per
+ * scheduled nightly — `perf.yaml` (target 00:30), `tsan.yaml` (17:00),
+ * `sanitizer.yaml` (19:00) — each with its own `--workflow` /
+ * `--workflow-label` / `--cron-target-utc`. Nothing about the three terms is
+ * perf-specific; `kCronPeriodHours` is 24 for all three and the drift
+ * measurement needs only the target the lane declares. Covering only
+ * `nightly-perf` was the second half of task 2580's hole: the lane whose
+ * silence went unnoticed for five nights was `nightly-tsan`, which this tool
+ * was not looking at.
  *
  * Exit codes: 0 fresh, 1 stale (a night looks missing), 2 could not tell
  * (bad args, `gh` failed, unparseable response, no repo/workflow resolved).
@@ -236,6 +255,20 @@ enum double kDriftBufferHours = 12.0;
 /// card's "Решения, принятые на месте" for the reasoning and how to flip
 /// this to 2.
 enum int kDefaultMissedNightsTolerated = 1;
+
+/// TERM 3's own dial (2026-08-30). Same formula, third independent input,
+/// same reason the other two are separate: a change to one tolerance must
+/// never move another silently.
+///
+/// WHY 36h SURVIVES THE MEASURED DRIFT, which is the number this has to be
+/// argued against. `kDriftBufferHours` is 12h; the largest schedule delivery
+/// drift this repository has ever measured is 693.6min = 11.6h (live run of
+/// this tool, 2026-08-30, over `nightly-perf`'s own schedule history). A lane
+/// that delivers at its worst observed lateness and then produces a verdict
+/// is still inside 24 + 12 = 36h, so term 3 cannot redden on lateness alone.
+/// It reddens when a lane has not CONCLUDED SUCCESSFULLY for a night and a
+/// half — which is the state terms 1 and 2 are both structurally blind to.
+enum int kDefaultVerdictMissedNightsTolerated = 1;
 
 /// Term 2's OWN dial (task 2580) — independently named and independently
 /// overridable (`--schedule-missed-nights-tolerated`) so a future change to
@@ -438,6 +471,118 @@ unittest
     assert(!vb2.ok, vb2.message);
 }
 
+// ---------------------------------------------------------------------------
+// 2026-08-30 — TERM 3: did the lane actually PRODUCE A VERDICT?
+// ---------------------------------------------------------------------------
+//
+// TERMS 1 AND 2 ARE BOTH GREEN ON THE FAILURE THAT MOTIVATED THIS. Measured
+// 2026-08-30: `nightly-tsan` has run its ThreadSanitizer tests exactly zero
+// times since 2026-08-25. Its cron fires; its runs exist; every one of them
+// is `event: schedule`. They just refuse at step 5 — `lane.d: FAIL: scheduled
+// start ... is outside the lane's HARD ceiling` — before a single test runs.
+//
+//   term 1 (age of last run, ANY event)      -> fresh. A run exists.
+//   term 2 (age of last SCHEDULE run)        -> delivering. Cron fires nightly.
+//   the lane's actual measurement            -> five nights of nothing.
+//
+// Extending terms 1 and 2 to `nightly-tsan` and `nightly-sanitizer` and
+// stopping there would have added two lanes' worth of green that CANNOT come
+// out differently on the one failure on record — the exact defect shape
+// CLAUDE.md names. Term 3 is the half that discriminates: the age of the
+// newest `schedule`-triggered run whose CONCLUSION was `success`.
+//
+// WHAT IT CANNOT SEE, said plainly: `conclusion` is one word for the whole
+// job, so "refused at the window guard" and "found a real race" are the same
+// `failure` to this term. It does not diagnose; it separates "this lane is
+// producing verdicts" from "this lane is producing nothing", and only the
+// second of those was invisible. A lane legitimately red for a real finding
+// is red in the Actions UI already, where the diagnosis belongs.
+//
+// REPORT, NOT GATE, by default — same reasoning the owner applied to terms 1
+// and 2 on 2026-08-28 (see "GATE OR REPORT" above): a silent nightly lane is
+// not the fault of whoever opened the next pull request. `--gate-verdict-
+// freshness` exists and nothing passes it.
+
+/// Same comparison shape and the same `<=` boundary as the two terms above,
+/// its OWN message. `lastVerdictRun` must already be filtered to
+/// `event == "schedule" && conclusion == "success"` by the caller — anything
+/// looser reintroduces exactly the blind spot this term exists to close.
+FreshnessVerdict checkVerdictFreshness(SysTime now, SysTime lastVerdictRun,
+                                        double thresholdHours, string workflowLabel) pure
+{
+    const durHours = (now - lastVerdictRun).total!"seconds" / 3600.0;
+    const ok = durHours <= thresholdHours;
+    string msg;
+    if (ok) {
+        msg = format("nightly_freshness: %s last produced a VERDICT %.1fh ago "
+                    ~ "(threshold %.1fh) — measuring.", workflowLabel, durHours, thresholdHours);
+    } else {
+        msg = format(
+            "nightly_freshness: %s last produced a VERDICT %.1fh ago, past the "
+          ~ "%.1fh threshold — LANE SILENT (2026-08-30). The schedule may well "
+          ~ "still be delivering and the runs may well still exist — both terms "
+          ~ "above read those and can be green while this lane measures "
+          ~ "NOTHING, which is what `nightly-tsan` did for five nights from "
+          ~ "2026-08-25 (its window guard refused every scheduled start before "
+          ~ "a single test ran). This term counts only event=schedule runs that "
+          ~ "CONCLUDED success, so neither a manual dispatch nor a delivered-"
+          ~ "but-refused run can reset it. It does not say WHY the lane is "
+          ~ "silent: a refusal and a genuine finding are the same `failure` "
+          ~ "here — open the lane's most recent run and read its first red step.",
+            workflowLabel, durHours, thresholdHours);
+    }
+    return FreshnessVerdict(ok, durHours, thresholdHours, msg);
+}
+
+unittest
+{
+    // THE WITNESS, from the measured 2026-08-30 state of `nightly-tsan`: the
+    // cron delivered LAST NIGHT (term 2 green), a run exists from last night
+    // (term 1 green), and the last run that concluded `success` is from
+    // 2026-08-25 (term 3 red). All three judged at the SAME instant off the
+    // SAME history — which is the whole claim: extending terms 1 and 2 alone
+    // would have been two more greens that cannot come out differently.
+    auto now = SysTime.fromISOExtString("2026-08-30T04:00:00Z");
+    const t1 = freshnessThresholdHours(kDefaultMissedNightsTolerated);
+    const t2 = freshnessThresholdHours(kDefaultScheduleMissedNightsTolerated);
+    const t3 = freshnessThresholdHours(kDefaultVerdictMissedNightsTolerated);
+
+    auto lastAnyRun      = SysTime.fromISOExtString("2026-08-29T19:37:00Z"); // refused at step 5
+    auto lastScheduleRun = lastAnyRun;                                       // ...and it WAS a schedule run
+    auto lastVerdictRun  = SysTime.fromISOExtString("2026-08-25T17:04:00Z"); // the last night that measured
+
+    auto v1 = checkFreshness(now, lastAnyRun, t1, "nightly-tsan");
+    auto v2 = checkScheduleHealth(now, lastScheduleRun, t2, "nightly-tsan");
+    auto v3 = checkVerdictFreshness(now, lastVerdictRun, t3, "nightly-tsan");
+    assert(v1.ok, "term 1 is green on a delivered-but-refused night: " ~ v1.message);
+    assert(v2.ok, "term 2 is green on a delivered-but-refused night: " ~ v2.message);
+    assert(!v3.ok, "term 3 MUST redden on it — that is the whole point: " ~ v3.message);
+    assert(v3.message.canFindWord("LANE SILENT"), v3.message);
+
+    // The reverse direction: a lane that measured last night is green on all
+    // three. Without this cell term 3 could be "always red" and still pass
+    // the assertion above.
+    auto measuredLastNight = SysTime.fromISOExtString("2026-08-29T17:30:00Z");
+    auto v3fresh = checkVerdictFreshness(now, measuredLastNight, t3, "nightly-tsan");
+    assert(v3fresh.ok, v3fresh.message);
+    assert(v3fresh.message.canFindWord("measuring"), v3fresh.message);
+
+    // THE NUMBER THIS IS ARGUED AGAINST: the measured MAXIMUM schedule
+    // delivery drift is 693.6min = 11.56h. A lane that delivers that late and
+    // then produces a verdict must NOT trip term 3, or the term would redden
+    // on lateness instead of on silence.
+    assert(t3 == 36.0, t3.to!string);
+    auto worstDriftedVerdict = SysTime.fromISOExtString("2026-08-29T04:33:36Z"); // 17:00 + 693.6min
+    auto v3drift = checkVerdictFreshness(now, worstDriftedVerdict, t3, "nightly-tsan");
+    assert(v3drift.ageHours < 24.0 + 11.6, v3drift.ageHours.to!string);
+    assert(v3drift.ok, "the measured-worst-drift night must stay green: " ~ v3drift.message);
+
+    // Exact boundary, same `<=` discipline as terms 1 and 2.
+    auto nowB = SysTime.fromISOExtString("2026-08-27T12:00:00Z");
+    assert(checkVerdictFreshness(nowB, SysTime.fromISOExtString("2026-08-26T00:00:00Z"), 36.0, "w").ok);
+    assert(!checkVerdictFreshness(nowB, SysTime.fromISOExtString("2026-08-25T23:59:59Z"), 36.0, "w").ok);
+}
+
 /// One data point of schedule drift: how many minutes past the cron's own
 /// target time-of-day `run` landed. Only the TIME OF DAY matters — the
 /// schedule fires once nightly, so "how late" is measured against the
@@ -445,6 +590,19 @@ unittest
 /// somehow landed before the target (never observed in this project's own
 /// history; left signed rather than clamped so a future negative value is
 /// visible as data, not silently discarded).
+///
+/// READ THIS BEFORE QUOTING A DRIFT FIGURE FOR A LATE-EVENING TARGET
+/// (2026-08-30, when this tool was pointed at `tsan.yaml`'s 17:00 and
+/// `sanitizer.yaml`'s 19:00 as well). Because the comparison is time-of-day,
+/// a delivery that crosses midnight reads as a large NEGATIVE drift, not as
+/// "eight hours late": a 17:00-target run arriving 01:20 gives -940, and a
+/// median over a mixed sample is then meaningless. The figure is trustworthy
+/// for a target the deliveries do not wrap past (perf's 00:30, where it was
+/// derived and where every recorded sample is a positive morning drift) and
+/// is a WEAK signal for the two evening lanes. It is left as-is rather than
+/// unwrapped because unwrapping needs the cron's own fire instant, which
+/// `gh run list` does not carry — the honest fix is to read the drift for
+/// those lanes as "the deliveries are not clustered", never as a duration.
 struct CronTarget { int hour; int minute; }
 
 double scheduleDriftMinutes(SysTime run, CronTarget target)
@@ -602,6 +760,67 @@ unittest
     assert(collectException!Exception(extractRunsFilteredByEvent("not json", "schedule")) !is null);
 }
 
+/// All `createdAt` values (newest-first) whose `event` AND `conclusion` both
+/// match — term 3's filter (2026-08-30). Reads the SAME JSON payload the
+/// other two terms read, so the tool still makes exactly one `gh run list`
+/// call however many terms need the network.
+///
+/// A run still in flight has `conclusion: ""` (or null), which matches
+/// nothing and is therefore excluded — deliberately: an in-progress run
+/// proves DELIVERY (term 2's question) and does not yet prove a VERDICT.
+string[] extractRunsFilteredByEventAndConclusion(string json, string eventName,
+                                                   string conclusionName)
+{
+    auto parsed = parseJSON(json);
+    enforce(parsed.type == JSONType.array,
+            "gh run list did not return a JSON array: " ~ json);
+    auto result = appender!(string[]);
+    foreach (entry; parsed.array) {
+        enforce(entry.type == JSONType.object
+                && "createdAt" in entry.object && "event" in entry.object
+                && "conclusion" in entry.object,
+                "gh run list entry missing createdAt/event/conclusion: " ~ json);
+        if (entry.object["event"].str != eventName) continue;
+        const c = entry.object["conclusion"];
+        if (c.type != JSONType.string) continue;   // null => still running
+        if (c.str == conclusionName) result.put(entry.object["createdAt"].str);
+    }
+    return result.data;
+}
+
+unittest
+{
+    // The measured 2026-08-30 shape of `nightly-tsan`: four consecutive
+    // schedule deliveries that all CONCLUDED failure at the window guard,
+    // one still in flight, and a successful night behind them. Term 2's
+    // filter takes five of these; term 3's takes exactly one, and it is the
+    // old one — which is the entire discrimination.
+    enum sample = `[` ~
+        `{"createdAt":"2026-08-29T19:37:00Z","event":"schedule","status":"completed","conclusion":"failure"},` ~
+        `{"createdAt":"2026-08-29T09:00:00Z","event":"workflow_dispatch","status":"in_progress","conclusion":null},` ~
+        `{"createdAt":"2026-08-28T19:02:00Z","event":"schedule","status":"completed","conclusion":"failure"},` ~
+        `{"createdAt":"2026-08-27T01:20:00Z","event":"schedule","status":"completed","conclusion":"failure"},` ~
+        `{"createdAt":"2026-08-26T00:52:00Z","event":"schedule","status":"completed","conclusion":"failure"},` ~
+        `{"createdAt":"2026-08-25T17:04:00Z","event":"schedule","status":"completed","conclusion":"success"}` ~
+        `]`;
+    assert(extractRunsFilteredByEvent(sample, "schedule").length == 5,
+        "term 2's filter must see all five deliveries — if it does not, this "
+      ~ "sample no longer exhibits the delivered-but-silent state");
+    assert(extractRunsFilteredByEventAndConclusion(sample, "schedule", "success")
+           == ["2026-08-25T17:04:00Z"],
+        "term 3's filter must drop the four refused deliveries and keep only "
+      ~ "the night that CONCLUDED success — dropping the conclusion term makes "
+      ~ "term 3 an alias of term 2, which is green on the one failure on "
+      ~ "record; got: "
+      ~ extractRunsFilteredByEventAndConclusion(sample, "schedule", "success").to!string);
+    // A run still in flight carries conclusion null and must not be counted
+    // as a verdict — nor throw.
+    assert(extractRunsFilteredByEventAndConclusion(sample, "workflow_dispatch", "success") == []);
+    assert(extractRunsFilteredByEventAndConclusion("[]", "schedule", "success") == []);
+    assert(collectException!Exception(
+        extractRunsFilteredByEventAndConclusion("not json", "schedule", "success")) !is null);
+}
+
 // ---------------------------------------------------------------------------
 // Impure edges: the real clock, the real `gh` call, repo-slug resolution.
 // ---------------------------------------------------------------------------
@@ -702,6 +921,14 @@ int main(string[] args)
     string cronTargetUtc = kCronTargetUtc;
     int scheduleHistoryLimit = kScheduleHistoryLimit;
 
+    // 2026-08-30 — term 3's own inputs, independent of both terms above.
+    int verdictMissedNightsTolerated = kDefaultVerdictMissedNightsTolerated;
+    double verdictThresholdOverride = -1.0;
+    string verdictRunIsosArg;   // test/offline seam: comma-separated, newest-first
+    bool fakeNoVerdictRuns;     // test/offline seam
+    bool printVerdictThreshold;
+    bool gateVerdictFreshness;
+
     auto helpInfo = getopt(args,
         "repo",        "OWNER/REPO to query (default: $GITHUB_REPOSITORY, "
                       ~ "else parsed from the `origin` git remote)",          &repo,
@@ -752,6 +979,23 @@ int main(string[] args)
                       ~ "into this process's own exit code too. Default "
                       ~ "false: term 2 is always PRINTED but never changes "
                       ~ "the exit code on its own",                           &gateScheduleHealth,
+        // --- 2026-08-30: term 3 (did the lane produce a verdict?) ---
+        "verdict-missed-nights-tolerated", "(TERM 3's own dial) consecutive "
+                      ~ "nights without a SUCCESSFUL scheduled run before "
+                      ~ "term 3 reddens (default 1)",                         &verdictMissedNightsTolerated,
+        "verdict-threshold-hours", "skip the formula entirely and use this "
+                      ~ "many hours as TERM 3's threshold (diagnostic/override)", &verdictThresholdOverride,
+        "verdict-run-isos", "(test/offline seam) comma-separated, newest-"
+                      ~ "first createdAt timestamps of event=schedule runs "
+                      ~ "that CONCLUDED success — skips the network fetch for "
+                      ~ "TERM 3 only",                                        &verdictRunIsosArg,
+        "fake-no-verdict-runs", "(test/offline seam) simulate ZERO successful "
+                      ~ "scheduled runs for TERM 3 only",                     &fakeNoVerdictRuns,
+        "print-verdict-threshold", "print TERM 3's computed threshold in "
+                      ~ "hours and exit; no network call",                    &printVerdictThreshold,
+        "gate-verdict-freshness", "fold TERM 3's verdict into this process's "
+                      ~ "own exit code too. Default false: term 3 is always "
+                      ~ "PRINTED but never changes the exit code on its own",  &gateVerdictFreshness,
     );
     if (helpInfo.helpWanted) {
         import std.getopt : defaultGetoptPrinter;
@@ -767,6 +1011,9 @@ int main(string[] args)
     const scheduleThreshold = scheduleThresholdOverride >= 0.0
         ? scheduleThresholdOverride
         : freshnessThresholdHours(scheduleMissedNightsTolerated, cronPeriodHours, driftBufferHours);
+    const verdictThreshold = verdictThresholdOverride >= 0.0
+        ? verdictThresholdOverride
+        : freshnessThresholdHours(verdictMissedNightsTolerated, cronPeriodHours, driftBufferHours);
 
     if (printThreshold) {
         writefln("%.1f", threshold);
@@ -774,6 +1021,10 @@ int main(string[] args)
     }
     if (printScheduleThreshold) {
         writefln("%.1f", scheduleThreshold);
+        return kExitFresh;
+    }
+    if (printVerdictThreshold) {
+        writefln("%.1f", verdictThreshold);
         return kExitFresh;
     }
 
@@ -804,13 +1055,14 @@ int main(string[] args)
     // wasteful.
     const term1NeedsNetwork = !fakeNoRuns && lastRunIso.length == 0;
     const term2NeedsNetwork = !fakeNoScheduleRuns && scheduleRunIsosArg.length == 0;
+    const term3NeedsNetwork = !fakeNoVerdictRuns && verdictRunIsosArg.length == 0;
 
     string resolvedRepo;
     string sharedJson;
     bool sharedJsonFetched;
     string sharedJsonError;
 
-    if (term1NeedsNetwork || term2NeedsNetwork) {
+    if (term1NeedsNetwork || term2NeedsNetwork || term3NeedsNetwork) {
         resolvedRepo = repo.length ? repo : defaultRepoSlug();
         if (!resolvedRepo.length) {
             stderr.writeln("nightly_freshness: could not resolve OWNER/REPO — pass "
@@ -940,7 +1192,69 @@ int main(string[] args)
         }
     }
 
+    // ---- TERM 3 (2026-08-30): always computed and PRINTED; only gates the ----
+    // ---- exit code when --gate-verdict-freshness is set.                 ----
+    bool term3Ok = true;
+    bool term3HardError;
+
+    string[] verdictIsos;
+    if (fakeNoVerdictRuns) {
+        writefln("nightly_freshness: %s (%s) has produced NO successful "
+               ~ "schedule-triggered run at all [--fake-no-verdict-runs, test "
+               ~ "seam] — treating the lane as SILENT (age is effectively infinite).",
+                 workflowLabel, workflow);
+        term3Ok = false;
+    } else {
+        if (verdictRunIsosArg.length) {
+            verdictIsos = verdictRunIsosArg.split(",").map!(s => s.strip).array;
+        } else if (!sharedJsonFetched) {
+            writeln("nightly_freshness: could not fetch verdict history for the "
+                ~ "term-3 check: " ~ (sharedJsonError.length ? sharedJsonError : "unknown error"));
+            term3Ok = false;
+            term3HardError = true;
+        } else {
+            auto ex6 = collectException!Exception(
+                verdictIsos = extractRunsFilteredByEventAndConclusion(
+                    sharedJson, "schedule", "success"));
+            if (ex6 !is null) {
+                writeln("nightly_freshness: could not parse verdict history for the "
+                    ~ "term-3 check: " ~ ex6.msg);
+                term3Ok = false;
+                term3HardError = true;
+            }
+        }
+
+        if (!term3HardError) {
+            if (verdictIsos.length == 0) {
+                writefln("nightly_freshness: %s (%s) — NO schedule-triggered run "
+                       ~ "CONCLUDED success in the most recent %d fetched runs — "
+                       ~ "LANE SILENT. The schedule may still be delivering (see "
+                       ~ "the term above); this lane is still producing nothing. "
+                       ~ "Widen --schedule-history-limit if the lane is simply "
+                       ~ "slower than %d runs of history.",
+                         workflowLabel, workflow, scheduleHistoryLimit, scheduleHistoryLimit);
+                term3Ok = false;
+            } else {
+                SysTime lastVerdict;
+                auto ex7 = collectException!Exception(
+                    lastVerdict = SysTime.fromISOExtString(verdictIsos[0]));
+                if (ex7 !is null) {
+                    writeln("nightly_freshness: a verdict-run timestamp was not "
+                        ~ "parseable: " ~ verdictIsos[0]);
+                    term3Ok = false;
+                    term3HardError = true;
+                } else {
+                    const verdict3 = checkVerdictFreshness(now, lastVerdict, verdictThreshold,
+                                                            format("%s (%s)", workflowLabel, workflow));
+                    writeln(verdict3.message);
+                    term3Ok = verdict3.ok;
+                }
+            }
+        }
+    }
+
     // ---- GATE OR REPORT (task 2580, item 3) — the one line. ----
+    if (gateVerdictFreshness && term3HardError) return kExitError;
     if (gateScheduleHealth && term2HardError) {
         // A term-2 fetch/parse failure, WITH gating turned on, is "could not
         // tell" — never silently folded into "stale" or "fine". Mirrors
@@ -948,6 +1262,7 @@ int main(string[] args)
         return kExitError;
     }
     bool overallOk = term1Ok;
-    if (gateScheduleHealth) overallOk = overallOk && term2Ok;
+    if (gateScheduleHealth)  overallOk = overallOk && term2Ok;
+    if (gateVerdictFreshness) overallOk = overallOk && term3Ok;
     return overallOk ? kExitFresh : kExitStale;
 }

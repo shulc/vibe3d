@@ -37,12 +37,17 @@
  *   preflight-tsan          the checks that are specific to the tsan workflow
  *                           (symbolize=0 nowhere, the expected-signature and
  *                           canary files parse, the window arithmetic closes)
- *   window-guard <event>    refuse a `schedule` start past the HARD ceiling
- *                           (would risk the sanitizer lane finishing inside
- *                           perf's window); pass loudly, not refuse, for a
- *                           late-but-safe start between the ideal window's
- *                           close and that ceiling — both COMPUTED, never
- *                           stored as literals
+ *   window-guard <event>    refuse a `schedule` start that would COLLIDE on
+ *                           this single-job runner; pass loudly, not refuse,
+ *                           for a late-but-safe start between the ideal
+ *                           window's close and the hard ceiling, and for one
+ *                           that has drifted clean OUT of the slot and
+ *                           collides with nothing. All three boundaries are
+ *                           COMPUTED, never stored as literals. Accepted set
+ *                           measured by sweeping all 1440 minutes:
+ *                           {00:00} u [04:30, 19:30) u [23:30, 24:00), i.e.
+ *                           931/1440 minutes against the 150 the old
+ *                           membership test allowed
  *   tsan-selfcheck          GATE: the synthetic race must be reported exactly
  *                           once, and the suppression canary must both silence
  *                           it and print its Matched block
@@ -797,6 +802,136 @@ int tsanHardLatestStartUtcMin() {
 
 string hhmm(int m) { return format("%02d:%02d", m / 60, m % 60); }
 
+// ---------------------------------------------------------------------------
+// OFF-SLOT STARTS (2026-08-30). The lower bound was a PREFERENCE enforced as
+// a hazard, and it is what has kept this lane silent since 2026-08-25.
+//
+// MEASURED, not argued. `tools/ci/nightly_freshness.d`, live run 2026-08-30
+// against this repository's own history: schedule delivery drift is
+// `median 98.8min (1.6h), max 693.6min (11.6h)`. Set that against the two
+// moves that look obvious and are both wrong:
+//
+//   * MOVE THE CRON EARLIER — fixes the MEDIAN and nothing else. 11.6h of
+//     drift lands 17:00 at 04:36 whatever the cron says; a translation of a
+//     2.5h window cannot cover an 11.6h tail.
+//   * WIDEN THE WINDOW — unavailable. `tsanHardLatestStartUtcMin` is not a
+//     taste; it is 00:30 + 24h - 270 - 30 = 19:30, pinned by the sanitizer
+//     lane's own budget against the perf lane's start, on a runner that takes
+//     ONE job at a time. Widening it is exactly the collision the ceiling was
+//     computed to prevent.
+//
+// The third form, and the one taken here: stop asking whether `now` is a
+// MEMBER of a wall-clock interval and ask whether the run's own occupancy
+// COLLIDES. The hazard this file's own comments state — "the sanitizer lane's
+// worst-case FINISH landing inside the perf lane's window" — says nothing
+// whatever about a start at 05:00: such a run holds the runner for 30 minutes
+// and releases it thirteen and a half hours before the sanitizer lane's
+// nominal start, and the induced chain is max(19:00, 05:30) + 270 = 23:30,
+// an hour clear of perf. The guard refused it anyway, for being early.
+//
+// So [17:00, 19:30) keeps its exact meaning and its exact verdicts, and
+// OUTSIDE it the decision moves to `occupancyHazard` below. Against the
+// measured maximum: 17:00 + 693.6min = 04:36, whose run window [04:36, 05:06)
+// clears perf's occupancy [00:30, 04:30) by six minutes and collides with
+// nothing — under the old rule it was refused for being "before 17:00", under
+// this one it RUNS. (04:29 still fails: perf may still be measuring.)
+//
+// THE COST, AND IT IS THE OWNER'S TO ACCEPT OR REFUSE. This runner is a
+// workstation inside the owner's graphical session. An off-slot acceptance
+// means a 30-minute instrumented lane can now start at, say, 11:00 local
+// working hours. Under `xvfb-run` that is ~1.12 GiB of RSS and no display
+// contention (see the workflow's DISPLAY comment), so the cost is CPU during
+// the owner's day — real, bounded, and traded against a lane that currently
+// measures nothing at all. `kTsanAcceptSafeOffSlotStarts` is the one-line
+// reversal, and it is a PARAMETER of `checkScheduleWindow`, not a global read
+// inside it, so `cmdPreflightTsan`'s selfcheck exercises BOTH values and the
+// refusing branch cannot rot into dead code.
+//
+// WHAT THIS DOES NOT FIX, AND IT IS THE OWNER'S CALL — the CRON TARGET.
+// Sweeping all 1440 minutes through `cmdWindowGuard` gives the accepted set
+// {00:00} u [04:30, 19:30) u [23:30, 24:00) = 931 minutes, against the 150
+// the membership test allowed. But the ACCEPTED SET IS NOT CONTIGUOUS FROM
+// 17:00: from a 17:00 cron the tolerated drift is [0, 2.5h) u [6.5h, 7h] u
+// [11.5h, ...) — the measured median (1.6h) and the measured maximum (11.6h
+// -> 04:33) both land in it, but a nine-hour hole sits between them, and a
+// delivery at, say, 21:00 is still refused because it genuinely collides.
+// The lever that closes the hole is the cron target, not this file: a cron at
+// 04:30 UTC yields FIFTEEN contiguous hours of drift tolerance ([04:30,
+// 19:30)), covering the measured maximum with 3.4h to spare. 04:30 UTC is
+// 07:30 MSK, i.e. it can put a 30-minute instrumented lane in the owner's
+// morning, which is a scheduling preference this file has no standing to
+// decide. NAMED HERE, NOT TAKEN: `.github/workflows/tsan.yaml`'s
+// `cron: '0 17 * * *'` is unchanged, and `cmdPreflightTsan` (2) still
+// requires the declared cron to sit inside the IDEAL window, so moving it is
+// a two-line change the owner makes deliberately.
+enum bool kTsanAcceptSafeOffSlotStarts = true;
+
+/// Smallest `x >= from` with `x ≡ tod (mod 24h)`. Minute-of-day arithmetic
+/// with no wall-clock date: a lane's window is a daily recurrence, and every
+/// comparison here has to be able to cross midnight.
+int nextAtOrAfter(int tod, int from) pure {
+    enum day = 24 * 60;
+    int x = tod;
+    while (x >= from + day) x -= day;
+    while (x < from) x += day;
+    return x;
+}
+
+/// Does `[aLo, aHi)` overlap ANY daily occurrence of `[bTod, bTod + bDur)`?
+/// Four shifts, not one: `aLo` is a minute-of-day but `aHi` may be tomorrow,
+/// and `bDur` (270 for the sanitizer lane) can itself run past midnight.
+bool overlapsDaily(int aLo, int aHi, int bTod, int bDur) pure {
+    enum day = 24 * 60;
+    foreach (shift; [-day, 0, day, 2 * day]) {
+        const bLo = bTod + shift, bHi = bLo + bDur;
+        if (aLo < bHi && bLo < aHi) return true;
+    }
+    return false;
+}
+
+/// The three ways a tsan run beginning at `now` can hurt another lane on this
+/// single, serialising runner. Three separate flags and not one boolean, so a
+/// mutation of any one of them cannot be absorbed by another still firing —
+/// `cmdPreflightTsan` pins a case in which each is the ONLY term that fires.
+struct OccupancyHazard {
+    bool collidesWithSanitizer;   // we would be queued behind / ahead of it at an unknown offset
+    bool collidesWithPerf;        // we would contend with the measurement itself
+    bool pushesSanitizerIntoPerf; // the induced chain finishes inside perf's window
+    bool any() const pure {
+        return collidesWithSanitizer || collidesWithPerf || pushesSanitizerIntoPerf;
+    }
+}
+
+/// Pure, and every constant is an argument — no globals, no clock. The chain
+/// modelled is the one the runner actually executes: this lane occupies
+/// `[now, now + timeoutMin)`; the sanitizer lane then starts at
+/// `max(its own unfinished occurrence, our release)` and runs its full
+/// budget; that finish must land strictly before the next perf start.
+///
+/// `pushesSanitizerIntoPerf` uses `>=`, not `>`, deliberately: a chain
+/// finishing at exactly 00:30 is the state the pre-existing hard ceiling
+/// already refused (`now >= hardLatest`), and this function has to reproduce
+/// that boundary rather than quietly move it by a minute.
+OccupancyHazard occupancyHazard(int now, int timeoutMin, int nextLaneStart,
+                                 int nextLaneEnd, int perfStart, int perfEnd) pure {
+    const sanDur  = nextLaneEnd - nextLaneStart;
+    const perfDur = perfEnd - perfStart;
+    const tsanEnd = now + timeoutMin;
+
+    OccupancyHazard h;
+    h.collidesWithSanitizer = overlapsDaily(now, tsanEnd, nextLaneStart, sanDur);
+    h.collidesWithPerf      = overlapsDaily(now, tsanEnd, perfStart, perfDur);
+
+    // The sanitizer occurrence that has not FINISHED yet — the one this run
+    // can still delay. `now - sanDur + 1` is what picks tonight's 19:00 while
+    // it is still running and tomorrow's once it has finished.
+    const sanStart  = nextAtOrAfter(nextLaneStart, now - sanDur + 1);
+    const sanEff    = sanStart > tsanEnd ? sanStart : tsanEnd;
+    const sanFinish = sanEff + sanDur;
+    h.pushesSanitizerIntoPerf = sanFinish >= nextAtOrAfter(perfStart, sanEff);
+    return h;
+}
+
 /// Current UTC minute-of-day, with a NAMED test hook. The hook exists because
 /// the window guard's own mutation (run it at 19:35 and require a failure —
 /// [18:30, 19:30) is the drift-tolerance zone and must PASS, not fail; see
@@ -827,12 +962,17 @@ int nowUtcMin() {
 // by the actual arithmetic (GitHub's own cron delivery drifted, not a real
 // collision risk). Both used to say "outside the window" and both used to
 // fail the job.
-enum ScheduleVerdict { pass, passLate, fail }
+//
+// FOUR outcomes since 2026-08-30 (see `kTsanAcceptSafeOffSlotStarts`): a
+// start that has drifted clean OUT of the nominal slot and yet collides with
+// nothing is a fourth state again, and collapsing it into `fail` is what kept
+// this lane silent for five nights.
+enum ScheduleVerdict { pass, passLate, passOffSlot, fail }
 
 struct ScheduleCheck {
     ScheduleVerdict verdict;
-    string message;  // ok text for pass/passLate, or the fail reason
-    string note;      // set ONLY for passLate — the loud drift-tolerance NOTE
+    string message;  // ok text for the three passes, or the fail reason
+    string note;      // set for passLate / passOffSlot — the loud NOTE
 }
 
 /// Pure: no clock read, no I/O, no process exit — so it can be driven with
@@ -842,21 +982,81 @@ struct ScheduleCheck {
 ScheduleCheck checkScheduleWindow(int now, int openMin, int idealLatest,
                                    int hardLatest, int timeoutMin,
                                    int nextLaneStart, int nextLaneEnd,
-                                   int perfStart, int perfEnd) {
-    if (now < openMin || now >= hardLatest)
-        return ScheduleCheck(ScheduleVerdict.fail, format(
-            "scheduled start at %s UTC is outside the lane's HARD ceiling "
-          ~ "[%s, %s) — a run starting here could still be going at %s, "
-          ~ "genuinely risking the sanitizer lane's worst-case finish "
-          ~ "landing inside the perf lane's window [%s, %s), even if the "
-          ~ "sanitizer lane starts the INSTANT this one releases the "
-          ~ "runner. The ceiling is COMPUTED from kTsanTimeoutMin=%d, the "
-          ~ "sanitizer lane's own %d-minute budget, and the perf lane's "
-          ~ "start %s; raise the tsan timeout or the sanitizer budget and "
-          ~ "it narrows by itself.",
-            hhmm(now), hhmm(openMin), hhmm(hardLatest), hhmm(now + timeoutMin),
-            hhmm(perfStart), hhmm(perfEnd), timeoutMin,
-            nextLaneEnd - nextLaneStart, hhmm(perfStart)));
+                                   int perfStart, int perfEnd,
+                                   bool acceptSafeOffSlot = kTsanAcceptSafeOffSlotStarts) {
+    // OUTSIDE the nominal slot the decision is the HAZARD, not the interval
+    // (2026-08-30). Inside it, every verdict below is bit-for-bit what it was
+    // before that change — the slot's own arithmetic already reasons about
+    // the queue, and rerouting it through `occupancyHazard` would refuse the
+    // drift-tolerance zone (a start at 18:39 does overlap the sanitizer lane's
+    // window, which is precisely the delay the passLate branch has always
+    // accepted as safe).
+    if (now < openMin || now >= hardLatest) {
+        const h = occupancyHazard(now, timeoutMin, nextLaneStart, nextLaneEnd,
+                                   perfStart, perfEnd);
+        if (h.any) {
+            string[] why;
+            if (h.collidesWithSanitizer)
+                why ~= format("its run window [%s, %s) overlaps the sanitizer "
+                            ~ "lane's occupancy [%s, %s), so the two would "
+                            ~ "queue at an offset nothing here can compute",
+                              hhmm(now), hhmm((now + timeoutMin) % (24 * 60)),
+                              hhmm(nextLaneStart), hhmm(nextLaneEnd % (24 * 60)));
+            if (h.collidesWithPerf)
+                why ~= format("its run window [%s, %s) overlaps the perf "
+                            ~ "lane's occupancy [%s, %s), and a perf number "
+                            ~ "measured beside this lane is contention noise",
+                              hhmm(now), hhmm((now + timeoutMin) % (24 * 60)),
+                              hhmm(perfStart), hhmm(perfEnd));
+            if (h.pushesSanitizerIntoPerf)
+                why ~= format("the induced chain (this lane releases the "
+                            ~ "runner at %s, the sanitizer lane then runs its "
+                            ~ "full %d minutes) finishes at or after the perf "
+                            ~ "lane's start %s",
+                              hhmm((now + timeoutMin) % (24 * 60)),
+                              nextLaneEnd - nextLaneStart, hhmm(perfStart));
+            return ScheduleCheck(ScheduleVerdict.fail, format(
+                "scheduled start at %s UTC is outside the nominal slot [%s, %s) "
+              ~ "AND collides: %s. This is the real hazard, not the slot — see "
+              ~ "`occupancyHazard`. The ceiling is COMPUTED from "
+              ~ "kTsanTimeoutMin=%d, the sanitizer lane's own %d-minute budget "
+              ~ "and the perf lane's start %s; raise either and it narrows by "
+              ~ "itself.",
+                hhmm(now), hhmm(openMin), hhmm(hardLatest), why.join("; "),
+                timeoutMin, nextLaneEnd - nextLaneStart, hhmm(perfStart)));
+        }
+        if (!acceptSafeOffSlot)
+            return ScheduleCheck(ScheduleVerdict.fail, format(
+                "scheduled start at %s UTC is outside the nominal slot [%s, %s). "
+              ~ "It collides with NOTHING — run window [%s, %s), sanitizer "
+              ~ "[%s, %s), perf [%s, %s) — but off-slot starts are refused by "
+              ~ "policy (kTsanAcceptSafeOffSlotStarts = false), because this "
+              ~ "runner is a workstation inside the owner's graphical session "
+              ~ "and an accepted off-slot start can land in working hours.",
+                hhmm(now), hhmm(openMin), hhmm(hardLatest),
+                hhmm(now), hhmm((now + timeoutMin) % (24 * 60)),
+                hhmm(nextLaneStart), hhmm(nextLaneEnd % (24 * 60)),
+                hhmm(perfStart), hhmm(perfEnd)));
+        return ScheduleCheck(ScheduleVerdict.passOffSlot, format(
+            "scheduled start %s UTC accepted OFF-SLOT — run window [%s, %s) "
+          ~ "collides with neither the sanitizer lane [%s, %s) nor perf "
+          ~ "[%s, %s), and the induced chain clears perf's start %s",
+            hhmm(now), hhmm(now), hhmm((now + timeoutMin) % (24 * 60)),
+            hhmm(nextLaneStart), hhmm(nextLaneEnd % (24 * 60)),
+            hhmm(perfStart), hhmm(perfEnd), hhmm(perfStart)),
+            format(
+            "scheduled start %s UTC is OUTSIDE the nominal slot [%s, %s) — "
+          ~ "GitHub's own cron delivery has drifted that far (measured "
+          ~ "2026-08-30: median 98.8min, MAX 693.6min = 11.6h against the "
+          ~ "target). Accepted because the hazard this guard exists for is "
+          ~ "runner OCCUPANCY, not membership of a wall-clock interval, and "
+          ~ "this run collides with nothing. Refusing it is what kept this "
+          ~ "lane silent from 2026-08-25: a refused window is a red job that "
+          ~ "measured NOTHING, which is worse than a red finding. Note this "
+          ~ "runner is the owner's workstation — set "
+          ~ "kTsanAcceptSafeOffSlotStarts = false to go back to refusing.",
+            hhmm(now), hhmm(openMin), hhmm(hardLatest)));
+    }
 
     if (now < idealLatest)
         return ScheduleCheck(ScheduleVerdict.pass, format(
@@ -913,6 +1113,7 @@ void cmdWindowGuard(string[] args) {
                 ok(chk.message);
                 break;
             case ScheduleVerdict.passLate:
+            case ScheduleVerdict.passOffSlot:
                 writeln("lane.d: NOTE: ", chk.note);
                 ok(chk.message);
                 break;
@@ -1686,8 +1887,6 @@ void cmdPreflightTsan() {
         static struct Case { int now; V want; string label; }
         const idealLatest = tsanLatestStartUtcMin();
         auto cases = [
-            Case(kTsanWindowOpenUtcMin - 1, V.fail,
-                 "one minute before the window opens"),
             Case(kTsanWindowOpenUtcMin, V.pass, "the window's open edge"),
             Case(idealLatest - 1, V.pass, "one minute inside the ideal window"),
             Case(idealLatest, V.passLate, "the ideal window's close edge"),
@@ -1696,7 +1895,28 @@ void cmdPreflightTsan() {
                ~ "created 19:02:02Z)"),
             Case(hardLatest - 1, V.passLate,
                  "one minute inside the hard ceiling"),
+            // OFF-SLOT, 2026-08-30. Everything below used to be a flat FAIL
+            // for being outside [17:00, 19:30); the verdict is now the
+            // OCCUPANCY, and each of the three hazard terms gets a cell in
+            // which it is the term that fires.
+            Case(kTsanWindowOpenUtcMin - 1, V.passOffSlot,
+                 "one minute before the nominal open — collides with nothing; "
+               ~ "refusing it was the defect, not the protection"),
+            Case(4 * 60 + 36, V.passOffSlot,
+                 "17:00 + the MEASURED MAXIMUM delivery drift (693.6min / "
+               ~ "11.6h, tools/ci/nightly_freshness.d live 2026-08-30) — the "
+               ~ "single cell this whole change is argued against"),
+            Case(23 * 60 + 30, V.passOffSlot,
+                 "the sanitizer lane has just finished and perf is an hour "
+               ~ "away"),
             Case(hardLatest, V.fail, "the hard ceiling itself"),
+            Case(4 * 60 + 29, V.fail,
+                 "one minute before perf's occupancy ends — perf may still be "
+               ~ "measuring (collidesWithPerf is the ONLY term that fires)"),
+            Case(0 * 60 + 52, V.fail,
+                 "the real 2026-08-2x delivery at 00:52 UTC — still refused, "
+               ~ "and for the right reason now"),
+            Case(20 * 60, V.fail, "an hour into the sanitizer lane's window"),
         ];
         foreach (c; cases) {
             auto got = checkScheduleWindow(c.now, kTsanWindowOpenUtcMin,
@@ -1710,6 +1930,63 @@ void cmdPreflightTsan() {
         ok(format("schedule-window selfcheck: %d cases agree (ideal close "
                 ~ "%s, hard ceiling %s)", cases.length, hhmm(idealLatest),
                   hhmm(hardLatest)));
+
+        // (2c) The off-slot POLICY switch, and the two hazard terms that the
+        // real constants cannot isolate. `checkScheduleWindow` takes every
+        // constant as an argument precisely so these cells exist: with the
+        // shipped numbers, any evening start that overlaps the sanitizer lane
+        // ALSO pushes its chain into perf, so a mutation of one term would
+        // hide behind the other. Synthetic lanes separate them.
+        {
+            // The measured-maximum cell again, with off-slot acceptance
+            // TURNED OFF: same instant, same hazard (none), opposite verdict.
+            // This is what keeps `kTsanAcceptSafeOffSlotStarts = false` from
+            // rotting into unexecuted dead code.
+            auto refused = checkScheduleWindow(4 * 60 + 36, kTsanWindowOpenUtcMin,
+                idealLatest, hardLatest, kTsanTimeoutMin, kNextLaneStartUtcMin,
+                kNextLaneEndUtcMin, kPerfStartUtcMin, kPerfEndUtcMin,
+                /*acceptSafeOffSlot=*/false);
+            if (refused.verdict != ScheduleVerdict.fail)
+                fail("off-slot policy selfcheck: with kTsanAcceptSafeOffSlot"
+                   ~ "Starts=false, 04:36 must be REFUSED, got "
+                   ~ refused.verdict.to!string ~ " — " ~ refused.message);
+            if (!refused.message.canFind("collides with NOTHING"))
+                fail("off-slot policy selfcheck: the refusal must say it is a "
+                   ~ "policy refusal, not a collision: " ~ refused.message);
+
+            // ONLY collidesWithSanitizer: a 30-minute sanitizer lane at
+            // 10:15 and a perf lane at 23:00, so nothing this run does can
+            // reach perf, directly or through the chain.
+            const hSan = occupancyHazard(10 * 60, 30, 10 * 60 + 15,
+                                          10 * 60 + 45, 23 * 60, 23 * 60 + 30);
+            if (!(hSan.collidesWithSanitizer && !hSan.collidesWithPerf
+                  && !hSan.pushesSanitizerIntoPerf))
+                fail(format("occupancyHazard selfcheck: the sanitizer-overlap "
+                          ~ "cell must fire that term ALONE, got %s", hSan));
+
+            // ONLY pushesSanitizerIntoPerf: this run ends at 10:30, clear of
+            // a sanitizer lane at [11:00, 12:00) and of perf at [12:00,
+            // 13:00) — but the chain lands exactly on perf's start.
+            const hPush = occupancyHazard(10 * 60, 30, 11 * 60, 12 * 60,
+                                           12 * 60, 13 * 60);
+            if (!(hPush.pushesSanitizerIntoPerf && !hPush.collidesWithSanitizer
+                  && !hPush.collidesWithPerf))
+                fail(format("occupancyHazard selfcheck: the chain-push cell "
+                          ~ "must fire that term ALONE, got %s", hPush));
+
+            // ONLY collidesWithPerf is the 04:29 row in the table above; assert
+            // the decomposition here too, so the table's `fail` cannot be
+            // satisfied by the wrong term.
+            const hPerf = occupancyHazard(4 * 60 + 29, kTsanTimeoutMin,
+                kNextLaneStartUtcMin, kNextLaneEndUtcMin,
+                kPerfStartUtcMin, kPerfEndUtcMin);
+            if (!(hPerf.collidesWithPerf && !hPerf.collidesWithSanitizer
+                  && !hPerf.pushesSanitizerIntoPerf))
+                fail(format("occupancyHazard selfcheck: 04:29 must fire the "
+                          ~ "perf-overlap term ALONE, got %s", hPerf));
+
+            ok("off-slot policy + the three hazard terms each isolated");
+        }
     }
 
     // (3) The verdict function and the canary must parse, and the canary must

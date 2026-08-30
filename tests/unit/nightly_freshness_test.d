@@ -414,3 +414,159 @@ unittest
     assert(r.output.indexOf("target 00:30 UTC") >= 0,
         "drift target time-of-day missing:\n" ~ r.output);
 }
+
+// ---------------------------------------------------------------------------
+// 10. TERM 3 (2026-08-30) — THE WITNESS: a lane that DELIVERS and MEASURES
+//     NOTHING. This is the block that must never go quietly green, and its
+//     whole force is that terms 1 and 2 are asserted GREEN in the same
+//     invocation, off the same timestamps, at the same instant.
+//
+//     The state is real, not constructed: on 2026-08-30 `nightly-tsan`'s
+//     cron had delivered every night, so a run existed (term 1 fresh) and it
+//     was a `schedule` run (term 2 delivering) — and every one of them
+//     refused at its window guard before a single test executed, so the last
+//     run that CONCLUDED success was 2026-08-25. Extending terms 1 and 2 to
+//     this lane and stopping there would have added two greens that cannot
+//     come out differently on the one failure on record.
+// ---------------------------------------------------------------------------
+unittest
+{
+    // The five refused deliveries, newest first, and the last night that
+    // actually produced a verdict behind them.
+    enum refused = "2026-08-29T19:37:00Z,2026-08-28T19:02:00Z,"
+                 ~ "2026-08-27T01:20:00Z,2026-08-26T00:52:00Z,2026-08-25T17:04:00Z";
+    enum lastVerdict = "2026-08-25T17:04:00Z";
+    enum now = "2026-08-30T04:00:00Z";
+
+    auto r = rdmd([
+        "--workflow", "tsan.yaml", "--workflow-label", "nightly-tsan",
+        "--cron-target-utc", "17:00",
+        "--last-run-iso",     "2026-08-29T19:37:00Z",
+        "--schedule-run-isos", refused,
+        "--verdict-run-isos",  lastVerdict,
+        "--now-iso",           now,
+    ]);
+    assert(r.output.indexOf("last ran 8.4h ago") >= 0,
+        "term 1 must be GREEN here — if it is not, this block is no longer "
+        ~ "the discriminating cell it claims to be:\n" ~ r.output);
+    assert(r.output.indexOf("— delivering.") >= 0,
+        "term 2 must be GREEN here, same reason:\n" ~ r.output);
+    assert(r.output.indexOf("LANE SILENT") >= 0,
+        "term 3 must REDDEN on a lane that delivers and measures nothing — "
+        ~ "this is the entire point of the term:\n" ~ r.output);
+    assert(r.output.indexOf("last produced a VERDICT 106.9h ago") >= 0,
+        "term 3's age is wrong or missing:\n" ~ r.output);
+    assert(r.status == 0, "report-only by default: term 3 must not move the "
+        ~ "exit code on its own (same owner decision as terms 1 and 2):\n" ~ r.output);
+
+    // The gate flag, and only the gate flag, moves it.
+    auto rGated = rdmd([
+        "--workflow", "tsan.yaml", "--workflow-label", "nightly-tsan",
+        "--last-run-iso",     "2026-08-29T19:37:00Z",
+        "--schedule-run-isos", refused,
+        "--verdict-run-isos",  lastVerdict,
+        "--now-iso",           now,
+        "--gate-verdict-freshness",
+    ]);
+    assert(rGated.status == 1, "gated mode must redden on a silent lane:\n" ~ rGated.output);
+
+    // REVERSE DIRECTION — without this, "LANE SILENT" could be unconditional
+    // and every assertion above would still pass. A lane that produced a
+    // verdict last night is green on all three terms.
+    auto rOk = rdmd([
+        "--workflow", "tsan.yaml", "--workflow-label", "nightly-tsan",
+        "--last-run-iso",     "2026-08-29T17:30:00Z",
+        "--schedule-run-isos", "2026-08-29T17:30:00Z",
+        "--verdict-run-isos",  "2026-08-29T17:30:00Z",
+        "--now-iso",           now,
+        "--gate-verdict-freshness",
+    ]);
+    assert(rOk.status == 0, "a lane that measured last night must stay green "
+        ~ "even under --gate-verdict-freshness:\n" ~ rOk.output);
+    assert(rOk.output.indexOf("— measuring.") >= 0, rOk.output);
+    assert(rOk.output.indexOf("LANE SILENT") < 0,
+        "term 3 reddened on a healthy lane — it is not discriminating, it is "
+        ~ "just always red:\n" ~ rOk.output);
+
+    // THE NUMBER THIS THRESHOLD IS ARGUED AGAINST. The measured MAXIMUM
+    // schedule delivery drift is 693.6min = 11.56h (live run of this tool,
+    // 2026-08-30). A lane delivering that late and then producing a verdict
+    // must stay GREEN, or term 3 would be reddening on lateness rather than
+    // on silence — and would then fire on exactly the nights edit 1 exists
+    // to let through.
+    auto rDrift = rdmd([
+        "--workflow", "tsan.yaml", "--workflow-label", "nightly-tsan",
+        "--last-run-iso",     "2026-08-29T04:33:36Z",
+        "--schedule-run-isos", "2026-08-29T04:33:36Z",
+        "--verdict-run-isos",  "2026-08-29T04:33:36Z",   // 17:00 + 693.6min
+        "--now-iso",           now,
+        "--gate-verdict-freshness",
+    ]);
+    assert(rDrift.status == 0, "the worst measured delivery drift must not "
+        ~ "trip term 3:\n" ~ rDrift.output);
+}
+
+// ---------------------------------------------------------------------------
+// 11. `--print-verdict-threshold` and its independence from the other two
+//     dials — same discipline as block 8. Three named thresholds, three
+//     dials, no aliasing.
+// ---------------------------------------------------------------------------
+unittest
+{
+    {
+        auto r = rdmd(["--print-verdict-threshold"]);
+        assert(r.status == 0, r.output);
+        assert(r.output.strip == "36.0", "got: " ~ r.output.strip);
+    }
+    {
+        auto r = rdmd(["--print-verdict-threshold", "--verdict-missed-nights-tolerated", "2"]);
+        assert(r.status == 0, r.output);
+        assert(r.output.strip == "60.0", "got: " ~ r.output.strip);
+    }
+    // Term 3's dial must move NEITHER of the other two thresholds...
+    {
+        auto r = rdmd(["--print-threshold", "--verdict-missed-nights-tolerated", "5"]);
+        assert(r.output.strip == "36.0", "term 1's threshold moved when only "
+            ~ "term 3's dial changed: " ~ r.output.strip);
+    }
+    {
+        auto r = rdmd(["--print-schedule-threshold", "--verdict-missed-nights-tolerated", "5"]);
+        assert(r.output.strip == "36.0", "term 2's threshold moved when only "
+            ~ "term 3's dial changed: " ~ r.output.strip);
+    }
+    // ...and neither of theirs must move term 3's.
+    {
+        auto r = rdmd(["--print-verdict-threshold", "--missed-nights-tolerated", "5",
+                       "--schedule-missed-nights-tolerated", "5"]);
+        assert(r.output.strip == "36.0", "term 3's threshold moved when only "
+            ~ "the other two dials changed: " ~ r.output.strip);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 12. `--fake-no-verdict-runs`: a lane that has NEVER produced a successful
+//     scheduled run is its own distinct answer, not a parse error and not
+//     "measuring" by omission — mirroring block 7 for term 3.
+// ---------------------------------------------------------------------------
+unittest
+{
+    auto r = rdmd([
+        "--fake-no-verdict-runs",
+        "--last-run-iso",      "2026-08-28T00:00:00Z",
+        "--schedule-run-isos", "2026-08-28T00:00:00Z",
+        "--now-iso",           "2026-08-28T01:00:00Z",
+    ]);
+    assert(r.status == 0, "report-only default:\n" ~ r.output);
+    assert(r.output.indexOf("NO successful schedule-triggered run") >= 0,
+        "the never-measured verdict does not say so plainly: " ~ r.output);
+
+    auto rGated = rdmd([
+        "--fake-no-verdict-runs",
+        "--last-run-iso",      "2026-08-28T00:00:00Z",
+        "--schedule-run-isos", "2026-08-28T00:00:00Z",
+        "--now-iso",           "2026-08-28T01:00:00Z",
+        "--gate-verdict-freshness",
+    ]);
+    assert(rGated.status == 1, "gated mode must redden when the lane has "
+        ~ "never produced a verdict at all:\n" ~ rGated.output);
+}

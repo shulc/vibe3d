@@ -124,7 +124,32 @@ jobs:
     # report; the owner extended that to the first term as well, so the
     # asymmetry this comment used to describe is gone. `--gate-schedule-health`
     # still exists and still works; nothing passes it today.
-    - name: 'Nightly-perf freshness (task 2040) + schedule delivery (task 2580)'
+    # 2026-08-30 — THREE LANES AND A THIRD TERM. Task 2580 closed half its own
+    # hole: it asked "is the schedule delivering", and it asked it of
+    # `nightly-perf` alone. Both halves cost a measured outage.
+    #
+    #   * THE LANE HALF. `nightly-tsan` ran its ThreadSanitizer tests for the
+    #     last time on 2026-08-25. Nothing here was looking at it. The two
+    #     other scheduled nightlies (`tsan.yaml` 17:00, `sanitizer.yaml`
+    #     19:00) now get the same three terms as `perf.yaml`, each with its
+    #     own `--cron-target-utc` — nothing in the tool was ever
+    #     perf-specific.
+    #   * THE TERM HALF, and it is the one that matters. Terms 1 and 2 were
+    #     BOTH GREEN throughout those five nights: the cron delivered, the
+    #     runs existed, every one of them was `event: schedule`. They just
+    #     refused at their own window guard before a single test ran. Adding
+    #     two more lanes to terms 1 and 2 would have added two more greens
+    #     that CANNOT come out differently on the one failure on record. Term
+    #     3 asks the discriminating question — how long since a scheduled run
+    #     CONCLUDED success — and reddens on exactly that state.
+    #
+    # REPORT, NOT GATE, for all three terms on all three lanes: unchanged
+    # owner decision from 2026-08-28 (see the block above). This step's
+    # outcome word does not appear in the final aggregate gate; every lane's
+    # verdict is surfaced as its own summary line below instead. `|| true` per
+    # lane so one lane's fetch failure cannot hide the other two's verdicts —
+    # the verdicts themselves are read out of the log, not out of exit codes.
+    - name: 'Nightly lane freshness: perf + tsan + sanitizer (tasks 2040/2580 + term 3)'
       id: nightly_freshness
       continue-on-error: true
       timeout-minutes: 5
@@ -132,7 +157,30 @@ jobs:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         set -o pipefail
-        rdmd tools/ci/nightly_freshness.d | tee nightly_freshness_output.log
+        : > nightly_freshness_output.log
+        worst=0
+        for lane in "perf.yaml|nightly-perf|00:30" \
+                    "tsan.yaml|nightly-tsan|17:00" \
+                    "sanitizer.yaml|nightly-sanitizer|19:00"; do
+          wf=${lane%%|*}; rest=${lane#*|}; label=${rest%%|*}; target=${rest##*|}
+          echo "--- $label ($wf, cron target $target UTC)" \
+            | tee -a nightly_freshness_output.log
+          rc=0
+          rdmd tools/ci/nightly_freshness.d \
+            --workflow "$wf" --workflow-label "$label" --cron-target-utc "$target" \
+            2>&1 | tee -a nightly_freshness_output.log || rc=$?
+          # Keep the WORST code across lanes so this step's outcome word still
+          # means something, while one lane's failure never stops the others
+          # from being asked. 2 ("could not tell") outranks 1 ("stale") — the
+          # tool's own discipline: "I could not check" must never read as
+          # either a green or a stale verdict.
+          # An `if`, not `[ ] && …`: this job's default shell is `bash -e`, and
+          # a bare test that evaluates false is a failing command at the end of
+          # the loop body — it would abort the loop after the FIRST healthy
+          # lane and never look at the other two.
+          if [ "$rc" -gt "$worst" ]; then worst=$rc; fi
+        done
+        exit $worst
 
     # nfde is now a VENDORED path dep (third_party/nfde, task 0431). Its C lib
     # (nativefiledialog-extended/out/src/libnfd.a) is produced by the package's
@@ -285,24 +333,35 @@ jobs:
         {
           echo "## Test results"
           echo ""
-          echo "- Nightly-perf freshness (task 2040): **${{ steps.nightly_freshness.outcome }}**"
-          # Task 2580's schedule-health term shares the step above but is
-          # report-only by default (see that step's own comment) — its
-          # verdict does not show up in the outcome word on the line above,
-          # so surface it here EXPLICITLY every run, not only on request,
-          # which is the whole point: a number that only prints when someone
-          # goes looking is the exact shape task 2040 was written to reject.
+          echo "- Nightly lane freshness (2040 / 2580 / term 3): **${{ steps.nightly_freshness.outcome }}**"
+          # All three terms are report-only (see that step's own comment), so
+          # NONE of them shows up in the outcome word above — surface every
+          # line the step printed, EXPLICITLY, every run and not only on
+          # request. A number that only prints when someone goes looking is
+          # the exact shape task 2040 was written to reject, and looking at
+          # only one of three lanes is the shape 2026-08-30 added.
+          #
+          # `grep -m1` per lane is gone deliberately: with three lanes in one
+          # log it would report the first lane's verdict three times. The log
+          # carries a `--- <label>` header per lane, so it is read whole.
           if [ -f nightly_freshness_output.log ]; then
-            SCHED_LINE=$(grep -m1 'schedule delivery' nightly_freshness_output.log || true)
-            if [ -n "$SCHED_LINE" ]; then
-              if echo "$SCHED_LINE" | grep -q 'CRON STOPPED'; then
-                echo "  - ⚠️ schedule delivery (task 2580): \`${SCHED_LINE}\`"
-              else
-                echo "  - schedule delivery (task 2580): \`${SCHED_LINE}\`"
-              fi
-            fi
-            DRIFT_LINE=$(grep -m1 'schedule drift' nightly_freshness_output.log || true)
-            [ -n "$DRIFT_LINE" ] && echo "  - \`${DRIFT_LINE}\`"
+            while IFS= read -r L; do
+              case "$L" in
+                ---*)                echo "  - **${L#--- }**" ;;
+                *"CRON STOPPED"*)    echo "    - ⚠️ \`${L}\`" ;;
+                *"LANE SILENT"*)     echo "    - ⚠️ \`${L}\`" ;;
+                *MISSING*)           echo "    - ⚠️ \`${L}\`" ;;
+                # "could not tell" is its own state and must never be silently
+                # absent from the summary — that is the disguise task 2040
+                # exists to remove, one level up. Verified against a stub log
+                # in which one of the three lanes exits 2.
+                *"could not "*|*"NO recorded"*|*"NO successful"*|*"no schedule-triggered run found"*)
+                                     echo "    - ⚠️ \`${L}\`" ;;
+                *"schedule drift"*)  echo "    - \`${L}\`" ;;
+                *"— fresh."*|*"— delivering."*|*"— measuring."*)
+                                     echo "    - \`${L}\`" ;;
+              esac
+            done < nightly_freshness_output.log
           fi
           echo "- Render config compiles (\`--config=with-render\`, compile only): **${{ steps.render_compile.outcome }}**"
           echo "- Embedded unit tests (\`dub test --config=tests\`): **${{ steps.unit.outcome }}**"

@@ -114,6 +114,17 @@ jobs:
     # taken 375s) so an ordinary overlap waits it out rather than failing,
     # while a genuinely stuck holder still gets caught inside this job's
     # existing 240-minute ceiling instead of hanging it silently.
+    #
+    # 2026-08-30 — the same wrapper now ALSO takes the test runner's host-wide
+    # lock, because "no foreign vibe3d process" turned out not to mean "quiet
+    # host": an IDLE `vibe3d --test` holds ~26% SM (nvidia-smi pmon), and
+    # doc/tasks/backlog/3380 reproduced this lane's nightly excursion
+    # deliberately by running a neighbour's test suite beside it (+64% on
+    # flip). doc/tasks/backlog/3430 is the card; the residual it names —
+    # everything that is not a vibe3d test run — is NOT closed by the lock and
+    # stays open there. The hold is per STEP (measured worst: ops at 375s), so
+    # a neighbouring `./run_test.d` waiting on it cannot exhaust its own 600s
+    # budget on one of them; the wrapper's own header has the full argument.
     - name: 'Ops matrix, absolute vs committed baseline (recorded)'
       id: ops
       continue-on-error: true
