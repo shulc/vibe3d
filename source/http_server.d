@@ -4029,17 +4029,39 @@ class HttpServer {
 
 
     /**
+     * The status line for a response code — reason phrase included.
+     *
+     * Split out of `formatResponse` and made `static` so a unittest can hold
+     * it against the set of codes this server actually emits. The reason
+     * phrase is not decoration: it is the half of the first line a human
+     * reads in a curl transcript or a CI log, and every code missing from
+     * this switch is printed as "<code> Unknown".
+     *
+     * 503 was that case for the whole of task 1740 — the one signal the task
+     * exists to produce read `HTTP/1.1 503 Unknown` on the wire — and 403,
+     * which eight routes in this file emit, has read `403 Unknown` since it
+     * was introduced. Both are the same defect: a code added at an emission
+     * site with nothing forcing a matching arm here. The census unittest at
+     * the foot of this module is what forces it now: it scans this file for
+     * every literal `statusCode = NNN` and demands an arm for each.
+     */
+    package static string statusLineFor(int code) {
+        switch (code) {
+            case 200: return "HTTP/1.1 200 OK";
+            case 400: return "HTTP/1.1 400 Bad Request";
+            case 403: return "HTTP/1.1 403 Forbidden";
+            case 404: return "HTTP/1.1 404 Not Found";
+            case 500: return "HTTP/1.1 500 Internal Server Error";
+            case 503: return "HTTP/1.1 503 Service Unavailable";
+            default:  return "HTTP/1.1 " ~ to!string(code) ~ " Unknown";
+        }
+    }
+
+    /**
      * Format an HTTP response
      */
     private string formatResponse(HttpResponse response) {
-        string statusLine;
-        switch (response.statusCode) {
-            case 200: statusLine = "HTTP/1.1 200 OK"; break;
-            case 400: statusLine = "HTTP/1.1 400 Bad Request"; break;
-            case 404: statusLine = "HTTP/1.1 404 Not Found"; break;
-            case 500: statusLine = "HTTP/1.1 500 Internal Server Error"; break;
-            default: statusLine = "HTTP/1.1 " ~ to!string(response.statusCode) ~ " Unknown";
-        }
+        string statusLine = statusLineFor(response.statusCode);
 
         string headers = "";
         foreach (key, value; response.headers) {
@@ -4500,6 +4522,91 @@ unittest {
         ~ "too would make 'is anything alive on this port' unanswerable, "
         ~ "which is the one question the 503 exists to keep answerable (got "
         ~ to!string(r4.statusCode) ~ ")");
+}
+
+// ---------------------------------------------------------------------------
+// The STATUS LINE, task 1740 tail.
+//
+// `formatResponse` printed `HTTP/1.1 503 Unknown` for the whole of the work
+// that introduced the 503 — the single signal the task exists to emit had a
+// reason phrase reading "Unknown" in every curl transcript and CI log that
+// showed it — and `403 Unknown` had been on the wire since 403 was first
+// emitted. Both codes reached the wire with no arm in the switch because
+// nothing connected an EMISSION SITE to the reason-phrase table.
+//
+// So this is a CENSUS, not a spot check on 503: it reads this module's own
+// source through `__FILE_FULL_PATH__` (absolute, fixed at compile time — no
+// dependence on the cwd of whatever runs the binary), collects every literal
+// `statusCode = NNN` in it, and demands a named phrase for each. A seventh
+// code added tomorrow at an emission site fails HERE rather than shipping a
+// wrong first line.
+//
+// Three ways this could pass while proving nothing, each answered by a cell:
+//   a. the scan matches nothing (a typo in the pattern, a moved file) and the
+//      foreach over an empty set is green — cell A demands the codes it must
+//      find, by value;
+//   b. the default arm is deleted and every code returns something named —
+//      cell C keeps an unemitted code answering "Unknown", which is the right
+//      answer for a code nobody assigns and the proof the switch still has a
+//      fallthrough to be caught by;
+//   c. the phrase is named but wrong (`503 OK`) — cell B pins the two codes
+//      this task is answerable for by their full text.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.file      : readText;
+    import std.regex     : regex, matchAll;
+    import std.algorithm : canFind, sort, uniq, map;
+    import std.array     : array;
+
+    // Cell A — the census. Absolute path baked in at compile time.
+    string src;
+    try src = readText(__FILE_FULL_PATH__);
+    catch (Exception e)
+        assert(false, "1740 status line: cannot read this module's own source "
+            ~ "at " ~ __FILE_FULL_PATH__ ~ " (" ~ e.msg ~ ") — the census "
+            ~ "cannot be performed, and a census that cannot run must not "
+            ~ "report green");
+
+    int[] emitted;
+    foreach (m; src.matchAll(regex(`statusCode\s*=\s*([0-9]{3})\b`)))
+        emitted ~= m[1].to!int;
+    emitted = emitted.sort.uniq.array;
+
+    // Anti-vacuity: the pattern must actually be finding the emission sites.
+    // These six are what the module emitted on 2026-08-30; the assertion is on
+    // CONTAINMENT, so adding a code is fine and losing the scan is not.
+    foreach (must; [200, 400, 403, 404, 500, 503])
+        assert(emitted.canFind(must),
+            "1740 status line: the source scan did not find `statusCode = "
+            ~ to!string(must) ~ "` in " ~ __FILE_FULL_PATH__ ~ " — the census "
+            ~ "is reading the wrong text or the pattern broke, so every "
+            ~ "assertion below it is vacuous. Found: " ~ to!string(emitted));
+
+    foreach (code; emitted)
+        assert(!HttpServer.statusLineFor(code).canFind("Unknown"),
+            "1740 status line: this server assigns statusCode = "
+            ~ to!string(code) ~ " somewhere in " ~ __FILE_FULL_PATH__
+            ~ ", but formatResponse has no arm for it, so the wire carries `"
+            ~ HttpServer.statusLineFor(code) ~ "`. The reason phrase is the half of the "
+            ~ "first line a human reads; add the arm beside the emission");
+
+    // Cell B — the two codes this task is answerable for, by full text.
+    assert(HttpServer.statusLineFor(503) == "HTTP/1.1 503 Service Unavailable",
+        "1740 status line: the readiness refusal is the ONE signal this task "
+        ~ "produces, and its first line is what an external probe and every "
+        ~ "log reader sees. Got `" ~ HttpServer.statusLineFor(503) ~ "`");
+    assert(HttpServer.statusLineFor(403) == "HTTP/1.1 403 Forbidden",
+        "1740 status line: 403 is emitted by eight routes here and read "
+        ~ "`403 Unknown` before this task touched the switch. Got `"
+        ~ HttpServer.statusLineFor(403) ~ "`");
+
+    // Cell C — the default arm survives. Without this, "no Unknown anywhere"
+    // is satisfiable by deleting the fallthrough, and an unassigned code would
+    // then format as whatever the last arm happened to return.
+    assert(HttpServer.statusLineFor(418) == "HTTP/1.1 418 Unknown",
+        "1740 status line: a code this server never assigns must still fall "
+        ~ "to the default arm — the census above proves nothing if that arm "
+        ~ "is gone. Got `" ~ HttpServer.statusLineFor(418) ~ "`");
 }
 
 // Parse `?key=N` (or `&key=N`) from a request path. Returns `def` when the

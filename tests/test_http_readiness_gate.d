@@ -26,7 +26,7 @@
 // the whole window — decided the instance was up, fired one command into the
 // gap and lost the night on a perfectly healthy process.
 //
-// THE THREE CELLS, and WHICH MUTATION EACH ONE ANSWERS TO — measured, not
+// THE FOUR CELLS, and WHICH MUTATION EACH ONE ANSWERS TO — measured, not
 // asserted. Both mutations below were run and the named cell was watched go
 // red; the wording matters because the two cells do NOT cover the same code:
 //   1. /api/command answers 503 at least once before the app is wired, and
@@ -50,6 +50,12 @@
 //      exactly the false ready the nightly took.
 //   3. the gate LIFTS, and once lifted the same routes answer normally. A
 //      gate wired to "never ready" would pass cells 1 and 2.
+//   4. the refusal's STATUS LINE reads `HTTP/1.1 503 Service Unavailable` on
+//      the wire. Cells 1 and 2 read three digits out of that line and are
+//      green over `HTTP/1.1 503 Unknown`, which is what this server actually
+//      sent for the whole of this task: `formatResponse` had no arm for 503.
+//      Reddens on removing that arm:
+//        AssertError@…(…) 1740 cell 4: … got `HTTP/1.1 503 Unknown`
 //
 // Cell 1 asserting "at least one" is not a race: the port opens ~250 ms into
 // startup and the wiring completes ~200 ms later, while a sample here costs
@@ -70,7 +76,9 @@ import std.socket   : Socket, TcpSocket, AddressFamily, SocketType,
                       ProtocolType, InternetAddress;
 import std.conv     : to;
 import std.string   : indexOf, strip;
-import std.algorithm: canFind;
+import std.algorithm: canFind, filter;
+import std.array    : array;
+import std.typecons : tuple;
 import std.format   : format;
 import std.process  : spawnProcess, wait, thisProcessID, Pid;
 import std.file     : mkdirRecurse, rmdirRecurse, exists, readText;
@@ -92,6 +100,11 @@ void main() {}
 struct Sample {
     string code;    // "503", "200", "connect-refused", "EMPTY-REPLY", "io-error"
     string body_;
+    // The WHOLE first line, reason phrase included, exactly as it came off
+    // the socket — empty when no bytes arrived. Kept separately from `code`
+    // because the phrase is the half a human reads, and it was wrong ("503
+    // Unknown") for the whole of the work that introduced the 503. Cell 4.
+    string statusLine;
 }
 
 /// One request, one connection, no library between us and the socket.
@@ -118,14 +131,16 @@ Sample probeOnce(ushort port, string method, string path, string reqBody) {
             resp ~= buf[0 .. n].idup;
             if (resp.length > 262144) break;
         }
-        if (resp.length == 0) return Sample("EMPTY-REPLY", "");
+        if (resp.length == 0) return Sample("EMPTY-REPLY", "", "");
         auto sp = resp.indexOf(' ');
         string code = (sp >= 0 && resp.length > sp + 4)
                     ? resp[sp + 1 .. sp + 4].idup : "???";
+        auto eol = resp.indexOf("\r\n");
+        string statusLine = eol >= 0 ? resp[0 .. eol].idup : resp.idup;
         auto hb = resp.indexOf("\r\n\r\n");
-        return Sample(code, hb >= 0 ? resp[hb + 4 .. $].idup : "");
+        return Sample(code, hb >= 0 ? resp[hb + 4 .. $].idup : "", statusLine);
     } catch (Exception) {
-        return Sample("io-error", "");
+        return Sample("io-error", "", "");
     }
 }
 
@@ -136,12 +151,15 @@ Sample probeOnce(ushort port, string method, string path, string reqBody) {
 struct Timeline {
     size_t[string] counts;
     string[]       distinctBodies;
+    string[]       distinctStatusLines;
     long           firstOkMs = -1;
     size_t         total;
 
     void add(Sample s, long atMs) {
         counts[s.code] = counts.get(s.code, 0) + 1;
         total++;
+        if (s.statusLine.length && !distinctStatusLines.canFind(s.statusLine))
+            distinctStatusLines ~= s.statusLine;
         // Truncated: a failure message has to be readable, and the ready
         // /api/registry body alone is tens of kilobytes.
         if (s.body_.length && distinctBodies.length < 8) {
@@ -156,8 +174,8 @@ struct Timeline {
     string render() const {
         string outp;
         foreach (k, v; counts) outp ~= format("%s=%d ", k, v);
-        return outp ~ format("| firstOk=%sms | bodies: %s",
-                             firstOkMs, distinctBodies);
+        return outp ~ format("| firstOk=%sms | status lines: %s | bodies: %s",
+                             firstOkMs, distinctStatusLines, distinctBodies);
     }
 }
 
@@ -343,4 +361,55 @@ unittest {
         "1740 cell 3: readiness must mean a command is actually dispatched — "
         ~ "a 200 whose body is a bridge timeout would mean the gate lifted "
         ~ "before the main loop drained anything. Got: " ~ c.body_);
+}
+
+// ---------------------------------------------------------------------------
+// Cell 4 — the REASON PHRASE on the wire.
+//
+// Cells 1-3 read three characters out of the status line, so all three are
+// satisfied by `HTTP/1.1 503 Unknown` — which is literally what this server
+// sent while the rest of this task was being built and measured. The status
+// line is the whole first line, it is what a curl transcript and every CI log
+// shows, and "Unknown" in it says the server does not recognise the code it
+// just chose. Nothing else in the tree looks at it.
+//
+// Asserted against the bytes off the socket rather than against
+// `formatResponse`'s return value on purpose: this is the one place the test
+// suite reads a real status line, and a unit-level check would still pass if
+// some later layer rewrote the line on its way out.
+// ---------------------------------------------------------------------------
+unittest {
+    // Both timelines, because the two answers travel different code paths
+    // into the same formatter (a bridged route's own arm, and the gate in
+    // handleRequest), and either could grow its own way of writing a line.
+    foreach (named; [tuple("/api/command", g_cmdLine),
+                     tuple("/api/registry", g_registryLine)]) {
+        auto route = named[0];
+        auto tl    = named[1];
+
+        auto lines503 = tl.distinctStatusLines.filter!(l => l.canFind(" 503 ")).array;
+
+        assert(lines503.length >= 1,
+            "1740 cell 4: no 503 status line was captured for " ~ route
+            ~ " — cell 1/2 should have failed first; if they passed, the "
+            ~ "status line is not being recorded and this cell is vacuous. "
+            ~ "Timeline: " ~ tl.render());
+
+        foreach (l; lines503)
+            assert(l == "HTTP/1.1 503 Service Unavailable",
+                "1740 cell 4: the readiness refusal on " ~ route ~ " must "
+                ~ "carry a named reason phrase. The 503 IS the deliverable of "
+                ~ "this task and its status line is what an external probe "
+                ~ "and every log reader sees; `Unknown` there says the server "
+                ~ "does not recognise the code it just chose. Add the arm to "
+                ~ "formatResponse. Got `" ~ l ~ "`");
+    }
+
+    // And the ready answers on the same connections were named too — this is
+    // what keeps the cell from being satisfied by a formatter that names 503
+    // and nothing else.
+    foreach (l; g_cmdLine.distinctStatusLines ~ g_registryLine.distinctStatusLines)
+        assert(!l.canFind("Unknown"),
+            "1740 cell 4: every status line this server sent during startup "
+            ~ "must name its code. Got `" ~ l ~ "`");
 }
