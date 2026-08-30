@@ -1,0 +1,939 @@
+// test_gesture_zero_delta_undo_second_form — task 2660's measured law, wired to
+// a live check as TWO KNOWN DIVERGENCES (self-retiring, red in BOTH directions).
+//
+// THE LAW, measured and frozen in
+// `tests/fixtures/gesture_zero_delta_undo_second_form.json` (task 2660,
+// verdict (b), live captures on fresh reference processes PLUS a breakpoint on
+// the one instruction that increments the engine's undo-entry counter):
+//
+//   A COMMITTED GESTURE COSTS UNDO STEPS EVEN WHEN IT CHANGED NOTHING, IN
+//   EVERY TOOL FAMILY — BUT THE COST IS PER TOOL, NOT A CONSTANT.
+//   2 undo steps for a transform-handle haul (task 2640) and 1 for a cutting
+//   tool, against ZERO for an identical run with no button press. The
+//   recording decision keys on "did anything register an undoable action",
+//   not on "did the mesh change".
+//
+//   And its dual: ARMING A TOOL AND DROPPING IT WITHOUT ENGAGING IT REGISTERS
+//   NOTHING — in BOTH stack shapes, over a preceding model edit and over
+//   another armed-and-dropped region alike. There is no stack-shape term.
+//
+// WE DIFFER TWICE, in opposite directions, and this file is the record of both.
+//
+//   (A) THE CUTTING FAMILY, and it is the SECOND family to show our rule is a
+//       RESULT test. `SliceTool.commitCurrentSlice` returns early on
+//       `!previewLive_`, and `previewLive_` is literally `nSplit > 0` — "did
+//       the cut change anything". So a committed zero-distance cut gesture
+//       costs us ZERO undo steps against the reference's ONE. Note that our
+//       site is NOT the transform one (`TransformTool.commitEdit` /
+//       `buildEditCmd`, registry row 86's first half): two independent
+//       implementations of the same wrong predicate, which is why a port is a
+//       policy change and not a one-site fix.
+//
+//   (B) THE SECOND STACK SHAPE, and here WE COST MORE. A transform tool's
+//       drop records a `HistoryFlags.ToolLifecycle` entry
+//       (`ToolDeactivationCommand`, emitted only for tools implementing
+//       `LifecycleUndoEmitter` — `XfrmTransformTool` is the sole implementor).
+//       `CommandHistory.undo`'s (R1) rule steps PAST such a tail transparently
+//       when a Model entry sits below it, and treats it as a HARD STEP when
+//       the entry below is another lifecycle one. So our SECOND arm-and-drop
+//       in a row costs the user one undo step where the reference costs none.
+//       Registry row 87.
+//
+// WHY A SIBLING FILE AND NOT MORE BLOCKS IN
+// `tests/test_gesture_zero_delta_undo_divergence.d`. Three reasons, all
+// load-bearing:
+//   * druntime stops a module at its FIRST failed assert. That file already
+//     carries seven blocks whose mutations were recorded one at a time; adding
+//     five more would bury every one of them behind an earlier failure and
+//     make the recorded mutation notes unreproducible without deleting blocks.
+//   * its scope is declared and narrow — "every cell drives the TRANSFORM
+//     tool", the family its fixture drove — and its `kStatus` is ONE
+//     retirement switch for ONE gap. The two gaps here close independently of
+//     that one and of each other, so they need their own switches; a single
+//     token would retire the wrong gap.
+//   * one reader per fixture keeps "which capture is this assertion from"
+//     answerable by looking at the import.
+//
+// THE STATUS TOKENS ARE THE RETIREMENT SWITCHES. `kStatusCut` and
+// `kStatusArmDrop` are each checked to be exactly "open" or "closed" (a typo
+// must not silently pick a branch), and each "closed" branch demands PARITY.
+// Porting either law is then a real two-line edit: flip the token and re-freeze
+// the matching `kOurs*` constant.
+//
+// THE INSTRUMENT IS THE CAPTURE'S OWN, AND THE ABSOLUTE INDEX IS NOT
+// COMPARABLE. The reading is `steps(N) = kB(N) - kB(control)`, where kB is the
+// index of the undo that reverts the edit PRECEDING the cell's own gesture.
+// What else sits on the stack is engine bookkeeping; the DIFFERENCE against a
+// control run identical except for the one varied step is the engine-
+// independent quantity the fixture's `rig.reading` defines.
+//
+// THE STAND IS BUILT BY A COMMAND, NOT BY A DRAG, AND THAT IS FORCED BY (B).
+// `mesh.move_vertex` leaves a plain Model entry at the tail of the undo stack.
+// A drag-built stand would drop its own tool and leave a `ToolLifecycle` entry
+// there instead — and then the FIRST arm-and-drop of cell (B) would already be
+// "over another lifecycle region", the two stack shapes would collapse into
+// one, and the parity row would read 1 for a reason that has nothing to do
+// with the law. This is not a guess: a drag-built stand's tail is exactly the
+// tail cell `armdrop_over_model_edit` leaves behind (a Model entry with a
+// lifecycle entry on top of it), and the cost of one more arm-and-drop over
+// THAT tail is measured, at 1 — it is what block 3 reads.
+//
+// ANTI-VACUITY, and it is the part that has already failed once on the sibling
+// file: every undo-step reading below is satisfied just as well by a gesture
+// that NEVER HAPPENED. Deleting the press records nothing either. The
+// witnesses that separate "the gesture ran and recorded nothing" from "no
+// gesture happened" are:
+//   * `lineDrawn` — the cutting tool's OWN engagement flag, read from
+//     `/api/tool/state`. FALSE in the control, TRUE in the zero-distance cell.
+//     This is the strong witness: it is the tool saying it took the press.
+//   * the change-bus delivery count, which moves for the zero cell and not for
+//     the control — an independent second channel, kept because the two fail
+//     for different reasons.
+//   * the drawn line is DEGENERATE (start == end) in the zero cell, which is
+//     what makes it the empty-delta flavour the fixture measured rather than
+//     some other gesture;
+//   * the mesh is byte-identical across the zero gesture (the premise of the
+//     law, not a conclusion);
+//   * the press pixel is IDENTICAL in all three cutting cells, so the zero
+//     press lands where the positive control presses;
+//   * the positive control must CUT and must cost at least one step — without
+//     it, "we record nothing" is a statement about an instrument that cannot
+//     see a recording at all.
+//
+// WHAT IS NOT COVERED, and why — read this before adding to it.
+//   * Deforming, creating and painting families. The fixture's own
+//     `not_measured` says no cell was driven for them; the MECHANISM argument
+//     covers them and a test cannot assert a mechanism argument.
+//   * Redo. Neither fixture makes a redo claim, so neither does this.
+//   * A full-magnitude cutting gesture whose RESULT is empty. The capture's
+//     cell for it cut the mesh anyway (`short_line_off_the_mesh`), so only the
+//     zero-distance flavour of an empty delta is measured, on both sides.
+//   * WHICH low-level blocks group into which user-visible undo step. The
+//     fixture's `decomposition.not_measured` says that channel counted blocks
+//     and could not separate the grouping.
+//   * The reference's kB for the two armed-and-dropped cells. The fixture's
+//     `not_measured` says that behavioural cross-check never ran, so its ZERO
+//     UNDO STEPS is an INFERENCE from ZERO ENTRIES RECORDED — sound (no entry
+//     can cost a step) but an inference, and block 3 says so in its message.
+//
+// MUTATIONS THAT REDDEN IT: recorded at the bottom of this file.
+
+import std.json;
+import std.net.curl : get, post;
+import std.format   : format;
+import std.math     : fabs, sqrt;
+import core.thread  : Thread;
+import core.time    : msecs;
+
+import drag_helpers;
+
+void main() {}
+
+// The literal is spelled out because run_test.d rewrites "localhost:8080"
+// per worker for parallel runs — do not build it dynamically.
+enum BASE = "http://localhost:8080";
+
+enum string kFixtureJson    = import("fixtures/gesture_zero_delta_undo_second_form.json");
+/// Task 2640's fixture, held open beside this one for exactly one purpose:
+/// block 6, which refuses a corpus where the two families' costs have been
+/// normalised to a single number. That normalisation IS candidate (a).
+enum string kFixtureOneJson = import("fixtures/gesture_zero_delta_undo.json");
+
+// ---------------------------------------------------------------------------
+// OUR SIDE, FROZEN. Measured on this tree 2026-08-30 through the rig below.
+// Steps are RELATIVE, exactly as the fixture reads them.
+// ---------------------------------------------------------------------------
+enum long kOursCutControlSteps  = 0;   // slice tool armed and dropped, no press
+enum long kOursCutZeroSteps     = 0;   // committed zero-distance cut gesture
+enum long kOursCutPositiveSteps = 1;   // committed real cut
+
+/// Arm-and-drop of the TRANSFORM tool, relative to the cell with one fewer
+/// armed-and-dropped region. Shape 1 = over the stand's model entry.
+enum long kOursArmDropOverModelSteps     = 0;   // parity with the reference
+enum long kOursArmDropOverLifecycleSteps = 1;   // the reference costs 0
+
+/// The retirement switches. "open" — we still differ, assert the gap.
+/// "closed" — the law is ported, assert PARITY instead.
+enum string kStatusCut     = "open";
+enum string kStatusArmDrop = "open";
+
+/// Rig constants. The fixture's cutting cells are prose ("sixteen pointer
+/// moves that ALL land on the press pixel"; "a 700 px line drawn across the
+/// mesh") and this fixture carries no machine drive record, so the step counts
+/// are OURS and are declared here rather than pretended to be read out of it.
+/// What IS read out of it is the cell semantics — block 0 pins "the zero cell
+/// left the mesh unchanged" from the fixture's own vertex counts.
+enum int kZeroMotionSteps = 16;
+enum int kCutMotionSteps  = 20;
+/// The positive control's far endpoint, in WORLD units along an in-plane axis.
+/// A pixel distance would be camera-dependent; this is not.
+enum float kCutReachWorld = 0.9f;
+
+// ---------------------------------------------------------------------------
+// HTTP plumbing
+// ---------------------------------------------------------------------------
+JSONValue getJson(string p)  { return parseJSON(cast(string) get(BASE ~ p)); }
+JSONValue postJson(string p, string b) {
+    return parseJSON(cast(string) post(BASE ~ p, b));
+}
+
+void settle() { Thread.sleep(250.msecs); }
+
+void script(string line) {
+    auto r = postJson("/api/command", line);
+    assert(r["status"].str == "ok",
+        format("/api/command '%s' failed: %s", line, r.toString));
+}
+
+double[][] verts() {
+    double[][] o;
+    foreach (v; getJson("/api/model")["vertices"].array) {
+        double[] a;
+        foreach (c; v.array) a ~= c.floating;
+        o ~= a;
+    }
+    return o;
+}
+
+bool meshEq(const double[][] a, const double[][] b) {
+    if (a.length != b.length) return false;
+    foreach (i, row; a) {
+        if (row.length != b[i].length) return false;
+        foreach (k, c; row) if (fabs(c - b[i][k]) > 1e-9) return false;
+    }
+    return true;
+}
+
+/// Depth of the VISIBLE undo stack. `/api/history` filters
+/// `HistoryFlags.ToolLifecycle` — which is precisely why block 4 asserts that
+/// this instrument and the undo walk DISAGREE on the lifecycle cells.
+long visibleUndoDepth() { return getJson("/api/history")["undo"].array.length; }
+
+/// Change-bus deliveries so far. One of the two gesture witnesses.
+long deliveries() { return getJson("/api/changes")["deliveryCount"].integer; }
+
+/// The slice tool's own state. `lineDrawn` is the engagement witness; the
+/// start/end triples say whether the drawn line is degenerate.
+JSONValue sliceState() { return getJson("/api/tool/state"); }
+
+// ---------------------------------------------------------------------------
+// The rig
+// ---------------------------------------------------------------------------
+
+/// A pointer path with NO button press — the control's gesture path. Mirrors
+/// `buildDragLog`'s header and timing so the two differ by the press and by
+/// nothing else.
+string buildMoveLog(int vpX, int vpY, int vpW, int vpH,
+                    int x0, int y0, int x1, int y1, int steps)
+{
+    string log = format(
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
+        vpX, vpY, vpW, vpH);
+    int lastX = x0, lastY = y0;
+    foreach (i; 0 .. steps + 1) {
+        const int x = x0 + cast(int)((cast(double)(x1 - x0) * i) / steps);
+        const int y = y0 + cast(int)((cast(double)(y1 - y0) * i) / steps);
+        log ~= format(
+            `{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":0,"mod":0}` ~ "\n",
+            50.0 + i * 50.0, x, y, x - lastX, y - lastY);
+        lastX = x; lastY = y;
+    }
+    return log;
+}
+
+/// The stand's one model edit: move the mesh's first vertex a fixed distance
+/// in +X through a COMMAND, so the tail of the undo stack is a plain Model
+/// entry with no tool-lifecycle entry after it. Returns the pre-edit mesh.
+double[][] buildStand() {
+    postJson("/api/reset", "");
+    settle();
+    auto pre = verts();
+    assert(pre.length > 0 && pre[0].length == 3,
+        "the stand has no vertex 0 to move — /api/reset did not give a mesh");
+    script(format("mesh.move_vertex from:{%g,%g,%g} to:{%g,%g,%g}",
+                  pre[0][0], pre[0][1], pre[0][2],
+                  pre[0][0] - 0.4, pre[0][1], pre[0][2]));
+    settle();
+    assert(!meshEq(pre, verts()),
+        "the stand's model edit did not move the mesh — there is no preceding "
+        ~ "edit for the undo walk to be about, and every kB below would be "
+        ~ "measuring some other entry");
+    return pre;
+}
+
+/// Walk the undo stack, reading the whole mesh after every step, and return
+/// the index of the first undo that lands back on `pre`.
+struct WalkResult {
+    int    kB = -1;
+    string firstStatus;
+    bool   firstRevertsStand;
+    bool   firstChangedMesh;
+}
+
+WalkResult undoWalk(string id, const double[][] pre, const double[][] post) {
+    WalkResult w;
+    foreach (k; 1 .. 7) {
+        auto resp = postJson("/api/undo", "");
+        settle();
+        const v = verts();
+        if (k == 1) {
+            w.firstStatus       = ("status" in resp) ? resp["status"].str : "<none>";
+            w.firstRevertsStand = meshEq(v, pre);
+            w.firstChangedMesh  = !meshEq(post, v);
+        }
+        if (w.kB < 0 && meshEq(v, pre)) w.kB = cast(int) k;
+    }
+    assert(w.kB > 0,
+        format("%s: no undo in six steps returned the mesh to its pre-stand "
+               ~ "state — the walk found no kB and every reading built on it "
+               ~ "would be meaningless", id));
+    return w;
+}
+
+/// The world point the press pixel projects from, and a second point the
+/// positive control drags to. Both lie on the construction plane the tool
+/// itself picks (the most-facing world plane), so the drawn line crosses the
+/// cube whatever the camera is doing. Replicates `pickMostFacingPlane`'s
+/// X > Y > Z tie-break, exactly as tests/test_slice_session.d does.
+void cutEndpoints(const ref Viewport vp, out Vec3 a, out Vec3 b) {
+    const Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
+    const float ax = fabs(camBack.x), ay = fabs(camBack.y), az = fabs(camBack.z);
+    Vec3 inPlane2;
+    if (ax >= ay && ax >= az)      inPlane2 = Vec3(0, 0, 1);
+    else if (ay >= ax && ay >= az) inPlane2 = Vec3(0, 0, 1);
+    else                           inPlane2 = Vec3(0, 1, 0);
+    a = Vec3(0, 0, 0);
+    b = Vec3(inPlane2.x * kCutReachWorld,
+             inPlane2.y * kCutReachWorld,
+             inPlane2.z * kCutReachWorld);
+}
+
+void toPixel(Vec3 w, const ref Viewport vp, out int px, out int py) {
+    float fx, fy;
+    const bool ok = projectToWindow(w, vp, fx, fy);
+    assert(ok, "a rig world point projected off-screen — the camera "
+             ~ "assumptions this rig is built on no longer hold");
+    px = cast(int)(fx + 0.5f);
+    py = cast(int)(fy + 0.5f);
+}
+
+struct CutCell {
+    int    pressX, pressY;
+    int    kB;
+    long   visibleDelta;
+    long   deliveryDelta;
+    bool   lineDrawn;
+    bool   lineDegenerate;
+    bool   gestureChangedMesh;
+    string firstUndoStatus;
+    bool   firstUndoRevertsStand;
+    bool   firstUndoChangedMesh;
+}
+
+/// One cutting cell: build the stand, arm `mesh.sliceTool`, drive the gesture,
+/// DROP the tool, then walk the undo stack.
+///
+/// The drop is inside EVERY cell including the control, deliberately: our
+/// Slice tool's only commit point is `deactivate`, so a cell that never drops
+/// could not record anything at all and the positive control would be dead.
+/// Since the drop is common to all three cells, whatever it costs cancels in
+/// `steps(N) = kB(N) - kB(control)`.
+CutCell runCutCell(string id, bool press, bool reach) {
+    CutCell c;
+    const pre = buildStand();
+    const postStand = verts();
+
+    auto cam = fetchCamera(BASE);
+    auto vp  = viewportFromCamera(cam);
+    Vec3 wa, wb;
+    cutEndpoints(vp, wa, wb);
+    int fx, fy;
+    toPixel(wa, vp, c.pressX, c.pressY);
+    toPixel(wb, vp, fx, fy);
+
+    const long vis0 = visibleUndoDepth();
+    const long del0 = deliveries();
+
+    script("tool.set mesh.sliceTool on");
+    settle();
+    if (press) {
+        const int x1 = reach ? fx : c.pressX;
+        const int y1 = reach ? fy : c.pressY;
+        playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                 c.pressX, c.pressY, x1, y1,
+                                 reach ? kCutMotionSteps : kZeroMotionSteps), BASE);
+    } else {
+        playAndWait(buildMoveLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                 c.pressX, c.pressY, c.pressX, c.pressY,
+                                 kZeroMotionSteps), BASE);
+    }
+    settle();
+
+    auto st = sliceState();
+    c.lineDrawn = st["lineDrawn"].type == JSONType.true_;
+    c.lineDegenerate =
+        fabs(st["startX"].floating - st["endX"].floating) < 1e-5 &&
+        fabs(st["startY"].floating - st["endY"].floating) < 1e-5 &&
+        fabs(st["startZ"].floating - st["endZ"].floating) < 1e-5;
+
+    script("tool.set mesh.sliceTool off");
+    settle();
+
+    c.visibleDelta  = visibleUndoDepth() - vis0;
+    c.deliveryDelta = deliveries() - del0;
+    const postN = verts();
+    c.gestureChangedMesh = !meshEq(postStand, postN);
+
+    auto w = undoWalk(id, pre, postN);
+    c.kB                    = w.kB;
+    c.firstUndoStatus       = w.firstStatus;
+    c.firstUndoRevertsStand = w.firstRevertsStand;
+    c.firstUndoChangedMesh  = w.firstChangedMesh;
+    return c;
+}
+
+struct ArmDropCell {
+    int  kB;
+    long visibleDelta;
+    long deliveryDelta;
+    bool meshMoved;
+}
+
+/// `regions` armings-and-droppings of the TRANSFORM tool over the stand, each
+/// with the same no-press pointer path the reference's cell drove, then the
+/// undo walk. `regions == 0` is the baseline the first region is measured
+/// against.
+ArmDropCell runArmDropCell(string id, int regions) {
+    ArmDropCell c;
+    const pre = buildStand();
+    const postStand = verts();
+
+    auto cam = fetchCamera(BASE);
+    const int px = cam.vpX + cam.width / 2;
+    const int py = cam.vpY + cam.height / 2;
+
+    const long vis0 = visibleUndoDepth();
+    const long del0 = deliveries();
+    foreach (i; 0 .. regions) {
+        script("tool.set move on");
+        settle();
+        playAndWait(buildMoveLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                 px, py, px, py, 8), BASE);
+        settle();
+        script("tool.set move off");
+        settle();
+    }
+    c.visibleDelta  = visibleUndoDepth() - vis0;
+    c.deliveryDelta = deliveries() - del0;
+
+    const postN = verts();
+    c.meshMoved = !meshEq(postStand, postN);
+    assert(!c.meshMoved,
+        format("%s: arming and dropping the transform tool MOVED the mesh — "
+               ~ "the cell is supposed to be a tool that was never engaged, so "
+               ~ "it is no longer the phenomenon the fixture measured", id));
+
+    c.kB = undoWalk(id, pre, postN).kB;
+    return c;
+}
+
+// ---------------------------------------------------------------------------
+// The measurement, taken once and shared by the blocks below.
+// ---------------------------------------------------------------------------
+struct Measured {
+    CutCell     cutControl, cutZero, cutPositive;
+    ArmDropCell ad0, ad1, ad2, ad3;
+    long        refCutControl, refCutZero, refCutPositive;
+    int         refKbCutControl, refKbCutZero, refKbCutPositive;
+    long        refArmDropModel, refArmDropLifecycle;
+    long        refTransformZero;              // task 2640's fixture
+}
+
+private Measured* g_m;
+
+JSONValue fixtureCase(JSONValue fx, string id) {
+    foreach (c; fx["cases"].array) if (c["id"].str == id) return c;
+    assert(false, "fixture has no case '" ~ id ~ "'");
+}
+
+Measured measured() {
+    if (g_m !is null) return *g_m;
+    auto fx  = parseJSON(kFixtureJson);
+    auto fx1 = parseJSON(kFixtureOneJson);
+
+    Measured m;
+    auto cc = fixtureCase(fx, "control_no_press");
+    auto cz = fixtureCase(fx, "zero_distance_gesture");
+    auto cp = fixtureCase(fx, "positive_control_real_cut");
+    m.refCutControl    = cc["entries_recorded"].integer;
+    m.refCutZero       = cz["entries_recorded"].integer;
+    m.refCutPositive   = cp["entries_recorded"].integer;
+    m.refKbCutControl  = cast(int) cc["undo_index_that_reverts_the_previous_edit"].integer;
+    m.refKbCutZero     = cast(int) cz["undo_index_that_reverts_the_previous_edit"].integer;
+    m.refKbCutPositive = cast(int) cp["undo_index_that_reverts_the_previous_edit"].integer;
+    m.refArmDropModel  =
+        fixtureCase(fx, "armed_and_dropped_over_a_model_edit")["entries_recorded"].integer;
+    m.refArmDropLifecycle =
+        fixtureCase(fx, "armed_and_dropped_over_another_lifecycle_region")["entries_recorded"].integer;
+    m.refTransformZero =
+        fixtureCase(fx1, "zero_distance_gesture")["entries_recorded"].integer;
+
+    m.cutControl  = runCutCell("cut_control_no_press",  false, false);
+    m.cutZero     = runCutCell("cut_zero_distance",     true,  false);
+    m.cutPositive = runCutCell("cut_positive_real_cut", true,  true);
+
+    m.ad0 = runArmDropCell("armdrop_baseline_no_arm",   0);
+    m.ad1 = runArmDropCell("armdrop_over_model_edit",   1);
+    m.ad2 = runArmDropCell("armdrop_over_lifecycle",    2);
+    m.ad3 = runArmDropCell("armdrop_over_lifecycle_2",  3);
+
+    g_m = new Measured;
+    *g_m = m;
+    return m;
+}
+
+// ---------------------------------------------------------------------------
+// 0 — THE FIXTURE'S OWN ARITHMETIC AND ITS OWN CELLS. `entries_recorded` and
+//     the undo indices are two frozen views of one capture, related by the
+//     declared reading `entries(N) = kB(N) - kB(control)`. Re-derive one from
+//     the other, so a fixture edited on one side only fails HERE instead of
+//     quietly moving the target every assertion below aims at. Plus: the two
+//     armed-and-dropped cells must both be present and both read zero — that
+//     pair IS the "there is no stack-shape term" finding, and with one of them
+//     gone block 3's divergence row would be comparing against a caveat again.
+// ---------------------------------------------------------------------------
+unittest {
+    auto fx = parseJSON(kFixtureJson);
+    auto cc = fixtureCase(fx, "control_no_press");
+    auto cz = fixtureCase(fx, "zero_distance_gesture");
+    auto cp = fixtureCase(fx, "positive_control_real_cut");
+    const long kbC = cc["undo_index_that_reverts_the_previous_edit"].integer;
+    const long kbZ = cz["undo_index_that_reverts_the_previous_edit"].integer;
+    const long kbP = cp["undo_index_that_reverts_the_previous_edit"].integer;
+
+    assert(cz["entries_recorded"].integer == kbZ - kbC,
+        format("the fixture contradicts itself: zero_distance_gesture declares "
+               ~ "entries_recorded %d, but its undo indices give %d - %d = %d. "
+               ~ "Re-measure; do not patch one side.",
+               cz["entries_recorded"].integer, kbZ, kbC, kbZ - kbC));
+    assert(cp["entries_recorded"].integer == kbP - kbC,
+        format("the fixture contradicts itself: positive_control_real_cut "
+               ~ "declares entries_recorded %d, but its undo indices give "
+               ~ "%d - %d = %d",
+               cp["entries_recorded"].integer, kbP, kbC, kbP - kbC));
+    assert(cc["entries_recorded"].integer == 0,
+        format("the fixture's control run declares %d entries; the whole "
+               ~ "reading is relative to a control that costs nothing",
+               cc["entries_recorded"].integer));
+    assert(cz["entries_recorded"].integer > 0,
+        format("the fixture declares %d entries for the zero-delta cutting "
+               ~ "gesture — there is no divergence left for this file to "
+               ~ "record", cz["entries_recorded"].integer));
+
+    // The zero cell must BE an empty delta on the reference's own numbers, or
+    // it is not the phenomenon and our matching cell is comparing to nothing.
+    assert(cz["mesh_changed"].type == JSONType.false_,
+        "the fixture's zero_distance_gesture no longer declares an unchanged "
+        ~ "mesh — the empty-delta premise is gone from the reference side");
+    assert(cz["vertex_count_after"].integer == cc["vertex_count_after"].integer,
+        format("the fixture's zero cell ends at %d vertices and its control at "
+               ~ "%d; an empty delta must leave the same mesh",
+               cz["vertex_count_after"].integer,
+               cc["vertex_count_after"].integer));
+    // And the intended-but-failed cell must stay marked as a REAL cut, so
+    // nobody later reads it as a second empty-delta data point.
+    assert(fixtureCase(fx, "short_line_off_the_mesh")["mesh_changed"].type
+               == JSONType.true_,
+        "the fixture's short_line_off_the_mesh cell no longer declares that it "
+        ~ "cut the mesh. Its own note says it was INTENDED as a full-magnitude "
+        ~ "gesture with an empty result and cut anyway, which is why it is not "
+        ~ "evidence about an empty delta — flipping that flag would silently "
+        ~ "turn a real-cut cell into a second empty-delta claim");
+
+    // The two stack shapes, and the fact that they agree.
+    auto a1 = fixtureCase(fx, "armed_and_dropped_over_a_model_edit");
+    auto a2 = fixtureCase(fx, "armed_and_dropped_over_another_lifecycle_region");
+    assert(a1["entries_recorded"].integer == 0
+        && a2["entries_recorded"].integer == 0,
+        format("the fixture's armed-and-dropped cells declare %d and %d "
+               ~ "entries; the measured law is that BOTH cost nothing, and it "
+               ~ "is what makes 'there is no stack-shape term' a measurement "
+               ~ "rather than an assumption",
+               a1["entries_recorded"].integer, a2["entries_recorded"].integer));
+    assert(a1["low_level_blocks_created"].integer == 0
+        && a2["low_level_blocks_created"].integer == 0,
+        "the fixture's armed-and-dropped cells no longer declare zero "
+        ~ "low-level blocks — the direct-counter channel is what makes the "
+        ~ "zero a measurement and not the absence of a reading");
+
+    assert(fx["verdict"].str == "b",
+        format("the fixture's verdict is now '%s'. This file is built on (b) — "
+               ~ "the law is general and the NUMBER is per tool; (a) and (c) "
+               ~ "would make blocks 5 and 6 assert the wrong thing",
+               fx["verdict"].str));
+
+    assert(kStatusCut == "open" || kStatusCut == "closed",
+        "kStatusCut must be exactly \"open\" or \"closed\" — a typo must not "
+        ~ "silently pick the parity branch");
+    assert(kStatusArmDrop == "open" || kStatusArmDrop == "closed",
+        "kStatusArmDrop must be exactly \"open\" or \"closed\" — a typo must "
+        ~ "not silently pick the parity branch");
+}
+
+// ---------------------------------------------------------------------------
+// 1 — THE INSTRUMENT, on the cutting family. Both calibration points from the
+//     fixture's own `instrument_calibration`: it must read ZERO on the control
+//     and NONZERO on a real cut. Plus the two gesture witnesses, which are the
+//     only things in this file that can tell "the gesture ran and recorded
+//     nothing" from "the gesture never happened".
+// ---------------------------------------------------------------------------
+unittest {
+    auto m = measured();
+
+    assert(m.cutControl.pressX == m.cutZero.pressX
+        && m.cutControl.pressY == m.cutZero.pressY
+        && m.cutControl.pressX == m.cutPositive.pressX
+        && m.cutControl.pressY == m.cutPositive.pressY,
+        format("the three cutting cells pressed at different pixels — control "
+               ~ "(%d,%d), zero (%d,%d), positive (%d,%d). They must differ by "
+               ~ "the button press and by NOTHING else, or the zero cell is "
+               ~ "not pressing where the positive control presses",
+               m.cutControl.pressX, m.cutControl.pressY,
+               m.cutZero.pressX, m.cutZero.pressY,
+               m.cutPositive.pressX, m.cutPositive.pressY));
+
+    // WITNESS 1 — the tool's own engagement flag.
+    assert(!m.cutControl.lineDrawn,
+        "the CONTROL cell's slice tool reports a DRAWN line although no button "
+        ~ "was ever pressed. It is the quiet end of this comparison; if it is "
+        ~ "not quiet, 'the zero cell engaged the tool' says nothing");
+    assert(m.cutZero.lineDrawn,
+        "the zero-distance gesture did NOT engage the cutting tool — its own "
+        ~ "`lineDrawn` is still false, so the press never reached it and every "
+        ~ "'we record nothing' reading below is about a gesture that did not "
+        ~ "happen");
+    assert(m.cutZero.lineDegenerate,
+        "the zero-distance cell drew a line whose endpoints DIFFER — the cell "
+        ~ "is supposed to be the zero-distance flavour of an empty delta, the "
+        ~ "only flavour the fixture measured");
+
+    // WITNESS 2 — an independent channel, kept because the two fail for
+    // different reasons (a tool that engages without publishing, a publish
+    // without engagement).
+    assert(m.cutControl.deliveryDelta == 0,
+        format("the CONTROL cell produced %d change-bus deliveries while "
+               ~ "performing no gesture at all", m.cutControl.deliveryDelta));
+    assert(m.cutZero.deliveryDelta > m.cutControl.deliveryDelta,
+        format("the zero-distance gesture produced %d change-bus deliveries "
+               ~ "against the control's %d — the press was never delivered",
+               m.cutZero.deliveryDelta, m.cutControl.deliveryDelta));
+
+    assert(!m.cutZero.gestureChangedMesh,
+        "the zero-distance cut gesture MOVED the mesh — the premise of the law "
+        ~ "is a committed gesture whose delta is EMPTY, so this cell is no "
+        ~ "longer the phenomenon the fixture measured");
+
+    assert(m.cutPositive.gestureChangedMesh,
+        "the positive control's cut left the mesh where it was — a press at "
+        ~ "that pixel with the same choreography does not cut at all, so the "
+        ~ "zero cell below would be measuring nothing rather than a committed "
+        ~ "gesture");
+    assert(m.cutPositive.kB - m.cutControl.kB >= 1,
+        format("the positive control cost %d undo steps: our instrument cannot "
+               ~ "see an entry AT ALL, so every 'we record nothing' reading "
+               ~ "below is vacuous", m.cutPositive.kB - m.cutControl.kB));
+    assert(!m.cutPositive.firstUndoRevertsStand,
+        "the positive control's FIRST undo reverted the stand's edit — a real "
+        ~ "committed cut left nothing of its own on top, so the same "
+        ~ "observable cannot say anything about the zero cell either");
+    assert(m.cutControl.firstUndoRevertsStand,
+        "the CONTROL cell's first undo did NOT revert the stand's edit, even "
+        ~ "though no gesture was performed. Something unnamed is sitting on "
+        ~ "top of the gesture window, and while it is there 'the first undo "
+        ~ "did not revert the preceding edit' is green for that reason and "
+        ~ "distinguishes no candidate law");
+
+    assert(m.cutPositive.kB - m.cutControl.kB == kOursCutPositiveSteps,
+        format("a real committed cut now costs %d undo steps, this file froze "
+               ~ "%d. The reference costs %d for the same gesture and we AGREE "
+               ~ "with it there — this is the parity end of the cutting "
+               ~ "family, so losing it means the read moved, not the law",
+               m.cutPositive.kB - m.cutControl.kB, kOursCutPositiveSteps,
+               m.refCutPositive));
+    assert(kOursCutControlSteps == 0,
+        "kOursCutControlSteps is the control's own reading and is 0 by "
+        ~ "construction; a non-zero value means the frozen record was edited "
+        ~ "into something the rig cannot produce");
+}
+
+// ---------------------------------------------------------------------------
+// 2 — assertions_for_a_port[3], FIRST HALF, AND IT IS A PARITY ROW:
+//     "A tool that was armed and dropped WITHOUT ever being engaged must cost
+//      NOTHING" — over a preceding MODEL edit.
+//
+//     We agree with the reference here, and the agreement is load-bearing: a
+//     file whose every assertion is "we differ" passes just as well when the
+//     channel is broken. This row shows the channel CAN agree on the same
+//     read. Measured against a stand where the tool is never armed at all —
+//     not against the cell itself, which would be 0 by construction.
+// ---------------------------------------------------------------------------
+unittest {
+    auto m = measured();
+    const long ours = m.ad1.kB - m.ad0.kB;
+    assert(ours == m.refArmDropModel,
+        format("arming and dropping the transform tool over a preceding MODEL "
+               ~ "edit cost %d undo steps (kB %d against the never-armed "
+               ~ "baseline's %d); the reference records %d entries for the "
+               ~ "same thing. This is the PARITY row — losing it means the "
+               ~ "read itself moved, not the law",
+               ours, m.ad1.kB, m.ad0.kB, m.refArmDropModel));
+    assert(ours == kOursArmDropOverModelSteps,
+        format("shape 1 now costs %d undo steps; this file froze %d",
+               ours, kOursArmDropOverModelSteps));
+}
+
+// ---------------------------------------------------------------------------
+// 3 — assertions_for_a_port[3], SECOND HALF, AND IT IS THE NEW DIVERGENCE:
+//     "…and NOTHING in BOTH stack shapes: over a preceding model edit and over
+//      another armed-and-dropped region alike."
+//
+//     THE SECOND SHAPE IS WHERE WE COST MORE, and it is the reason task 2660
+//     re-drove this at all: task 2640 could only leave it as a caveated
+//     adjacent fact because it had driven one shape. Both shapes read zero on
+//     the reference, so the stack-shape term is OURS. Registry row 87.
+//
+//     A NOTE ON WHAT THE REFERENCE SIDE IS. The fixture's `not_measured` says
+//     the behavioural kB cross-check for these two cells never ran, so its
+//     zero UNDO STEPS is an inference from zero ENTRIES RECORDED. The
+//     inference is sound — an entry that does not exist cannot cost a step —
+//     and it is named here so nobody later cites it as a measured kB.
+// ---------------------------------------------------------------------------
+unittest {
+    auto m = measured();
+    const long ours = m.ad2.kB - m.ad1.kB;
+
+    if (kStatusArmDrop == "open") {
+        assert(ours == kOursArmDropOverLifecycleSteps && ours > m.refArmDropLifecycle,
+            format("a SECOND armed-and-dropped transform region now costs %d "
+                   ~ "undo steps (kB %d against the single region's %d); this "
+                   ~ "file froze %d against the reference's %d entries. A "
+                   ~ "value of %d means the divergence CLOSED: flip "
+                   ~ "kStatusArmDrop to \"closed\", re-freeze "
+                   ~ "kOursArmDropOverLifecycleSteps and retire registry "
+                   ~ "row 87. Any other number means it CHANGED — re-measure.",
+                   ours, m.ad2.kB, m.ad1.kB, kOursArmDropOverLifecycleSteps,
+                   m.refArmDropLifecycle, m.refArmDropLifecycle));
+        // The registry row claims EVERY further region costs another step, not
+        // just the second. Without this the row would be over-claiming from a
+        // single cell.
+        assert(m.ad3.kB - m.ad2.kB == ours,
+            format("the THIRD armed-and-dropped region cost %d undo steps "
+                   ~ "where the second cost %d. Registry row 87 says every "
+                   ~ "further region costs the same; one of the two is now "
+                   ~ "wrong", m.ad3.kB - m.ad2.kB, ours));
+    } else {
+        assert(ours == m.refArmDropLifecycle,
+            format("kStatusArmDrop says the law is ported, but a second "
+                   ~ "armed-and-dropped region still costs %d undo steps "
+                   ~ "against the reference's %d",
+                   ours, m.refArmDropLifecycle));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 4 — THE INSTRUMENT THAT CANNOT SEE ROW 87, asserted so nobody writes the
+//     next test on it. `/api/history` filters `HistoryFlags.ToolLifecycle`, so
+//     its visible depth moves by ZERO across every armed-and-dropped cell
+//     while the undo walk reads a hard step. The WALK is the law's instrument.
+//
+//     The cutting cells are the control for this claim: there the two
+//     instruments must AGREE, because no lifecycle entry is born in them at
+//     all (only `XfrmTransformTool` implements `LifecycleUndoEmitter`). A
+//     disagreement there means one appeared where this rig assumes none.
+// ---------------------------------------------------------------------------
+unittest {
+    auto m = measured();
+
+    assert(m.ad2.visibleDelta == 0 && m.ad1.visibleDelta == 0,
+        format("/api/history's visible undo depth moved by %d and %d across "
+               ~ "the armed-and-dropped cells. It is supposed to be BLIND to "
+               ~ "lifecycle entries; if it can see them, block 3's divergence "
+               ~ "could have been written on the cheap instrument and this "
+               ~ "file's whole undo walk is unnecessary — re-read (R1)",
+               m.ad1.visibleDelta, m.ad2.visibleDelta));
+    assert(m.ad2.kB - m.ad1.kB != m.ad2.visibleDelta - m.ad1.visibleDelta,
+        "the two instruments AGREE on the second armed-and-dropped region. "
+        ~ "They must not: the walk counts raw undo steps and /api/history "
+        ~ "filters ToolLifecycle, so an agreement means either the drop stopped "
+        ~ "recording a lifecycle entry or /api/history stopped filtering it");
+
+    assert(m.cutZero.visibleDelta == m.cutZero.kB - m.cutControl.kB,
+        format("the two instruments disagree on the CUTTING cells: "
+               ~ "/api/history's visible depth moved by %d across the gesture, "
+               ~ "the raw undo walk by %d. No lifecycle entry can be born "
+               ~ "there — the Slice tool does not implement "
+               ~ "LifecycleUndoEmitter — so a mismatch means one appeared "
+               ~ "where this rig assumes none",
+               m.cutZero.visibleDelta, m.cutZero.kB - m.cutControl.kB));
+}
+
+// ---------------------------------------------------------------------------
+// 5 — assertions_for_a_port[0] and [1], ON THE CUTTING FAMILY:
+//     "A committed gesture that produced no change MUST leave something on the
+//      undo stack, in EVERY tool family: the first undo after it must NOT
+//      revert the edit that preceded it" — and "that undo must succeed and
+//      must leave the mesh byte-identical: it is silent, not refused."
+//
+//     THE DIVERGENCE. Ours reverts the stand immediately. Discriminating,
+//     because block 1 pinned the two ends of the same observable: the
+//     control's first undo DOES revert the stand, the positive control's does
+//     NOT.
+//
+//     [1] SPLITS. The "succeeds" half is PARITY — our undo answers `ok`, as
+//     the reference's did. The "byte-identical" half is the divergence.
+//     Asserting only the second half would let a REFUSAL — also "not
+//     byte-identical", for the wrong reason — pass unnoticed.
+// ---------------------------------------------------------------------------
+unittest {
+    auto m = measured();
+
+    assert(m.cutZero.firstUndoStatus == "ok",
+        format("the first undo after the zero-delta cut gesture answered '%s'. "
+               ~ "Both engines agree the undo EXECUTES — this is the parity "
+               ~ "half, and a refusal here would make the divergence half "
+               ~ "unreadable", m.cutZero.firstUndoStatus));
+
+    if (kStatusCut == "open") {
+        assert(m.cutZero.firstUndoRevertsStand,
+            "DIVERGENCE CLOSED: the first undo after a committed zero-delta "
+            ~ "CUTTING gesture no longer reverts the edit that preceded it — "
+            ~ "which is what the reference does (task 2660, verdict (b)). If "
+            ~ "the law was ported deliberately, flip kStatusCut to \"closed\", "
+            ~ "re-freeze kOursCutZeroSteps, and retire the cutting half of "
+            ~ "registry row 86 in doc/behavior_gap_registry.md.");
+        assert(m.cutZero.firstUndoChangedMesh,
+            "DIVERGENCE CLOSED: the first undo after a committed zero-delta "
+            ~ "cutting gesture is now SILENT (it left the mesh "
+            ~ "byte-identical), which is the reference's behaviour. Flip "
+            ~ "kStatusCut to \"closed\", re-freeze kOursCutZeroSteps and "
+            ~ "retire the cutting half of registry row 86.");
+    } else {
+        assert(!m.cutZero.firstUndoRevertsStand,
+            "kStatusCut says the law is ported, but the first undo after a "
+            ~ "committed zero-delta cutting gesture still reverts the edit "
+            ~ "that preceded it");
+        assert(!m.cutZero.firstUndoChangedMesh,
+            "kStatusCut says the law is ported, but the first undo after the "
+            ~ "zero-delta cut gesture still changed the mesh instead of being "
+            ~ "silent");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 6 — THE LAW ITSELF: THE COST IS PER TOOL, NOT A CONSTANT (verdict (b)).
+//     This is the one assertion that needs BOTH fixtures, and it is the guard
+//     against the shape a port would most plausibly take by accident:
+//     normalising the two families to one number. Candidate (a) is exactly
+//     that normalisation, and the cutting cell refuted it.
+//
+//     Plus the gap on the cutting family, RECOMPUTED rather than declared —
+//     narrow it in either direction and this reddens.
+// ---------------------------------------------------------------------------
+unittest {
+    auto m = measured();
+
+    assert(m.refTransformZero > 0 && m.refCutZero > 0,
+        format("one of the two frozen zero-delta costs is not positive "
+               ~ "(transform %d, cutting %d) — the law is that a committed "
+               ~ "empty-delta gesture is NEVER free, in either family",
+               m.refTransformZero, m.refCutZero));
+    assert(m.refTransformZero != m.refCutZero,
+        format("the two fixtures now declare the SAME cost for a committed "
+               ~ "zero-delta gesture (transform %d, cutting %d). That is "
+               ~ "candidate (a) — 'the law and its number are both general' — "
+               ~ "which this capture refuted. A corpus normalised to one "
+               ~ "number cannot discriminate (a) from (b), and a port built on "
+               ~ "it would hard-code the wrong constant",
+               m.refTransformZero, m.refCutZero));
+
+    // (1) the regression pin on our own side
+    assert(m.cutZero.kB - m.cutControl.kB == kOursCutZeroSteps,
+        format("a committed zero-delta CUTTING gesture now costs %d undo "
+               ~ "steps; this file froze %d. This is a KNOWN DIVERGENCE from "
+               ~ "the reference's %d — if you changed the behaviour "
+               ~ "deliberately, re-measure, update this file and update "
+               ~ "registry row 86",
+               m.cutZero.kB - m.cutControl.kB, kOursCutZeroSteps, m.refCutZero));
+
+    // (3) the gap, recomputed
+    const long gap = m.refCutZero - (m.cutZero.kB - m.cutControl.kB);
+    if (kStatusCut == "open") {
+        assert(gap == m.refCutZero - kOursCutZeroSteps && gap > 0,
+            format("the cutting gap is now %d undo steps (reference %d, ours "
+                   ~ "%d); this file records %d. A gap of 0 means the law is "
+                   ~ "ported: flip kStatusCut to \"closed\", re-freeze "
+                   ~ "kOursCutZeroSteps and retire the cutting half of "
+                   ~ "registry row 86. Any other number means the divergence "
+                   ~ "CHANGED — re-measure",
+                   gap, m.refCutZero, m.cutZero.kB - m.cutControl.kB,
+                   m.refCutZero - kOursCutZeroSteps));
+    } else {
+        assert(gap == 0,
+            format("kStatusCut says the law is ported, but the gap is still %d "
+                   ~ "undo steps (reference %d, ours %d)",
+                   gap, m.refCutZero, m.cutZero.kB - m.cutControl.kB));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MUTATIONS THAT REDDEN IT, all run on this tree 2026-08-30, in isolation
+// (druntime stops a module at its FIRST failed assert, so a mutation that
+// reddens several blocks shows only the first unless the earlier ones are
+// removed for the run). Product mutations were rebuilt and the app relaunched
+// off the mutated binary — verified through /proc/PID/exe, which reads
+// "… (deleted)" while a live instance still serves the previous image.
+//
+//   M1 — DELETE THE GESTURE. This is the VACUITY mutation, and it is the one
+//        that defeated the sibling file's step readings: the zero cell stops
+//        pressing (`runCutCell("cut_zero_distance", false, false)` in
+//        `measured()`). EVERY undo-step reading in this file stays exactly as
+//        it was — blocks 2, 3, 4, 5 and 6 all still pass with block 1 removed,
+//        measured — and block 1's engagement witness is the only thing that
+//        reddens:
+//          "the zero-distance gesture did NOT engage the cutting tool — its
+//           own `lineDrawn` is still false, so the press never reached it and
+//           every 'we record nothing' reading below is about a gesture that
+//           did not happen"
+//
+//   M3 — CLOSE THE ROW-87 GAP IN THE PRODUCT. `CommandHistory.undo`'s (R1)
+//        block: `if (!foundModel)` -> `if (false)`, so a lifecycle tail is
+//        always transparent. Block 3 reddens:
+//          "a SECOND armed-and-dropped transform region now costs 0 undo steps
+//           (kB 1 against the single region's 1); this file froze 1 against
+//           the reference's 0 entries. A value of 0 means the divergence
+//           CLOSED: flip kStatusArmDrop to \"closed\" …"
+//        Block 4 reddens on the same mutation for its own reason (the two
+//        instruments stop disagreeing), which is why the M2 run below removes
+//        blocks 3 AND 4.
+//
+//   M2 — CLOSE THE CUTTING GAP IN THE PRODUCT. `SliceTool.updatePreview`
+//        (source/tools/slice/slice_tool.d): `previewLive_ = nSplit > 0;` ->
+//        `previewLive_ = true;`, i.e. record on a gesture that split no face.
+//        With blocks 3 and 4 removed, block 5 reddens:
+//          "DIVERGENCE CLOSED: the first undo after a committed zero-delta
+//           CUTTING gesture no longer reverts the edit that preceded it —
+//           which is what the reference does (task 2660, verdict (b)). …"
+//        Note this mutation and not the more obvious one — dropping
+//        `!previewLive_` from `commitCurrentSlice`'s early return — because
+//        that one records in the CONTROL cell too and reddens block 1's
+//        calibration instead, which says nothing about the law.
+//
+//   M4 — NOT A MUTATION, and deliberately not run as one: the reason the stand
+//        is command-built. A drag-built stand ends in its own tool-drop
+//        `ToolLifecycle` entry, which is the SAME stack tail that cell
+//        `armdrop_over_model_edit` leaves behind — and the cost of one further
+//        arm-and-drop over that tail is measured, at 1, by block 3 itself. So
+//        a drag-built stand would make block 2's PARITY row read 1, collapse
+//        the two stack shapes into one, and lose the parity for a reason that
+//        has nothing to do with the law. No separate run is needed to know
+//        that; block 3 is the measurement.

@@ -1,0 +1,127 @@
+{
+  "fixture": "gesture_zero_delta_undo_second_form",
+  "version": 1,
+  "measured": "2026-08-30",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "gui-gesture",
+    "captured_utc": "2026-08-30",
+    "task": "2660",
+    "notes": "Two independent channels. (1) BEHAVIOUR: four live captures, one FRESH editor process per capture, driven through an isolated virtual display with the pointer injected over the remote-framebuffer channel and each undo typed into the reference's command field; every undo was independently confirmed to have executed in the reference's own executed-command history before its effect was read. (2) MECHANISM: a breakpoint on the single machine instruction in the whole shipped engine that increments its undo-entry counter, read live under a debugger attached by process id, plus a static symbol read that located that instruction with no engine running at all. All geometry readback is read-only."
+  },
+  "question": "Task 2640 measured that a COMMITTED transform gesture whose delta is EMPTY still costs undo steps, and left two questions open: does a tool from another family behave the same, and what does arming a tool and dropping it WITHOUT any gesture cost in each of the two stack shapes?",
+  "candidates": {
+    "a": "The law and its number are both general: any committed gesture with an empty delta costs the same 2 undo steps, in every family.",
+    "b": "The LAW is general but the NUMBER is family-specific: a committed empty-delta gesture is never free, but how many steps it costs depends on the tool.",
+    "c": "The law is transform-specific: a family whose operation is topological records nothing when its gesture produces no topology."
+  },
+  "verdict": "b",
+  "law": "A COMMITTED GESTURE COSTS UNDO STEPS EVEN WHEN IT CHANGED NOTHING, IN EVERY TOOL FAMILY -- BUT THE COST IS PER TOOL, NOT A CONSTANT. A press-move-release that never leaves the press pixel leaves the mesh byte-identical and still records: 2 undo steps for a transform-handle haul (task 2640) and 1 for a cutting tool, against ZERO for an otherwise identical run with no button press. The reason is mechanical: an undo entry is created when a NON-EMPTY undo block is closed, by machinery -- the toolpipe's own gesture block, the post-mode auto-apply, and the tool-drop command -- that is shared by every family and never inspects the result. So the recording decision keys on 'did anything register an undoable action', not on 'did the mesh change'. ARMING A TOOL AND DROPPING IT WITHOUT ENGAGING IT REGISTERS NOTHING and costs ZERO undo steps, and it costs zero whether the entry beneath it is a model edit or another tool-lifecycle region.",
+  "rig": {
+    "stand": "A cube subdivided once per axis. THREE DISJOINT four-vertex sets -- top corners, bottom corners, mid-height corners -- never one set moved three times: a set that has already moved carries its gizmo away from the centre of frame and the handle localiser latches onto interface furniture instead.",
+    "shape": "E1 = a real committed drag of the top set. E2 = a real committed drag of the bottom set, and the state the undo walk starts from. N = the gesture under test, driven with the CUTTING tool at a raw viewport pixel (that family draws no handle to localise). Then ten undos, reading the full mesh after every one.",
+    "reading": "kB = the index of the undo that reverts E2. Everything stacked above E2 is geometry-silent and IDENTICAL in every run, so it cancels. entries(N) = kB(N) - kB(control).",
+    "second_instrument": "A breakpoint on the one instruction that increments the engine's undo-entry counter, attached AFTER the stand is built and the tool armed, so the window contains the gesture and nothing else. This counts entries with NO undo walk at all, and its backtrace NAMES each entry's creator.",
+    "aim_calibration": "The press pixel was CALIBRATED, not guessed: the projection was read off a calibration run's screenshot and confirmed against the reference's own logged cut-line endpoints -- world origin at pixel (880,561), 414 px per world unit, 3-D pane x in [258,1195]. A first aim at x=200 was the tool-properties panel; the tool never engaged there and the cell was void.",
+    "validity_checks": [
+      "The component selection is identical before and after N in EVERY run, so no press ever re-picked geometry.",
+      "The positive control drives a real cut from the SAME press pixel with the SAME press choreography.",
+      "Every undo in every run reported that it executed, with zero retries.",
+      "The four specs are byte-identical except ONE step, and only that step's gesture/length keys -- asserted by a programmatic diff."
+    ]
+  },
+  "instrument_calibration": {
+    "reads_zero": "the control run, which performs the whole gesture path -- tool arm, pointer move onto the press pixel, tool drop, geometry read -- with NO button press; it reads 0 on the undo count AND 0 on the debugger's entry counter",
+    "reads_nonzero": "the positive control, a real committed cut, at 1 undo step and 39 low-level entries; and on the transform family the same instrument reads 37 low-level entries for a real haul",
+    "why_both_are_needed": "A control that cannot read zero makes every non-zero unfalsifiable; a rig with no positive control cannot show it would have seen an entry at all."
+  },
+  "cases": [
+    {
+      "id": "control_no_press",
+      "family": "cutting",
+      "gesture": "the entire gesture path with NO button press",
+      "commands_the_reference_logged_for_the_gesture": 0,
+      "mesh_changed": false,
+      "vertex_count_after": 26,
+      "undo_index_that_reverts_the_previous_edit": 2,
+      "entries_recorded": 0,
+      "low_level_blocks_created": 0,
+      "trajectory": "u1=C u2=B u3=B u4=B u5=B u6=B u7=B u8=A u9=A u10=A"
+    },
+    {
+      "id": "zero_distance_gesture",
+      "family": "cutting",
+      "gesture": "press, sixteen pointer moves that ALL land on the press pixel, release",
+      "commands_the_reference_logged_for_the_gesture": 11,
+      "mesh_changed": false,
+      "vertex_count_after": 26,
+      "undo_index_that_reverts_the_previous_edit": 3,
+      "entries_recorded": 1,
+      "low_level_blocks_created": 5,
+      "trajectory": "u1=C u2=C u3=B u4=B u5=B u6=B u7=B u8=B u9=A u10=A"
+    },
+    {
+      "id": "positive_control_real_cut",
+      "family": "cutting",
+      "gesture": "press, a 700 px line drawn across the mesh, release",
+      "commands_the_reference_logged_for_the_gesture": 181,
+      "mesh_changed": true,
+      "vertex_count_after": 36,
+      "undo_index_that_reverts_the_previous_edit": 3,
+      "entries_recorded": 1,
+      "low_level_blocks_created": 39,
+      "trajectory": "u1=C u2=C u3=B u4=B u5=B u6=B u7=B u8=B u9=A u10=A"
+    },
+    {
+      "id": "short_line_off_the_mesh",
+      "family": "cutting",
+      "gesture": "press, a 250 px line ending 102 px clear of the mesh, release",
+      "commands_the_reference_logged_for_the_gesture": 181,
+      "mesh_changed": true,
+      "vertex_count_after": 36,
+      "undo_index_that_reverts_the_previous_edit": 3,
+      "entries_recorded": 1,
+      "low_level_blocks_created": 39,
+      "note": "INTENDED as a full-magnitude gesture with an empty result; it CUT ANYWAY, so it is a second real-cut cell and NOT evidence about an empty delta. Recorded because it is a real finding about the cutting tool: the drawn segment is not the extent of the cut, with the unbounded option OFF."
+    },
+    {
+      "id": "armed_and_dropped_over_a_model_edit",
+      "family": "transform",
+      "gesture": "arm the tool, then the whole gesture path with no press, then drop it",
+      "mesh_changed": false,
+      "entries_recorded": 0,
+      "low_level_blocks_created": 0
+    },
+    {
+      "id": "armed_and_dropped_over_another_lifecycle_region",
+      "family": "transform",
+      "gesture": "the same arm-and-drop again, immediately on top of the first",
+      "mesh_changed": false,
+      "entries_recorded": 0,
+      "low_level_blocks_created": 0,
+      "note": "The second stack shape. Read on the debugger's direct counter, which needs no undo walk; the kB cross-check for this shape was NOT driven."
+    }
+  ],
+  "decomposition": {
+    "measured": "An undo entry is created exactly when a NON-EMPTY undo block is closed, at a single site shared by the whole engine. The entries a committed gesture creates come from three creators, and the SET is identical in both families measured: (1) the toolpipe's own gesture block, closed on the pointer event and NOT a command at all -- which is why a gesture that cost two undo steps showed only one line in the reference's command log; (2) the post-mode auto-apply command; (3) the tool-drop command. What differs per family is only the MULTIPLICITY: a transform zero-distance gesture makes 1+1+1 = 3 blocks, a cutting one 2+2+1 = 5, and a real haul 18 + 18 + 1 = 37.",
+    "not_measured": "Which of those blocks group into which user-visible undo step. One undo pops a GROUP, and the grouping could not be separated on this drive path because typing the undo into the command field pushes blocks of its own between the pops."
+  },
+  "assertions_for_a_port": [
+    "A committed gesture that produced no change MUST leave something on the undo stack, in EVERY tool family: the first undo after it must NOT revert the edit that preceded it.",
+    "That undo must succeed and must leave the mesh byte-identical -- it is silent, not refused.",
+    "The COST is per tool and must not be hard-coded as a single constant: a transform-handle haul with an empty delta costs 2 undo steps and a cutting gesture with an empty delta costs 1, on the same rig and the same instrument.",
+    "A tool that was armed and dropped WITHOUT ever being engaged must cost NOTHING -- and nothing in BOTH stack shapes: over a preceding model edit and over another armed-and-dropped region alike.",
+    "The predicate is 'did anything register an undoable action', not 'did the mesh change'. A gesture that engaged the tool records even with an empty delta; a drop of a tool that was never engaged records nothing."
+  ],
+  "not_measured": [
+    "Which entries group into which user-visible undo step -- see decomposition.not_measured.",
+    "The entries' user-visible names or grouping labels.",
+    "Redo. Not driven; the redo leg is unreadable on this drive path (task 2640, gap 2) and no claim is made here.",
+    "A committed gesture of FULL magnitude whose result is empty, in the cutting family: the cell intended for it cut the mesh anyway. Only the zero-distance flavour of an empty delta is measured here.",
+    "The OTHER flavour of an empty delta -- a gesture that moved and returned to its origin. Still NOT reachable through injected pointer transport (task 2640); needs a hand-driven gesture.",
+    "Deforming, creating and painting families beyond the two measured; the MECHANISM argument covers them (the record site is family-agnostic and no tool code reaches it) but no cell was driven.",
+    "The kB behavioural cross-check for the armed-and-dropped cells. Its four specs are written and validated; the host had to be taken down before they ran."
+  ]
+}

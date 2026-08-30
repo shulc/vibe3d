@@ -125,11 +125,17 @@
 //     a `ToolLifecycle` entry where the reference logs no command at all, but
 //     whether that entry costs the user an undo STEP is stack-shape dependent
 //     (transparent over a model entry, a hard step over another lifecycle one),
-//     and the capture drove only one shape. Over-claiming a flat divergence
-//     there would freeze a number nobody measured. Recorded as an adjacent
-//     fact on registry row 86 instead.
+//     and THIS capture drove only one shape. Over-claiming a flat divergence
+//     there would freeze a number nobody measured.
+//     RESOLVED ELSEWHERE, 2026-08-30 (task 2660): the second-form capture drove
+//     BOTH shapes, both cost the reference nothing, so the stack-shape term is
+//     ours alone. That is now registry row 87, pinned by
+//     `tests/test_gesture_zero_delta_undo_second_form.d` — not by this file,
+//     whose fixture still cannot see it.
 //   * Nothing about tools outside the transform family (the fixture's own
-//     `not_measured`).
+//     `not_measured`). The CUTTING family is measured in the second-form
+//     fixture and read by the sibling file above; this file's scope is
+//     unchanged.
 //   * Nothing about redo: the fixture makes no redo claim, so neither does this.
 //   * Nothing about WHAT the reference's two entries are. `decomposition.
 //     not_measured` says that channel counted entries and did not name them.
