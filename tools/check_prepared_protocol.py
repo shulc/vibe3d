@@ -192,6 +192,81 @@ reason_replace = json.loads(json.dumps(TOOL_STATE_DEFERRED_ROWS))
 reason_replace[0]["reason"] = "different nonempty reviewed-looking reason"
 expect_deferred_exact_drift(reason_replace, "nonempty-reason replacement")
 
+# P1.0b.3a record-observer owner infrastructure. The exact legacy census stays
+# two app assignments until P1.0c; the prepared hub has no production caller.
+app_source = (ROOT / "source/app.d").read_text()
+def validate_legacy_observer_census(source):
+    closure = list(re.finditer(
+        r"history\.onRecord\s*=\s*\(string line, uint flags\)\s*\{", source))
+    direct = re.findall(
+        r"history\.onRecord\s*=\s*&macroRecorder\.onCommandRecorded\s*;", source)
+    if len(closure) != 1 or len(direct) != 1:
+        fail("P1.0b.3a exact legacy record observer callsite set changed")
+    body = source[closure[0].end():balanced_source(source, closure[0].end())-1]
+    if semantic_digest(body) != "bf531462a0fd0527b9c7ec37947373c01f509123715713852565432f88e2e2b1":
+        fail("P1.0b.3a HTTP macro-then-trace observer order drifted")
+validate_legacy_observer_census(app_source)
+for label, mutant in (
+    ("missing", app_source.replace("history.onRecord = &macroRecorder.onCommandRecorded;", "", 1)),
+    ("surplus", app_source + "\nhistory.onRecord = &macroRecorder.onCommandRecorded;\n"),
+    ("reorder", app_source.replace(
+        "macroRecorder.onCommandRecorded(line, flags);\n            captureStepTrace(line, flags);",
+        "captureStepTrace(line, flags);\n            macroRecorder.onCommandRecorded(line, flags);", 1))):
+    try: validate_legacy_observer_census(mutant)
+    except SystemExit as error:
+        expected = "observer order drifted" if label == "reorder" else "observer callsite set changed"
+        if expected not in str(error): fail(f"P1.0b.3a {label} observer mutation failed wrong")
+    else: fail(f"P1.0b.3a {label} observer mutation did not RED")
+observer_source = (ROOT / "source/record_observer_hub.d").read_text()
+production_hub_refs = 0
+for path in (ROOT / "source").rglob("*.d"):
+    if path.name != "record_observer_hub.d":
+        production_hub_refs += path.read_text().count("RecordObserverHub")
+if production_hub_refs:
+    fail("P1.0b.3a record observer hub gained a pre-cutover caller")
+install_match = re.search(r"void\s+installPrepared\s*\([^;{}]*\)\s*nothrow\s+@nogc\s*\{",
+                          observer_source)
+if not install_match:
+    fail("P1.0b.3a record observer installer lost nothrow signature")
+install_body = observer_source[install_match.end():balanced_source(observer_source, install_match.end())-1]
+if re.search(r"\b(?:assert|enforce|throw|dup|idup|onRecord|append)\b", install_body):
+    fail("P1.0b.3a record observer installer gained fallible/open work")
+RECORD_OBSERVER_PREPARE_SHA256 = "6a14ef9808c1ae91bc20c25c1a965098faf48da865a1dbe8098a8e68184f9e6c"
+def validate_record_observer_prepare(source):
+    match = re.search(r"PreparedRecordObserverImage\s+prepareRecord\s*\([^;{}]*\)\s*\{",
+                      source)
+    if not match:
+        fail("P1.0b.3a record observer prepare seam vanished")
+    body = source[match.end():balanced_source(source, match.end())-1]
+    if semantic_digest(body) != RECORD_OBSERVER_PREPARE_SHA256:
+        fail("P1.0b.3a record observer prepare exact behavior drifted")
+validate_record_observer_prepare(observer_source)
+
+filter_expression = ("HistoryFlags.InSession | HistoryFlags.Refire |\n"
+                     "                       HistoryFlags.ToolLifecycle")
+observer_prepare_mutations = (
+    ("empty macro line", "if (macroActive_ && line.length)",
+     "if (macroActive_)"),
+    ("Refire filter", filter_expression,
+     "HistoryFlags.InSession |\n                       HistoryFlags.ToolLifecycle"),
+    ("ToolLifecycle filter", filter_expression,
+     "HistoryFlags.InSession | HistoryFlags.Refire"),
+    ("filter polarity", "!(flags & (", "(flags & ("),
+    ("trace cap", "if (result.traceEntries.length > 500)",
+     "if (result.traceEntries.length > 501)"),
+)
+for label, contract, wrong in observer_prepare_mutations:
+    mutant = observer_source.replace(contract, wrong, 1)
+    if mutant == observer_source:
+        fail(f"P1.0b.3a {label} mutation anchor vanished")
+    try:
+        validate_record_observer_prepare(mutant)
+    except SystemExit as error:
+        if "record observer prepare exact behavior drifted" not in str(error):
+            fail(f"P1.0b.3a {label} mutation failed for wrong reason")
+    else:
+        fail(f"P1.0b.3a {label} mutation did not RED")
+
 # Potency: changing the Arc producer to copy the original Drawing state must
 # RED the named producer contract, independently of the hook-body fingerprint.
 arc_source = (ROOT / "source/tools/create/arc.d").read_text()
