@@ -7,8 +7,11 @@ import sys
 import tempfile
 import json
 import shutil
+import hashlib
 
-from prepared_writer_census import scan as scan_writer_graph, canonical as canonical_writer_graph
+from prepared_writer_census import (scan as scan_writer_graph,
+    canonical as canonical_writer_graph, _balanced as balanced_source,
+    _semantic_digest as semantic_digest)
 
 ROOT = Path(__file__).resolve().parents[1]
 DMD_FLAGS_RUN = subprocess.run(
@@ -90,6 +93,161 @@ relevant_roots = [r for r in CURRENT_WRITERS["hooks"]
                   if r["symbol"] in ("activate", "update", "onParamChanged")]
 if (len(deactivations), len(param_hooks), len(relevant_roots)) != (35, 25, 73):
     fail("P1.0b.0 reviewed writer cardinality changed")
+
+# P1.0b.1 exact conversion/defer ledger. The frozen writer rows remain the
+# authority; this list is deliberately smaller and bidirectional, so a root
+# cannot disappear into an unlabelled middle state.
+TOOL_STATE_CONVERTED = {
+    ("tools.create.arc", "ArcTool", "activate"),
+    ("tools.create.arc", "ArcTool", "deactivate"),
+    ("tools.alignment.mirror", "MirrorTool", "onParamChanged"),
+    ("tools.edit.bridge_tool", "BridgeTool", "onParamChanged"),
+    ("tools.transform.xfrm_transform", "XfrmTransformTool", "onParamChanged"),
+}
+all_hook_keys = {(r["module"], r["aggregate"], r["symbol"])
+                 for r in CURRENT_WRITERS["hooks"]}
+if not TOOL_STATE_CONVERTED <= all_hook_keys:
+    fail("P1.0b.1 converted tool-state row left the frozen census")
+TOOL_STATE_DEFERRED = all_hook_keys - TOOL_STATE_CONVERTED
+
+converted_sources = {
+    "source/tools/create/arc.d": ("prepareIdleState", "validatePreparedState", "installLegacyPreparedState"),
+    "source/tools/alignment/mirror.d": ("prepareParamState", "validatePreparedState", "installLegacyPreparedState"),
+    "source/tools/edit/bridge_tool.d": ("prepareParamState", "validatePreparedState", "installLegacyPreparedState"),
+    "source/tools/transform/xfrm_transform.d": ("prepareParamState", "validatePreparedState", "installLegacyPreparedState"),
+}
+for relative, methods in converted_sources.items():
+    source = (ROOT / relative).read_text()
+    for method in methods:
+        matches = list(re.finditer(r"\b" + method + r"\s*\([^;{}]*\)[^{;]*\bnothrow\b[^;{}]*\{", source))
+        if len(matches) != 1:
+            fail(f"P1.0b.1 {relative} {method} is not one exact nothrow seam")
+        if method == "installLegacyPreparedState":
+            body = source[matches[0].end():balanced_source(source, matches[0].end())-1]
+            if re.search(r"\b(?:assert|enforce|throw)\b", body):
+                fail(f"P1.0b.1 {relative} installer has a throwable guard")
+            if "PreparedToolStateDelta" in body or ".kind" in body or ".owner" in body:
+                fail(f"P1.0b.1 {relative} installer decodes an unvalidated carrier")
+
+TOOL_STATE_DEFERRED_ROWS = json.loads(
+    (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
+TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
+    "62bd2f454cfa507a796ef30a5b1882e11e086469941cfcecdfdc0dd49aeff100"
+def validate_deferred_rows(rows, require_canonical=True):
+    keys = {(r["key"]["module"], r["key"]["aggregate"],
+             r["key"]["symbol"], r["key"]["signature"]) for r in rows}
+    expected = {(r["module"], r["aggregate"], r["symbol"], r["signature"])
+                for r in CURRENT_WRITERS["hooks"]
+                if (r["module"], r["aggregate"], r["symbol"])
+                   not in TOOL_STATE_CONVERTED}
+    if len(keys) != len(rows) or keys != expected:
+        fail("P1.0b.1 checked-in deferred row set mismatch")
+    for row in rows:
+        if row["batch"] not in {"P1.0b.2", "P1.0b.2+", "P1.0b.3+"} or not row["reason"]:
+            fail("P1.0b.1 checked-in deferred batch/reason invalid")
+    canonical = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
+    if require_canonical and hashlib.sha256(canonical).hexdigest() != \
+            TOOL_STATE_DEFERRED_CANONICAL_SHA256:
+        fail("P1.0b.1 checked-in deferred exact values drifted")
+validate_deferred_rows(TOOL_STATE_DEFERRED_ROWS)
+for field in ("batch", "reason"):
+    mutant = json.loads(json.dumps(TOOL_STATE_DEFERRED_ROWS))
+    mutant[0][field] = "" if field == "reason" else "P9.invalid"
+    try: validate_deferred_rows(mutant)
+    except SystemExit as error:
+        if "batch/reason invalid" not in str(error):
+            fail("P1.0b.1 deferred-ledger mutation failed for wrong reason")
+    else: fail("P1.0b.1 deferred-ledger wrong batch/reason mutation did not RED")
+
+def expect_deferred_exact_drift(mutant, label):
+    try: validate_deferred_rows(mutant)
+    except SystemExit as error:
+        if "deferred exact values drifted" not in str(error):
+            fail(f"P1.0b.1 deferred {label} mutation failed for wrong reason")
+    else: fail(f"P1.0b.1 deferred {label} mutation did not RED exact drift")
+
+batch_swap = json.loads(json.dumps(TOOL_STATE_DEFERRED_ROWS))
+batch_pair = next((i, j) for i in range(len(batch_swap))
+                  for j in range(i + 1, len(batch_swap))
+                  if batch_swap[i]["batch"] != batch_swap[j]["batch"])
+batch_swap[batch_pair[0]]["batch"], batch_swap[batch_pair[1]]["batch"] = \
+    batch_swap[batch_pair[1]]["batch"], batch_swap[batch_pair[0]]["batch"]
+expect_deferred_exact_drift(batch_swap, "allowed-batch swap")
+
+reason_swap = json.loads(json.dumps(TOOL_STATE_DEFERRED_ROWS))
+reason_pair = next((i, j) for i in range(len(reason_swap))
+                   for j in range(i + 1, len(reason_swap))
+                   if reason_swap[i]["reason"] != reason_swap[j]["reason"])
+reason_swap[reason_pair[0]]["reason"], reason_swap[reason_pair[1]]["reason"] = \
+    reason_swap[reason_pair[1]]["reason"], reason_swap[reason_pair[0]]["reason"]
+expect_deferred_exact_drift(reason_swap, "allowed-reason swap")
+
+reason_replace = json.loads(json.dumps(TOOL_STATE_DEFERRED_ROWS))
+reason_replace[0]["reason"] = "different nonempty reviewed-looking reason"
+expect_deferred_exact_drift(reason_replace, "nonempty-reason replacement")
+
+# Potency: changing the Arc producer to copy the original Drawing state must
+# RED the named producer contract, independently of the hook-body fingerprint.
+arc_source = (ROOT / "source/tools/create/arc.d").read_text()
+arc_contract = "cast(int) ArcState.Idle"
+def validate_arc_reset_contract(source):
+    if source.count(arc_contract) != 3: # producer + validator + parity assertion
+        fail("P1.0b.1 Arc original-independent reset contract changed")
+validate_arc_reset_contract(arc_source)
+arc_mutant = arc_source.replace(arc_contract, "cast(int) ArcState.Drawing", 1)
+try:
+    validate_arc_reset_contract(arc_mutant)
+except SystemExit as error:
+    if "Arc original-independent reset contract changed" not in str(error):
+        fail("P1.0b.1 original-state mutation failed for wrong reason")
+else:
+    fail("P1.0b.1 original-state mutation did not RED producer parity")
+
+tool_state_value_contracts = (
+    ("source/tools/alignment/mirror.d", "PreparedToolStateDelta.boolean(preparedToolStateOwner, true)", "PreparedToolStateDelta.boolean(preparedToolStateOwner, false)"),
+    ("source/tools/edit/bridge_tool.d", "PreparedToolStateDelta.boolean(preparedToolStateOwner, true)", "PreparedToolStateDelta.boolean(preparedToolStateOwner, false)"),
+    ("source/tools/transform/xfrm_transform.d", "preparedToolStateOwner,\n                                               uniformVal, uniformVal, uniformVal", "preparedToolStateOwner,\n                                               uniformVal, 1.0f, uniformVal"),
+)
+for relative, contract, wrong in tool_state_value_contracts:
+    source = (ROOT / relative).read_text()
+    def validate_value_contract(candidate):
+        if candidate.count(contract) != 1:
+            fail(f"P1.0b.1 {relative} prepared value contract changed")
+    validate_value_contract(source)
+    mutant = source.replace(contract, wrong, 1)
+    try:
+        validate_value_contract(mutant)
+    except SystemExit as error:
+        if "prepared value contract changed" not in str(error):
+            fail(f"P1.0b.1 {relative} wrong-value mutation failed for wrong reason")
+    else:
+        fail(f"P1.0b.1 {relative} wrong-value mutation did not RED")
+
+# Every adapter is pinned prepare -> validate -> install. Dropping or moving an
+# operation changes the already-frozen direct-body fingerprint; these explicit
+# controls prove all five converted rows participate in that gate.
+converted_rows = [r for r in CURRENT_WRITERS["hooks"]
+                  if (r["module"], r["aggregate"], r["symbol"])
+                     in TOOL_STATE_CONVERTED]
+for row in converted_rows:
+    if row["semantic_sha256"] not in {r["semantic_sha256"] for r in WRITER_MANIFEST["hooks"]}:
+        fail("P1.0b.1 converted adapter is not fingerprinted")
+    path = ROOT / "source" / Path(*row["module"].split("."))
+    path = path.with_suffix(".d")
+    source = path.read_text()
+    match = re.search(r"\boverride\s+void\s+" + row["symbol"] +
+                      r"\s*\([^;{}]*\)\s*\{", source)
+    if not match: fail("P1.0b.1 converted adapter body vanished")
+    body = source[match.end():balanced_source(source, match.end())-1]
+    statements = [part + ";" for part in body.split(";") if part.strip()]
+    if len(statements) != 3:
+        fail("P1.0b.1 converted adapter is not exact prepare/handle/install shape")
+    dropped = "".join(statements[:2])
+    reordered = statements[1] + statements[0] + statements[2]
+    if semantic_digest(dropped) == row["semantic_sha256"]:
+        fail("P1.0b.1 adapter drop mutation did not RED fingerprint")
+    if semantic_digest(reordered) == row["semantic_sha256"]:
+        fail("P1.0b.1 adapter reorder mutation did not RED fingerprint")
 
 # Mutation tests operate on copied production source and must be rejected by
 # the same bidirectional gate. They cover duplicates, new exact symbols in each

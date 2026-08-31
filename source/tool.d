@@ -15,6 +15,10 @@ import change_bus : changeBus;
 import std.json : JSONValue;
 import tool_input : ToolAction, PassThrough, InputPhase, InputButton, InputMod,
                     ResetScope, InputBinding, resolveToolAction, resolveResetScope;
+import prepared_tool_effect : OwnedId;
+import core.atomic : atomicOp;
+
+private shared ulong nextPreparedToolOwnerId_;
 
 // ---------------------------------------------------------------------------
 // Tool flags — tool-level behaviour bits. The enum carries two kinds of bit:
@@ -166,6 +170,17 @@ private enum string gestureCarrierRefusal(F) =
 // ---------------------------------------------------------------------------
 
 class Tool : ParamProvider {
+private:
+    immutable ulong preparedToolOwnerIdentity_;
+public:
+    this() nothrow @nogc {
+        preparedToolOwnerIdentity_ = atomicOp!"+="(nextPreparedToolOwnerId_, 1UL);
+    }
+protected:
+    final OwnedId preparedToolStateOwner() const nothrow @nogc {
+        return OwnedId(preparedToolOwnerIdentity_);
+    }
+public:
     // Set true only while an interactive property write is notifying the
     // tool, and left false on the headless `tool.attr` path. Tools that build live
     // geometry on a param change (e.g. EdgeExtrudeTool) gate their preview
@@ -748,6 +763,13 @@ class Tool : ParamProvider {
     // snapshot rule of `Command.needsEditTarget()` applies here too (cached
     // per id off a cold instance in `Registry.cacheSupportedModes`).
     bool needsEditTarget() const { return true; }
+}
+
+unittest {
+    auto first = new Tool();
+    auto second = new Tool();
+    assert(first.preparedToolStateOwner.value != 0);
+    assert(second.preparedToolStateOwner.value > first.preparedToolStateOwner.value);
 }
 
 // ---------------------------------------------------------------------------

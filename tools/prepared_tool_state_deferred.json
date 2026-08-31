@@ -1,0 +1,1042 @@
+[
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "Tool",
+      "module": "tool",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "Tool",
+      "module": "tool",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "Tool",
+      "module": "tool",
+      "signature": "void(ref VectorStack vts)",
+      "symbol": "update"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "Tool",
+      "module": "tool",
+      "signature": "void(string name)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "ArrayTool",
+      "module": "tools.alignment.array_tool",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "ArrayTool",
+      "module": "tools.alignment.array_tool",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "ArrayTool",
+      "module": "tools.alignment.array_tool",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "CloneTool",
+      "module": "tools.alignment.clone_tool",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "CloneTool",
+      "module": "tools.alignment.clone_tool",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "LinearAlignTool",
+      "module": "tools.alignment.linear_align_tool",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "MirrorTool",
+      "module": "tools.alignment.mirror",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "MirrorTool",
+      "module": "tools.alignment.mirror",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "RadialAlignTool",
+      "module": "tools.alignment.radial_align_tool",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "RadialArrayTool",
+      "module": "tools.alignment.radial_array_tool",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "RadialArrayTool",
+      "module": "tools.alignment.radial_array_tool",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "RadialArrayTool",
+      "module": "tools.alignment.radial_array_tool",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "RadialSweepTool",
+      "module": "tools.alignment.radial_sweep_tool",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "RadialSweepTool",
+      "module": "tools.alignment.radial_sweep_tool",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "RadialSweepTool",
+      "module": "tools.alignment.radial_sweep_tool",
+      "signature": "void(string name)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "CommandWrapperTool",
+      "module": "tools.common.command_wrapper",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "CommandWrapperTool",
+      "module": "tools.common.command_wrapper",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "CommandWrapperTool",
+      "module": "tools.common.command_wrapper",
+      "signature": "void(string name)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "BoxTool",
+      "module": "tools.create.box",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "BoxTool",
+      "module": "tools.create.box",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "BoxTool",
+      "module": "tools.create.box",
+      "signature": "void(string name)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "PenTool",
+      "module": "tools.create.pen",
+      "signature": "void(string name)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "PenTool",
+      "module": "tools.create.pen",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "PenTool",
+      "module": "tools.create.pen",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "PrimitiveCreateTool",
+      "module": "tools.create.primitive_create_tool",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "PrimitiveCreateTool",
+      "module": "tools.create.primitive_create_tool",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "SphereTool",
+      "module": "tools.create.sphere",
+      "signature": "void(string name)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "VertexTool",
+      "module": "tools.create.vertex_place",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "VertexTool",
+      "module": "tools.create.vertex_place",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "BendTool",
+      "module": "tools.deform.bend",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "MagnetTool",
+      "module": "tools.deform.magnet",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "MagnetTool",
+      "module": "tools.deform.magnet",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "MagnetTool",
+      "module": "tools.deform.magnet",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "PushTool",
+      "module": "tools.deform.push",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "SmoothShiftTool",
+      "module": "tools.deform.smooth_shift_tool",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "SmoothShiftTool",
+      "module": "tools.deform.smooth_shift_tool",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "SmoothShiftTool",
+      "module": "tools.deform.smooth_shift_tool",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "StrokeExtrudeTool",
+      "module": "tools.deform.stroke_extrude_tool",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "StrokeExtrudeTool",
+      "module": "tools.deform.stroke_extrude_tool",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "BridgeTool",
+      "module": "tools.edit.bridge_tool",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "BridgeTool",
+      "module": "tools.edit.bridge_tool",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "EdgeBevelTool",
+      "module": "tools.edit.edge_bevel",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "EdgeBevelTool",
+      "module": "tools.edit.edge_bevel",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "EdgeBevelTool",
+      "module": "tools.edit.edge_bevel",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "EdgeExtendTool",
+      "module": "tools.edit.edge_extend",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "EdgeExtendTool",
+      "module": "tools.edit.edge_extend",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "EdgeExtendTool",
+      "module": "tools.edit.edge_extend",
+      "signature": "void(string name)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "EdgeExtendTool",
+      "module": "tools.edit.edge_extend",
+      "signature": "void(ref VectorStack vts)",
+      "symbol": "update"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "EdgeExtrudeTool",
+      "module": "tools.edit.edge_extrude",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "EdgeExtrudeTool",
+      "module": "tools.edit.edge_extrude",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "EdgeExtrudeTool",
+      "module": "tools.edit.edge_extrude",
+      "signature": "void(string name)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "PolyBevelTool",
+      "module": "tools.edit.poly_bevel",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "PolyBevelTool",
+      "module": "tools.edit.poly_bevel",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "PolyBevelTool",
+      "module": "tools.edit.poly_bevel",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "PolyExtrudeTool",
+      "module": "tools.edit.poly_extrude",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "PolyExtrudeTool",
+      "module": "tools.edit.poly_extrude",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "PolyExtrudeTool",
+      "module": "tools.edit.poly_extrude",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "PolyInsetTool",
+      "module": "tools.edit.poly_inset_tool",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "PolyInsetTool",
+      "module": "tools.edit.poly_inset_tool",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "PolyInsetTool",
+      "module": "tools.edit.poly_inset_tool",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "ReductionTool",
+      "module": "tools.edit.reduce",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "ReductionTool",
+      "module": "tools.edit.reduce",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "ReductionTool",
+      "module": "tools.edit.reduce",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "TackTool",
+      "module": "tools.edit.tack",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "TackTool",
+      "module": "tools.edit.tack",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "TopologyPenTool",
+      "module": "tools.edit.topology_pen.tool",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "TopologyPenTool",
+      "module": "tools.edit.topology_pen.tool",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "TopologyPenTool",
+      "module": "tools.edit.topology_pen.tool",
+      "signature": "void(ref VectorStack vts)",
+      "symbol": "update"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "VertexMergeTool",
+      "module": "tools.edit.vert_merge_tool",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "VertexMergeTool",
+      "module": "tools.edit.vert_merge_tool",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "VertexMergeTool",
+      "module": "tools.edit.vert_merge_tool",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "VertexBevelTool",
+      "module": "tools.edit.vertex_bevel_tool",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "VertexBevelTool",
+      "module": "tools.edit.vertex_bevel_tool",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "VertexBevelTool",
+      "module": "tools.edit.vertex_bevel_tool",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "VertexExtrudeTool",
+      "module": "tools.edit.vertex_extrude_tool",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "VertexExtrudeTool",
+      "module": "tools.edit.vertex_extrude_tool",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "VertexExtrudeTool",
+      "module": "tools.edit.vertex_extrude_tool",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "EdgeSliceTool",
+      "module": "tools.slice.edge_slice_tool",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "EdgeSliceTool",
+      "module": "tools.slice.edge_slice_tool",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "EdgeSliceTool",
+      "module": "tools.slice.edge_slice_tool",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "LoopSliceTool",
+      "module": "tools.slice.loop_slice_tool",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "LoopSliceTool",
+      "module": "tools.slice.loop_slice_tool",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "LoopSliceTool",
+      "module": "tools.slice.loop_slice_tool",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "SliceTool",
+      "module": "tools.slice.slice_tool",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "SliceTool",
+      "module": "tools.slice.slice_tool",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2",
+    "key": {
+      "aggregate": "SliceTool",
+      "module": "tools.slice.slice_tool",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    "reason": "parameter/session state or mixed Mesh/GpuGl branch requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "MoveTool",
+      "module": "tools.transform.move",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "MoveTool",
+      "module": "tools.transform.move",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "MoveTool",
+      "module": "tools.transform.move",
+      "signature": "void(ref VectorStack vts)",
+      "symbol": "update"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "RotateTool",
+      "module": "tools.transform.rotate",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "RotateTool",
+      "module": "tools.transform.rotate",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "RotateTool",
+      "module": "tools.transform.rotate",
+      "signature": "void(ref VectorStack vts)",
+      "symbol": "update"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "ScaleTool",
+      "module": "tools.transform.scale",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "ScaleTool",
+      "module": "tools.transform.scale",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "ScaleTool",
+      "module": "tools.transform.scale",
+      "signature": "void(ref VectorStack vts)",
+      "symbol": "update"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "TransformTool",
+      "module": "tools.transform.transform",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "TransformTool",
+      "module": "tools.transform.transform",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "XfrmTransformTool",
+      "module": "tools.transform.xfrm_transform",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.3+",
+    "key": {
+      "aggregate": "XfrmTransformTool",
+      "module": "tools.transform.xfrm_transform",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
+  },
+  {
+    "batch": "P1.0b.2+",
+    "key": {
+      "aggregate": "XfrmTransformTool",
+      "module": "tools.transform.xfrm_transform",
+      "signature": "void(ref VectorStack vts)",
+      "symbol": "update"
+    },
+    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
+  }
+]

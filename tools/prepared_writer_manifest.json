@@ -541,7 +541,7 @@
     {
       "aggregate": "MirrorTool",
       "module": "tools.alignment.mirror",
-      "semantic_sha256": "8ee46ae192258fb4a5955cfd5354221e921c4493d9e049da88913d6adee50b73",
+      "semantic_sha256": "3a193629c9b1b639ddeabc19443eaeecdb94ccde999e96e88a3202e05c67723f",
       "signature": "void(string name)",
       "symbol": "onParamChanged"
     },
@@ -618,14 +618,14 @@
     {
       "aggregate": "ArcTool",
       "module": "tools.create.arc",
-      "semantic_sha256": "e7dd1751a98a0e1484c59402f2f0812e84355e5133b329b29598655ea2e1983d",
+      "semantic_sha256": "2d95b010c1face218b3d3ff2df07d9a3e32b5c1758e9e9e1f0cdfd8105881a4a",
       "signature": "void()",
       "symbol": "activate"
     },
     {
       "aggregate": "ArcTool",
       "module": "tools.create.arc",
-      "semantic_sha256": "e7dd1751a98a0e1484c59402f2f0812e84355e5133b329b29598655ea2e1983d",
+      "semantic_sha256": "2d95b010c1face218b3d3ff2df07d9a3e32b5c1758e9e9e1f0cdfd8105881a4a",
       "signature": "void()",
       "symbol": "deactivate"
     },
@@ -793,7 +793,7 @@
     {
       "aggregate": "BridgeTool",
       "module": "tools.edit.bridge_tool",
-      "semantic_sha256": "8ee46ae192258fb4a5955cfd5354221e921c4493d9e049da88913d6adee50b73",
+      "semantic_sha256": "158c0e626477e299c067d9f0459551bbd3a0b891f2278cb5a9c5f4734eaa7459",
       "signature": "void(string name)",
       "symbol": "onParamChanged"
     },
@@ -1213,7 +1213,7 @@
     {
       "aggregate": "XfrmTransformTool",
       "module": "tools.transform.xfrm_transform",
-      "semantic_sha256": "26f44137a30b1aa678f4d86f0c54296515097bc3eb769e1b9a36aebfd68ac51b",
+      "semantic_sha256": "8479ba40576cbf9449e0b8ccf8868499de81f1160f81dd85569895b24c406a72",
       "signature": "void(string name)",
       "symbol": "onParamChanged"
     }

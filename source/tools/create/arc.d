@@ -14,6 +14,7 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import tools.create.create_common : currentWorkplaneFrame, WorkplaneFrame, transformPoint;
 import editmode : EditMode;
+import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind;
 
 import std.math : sin, cos, PI;
 
@@ -115,6 +116,10 @@ void buildArc(Mesh* dst, const ref ArcParams p)
 // ---------------------------------------------------------------------------
 
 private enum ArcState { Idle, Drawing }
+private struct ArcPreparedState {
+    ArcState state; bool consumable;
+    @disable this(this);
+}
 
 class ArcTool : Tool {
 private:
@@ -161,12 +166,39 @@ public:
     }
 
     override void activate() {
-        state = ArcState.Idle;
+        auto prepared = prepareIdleState();
+        ArcPreparedState handle;
+        if (validatePreparedState(prepared, handle)) installLegacyPreparedState(handle);
     }
 
     override void deactivate() {
-        state = ArcState.Idle;
+        auto prepared = prepareIdleState();
+        ArcPreparedState handle;
+        if (validatePreparedState(prepared, handle)) installLegacyPreparedState(handle);
     }
+
+private:
+    PreparedToolStateDelta prepareIdleState() const nothrow @nogc {
+        return PreparedToolStateDelta.integer(preparedToolStateOwner,
+                                               cast(int) ArcState.Idle);
+    }
+
+    bool validatePreparedState(ref PreparedToolStateDelta prepared,
+                               out ArcPreparedState handle) nothrow @nogc {
+        if (prepared.owner != preparedToolStateOwner ||
+            prepared.kind != PreparedToolStateKind.Int32 ||
+            prepared.intValue != cast(int) ArcState.Idle) return false;
+        handle = ArcPreparedState(ArcState.Idle, true);
+        return true;
+    }
+
+    void installLegacyPreparedState(ref ArcPreparedState handle) nothrow @nogc {
+        if (!handle.consumable) return;
+        handle.consumable = false;
+        state = handle.state;
+    }
+
+public:
 
     override void evaluate() {}
 
@@ -247,3 +279,21 @@ private:
         recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 }
+
+unittest {
+    Mesh owned;
+    auto tool = new ArcTool(() => &owned, null, LitShader.init);
+    tool.state = ArcState.Drawing;
+    auto prepared = tool.prepareIdleState();
+    assert(tool.state == ArcState.Drawing); // producer reads no live-after-write state
+    assert(prepared.intValue == cast(int) ArcState.Idle); // original-state mutation RED
+    ArcPreparedState handle;
+    assert(tool.validatePreparedState(prepared, handle));
+    tool.installLegacyPreparedState(handle);
+    assert(tool.state == ArcState.Idle); // installed state == legacy assignment
+    tool.state = ArcState.Drawing;
+    tool.installLegacyPreparedState(handle);
+    assert(tool.state == ArcState.Drawing); // consumed handle cannot replay
+}
+
+static assert(!__traits(compiles, { ArcPreparedState a; ArcPreparedState b = a; }));

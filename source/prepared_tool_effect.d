@@ -25,6 +25,38 @@ enum PreparedEffectKind : ubyte {
     CandidateHandle,
 }
 
+/// Closed value vocabulary for P1.0b.1 tool-instance state. Interpretation is
+/// deliberately owned by each concrete tool installer; this is not a field
+/// offset or byte-decoding protocol.
+enum PreparedToolStateKind : ubyte { None, Bool, Int32, Vec3 }
+
+@PreparedAggregate struct PreparedToolStateDelta {
+    OwnedId owner;
+    PreparedToolStateKind kind;
+    bool boolValue;
+    int intValue;
+    float x, y, z;
+
+    static PreparedToolStateDelta none(OwnedId owner) pure nothrow @safe @nogc {
+        return PreparedToolStateDelta(owner, PreparedToolStateKind.None);
+    }
+    static PreparedToolStateDelta boolean(OwnedId owner, bool value) pure nothrow @safe @nogc {
+        auto result = PreparedToolStateDelta(owner, PreparedToolStateKind.Bool);
+        result.boolValue = value;
+        return result;
+    }
+    static PreparedToolStateDelta integer(OwnedId owner, int value) pure nothrow @safe @nogc {
+        auto result = PreparedToolStateDelta(owner, PreparedToolStateKind.Int32);
+        result.intValue = value;
+        return result;
+    }
+    static PreparedToolStateDelta vec3(OwnedId owner, float x, float y, float z) pure nothrow @safe @nogc {
+        auto result = PreparedToolStateDelta(owner, PreparedToolStateKind.Vec3);
+        result.x = x; result.y = y; result.z = z;
+        return result;
+    }
+}
+
 /// An owner-issued identity.  It is not an address and cannot borrow owner
 /// storage.  Zero is the empty token in every owner namespace.
 @PreparedAggregate struct OwnedId { ulong value; }
@@ -78,6 +110,7 @@ public:
     PreparedHistoryInstall history;
     PreparedJournalEntry journal;
     PreparedCandidateHandle candidate;
+    PreparedToolStateDelta toolState;
 }
 
 /// Recursive allow-by-construction check. OwnedBytes is the sole admitted

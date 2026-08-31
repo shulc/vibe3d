@@ -33,6 +33,12 @@ module tools.transform.xfrm_transform;
 // chain monotonic with respect to a single captured pivot /
 // falloff snapshot, in the documented xfrm.transform order
 // (T → R → S).
+
+import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind;
+private struct XfrmPreparedState {
+    bool apply; Vec3 scale; bool consumable;
+    @disable this(this);
+}
 //
 // Single-source applyTRS contract (Phase 3 — transform-single-source plan):
 //
@@ -1243,9 +1249,36 @@ public:
     // (the per-axis SX/SY/SZ params bind directly to run.s.x/y/z so they
     // take effect through the Param pointer without needing this hook).
     override void onParamChanged(string name) {
-        if (uniform && name == "uniformScale")
-            run.s = Vec3(uniformVal, uniformVal, uniformVal);
+        auto prepared = prepareParamState(name);
+        XfrmPreparedState handle;
+        if (validatePreparedState(prepared, handle)) installLegacyPreparedState(handle);
     }
+
+private:
+    PreparedToolStateDelta prepareParamState(string name) const nothrow @nogc {
+        if (uniform && name == "uniformScale")
+            return PreparedToolStateDelta.vec3(preparedToolStateOwner,
+                                               uniformVal, uniformVal, uniformVal);
+        return PreparedToolStateDelta.none(preparedToolStateOwner);
+    }
+    bool validatePreparedState(ref PreparedToolStateDelta prepared,
+                               out XfrmPreparedState handle) nothrow @nogc {
+        if (prepared.owner != preparedToolStateOwner) return false;
+        if (prepared.kind == PreparedToolStateKind.None) {
+            handle = XfrmPreparedState(false, Vec3.init, true);
+            return true;
+        }
+        if (prepared.kind != PreparedToolStateKind.Vec3) return false;
+        handle = XfrmPreparedState(true,
+            Vec3(prepared.x, prepared.y, prepared.z), true);
+        return true;
+    }
+    void installLegacyPreparedState(ref XfrmPreparedState handle) nothrow @nogc {
+        if (!handle.consumable) return;
+        handle.consumable = false;
+        if (handle.apply) run.s = handle.scale;
+    }
+public:
 
     // When the config-driven transform form is rendering (forms_engine_plan.md
     // Phase 5 + 5b), it OWNS ALL the TRS value rows — Position (TX/TY/TZ),
@@ -5999,3 +6032,34 @@ private:
         else if (flagS) gpuMatrix = scaleSub.gpuMatrix;
     }
 }
+
+unittest {
+    Mesh owned;
+    EditMode mode = EditMode.Vertices;
+    auto tool = new XfrmTransformTool(() => &owned, null, &mode);
+    tool.uniform = true;
+    tool.uniformVal = 2.5f;
+    tool.run.s = Vec3(7, 8, 9);
+    auto prepared = tool.prepareParamState("uniformScale");
+    assert(tool.run.s == Vec3(7, 8, 9));
+    assert(Vec3(prepared.x, prepared.y, prepared.z) == Vec3(2.5f, 2.5f, 2.5f));
+    XfrmPreparedState handle;
+    assert(tool.validatePreparedState(prepared, handle));
+    tool.installLegacyPreparedState(handle);
+    assert(tool.run.s == Vec3(2.5f, 2.5f, 2.5f));
+    tool.run.s = Vec3(8, 8, 8);
+    tool.installLegacyPreparedState(handle);
+    assert(tool.run.s == Vec3(8, 8, 8));
+
+    auto absent = tool.prepareParamState("SX");
+    assert(absent.kind == PreparedToolStateKind.None);
+    assert(tool.validatePreparedState(absent, handle));
+    tool.installLegacyPreparedState(handle);
+    assert(tool.run.s == Vec3(8, 8, 8));
+
+    tool.uniform = false;
+    auto disabled = tool.prepareParamState("uniformScale");
+    assert(disabled.kind == PreparedToolStateKind.None);
+}
+
+static assert(!__traits(compiles, { XfrmPreparedState a; XfrmPreparedState b = a; }));

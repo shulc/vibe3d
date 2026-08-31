@@ -18,8 +18,13 @@ import shader : Shader, LitShader, drawLitPreview;
 import handler : MoveHandler, ToolHandles, Arrow, BoxHandler, gizmoSize, drawThickLinesExt;
 import drag : planeDragDelta, screenAxisDelta, gesturePrevPixel;
 import eventlog : queryMouse;
+import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind;
 
 version (unittest) import std.conv : to;
+private struct MirrorPreparedState {
+    bool engaged; bool consumable;
+    @disable this(this);
+}
 
 // ---------------------------------------------------------------------------
 // rebuildMirrorPreview — the non-cumulative preview recompute (impl plan
@@ -371,8 +376,28 @@ public:
     }
 
     override void onParamChanged(string name) {
-        engaged = true;
+        auto prepared = prepareParamState(name);
+        MirrorPreparedState handle;
+        if (validatePreparedState(prepared, handle)) installLegacyPreparedState(handle);
     }
+
+private:
+    PreparedToolStateDelta prepareParamState(string) const nothrow @nogc {
+        return PreparedToolStateDelta.boolean(preparedToolStateOwner, true);
+    }
+    bool validatePreparedState(ref PreparedToolStateDelta prepared,
+                               out MirrorPreparedState handle) nothrow @nogc {
+        if (prepared.owner != preparedToolStateOwner ||
+            prepared.kind != PreparedToolStateKind.Bool) return false;
+        handle = MirrorPreparedState(prepared.boolValue, true);
+        return true;
+    }
+    void installLegacyPreparedState(ref MirrorPreparedState handle) nothrow @nogc {
+        if (!handle.consumable) return;
+        handle.consumable = false;
+        engaged = handle.engaged;
+    }
+public:
 
     // ----- Headless one-shot (fold #4: builds its OWN mask from the live
     // mesh — ToolHeadlessCommand never calls activate(), so baseMask/baseSnap
@@ -680,6 +705,24 @@ public:
         return -1;
     }
 }
+
+unittest {
+    Mesh owned;
+    auto tool = new MirrorTool(() => &owned, null, LitShader.init);
+    tool.engaged = false;
+    auto prepared = tool.prepareParamState("axis");
+    assert(!tool.engaged);
+    assert(prepared.boolValue); // using the original false state instead REDs
+    MirrorPreparedState handle;
+    assert(tool.validatePreparedState(prepared, handle));
+    tool.installLegacyPreparedState(handle);
+    assert(tool.engaged); // installed state == legacy assignment
+    tool.engaged = false;
+    tool.installLegacyPreparedState(handle);
+    assert(!tool.engaged);
+}
+
+static assert(!__traits(compiles, { MirrorPreparedState a; MirrorPreparedState b = a; }));
 
 /// Camera forward direction from a Viewport's view matrix (not necessarily
 /// unit length — rayPlaneIntersect's t = dot(n,d)/dot(n,dir) is invariant

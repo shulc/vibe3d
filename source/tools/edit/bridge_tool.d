@@ -16,8 +16,13 @@ import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
 import shader : Shader, LitShader, drawLitPreview;
 import std.json : JSONValue;
+import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind;
 
 version (unittest) import std.conv : to;
+private struct BridgePreparedState {
+    bool engaged; bool consumable;
+    @disable this(this);
+}
 
 // ---------------------------------------------------------------------------
 // BridgeParams — single source of truth for the Bridge tool (task 0357),
@@ -414,8 +419,28 @@ public:
     }
 
     override void onParamChanged(string name) {
-        engaged = true;
+        auto prepared = prepareParamState(name);
+        BridgePreparedState handle;
+        if (validatePreparedState(prepared, handle)) installLegacyPreparedState(handle);
     }
+
+private:
+    PreparedToolStateDelta prepareParamState(string) const nothrow @nogc {
+        return PreparedToolStateDelta.boolean(preparedToolStateOwner, true);
+    }
+    bool validatePreparedState(ref PreparedToolStateDelta prepared,
+                               out BridgePreparedState handle) nothrow @nogc {
+        if (prepared.owner != preparedToolStateOwner ||
+            prepared.kind != PreparedToolStateKind.Bool) return false;
+        handle = BridgePreparedState(prepared.boolValue, true);
+        return true;
+    }
+    void installLegacyPreparedState(ref BridgePreparedState handle) nothrow @nogc {
+        if (!handle.consumable) return;
+        handle.consumable = false;
+        engaged = handle.engaged;
+    }
+public:
 
     // ----- Headless one-shot (fold #1: builds its OWN selection from the
     // live mesh — ToolHeadlessCommand never calls activate()). -----------
@@ -518,6 +543,24 @@ public:
         return true;
     }
 }
+
+unittest {
+    Mesh owned;
+    auto tool = new BridgeTool(() => &owned, null, LitShader.init, null);
+    tool.engaged = false;
+    auto prepared = tool.prepareParamState("segments");
+    assert(!tool.engaged);
+    assert(prepared.boolValue); // using the original false state instead REDs
+    BridgePreparedState handle;
+    assert(tool.validatePreparedState(prepared, handle));
+    tool.installLegacyPreparedState(handle);
+    assert(tool.engaged); // installed state == legacy assignment
+    tool.engaged = false;
+    tool.installLegacyPreparedState(handle);
+    assert(!tool.engaged);
+}
+
+static assert(!__traits(compiles, { BridgePreparedState a; BridgePreparedState b = a; }));
 
 // ---------------------------------------------------------------------------
 // Module unittests — dubtest-lane parity + regression gate (task 0357).
