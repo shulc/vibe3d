@@ -58,6 +58,28 @@ module change_bus;
 
 public import mesh_edit_delta : MeshEditScope;
 import seltype : SelType;
+import prepared_tool_effect : PreparedJournalEntry;
+
+/// Owner-prepared synchronous deliveries. Private copied storage prevents a
+/// caller from aliasing/reordering entries after prepare; replay preserves one
+/// deliverMesh call per row and performs no allocation.
+struct PreparedDeliveryJournal {
+private:
+    PreparedJournalEntry[] entries_;
+public:
+    @disable this(this);
+    static PreparedDeliveryJournal copyOf(const(PreparedJournalEntry)[] src) {
+        PreparedDeliveryJournal j;
+        j.entries_ = src.dup;
+        return j;
+    }
+    size_t length() const pure nothrow @safe @nogc { return entries_.length; }
+    void replay(ref ChangeBus bus) nothrow {
+        foreach (ref e; entries_)
+            bus.deliverMesh(cast(size_t)e.subject.value, e.flags, e.selectionDomains);
+        entries_ = null;
+    }
+}
 
 // Manifest "everything changed" mask for bulk transitions (scene reset, file
 // load, snapshot restore, playback start) where the whole mesh is replaced and

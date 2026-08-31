@@ -263,6 +263,9 @@
 			"sourceFiles": [
 				"tools/perf/lib/vslast.d"
 			],
+			"preBuildCommands": [
+				"python3 tools/check_prepared_protocol.py"
+			],
 			"importPaths": [
 				"source",
 				"tools/perf"

@@ -247,6 +247,27 @@ final class CompositeCommand : Command {
     override CmdFlags cmdFlags() const { return unionFlags_; }
 }
 
+/// Owner-built history image for the P1 prepared transition. Its slice fields
+/// are private and can only be produced by CommandHistory's copying prepare
+/// method; commit transfers their headers without allocation.
+struct PreparedHistoryImage {
+private:
+    HistoryEntry[] undoStack, redoStack;
+    size_t maxDepth;
+    UndoState state;
+    ulong undoEpoch;
+    bool lockout, coalesceBarrier, refireOpen;
+    Command liveCmd;
+    int blockDepth;
+    Command[] blockChildren;
+    string blockLabel;
+    ulong currentRunId;
+    bool runOpen;
+    ulong tweakGeneration;
+public:
+    @disable this(this);
+}
+
 final class CommandHistory {
     private HistoryEntry[] undoStack;
     private HistoryEntry[] redoStack;
@@ -350,6 +371,48 @@ final class CommandHistory {
     // means a caller that never bumps (e.g. the replaceInSessionTail unit tests)
     // sees pure REPLACE — the historical Refire-keyed behaviour, unchanged.
     private ulong _tweakGeneration = 0;
+
+    /// Fallible prepare half: duplicate every mutable history-owned container.
+    /// This is inert until installPreparedImage is called by the future P1.0c
+    /// commit; no existing recorder or navigation door calls either method.
+    PreparedHistoryImage prepareCurrentImage() {
+        PreparedHistoryImage p;
+        p.undoStack = undoStack.dup;
+        p.redoStack = redoStack.dup;
+        p.maxDepth = maxDepth; p.state = _state; p.undoEpoch = _undoEpoch;
+        p.lockout = _lockout; p.coalesceBarrier = _coalesceBarrier;
+        p.refireOpen = refireOpen; p.liveCmd = liveCmd;
+        p.blockDepth = blockDepth; p.blockChildren = blockChildren.dup;
+        p.blockLabel = blockLabel.dup;
+        p.currentRunId = _currentRunId; p.runOpen = _runOpen;
+        p.tweakGeneration = _tweakGeneration;
+        return p;
+    }
+
+    /// Prepare the exact lifecycle append image: append to undo, enforce the
+    /// owner's depth policy and invalidate redo, with every allocation here.
+    PreparedHistoryImage prepareLifecycleAppend(HistoryEntry entry) {
+        auto p = prepareCurrentImage();
+        p.undoStack ~= entry;
+        if (p.undoStack.length > p.maxDepth)
+            p.undoStack = p.undoStack[$ - p.maxDepth .. $].dup;
+        p.redoStack = null;
+        return p;
+    }
+
+    /// Nonallocating owner install. Assignments transfer already-prepared
+    /// array/string headers; no command hooks or history callbacks run.
+    void installPreparedImage(ref PreparedHistoryImage p) nothrow {
+        undoStack = p.undoStack; redoStack = p.redoStack;
+        maxDepth = p.maxDepth; _state = p.state; _undoEpoch = p.undoEpoch;
+        _lockout = p.lockout; _coalesceBarrier = p.coalesceBarrier;
+        refireOpen = p.refireOpen; liveCmd = p.liveCmd;
+        blockDepth = p.blockDepth; blockChildren = p.blockChildren;
+        blockLabel = p.blockLabel; _currentRunId = p.currentRunId;
+        _runOpen = p.runOpen; _tweakGeneration = p.tweakGeneration;
+        p.undoStack = null; p.redoStack = null; p.blockChildren = null;
+        p.blockLabel = null; p.liveCmd = null;
+    }
 
     /// Phase 7 macro recorder hook. Invoked AFTER an entry lands on
     /// the undo stack — receives the canonical argstring command

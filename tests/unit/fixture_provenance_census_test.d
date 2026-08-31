@@ -189,7 +189,9 @@ private string[] pyTupleLiterals(string src, string name)
 private string[] kSourceValues;
 private string[] kMethodValues;
 
-/// The neutral `reference` literals. NOT derived: `fixture_helpers.d` does not
+/// The neutral legacy `reference` literals. C2 fixtures deliberately replace
+/// this field with `reference_token`; exactly one of the two spellings is
+/// required and both use the same neutral shape validator.
 /// check this field at all, so there is no second copy to drift from — the
 /// duplication this module is fixing is the one that exists, not every one
 /// that could.
@@ -273,12 +275,19 @@ private string[] lintProvenance(const JSONValue block)
                        "source" in obj ? obj["source"].toString() : "<missing>",
                        kSourceValues);
 
-    if ("reference" !in obj || obj["reference"].type != JSONType.string
-        || !isNeutralReferenceShape(obj["reference"].str))
-        errs ~= format("provenance.reference %s is not a valid/neutral shape "
+    immutable hasLegacy = "reference" in obj && obj["reference"].type == JSONType.string;
+    immutable hasToken = "reference_token" in obj
+                      && obj["reference_token"].type == JSONType.string;
+    if (hasLegacy == hasToken)
+        errs ~= "provenance requires exactly one of reference/reference_token";
+    else {
+        immutable key = hasToken ? "reference_token" : "reference";
+        if (!isNeutralReferenceShape(obj[key].str))
+        errs ~= format("provenance.%s %s is not a valid/neutral shape "
                        ~ "(want one of %s or 'ref-editor@<version>')",
-                       "reference" in obj ? obj["reference"].toString() : "<missing>",
+                       key, obj[key].toString(),
                        kNeutralReferenceLiterals);
+    }
 
     if ("method" !in obj || obj["method"].type != JSONType.string
         || !kMethodValues.canFind(obj["method"].str))
@@ -291,6 +300,19 @@ private string[] lintProvenance(const JSONValue block)
         errs ~= "provenance.captured_utc missing/empty";
 
     return errs;
+}
+
+unittest { // C2 reference_token-only schema, including its non-vacuous RED
+    loadVocabularies();
+    auto p = parseJSON(`{"schema":1,"source":"live-capture",`
+                     ~ `"reference_token":"ref-editor@11.2v3",`
+                     ~ `"method":"debug-live","captured_utc":"2026-08-31"}`);
+    assert(lintProvenance(p).length == 0,
+           "reference_token-only C2 provenance must be accepted");
+    p.object.remove("reference_token");
+    assert(lintProvenance(p).canFind(
+        "provenance requires exactly one of reference/reference_token"),
+        "removing C2 reference_token must RED with the exact missing-token rule");
 }
 
 /// "parity" | "smoke-simulated" | "smoke-analytic" | "unknown". Only
