@@ -682,7 +682,7 @@ unittest {
     } else {
         auto at   = src.indexOf(needle);
         auto rest = src[cast(size_t) at .. $];
-        auto end  = rest.indexOf("};");
+        auto end  = rest.indexOf("});");
         immutable block = (end < 0) ? rest : rest[0 .. cast(size_t) end];
         ++checked;
 
@@ -954,7 +954,7 @@ unittest {
     // still yields exactly the thirteen and in the order they are passed.
     string[] idents;
     {
-        immutable string key = `reg.toolFactories["mesh.topoPen"] = () {`;
+        immutable string key = `reg.toolFactories["mesh.topoPen"] = typedToolFactory!TopologyPenTool(() {`;
         immutable ptrdiff_t at = regSrc.indexOf(key);
         assert(at >= 0,
             "G7 census (member 7): the `mesh.topoPen` registration block was not "

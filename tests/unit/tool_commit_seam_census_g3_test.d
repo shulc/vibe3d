@@ -542,7 +542,7 @@ unittest {
         }
         auto at   = src.indexOf(needle);
         auto rest = src[cast(size_t) at .. $];
-        auto end  = rest.indexOf("};");
+        auto end  = rest.indexOf("});");
         immutable block = (end < 0) ? rest : rest[0 .. cast(size_t) end];
         ++checked;
         if (countOccurrences(block, "setGestureBindings(") != 1)

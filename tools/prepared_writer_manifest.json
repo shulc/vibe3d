@@ -1,0 +1,1820 @@
+{
+  "bypasses": [],
+  "factories": [
+    {
+      "aggregate": "<module>",
+      "id": "move",
+      "product_types": [
+        "XfrmTransformTool"
+      ],
+      "semantic_sha256": "da0a3531836db5b48f9e61888f7bc0edb5262903121bb7f3fefb2d32e4b7c17b",
+      "symbol": "toolFactories[\"move\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "rotate",
+      "product_types": [
+        "XfrmTransformTool"
+      ],
+      "semantic_sha256": "32c6de1da43a89ab87335f0706016dce55246b522d0f08839c8514298bc5f4b8",
+      "symbol": "toolFactories[\"rotate\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "scale",
+      "product_types": [
+        "XfrmTransformTool"
+      ],
+      "semantic_sha256": "5b8b31f4ba7cc366b3fbd660055492b5b006aaafbdcc03a6ecab0fc9d4d59b7a",
+      "symbol": "toolFactories[\"scale\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "xfrm.transform",
+      "product_types": [
+        "XfrmTransformTool"
+      ],
+      "semantic_sha256": "fdd8c16f2f44e74612ca4cf026b8eefc3b0f0cef3b360a7647a3e60dd3cccb5e",
+      "symbol": "toolFactories[\"xfrm.transform\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "xfrm.push",
+      "product_types": [
+        "PushTool"
+      ],
+      "semantic_sha256": "af80cfafc43f7401e4b86f68d86b7c9863d48998c6512f928bb710a803ebbb4c",
+      "symbol": "toolFactories[\"xfrm.push\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "xfrm.bend",
+      "product_types": [
+        "BendTool"
+      ],
+      "semantic_sha256": "94cd46d652e131f188f7624d5df853dca3208e5d129902e77350e090976cd474",
+      "symbol": "toolFactories[\"xfrm.bend\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "xfrm.linearAlignTool",
+      "product_types": [
+        "LinearAlignTool"
+      ],
+      "semantic_sha256": "a98b6531a165d7867973bd86b93ef3f3be892cde7dff9b1f481d65dc85c3487c",
+      "symbol": "toolFactories[\"xfrm.linearAlignTool\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "xfrm.radialAlignTool",
+      "product_types": [
+        "RadialAlignTool"
+      ],
+      "semantic_sha256": "9311edd0eb3cf17f77d718187f1f64622c4b38a878d56414c651dfd5549edd1f",
+      "symbol": "toolFactories[\"xfrm.radialAlignTool\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "xfrm.smooth",
+      "product_types": [
+        "XfrmSmoothTool"
+      ],
+      "semantic_sha256": "748ff9217c8425b2cf65ebb1a1c2c2f52ff27256f87d371757dfaa4d0a462a8b",
+      "symbol": "toolFactories[\"xfrm.smooth\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "xfrm.jitter",
+      "product_types": [
+        "XfrmJitterTool"
+      ],
+      "semantic_sha256": "77184bc88971bdd64da04ef27df362e63ddcc88ada58a442ba696e6c3c8823d2",
+      "symbol": "toolFactories[\"xfrm.jitter\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "edge.slide",
+      "product_types": [
+        "EdgeSlideTool"
+      ],
+      "semantic_sha256": "3451c8488b1cdaa2adaef987cacca65ff23cdd5e60aa61c686665da8d4cf54bb",
+      "symbol": "toolFactories[\"edge.slide\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "xfrm.quantize",
+      "product_types": [
+        "XfrmQuantizeTool"
+      ],
+      "semantic_sha256": "69ff03de7dddacd28e8479305cf56036ae60447a08c4fa9e9641a36e945af19a",
+      "symbol": "toolFactories[\"xfrm.quantize\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.mirrorTool",
+      "product_types": [
+        "MirrorTool"
+      ],
+      "semantic_sha256": "27f934fbf5d59444e3528f37736f360fb557e6a3ea0f9e157a7a5a957c197426",
+      "symbol": "toolFactories[\"mesh.mirrorTool\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.radialSweepTool",
+      "product_types": [
+        "RadialSweepTool"
+      ],
+      "semantic_sha256": "329de789fc09801583eaa25dbe2d99981b5d17fa5fcea899818e68c77f132a85",
+      "symbol": "toolFactories[\"mesh.radialSweepTool\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.tack",
+      "product_types": [
+        "TackTool"
+      ],
+      "semantic_sha256": "369cebec4994e047d4177a41e560b734dfec8a3ff30cecdcec77fc7f77b9de67",
+      "symbol": "toolFactories[\"mesh.tack\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.topoPen",
+      "product_types": [
+        "TopologyPenTool"
+      ],
+      "semantic_sha256": "a40f99afd16fcc02d09b995e1cf0cdc347566c834fd5f18e50085c7ec9d65cca",
+      "symbol": "toolFactories[\"mesh.topoPen\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.bridgeTool",
+      "product_types": [
+        "BridgeTool"
+      ],
+      "semantic_sha256": "d64b38ee85b789c3583e2b0470f8b5b3b56345bc6172a59dfcec13a018441600",
+      "symbol": "toolFactories[\"mesh.bridgeTool\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "prim.cube",
+      "product_types": [
+        "BoxTool"
+      ],
+      "semantic_sha256": "84a8b8322fccf4216dc16d5e8ef5cf6aaecff4d424fef2f33e01eb99f3d51d9c",
+      "symbol": "toolFactories[\"prim.cube\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "prim.sphere",
+      "product_types": [
+        "SphereTool"
+      ],
+      "semantic_sha256": "a390e55467082c2702256acfc293897c0977cad3d387db1e9291059e0fbfbc52",
+      "symbol": "toolFactories[\"prim.sphere\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "prim.ellipsoid",
+      "product_types": [
+        "SphereTool"
+      ],
+      "semantic_sha256": "f324b9e80e901df49a72c5817b28da1104cced3c175166bdcbddad487d2a6095",
+      "symbol": "toolFactories[\"prim.ellipsoid\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "prim.cylinder",
+      "product_types": [
+        "CylinderTool"
+      ],
+      "semantic_sha256": "317ee0902ccde9c6596e5e7d0283974e36094f1bd650fdc44d1ee64208b5a8b1",
+      "symbol": "toolFactories[\"prim.cylinder\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "prim.tube",
+      "product_types": [
+        "TubeTool"
+      ],
+      "semantic_sha256": "0aa24d8c15e159fde2527b38872320eb0060a323152e739f6199e89a30d91bf3",
+      "symbol": "toolFactories[\"prim.tube\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "prim.cone",
+      "product_types": [
+        "ConeTool"
+      ],
+      "semantic_sha256": "c970c38df50f5726fc5251d28605645777b75ce6c1bb10db8bd99cf000b6e5d9",
+      "symbol": "toolFactories[\"prim.cone\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "prim.capsule",
+      "product_types": [
+        "CapsuleTool"
+      ],
+      "semantic_sha256": "f16f10aee8b339aff05dd848ea751c66e5a58a11c4ef65c9938f8e307fd60ae6",
+      "symbol": "toolFactories[\"prim.capsule\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "prim.torus",
+      "product_types": [
+        "TorusTool"
+      ],
+      "semantic_sha256": "17d2a7b3fad50c30be9f78bc98e4e5248af8b3db33d455fd44503d7516c4dd81",
+      "symbol": "toolFactories[\"prim.torus\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "prim.arc",
+      "product_types": [
+        "ArcTool"
+      ],
+      "semantic_sha256": "85f9f29a39e2fe366901edfdc03062c7df1fdec14390c2b36a8d874984ca631b",
+      "symbol": "toolFactories[\"prim.arc\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "pen",
+      "product_types": [
+        "PenTool"
+      ],
+      "semantic_sha256": "9ce10028632e3edfbbb0bfe6b429200d8cbb94d18b6b30a00d3fcb231060c5f5",
+      "symbol": "toolFactories[\"pen\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "prim.vertex",
+      "product_types": [
+        "VertexTool"
+      ],
+      "semantic_sha256": "350dd26a8529989bfd4c6450a3ef622b63cede8f3a1dafa438b713ac2dea28bc",
+      "symbol": "toolFactories[\"prim.vertex\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.dragWeld",
+      "product_types": [
+        "DragWeldTool"
+      ],
+      "semantic_sha256": "2a37917953bbda8fe594adbbb538b93a04ca6b056ea76199dae4b1711a7785e8",
+      "symbol": "toolFactories[\"mesh.dragWeld\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "edge.extrude",
+      "product_types": [
+        "EdgeExtrudeTool"
+      ],
+      "semantic_sha256": "1b44cd02a412461c32d22c9537b3934fb2ca24c07f20f09c84202de0beb137b0",
+      "symbol": "toolFactories[\"edge.extrude\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "poly.extrude",
+      "product_types": [
+        "PolyExtrudeTool"
+      ],
+      "semantic_sha256": "29a4887d11a2fa4e3bedcb11afe1b35699c964fe96df64caabd9be7b923a5174",
+      "symbol": "toolFactories[\"poly.extrude\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.radialArrayTool",
+      "product_types": [
+        "RadialArrayTool"
+      ],
+      "semantic_sha256": "945cc76c49664ebf9101ae93f822fbedae2c79a4072ef1a6f03582c565b18e7e",
+      "symbol": "toolFactories[\"mesh.radialArrayTool\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "tool.strokeExtrude",
+      "product_types": [
+        "StrokeExtrudeTool"
+      ],
+      "semantic_sha256": "9ec49c1bbcf7c46cc36386d22475d1cb49f77e0d497028f828a7fa4362274f59",
+      "symbol": "toolFactories[\"tool.strokeExtrude\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "edge.extend",
+      "product_types": [
+        "EdgeExtendTool"
+      ],
+      "semantic_sha256": "86eaa02f663cf899d13086f4babc4eeee2c3402740bef7c0168e6e3d4f92ddfb",
+      "symbol": "toolFactories[\"edge.extend\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "poly.bevel",
+      "product_types": [
+        "PolyBevelTool"
+      ],
+      "semantic_sha256": "bb1bad762ef7103be93aeae6f7cf4462eec4d8218f7c00170284fe0bc21ac80a",
+      "symbol": "toolFactories[\"poly.bevel\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.polyInsetTool",
+      "product_types": [
+        "PolyInsetTool"
+      ],
+      "semantic_sha256": "a4d4785bddc256dd99f249eec530cc6ab042a408ea13ae70c6ba9bdb64712ad7",
+      "symbol": "toolFactories[\"mesh.polyInsetTool\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.smoothShiftTool",
+      "product_types": [
+        "SmoothShiftTool"
+      ],
+      "semantic_sha256": "081df040cb924baa29465fc070036de3b94f418327af23d210c1567b16333263",
+      "symbol": "toolFactories[\"mesh.smoothShiftTool\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "xfrm.magnet",
+      "product_types": [
+        "MagnetTool"
+      ],
+      "semantic_sha256": "d66522d134905f21ff6eb9f2275a35b61e024ed245f93423e72e44bb19acd6cf",
+      "symbol": "toolFactories[\"xfrm.magnet\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "edge.bevel",
+      "product_types": [
+        "EdgeBevelTool"
+      ],
+      "semantic_sha256": "317364475b7cea5d33209c003b4566c58898e6e47502348bea303d1ce07fc0de",
+      "symbol": "toolFactories[\"edge.bevel\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.vertexBevel",
+      "product_types": [
+        "VertexBevelTool"
+      ],
+      "semantic_sha256": "179fb25500cd13df1152608b56946372ddf347e4610d866865c294e8b4369aa6",
+      "symbol": "toolFactories[\"mesh.vertexBevel\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.vertexExtrude",
+      "product_types": [
+        "VertexExtrudeTool"
+      ],
+      "semantic_sha256": "fdb954cb02469daee727b70197a4b5808d66b692b5b51ea3bc09d199610540fd",
+      "symbol": "toolFactories[\"mesh.vertexExtrude\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "vert.merge",
+      "product_types": [
+        "VertexMergeTool"
+      ],
+      "semantic_sha256": "e6a2f866183b93ce6641803b09e29425ac0a29484b7f66a6d425caaa082d765c",
+      "symbol": "toolFactories[\"vert.merge\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.loopSliceTool",
+      "product_types": [
+        "LoopSliceTool"
+      ],
+      "semantic_sha256": "60a8c223f73765886453c15695e8d31286d17f73d407f272adb04b9f1fc7c13f",
+      "symbol": "toolFactories[\"mesh.loopSliceTool\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.sliceTool",
+      "product_types": [
+        "SliceTool"
+      ],
+      "semantic_sha256": "b98974dcdf0a905b1ff7c3e7de360b043da9cab9b8627ae25c08b2e81b827725",
+      "symbol": "toolFactories[\"mesh.sliceTool\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.edgeSliceTool",
+      "product_types": [
+        "EdgeSliceTool"
+      ],
+      "semantic_sha256": "c299976df0c1940a114aa4269d8aa204074048053aef02dc17f83484b804891e",
+      "symbol": "toolFactories[\"mesh.edgeSliceTool\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.reduceTool",
+      "product_types": [
+        "ReductionTool"
+      ],
+      "semantic_sha256": "18e16076cc9d9ebbb64b683d077d7e0afcfd55b92439aa2ccd86b92e89866c12",
+      "symbol": "toolFactories[\"mesh.reduceTool\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.clone",
+      "product_types": [
+        "CloneTool"
+      ],
+      "semantic_sha256": "6e9083a0b0559653144322ee53ea2fa9380242cb8e4fc7215c51899befcfd3fb",
+      "symbol": "toolFactories[\"mesh.clone\"]"
+    },
+    {
+      "aggregate": "<module>",
+      "id": "mesh.arrayTool",
+      "product_types": [
+        "ArrayTool"
+      ],
+      "semantic_sha256": "32bed99bc2a30b0bc3871d14c4f6c8af0580da9a9b0b9f4bf2e74f9fb3e36423",
+      "symbol": "toolFactories[\"mesh.arrayTool\"]"
+    },
+    {
+      "aggregate": "registerToolPresets",
+      "id": "<generated:p.id>",
+      "preset_bases": [
+        "mesh.smoothShiftTool",
+        "move",
+        "rotate",
+        "scale",
+        "xfrm.push",
+        "xfrm.transform"
+      ],
+      "product_types": [
+        "PushTool",
+        "SmoothShiftTool",
+        "XfrmTransformTool"
+      ],
+      "semantic_sha256": "a3d74ea6fab9e7ca206cb4faaf9c173d714af0e2f8d4c259b29d3c3292fe0707",
+      "symbol": "toolFactories[p.id]"
+    }
+  ],
+  "hooks": [
+    {
+      "aggregate": "Tool",
+      "module": "tool",
+      "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "Tool",
+      "module": "tool",
+      "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "Tool",
+      "module": "tool",
+      "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signature": "void(ref VectorStack vts)",
+      "symbol": "update"
+    },
+    {
+      "aggregate": "Tool",
+      "module": "tool",
+      "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signature": "void(string name)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "ArrayTool",
+      "module": "tools.alignment.array_tool",
+      "semantic_sha256": "a3ef0434124519c5ecfb65e6445f66747a2e03c51bd5104c88bd54f93fc4e898",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "ArrayTool",
+      "module": "tools.alignment.array_tool",
+      "semantic_sha256": "18101145a3ef33274b4494c4aa5519ebc86cd915497ade139d6800d8df50d06c",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "ArrayTool",
+      "module": "tools.alignment.array_tool",
+      "semantic_sha256": "faa816189d3021af9a62bdb189d73719db6b1f1e192945b9cb122d7cf6c1ce46",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "CloneTool",
+      "module": "tools.alignment.clone_tool",
+      "semantic_sha256": "a3ef0434124519c5ecfb65e6445f66747a2e03c51bd5104c88bd54f93fc4e898",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "CloneTool",
+      "module": "tools.alignment.clone_tool",
+      "semantic_sha256": "18101145a3ef33274b4494c4aa5519ebc86cd915497ade139d6800d8df50d06c",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "LinearAlignTool",
+      "module": "tools.alignment.linear_align_tool",
+      "semantic_sha256": "ccaddca49039e3e10e2aec4209b41a380aa4ed42819cda65714bb7ddcb15b7bd",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "MirrorTool",
+      "module": "tools.alignment.mirror",
+      "semantic_sha256": "84af0a782532126b277d0a15bffae69dc09a70ac0ffc061cdfde5951333b4984",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "MirrorTool",
+      "module": "tools.alignment.mirror",
+      "semantic_sha256": "6522ff516b49d73107a433b56c09adcabfcec7c547703e063cd262b53cde1c3b",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "MirrorTool",
+      "module": "tools.alignment.mirror",
+      "semantic_sha256": "8ee46ae192258fb4a5955cfd5354221e921c4493d9e049da88913d6adee50b73",
+      "signature": "void(string name)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "RadialAlignTool",
+      "module": "tools.alignment.radial_align_tool",
+      "semantic_sha256": "ccaddca49039e3e10e2aec4209b41a380aa4ed42819cda65714bb7ddcb15b7bd",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "RadialArrayTool",
+      "module": "tools.alignment.radial_array_tool",
+      "semantic_sha256": "aafb54dc5b7e706047ebfea6318e70555e5bc1df1871c228d54a2e66e73e6f99",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "RadialArrayTool",
+      "module": "tools.alignment.radial_array_tool",
+      "semantic_sha256": "950375fbad4e8a667be3325b18aebd1f9d1d2539851de1ae4db12f7b99b6f2a2",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "RadialArrayTool",
+      "module": "tools.alignment.radial_array_tool",
+      "semantic_sha256": "faa816189d3021af9a62bdb189d73719db6b1f1e192945b9cb122d7cf6c1ce46",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "RadialSweepTool",
+      "module": "tools.alignment.radial_sweep_tool",
+      "semantic_sha256": "8ab0691215101b687c0bc82277880393bb77d60ec65bbf23d9a7083c33da1a95",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "RadialSweepTool",
+      "module": "tools.alignment.radial_sweep_tool",
+      "semantic_sha256": "bc2dd2b49988de101ede16263aae06828deb850afef80d1d52c3067323c60184",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "RadialSweepTool",
+      "module": "tools.alignment.radial_sweep_tool",
+      "semantic_sha256": "bd9c9bc3d097241da42aa6fc0001c5c9e5bc3e885922c7786c6fd12344da87bb",
+      "signature": "void(string name)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "CommandWrapperTool",
+      "module": "tools.common.command_wrapper",
+      "semantic_sha256": "8260c236cb5e4e88ae780ee73b85d8d0f415d909d0c57b6b7bc5aa556cfee7fe",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "CommandWrapperTool",
+      "module": "tools.common.command_wrapper",
+      "semantic_sha256": "e55b562e88e2b72ba7cca0ac615b5ec1d38b8fd58280d6d1223484a82f3ef361",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "CommandWrapperTool",
+      "module": "tools.common.command_wrapper",
+      "semantic_sha256": "cabd83ae2c74394f7afa454dc015a8ed803e4e39d612e0dbede5e345e4107fa9",
+      "signature": "void(string name)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "ArcTool",
+      "module": "tools.create.arc",
+      "semantic_sha256": "e7dd1751a98a0e1484c59402f2f0812e84355e5133b329b29598655ea2e1983d",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "ArcTool",
+      "module": "tools.create.arc",
+      "semantic_sha256": "e7dd1751a98a0e1484c59402f2f0812e84355e5133b329b29598655ea2e1983d",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "BoxTool",
+      "module": "tools.create.box",
+      "semantic_sha256": "d37bf7fc3b1b824101b7fd57ac56b04d70f450a062b08331c9377ce0f1578f46",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "BoxTool",
+      "module": "tools.create.box",
+      "semantic_sha256": "c503eed850d3300c38a4fa05135e19178b1b3e0340f75f1306805676aeddd085",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "BoxTool",
+      "module": "tools.create.box",
+      "semantic_sha256": "11abde8d4e60c58d30a6218fe3a58d9ede0ba4830b28bcc0f9f2ab7a539d615a",
+      "signature": "void(string name)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "PenTool",
+      "module": "tools.create.pen",
+      "semantic_sha256": "47134368753d96dd82407cf9a19e650d2569b72afeb3465e2aa549b08a29bed5",
+      "signature": "void(string name)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "PenTool",
+      "module": "tools.create.pen",
+      "semantic_sha256": "0ab908f5f5037fe19851bc5c5ad7fcbd8f8cea26d96bfa48fd38a58529c4fd4e",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "PenTool",
+      "module": "tools.create.pen",
+      "semantic_sha256": "c8429b5f94f0aa0f7c35196732f7c6aae43b67c851e432e21d52ac26e62e4e9f",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "PrimitiveCreateTool",
+      "module": "tools.create.primitive_create_tool",
+      "semantic_sha256": "276563301e7e13d8db0bb142d6665fae4424de0f4e6834ede2f013fc32485b3b",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "PrimitiveCreateTool",
+      "module": "tools.create.primitive_create_tool",
+      "semantic_sha256": "7967cb1a52a1f94386219c821f413a933e2da8b123ab5e09cc1d84c5222ca44c",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "SphereTool",
+      "module": "tools.create.sphere",
+      "semantic_sha256": "8030fee913cc90f298b529625a29a498265ec88f407d6d09e62c5bbcf66300f9",
+      "signature": "void(string name)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "VertexTool",
+      "module": "tools.create.vertex_place",
+      "semantic_sha256": "ccaa9182dfd33f1b2e58d143fab66008d851124e40369da37be3832703427343",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "VertexTool",
+      "module": "tools.create.vertex_place",
+      "semantic_sha256": "fbbb270bb45f55d9efb1b29abeb2ca14686110236ea74b0ef304995c090c4982",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "BendTool",
+      "module": "tools.deform.bend",
+      "semantic_sha256": "ccaddca49039e3e10e2aec4209b41a380aa4ed42819cda65714bb7ddcb15b7bd",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "MagnetTool",
+      "module": "tools.deform.magnet",
+      "semantic_sha256": "72059a3265814f4c7bee64d56036309561d04fb49f849b547eb26c11bebcc165",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "MagnetTool",
+      "module": "tools.deform.magnet",
+      "semantic_sha256": "6c04455184eb4a972c514eb56fc9bfdc45bef7bb04afbe38d20835a28d5edaf0",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "MagnetTool",
+      "module": "tools.deform.magnet",
+      "semantic_sha256": "5f02b3ec7258316f28581631e5963f7ba1c2835e9c43f0cc4b2884780adfad74",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "PushTool",
+      "module": "tools.deform.push",
+      "semantic_sha256": "ccaddca49039e3e10e2aec4209b41a380aa4ed42819cda65714bb7ddcb15b7bd",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "SmoothShiftTool",
+      "module": "tools.deform.smooth_shift_tool",
+      "semantic_sha256": "aafb54dc5b7e706047ebfea6318e70555e5bc1df1871c228d54a2e66e73e6f99",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "SmoothShiftTool",
+      "module": "tools.deform.smooth_shift_tool",
+      "semantic_sha256": "182fb540f92acc189db84294447409a03424e87421fcb6c320fdcee88f6cf301",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "SmoothShiftTool",
+      "module": "tools.deform.smooth_shift_tool",
+      "semantic_sha256": "faa816189d3021af9a62bdb189d73719db6b1f1e192945b9cb122d7cf6c1ce46",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "StrokeExtrudeTool",
+      "module": "tools.deform.stroke_extrude_tool",
+      "semantic_sha256": "aafb54dc5b7e706047ebfea6318e70555e5bc1df1871c228d54a2e66e73e6f99",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "StrokeExtrudeTool",
+      "module": "tools.deform.stroke_extrude_tool",
+      "semantic_sha256": "9985f0f6fcc92fe34f2d24ac906f301e4125fd2cb6c04c0d87845de16700450f",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "BridgeTool",
+      "module": "tools.edit.bridge_tool",
+      "semantic_sha256": "25881e5994ee4dd85216bec98f85c6ef685118b969dc7900ca281e0bc09c6875",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "BridgeTool",
+      "module": "tools.edit.bridge_tool",
+      "semantic_sha256": "eda1f5e3ff46f3d06b925d4b22481b3b633cc0fbdb5c5c0aa84c5f8fb5a80adc",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "BridgeTool",
+      "module": "tools.edit.bridge_tool",
+      "semantic_sha256": "8ee46ae192258fb4a5955cfd5354221e921c4493d9e049da88913d6adee50b73",
+      "signature": "void(string name)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "EdgeBevelTool",
+      "module": "tools.edit.edge_bevel",
+      "semantic_sha256": "aafb54dc5b7e706047ebfea6318e70555e5bc1df1871c228d54a2e66e73e6f99",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "EdgeBevelTool",
+      "module": "tools.edit.edge_bevel",
+      "semantic_sha256": "9916920b06af7b316a81f4a375beb3bfcf18b6c001866c7bda0bd6a8f0651e3f",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "EdgeBevelTool",
+      "module": "tools.edit.edge_bevel",
+      "semantic_sha256": "faa816189d3021af9a62bdb189d73719db6b1f1e192945b9cb122d7cf6c1ce46",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "EdgeExtendTool",
+      "module": "tools.edit.edge_extend",
+      "semantic_sha256": "754f843cd4f5fcbc2d7ae6c82952b8eacdcce9674fcff77b7b323c4cc24920c4",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "EdgeExtendTool",
+      "module": "tools.edit.edge_extend",
+      "semantic_sha256": "f01476eaa15467b86120d25e937c3e6bfe94e6c4b46d11090b4323433c90daea",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "EdgeExtendTool",
+      "module": "tools.edit.edge_extend",
+      "semantic_sha256": "1c8700f3a1cf3d55a11d9af76f44668cbcf89dd3ac68bc4b37107317de16ee15",
+      "signature": "void(string name)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "EdgeExtendTool",
+      "module": "tools.edit.edge_extend",
+      "semantic_sha256": "546262f78f4e5e63dca7218a94ce12a4582e77d9023b3b37c6cdb6f9f52afdbf",
+      "signature": "void(ref VectorStack vts)",
+      "symbol": "update"
+    },
+    {
+      "aggregate": "EdgeExtrudeTool",
+      "module": "tools.edit.edge_extrude",
+      "semantic_sha256": "aafb54dc5b7e706047ebfea6318e70555e5bc1df1871c228d54a2e66e73e6f99",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "EdgeExtrudeTool",
+      "module": "tools.edit.edge_extrude",
+      "semantic_sha256": "c0b879d5c71676620805baa6fe07c85328c4ee2b6a237f62b3555de019f2269c",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "EdgeExtrudeTool",
+      "module": "tools.edit.edge_extrude",
+      "semantic_sha256": "faa816189d3021af9a62bdb189d73719db6b1f1e192945b9cb122d7cf6c1ce46",
+      "signature": "void(string name)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "PolyBevelTool",
+      "module": "tools.edit.poly_bevel",
+      "semantic_sha256": "aafb54dc5b7e706047ebfea6318e70555e5bc1df1871c228d54a2e66e73e6f99",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "PolyBevelTool",
+      "module": "tools.edit.poly_bevel",
+      "semantic_sha256": "68c0481fd6eb04fb0c86b2faf61636476977d35466ef58724d3b9a83c955dfd4",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "PolyBevelTool",
+      "module": "tools.edit.poly_bevel",
+      "semantic_sha256": "faa816189d3021af9a62bdb189d73719db6b1f1e192945b9cb122d7cf6c1ce46",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "PolyExtrudeTool",
+      "module": "tools.edit.poly_extrude",
+      "semantic_sha256": "aafb54dc5b7e706047ebfea6318e70555e5bc1df1871c228d54a2e66e73e6f99",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "PolyExtrudeTool",
+      "module": "tools.edit.poly_extrude",
+      "semantic_sha256": "78488ad7011555fba40a02e7d858152078e881510a9f4021a9361abe32b00afa",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "PolyExtrudeTool",
+      "module": "tools.edit.poly_extrude",
+      "semantic_sha256": "faa816189d3021af9a62bdb189d73719db6b1f1e192945b9cb122d7cf6c1ce46",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "PolyInsetTool",
+      "module": "tools.edit.poly_inset_tool",
+      "semantic_sha256": "aafb54dc5b7e706047ebfea6318e70555e5bc1df1871c228d54a2e66e73e6f99",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "PolyInsetTool",
+      "module": "tools.edit.poly_inset_tool",
+      "semantic_sha256": "18101145a3ef33274b4494c4aa5519ebc86cd915497ade139d6800d8df50d06c",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "PolyInsetTool",
+      "module": "tools.edit.poly_inset_tool",
+      "semantic_sha256": "faa816189d3021af9a62bdb189d73719db6b1f1e192945b9cb122d7cf6c1ce46",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "ReductionTool",
+      "module": "tools.edit.reduce",
+      "semantic_sha256": "d4c3e2c3f5b88e8999f4df900e9985472e616a59fac6659149857978d5bbb6f2",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "ReductionTool",
+      "module": "tools.edit.reduce",
+      "semantic_sha256": "c95460edbee65fb5eeaecf565baed123eafe59881e386606ed98d8c7634879ec",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "ReductionTool",
+      "module": "tools.edit.reduce",
+      "semantic_sha256": "faa816189d3021af9a62bdb189d73719db6b1f1e192945b9cb122d7cf6c1ce46",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "TackTool",
+      "module": "tools.edit.tack",
+      "semantic_sha256": "d2eece331343cf16475a27cd009c9a49876b8a4b43084e08228a94bb817979af",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "TackTool",
+      "module": "tools.edit.tack",
+      "semantic_sha256": "6adcb22924664990fa4cf797b8618f7fc007f798b2da3f6605af559be823d95e",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "TopologyPenTool",
+      "module": "tools.edit.topology_pen.tool",
+      "semantic_sha256": "af582cc4c8ab279e53dc2a3cc1fd3813695f4e903ac5acc33402d35bb6a49d03",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "TopologyPenTool",
+      "module": "tools.edit.topology_pen.tool",
+      "semantic_sha256": "784bda7c4a3b077473179c48acf83bc27f04a6e4b3198780397c4b899f14737f",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "TopologyPenTool",
+      "module": "tools.edit.topology_pen.tool",
+      "semantic_sha256": "16a63e3246e6866635059688c74a22eaa43288f38bcf32ac8e27d8ee3b4bd7c0",
+      "signature": "void(ref VectorStack vts)",
+      "symbol": "update"
+    },
+    {
+      "aggregate": "VertexMergeTool",
+      "module": "tools.edit.vert_merge_tool",
+      "semantic_sha256": "aafb54dc5b7e706047ebfea6318e70555e5bc1df1871c228d54a2e66e73e6f99",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "VertexMergeTool",
+      "module": "tools.edit.vert_merge_tool",
+      "semantic_sha256": "18101145a3ef33274b4494c4aa5519ebc86cd915497ade139d6800d8df50d06c",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "VertexMergeTool",
+      "module": "tools.edit.vert_merge_tool",
+      "semantic_sha256": "faa816189d3021af9a62bdb189d73719db6b1f1e192945b9cb122d7cf6c1ce46",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "VertexBevelTool",
+      "module": "tools.edit.vertex_bevel_tool",
+      "semantic_sha256": "aafb54dc5b7e706047ebfea6318e70555e5bc1df1871c228d54a2e66e73e6f99",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "VertexBevelTool",
+      "module": "tools.edit.vertex_bevel_tool",
+      "semantic_sha256": "e9fd12759d155197d0e381aaeffc648a8f63b0f33a00d813001093f280c6e232",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "VertexBevelTool",
+      "module": "tools.edit.vertex_bevel_tool",
+      "semantic_sha256": "faa816189d3021af9a62bdb189d73719db6b1f1e192945b9cb122d7cf6c1ce46",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "VertexExtrudeTool",
+      "module": "tools.edit.vertex_extrude_tool",
+      "semantic_sha256": "aafb54dc5b7e706047ebfea6318e70555e5bc1df1871c228d54a2e66e73e6f99",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "VertexExtrudeTool",
+      "module": "tools.edit.vertex_extrude_tool",
+      "semantic_sha256": "37ba42f1765bece6e7a11511298113cb1fa8a42b5b5d4c906857b13d07195e54",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "VertexExtrudeTool",
+      "module": "tools.edit.vertex_extrude_tool",
+      "semantic_sha256": "faa816189d3021af9a62bdb189d73719db6b1f1e192945b9cb122d7cf6c1ce46",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "EdgeSliceTool",
+      "module": "tools.slice.edge_slice_tool",
+      "semantic_sha256": "aafb54dc5b7e706047ebfea6318e70555e5bc1df1871c228d54a2e66e73e6f99",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "EdgeSliceTool",
+      "module": "tools.slice.edge_slice_tool",
+      "semantic_sha256": "51c8efb126c58975e2beb9be3392d769ea18735375ebd16d00f54a14558634c4",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "EdgeSliceTool",
+      "module": "tools.slice.edge_slice_tool",
+      "semantic_sha256": "673640caef1398d914245f007fad0d06a8968588d0ffd6c63ce4d5b347685f95",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "LoopSliceTool",
+      "module": "tools.slice.loop_slice_tool",
+      "semantic_sha256": "aafb54dc5b7e706047ebfea6318e70555e5bc1df1871c228d54a2e66e73e6f99",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "LoopSliceTool",
+      "module": "tools.slice.loop_slice_tool",
+      "semantic_sha256": "b16baa468d5f1b47710e3b4ad985553a95d14bc5b52cc360d4b5541163d2c3c4",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "LoopSliceTool",
+      "module": "tools.slice.loop_slice_tool",
+      "semantic_sha256": "094613f44792d2bc46e9ea7bc304be64e819a8204c53ae971ad2c49ddac45007",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "SliceTool",
+      "module": "tools.slice.slice_tool",
+      "semantic_sha256": "8de5b18e3f3a99a9bb1303686e5e6f54c795c8dd46ec66d5315a6a707f64d56d",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "SliceTool",
+      "module": "tools.slice.slice_tool",
+      "semantic_sha256": "c6620c7c24ea0dd40fb731fb32d4879abb9168705ae88d16d6569d9bc48ba633",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "SliceTool",
+      "module": "tools.slice.slice_tool",
+      "semantic_sha256": "7cc045b6aa3d6a7e5532283ef25e5930384a444707bff3e4e5d4c3143f361391",
+      "signature": "void(string pname)",
+      "symbol": "onParamChanged"
+    },
+    {
+      "aggregate": "MoveTool",
+      "module": "tools.transform.move",
+      "semantic_sha256": "9748d2d2ca572925f1b739690f081cb8bbc33855ed79ec9496b1a9c93a20c767",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "MoveTool",
+      "module": "tools.transform.move",
+      "semantic_sha256": "cfcb222d97ee28be7a73326f8d51ab74093d836f2b193cb0b20e524acfb8dbba",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "MoveTool",
+      "module": "tools.transform.move",
+      "semantic_sha256": "c2576125d093ceb008c61774033e562e38f7fc8478b0916e5e90f34c02d260f2",
+      "signature": "void(ref VectorStack vts)",
+      "symbol": "update"
+    },
+    {
+      "aggregate": "RotateTool",
+      "module": "tools.transform.rotate",
+      "semantic_sha256": "d966558aa2b8ba18a5731eea56c905fbdccfed339612fb696039fcea01663adb",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "RotateTool",
+      "module": "tools.transform.rotate",
+      "semantic_sha256": "69fc3cd4c45f548bc0348b8232f612c8d55ccf4b657db73dcacaf3e47aa391c5",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "RotateTool",
+      "module": "tools.transform.rotate",
+      "semantic_sha256": "e8f8de12edcec914229a95c08193e5bb554190c48a88634c07709b54ce48facc",
+      "signature": "void(ref VectorStack vts)",
+      "symbol": "update"
+    },
+    {
+      "aggregate": "ScaleTool",
+      "module": "tools.transform.scale",
+      "semantic_sha256": "8eb50f78688edb3771642e8a07abdb06b7d48afcbf5f3f1b03044931e3cb67ff",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "ScaleTool",
+      "module": "tools.transform.scale",
+      "semantic_sha256": "9a962121454efcd04a7e717f6106908d57f216bef16eb6b1fba492312a86543a",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "ScaleTool",
+      "module": "tools.transform.scale",
+      "semantic_sha256": "451d97cd788d6291951fad7425f84e6378c15582144b2e2fa2d2d8b5d04ecbbb",
+      "signature": "void(ref VectorStack vts)",
+      "symbol": "update"
+    },
+    {
+      "aggregate": "TransformTool",
+      "module": "tools.transform.transform",
+      "semantic_sha256": "7fd01b18da7b9b2f2a7bf71a278d62c13fe70a8597c3bc656eaf22a88a668b97",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "TransformTool",
+      "module": "tools.transform.transform",
+      "semantic_sha256": "3e59444213494ece3b8d16b0985bc9c432c43ab01e1e70d57e6ba4b0836a2f47",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "XfrmTransformTool",
+      "module": "tools.transform.xfrm_transform",
+      "semantic_sha256": "5311bbdab1c8a0bf29bb289605c5a6f1c60bc0f46ceefc0ec71e40f2aeccaa26",
+      "signature": "void()",
+      "symbol": "activate"
+    },
+    {
+      "aggregate": "XfrmTransformTool",
+      "module": "tools.transform.xfrm_transform",
+      "semantic_sha256": "4c68c584082fc14dd8d1a01b5a62c2d9000ce91f0490f9641f4a42446f06893f",
+      "signature": "void()",
+      "symbol": "deactivate"
+    },
+    {
+      "aggregate": "XfrmTransformTool",
+      "module": "tools.transform.xfrm_transform",
+      "semantic_sha256": "d15fd8518e0fb33367c4577bee8e9c2de35df460c83aabf4db20b18e1e59c8b2",
+      "signature": "void(ref VectorStack vts)",
+      "symbol": "update"
+    },
+    {
+      "aggregate": "XfrmTransformTool",
+      "module": "tools.transform.xfrm_transform",
+      "semantic_sha256": "26f44137a30b1aa678f4d86f0c54296515097bc3eb769e1b9a36aebfd68ac51b",
+      "signature": "void(string name)",
+      "symbol": "onParamChanged"
+    }
+  ],
+  "internal_publishers": [
+    {
+      "line": 76,
+      "path": "source/prepared_tool_transition.d",
+      "symbol": "prepareArm"
+    },
+    {
+      "line": 102,
+      "path": "source/prepared_tool_transition.d",
+      "symbol": "commitPreparedArm"
+    }
+  ],
+  "params": [
+    {
+      "aggregate": "Tool",
+      "module": "tool",
+      "semantic_sha256": "c7221e1192cef51aa9d2ab86a2200fac852bd254ed01b295bd47b2923204ecc5",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "ArrayTool",
+      "module": "tools.alignment.array_tool",
+      "semantic_sha256": "9c9dabab333efa0439095e94a42ae96d81b4b161fa08e0bedad8d9a8df3ded17",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "LinearAlignTool",
+      "module": "tools.alignment.linear_align_tool",
+      "semantic_sha256": "bc523e1e97fe2d03322142a17af26e1bc4db1bec82236679038b3b604210f86b",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "MirrorTool",
+      "module": "tools.alignment.mirror",
+      "semantic_sha256": "44a6cd2975511cfb3bef6605e59ae92a8469d560a4bf3a8f4e6c89380a52862c",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "RadialAlignTool",
+      "module": "tools.alignment.radial_align_tool",
+      "semantic_sha256": "221da3e44de49dbed663ebce38ebb4163f8ea95ec410a71b2f4f5a9e201f45a8",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "RadialArrayTool",
+      "module": "tools.alignment.radial_array_tool",
+      "semantic_sha256": "afe711cd0a848e39028123e9e1b9be10ba961fa698ddb7c8d5fc2810389cb711",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "RadialSweepTool",
+      "module": "tools.alignment.radial_sweep_tool",
+      "semantic_sha256": "00ffb347b5633b44b1149be5d93b5ad6785de4810793cd27e57f699dfd8ff2ca",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "CommandWrapperTool",
+      "module": "tools.common.command_wrapper",
+      "semantic_sha256": "ec9c3c2b4bf4a923012df35a8df6bfc9562ae58c84744452971a615a8946cc0b",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "ArcTool",
+      "module": "tools.create.arc",
+      "semantic_sha256": "a3967b003cb1633c61e7a389cff6440d5c3dc4166461d2d63c71bffda02a8a31",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "BoxTool",
+      "module": "tools.create.box",
+      "semantic_sha256": "fa800dec8c70b7b0da0ed709c469f29f57a0f8b45209eda4b8b078fe066ffa1b",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "CapsuleTool",
+      "module": "tools.create.capsule",
+      "semantic_sha256": "6d2ac918cd9d89ca82d3782d61c42c375ed410247bdec773e72805cae67b8684",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "ConeTool",
+      "module": "tools.create.cone",
+      "semantic_sha256": "319f3a389ff9d558dc0cdbfbb5196023d943a0ede34be5fcc7318cf1a928f3d6",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "CylinderTool",
+      "module": "tools.create.cylinder",
+      "semantic_sha256": "4d651e39bc9bc41abbae0895eebaa2defd44ba639f1e9d46a0d4dcc8c7e0cb46",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "PenTool",
+      "module": "tools.create.pen",
+      "semantic_sha256": "68311c684060f8c1d5f3a3fcc19920b8ff256fb545a7c23010eadc3fd6ea37b0",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "SphereTool",
+      "module": "tools.create.sphere",
+      "semantic_sha256": "0085dd31075805d175da07deef7b4f0f53a6ea7320630f6b4a9dec104370eb2a",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "TorusTool",
+      "module": "tools.create.torus",
+      "semantic_sha256": "21b91b5277b8599cc195cdb8af877a04423afb6abf7b2bcf54e25469043a0685",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "TubeTool",
+      "module": "tools.create.tube",
+      "semantic_sha256": "7e0f397b488d556bc3421f22d3faaacf7c2d85922c667c42afb20fb15cb61c7c",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "VertexTool",
+      "module": "tools.create.vertex_place",
+      "semantic_sha256": "c7221e1192cef51aa9d2ab86a2200fac852bd254ed01b295bd47b2923204ecc5",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "BendTool",
+      "module": "tools.deform.bend",
+      "semantic_sha256": "0031403f85ecf2b37195c5ff5363b75b05f8647e88e110a7c0af9a673f0642dd",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "MagnetTool",
+      "module": "tools.deform.magnet",
+      "semantic_sha256": "bfbcc4a8387b48b914e8b8c5100b4cbe03ea112ccdca3b30bafa0755a3f21b06",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "PushTool",
+      "module": "tools.deform.push",
+      "semantic_sha256": "8908737deadb3f9ee08f82c364afd706687ffc1df8f191204fc0db44eb94ace8",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "SmoothShiftTool",
+      "module": "tools.deform.smooth_shift_tool",
+      "semantic_sha256": "23b730309487569d4ff6c8a39cd701839ac75b2356012b84eb9b06d2d35477f3",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "StrokeExtrudeTool",
+      "module": "tools.deform.stroke_extrude_tool",
+      "semantic_sha256": "9fa05846934fabdce0cf01413e8199434927ccfea3eaaaa58a1e80956a9db291",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "BridgeTool",
+      "module": "tools.edit.bridge_tool",
+      "semantic_sha256": "ec6a460377907665c1928c0b7c5baea849add954f82544928f04263bac42114c",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "DragWeldTool",
+      "module": "tools.edit.drag_weld",
+      "semantic_sha256": "c7221e1192cef51aa9d2ab86a2200fac852bd254ed01b295bd47b2923204ecc5",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "EdgeBevelTool",
+      "module": "tools.edit.edge_bevel",
+      "semantic_sha256": "a3ffdf76c5fc602af6be5333855f4a36482008a62842800047dd9cf10496e95c",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "EdgeExtendTool",
+      "module": "tools.edit.edge_extend",
+      "semantic_sha256": "a9e15f5d6a4e6e6ed351f4271c16fc5bb6a972e78cfb5e0e8d153fa343b8b21c",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "EdgeExtrudeTool",
+      "module": "tools.edit.edge_extrude",
+      "semantic_sha256": "18f4614d2ffc7253bcc42fb36f2f9ee96989f7991f331090ffaf40a48d4f9fb4",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "PolyBevelTool",
+      "module": "tools.edit.poly_bevel",
+      "semantic_sha256": "ee6512085a1d77b6a559c7d7c9dc04548a2b6790a97eeef3a6ebe70e3801c5e5",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "PolyExtrudeTool",
+      "module": "tools.edit.poly_extrude",
+      "semantic_sha256": "272d926fb56947d04f267a65533dade30b36d71e805f93e8492ce893a8ab347d",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "PolyInsetTool",
+      "module": "tools.edit.poly_inset_tool",
+      "semantic_sha256": "1279d0d8355710fd0ed4dca22492520241cb927952404c919802e95d08b9d599",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "ReductionTool",
+      "module": "tools.edit.reduce",
+      "semantic_sha256": "99697e140a3600e61ae5544bc92bb08e05aac8ab82e11dd50ea3abb79aa3a6c0",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "TackTool",
+      "module": "tools.edit.tack",
+      "semantic_sha256": "34f47a5a88026bf10a272ceb75796bf68f786e8bfcd54136500d5ca3a29cf15b",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "TopologyPenTool",
+      "module": "tools.edit.topology_pen.tool",
+      "semantic_sha256": "2bb2d90f89990c58c595b269e9202c46a36831591204501977d97f50fd84362d",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "VertexMergeTool",
+      "module": "tools.edit.vert_merge_tool",
+      "semantic_sha256": "f80a82b4d64fc1d656d9dc0c3ac74bdc8343f1dd28c81cc29a450ff0d4d2d54b",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "VertexBevelTool",
+      "module": "tools.edit.vertex_bevel_tool",
+      "semantic_sha256": "a48dc74ff98137c061902ad33adee5d0e72c3fbedb56313d463f238ca92dd036",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "VertexExtrudeTool",
+      "module": "tools.edit.vertex_extrude_tool",
+      "semantic_sha256": "1bacdc5ec3febc1c9522fda75be4c52ffeea787a808a5446c88663a919e4d77a",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "EdgeSliceTool",
+      "module": "tools.slice.edge_slice_tool",
+      "semantic_sha256": "e4bff7bf8fc35d913baac9b28a2da1ad7f133bba83d5f8fa5e1c97d2a67c3d91",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "LoopSliceTool",
+      "module": "tools.slice.loop_slice_tool",
+      "semantic_sha256": "0e0fff3289f9bb33aee5126af347020fba20e63756decad1d5976cf1f8c2108f",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "SliceTool",
+      "module": "tools.slice.slice_tool",
+      "semantic_sha256": "2bd3784f6d56d912693be4bdb930d83d43bd2c8132e34c80a237614decd04839",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "RotateTool",
+      "module": "tools.transform.rotate",
+      "semantic_sha256": "ed3213edcc1eef7f049f421b0137c96f19a51a0f23b299f40b4f1aa7ef99b18b",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "ScaleTool",
+      "module": "tools.transform.scale",
+      "semantic_sha256": "f1c92e5665855324ebfe817885e7de976c7ac07005e14f6ba0055d4485ce2c63",
+      "signature": "Param[]()",
+      "symbol": "params"
+    },
+    {
+      "aggregate": "XfrmTransformTool",
+      "module": "tools.transform.xfrm_transform",
+      "semantic_sha256": "bb7b99866037bdc0bfdfda7ae2fe4bee1d3e6597c3ae32e910f5dacddd5e3723",
+      "signature": "Param[]()",
+      "symbol": "params"
+    }
+  ],
+  "products": [
+    {
+      "aggregate": "ArcTool",
+      "module": "tools.create.arc",
+      "signature": "ArcTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "ArrayTool",
+      "module": "tools.alignment.array_tool",
+      "signature": "ArrayTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "BendTool",
+      "module": "tools.deform.bend",
+      "signature": "BendTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "BoxTool",
+      "module": "tools.create.box",
+      "signature": "BoxTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "BridgeTool",
+      "module": "tools.edit.bridge_tool",
+      "signature": "BridgeTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "CapsuleTool",
+      "module": "tools.create.capsule",
+      "signature": "CapsuleTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "CloneTool",
+      "module": "tools.alignment.clone_tool",
+      "signature": "CloneTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "ConeTool",
+      "module": "tools.create.cone",
+      "signature": "ConeTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "CylinderTool",
+      "module": "tools.create.cylinder",
+      "signature": "CylinderTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "DragWeldTool",
+      "module": "tools.edit.drag_weld",
+      "signature": "DragWeldTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "EdgeBevelTool",
+      "module": "tools.edit.edge_bevel",
+      "signature": "EdgeBevelTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "EdgeExtendTool",
+      "module": "tools.edit.edge_extend",
+      "signature": "EdgeExtendTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "EdgeExtrudeTool",
+      "module": "tools.edit.edge_extrude",
+      "signature": "EdgeExtrudeTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "EdgeSliceTool",
+      "module": "tools.slice.edge_slice_tool",
+      "signature": "EdgeSliceTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "EdgeSlideTool",
+      "module": "tools.slice.edge_slide",
+      "signature": "EdgeSlideTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "LinearAlignTool",
+      "module": "tools.alignment.linear_align_tool",
+      "signature": "LinearAlignTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "LoopSliceTool",
+      "module": "tools.slice.loop_slice_tool",
+      "signature": "LoopSliceTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "MagnetTool",
+      "module": "tools.deform.magnet",
+      "signature": "MagnetTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "MirrorTool",
+      "module": "tools.alignment.mirror",
+      "signature": "MirrorTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "PenTool",
+      "module": "tools.create.pen",
+      "signature": "PenTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "PolyBevelTool",
+      "module": "tools.edit.poly_bevel",
+      "signature": "PolyBevelTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "PolyExtrudeTool",
+      "module": "tools.edit.poly_extrude",
+      "signature": "PolyExtrudeTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "PolyInsetTool",
+      "module": "tools.edit.poly_inset_tool",
+      "signature": "PolyInsetTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "PushTool",
+      "module": "tools.deform.push",
+      "signature": "PushTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "RadialAlignTool",
+      "module": "tools.alignment.radial_align_tool",
+      "signature": "RadialAlignTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "RadialArrayTool",
+      "module": "tools.alignment.radial_array_tool",
+      "signature": "RadialArrayTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "RadialSweepTool",
+      "module": "tools.alignment.radial_sweep_tool",
+      "signature": "RadialSweepTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "ReductionTool",
+      "module": "tools.edit.reduce",
+      "signature": "ReductionTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "SliceTool",
+      "module": "tools.slice.slice_tool",
+      "signature": "SliceTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "SmoothShiftTool",
+      "module": "tools.deform.smooth_shift_tool",
+      "signature": "SmoothShiftTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "SphereTool",
+      "module": "tools.create.sphere",
+      "signature": "SphereTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "StrokeExtrudeTool",
+      "module": "tools.deform.stroke_extrude_tool",
+      "signature": "StrokeExtrudeTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "TackTool",
+      "module": "tools.edit.tack",
+      "signature": "TackTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "TopologyPenTool",
+      "module": "tools.edit.topology_pen.tool",
+      "signature": "TopologyPenTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "TorusTool",
+      "module": "tools.create.torus",
+      "signature": "TorusTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "TubeTool",
+      "module": "tools.create.tube",
+      "signature": "TubeTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "VertexBevelTool",
+      "module": "tools.edit.vertex_bevel_tool",
+      "signature": "VertexBevelTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "VertexExtrudeTool",
+      "module": "tools.edit.vertex_extrude_tool",
+      "signature": "VertexExtrudeTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "VertexMergeTool",
+      "module": "tools.edit.vert_merge_tool",
+      "signature": "VertexMergeTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "VertexTool",
+      "module": "tools.create.vertex_place",
+      "signature": "VertexTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "XfrmJitterTool",
+      "module": "tools.common.command_wrapper",
+      "signature": "XfrmJitterTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "XfrmQuantizeTool",
+      "module": "tools.common.command_wrapper",
+      "signature": "XfrmQuantizeTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "XfrmSmoothTool",
+      "module": "tools.common.command_wrapper",
+      "signature": "XfrmSmoothTool",
+      "symbol": "factoryProduct"
+    },
+    {
+      "aggregate": "XfrmTransformTool",
+      "module": "tools.transform.xfrm_transform",
+      "signature": "XfrmTransformTool",
+      "symbol": "factoryProduct"
+    }
+  ],
+  "surfaces": [
+    {
+      "aggregate": "<module>",
+      "classification": "LegacyDoor",
+      "module": "app",
+      "prepared_delegations": 0,
+      "semantic_sha256": "0b5934c9124817a9e8bb18cec0c037abcbe3195d45bc48c4fb3548de0f7f73f5",
+      "symbol": "activateToolById"
+    },
+    {
+      "aggregate": "ToolSetCommand",
+      "classification": "LegacyDoor",
+      "module": "commands.tool.set",
+      "prepared_delegations": 0,
+      "semantic_sha256": "2fb479d7e486a1381c49758ddce832e746938fbbffd77526ec3b65104c49a4f5",
+      "symbol": "applyImpl"
+    }
+  ]
+}

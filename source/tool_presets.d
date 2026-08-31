@@ -3,8 +3,11 @@ module tool_presets;
 import std.format : format;
 import std.json : JSONValue;
 
-import registry         : Registry;
+import registry         : Registry, ToolFactory, typedToolFactory;
 import tool             : Tool, ToolFlag;
+import tools.transform.xfrm_transform : XfrmTransformTool;
+import tools.deform.push : PushTool;
+import tools.deform.smooth_shift_tool : SmoothShiftTool;
 import toolpipe.pipeline : g_pipeCtx;
 import params : Param, ParamProvider, injectParamsInto, parseInto;
 import prefs  : g_prefs, Prefs;
@@ -332,14 +335,15 @@ void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
         // `foreach (ref)` over array elements closes by reference,
         // every closure would otherwise share the last iteration's
         // preset). The `presetCopy` parameter trick forces a copy.
-        Tool delegate() makeFactory(ToolPreset presetCopy) {
-            return () {
+        ToolFactory makeFactory(T)(ToolPreset presetCopy) {
+            return typedToolFactory!T(() {
                 auto baseFactory = presetCopy.base in reg.toolFactories;
                 if (baseFactory is null)
                     throw new Exception(format(
                         "tool_presets: base '%s' for preset '%s' vanished",
                         presetCopy.base, presetCopy.id));
-                auto t = (*baseFactory)();
+                auto t = cast(T)(*baseFactory)();
+                assert(t !is null, "typed preset base factory descriptor drift");
                 t.presetFlags = presetCopy.flags;
                 if (presetCopy.toolAttrs.length > 0)
                     applyToolAttrs(t, presetCopy.toolAttrs, presetCopy.id);
@@ -350,7 +354,7 @@ void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
                 // (cacheSupportedModes / fv.toolAttrs build-and-discard a
                 // factory purely to enumerate params(), never activating).
                 return t;
-            };
+            });
         }
         void delegate() makePreActivate(ToolPreset presetCopy) {
             return () {
@@ -363,7 +367,25 @@ void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
                 }
             };
         }
-        reg.toolFactories[p.id] = makeFactory(p);
+        ToolFactory typedPresetFactory;
+        switch (p.base) {
+            case "move":
+            case "rotate":
+            case "scale":
+            case "xfrm.transform":
+                typedPresetFactory = makeFactory!XfrmTransformTool(p);
+                break;
+            case "xfrm.push":
+                typedPresetFactory = makeFactory!PushTool(p);
+                break;
+            case "mesh.smoothShiftTool":
+                typedPresetFactory = makeFactory!SmoothShiftTool(p);
+                break;
+            default:
+                throw new Exception(format(
+                    "tool_presets: preset '%s' has undescribed typed base '%s'", p.id, p.base));
+        }
+        reg.toolFactories[p.id] = typedPresetFactory;
         reg.preActivate[p.id]   = makePreActivate(p);
     }
 }

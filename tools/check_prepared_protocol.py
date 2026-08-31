@@ -5,8 +5,250 @@ import re
 import subprocess
 import sys
 import tempfile
+import json
+import shutil
+
+from prepared_writer_census import scan as scan_writer_graph, canonical as canonical_writer_graph
 
 ROOT = Path(__file__).resolve().parents[1]
+DMD_FLAGS_RUN = subprocess.run(
+    ["dub", "describe", "--data=import-paths,string-import-paths,versions,debug-versions"],
+    cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+if DMD_FLAGS_RUN.returncode:
+    raise SystemExit("P1.0b.0 cannot obtain D compiler flags")
+DMD_FLAGS = DMD_FLAGS_RUN.stdout.split()
+
+def fail(message):
+    raise SystemExit(message)
+
+WRITER_MANIFEST_PATH = ROOT / "tools/prepared_writer_manifest.json"
+
+def writer_keys(rows):
+    return [(r.get("module", "registration"), r["aggregate"], r["symbol"], r.get("signature", "factory"))
+            for r in rows]
+
+def validate_writer_graph(actual, expected):
+    for section in ("hooks", "params", "factories", "products", "surfaces"):
+        keys = writer_keys(expected[section])
+        if len(keys) != len(set(keys)):
+            fail(f"P1.0b.0 duplicate {section} manifest row")
+        akeys = set(writer_keys(actual[section]))
+        ekeys = set(keys)
+        if akeys != ekeys:
+            fail(f"P1.0b.0 {section} symbol mismatch: missing={sorted(ekeys-akeys)} surplus={sorted(akeys-ekeys)}")
+    if actual.get("bypasses") != expected.get("bypasses"):
+        fail("P1.0b.0 activation/lifecycle bypass callsite set changed")
+    if canonical_writer_graph(actual) != canonical_writer_graph(expected):
+        fail("P1.0b.0 direct-body/product census changed with names intact")
+
+WRITER_MANIFEST = json.loads(WRITER_MANIFEST_PATH.read_text())
+CURRENT_WRITERS = scan_writer_graph(ROOT)
+validate_writer_graph(CURRENT_WRITERS, WRITER_MANIFEST)
+
+# One real compiler-backed ownership/signature gate for every reviewed root and
+# params provider. `isSame(parent, Aggregate)` excludes inherited-name matches.
+owned_rows = CURRENT_WRITERS["hooks"] + CURRENT_WRITERS["params"]
+modules = sorted({row["module"] for row in owned_rows})
+modules = sorted(set(modules) | {row["module"] for row in CURRENT_WRITERS["products"]})
+module_alias = {module: f"m{i}" for i, module in enumerate(modules)}
+with tempfile.TemporaryDirectory(prefix="vibe3d-writer-traits-") as td:
+    lines = ["module prepared_writer_traits;",
+             "import std.traits : ReturnType, Parameters, ParameterStorageClassTuple, functionAttributes;",
+             "import params : Param; import operator : VectorStack;",
+             "void expectedVoid() {} void expectedString(string value) {}",
+             "void expectedRef(ref VectorStack value) {} Param[] expectedParams() { return null; }"]
+    lines += [f"import {alias_} = {module};" for module, alias_ in module_alias.items()]
+    for i, row in enumerate(owned_rows):
+        owner = f"{module_alias[row['module']]}.{row['aggregate']}"
+        expected = {"void()": "expectedVoid", "void(string name)": "expectedString",
+                    "void(string pname)": "expectedString",
+                    "void(ref VectorStack vts)": "expectedRef",
+                    "Param[]()": "expectedParams"}.get(row["signature"])
+        if expected is None: fail("P1.0b.0 unreviewed exact signature: " + row["signature"])
+        lines += [f'static assert(__traits(hasMember, {owner}, "{row["symbol"]}"));',
+                  f'alias writerMember{i} = __traits(getMember, {owner}, "{row["symbol"]}");',
+                  f'static assert(__traits(isSame, __traits(parent, writerMember{i}), {owner}));',
+                  f'static assert(is(ReturnType!writerMember{i} == ReturnType!{expected}));',
+                  f'static assert(is(Parameters!writerMember{i} == Parameters!{expected}));',
+                  f'static assert(ParameterStorageClassTuple!writerMember{i} == ParameterStorageClassTuple!{expected});',
+                  f'static assert(functionAttributes!writerMember{i} == functionAttributes!{expected});']
+    for row in CURRENT_WRITERS["products"]:
+        product = f"{module_alias[row['module']]}.{row['aggregate']}"
+        lines.append(f"static assert(is({product} == class));")
+    path = Path(td) / "prepared_writer_traits.d"
+    path.write_text("\n".join(lines))
+    compile_traits = subprocess.run(["dmd", "-o-", *DMD_FLAGS, str(path)], cwd=ROOT,
+                                    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if compile_traits.returncode:
+        fail("P1.0b.0 compiler-backed owner/signature census failed:\n" + compile_traits.stdout)
+
+deactivations = [r for r in CURRENT_WRITERS["hooks"]
+                 if r["symbol"] == "deactivate" and r["module"] != "tool"]
+param_hooks = [r for r in CURRENT_WRITERS["hooks"]
+               if r["symbol"] == "onParamChanged" and r["module"] != "tool"]
+relevant_roots = [r for r in CURRENT_WRITERS["hooks"]
+                  if r["symbol"] in ("activate", "update", "onParamChanged")]
+if (len(deactivations), len(param_hooks), len(relevant_roots)) != (35, 25, 73):
+    fail("P1.0b.0 reviewed writer cardinality changed")
+
+# Mutation tests operate on copied production source and must be rejected by
+# the same bidirectional gate. They cover duplicates, new exact symbols in each
+# inventory, and a name-preserving newly reachable domain/callee.
+def mutation_rejected(edit, expected_message, expected=WRITER_MANIFEST, inspect=None):
+    with tempfile.TemporaryDirectory(prefix="vibe3d-writer-mut-") as td:
+        mutant_root = Path(td)
+        shutil.copytree(ROOT / "source/tools", mutant_root / "source/tools")
+        for name in ("tool.d", "registration.d", "tool_presets.d", "prepared_tool_transition.d"):
+            shutil.copy2(ROOT / "source" / name, mutant_root / "source" / name)
+        shutil.copy2(ROOT / "source/app.d", mutant_root / "source/app.d")
+        (mutant_root / "source/commands/tool").mkdir(parents=True)
+        shutil.copy2(ROOT / "source/commands/tool/set.d",
+                     mutant_root / "source/commands/tool/set.d")
+        (mutant_root / "config").mkdir()
+        shutil.copy2(ROOT / "config/tool_presets.yaml", mutant_root / "config/tool_presets.yaml")
+        edit(mutant_root)
+        actual = scan_writer_graph(mutant_root)
+        if inspect is not None:
+            inspect(actual)
+        try:
+            validate_writer_graph(actual, expected)
+        except SystemExit as error:
+            if expected_message not in str(error):
+                fail(f"P1.0b.0 mutation failed for wrong reason: {error}")
+            return True
+    return False
+
+duplicate = json.loads(json.dumps(WRITER_MANIFEST))
+duplicate["hooks"].append(duplicate["hooks"][0])
+try:
+    validate_writer_graph(CURRENT_WRITERS, duplicate)
+except SystemExit:
+    pass
+else:
+    fail("P1.0b.0 duplicate-row mutation did not fail")
+
+
+with tempfile.TemporaryDirectory(prefix="vibe3d-writer-signatures-") as td:
+    signature_source = Path(td) / "writer_signature_mutants.d"
+    signature_source.write_text(r'''module writer_signature_mutants;
+struct Param {}
+class Tool {
+    void deactivate() {}
+    void onParamChanged(string name) {}
+    Param[] params() { return []; }
+}
+class AddedDeactivate : Tool { override void deactivate() {} }
+class AddedParamHook : Tool { override void onParamChanged(string name) {} }
+class AddedParams : Tool { override Param[] params() { return []; } }
+''')
+    signature_compile = subprocess.run(["dmd", "-c", str(signature_source)], text=True,
+                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if signature_compile.returncode:
+        fail("P1.0b.0 added-symbol mutations are not valid D signatures:\n" + signature_compile.stdout)
+
+def add_reachable_override_set(root):
+    p = root / "source/tools/p1_census_mutant.d"
+    p.write_text("module tools.p1_census_mutant; import tool : Tool; import params : Param; "
+                 "class P1CensusMutant : Tool { "
+                 "override void deactivate() {} "
+                 "override void onParamChanged(string name) {} "
+                 "override Param[] params() { return []; } }")
+    registration = root / "source/registration.d"
+    registration.write_text(registration.read_text() +
+        '\nvoid p1ReachableMutant() { import tools.p1_census_mutant : P1CensusMutant; '
+        'reg.toolFactories["p1.reachable"] = typedToolFactory!P1CensusMutant('
+        '() { return new P1CensusMutant(); }); }\n')
+    compile_fixture = root / "p1_typed_registration_compile.d"
+    compile_fixture.write_text("module p1_typed_registration_compile; struct Param {} "
+        "class Tool { void deactivate() {} void onParamChanged(string name) {} "
+        "Param[] params() { return []; } } alias ToolFactory = Tool delegate(); "
+        "ToolFactory typedToolFactory(T : Tool)(T delegate() factory) { return () => factory(); } "
+        "class P1CensusMutant : Tool { override void deactivate() {} "
+        "override void onParamChanged(string name) {} override Param[] params() { return []; } } "
+        "struct Registry { ToolFactory[string] toolFactories; } "
+        "void register(ref Registry reg) { reg.toolFactories[\"p1.reachable\"] = "
+        "typedToolFactory!P1CensusMutant(() { return new P1CensusMutant(); }); }")
+    compiled = subprocess.run(["dmd", "-o-", str(compile_fixture)],
+                              cwd=root, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if compiled.returncode: fail("P1.0b.0 typed production-shape mutation does not compile:\n" + compiled.stdout)
+
+def inspect_reachable_override_set(actual):
+    expected = {
+        "hooks": {("P1CensusMutant", "deactivate"),
+                  ("P1CensusMutant", "onParamChanged")},
+        "params": {("P1CensusMutant", "params")},
+        "factories": {("<module>", 'toolFactories["p1.reachable"]')},
+        "products": {("P1CensusMutant", "factoryProduct")},
+    }
+    for section, required in expected.items():
+        discovered = {(row["aggregate"], row["symbol"]) for row in actual[section]}
+        if not required <= discovered:
+            fail(f"P1.0b.0 typed production-shape mutation was not discovered in {section}")
+
+if not mutation_rejected(add_reachable_override_set, "hooks symbol mismatch",
+                         inspect=inspect_reachable_override_set):
+    fail("P1.0b.0 added production factory/override/provider set did not fail")
+
+def change_factory_product(root):
+    p = root / "source/registration.d"
+    text = p.read_text()
+    anchor = 'reg.toolFactories["xfrm.push"] = typedToolFactory!PushTool(() {'
+    begin = text.find(anchor)
+    product = text.find("new PushTool(", begin)
+    if begin < 0 or product < 0: fail("P1.0b.0 factory product mutation anchor vanished")
+    p.write_text(text[:product] + "new BendTool(" + text[product + len("new PushTool("):])
+    compiled = subprocess.run(["dmd", "-o-", f"-I={root / 'source'}", *DMD_FLAGS, str(p)],
+                              cwd=root, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if compiled.returncode == 0:
+        fail("P1.0b.0 wrong concrete return unexpectedly passed typedToolFactory")
+if not mutation_rejected(change_factory_product, "direct-body/product census changed"):
+    fail("P1.0b.0 factory returned product/descriptor mismatch did not fail")
+
+for label, edit in (
+        ("missing", lambda m: m["products"].pop()),
+        ("stale", lambda m: m["factories"][0]["product_types"].append("StaleTool"))):
+    mutant_descriptor = json.loads(json.dumps(WRITER_MANIFEST))
+    edit(mutant_descriptor)
+    try:
+        validate_writer_graph(CURRENT_WRITERS, mutant_descriptor)
+    except SystemExit:
+        pass
+    else:
+        fail(f"P1.0b.0 {label} factory product descriptor mutation did not fail")
+
+def add_domain_without_renaming(root):
+    p = root / "source/tools/transform/transform.d"
+    text = p.read_text()
+    needle = "override void deactivate() {"
+    if needle not in text: fail("P1.0b.0 name-only mutation anchor vanished")
+    p.write_text(text.replace(needle, needle + " history.p1CensusWrite();", 1))
+if not mutation_rejected(add_domain_without_renaming, "direct-body/product census changed"):
+    fail("P1.0b.0 name-only/new-domain mutation did not fail")
+
+def add_ref_escape_without_renaming(root):
+    p = root / "source/tools/transform/transform.d"
+    text = p.read_text()
+    needle = "override void deactivate() {"
+    if needle not in text: fail("P1.0b.0 ref-escape mutation anchor vanished")
+    p.write_text(text.replace(needle, needle + " auto escaped = mesh.vertices[];", 1))
+if not mutation_rejected(add_ref_escape_without_renaming, "direct-body/product census changed"):
+    fail("P1.0b.0 name-preserving ref escape mutation did not fail")
+
+def add_bypass_callsite(root):
+    p = root / "source/prepared_tool_transition.d"
+    p.write_text(p.read_text() +
+        "\nbool p1Unauthorized(ref Tool active, CommandHistory history, ref ChangeBus bus, "
+        "ref PreparedArm prepared) nothrow { return commitPreparedArm(active, history, bus, prepared); }\n")
+    compiled = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(p)], cwd=root, text=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if compiled.returncode: fail("P1.0b.0 bypass mutation is not valid D:\n" + compiled.stdout)
+if not mutation_rejected(add_bypass_callsite, "activation/lifecycle bypass callsite set changed"):
+    fail("P1.0b.0 added activation/lifecycle bypass callsite did not fail")
+
+def bypass_gate(text):
+    return not re.search(r"\b(?:prepareArm|commitPreparedArm)\s*\(", text)
+if bypass_gate("void mutant() { prepareArm(); }"):
+    fail("P1.0b.0 direct activation bypass mutation did not fail")
 
 MANIFEST = {
     "prepared_tool_transition.prepareArm",

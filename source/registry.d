@@ -26,6 +26,26 @@ struct AppContext {
 alias ToolFactory    = Tool    delegate();
 alias CommandFactory = Command delegate();
 
+/// Behavior-neutral typed seam for the factory census. The inner delegate's
+/// concrete return type is checked by D; only the stored registry ABI widens
+/// it to Tool.
+ToolFactory typedToolFactory(T : Tool)(T delegate() factory) {
+    return () => cast(Tool) factory();
+}
+
+version (unittest) {
+    private final class _TypedFactoryTool : Tool {}
+    private _TypedFactoryTool _typedFactoryIndirect() {
+        return new _TypedFactoryTool();
+    }
+}
+
+unittest {
+    auto factory = typedToolFactory!_TypedFactoryTool(
+        () => _typedFactoryIndirect());
+    assert(cast(_TypedFactoryTool) factory() !is null);
+}
+
 alias PreActivate = void delegate();
 
 struct Registry {
