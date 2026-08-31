@@ -1,4 +1,9 @@
 module tools.common.command_wrapper;
+import prepared_tool_effect : PreparedParamDelta, PreparedParamKind;
+private struct WrapperPreparedParamHandle {
+    bool applyDirty, consumable;
+    @disable this(this);
+}
 
 import bindbc.sdl;
 
@@ -508,14 +513,36 @@ abstract class CommandWrapperTool : Tool, RefireClient {
         // buildRefireCommand() owns the mutation — don't queue an internal
         // preview (it would double-apply against the same baseline in the same
         // tick). Outside refire this is the legacy preview path.
-        if (refireDriving_) return;
+        auto prepared = prepareParamChange(name);
+        WrapperPreparedParamHandle handle;
+        if (validatePreparedParam(prepared, handle)) installLegacyPreparedParam(handle);
+    }
+
+private:
+    PreparedParamDelta prepareParamChange(string) const nothrow @nogc {
+        if (refireDriving_) return PreparedParamDelta.none(preparedToolStateOwner);
+        return PreparedParamDelta.dirty(preparedToolStateOwner);
+    }
+    bool validatePreparedParam(ref PreparedParamDelta prepared,
+                               out WrapperPreparedParamHandle handle) nothrow @nogc {
+        if (prepared.owner != preparedToolStateOwner) return false;
+        if (prepared.kind == PreparedParamKind.None) {
+            handle = WrapperPreparedParamHandle(false, true); return true;
+        }
+        if (prepared.kind != PreparedParamKind.DirtyFlag || !prepared.boolValue) return false;
+        handle = WrapperPreparedParamHandle(true, true); return true;
+    }
+    void installLegacyPreparedParam(ref WrapperPreparedParamHandle handle) nothrow @nogc {
+        if (!handle.consumable) return;
+        handle.consumable = false;
         // A schema widget changed — `evaluate()` will re-run the
         // preview next frame. Don't apply directly here: PropertyPanel
         // calls onParamChanged per-widget per-frame, evaluate() once
         // at the end, so a single frame with multiple slider tweaks
         // produces a single re-apply.
-        paramsDirty = true;
+        if (handle.applyDirty) paramsDirty = true;
     }
+public:
 
     override void evaluate() {
         if (meshPtr is null) return;
@@ -862,6 +889,35 @@ final class XfrmQuantizeTool : CommandWrapperTool {
     // no meaningful sphere to draw, so suppress the click-point handle.
     protected override bool drawsClickHandle() const { return false; }
 }
+
+unittest {
+    import mesh : makeCube;
+    Mesh m = makeCube();
+    View view = new View(0, 0, 800, 600);
+    auto tool = new XfrmJitterTool(&m, view, EditMode.Vertices, null);
+
+    tool.paramsDirty = false;
+    auto prepared = tool.prepareParamChange("amplitude");
+    assert(!tool.paramsDirty && prepared.kind == PreparedParamKind.DirtyFlag);
+    WrapperPreparedParamHandle handle;
+    assert(tool.validatePreparedParam(prepared, handle));
+    tool.installLegacyPreparedParam(handle);
+    assert(tool.paramsDirty);
+    tool.paramsDirty = false;
+    tool.installLegacyPreparedParam(handle);
+    assert(!tool.paramsDirty); // one-shot handle cannot replay
+
+    tool.refireDriving_ = true;
+    auto suppressed = tool.prepareParamChange("amplitude");
+    assert(suppressed.kind == PreparedParamKind.None);
+    assert(tool.validatePreparedParam(suppressed, handle));
+    tool.installLegacyPreparedParam(handle);
+    assert(!tool.paramsDirty);
+}
+
+static assert(!__traits(compiles, {
+    WrapperPreparedParamHandle a; WrapperPreparedParamHandle b = a;
+}));
 
 // task 0678 T7 — Shift+apply (task 0461) must work for wrapper tools: a dirty
 // session commits IN PLACE (one history entry, baseline advanced, dirty

@@ -103,6 +103,9 @@ TOOL_STATE_CONVERTED = {
     ("tools.alignment.mirror", "MirrorTool", "onParamChanged"),
     ("tools.edit.bridge_tool", "BridgeTool", "onParamChanged"),
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "onParamChanged"),
+    ("tool", "Tool", "onParamChanged"),
+    ("tools.common.command_wrapper", "CommandWrapperTool", "onParamChanged"),
+    ("tools.create.sphere", "SphereTool", "onParamChanged"),
 }
 all_hook_keys = {(r["module"], r["aggregate"], r["symbol"])
                  for r in CURRENT_WRITERS["hooks"]}
@@ -111,10 +114,13 @@ if not TOOL_STATE_CONVERTED <= all_hook_keys:
 TOOL_STATE_DEFERRED = all_hook_keys - TOOL_STATE_CONVERTED
 
 converted_sources = {
+    "source/tool.d": ("prepareBaseParam", "validateBaseParam", "installLegacyPreparedParam"),
     "source/tools/create/arc.d": ("prepareIdleState", "validatePreparedState", "installLegacyPreparedState"),
     "source/tools/alignment/mirror.d": ("prepareParamState", "validatePreparedState", "installLegacyPreparedState"),
     "source/tools/edit/bridge_tool.d": ("prepareParamState", "validatePreparedState", "installLegacyPreparedState"),
     "source/tools/transform/xfrm_transform.d": ("prepareParamState", "validatePreparedState", "installLegacyPreparedState"),
+    "source/tools/common/command_wrapper.d": ("prepareParamChange", "validatePreparedParam", "installLegacyPreparedParam"),
+    "source/tools/create/sphere.d": ("prepareAxisParam", "validatePreparedParam", "installLegacyPreparedParam"),
 }
 for relative, methods in converted_sources.items():
     source = (ROOT / relative).read_text()
@@ -122,7 +128,7 @@ for relative, methods in converted_sources.items():
         matches = list(re.finditer(r"\b" + method + r"\s*\([^;{}]*\)[^{;]*\bnothrow\b[^;{}]*\{", source))
         if len(matches) != 1:
             fail(f"P1.0b.1 {relative} {method} is not one exact nothrow seam")
-        if method == "installLegacyPreparedState":
+        if method.startswith("installLegacyPrepared"):
             body = source[matches[0].end():balanced_source(source, matches[0].end())-1]
             if re.search(r"\b(?:assert|enforce|throw)\b", body):
                 fail(f"P1.0b.1 {relative} installer has a throwable guard")
@@ -132,7 +138,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "62bd2f454cfa507a796ef30a5b1882e11e086469941cfcecdfdc0dd49aeff100"
+    "1500a754b4b9103d0ff8cc978ad874680a1a8f1e293e3bece17fadd7cbf91c64"
 def validate_deferred_rows(rows, require_canonical=True):
     keys = {(r["key"]["module"], r["key"]["aggregate"],
              r["key"]["symbol"], r["key"]["signature"]) for r in rows}
@@ -223,6 +229,38 @@ for relative, contract, wrong in tool_state_value_contracts:
     else:
         fail(f"P1.0b.1 {relative} wrong-value mutation did not RED")
 
+p1b2_param_contracts = (
+    ("source/tool.d", "PreparedParamDelta.none(preparedToolStateOwner)",
+     "PreparedParamDelta.dirty(preparedToolStateOwner)", "base no-op"),
+    ("source/tools/common/command_wrapper.d",
+     "if (refireDriving_) return PreparedParamDelta.none(preparedToolStateOwner);",
+     "if (!refireDriving_) return PreparedParamDelta.none(preparedToolStateOwner);",
+     "refire suppression"),
+    ("source/tools/common/command_wrapper.d",
+     "return PreparedParamDelta.dirty(preparedToolStateOwner);",
+     "return PreparedParamDelta.none(preparedToolStateOwner);", "dirty value"),
+    ("source/tools/create/sphere.d", "axisAtLastSync == 0 ? (i + 1) % 3",
+     "params_.axis == 0 ? (i + 1) % 3", "old-axis source"),
+    ("source/tools/create/sphere.d", "axisAtLastSync = handle.axis;",
+     "axisAtLastSync = params_.axis;", "final axis stamp"),
+    ("source/tools/create/sphere.d",
+     "if (prepared.intValue < 0 || prepared.intValue > 2) return false;",
+     "if (prepared.intValue < 0 || prepared.intValue > 3) return false;",
+     "illegal axis refusal"),
+)
+for relative, contract, wrong, label in p1b2_param_contracts:
+    source = (ROOT / relative).read_text()
+    def validate_p1b2_contract(candidate):
+        if candidate.count(contract) != 1:
+            fail(f"P1.0b.2 {label} contract changed")
+    validate_p1b2_contract(source)
+    mutant = source.replace(contract, wrong, 1)
+    try: validate_p1b2_contract(mutant)
+    except SystemExit as error:
+        if f"P1.0b.2 {label} contract changed" not in str(error):
+            fail(f"P1.0b.2 {label} mutation failed for wrong reason")
+    else: fail(f"P1.0b.2 {label} mutation did not RED")
+
 # Every adapter is pinned prepare -> validate -> install. Dropping or moving an
 # operation changes the already-frozen direct-body fingerprint; these explicit
 # controls prove all five converted rows participate in that gate.
@@ -235,7 +273,7 @@ for row in converted_rows:
     path = ROOT / "source" / Path(*row["module"].split("."))
     path = path.with_suffix(".d")
     source = path.read_text()
-    match = re.search(r"\boverride\s+void\s+" + row["symbol"] +
+    match = re.search(r"\b(?:override\s+)?void\s+" + row["symbol"] +
                       r"\s*\([^;{}]*\)\s*\{", source)
     if not match: fail("P1.0b.1 converted adapter body vanished")
     body = source[match.end():balanced_source(source, match.end())-1]

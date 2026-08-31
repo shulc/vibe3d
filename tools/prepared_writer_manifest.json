@@ -478,7 +478,7 @@
     {
       "aggregate": "Tool",
       "module": "tool",
-      "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "semantic_sha256": "3b74ac5ee8f681cb31e02f6b37ae47dd24d407751002f517bb689b1e53ec5bbe",
       "signature": "void(string name)",
       "symbol": "onParamChanged"
     },
@@ -611,7 +611,7 @@
     {
       "aggregate": "CommandWrapperTool",
       "module": "tools.common.command_wrapper",
-      "semantic_sha256": "cabd83ae2c74394f7afa454dc015a8ed803e4e39d612e0dbede5e345e4107fa9",
+      "semantic_sha256": "871ff252381fe29cda35f9615948b277860c60e6b6f188b264dbf2909ee97526",
       "signature": "void(string name)",
       "symbol": "onParamChanged"
     },
@@ -688,7 +688,7 @@
     {
       "aggregate": "SphereTool",
       "module": "tools.create.sphere",
-      "semantic_sha256": "8030fee913cc90f298b529625a29a498265ec88f407d6d09e62c5bbcf66300f9",
+      "semantic_sha256": "1d4e9bc0378820507cb1faf37c0ef19e094a9b0d7575348748c806797d6b1a97",
       "signature": "void(string name)",
       "symbol": "onParamChanged"
     },

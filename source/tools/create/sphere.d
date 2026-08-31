@@ -1,4 +1,9 @@
 module tools.create.sphere;
+import prepared_tool_effect : PreparedParamDelta, PreparedParamKind;
+private struct SpherePreparedParamHandle {
+    bool apply; int axis; float x, y, z; bool consumable;
+    @disable this(this);
+}
 
 import mesh;
 import math;
@@ -522,6 +527,10 @@ private:
     bool ellipsoidMode_;
 
 public:
+    version (unittest) {
+        void p1SetParams(SphereParams value) { params_ = value; }
+        SphereParams p1Params() const { return params_; }
+    }
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader, bool ellipsoidMode = false) {
         super(meshSrc, gpu, litShader);
         this.ellipsoidMode_ = ellipsoidMode;
@@ -593,26 +602,57 @@ public:
     }
 
     override void onParamChanged(string name) {
-        if (name != "axis") return;
-        if (params_.axis == axisAtLastSync) return;
+        auto prepared = prepareAxisParam(name);
+        SpherePreparedParamHandle handle;
+        if (validatePreparedParam(prepared, handle)) installLegacyPreparedParam(handle);
+    }
+
+private:
+    PreparedParamDelta prepareAxisParam(string name) const nothrow @nogc {
+        if (name != "axis" || params_.axis == axisAtLastSync)
+            return PreparedParamDelta.none(preparedToolStateOwner);
 
         // Re-permute sizeX/Y/Z so the sphere's WORLD extents along X/Y/Z are
         // unchanged across the axis switch — only the topology orientation
         // (where the poles point) rotates. Without this, the cyclic
         // permutation in buildSphereGlobe would visibly shuffle the radii
         // (sizeX→world Y for axis=Z, etc.).
-        int oldAxis = axisAtLastSync;
-        // Snapshot old-frame world radii before any writes.
-        float wx = worldRadiusUnderAxis(oldAxis, 0);
-        float wy = worldRadiusUnderAxis(oldAxis, 1);
-        float wz = worldRadiusUnderAxis(oldAxis, 2);
-        // params_.axis is already the new value — setWorldSize routes
-        // through the new permutation.
-        setWorldSize(0, wx);
-        setWorldSize(1, wy);
-        setWorldSize(2, wz);
-        axisAtLastSync = params_.axis;
+        float[3] oldSizes = [params_.sizeX, params_.sizeY, params_.sizeZ];
+        float[3] world;
+        foreach (i; 0 .. 3) {
+            int oldOrig = axisAtLastSync == 1 ? i :
+                (axisAtLastSync == 0 ? (i + 1) % 3 : (i + 2) % 3);
+            world[i] = oldSizes[oldOrig];
+        }
+        float[3] next;
+        foreach (i; 0 .. 3) {
+            int newOrig = params_.axis == 1 ? i :
+                (params_.axis == 0 ? (i + 1) % 3 : (i + 2) % 3);
+            next[newOrig] = world[i];
+        }
+        return PreparedParamDelta.sphereAxis(preparedToolStateOwner,
+            params_.axis, next[0], next[1], next[2]);
     }
+    bool validatePreparedParam(ref PreparedParamDelta prepared,
+                               out SpherePreparedParamHandle handle) nothrow @nogc {
+        if (prepared.owner != preparedToolStateOwner) return false;
+        if (prepared.kind == PreparedParamKind.None) {
+            handle = SpherePreparedParamHandle(false, 0, 0, 0, 0, true); return true;
+        }
+        if (prepared.kind != PreparedParamKind.SphereAxis) return false;
+        if (prepared.intValue < 0 || prepared.intValue > 2) return false;
+        handle = SpherePreparedParamHandle(true, prepared.intValue,
+            prepared.x, prepared.y, prepared.z, true);
+        return true;
+    }
+    void installLegacyPreparedParam(ref SpherePreparedParamHandle handle) nothrow @nogc {
+        if (!handle.consumable) return;
+        handle.consumable = false;
+        if (!handle.apply) return;
+        params_.sizeX = handle.x; params_.sizeY = handle.y; params_.sizeZ = handle.z;
+        axisAtLastSync = handle.axis;
+    }
+public:
 
     // Headless FULL override — see the class doc and task 0414 plan sec 1a.
     override bool applyHeadless() {
@@ -789,3 +829,46 @@ private:
         return 24;
     }
 }
+
+unittest {
+    Mesh owned;
+    auto tool = new SphereTool(() => &owned, null, LitShader.init);
+    SphereParams seed;
+    seed.sizeX = 2; seed.sizeY = 3; seed.sizeZ = 5; seed.axis = 0;
+    tool.p1SetParams(seed);
+    tool.axisAtLastSync = 1;
+    auto prepared = tool.prepareAxisParam("axis");
+    auto before = tool.p1Params;
+    assert(before.sizeX == 2 && before.sizeY == 3 && before.sizeZ == 5);
+    assert(prepared.x == 5 && prepared.y == 2 && prepared.z == 3);
+    SpherePreparedParamHandle handle;
+    assert(tool.validatePreparedParam(prepared, handle));
+    tool.installLegacyPreparedParam(handle);
+    auto after = tool.p1Params;
+    assert(after.sizeX == 5 && after.sizeY == 2 && after.sizeZ == 3);
+    assert(tool.axisAtLastSync == 0);
+    after.sizeX = 9; tool.p1SetParams(after);
+    tool.installLegacyPreparedParam(handle);
+    assert(tool.p1Params.sizeX == 9); // one-shot handle cannot replay
+
+    auto unrelated = tool.prepareAxisParam("sizeX");
+    assert(unrelated.kind == PreparedParamKind.None);
+    auto sameAxis = tool.prepareAxisParam("axis");
+    assert(sameAxis.kind == PreparedParamKind.None);
+
+    auto invalid = PreparedParamDelta.sphereAxis(prepared.owner, 3, 11, 12, 13);
+    SpherePreparedParamHandle refused;
+    assert(!tool.validatePreparedParam(invalid, refused));
+    assert(!refused.consumable && !refused.apply);
+    auto beforeRefusedInstall = tool.p1Params;
+    tool.installLegacyPreparedParam(refused);
+    auto afterRefusedInstall = tool.p1Params;
+    assert(afterRefusedInstall.sizeX == beforeRefusedInstall.sizeX &&
+           afterRefusedInstall.sizeY == beforeRefusedInstall.sizeY &&
+           afterRefusedInstall.sizeZ == beforeRefusedInstall.sizeZ);
+    assert(tool.axisAtLastSync == 0);
+}
+
+static assert(!__traits(compiles, {
+    SpherePreparedParamHandle a; SpherePreparedParamHandle b = a;
+}));

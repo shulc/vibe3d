@@ -29,6 +29,7 @@ enum PreparedEffectKind : ubyte {
 /// deliberately owned by each concrete tool installer; this is not a field
 /// offset or byte-decoding protocol.
 enum PreparedToolStateKind : ubyte { None, Bool, Int32, Vec3 }
+enum PreparedParamKind : ubyte { None, DirtyFlag, SphereAxis }
 
 @PreparedAggregate struct PreparedToolStateDelta {
     OwnedId owner;
@@ -53,6 +54,30 @@ enum PreparedToolStateKind : ubyte { None, Bool, Int32, Vec3 }
     static PreparedToolStateDelta vec3(OwnedId owner, float x, float y, float z) pure nothrow @safe @nogc {
         auto result = PreparedToolStateDelta(owner, PreparedToolStateKind.Vec3);
         result.x = x; result.y = y; result.z = z;
+        return result;
+    }
+}
+
+@PreparedAggregate struct PreparedParamDelta {
+    OwnedId owner;
+    PreparedParamKind kind;
+    bool boolValue;
+    int intValue;
+    float x, y, z;
+
+    static PreparedParamDelta none(OwnedId owner) pure nothrow @safe @nogc {
+        return PreparedParamDelta(owner, PreparedParamKind.None);
+    }
+    static PreparedParamDelta dirty(OwnedId owner) pure nothrow @safe @nogc {
+        auto result = PreparedParamDelta(owner, PreparedParamKind.DirtyFlag);
+        result.boolValue = true;
+        return result;
+    }
+    static PreparedParamDelta sphereAxis(OwnedId owner, int axis,
+                                          float x, float y, float z)
+                                          pure nothrow @safe @nogc {
+        auto result = PreparedParamDelta(owner, PreparedParamKind.SphereAxis);
+        result.intValue = axis; result.x = x; result.y = y; result.z = z;
         return result;
     }
 }
@@ -111,6 +136,7 @@ public:
     PreparedJournalEntry journal;
     PreparedCandidateHandle candidate;
     PreparedToolStateDelta toolState;
+    PreparedParamDelta param;
 }
 
 /// Recursive allow-by-construction check. OwnedBytes is the sole admitted

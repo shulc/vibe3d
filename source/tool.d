@@ -15,10 +15,14 @@ import change_bus : changeBus;
 import std.json : JSONValue;
 import tool_input : ToolAction, PassThrough, InputPhase, InputButton, InputMod,
                     ResetScope, InputBinding, resolveToolAction, resolveResetScope;
-import prepared_tool_effect : OwnedId;
+import prepared_tool_effect : OwnedId, PreparedParamDelta, PreparedParamKind;
 import core.atomic : atomicOp;
 
 private shared ulong nextPreparedToolOwnerId_;
+private struct ToolPreparedParamHandle {
+    bool consumable;
+    @disable this(this);
+}
 
 // ---------------------------------------------------------------------------
 // Tool flags — tool-level behaviour bits. The enum carries two kinds of bit:
@@ -372,7 +376,28 @@ public:
 
     // Called after a parameter value changes. Tools override to drive
     // their preview re-evaluation.
-    void onParamChanged(string name) {}
+    void onParamChanged(string name) {
+        auto prepared = prepareBaseParam(name);
+        ToolPreparedParamHandle handle;
+        if (validateBaseParam(prepared, handle)) installLegacyPreparedParam(handle);
+    }
+
+private:
+    PreparedParamDelta prepareBaseParam(string) const nothrow @nogc {
+        return PreparedParamDelta.none(preparedToolStateOwner);
+    }
+    bool validateBaseParam(ref PreparedParamDelta prepared,
+                           out ToolPreparedParamHandle handle) nothrow @nogc {
+        if (prepared.owner != preparedToolStateOwner ||
+            prepared.kind != PreparedParamKind.None) return false;
+        handle = ToolPreparedParamHandle(true);
+        return true;
+    }
+    void installLegacyPreparedParam(ref ToolPreparedParamHandle handle) nothrow @nogc {
+        if (!handle.consumable) return;
+        handle.consumable = false;
+    }
+public:
 
     // Whether the named parameter widget should be enabled.
     bool paramEnabled(string name) const { return true; }
@@ -770,7 +795,17 @@ unittest {
     auto second = new Tool();
     assert(first.preparedToolStateOwner.value != 0);
     assert(second.preparedToolStateOwner.value > first.preparedToolStateOwner.value);
+    auto prepared = first.prepareBaseParam("ignored");
+    ToolPreparedParamHandle handle;
+    assert(first.validateBaseParam(prepared, handle));
+    first.installLegacyPreparedParam(handle);
+    assert(!handle.consumable);
+    first.installLegacyPreparedParam(handle);
 }
+
+static assert(!__traits(compiles, {
+    ToolPreparedParamHandle a; ToolPreparedParamHandle b = a;
+}));
 
 // ---------------------------------------------------------------------------
 // InputBindable — the declarative input-dispatch capability (task 0705, T6).
