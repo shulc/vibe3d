@@ -75,17 +75,32 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import prepared_record_context : PreparedRecordContext;
 import prepared_private_state : PreparedPrivateStateOwner;
-import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
-import mesh_gpu : GpuCreateOwner;
+import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
+    PreparedDeactivateEffect, PreparedDeactivateKind;
+import mesh_gpu : GpuCreateOwner, GpuUploadOwner, GpuResourceOwner;
+import command_history : PreparedHistoryKind;
+import document : Layer;
+import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import tools.create.create_common : pickWorkplaneFrame, WorkplaneFrame, currentWorkplaneFrame,
                               mostFacingAxis, transformPoint, transformDir, snapLocalHit,
                               frameIsLeftHanded, reverseFaceWinding,
                               workplaneCursorPlaneHit;
 import editmode : EditMode;
 import snap : SnapResult;
-import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
+import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap, SnapOverlayOwner;
 
 import std.math : abs, sqrt;
+
+struct PreparedPrimitiveDeactivateImage {
+    bool valid, expectedWillCommit, expectedCommitValid;
+    MeshSnapshot scene;
+    MeshSnapshot candidate;
+    SnapResult expectedLastSnap;
+    WorkplaneFrame expectedFrame;
+    ulong expectedFrameWitness;
+    ulong expectedProductWitness;
+    void clear() nothrow @nogc { this = PreparedPrimitiveDeactivateImage.init; }
+}
 
 // ---------------------------------------------------------------------------
 // PrimitiveCreateTool — infra shared by every primitive create-tool: mesh/
@@ -97,6 +112,13 @@ import std.math : abs, sqrt;
 // ---------------------------------------------------------------------------
 abstract class PrimitiveCreateTool : Tool, KeepAliveOnCancel {
 protected:
+    final ulong preparedBytesWitness(const(void)* data, size_t length) const
+            nothrow @nogc {
+        auto bytes = (cast(const(ubyte)*) data)[0 .. length];
+        ulong hash = 1469598103934665603UL;
+        foreach (value; bytes) hash = (hash ^ value) * 1099511628211UL;
+        return hash;
+    }
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
     GpuMesh*    gpu;
@@ -206,7 +228,10 @@ public:
     /// abstract (rather than a shared `state = Idle` statement) because
     /// each leaf-group has its own enum TYPE (RadialState / TorusState /
     /// TubeState).
-    protected void goIdle();
+    protected void goIdle() nothrow @nogc;
+    protected ulong preparedDeactivateProductWitness() const nothrow @nogc {
+        return 0;
+    }
 
     /// Emit the primitive into `dst` (LOCAL workplane space) from the
     /// current params_. Used by BOTH the interactive preview
@@ -328,6 +353,91 @@ public:
 
         lastSnap = SnapResult.init;
         clearLastSnap();
+    }
+
+    final PreparedPrimitiveDeactivateImage buildPreparedDeactivateState(
+            out Mesh candidate, out uint deliveryFlags,
+            out uint deliveryDomains) {
+        PreparedPrimitiveDeactivateImage image;
+        image.valid = true;
+        image.expectedWillCommit = willCommit();
+        image.expectedCommitValid = commitValid();
+        image.expectedLastSnap = lastSnap;
+        image.expectedFrame = frame;
+        image.expectedFrameWitness = preparedBytesWitness(&frame,
+            WorkplaneFrame.sizeof);
+        image.expectedProductWitness = preparedDeactivateProductWitness();
+        image.scene = MeshSnapshot.capture(*mesh);
+        image.scene.restore(candidate);
+        if (image.expectedCommitValid) {
+            auto shadow = beginPreparedShadow(candidate);
+            size_t firstNewVert = candidate.vertices.length;
+            size_t firstNewFace = candidate.faces.length;
+            buildInto(&candidate);
+            applyFrameToMeshRange(&candidate, firstNewVert, firstNewFace);
+            candidate.declareCornerAppend();
+            candidate.buildLoops();
+            drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);
+            shadow.close();
+        }
+        image.candidate = MeshSnapshot.capture(candidate);
+        return image;
+    }
+
+    final bool preparedDeactivateStateMatches(
+            in PreparedPrimitiveDeactivateImage image) nothrow @nogc {
+        return image.valid && image.expectedLastSnap == lastSnap &&
+            image.expectedFrameWitness == preparedBytesWitness(&frame,
+                WorkplaneFrame.sizeof) && image.expectedProductWitness ==
+                preparedDeactivateProductWitness();
+    }
+
+    final void installPreparedDeactivateState(
+            ref PreparedPrimitiveDeactivateImage image) nothrow @nogc {
+        goIdle();
+        meshChanged = image.expectedCommitValid;
+        lastSnap = SnapResult.init;
+        image.clear();
+    }
+
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,
+            Layer layer, GpuUploadOwner mainUpload,
+            GpuResourceOwner previewDestroy, SnapOverlayOwner snapOwner) {
+        if (context is null) return PreparedDeactivateEffect(
+            preparedToolStateOwner, PreparedDeactivateKind.Primitive, false, false);
+        scope(failure) context.discard();
+        Mesh candidate; uint deliveryFlags, deliveryDomains;
+        auto stateOwner = PreparedPrivateStateOwner.primitiveDeactivate(this,
+            candidate, deliveryFlags, deliveryDomains);
+        bool ok = stateOwner !is null && layer !is null &&
+            &layer.meshRef() is mesh && previewDestroy !is null &&
+            previewDestroy.owns(&previewGpu);
+        if (ok && stateOwner.primitiveDeactivateCommitValid) {
+            ok = mainUpload !is null && mainUpload.owns(gpu) &&
+                context.prepareStampedMeshImage(layer, candidate,
+                    deliveryFlags, deliveryDomains) &&
+                context.prepareUpload(mainUpload, candidate);
+        }
+        if (ok) ok = context.preparePrivateState(stateOwner) &&
+            context.prepareDestroy(previewDestroy);
+        bool historyPrepared;
+        if (ok && stateOwner.primitiveDeactivateWillCommit &&
+            history !is null && gestureFactory !is null) {
+            auto cmd = cast(MeshSessionEdit) gestureFactory();
+            if (cmd !is null) {
+                cmd.setSnapshots(stateOwner.primitiveDeactivatePre,
+                    MeshSnapshot.capture(candidate), commitLabel());
+                historyPrepared = context.prepare(cmd,
+                    PreparedHistoryKind.Plain).accepted;
+                ok = historyPrepared;
+            } else ok = context.prepareGestureCarrierMismatch();
+        }
+        if (ok) ok = historyPrepared ? context.markHistoryInstall()
+                                     : context.markNoHistoryInstall();
+        if (ok) ok = snapOwner !is null && context.prepareSnapClear(snapOwner);
+        if (!ok) context.discard();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.Primitive, historyPrepared, ok);
     }
 
     override void evaluate() {
@@ -772,7 +882,12 @@ public:
         return (state == RadialState.BaseSet)
             || (state >= RadialState.DrawingHeight && currentHeight() > 1e-5f);
     }
-    protected override void goIdle() { state = RadialState.Idle; }
+    protected override void goIdle() nothrow @nogc { state = RadialState.Idle; }
+    protected override ulong preparedDeactivateProductWitness() const
+            nothrow @nogc {
+        ulong hash = preparedBytesWitness(&params_, P.sizeof);
+        return (hash ^ cast(ubyte) state) * 1099511628211UL;
+    }
 
     final void installPreparedRadialActivation() nothrow @nogc {
         installPreparedRadialActivationPre();

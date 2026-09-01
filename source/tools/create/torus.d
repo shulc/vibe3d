@@ -168,6 +168,18 @@ public:
         seedPreparedHandledActivationForTest(3);
         seedPreparedPrimitiveActivationForTest(true, 2, 9);
     }
+    version(unittest) void seedPreparedEmptyDeactivateForTest() {
+        state = TorusState.MajorSet;
+        params_.majorRadius = 1; params_.minorRadius = 0;
+        frame.toWorld = [1,0,0,0, 0,1,0,0,
+                         0,0,1,0, 0,0,0,1];
+        frame.toLocal = frame.toWorld;
+        preparedPreviewGpu().faceVao = 81;
+    }
+    version(unittest) bool preparedEmptyDeactivateInstalledForTest() const
+            nothrow @nogc {
+        return state == TorusState.Idle && !meshChanged;
+    }
     version(unittest) bool preparedActivationForTest() const nothrow @nogc {
         return state == TorusState.Idle && preparedHandledActivationForTest() &&
             preparedPrimitiveActivationBaseForTest();
@@ -385,7 +397,11 @@ protected:
             && params_.minorRadius > 1e-5f;
     }
 
-    override void goIdle() { state = TorusState.Idle; }
+    override void goIdle() nothrow @nogc { state = TorusState.Idle; }
+    override ulong preparedDeactivateProductWitness() const nothrow @nogc {
+        ulong hash = preparedBytesWitness(&params_, TorusParams.sizeof);
+        return (hash ^ cast(ubyte) state) * 1099511628211UL;
+    }
 
     // Exposed for drawProperties() so it never needs to reach into
     // TorusState directly.

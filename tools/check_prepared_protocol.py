@@ -241,6 +241,7 @@ B5P_PREPARED_LEGACY = {
     ("tools.alignment.mirror", "MirrorTool", "deactivate"),
     ("tools.create.box", "BoxTool", "deactivate"),
     ("tools.create.pen", "PenTool", "deactivate"),
+    ("tools.create.primitive_create_tool", "PrimitiveCreateTool", "deactivate"),
     ("tools.edit.bridge_tool", "BridgeTool", "deactivate"),
     ("tools.edit.topology_pen.tool", "TopologyPenTool", "activate"),
     ("tools.edit.edge_extend", "EdgeExtendTool", "activate"),
@@ -301,7 +302,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "5eeebc8ade65fcbf6c85974b82462b62fd5aa389d785b57a1e2dcf22e2f38da8"
+    "48c03f245e1859020f9ef67c10e75437bfd85058850cd185b55c9c4f03ab9b55"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -4290,6 +4291,84 @@ for target, old, new, label in (
     if pen_deactivate_gate(t, o, e, record_context, handler_shapes_for_pen):
         fail(f"Pen deactivation mutation did not RED: {label}")
 
+primitive_deactivate_tool = (ROOT / "source/tools/create/primitive_create_tool.d").read_text()
+primitive_deactivate_owner = (ROOT / "source/prepared_private_state.d").read_text()
+primitive_deactivate_effect = (ROOT / "source/prepared_tool_effect.d").read_text()
+def primitive_deactivate_gate(tool, owner, effect):
+    start = tool.find("final PreparedDeactivateEffect prepareDeactivate(")
+    body = tool[start:tool.find("override void evaluate()", start)]
+    state = tool[tool.find("struct PreparedPrimitiveDeactivateImage"):start]
+    owner_block = owner[owner.find("static PreparedPrivateStateOwner primitiveDeactivate"):]
+    effect_block = effect[effect.find("enum PreparedDeactivateKind"):
+        effect.find("enum PreparedActivateKind")]
+    return (start >= 0 and "Primitive," in effect_block and
+        "expectedWillCommit" in state and "expectedCommitValid" in state and
+        "image.expectedProductWitness = preparedDeactivateProductWitness();" in state and
+        "image.expectedFrameWitness = preparedBytesWitness(&frame," in state and
+        "image.expectedProductWitness ==" in state and
+        "beginPreparedShadow(candidate)" in tool and
+        "buildInto(&candidate);" in tool and
+        "applyFrameToMeshRange(&candidate, firstNewVert, firstNewFace);" in tool and
+        "candidate.declareCornerAppend();" in tool and
+        "drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);" in tool and
+        "target.buildPreparedDeactivateState(" in owner_block and
+        "!primitiveTarget.preparedDeactivateStateMatches(" in owner_block and
+        "primitiveTarget.installPreparedDeactivateState(" in owner_block and
+        "&layer.meshRef() is mesh" in body and
+        "previewDestroy.owns(&previewGpu)" in body and
+        "mainUpload.owns(gpu)" in body and
+        "context.prepareStampedMeshImage(layer, candidate," in body and
+        "context.prepareUpload(mainUpload, candidate)" in body and
+        "context.preparePrivateState(stateOwner)" in body and
+        "context.prepareDestroy(previewDestroy)" in body and
+        "PreparedHistoryKind.Plain" in body and
+        "context.prepareGestureCarrierMismatch()" in body and
+        "context.markHistoryInstall()" in body and
+        "context.markNoHistoryInstall()" in body and
+        "context.prepareSnapClear(snapOwner)" in body and
+        body.find("context.prepareStampedMeshImage(layer, candidate,") <
+            body.find("context.prepareUpload(mainUpload, candidate)") <
+            body.find("context.preparePrivateState(stateOwner)") <
+            body.find("context.prepareDestroy(previewDestroy)") <
+            body.find("context.markHistoryInstall()") <
+            body.find("context.prepareSnapClear(snapOwner)") and
+        "PreparedDeactivateKind.Primitive, historyPrepared, ok);" in body)
+if not primitive_deactivate_gate(primitive_deactivate_tool,
+        primitive_deactivate_owner, primitive_deactivate_effect):
+    fail("Primitive deactivation prepared contract drift")
+for target, old, new, label in (
+    ("tool", "beginPreparedShadow(candidate)", "beginPreparedShadow(*mesh)", "drop detached shadow"),
+    ("tool", "buildInto(&candidate);", "buildInto(mesh);", "write live product"),
+    ("tool", "image.expectedProductWitness = preparedDeactivateProductWitness();",
+     "image.expectedProductWitness = 0;", "drop product witness"),
+    ("tool", "&layer.meshRef() is mesh", "true", "drop layer identity"),
+    ("tool", "previewDestroy.owns(&previewGpu)", "true", "drop preview identity"),
+    ("tool", "mainUpload.owns(gpu)", "true", "drop upload identity"),
+    ("tool", "context.prepareStampedMeshImage(layer, candidate,", "false /* mesh */ (", "drop mesh enlist"),
+    ("tool", "context.preparePrivateState(stateOwner)", "true", "drop final state"),
+    ("tool", "context.prepareDestroy(previewDestroy)", "true", "drop preview destroy"),
+    ("tool", "PreparedHistoryKind.Plain", "PreparedHistoryKind.ReplaceRunTail", "change history mode"),
+    ("tool", "context.prepareSnapClear(snapOwner)", "true", "drop snap clear"),
+    ("effect", "Primitive,", "None,", "drop effect kind"),
+):
+    t, o, e = primitive_deactivate_tool, primitive_deactivate_owner, primitive_deactivate_effect
+    if target == "effect":
+        pos = e.find(old, e.find("enum PreparedDeactivateKind"))
+        if pos >= 0: e = e[:pos] + new + e[pos + len(old):]
+    elif target == "owner":
+        pos = o.find(old, o.find("static PreparedPrivateStateOwner primitiveDeactivate"))
+        if pos >= 0: o = o[:pos] + new + o[pos + len(old):]
+    else:
+        candidate_mutation = old in {
+            "beginPreparedShadow(candidate)", "buildInto(&candidate);",
+            "image.expectedProductWitness = preparedDeactivateProductWitness();"}
+        search_from = t.find("struct PreparedPrimitiveDeactivateImage") if candidate_mutation \
+            else t.find("final PreparedDeactivateEffect prepareDeactivate(")
+        pos = t.find(old, search_from)
+        if pos >= 0: t = t[:pos] + new + t[pos + len(old):]
+    if primitive_deactivate_gate(t, o, e):
+        fail(f"Primitive deactivation mutation did not RED: {label}")
+
 mirror_deactivate_effect = (ROOT / "source/prepared_tool_effect.d").read_text()
 def mirror_deactivate_producer_gate(tool, effect):
     start = tool.find("final PreparedDeactivateEffect prepareDeactivate(")
@@ -4567,7 +4646,7 @@ expected_primitive_products = [
 def b5d1_gate(s):
     return ("enum PreparedPrivateStateKind : ubyte" in s["owner"] and
             all(kind in s["owner"] for kind in
-                ("Box, BoxDeactivate, Pen, PenDeactivate, Primitive, Vertex", "ArraySession", "CloneSession",
+                ("Box, BoxDeactivate, Pen, PenDeactivate, Primitive, PrimitiveDeactivate,", "Vertex", "ArraySession", "CloneSession",
                  "MagnetSession", "ReductionSession")) and
             s["owner"].count("@disable this(this)") == 2 and
             "delegate" not in s["owner"] and "void*" not in s["owner"] and

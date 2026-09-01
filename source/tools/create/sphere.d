@@ -530,6 +530,19 @@ public:
     version (unittest) {
         void p1SetParams(SphereParams value) { params_ = value; }
         SphereParams p1Params() const { return params_; }
+        void seedPreparedDeactivateForTest() {
+            seedPreparedRadialActivationForTest();
+            planeNormal = Vec3(0, 1, 0);
+            planeAxis1 = Vec3(1, 0, 0); planeAxis2 = Vec3(0, 0, 1);
+            frame.toWorld = [1,0,0,0, 0,1,0,0,
+                             0,0,1,0, 0,0,0,1];
+            frame.toLocal = frame.toWorld;
+            preparedPreviewGpu().faceVao = 71;
+        }
+        void mutatePreparedDeactivateForTest() { params_.sizeX += 1; }
+        bool preparedDeactivateInstalledForTest() const {
+            return isIdle() && meshChanged && lastSnap == typeof(lastSnap).init;
+        }
     }
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader, bool ellipsoidMode = false) {
         super(meshSrc, gpu, litShader);

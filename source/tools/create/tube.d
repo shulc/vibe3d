@@ -407,7 +407,11 @@ protected:
             && params_.outerRadius > 1e-5f
             && params_.height      > 1e-5f;
     }
-    override void goIdle() { state = TubeState.Idle; }
+    override void goIdle() nothrow @nogc { state = TubeState.Idle; }
+    override ulong preparedDeactivateProductWitness() const nothrow @nogc {
+        ulong hash = preparedBytesWitness(&params_, TubeParams.sizeof);
+        return (hash ^ cast(ubyte) state) * 1099511628211UL;
+    }
 
     // Exposed for drawProperties() so it never needs to reach into
     // TubeState directly.

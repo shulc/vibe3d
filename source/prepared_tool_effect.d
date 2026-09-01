@@ -35,7 +35,7 @@ enum PreparedDeactivateKind : ubyte {
     EdgeBevel, EdgeExtrude, PolyBevel, PolyExtrude, PolyInset, Reduction,
     VertexMerge, VertexBevel, VertexExtrude, Xfrm, Move, Rotate, Scale,
     CommandWrapper, Tack, TransformNormalUpload, Vertex,
-    Mirror, Bridge, Box, Pen,
+    Mirror, Bridge, Box, Pen, Primitive,
 }
 enum PreparedActivateKind : ubyte {
     None, Vertex, Array, Clone, Magnet, Reduction, Box, Pen, Primitive,

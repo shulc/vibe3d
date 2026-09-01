@@ -273,6 +273,8 @@ public:
         case PreparedPrivateStateKind.PenDeactivate:
             e.kind = PreparedResourceKind.PenState; break;
         case PreparedPrivateStateKind.Primitive: e.kind = PreparedResourceKind.PrimitiveState; break;
+        case PreparedPrivateStateKind.PrimitiveDeactivate:
+            e.kind = PreparedResourceKind.PrimitiveState; break;
         case PreparedPrivateStateKind.Vertex: e.kind = PreparedResourceKind.VertexState; break;
         case PreparedPrivateStateKind.ArraySession: e.kind = PreparedResourceKind.ArraySessionState; break;
         case PreparedPrivateStateKind.CloneSession: e.kind = PreparedResourceKind.CloneSessionState; break;

@@ -32,16 +32,6 @@
   {
     "batch": "P1.0b.3+",
     "key": {
-      "aggregate": "PrimitiveCreateTool",
-      "module": "tools.create.primitive_create_tool",
-      "signature": "void()",
-      "symbol": "deactivate"
-    },
-    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
-  },
-  {
-    "batch": "P1.0b.3+",
-    "key": {
       "aggregate": "MagnetTool",
       "module": "tools.deform.magnet",
       "signature": "void(string pname)",
