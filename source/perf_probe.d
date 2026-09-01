@@ -1596,6 +1596,9 @@ struct FrameWorkProbe {
         cur_.uploadCalls++;
         cur_.uploadVerts += verts;
     }
+    version(unittest) long uploadCallsForTest() const nothrow @nogc {
+        return cur_.uploadCalls;
+    }
 
     void bumpCellConsidered()  { cur_.cellsConsidered++; }
     void bumpCellRendered()    { cur_.cellsRendered++; }
