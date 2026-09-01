@@ -312,6 +312,7 @@ for path, text in prepared_source_texts.items():
             "tools.alignment.clone_tool", "tools.deform.magnet",
             "tools.edit.reduce", "prepared_private_state",
             "prepared_selection_profile", "prepared_radial_sweep_transition",
+            "prepared_radial_array_transition",
             "tools.alignment.radial_sweep_tool"}:
         fail(f"P1.0b.3d PreparedRecordContext gained an unreviewed import: {module}")
     if "new PreparedRecordContext" in text:
@@ -1142,6 +1143,15 @@ with tempfile.TemporaryDirectory(prefix="vibe3d-prepared-copy-") as td:
 if run.returncode == 0 or ("not copyable" not in run.stdout
                            and not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
     fail("PreparedArm copy was not rejected by its disabled copy constructor:\n" + run.stdout)
+
+radial_copy_fixture = ROOT / "tests/compile_fail/prepared_radial_array_token_copy.d"
+run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(radial_copy_fixture)],
+                     cwd=ROOT, text=True, stdout=subprocess.PIPE,
+                     stderr=subprocess.STDOUT)
+if run.returncode == 0 or ("not copyable" not in run.stdout and
+                           not ("copy constructor" in run.stdout and
+                                "disabled" in run.stdout)):
+    fail("RadialArray prepared/validated token copy was not rejected:\n" + run.stdout)
 
 # P1.0b.4b dormant full-upload owner. Keep production at zero callers until
 # P1.0c, and freeze the closed prepare/validate/nothrow-consume boundary plus
@@ -1993,4 +2003,63 @@ for path in (ROOT / "source").rglob("*.d"):
     if ".prepareCreateUpload(" in without_unittests(path.read_text()):
         fail("combined GPU create-upload gained a pre-cutover caller")
 
-print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures)} compile-fail fixtures)")
+# Isolated RadialArray shared session transition owner. This owner unlocks the
+# activate/deactivate private projections for later producers; topology/GPU/
+# history remain separate reviewed effects and the ledger is unchanged here.
+radial_array_owner = (ROOT / "source/prepared_radial_array_transition.d").read_text()
+radial_array_tool = (ROOT / "source/tools/alignment/radial_array_tool.d").read_text()
+def radial_array_owner_gate(owner, context, tool):
+    production = without_unittests(owner)
+    return ("final class PreparedRadialArrayTransitionOwner" in owner and
+            "struct PreparedRadialArrayTransitionToken" in owner and
+            "struct ValidatedRadialArrayTransitionToken" in owner and
+            owner.count("@disable this(this);") == 2 and
+            not any(x in production for x in (" delegate", " function(", "void*", "ubyte[]")) and
+            "target.classinfo is RadialArrayTool.classinfo" in owner and
+            "target.ownsPreparedMesh(&source)" in owner and
+            "prepared_.generation != generation_" in owner and
+            "validatedToken_.generation != generation_" in owner and
+            "target_.installPreparedTransition(image_);" in owner and
+            "!image_.valid && !image_.before.filled" in owner and
+            "image_.before.vertices.length == 0" in owner and
+            "pending_ = validated_ = false; consumed_ = true; target_ = null;" in owner and
+            "struct RadialArrayTransitionImage" in tool and
+            "MeshSnapshot before;" in tool and
+            "final bool ownsPreparedMesh(const Mesh* candidate)" in tool and
+            "image.before = MeshSnapshot.capture(source);" in tool and
+            "image.before.moveInto(before);" in tool and
+            "active = image.active; built = image.built; dragPart = image.dragPart;" in tool and
+            "if (image.clearHaul) toolHandles.clearHaul(); image.clear();" in tool and
+            "bool prepareRadialArrayTransition(PreparedRadialArrayTransitionOwner owner)" in context and
+            "e.radialArrayTransition.validate();" in context and
+            "e.radialArrayTransition.install();" in context and
+            "e.radialArrayTransition.abort();" in context)
+if not radial_array_owner_gate(radial_array_owner, record_context, radial_array_tool):
+    fail("RadialArray transition owner contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo is RadialArrayTool.classinfo", "target !is null", "admit derived product"),
+    ("owner", "target.ownsPreparedMesh(&source)", "true", "admit foreign mesh"),
+    ("owner", "prepared_.generation != generation_", "false", "drop prepared generation"),
+    ("owner", "validatedToken_.generation != generation_", "false", "drop validated generation"),
+    ("owner", "target_.installPreparedTransition(image_);", "", "drop fixed install"),
+    ("owner", "image_.before.vertices.length == 0", "true", "omit snapshot scrub proof"),
+    ("owner", "pending_ = validated_ = false; consumed_ = true; target_ = null;", "pending_ = validated_ = false;", "rearm consumed owner"),
+    ("tool", "image.before.moveInto(before);", "", "drop detached activation snapshot"),
+    ("tool", "image.before = MeshSnapshot.capture(source);", "image.before = MeshSnapshot.init;", "replace deep snapshot with empty/shallow image"),
+    ("tool", "if (image.clearHaul) toolHandles.clearHaul(); image.clear();", "image.clear();", "drop haul reset"),
+    ("context", "e.radialArrayTransition.abort();", "", "drop context abort"),
+):
+    owner, context, tool = radial_array_owner, record_context, radial_array_tool
+    if target == "owner": owner = owner.replace(old, new, 1)
+    elif target == "tool": tool = tool.replace(old, new, 1)
+    else: context = context.replace(old, new, 1)
+    if radial_array_owner_gate(owner, context, tool):
+        fail(f"RadialArray transition mutation did not RED: {label}")
+for hook in ("override void activate()", "override void deactivate()",
+             "override void onParamChanged(string pname)"):
+    start = radial_array_tool.find(hook); body_start = radial_array_tool.find("{", start) + 1
+    body = radial_array_tool[body_start:balanced_source(radial_array_tool, body_start)-1]
+    if "PreparedRadialArrayTransitionOwner" in body or "prepareRadialArrayTransition" in body:
+        fail("RadialArray transition owner reached from production hook")
+
+print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures) + 1} compile-fail fixtures)")

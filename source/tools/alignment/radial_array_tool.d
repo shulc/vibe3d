@@ -27,6 +27,15 @@ import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import command_history : PreparedHistoryKind;
 
+enum PreparedRadialArrayTransitionKind : ubyte { Activate, Deactivate }
+struct RadialArrayTransitionImage {
+    MeshSnapshot before;
+    PreparedRadialArrayTransitionKind kind;
+    bool active, built, clearHaul, valid;
+    int dragPart;
+    void clear() nothrow @nogc { this = RadialArrayTransitionImage.init; }
+}
+
 // ---------------------------------------------------------------------------
 // RadialArrayTool — interactive port of the reference editor's "Radial
 // Array" duplicate preset (factory id `mesh.radialArrayTool`).
@@ -193,6 +202,49 @@ public:
     }
 
     override string name() const { return "Radial Array"; }
+
+    final bool ownsPreparedMesh(const Mesh* candidate) const {
+        return candidate !is null && mesh !is null && candidate is mesh;
+    }
+
+    final RadialArrayTransitionImage buildPreparedActivationImage(ref Mesh source) {
+        RadialArrayTransitionImage image;
+        image.before = MeshSnapshot.capture(source);
+        image.kind = PreparedRadialArrayTransitionKind.Activate;
+        image.active = true; image.built = false; image.dragPart = -1;
+        image.clearHaul = true; image.valid = true; return image;
+    }
+    final RadialArrayTransitionImage buildPreparedDeactivateImage() nothrow @nogc {
+        RadialArrayTransitionImage image;
+        image.kind = PreparedRadialArrayTransitionKind.Deactivate;
+        image.active = false; image.built = false; image.dragPart = -1;
+        image.clearHaul = true; image.valid = true; return image;
+    }
+    final void installPreparedTransition(ref RadialArrayTransitionImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        if (image.kind == PreparedRadialArrayTransitionKind.Activate)
+            image.before.moveInto(before);
+        active = image.active; built = image.built; dragPart = image.dragPart;
+        if (image.clearHaul) toolHandles.clearHaul(); image.clear();
+    }
+    version(unittest) void seedPreparedTransitionForTest() {
+        active = false; built = true; dragPart = 4; toolHandles.setHaul(3);
+    }
+    version(unittest) bool preparedTransitionForTest(bool expectedActive)
+            const nothrow @nogc {
+        return active == expectedActive && !built && dragPart == -1 &&
+            toolHandles.haulForPreparedTest() == -1 &&
+            (!expectedActive || before.filled);
+    }
+    version(unittest) bool preparedSnapshotForTest(size_t vertices,
+            size_t edges, size_t faces, Vec3 first, const Mesh* live) const
+            nothrow @nogc {
+        return before.filled && before.vertices.length == vertices &&
+            before.edges.length == edges && before.faces.length == faces &&
+            before.vertices.length != 0 && before.vertices[0] == first &&
+            (live is null || before.vertices.ptr !is live.vertices.ptr);
+    }
 
     override Param[] params() {
         return [

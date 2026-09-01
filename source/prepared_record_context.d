@@ -15,6 +15,7 @@ import snap_render : SnapOverlayOwner;
 import prepared_private_state : PreparedPrivateStateOwner, PreparedPrivateStateKind;
 import prepared_selection_profile : PreparedSelectionProfileOwner;
 import prepared_radial_sweep_transition : PreparedRadialSweepTransitionOwner;
+import prepared_radial_array_transition : PreparedRadialArrayTransitionOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -24,7 +25,7 @@ private enum PreparedResourceKind : ubyte {
     , GpuCreate, SnapOverlayClear, BoxState, PenState, PrimitiveState, VertexState,
     ArraySessionState, CloneSessionState, MagnetSessionState, ReductionSessionState,
     RadialSweepProfileState, RadialSweepTransitionState, GestureCarrierMismatch,
-    GpuCreateUpload
+    GpuCreateUpload, RadialArrayTransitionState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -32,6 +33,7 @@ private struct PreparedResourceEntry {
     GpuUploadOwner gpuUpload;
     GpuCreateOwner gpuCreate;
     GpuCreateUploadOwner gpuCreateUpload;
+    PreparedRadialArrayTransitionOwner radialArrayTransition;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -211,6 +213,17 @@ public:
         e.radialSweepTransition = owner; resources_ ~= e; return true;
     }
 
+    bool prepareRadialArrayTransition(PreparedRadialArrayTransitionOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected radial-array transition enlist failure");
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.RadialArrayTransitionState;
+        e.radialArrayTransition = owner; resources_ ~= e; return true;
+    }
+
     bool prepareGestureCarrierMismatch() {
         if (!begun_ || validated_Once) return false;
         resources_.reserve(1 + resources_.length);
@@ -349,6 +362,9 @@ public:
             case PreparedResourceKind.GpuCreateUpload:
                 ok = e.gpuCreateUpload !is null &&
                     e.gpuCreateUpload.validateEnlisted(resourceThread_, resourceContext_); break;
+            case PreparedResourceKind.RadialArrayTransitionState:
+                ok = e.radialArrayTransition !is null &&
+                    e.radialArrayTransition.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -428,6 +444,10 @@ public:
             e.gpuCreateUpload.installEnlisted();
             version(unittest) installTrace_[installTraceLength_++] = 12;
             break;
+        case PreparedResourceKind.RadialArrayTransitionState:
+            e.radialArrayTransition.install();
+            version(unittest) installTrace_[installTraceLength_++] = 13;
+            break;
         }
         if (!installedHistory) history_.installPreparedToken(validated_);
         resources_.length = 0;
@@ -468,6 +488,8 @@ private:
         case PreparedResourceKind.RadialSweepTransitionState: e.radialSweepTransition.abort(); break;
         case PreparedResourceKind.GestureCarrierMismatch: break;
         case PreparedResourceKind.GpuCreateUpload: e.gpuCreateUpload.abortEnlisted(); break;
+        case PreparedResourceKind.RadialArrayTransitionState:
+            e.radialArrayTransition.abort(); break;
         }
         resources_.length = 0;
         historyMarker_ = false;
