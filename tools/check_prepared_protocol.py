@@ -316,6 +316,7 @@ for path, text in prepared_source_texts.items():
             "tools.edit.reduce", "prepared_private_state",
             "prepared_selection_profile", "prepared_radial_sweep_transition",
             "prepared_radial_array_transition",
+            "prepared_transform_activation",
             "tools.alignment.radial_sweep_tool",
             "tools.alignment.radial_array_tool"}:
         fail(f"P1.0b.3d PreparedRecordContext gained an unreviewed import: {module}")
@@ -2090,4 +2091,91 @@ for hook in ("override void activate()", "override void deactivate()",
     if "PreparedRadialArrayTransitionOwner" in body or "prepareRadialArrayTransition" in body:
         fail("RadialArray transition owner reached from production hook")
 
-print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures) + 1} compile-fail fixtures)")
+# Isolated shared activation projection for the exact registered LinearAlign
+# and RadialAlign products. No producer/hook calls it yet.
+transform_activation_owner = (ROOT / "source/prepared_transform_activation.d").read_text()
+transform_tool = (ROOT / "source/tools/transform/transform.d").read_text()
+def transform_activation_gate(owner, context, tool):
+    production = without_unittests(owner)
+    builder_projection = (
+        "image.gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];\n"
+        "        image.lastSelectionHash = ulong.max;\n"
+        "        image.lastMutationVersion = ulong.max;\n"
+        "        image.dragAxis = -1; image.active = true;\n"
+        "        image.vertexCacheDirty = true;\n"
+        "        image.needsGpuUpdate = image.centerManual = image.wholeMeshDrag =\n"
+        "            image.propsDragging = false;\n"
+        "        image.valid = true; return image;")
+    install_projection = (
+        "gpuMatrix = image.gpuMatrix; lastSelectionHash = image.lastSelectionHash;\n"
+        "        lastMutationVersion = image.lastMutationVersion;\n"
+        "        dragAxis = image.dragAxis; active = image.active;\n"
+        "        vertexCacheDirty = image.vertexCacheDirty;\n"
+        "        needsGpuUpdate = image.needsGpuUpdate; centerManual = image.centerManual;\n"
+        "        wholeMeshDrag = image.wholeMeshDrag; propsDragging = image.propsDragging;\n"
+        "        image.clear();")
+    return ("final class PreparedTransformActivationOwner" in owner and
+        owner.count("@disable this(this);") == 2 and
+        not any(x in production for x in (" delegate", " function(", "void*", "ubyte[]")) and
+        "target.classinfo is LinearAlignTool.classinfo" in owner and
+        "target.classinfo is RadialAlignTool.classinfo" in owner and
+        "prepared_.generation != generation_" in owner and
+        "validatedToken_.generation != generation_" in owner and
+        "target_.installPreparedActivation(image_); consume();" in owner and
+        "pending_ = validated_ = false; consumed_ = true; target_ = null;" in owner and
+        "struct PreparedTransformActivationImage" in tool and
+        builder_projection in tool and install_projection in tool and
+        "final void installPreparedActivation(" in tool and
+        "lastSelectionHash = image.lastSelectionHash" in tool and
+        "lastMutationVersion = image.lastMutationVersion" in tool and
+        "needsGpuUpdate = image.needsGpuUpdate" in tool and
+        "wholeMeshDrag = image.wholeMeshDrag" in tool and
+        "image.clear();" in tool and
+        "bool prepareTransformActivation(PreparedTransformActivationOwner owner)" in context and
+        "e.transformActivation.validate();" in context and
+        "e.transformActivation.install();" in context and
+        "e.transformActivation.abort();" in context)
+if not transform_activation_gate(transform_activation_owner, record_context, transform_tool):
+    fail("Transform activation owner contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo is LinearAlignTool.classinfo", "false", "drop LinearAlign admission"),
+    ("owner", "target.classinfo is RadialAlignTool.classinfo", "false", "drop RadialAlign admission"),
+    ("owner", "target.classinfo is LinearAlignTool.classinfo", "cast(LinearAlignTool) target !is null", "broaden LinearAlign admission to derived behavior"),
+    ("owner", "prepared_.generation != generation_", "false", "drop prepared generation"),
+    ("owner", "validatedToken_.generation != generation_", "false", "drop validated generation"),
+    ("owner", "target_.installPreparedActivation(image_); consume();", "consume();", "drop fixed install"),
+    ("tool", "lastSelectionHash = image.lastSelectionHash", "lastSelectionHash = 0", "drop selection sentinel"),
+    ("tool", "needsGpuUpdate = image.needsGpuUpdate", "needsGpuUpdate = true", "drop GPU dirty reset"),
+    ("tool", "image.lastSelectionHash = ulong.max;", "image.lastSelectionHash = 0;", "change cache hash sentinel"),
+    ("tool", "image.lastMutationVersion = ulong.max;", "image.lastMutationVersion = 0;", "change mutation sentinel"),
+    ("tool", "image.dragAxis = -1; image.active = true;", "image.dragAxis = 0; image.active = false;", "change active drag projection"),
+    ("tool", "image.vertexCacheDirty = true;", "image.vertexCacheDirty = false;", "change cache dirty projection"),
+    ("tool", "image.propsDragging = false;", "image.propsDragging = true;", "change false flag projection"),
+    ("tool", "image.gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];", "image.gpuMatrix[] = 0;", "change identity GPU matrix"),
+    ("tool", "gpuMatrix = image.gpuMatrix; lastSelectionHash = image.lastSelectionHash;", "lastSelectionHash = image.lastSelectionHash; gpuMatrix = image.gpuMatrix;", "reorder fixed install"),
+    ("context", "e.transformActivation.abort();", "", "drop context abort"),
+):
+    owner, context, tool = transform_activation_owner, record_context, transform_tool
+    if target == "owner": owner = owner.replace(old, new, 1)
+    elif target == "tool": tool = tool.replace(old, new, 1)
+    else: context = context.replace(old, new, 1)
+    if transform_activation_gate(owner, context, tool):
+        fail(f"Transform activation mutation did not RED: {label}")
+for path, aggregate in (("tools/transform/transform.d", "TransformTool"),
+                        ("tools/alignment/linear_align_tool.d", "LinearAlignTool"),
+                        ("tools/alignment/radial_align_tool.d", "RadialAlignTool")):
+    source = (ROOT / "source" / path).read_text()
+    start = source.find("override void activate()")
+    body_start = source.find("{", start) + 1
+    body = source[body_start:balanced_source(source, body_start)-1]
+    if "PreparedTransformActivationOwner" in body or "prepareTransformActivation" in body:
+        fail(f"Transform activation owner reached from production hook: {aggregate}")
+
+transform_copy_fixture = ROOT / "tests/compile_fail/prepared_transform_activation_token_copy.d"
+run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(transform_copy_fixture)],
+    cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+if run.returncode == 0 or ("not copyable" not in run.stdout and
+        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+    fail("Transform activation token copy was not rejected:\n" + run.stdout)
+
+print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures) + 2} compile-fail fixtures)")

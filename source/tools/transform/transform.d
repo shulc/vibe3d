@@ -2,6 +2,15 @@ module tools.transform.transform;
 import tool;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+
+struct PreparedTransformActivationImage {
+    float[16] gpuMatrix;
+    ulong lastSelectionHash, lastMutationVersion;
+    int dragAxis;
+    bool active, vertexCacheDirty, needsGpuUpdate, centerManual;
+    bool wholeMeshDrag, propsDragging, valid;
+    void clear() nothrow @nogc { this = PreparedTransformActivationImage.init; }
+}
 import mesh_gpu : GpuUploadOwner;
 import command_history : PreparedHistoryKind;
 import operator : VectorStack;
@@ -237,6 +246,42 @@ public:
     // value is the bank's own drag-axis convention (varies per tool); the host only
     // checks >= 0 (and the principal-ring 0..2 range for Rotate).
     final int dragAxisPublic() const { return dragAxis; }
+
+    final PreparedTransformActivationImage buildPreparedActivationImage()
+            nothrow @nogc {
+        PreparedTransformActivationImage image;
+        image.gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+        image.lastSelectionHash = ulong.max;
+        image.lastMutationVersion = ulong.max;
+        image.dragAxis = -1; image.active = true;
+        image.vertexCacheDirty = true;
+        image.needsGpuUpdate = image.centerManual = image.wholeMeshDrag =
+            image.propsDragging = false;
+        image.valid = true; return image;
+    }
+    final void installPreparedActivation(
+            ref PreparedTransformActivationImage image) nothrow @nogc {
+        if (!image.valid) return;
+        gpuMatrix = image.gpuMatrix; lastSelectionHash = image.lastSelectionHash;
+        lastMutationVersion = image.lastMutationVersion;
+        dragAxis = image.dragAxis; active = image.active;
+        vertexCacheDirty = image.vertexCacheDirty;
+        needsGpuUpdate = image.needsGpuUpdate; centerManual = image.centerManual;
+        wholeMeshDrag = image.wholeMeshDrag; propsDragging = image.propsDragging;
+        image.clear();
+    }
+    version(unittest) void seedPreparedActivationForTest() nothrow @nogc {
+        gpuMatrix[] = 7; lastSelectionHash = 3; lastMutationVersion = 4;
+        dragAxis = 2; active = false; vertexCacheDirty = false;
+        needsGpuUpdate = centerManual = wholeMeshDrag = propsDragging = true;
+    }
+    version(unittest) bool preparedActivationForTest() const nothrow @nogc {
+        const float[16] identity = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+        return gpuMatrix == identity && lastSelectionHash == ulong.max &&
+            lastMutationVersion == ulong.max && dragAxis == -1 && active &&
+            vertexCacheDirty && !needsGpuUpdate && !centerManual &&
+            !wholeMeshDrag && !propsDragging;
+    }
 
 protected:
     bool          active;
