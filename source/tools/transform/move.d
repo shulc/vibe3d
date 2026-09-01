@@ -35,8 +35,10 @@ import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 import document : primaryModelSpace;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
-    PreparedTransformProductEffect, PreparedTransformProductKind;
+    PreparedTransformProductEffect, PreparedTransformProductKind,
+    PreparedMoveUpdateEffect, PreparedMoveUpdateKind;
 import prepared_transform_product_activation : PreparedTransformProductActivationOwner;
+import prepared_move_update : PreparedMoveUpdateOwner;
 
 enum PreparedMoveUpdateBranch : ubyte {
     InactiveNoop, DraggingNoop, WrapperEditOpenNoop, Refresh
@@ -390,6 +392,21 @@ public:
             handler.setPosition(image.center);
         }
         image.clear();
+    }
+
+    /// Dormant Prepared twin of update(). The production override remains the
+    /// byte-for-byte Legacy route until the single P1.0c cutover.
+    final PreparedMoveUpdateEffect prepareUpdate(ref VectorStack vts,
+            PreparedRecordContext context) {
+        if (context is null) return PreparedMoveUpdateEffect(
+            preparedToolStateOwner, PreparedMoveUpdateKind.None, false);
+        scope(failure) context.discard();
+        auto owner = PreparedMoveUpdateOwner.prepare(this, vts);
+        auto kind = owner is null ? PreparedMoveUpdateKind.None : owner.effectKind();
+        bool ok = owner !is null && context.prepareMoveUpdate(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedMoveUpdateEffect(preparedToolStateOwner, kind, ok);
     }
 
     version(unittest) final void seedPreparedMoveUpdateForTest(

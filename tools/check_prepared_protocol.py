@@ -167,10 +167,13 @@ B5L_PREPARED_LEGACY = {
     ("tools.transform.rotate", "RotateTool", "activate"),
     ("tools.transform.scale", "ScaleTool", "activate"),
 }
+B5M_PREPARED_LEGACY = {
+    ("tools.transform.move", "MoveTool", "update"),
+}
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
     B5I_PREPARED_LEGACY | B5J_PREPARED_LEGACY | B5K_PREPARED_LEGACY |
-    B5L_PREPARED_LEGACY)
+    B5L_PREPARED_LEGACY | B5M_PREPARED_LEGACY)
 all_hook_keys = {(r["module"], r["aggregate"], r["symbol"])
                  for r in CURRENT_WRITERS["hooks"]}
 if not TOOL_STATE_CONVERTED | PREPARED_LEGACY <= all_hook_keys:
@@ -202,7 +205,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "61c1f266c4a80924a729949871c62af8068a1e8af3b9b19d21767983a91a0e2b"
+    "a1a34d020ac29742b7f37d514772085111eeb804d5d2b41382ebba0208b92b91"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -219,7 +222,7 @@ def validate_deferred_rows(rows, require_canonical=True):
             fail("P1.0b.1 checked-in deferred batch/reason invalid")
     canonical = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
     if require_canonical and hashlib.sha256(canonical).hexdigest() != \
-            "61c1f266c4a80924a729949871c62af8068a1e8af3b9b19d21767983a91a0e2b":
+            "a1a34d020ac29742b7f37d514772085111eeb804d5d2b41382ebba0208b92b91":
         fail("P1.0b.1 checked-in deferred exact values drifted")
 validate_deferred_rows(TOOL_STATE_DEFERRED_ROWS)
 for field in ("batch", "reason"):
@@ -2394,8 +2397,8 @@ if run.returncode == 0 or ("not copyable" not in run.stdout and
         not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
     fail("Transform product activation token copy was not rejected:\n" + run.stdout)
 
-# Exact Move update owner infrastructure. This deliberately has no producer:
-# the production update root remains Legacy until P1.0c.
+# Exact Move update owner plus dormant Prepared+Legacy producer. The production
+# update root itself remains Legacy until P1.0c.
 move_update_owner = (ROOT / "source/prepared_move_update.d").read_text()
 def move_update_gate(owner, context, move):
     production = without_unittests(owner)
@@ -2412,6 +2415,10 @@ def move_update_gate(owner, context, move):
         "prepared_.generation != generation_" in owner and
         "validatedToken_.owner != owner_" in owner and
         "validatedToken_.generation != generation_" in owner and
+        "case PreparedMoveUpdateBranch.InactiveNoop:\n            return PreparedMoveUpdateKind.InactiveNoop;" in owner and
+        "case PreparedMoveUpdateBranch.DraggingNoop:\n            return PreparedMoveUpdateKind.DraggingNoop;" in owner and
+        "case PreparedMoveUpdateBranch.WrapperEditOpenNoop:\n            return PreparedMoveUpdateKind.WrapperEditOpenNoop;" in owner and
+        "case PreparedMoveUpdateBranch.Refresh:\n            return PreparedMoveUpdateKind.Refresh;" in owner and
         "target_.installPreparedMoveUpdate(image_);\n        consume();" in owner and
         "image_.clear(); pending_ = validated_ = false; consumed_ = true;" in owner and
         "enum PreparedMoveUpdateBranch : ubyte" in move and
@@ -2436,8 +2443,27 @@ move_update_production_calls = sum(
     without_unittests(text).count("PreparedMoveUpdateOwner.prepare(") +
     without_unittests(text).count(".prepareMoveUpdate(")
     for text in prepared_source_texts.values())
-if move_update_production_calls != 0:
-    fail("Move update owner reached from a production caller")
+if move_update_production_calls != 2:
+    fail("Move update owner escaped its one dormant producer")
+
+def move_update_producer_gate(move):
+    start = move.find("final PreparedMoveUpdateEffect prepareUpdate(")
+    if start < 0: return False
+    begin = move.find("{", start) + 1
+    body = move[begin:balanced_source(move, begin)-1]
+    return all(x in body for x in (
+        "if (context is null) return PreparedMoveUpdateEffect(\n"
+        "            preparedToolStateOwner, PreparedMoveUpdateKind.None, false);",
+        "scope(failure) context.discard();",
+        "PreparedMoveUpdateOwner.prepare(this, vts)",
+        "auto kind = owner is null ? PreparedMoveUpdateKind.None : owner.effectKind();",
+        "context.prepareMoveUpdate(owner) &&\n            context.markNoHistoryInstall();",
+        "if (!ok) context.discard();",
+        "return PreparedMoveUpdateEffect(preparedToolStateOwner, kind, ok);")) and \
+        not any(x in body for x in ("owner.install(", "context.install(",
+            "context.validate(", "installPreparedMoveUpdate("))
+if not move_update_producer_gate(move_tool):
+    fail("Move update dormant producer contract drift")
 
 for target, old, new, label in (
     ("owner", "target.classinfo !is MoveTool.classinfo", "cast(MoveTool) target is null", "broaden exact Move admission"),
@@ -2445,6 +2471,10 @@ for target, old, new, label in (
     ("owner", "prepared_.generation != generation_", "false", "drop prepared generation"),
     ("owner", "validatedToken_.owner != owner_", "false", "drop validated owner identity"),
     ("owner", "validatedToken_.generation != generation_", "false", "drop validated generation"),
+    ("owner", "return PreparedMoveUpdateKind.InactiveNoop;", "return PreparedMoveUpdateKind.Refresh;", "swap inactive branch effect"),
+    ("owner", "return PreparedMoveUpdateKind.DraggingNoop;", "return PreparedMoveUpdateKind.Refresh;", "swap dragging branch effect"),
+    ("owner", "return PreparedMoveUpdateKind.WrapperEditOpenNoop;", "return PreparedMoveUpdateKind.InactiveNoop;", "swap wrapper-open branch effect"),
+    ("owner", "return PreparedMoveUpdateKind.Refresh;", "return PreparedMoveUpdateKind.DraggingNoop;", "swap refresh branch effect"),
     ("owner", "target_.installPreparedMoveUpdate(image_);", "", "drop fixed install"),
     ("owner", "image_.clear(); pending_ = validated_ = false; consumed_ = true;", "pending_ = validated_ = false; consumed_ = true;", "omit payload scrub"),
     ("move", "if (!active) { image.branch = PreparedMoveUpdateBranch.InactiveNoop; return image; }", "", "drop inactive guard"),
@@ -2464,6 +2494,23 @@ for target, old, new, label in (
     else: context = context.replace(old, new, 1)
     if move_update_gate(owner, context, move):
         fail(f"Move update mutation did not RED: {label}")
+
+for old, new, label in (
+    ("scope(failure) context.discard();", "", "drop function failure cleanup"),
+    ("PreparedMoveUpdateOwner.prepare(this, vts)", "null", "drop owner prepare"),
+    ("context.prepareMoveUpdate(owner) &&", "true &&", "drop context enlist"),
+    ("context.markNoHistoryInstall();", "true;", "drop NoHistory ordering"),
+    ("if (!ok) context.discard();", "", "drop refusal discard"),
+    ("owner.effectKind()", "PreparedMoveUpdateKind.None", "drop branch result"),
+    ("PreparedMoveUpdateEffect(preparedToolStateOwner, kind, ok)",
+     "PreparedMoveUpdateEffect(OwnedId.init, kind, ok)", "wrong accepted owner"),
+    ("auto owner = PreparedMoveUpdateOwner.prepare(this, vts);",
+     "auto owner = PreparedMoveUpdateOwner.prepare(this, vts); owner.install();",
+     "early owner install"),
+):
+    mutant = move_tool.replace(old, new, 1)
+    if move_update_producer_gate(mutant):
+        fail(f"Move update producer mutation did not RED: {label}")
 
 move_update_copy_fixture = ROOT / "tests/compile_fail/prepared_move_update_token_copy.d"
 run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(move_update_copy_fixture)],

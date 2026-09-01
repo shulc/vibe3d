@@ -4,6 +4,7 @@ import core.atomic : atomicOp;
 import operator : VectorStack;
 import tools.transform.move : MoveTool, PreparedMoveUpdateImage,
                               PreparedMoveUpdateBranch;
+import prepared_tool_effect : PreparedMoveUpdateKind;
 
 struct PreparedMoveUpdateToken {
     @disable this(this);
@@ -21,6 +22,7 @@ private shared ulong nextMoveUpdateOwner;
 /// image remains private; only scalar tokens cross PreparedRecordContext.
 final class PreparedMoveUpdateOwner {
 private:
+    version(unittest) static size_t abortCount_;
     MoveTool target_;
     PreparedMoveUpdateImage image_;
     immutable ulong owner_;
@@ -60,12 +62,31 @@ public:
         consume();
     }
     void abort() nothrow @nogc {
-        if (!consumed_) { image_.clear(); consume(); }
+        if (!consumed_) {
+            version(unittest) ++abortCount_;
+            image_.clear(); consume();
+        }
+    }
+    PreparedMoveUpdateKind effectKind() const nothrow @nogc {
+        if (!image_.valid) return PreparedMoveUpdateKind.None;
+        final switch (image_.branch) {
+        case PreparedMoveUpdateBranch.InactiveNoop:
+            return PreparedMoveUpdateKind.InactiveNoop;
+        case PreparedMoveUpdateBranch.DraggingNoop:
+            return PreparedMoveUpdateKind.DraggingNoop;
+        case PreparedMoveUpdateBranch.WrapperEditOpenNoop:
+            return PreparedMoveUpdateKind.WrapperEditOpenNoop;
+        case PreparedMoveUpdateBranch.Refresh:
+            return PreparedMoveUpdateKind.Refresh;
+        }
     }
     version(unittest) PreparedMoveUpdateBranch branchForTest() const
             nothrow @nogc { return image_.branch; }
     version(unittest) bool payloadEmpty() const nothrow @nogc {
         return !image_.valid;
+    }
+    version(unittest) static size_t abortCountForTest() nothrow @nogc {
+        return abortCount_;
     }
     version(unittest) void corruptPreparedForTest(bool ownerIdentity)
             nothrow @nogc {
@@ -187,6 +208,94 @@ version(unittest) unittest {
             super(source, gpu_, mode_);
         }
     }
-    assert(PreparedMoveUpdateOwner.prepare(
-        new DerivedMove(() => &mesh, &gpu, &mode), vts) is null);
+    auto derived = new DerivedMove(() => &mesh, &gpu, &mode);
+    assert(PreparedMoveUpdateOwner.prepare(derived, vts) is null);
+
+    // Dormant producer: every branch is accepted without a prepare-time live
+    // write and installs in MoveUpdate -> NoHistory order.
+    move.seedPreparedMoveUpdateForTest(false, -1, null, oldCached, oldHandler);
+    auto inactiveContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    auto inactiveEffect = move.prepareUpdate(vts, inactiveContext);
+    assert(inactiveEffect.accepted &&
+        inactiveEffect.kind == PreparedMoveUpdateKind.InactiveNoop &&
+        inactiveEffect.owner == move.preparedOwnerForTest() &&
+        move.preparedMoveUpdateStateForTest(oldCached, oldHandler) &&
+        inactiveContext.validate());
+    inactiveContext.install(); inactiveContext.install();
+    assert(inactiveContext.installTraceForTest == [16,8] &&
+        move.preparedMoveUpdateStateForTest(oldCached, oldHandler));
+
+    move.seedPreparedMoveUpdateForTest(true, 2, null, oldCached, oldHandler);
+    auto dragContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    auto dragEffect = move.prepareUpdate(vts, dragContext);
+    assert(dragEffect.accepted &&
+        dragEffect.kind == PreparedMoveUpdateKind.DraggingNoop &&
+        move.preparedMoveUpdateStateForTest(oldCached, oldHandler) &&
+        dragContext.validate());
+    dragContext.install(); dragContext.install();
+    assert(dragContext.installTraceForTest == [16,8] &&
+        move.preparedMoveUpdateStateForTest(oldCached, oldHandler));
+
+    wrapper.preparedMoveUpdateOpenForTest(true);
+    move.seedPreparedMoveUpdateForTest(true, -1, wrapper, oldCached, oldHandler);
+    auto openContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    auto openEffect = move.prepareUpdate(vts, openContext);
+    assert(openEffect.accepted &&
+        openEffect.kind == PreparedMoveUpdateKind.WrapperEditOpenNoop &&
+        move.preparedMoveUpdateStateForTest(oldCached, oldHandler) &&
+        openContext.validate());
+    openContext.install(); openContext.install();
+    assert(openContext.installTraceForTest == [16,8] &&
+        move.preparedMoveUpdateStateForTest(oldCached, oldHandler));
+    wrapper.preparedMoveUpdateOpenForTest(false);
+
+    move.seedPreparedMoveUpdateForTest(true, -1, foreign, oldCached, oldHandler);
+    acen.center = Vec3(17,18,19);
+    auto refreshContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    auto refreshEffect = move.prepareUpdate(vts, refreshContext);
+    assert(refreshEffect.accepted && refreshEffect.kind == PreparedMoveUpdateKind.Refresh &&
+        refreshEffect.owner == move.preparedOwnerForTest() &&
+        move.preparedMoveUpdateStateForTest(oldCached, oldHandler) &&
+        refreshContext.validate());
+    acen.center = Vec3(71,81,91);
+    refreshContext.install(); refreshContext.install();
+    assert(refreshContext.installTraceForTest == [16,8] &&
+        move.preparedMoveUpdateStateForTest(Vec3(17,18,19), Vec3(17,18,19)));
+
+    // Null and exact-class refusal are terminal and carry no accepted effect.
+    auto nullEffect = move.prepareUpdate(vts, null);
+    assert(!nullEffect.accepted && nullEffect.kind == PreparedMoveUpdateKind.None &&
+        nullEffect.owner == move.preparedOwnerForTest());
+    auto refusedContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    auto refused = derived.prepareUpdate(vts, refusedContext);
+    assert(!refused.accepted && refused.kind == PreparedMoveUpdateKind.None &&
+        refused.owner == derived.preparedOwnerForTest() &&
+        refusedContext.resourceCountForTest == 0);
+
+    // A throw after owner begin triggers function-wide context cleanup, scrubs
+    // the owner, leaves live state unchanged, and a fresh retry succeeds.
+    move.seedPreparedMoveUpdateForTest(true, -1, null, oldCached, oldHandler);
+    acen.center = Vec3(27,28,29);
+    auto producerAborts = PreparedMoveUpdateOwner.abortCountForTest();
+    auto producerFault = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    PreparedRecordContext.failAfterResourceBeginForTest(true); threw = false;
+    try move.prepareUpdate(vts, producerFault); catch (Exception) threw = true;
+    PreparedRecordContext.failAfterResourceBeginForTest(false);
+    assert(threw && producerFault.resourceCountForTest == 0 &&
+        PreparedMoveUpdateOwner.abortCountForTest() == producerAborts + 1 &&
+        move.preparedMoveUpdateStateForTest(oldCached, oldHandler));
+    auto producerRetry = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    auto retryEffect = move.prepareUpdate(vts, producerRetry);
+    assert(retryEffect.accepted && retryEffect.kind == PreparedMoveUpdateKind.Refresh &&
+        move.preparedMoveUpdateStateForTest(oldCached, oldHandler) &&
+        producerRetry.validate());
+    producerRetry.discard();
+    assert(move.preparedMoveUpdateStateForTest(oldCached, oldHandler));
 }
