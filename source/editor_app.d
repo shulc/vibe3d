@@ -679,7 +679,7 @@ bool seedDefaultLayoutIfMissing(string userIniPath) {
 // construction time, not at registration time -- scratch-proven late
 // binding (withctx.d).
 // ---------------------------------------------------------------------------
-alias MeshDg        = ref Mesh delegate();
+alias MeshDg        = ref Mesh delegate() nothrow @nogc;
 alias ViewDg         = ref View delegate();
 
 // ---------------------------------------------------------------------------
@@ -757,7 +757,7 @@ struct EditorApp {
     // working unchanged (a property method supports explicit-call syntax
     // too).
     MeshDg meshDg;
-    @property ref Mesh mesh() { return meshDg(); }
+    @property ref Mesh mesh() nothrow @nogc { return meshDg(); }
 
     // `cameraView` is the SAME class of gotcha as `mesh` above (task 0419
     // later found `mesh` needed the identical treatment -- see its comment):

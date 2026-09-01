@@ -70,6 +70,34 @@ struct MeshSnapshot {
         this = MeshSnapshot.init;
     }
 
+    /// Exact, allocation-free witness that the live mesh still has the full
+    /// projection captured by `capture`. Prepared owners use this at commit:
+    /// a version counter is insufficient because several legitimate paths
+    /// write mesh storage directly without advancing it.
+    bool matches(in Mesh mesh) const nothrow @nogc {
+        if (!filled || vertices != mesh.vertices || edges != mesh.edges ||
+            vertexMarks != mesh.vertexMarks || edgeMarks != mesh.edgeMarks ||
+            faceMarks != mesh.faceMarks ||
+            vertexSelectionOrder != mesh.vertexSelectionOrder ||
+            edgeSelectionOrder != mesh.edgeSelectionOrder ||
+            faceSelectionOrder != mesh.faceSelectionOrder ||
+            vertexSelectionOrderCounter != mesh.vertexSelectionOrderCounter ||
+            edgeSelectionOrderCounter != mesh.edgeSelectionOrderCounter ||
+            faceSelectionOrderCounter != mesh.faceSelectionOrderCounter ||
+            surfaces != mesh.surfaces || faceMaterial != mesh.faceMaterial ||
+            facePart != mesh.facePart || meshMaps != mesh.meshMaps ||
+            vertexSetNames != mesh.vertexSetNames ||
+            vertexSetMask != mesh.vertexSetMask ||
+            edgeSetNames != mesh.edgeSetNames ||
+            edgeSetMask != mesh.edgeSetMask ||
+            polygonSetNames != mesh.polygonSetNames ||
+            faceSetMask != mesh.faceSetMask || faces.length != mesh.faces.length)
+            return false;
+        foreach (i, face; faces)
+            if (face != mesh.faces[i]) return false;
+        return true;
+    }
+
     static MeshSnapshot capture(in Mesh mesh) {
         MeshSnapshot s;
         s.vertices             = mesh.vertices.dup;

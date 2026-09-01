@@ -122,16 +122,6 @@
   {
     "batch": "P1.0b.2+",
     "key": {
-      "aggregate": "StrokeExtrudeTool",
-      "module": "tools.deform.stroke_extrude_tool",
-      "signature": "void()",
-      "symbol": "activate"
-    },
-    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
-  },
-  {
-    "batch": "P1.0b.2+",
-    "key": {
       "aggregate": "BridgeTool",
       "module": "tools.edit.bridge_tool",
       "signature": "void()",

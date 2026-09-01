@@ -37,7 +37,8 @@ enum PreparedDeactivateKind : ubyte {
     CommandWrapper, Tack, TransformNormalUpload, Vertex,
 }
 enum PreparedActivateKind : ubyte {
-    None, Vertex, Array, Clone, Magnet, Reduction, Box, Pen, Primitive
+    None, Vertex, Array, Clone, Magnet, Reduction, Box, Pen, Primitive,
+    StrokeExtrude
 }
 enum PreparedRadialSweepKind : ubyte { Activate, Param, Deactivate }
 enum PreparedRadialArrayKind : ubyte { Activate, Deactivate }

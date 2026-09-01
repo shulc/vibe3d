@@ -1,6 +1,8 @@
 module tools.deform.stroke_extrude_tool;
 import prepared_record_context : PreparedRecordContext;
-import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
+    PreparedSessionActivateEffect, PreparedActivateKind;
+import prepared_stroke_extrude_activation : PreparedStrokeExtrudeActivationOwner;
 import command_history : PreparedHistoryKind;
 
 import bindbc.sdl;
@@ -17,6 +19,14 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import document : primaryModelSpace;
+
+struct PreparedStrokeExtrudeActivationImage {
+    MeshSnapshot before;
+    bool valid;
+    void clear() nothrow @nogc {
+        before = MeshSnapshot.init; valid = false;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // StrokeExtrudeTool — interactive port of the reference editor's "Sketch
@@ -77,7 +87,7 @@ import document : primaryModelSpace;
 // ---------------------------------------------------------------------------
 class StrokeExtrudeTool : Tool {
 private:
-    Mesh* delegate() meshSrc_;
+    Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
     GpuMesh*         gpu;
     LitShader        litShader;
@@ -112,7 +122,8 @@ private:
     enum size_t maxSpans = 4096;
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader) {
+    this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu,
+            LitShader litShader) {
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.litShader = litShader;
@@ -135,6 +146,70 @@ public:
     override void activate() {
         active = true;
         reinitSession();
+    }
+
+    final PreparedStrokeExtrudeActivationImage buildPreparedActivation(
+            out Mesh* source) {
+        PreparedStrokeExtrudeActivationImage image;
+        source = mesh;
+        if (source is null) return image;
+        image.before = MeshSnapshot.capture(*source);
+        image.valid = true;
+        return image;
+    }
+
+    final Mesh* preparedActivationMesh() nothrow @nogc {
+        return meshSrc_();
+    }
+
+    final void installPreparedActivation(
+            ref PreparedStrokeExtrudeActivationImage image) nothrow @nogc {
+        if (!image.valid) return;
+        active = true; drawing_ = false; built_ = false;
+        mask_ = null; pathPoints_.length = 0;
+        image.before.moveInto(before);
+        image.valid = false;
+    }
+
+    final PreparedSessionActivateEffect prepareActivate(
+            PreparedRecordContext context) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.StrokeExtrude, false);
+        scope(failure) context.discard();
+        auto owner = PreparedStrokeExtrudeActivationOwner.prepare(this);
+        bool ok = owner !is null &&
+            context.prepareStrokeExtrudeActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.StrokeExtrude, ok);
+    }
+
+    version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
+        return preparedToolStateOwner;
+    }
+    version(unittest) final void seedPreparedActivationForTest(ref Mesh oldMesh) {
+        active = false; drawing_ = true; built_ = true;
+        mask_ = [true, false]; pathPoints_ = [Vec3(9,8,7)];
+        alignToPath_ = false; precisionPx_ = 77; liveTip_ = Vec3(1,2,3);
+        lastScreenX_ = 4; lastScreenY_ = 5; vpWorld_.view[0] = 6;
+        before = MeshSnapshot.capture(oldMesh);
+    }
+    version(unittest) final bool preparedActivationDirtyForTest() const
+            nothrow @nogc {
+        return !active && drawing_ && built_ && mask_.length == 2 &&
+            pathPoints_.length == 1 && pathPoints_[0] == Vec3(9,8,7) &&
+            !alignToPath_ && precisionPx_ == 77 && liveTip_ == Vec3(1,2,3) &&
+            lastScreenX_ == 4 && lastScreenY_ == 5 && vpWorld_.view[0] == 6;
+    }
+    version(unittest) final bool preparedActivationForTest(size_t vertices,
+            Vec3 first, const Vec3* livePtr) const nothrow @nogc {
+        return active && !drawing_ && !built_ && mask_ is null &&
+            pathPoints_.length == 0 && before.filled &&
+            before.vertices.length == vertices && vertices != 0 &&
+            before.vertices[0] == first && before.vertices.ptr !is livePtr &&
+            !alignToPath_ && precisionPx_ == 77 && liveTip_ == Vec3(1,2,3) &&
+            lastScreenX_ == 4 && lastScreenY_ == 5 && vpWorld_.view[0] == 6;
     }
 
     private void reinitSession() {

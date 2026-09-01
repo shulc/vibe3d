@@ -1655,7 +1655,7 @@ void main(string[] args) {
     // here. `Command.apply()`'s Operator branch (via `g_editTargetResolver`,
     // installed below) and tool activation both refuse first, and
     // `test_empty_item_selection.d` asserts the stand-in stays empty afterwards.
-    ref Mesh mesh() {
+    ref Mesh mesh() nothrow @nogc {
         // ONE walk, not three (task 1760). `hasEditTarget()` is
         // `primary !is null` and `activeMeshRef()` used to name `primary`
         // twice more, so this three-line accessor ran the derived

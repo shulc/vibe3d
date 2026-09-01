@@ -241,6 +241,7 @@ B5P_PREPARED_LEGACY = {
     ("tools.create.box", "BoxTool", "activate"),
     ("tools.create.pen", "PenTool", "activate"),
     ("tools.create.primitive_create_tool", "PrimitiveCreateTool", "activate"),
+    ("tools.deform.stroke_extrude_tool", "StrokeExtrudeTool", "activate"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
@@ -278,7 +279,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "e7f28b3746bb2cf60a106f8b0c480cffde9aabe4b9cc0530963b9b5884f7b66f"
+    "78010719f61160ae6dea6608b2541891dc2b157f52beb7c1380276d082b2bcc3"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -409,11 +410,13 @@ for path, text in prepared_source_texts.items():
             "prepared_move_update",
             "prepared_inherited_noop",
             "prepared_xfrm_activation_session",
+            "prepared_stroke_extrude_activation",
             "tools.alignment.radial_sweep_tool",
             "tools.alignment.radial_array_tool",
             "tools.alignment.linear_align_tool",
             "tools.alignment.radial_align_tool",
-            "tools.deform.bend", "tools.deform.push"}:
+            "tools.deform.bend", "tools.deform.push",
+            "tools.deform.stroke_extrude_tool"}:
         fail(f"P1.0b.3d PreparedRecordContext gained an unreviewed import: {module}")
     if "new PreparedRecordContext" in text:
         production_text = without_unittests(text)
@@ -1844,6 +1847,145 @@ for name, old, new, label in (
     mutant[name] = mutant[name].replace(old, new, 1)
     if mutant[name] == primitive_activation_sources[name] or primitive_activation_gate(mutant):
         fail(f"Primitive activation mutation did not RED: {label}")
+
+# Exact StrokeExtrude activation: a deep cage snapshot plus fixed session
+# reset, followed by NoHistory. Production activate stays legacy until cutover.
+stroke_activation_owner = (ROOT /
+    "source/prepared_stroke_extrude_activation.d").read_text()
+stroke_activation_tool = (ROOT /
+    "source/tools/deform/stroke_extrude_tool.d").read_text()
+stroke_activation_snapshot = (ROOT / "source/snapshot.d").read_text()
+stroke_snapshot_match_checks = (
+    "vertices != mesh.vertices", "edges != mesh.edges",
+    "vertexMarks != mesh.vertexMarks", "edgeMarks != mesh.edgeMarks",
+    "faceMarks != mesh.faceMarks",
+    "vertexSelectionOrder != mesh.vertexSelectionOrder",
+    "edgeSelectionOrder != mesh.edgeSelectionOrder",
+    "faceSelectionOrder != mesh.faceSelectionOrder",
+    "vertexSelectionOrderCounter != mesh.vertexSelectionOrderCounter",
+    "edgeSelectionOrderCounter != mesh.edgeSelectionOrderCounter",
+    "faceSelectionOrderCounter != mesh.faceSelectionOrderCounter",
+    "surfaces != mesh.surfaces", "faceMaterial != mesh.faceMaterial",
+    "facePart != mesh.facePart", "meshMaps != mesh.meshMaps",
+    "vertexSetNames != mesh.vertexSetNames",
+    "vertexSetMask != mesh.vertexSetMask",
+    "edgeSetNames != mesh.edgeSetNames", "edgeSetMask != mesh.edgeSetMask",
+    "polygonSetNames != mesh.polygonSetNames",
+    "faceSetMask != mesh.faceSetMask", "faces.length != mesh.faces.length",
+    "face != mesh.faces[i]",
+)
+def stroke_activation_gate(owner, context, tool, snapshot=stroke_activation_snapshot):
+    production_owner = without_unittests(owner)
+    production_tool = without_unittests(tool)
+    start = production_tool.find(
+        "final PreparedSessionActivateEffect prepareActivate(")
+    end = production_tool.find("final auto preparedOwnerForTest", start)
+    producer = production_tool[start:end] if start >= 0 and end > start else ""
+    legacy = re.search(r"override void activate\(\)\s*\{", production_tool)
+    legacy_body = production_tool[legacy.end():balanced_source(
+        production_tool, legacy.end())-1] if legacy else ""
+    return (
+        "final class PreparedStrokeExtrudeActivationOwner" in owner and
+        owner.count("@disable this(this);") == 2 and
+        not any(x in production_owner for x in
+                (" delegate", " function(", "void*", "ubyte[]")) and
+        "target.classinfo !is StrokeExtrudeTool.classinfo" in owner and
+        "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
+        "target_.preparedActivationMesh() !is source_" in owner and
+        "!image_.before.matches(*source_)" in owner and
+        "Mesh* delegate() nothrow @nogc meshSrc_;" in tool and
+        all(check in snapshot for check in stroke_snapshot_match_checks) and
+        "target_.installPreparedActivation(image_);\n        consume();" in owner and
+        "image_.clear(); target_ = null; source_ = null;" in owner and
+        "image.before = MeshSnapshot.capture(*source);\n"
+        "        image.valid = true;" in tool and
+        "active = true; drawing_ = false; built_ = false;\n"
+        "        mask_ = null; pathPoints_.length = 0;\n"
+        "        image.before.moveInto(before);\n"
+        "        image.valid = false;" in tool and
+        "PreparedStrokeExtrudeActivationOwner.prepare(this)" in producer and
+        "context.prepareStrokeExtrudeActivation(owner)" in producer and
+        "context.markNoHistoryInstall()" in producer and
+        producer.find("context.prepareStrokeExtrudeActivation(owner)") <
+            producer.find("context.markNoHistoryInstall()") and
+        "scope(failure) context.discard();" in producer and
+        "if (!ok) context.discard();" in producer and
+        "PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+        "            PreparedActivateKind.StrokeExtrude, ok)" in producer and
+        not any(x in producer for x in
+                ("context.validate(", "context.install(", "owner.install(")) and
+        not any(x in legacy_body for x in
+                ("prepareActivate(", "PreparedRecordContext")) and
+        "e.strokeExtrudeActivation.validate();" in context and
+        "e.strokeExtrudeActivation.install();" in context and
+        "e.strokeExtrudeActivation.abort();" in context)
+if not stroke_activation_gate(stroke_activation_owner, record_context,
+                              stroke_activation_tool, stroke_activation_snapshot):
+    fail("StrokeExtrude activation prepared contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is StrokeExtrudeTool.classinfo", "false",
+     "broaden exact product admission"),
+    ("owner", "result.image_ = target.buildPreparedActivation(result.source_);", "",
+     "drop detached builder"),
+    ("owner", "target_.preparedActivationMesh() !is source_", "false",
+     "drop live mesh identity validation"),
+    ("owner", "!image_.before.matches(*source_)", "false",
+     "drop live mesh content validation"),
+    ("owner", "target_.installPreparedActivation(image_);", "",
+     "drop fixed installer"),
+    ("owner", "image_.clear(); target_ = null; source_ = null;", "target_ = null;",
+     "retain deep payload"),
+    ("tool", "image.before = MeshSnapshot.capture(*source);", "",
+     "drop cage snapshot"),
+    ("tool", "image.before.moveInto(before);", "before = image.before;",
+     "shallow-copy cage snapshot"),
+    ("tool", "image.valid = false;", "",
+     "retain installed carrier validity"),
+    ("tool", "active = true; drawing_ = false; built_ = false;",
+     "active = true; drawing_ = false;", "drop built reset"),
+    ("tool", "mask_ = null; pathPoints_.length = 0;", "mask_ = null;",
+     "drop path reset"),
+    ("tool", "scope(failure) context.discard();", "",
+     "drop function failure cleanup"),
+    ("tool", "context.prepareStrokeExtrudeActivation(owner)", "true",
+     "drop context enlist"),
+    ("tool", "context.markNoHistoryInstall()", "true",
+     "drop NoHistory seal"),
+    ("tool", "PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+     "            PreparedActivateKind.StrokeExtrude, ok)",
+     "PreparedSessionActivateEffect(OwnedId.init,\n"
+     "            PreparedActivateKind.StrokeExtrude, ok)",
+     "forge effect owner"),
+    ("context", "e.strokeExtrudeActivation.validate();", "true;",
+     "drop context validation"),
+    ("context", "e.strokeExtrudeActivation.install();", "",
+     "drop context install"),
+    ("context", "e.strokeExtrudeActivation.abort();", "",
+     "drop context abort"),
+):
+    o, c, t = stroke_activation_owner, record_context, stroke_activation_tool
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    else: t = t.replace(old, new, 1)
+    if (o == stroke_activation_owner and c == record_context and
+            t == stroke_activation_tool) or stroke_activation_gate(o, c, t):
+        fail(f"StrokeExtrude activation mutation did not RED: {label}")
+for check in stroke_snapshot_match_checks:
+    mutant = stroke_activation_snapshot.replace(check, check.replace(" != ", " == "), 1)
+    if mutant == stroke_activation_snapshot or stroke_activation_gate(
+            stroke_activation_owner, record_context, stroke_activation_tool, mutant):
+        fail("StrokeExtrude snapshot field mutation did not RED: " + check)
+
+for stroke_activation_copy_fixture in (
+    ROOT / "tests/compile_fail/prepared_stroke_extrude_activation_token_copy.d",
+    ROOT / "tests/compile_fail/prepared_stroke_extrude_activation_validated_token_copy.d",
+):
+    run = subprocess.run(["dmd", "-c", *DMD_FLAGS,
+        str(stroke_activation_copy_fixture)], cwd=ROOT, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if run.returncode == 0 or ("not copyable" not in run.stdout and
+            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+        fail("StrokeExtrude activation token copy was not rejected:\n" + run.stdout)
 
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
 # detached whole-Mesh adoption with exact caller-supplied change flags, and a

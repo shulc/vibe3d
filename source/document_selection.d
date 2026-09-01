@@ -73,7 +73,7 @@ mixin template DocumentSelection() {
     /// current and still listed in a bucket (an undo that restored `selected`
     /// by raw field write) reads `Current`, exactly as the reference's own
     /// lookup resolves it.
-    SelState selectionState(const(Layer) l) const {
+    SelState selectionState(const(Layer) l) const nothrow @nogc {
         if (l is null) return SelState.None;
         if (l.selected) return SelState.Current;
         foreach (h; deselected_[l.kind]) if (h is l) return SelState.History;
@@ -90,7 +90,7 @@ mixin template DocumentSelection() {
     /// every refusal in this file keys on the capability, and a future kind
     /// with geometry but barred from being the edit target must take the
     /// ordinary arm.
-    LayerRole roleOf(const(Layer) l) const {
+    LayerRole roleOf(const(Layer) l) const nothrow @nogc {
         if (l is null) return LayerRole.None;
         // Not a scene item at all (a clip lives only in its own panel), so it
         // is not a layer — not a background one either.
@@ -134,7 +134,7 @@ mixin template DocumentSelection() {
     /// animation event; we do not need to, and a memo that is maintained rather
     /// than dropped is precisely the stored pointer this task exists to not
     /// reintroduce.
-    private inout(Layer) nthEditTargetCandidate(size_t n) inout {
+    private inout(Layer) nthEditTargetCandidate(size_t n) inout nothrow @nogc {
         { import perf_probe : g_perf, Cat; g_perf.count(Cat.editTargetDerive, 1); }
         size_t emitted = 0;
         foreach (stage; 0 .. 2) {
@@ -186,7 +186,9 @@ mixin template DocumentSelection() {
     /// see the struct's doc comment. Nothing assigns the edit target; the
     /// mutators move items between the current list and the history buckets and
     /// this recomputes.
-    inout(Layer) primary() inout { return nthEditTargetCandidate(0); }
+    inout(Layer) primary() inout nothrow @nogc {
+        return nthEditTargetCandidate(0);
+    }
 
     /// The single FILTER `foregroundLayersInto`/`foregroundLayerCount` share
     /// below (task 0770): is `l` a foreground candidate at all, independent of

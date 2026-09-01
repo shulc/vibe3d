@@ -628,7 +628,7 @@ final class Layer {
     /// PROVED by `assertDocInvariants`, which is plain `assert()` and is
     /// therefore ALSO compiled out under `-release` (see its own doc
     /// comment) — neither check is production enforcement.
-    ref inout(Mesh) meshRef() inout {
+    ref inout(Mesh) meshRef() inout nothrow @nogc {
         debug assert(hasMesh, "meshRef() called on a non-mesh item");
         return mesh_;
     }
@@ -967,7 +967,7 @@ private __gshared Mesh g_noEditTargetMesh;
 /// `tests/test_empty_item_selection.d` asserts it stays empty after a refused
 /// command, which is how "no write reaches it" stays true rather than merely
 /// intended.
-ref Mesh noEditTargetMesh() { return g_noEditTargetMesh; }
+ref Mesh noEditTargetMesh() nothrow @nogc { return g_noEditTargetMesh; }
 
 /// The selection STATE of one item — the port of the reference's own state
 /// word, narrowed to the two bits this document model uses (task 0671).

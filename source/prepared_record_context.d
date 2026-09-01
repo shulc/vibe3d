@@ -21,6 +21,7 @@ import prepared_transform_product_activation : PreparedTransformProductActivatio
 import prepared_move_update : PreparedMoveUpdateOwner;
 import prepared_inherited_noop : PreparedInheritedNoopOwner;
 import prepared_xfrm_activation_session : PreparedXfrmActivationSessionOwner;
+import prepared_stroke_extrude_activation : PreparedStrokeExtrudeActivationOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -32,7 +33,7 @@ private enum PreparedResourceKind : ubyte {
     RadialSweepProfileState, RadialSweepTransitionState, GestureCarrierMismatch,
     GpuCreateUpload, RadialArrayTransitionState, TransformActivationState,
     TransformProductActivationState, MoveUpdateState, InheritedNoopState,
-    XfrmActivationPreState, XfrmActivationPostState
+    XfrmActivationPreState, XfrmActivationPostState, StrokeExtrudeActivationState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -46,6 +47,7 @@ private struct PreparedResourceEntry {
     PreparedMoveUpdateOwner moveUpdate;
     PreparedInheritedNoopOwner inheritedNoop;
     PreparedXfrmActivationSessionOwner xfrmActivation;
+    PreparedStrokeExtrudeActivationOwner strokeExtrudeActivation;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -308,6 +310,17 @@ public:
         PreparedResourceEntry e; e.kind = PreparedResourceKind.MoveUpdateState;
         e.moveUpdate = owner; resources_ ~= e; return true;
     }
+    bool prepareStrokeExtrudeActivation(PreparedStrokeExtrudeActivationOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected StrokeExtrude activation enlist failure");
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.StrokeExtrudeActivationState;
+        e.strokeExtrudeActivation = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -480,6 +493,9 @@ public:
             case PreparedResourceKind.XfrmActivationPostState:
                 ok = e.xfrmActivation !is null &&
                     e.xfrmActivation.validatePost(); break;
+            case PreparedResourceKind.StrokeExtrudeActivationState:
+                ok = e.strokeExtrudeActivation !is null &&
+                    e.strokeExtrudeActivation.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -588,6 +604,10 @@ public:
             e.xfrmActivation.installPost();
             version(unittest) installTrace_[installTraceLength_++] = 19;
             break;
+        case PreparedResourceKind.StrokeExtrudeActivationState:
+            e.strokeExtrudeActivation.install();
+            version(unittest) installTrace_[installTraceLength_++] = 20;
+            break;
         }
         if (!installedHistory && history_ !is null)
             history_.installPreparedToken(validated_);
@@ -645,6 +665,8 @@ private:
         case PreparedResourceKind.XfrmActivationPreState:
         case PreparedResourceKind.XfrmActivationPostState:
             e.xfrmActivation.abort(); break;
+        case PreparedResourceKind.StrokeExtrudeActivationState:
+            e.strokeExtrudeActivation.abort(); break;
         }
         resources_.length = 0;
         historyMarker_ = false;

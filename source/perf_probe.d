@@ -779,7 +779,7 @@ version (PerfProbe) {
     private struct CounterStat {
         long count;   // number of count() calls
         long sum;     // accumulated value
-        void add(long n) { count++; sum += n; }
+        void add(long n) nothrow @nogc { count++; sum += n; }
         void clear() { this = CounterStat.init; }
     }
 
@@ -801,7 +801,7 @@ version (PerfProbe) {
 
         /// Add `n` to a counter category (vertsTouched / falloffEvalCount).
         /// No-op (with a debug consistency check) if `c` is a timer.
-        void count(Cat c, long n) {
+        void count(Cat c, long n) nothrow @nogc {
             if (c < firstCounter) {
                 debug assert(false, "perf_probe.count called on a timer category");
                 return;
@@ -1283,7 +1283,7 @@ version (PerfProbe) {
 
     struct PerfProbe {
         pragma(inline, true) ScopeTimer scope_(Cat) { return ScopeTimer.init; }
-        pragma(inline, true) void count(Cat, long) {}
+        pragma(inline, true) void count(Cat, long) nothrow @nogc {}
         // Task 1500: the subpatch build's timer is no longer opened by a
         // ScopeTimer at the top of one function — the build runs on a worker
         // thread and the MAIN thread records the elapsed span on reception.
