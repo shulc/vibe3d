@@ -44,7 +44,7 @@ enum PreparedActivateKind : ubyte {
     Slice, Tack, CommandWrapper, Bridge, Mirror, EdgeExtend, TopologyPen
 }
 enum PreparedRadialSweepKind : ubyte { Activate, Param, Deactivate }
-enum PreparedRadialArrayKind : ubyte { Activate, Deactivate }
+enum PreparedRadialArrayKind : ubyte { Activate, Param, Deactivate }
 enum PreparedTransformActivationKind : ubyte { LinearAlign, RadialAlign, Bend, Push }
 enum PreparedTransformProductKind : ubyte { Move, Rotate, Scale }
 enum PreparedMoveUpdateKind : ubyte {

@@ -4,6 +4,8 @@ import mesh : Mesh;
 import tools.alignment.radial_array_tool : RadialArrayTool,
     RadialArrayTransitionImage, PreparedRadialArrayTransitionKind;
 import core.atomic : atomicOp;
+import document : Layer;
+import prepared_tool_effect : PreparedRadialArrayKind;
 
 struct PreparedRadialArrayTransitionToken {
     @disable this(this);
@@ -23,6 +25,8 @@ final class PreparedRadialArrayTransitionOwner {
 private:
     RadialArrayTool target_;
     RadialArrayTransitionImage image_;
+    Layer layer_;
+    Mesh* source_;
     immutable ulong owner_;
     ulong generation_;
     bool pending_, validated_, consumed_;
@@ -41,10 +45,29 @@ public:
         auto result = new PreparedRadialArrayTransitionOwner(target);
         result.image_ = target.buildPreparedDeactivateImage(); return result;
     }
+    static PreparedRadialArrayTransitionOwner param(RadialArrayTool target,
+                                                     Layer layer) {
+        if (!admit(target) || layer is null ||
+            !target.ownsPreparedMesh(&layer.meshRef())) return null;
+        auto result = new PreparedRadialArrayTransitionOwner(target);
+        result.layer_ = layer; result.source_ = &layer.meshRef();
+        result.image_ = target.buildPreparedParamImage(layer.meshRef());
+        return result.image_.valid ? result : null;
+    }
     @property PreparedRadialArrayTransitionKind kind() const nothrow @nogc {
         return image_.kind;
     }
     bool owns(RadialArrayTool target) const nothrow @nogc { return target_ is target; }
+    @property bool applies() const nothrow @nogc { return image_.applies; }
+    ref const(Mesh) candidate() const return scope nothrow @nogc {
+        return image_.candidate;
+    }
+    @property uint deliveryFlags() const nothrow @nogc {
+        return image_.deliveryFlags;
+    }
+    @property uint deliveryDomains() const nothrow @nogc {
+        return image_.deliveryDomains;
+    }
     bool begin() nothrow @nogc {
         if (pending_ || consumed_ || target_ is null || !image_.valid) return false;
         ++generation_; pending_ = true; prepared_.owner = owner_;
@@ -52,7 +75,10 @@ public:
     }
     bool validate() nothrow @nogc {
         if (!pending_ || validated_ || consumed_ || target_ is null ||
-            prepared_.owner != owner_ || prepared_.generation != generation_) return false;
+            prepared_.owner != owner_ || prepared_.generation != generation_ ||
+            (image_.kind == PreparedRadialArrayTransitionKind.Param &&
+             (layer_ is null || source_ is null || &layer_.meshRef() !is source_ ||
+              !target_.preparedParamMatches(image_, *source_)))) return false;
         validated_ = true; validatedToken_.owner = owner_;
         validatedToken_.generation = generation_;
         prepared_.owner = prepared_.generation = 0; return true;
@@ -80,6 +106,7 @@ private:
     }
     void consume() nothrow @nogc {
         pending_ = validated_ = false; consumed_ = true; target_ = null;
+        layer_ = null; source_ = null;
         prepared_.owner = prepared_.generation = 0;
         validatedToken_.owner = validatedToken_.generation = 0;
     }
@@ -273,6 +300,64 @@ version(unittest) unittest {
         new RecordObserverHub());
     assert(!missingTool.prepareActivate(missingContext).accepted &&
         !missingContext.validate());
+
+    import document : Layer;
+    import mesh_gpu : GpuUploadOwner;
+    auto paramLayer = new Layer; paramLayer.meshRef() = makeCube();
+    paramLayer.meshRef().syncSelection(); paramLayer.meshRef().selectFace(0);
+    GpuMesh paramGpu;
+    auto paramTool = new RadialArrayTool(() => &paramLayer.meshRef(), &paramGpu,
+        &mode, LitShader.init);
+    paramTool.seedPreparedParamForTest(paramLayer.meshRef(), true);
+    const paramOldFaces = paramLayer.meshRef().faces.length;
+    auto paramContext = new PreparedRecordContext(null, new RecordObserverHub());
+    paramContext.setResourceIdentity(7, 11);
+    auto paramEffect = paramTool.prepareParamChanged(paramContext, paramLayer,
+        GpuUploadOwner.fakeForTest(&paramGpu));
+    assert(paramEffect.accepted && paramEffect.kind == PreparedRadialArrayKind.Param &&
+        paramLayer.meshRef().faces.length == paramOldFaces &&
+        paramTool.preparedParamStateForTest(false) && paramContext.validate());
+    paramContext.install(); paramContext.install();
+    assert(paramLayer.meshRef().faces.length > paramOldFaces &&
+        paramTool.preparedParamStateForTest(true) &&
+        paramContext.installTraceForTest() == [3,4,13,2,8]);
+
+    auto noopLayer = new Layer; noopLayer.meshRef() = makeCube();
+    GpuMesh noopGpu;
+    auto noopTool = new RadialArrayTool(() => &noopLayer.meshRef(), &noopGpu,
+        &mode, LitShader.init);
+    noopTool.seedPreparedParamForTest(noopLayer.meshRef(), false);
+    auto noopContext = new PreparedRecordContext(null, new RecordObserverHub());
+    auto noopEffect = noopTool.prepareParamChanged(noopContext, noopLayer, null);
+    assert(noopEffect.accepted && noopEffect.kind == PreparedRadialArrayKind.Param &&
+        noopContext.validate()); noopContext.install();
+    assert(noopLayer.meshRef().faces.length == 6 &&
+        noopContext.installTraceForTest() == [13,8]);
+
+    auto staleLayer = new Layer; staleLayer.meshRef() = makeCube();
+    GpuMesh staleGpu;
+    auto staleTool = new RadialArrayTool(() => &staleLayer.meshRef(), &staleGpu,
+        &mode, LitShader.init);
+    staleTool.seedPreparedParamForTest(staleLayer.meshRef(), true);
+    auto staleContext = new PreparedRecordContext(null, new RecordObserverHub());
+    staleContext.setResourceIdentity(7, 11);
+    assert(staleTool.prepareParamChanged(staleContext, staleLayer,
+        GpuUploadOwner.fakeForTest(&staleGpu)).accepted);
+    staleTool.mutatePreparedParamForTest(180);
+    assert(!staleContext.validate() && staleLayer.meshRef().faces.length == 6 &&
+        staleTool.preparedParamStateForTest(false));
+
+    auto wrongLayer = new Layer; wrongLayer.meshRef() = makeCube();
+    auto wrongTool = new RadialArrayTool(() => &wrongLayer.meshRef(), &staleGpu,
+        &mode, LitShader.init);
+    wrongTool.seedPreparedParamForTest(wrongLayer.meshRef(), true);
+    GpuMesh foreignParamGpu;
+    auto wrongContext = new PreparedRecordContext(null, new RecordObserverHub());
+    wrongContext.setResourceIdentity(7, 11);
+    assert(!wrongTool.prepareParamChanged(wrongContext, wrongLayer,
+        GpuUploadOwner.fakeForTest(&foreignParamGpu)).accepted &&
+        !wrongContext.validate() && wrongLayer.meshRef().faces.length == 6);
+
     auto producerFault = new PreparedRecordContext(new CommandHistory(),
         new RecordObserverHub());
     PreparedRecordContext.failAfterResourceBeginForTest(true); threw = false;

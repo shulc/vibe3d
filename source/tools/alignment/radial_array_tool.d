@@ -28,13 +28,36 @@ import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedRadialArrayEffect, PreparedRadialArrayKind;
 import prepared_radial_array_transition : PreparedRadialArrayTransitionOwner;
 import command_history : PreparedHistoryKind;
+import document : Layer;
+import mesh_gpu : GpuUploadOwner;
+import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
+import core.stdc.string : memcmp;
 
-enum PreparedRadialArrayTransitionKind : ubyte { Activate, Deactivate }
+enum PreparedRadialArrayTransitionKind : ubyte { Activate, Param, Deactivate }
+struct RadialArrayParamProjection {
+    int count;
+    string axis;
+    Vec3 center;
+    float angle, offset, weld;
+    bool opEquals(const RadialArrayParamProjection other) const nothrow @nogc {
+        bool sameBytes(T)(ref const T a, ref const T b) nothrow @nogc {
+            return memcmp(&a, &b, T.sizeof) == 0;
+        }
+        return count == other.count && axis == other.axis &&
+            sameBytes(center, other.center) && sameBytes(angle, other.angle) &&
+            sameBytes(offset, other.offset) && sameBytes(weld, other.weld);
+    }
+}
 struct RadialArrayTransitionImage {
     MeshSnapshot before;
+    MeshSnapshot expectedLive, expectedBefore;
+    Mesh candidate;
+    RadialArrayParamProjection expectedParams;
     PreparedRadialArrayTransitionKind kind;
-    bool active, built, clearHaul, valid;
+    bool active, built, clearHaul, valid, applies;
+    bool expectedActive, expectedBuilt;
     int dragPart;
+    uint deliveryFlags, deliveryDomains;
     void clear() nothrow @nogc { this = RadialArrayTransitionImage.init; }
 }
 
@@ -222,6 +245,48 @@ public:
         image.active = false; image.built = false; image.dragPart = -1;
         image.clearHaul = true; image.valid = true; return image;
     }
+    final RadialArrayTransitionImage buildPreparedParamImage(ref Mesh live) {
+        RadialArrayTransitionImage image;
+        image.kind = PreparedRadialArrayTransitionKind.Param;
+        image.valid = true; image.expectedActive = active;
+        image.expectedBuilt = built; image.active = active;
+        image.built = built; image.dragPart = dragPart;
+        image.expectedParams = paramProjection();
+        image.expectedParams.axis = axis_.dup;
+        image.expectedLive = MeshSnapshot.capture(live);
+        if (!before.filled) return image;
+        Mesh baseline;
+        auto baselineShadow = beginPreparedShadow(baseline);
+        before.restore(baseline);
+        drainPreparedShadowDelivery(baseline, image.deliveryFlags,
+            image.deliveryDomains);
+        baselineShadow.close();
+        image.expectedBefore = MeshSnapshot.capture(baseline);
+        image.deliveryFlags = image.deliveryDomains = 0;
+        if (!interactiveParamEdit || !active) return image;
+        image.applies = true; image.candidate = baseline; baseline = Mesh.init;
+        auto shadow = beginPreparedShadow(image.candidate);
+        if (count_ <= 1) image.built = false;
+        else {
+            auto mask = image.candidate.operandFaceMask();
+            Vec3 extraShift = axisUnit() *
+                (offset_ / cast(float)(count_ - 1));
+            size_t n = image.candidate.radialArrayFaces(mask, count_, axisChar(),
+                center_, angle_ * PI / 180.0f, extraShift, weld_);
+            image.built = n != 0;
+        }
+        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+            image.deliveryDomains);
+        shadow.close(); return image;
+    }
+    final bool preparedParamMatches(in RadialArrayTransitionImage image,
+            ref const Mesh live) const nothrow @nogc {
+        return image.valid && image.kind == PreparedRadialArrayTransitionKind.Param &&
+            active == image.expectedActive && built == image.expectedBuilt &&
+            image.expectedParams == paramProjection() &&
+            image.expectedLive.matches(live) &&
+            (!before.filled || image.expectedBefore.matches(before));
+    }
     final void installPreparedTransition(ref RadialArrayTransitionImage image)
             nothrow @nogc {
         if (!image.valid) return;
@@ -237,6 +302,16 @@ public:
         before = MeshSnapshot.capture(source); active = true; built = true;
         dragPart = 4; toolHandles.setHaul(3);
     }
+    version(unittest) void seedPreparedParamForTest(ref Mesh source,
+            bool interactive) {
+        before = MeshSnapshot.capture(source); active = true; built = false;
+        dragPart = -1; interactiveParamEdit = interactive;
+        count_ = 4; angle_ = 90; offset_ = 2; weld_ = 0;
+    }
+    version(unittest) void mutatePreparedParamForTest(float value)
+            nothrow @nogc { angle_ = value; }
+    version(unittest) bool preparedParamStateForTest(bool expectedBuilt)
+            const nothrow @nogc { return active && built == expectedBuilt; }
     version(unittest) bool preparedBuiltSeedUnchangedForTest() const
             nothrow @nogc {
         return active && built && dragPart == 4 &&
@@ -387,6 +462,26 @@ public:
 
     override void onParamChanged(string pname) {
         if (interactiveParamEdit) rebuildPreview();
+    }
+    final PreparedRadialArrayEffect prepareParamChanged(
+            PreparedRecordContext context, Layer layer,
+            GpuUploadOwner uploadOwner) {
+        if (context is null) return PreparedRadialArrayEffect(
+            preparedToolStateOwner, PreparedRadialArrayKind.Param, false);
+        scope(failure) context.discard();
+        auto transition = PreparedRadialArrayTransitionOwner.param(this, layer);
+        bool ok = transition !is null;
+        if (ok && transition.applies)
+            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
+                context.prepareStampedMeshImage(layer, transition.candidate,
+                    transition.deliveryFlags, transition.deliveryDomains);
+        if (ok) ok = context.prepareRadialArrayTransition(transition);
+        if (ok && transition.applies)
+            ok = context.prepareUpload(uploadOwner, transition.candidate);
+        if (ok) ok = context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedRadialArrayEffect(preparedToolStateOwner,
+            PreparedRadialArrayKind.Param, ok);
     }
     override void evaluate() {}
 
@@ -600,6 +695,10 @@ public:
     }
 
 private:
+    RadialArrayParamProjection paramProjection() const nothrow @nogc {
+        return RadialArrayParamProjection(count_, axis_, center_, angle_,
+            offset_, weld_);
+    }
     char axisChar() const {
         if (axis_ == "X") return 'X';
         if (axis_ == "Z") return 'Z';

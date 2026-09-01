@@ -238,6 +238,7 @@ B5O_PREPARED_LEGACY = {
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "activate"),
 }
 B5P_PREPARED_LEGACY = {
+    ("tools.alignment.radial_array_tool", "RadialArrayTool", "onParamChanged"),
     ("tools.alignment.array_tool", "ArrayTool", "onParamChanged"),
     ("tools.create.pen", "PenTool", "onParamChanged"),
     ("tools.alignment.mirror", "MirrorTool", "deactivate"),
@@ -305,7 +306,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "68234fe90f7aecf94b3962a7323774feae88cbd0580708194cbab85cc2b09aa4"
+    "8674efca65cac94a6ea753c03d59f59ad6622ec29fdc22c777747265fb5eef91"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -5381,7 +5382,7 @@ def radial_array_owner_gate(owner, context, tool):
             "else ok = context.prepareGestureCarrierMismatch();" in tool and
             "historyPrepared ? context.markHistoryInstall()" in tool and
             "PreparedRadialArrayTransitionOwner.deactivation(this)" in tool and
-            tool.count("scope(failure) context.discard();") >= 2)
+            tool.count("scope(failure) context.discard();") == 3)
 if not radial_array_owner_gate(radial_array_owner, record_context, radial_array_tool):
     fail("RadialArray transition owner contract drift")
 if re.search(r"final\s+PreparedDeactivateEffect\s+prepareDeactivate\s*\(",
@@ -5414,6 +5415,66 @@ for target, old, new, label in (
     else: context = context.replace(old, new, 1)
     if radial_array_owner_gate(owner, context, tool):
         fail(f"RadialArray transition mutation did not RED: {label}")
+
+def radial_array_param_gate(owner, tool, context):
+    start = tool.find("final PreparedRadialArrayEffect prepareParamChanged(")
+    end = tool.find("override void evaluate()", start)
+    producer = tool[start:end]
+    return (all(x in tool for x in (
+                "PreparedRadialArrayTransitionKind : ubyte { Activate, Param, Deactivate }",
+                "image.expectedLive = MeshSnapshot.capture(live);",
+                "image.expectedBefore = MeshSnapshot.capture(baseline);",
+                "auto shadow = beginPreparedShadow(image.candidate);",
+                "image.candidate.radialArrayFaces(mask, count_, axisChar()",
+                "drainPreparedShadowDelivery(image.candidate",
+                "sameBytes(center, other.center)",
+                "image.expectedLive.matches(live)",
+                "image.expectedBefore.matches(before)")) and
+            all(x in owner for x in (
+                "static PreparedRadialArrayTransitionOwner param(",
+                "!target.ownsPreparedMesh(&layer.meshRef())",
+                "&layer_.meshRef() !is source_",
+                "!target_.preparedParamMatches(image_, *source_)")) and
+            all(x in producer for x in (
+                "PreparedRadialArrayTransitionOwner.param(this, layer)",
+                "uploadOwner.owns(gpu)",
+                "context.prepareStampedMeshImage(layer, transition.candidate,",
+                "context.prepareRadialArrayTransition(transition)",
+                "context.prepareUpload(uploadOwner, transition.candidate)",
+                "context.markNoHistoryInstall()", "scope(failure) context.discard();",
+                "if (!ok) context.discard();")) and
+            producer.find("context.prepareStampedMeshImage") <
+                producer.find("context.prepareRadialArrayTransition(transition)") <
+                producer.find("context.prepareUpload(uploadOwner") <
+                producer.find("context.markNoHistoryInstall()") and
+            "PreparedRadialArrayKind : ubyte { Activate, Param, Deactivate }" in
+                (ROOT / "source/prepared_tool_effect.d").read_text())
+if not radial_array_param_gate(radial_array_owner, radial_array_tool,
+                               record_context):
+    fail("RadialArray onParamChanged prepared contract drift")
+for target, old, new, label in (
+    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
+    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop detached shadow"),
+    ("tool", "sameBytes(center, other.center)", "true", "drop byte-exact center"),
+    ("owner", "!target.ownsPreparedMesh(&layer.meshRef())", "false", "drop Layer subject"),
+    ("owner", "&layer_.meshRef() !is source_", "false", "drop retained subject"),
+    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
+    ("tool", "context.prepareRadialArrayTransition(transition)", "true", "drop state"),
+    ("tool", "context.prepareUpload(uploadOwner, transition.candidate)", "true", "drop upload"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
+):
+    o, t = radial_array_owner, radial_array_tool
+    if target == "owner":
+        pos = o.find(old, o.find("static PreparedRadialArrayTransitionOwner param("))
+        if pos < 0: pos = o.find(old)
+        o = o[:pos] + new + o[pos + len(old):]
+    else:
+        producer_start = t.find("final PreparedRadialArrayEffect prepareParamChanged(")
+        start = producer_start if old in t[producer_start:] else t.find(
+            "struct RadialArrayParamProjection")
+        pos = t.find(old, start); t = t[:pos] + new + t[pos + len(old):]
+    if radial_array_param_gate(o, t, record_context):
+        fail(f"RadialArray parameter mutation did not RED: {label}")
 for hook in ("override void activate()", "override void deactivate()",
              "override void onParamChanged(string pname)"):
     start = radial_array_tool.find(hook); body_start = radial_array_tool.find("{", start) + 1
