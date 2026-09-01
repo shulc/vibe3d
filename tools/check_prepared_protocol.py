@@ -245,6 +245,7 @@ B5P_PREPARED_LEGACY = {
     ("tools.edit.vert_merge_tool", "VertexMergeTool", "activate"),
     ("tools.edit.poly_inset_tool", "PolyInsetTool", "activate"),
     ("tools.edit.poly_extrude", "PolyExtrudeTool", "activate"),
+    ("tools.deform.smooth_shift_tool", "SmoothShiftTool", "activate"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
@@ -282,7 +283,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "be3f70510c93c1a58173804f6356be323d17a98a062f378be4477572f0b84b93"
+    "4b6fb02a2f7aa91cbd20f8336aaee59e045208c710874ebbdc61a092632dc6d6"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -417,6 +418,7 @@ for path, text in prepared_source_texts.items():
             "prepared_vertex_merge_activation",
             "prepared_poly_inset_activation",
             "prepared_poly_extrude_activation",
+            "prepared_smooth_shift_activation",
             "tools.alignment.radial_sweep_tool",
             "tools.alignment.radial_array_tool",
             "tools.alignment.linear_align_tool",
@@ -2325,6 +2327,159 @@ for fixture in (
     if run.returncode == 0 or ("not copyable" not in run.stdout and
             not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
         fail("PolyExtrude activation token copy was not rejected:\n" + run.stdout)
+
+# Exact SmoothShift activation owns the cage baseline and its five-vector
+# selection frame while preserving all five preset/sticky parameter fields.
+smooth_shift_activation_owner = (ROOT /
+    "source/prepared_smooth_shift_activation.d").read_text()
+smooth_shift_activation_tool = (ROOT /
+    "source/tools/deform/smooth_shift_tool.d").read_text()
+def smooth_shift_activation_gate(owner, context, tool):
+    po = without_unittests(owner); pt = without_unittests(tool)
+    start = pt.find("final PreparedSessionActivateEffect prepareActivate(")
+    end = pt.find("private void reinitSession()", start)
+    producer = pt[start:end] if start >= 0 and end > start else ""
+    install_start = pt.find("final void installPreparedActivation(")
+    install_end = pt.find("final PreparedSessionActivateEffect prepareActivate(",
+                          install_start)
+    installer = pt[install_start:install_end] \
+        if install_start >= 0 and install_end > install_start else ""
+    formula_start = pt.find("private static void computePreparedGizmoFrame")
+    formula_end = pt.find("void rebuildPreview()", formula_start)
+    formula = pt[formula_start:formula_end] \
+        if formula_start >= 0 and formula_end > formula_start else ""
+    legacy = re.search(r"override void activate\(\)\s*\{", pt)
+    legacy_body = pt[legacy.end():balanced_source(pt, legacy.end())-1] if legacy else ""
+    return (
+        "final class PreparedSmoothShiftActivationOwner" in owner and
+        owner.count("@disable this(this);") == 2 and
+        not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
+        "target.classinfo !is SmoothShiftTool.classinfo" in owner and
+        "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
+        "target_.preparedActivationMesh() !is source_" in owner and
+        "!image_.before.matches(*source_)" in owner and
+        "target_.installPreparedActivation(image_); consume();" in owner and
+        "image_.clear(); target_ = null; source_ = null;" in owner and
+        "Mesh* delegate() nothrow @nogc meshSrc_;" in tool and
+        "image.before = MeshSnapshot.capture(*source); image.valid = true;" in tool and
+        tool.count("image.gizmoValid = gizmoValid; image.anchor = anchor;") == 3 and
+        tool.count("image.baseAnchor = baseAnchor; image.offsetAxis = offsetAxis;") == 3 and
+        tool.count("image.scaleAxis = scaleAxis; image.gizmoSelHash = gizmoSelHash;") == 3 and
+        "active = true; built = false; dragPart = -1;" in installer and
+        "image.before.moveInto(before);" in installer and
+        "gizmoValid = image.gizmoValid; anchor = image.anchor;" in installer and
+        "baseAnchor = image.baseAnchor; offsetAxis = image.offsetAxis;" in installer and
+        "scaleAxis = image.scaleAxis; gizmoSelHash = image.gizmoSelHash;" in installer and
+        "image.clear();" in installer and
+        not any(re.search(r"\b" + field + r"\s*=", installer) for field in
+                ("shift_", "scale_", "maxAngle_", "thicken_", "sharp_")) and
+        "if (source.faces.length == 0) return;" in formula and
+        "bool any = source.hasAnySelectedFaces();" in formula and
+        "if (any && !source.isFaceSelected(fi)) continue;" in formula and
+        "image.anchor = Vec3(0,0,0);" in formula and
+        "sum = sum + source.faceNormal(cast(uint)fi);" in formula and
+        "image.anchor = image.anchor + source.faceCentroid(cast(uint)fi);" in formula and
+        "++cnt;" in formula and "if (cnt == 0) return;" in formula and
+        "image.anchor = image.anchor * (1.0f / cast(float)cnt);" in formula and
+        "image.offsetAxis = (len > 1e-6f) ? sum * (1.0f/len) : Vec3(0,1,0);" in formula and
+        "abs(image.offsetAxis.y) < 0.9f" in formula and
+        "image.scaleAxis = (slen > 1e-6f) ?\n"
+        "            side * (1.0f/slen) : Vec3(1,0,0);" in formula and
+        "image.baseAnchor = image.anchor;" in formula and
+        "source.selectionSignature(EditMode.Polygons)" in formula and
+        "image.gizmoValid = true;" in formula and
+        "PreparedSmoothShiftActivationOwner.prepare(this)" in producer and
+        "context.prepareSmoothShiftActivation(owner)" in producer and
+        "context.markNoHistoryInstall()" in producer and
+        producer.find("context.prepareSmoothShiftActivation(owner)") <
+            producer.find("context.markNoHistoryInstall()") and
+        "scope(failure) context.discard();" in producer and
+        "if (!ok) context.discard();" in producer and
+        "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+        "            PreparedActivateKind.SmoothShift, ok);" in producer and
+        not any(x in producer for x in
+                ("context.validate(", "context.install(", "owner.install(")) and
+        not any(x in legacy_body for x in
+                ("prepareActivate(", "PreparedRecordContext")) and
+        "e.smoothShiftActivation.validate();" in context and
+        "e.smoothShiftActivation.install();" in context and
+        "e.smoothShiftActivation.abort();" in context)
+if not smooth_shift_activation_gate(smooth_shift_activation_owner,
+                                    record_context, smooth_shift_activation_tool):
+    fail("SmoothShift activation prepared contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is SmoothShiftTool.classinfo", "false", "broaden product"),
+    ("owner", "result.image_ = target.buildPreparedActivation(result.source_);", "", "drop builder"),
+    ("owner", "target_.preparedActivationMesh() !is source_", "false", "drop identity"),
+    ("owner", "!image_.before.matches(*source_)", "false", "drop content guard"),
+    ("owner", "target_.installPreparedActivation(image_);", "", "drop install"),
+    ("owner", "image_.clear(); target_ = null; source_ = null;", "target_ = null;", "retain payload"),
+    ("tool", "image.before = MeshSnapshot.capture(*source);", "", "drop snapshot"),
+    ("tool", "image.gizmoValid = gizmoValid; image.anchor = anchor;", "", "drop frame seed"),
+    ("tool", "active = true; built = false; dragPart = -1;", "built = false; dragPart = -1;", "drop active reset"),
+    ("tool", "active = true; built = false; dragPart = -1;", "active = true; dragPart = -1;", "drop built reset"),
+    ("tool", "active = true; built = false; dragPart = -1;", "active = true; built = false;", "drop drag reset"),
+    ("tool", "active = true; built = false; dragPart = -1;",
+     "active = true; built = false; dragPart = -1; shift_ = 0;", "reset shift preset"),
+    ("tool", "active = true; built = false; dragPart = -1;",
+     "active = true; built = false; dragPart = -1; scale_ = 1;", "reset scale preset"),
+    ("tool", "active = true; built = false; dragPart = -1;",
+     "active = true; built = false; dragPart = -1; maxAngle_ = 89.5f;", "reset angle preset"),
+    ("tool", "active = true; built = false; dragPart = -1;",
+     "active = true; built = false; dragPart = -1; thicken_ = false;", "reset thicken preset"),
+    ("tool", "active = true; built = false; dragPart = -1;",
+     "active = true; built = false; dragPart = -1; sharp_ = false;", "reset sharp preset"),
+    ("tool", "image.before.moveInto(before);", "before = image.before;", "shallow snapshot"),
+    ("tool", "image.before.moveInto(before);\n"
+     "        gizmoValid = image.gizmoValid; anchor = image.anchor;",
+     "image.before.moveInto(before);\n        anchor = image.anchor;", "drop gizmo validity"),
+    ("tool", "gizmoValid = image.gizmoValid; anchor = image.anchor;", "gizmoValid = image.gizmoValid;", "drop anchor"),
+    ("tool", "baseAnchor = image.baseAnchor; offsetAxis = image.offsetAxis;", "offsetAxis = image.offsetAxis;", "drop base anchor"),
+    ("tool", "baseAnchor = image.baseAnchor; offsetAxis = image.offsetAxis;",
+     "baseAnchor = image.baseAnchor;", "drop offset axis"),
+    ("tool", "scaleAxis = image.scaleAxis; gizmoSelHash = image.gizmoSelHash;", "gizmoSelHash = image.gizmoSelHash;", "drop scale axis"),
+    ("tool", "scaleAxis = image.scaleAxis; gizmoSelHash = image.gizmoSelHash;",
+     "scaleAxis = image.scaleAxis;", "drop selection hash"),
+    ("tool", "if (source.faces.length == 0) return;", "", "drop empty branch"),
+    ("tool", "bool any = source.hasAnySelectedFaces();",
+     "bool any = true;", "change empty-selection law"),
+    ("tool", "if (any && !source.isFaceSelected(fi)) continue;", "", "drop selection guard"),
+    ("tool", "++cnt;", "", "drop divisor count"),
+    ("tool", "image.offsetAxis = (len > 1e-6f)",
+     "image.offsetAxis = (len >= 0)", "drop normal fallback threshold"),
+    ("tool", "abs(image.offsetAxis.y) < 0.9f", "false", "change side reference"),
+    ("tool", "image.scaleAxis = (slen > 1e-6f)",
+     "image.scaleAxis = (slen >= 0)", "drop side fallback threshold"),
+    ("tool", "image.gizmoValid = true;", "", "drop valid seal"),
+    ("tool", "scope(failure) context.discard();", "", "drop failure cleanup"),
+    ("tool", "context.prepareSmoothShiftActivation(owner)", "true", "drop enlist"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop history seal"),
+    ("tool", "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+     "            PreparedActivateKind.SmoothShift, ok);",
+     "return PreparedSessionActivateEffect(OwnedId.init,\n"
+     "            PreparedActivateKind.SmoothShift, ok);", "forge effect owner"),
+    ("tool", "PreparedActivateKind.SmoothShift, ok);",
+     "PreparedActivateKind.SmoothShift, true);", "forge acceptance"),
+    ("context", "e.smoothShiftActivation.validate();", "true;", "drop validation"),
+    ("context", "e.smoothShiftActivation.install();", "", "drop context install"),
+    ("context", "e.smoothShiftActivation.abort();", "", "drop context abort"),
+):
+    o, c, t = smooth_shift_activation_owner, record_context, smooth_shift_activation_tool
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    else: t = t.replace(old, new, 1)
+    if ((o == smooth_shift_activation_owner and c == record_context and
+         t == smooth_shift_activation_tool) or smooth_shift_activation_gate(o,c,t)):
+        fail(f"SmoothShift activation mutation did not RED: {label}")
+for fixture in (
+    ROOT / "tests/compile_fail/prepared_smooth_shift_activation_token_copy.d",
+    ROOT / "tests/compile_fail/prepared_smooth_shift_activation_validated_token_copy.d",
+):
+    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if run.returncode == 0 or ("not copyable" not in run.stdout and
+            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+        fail("SmoothShift activation token copy was not rejected:\n" + run.stdout)
 
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
 # detached whole-Mesh adoption with exact caller-supplied change flags, and a

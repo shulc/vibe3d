@@ -24,7 +24,19 @@ import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import prepared_smooth_shift_activation : PreparedSmoothShiftActivationOwner;
 import command_history : PreparedHistoryKind;
+
+struct PreparedSmoothShiftActivationImage {
+    MeshSnapshot before;
+    bool valid, gizmoValid;
+    Vec3 anchor, baseAnchor, offsetAxis, scaleAxis;
+    ulong gizmoSelHash;
+    void clear() nothrow @nogc {
+        this = PreparedSmoothShiftActivationImage.init;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // SmoothShiftTool — interactive Smooth Shift + Thicken (factory id
@@ -75,7 +87,7 @@ import command_history : PreparedHistoryKind;
 // ---------------------------------------------------------------------------
 class SmoothShiftTool : Tool {
 private:
-    Mesh* delegate() meshSrc_;
+    Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
     GpuMesh*         gpu;
     EditMode*        editMode;
@@ -127,7 +139,8 @@ private:
     enum Vec3 SCALE_COLOR  = schemeColor(SchemeColor.toolWidth);
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader) {
+    this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu,
+            EditMode* editMode, LitShader litShader) {
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
@@ -161,6 +174,41 @@ public:
     override void activate() {
         active = true;
         reinitSession();
+    }
+
+    final PreparedSmoothShiftActivationImage buildPreparedActivation(
+            out Mesh* source) {
+        PreparedSmoothShiftActivationImage image;
+        source = mesh; if (source is null) return image;
+        image.before = MeshSnapshot.capture(*source); image.valid = true;
+        image.gizmoValid = gizmoValid; image.anchor = anchor;
+        image.baseAnchor = baseAnchor; image.offsetAxis = offsetAxis;
+        image.scaleAxis = scaleAxis; image.gizmoSelHash = gizmoSelHash;
+        computePreparedGizmoFrame(*source, image);
+        return image;
+    }
+    final Mesh* preparedActivationMesh() nothrow @nogc { return meshSrc_(); }
+    final void installPreparedActivation(
+            ref PreparedSmoothShiftActivationImage image) nothrow @nogc {
+        if (!image.valid) return;
+        active = true; built = false; dragPart = -1;
+        image.before.moveInto(before);
+        gizmoValid = image.gizmoValid; anchor = image.anchor;
+        baseAnchor = image.baseAnchor; offsetAxis = image.offsetAxis;
+        scaleAxis = image.scaleAxis; gizmoSelHash = image.gizmoSelHash;
+        image.clear();
+    }
+    final PreparedSessionActivateEffect prepareActivate(
+            PreparedRecordContext context) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.SmoothShift, false);
+        scope(failure) context.discard();
+        auto owner = PreparedSmoothShiftActivationOwner.prepare(this);
+        bool ok = owner !is null && context.prepareSmoothShiftActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.SmoothShift, ok);
     }
 
     // (Re)initialise the edit session against the CURRENT mesh — shared by
@@ -377,29 +425,43 @@ private:
     }
 
     void computeGizmoFrame() {
-        gizmoValid = false;
-        if (mesh.faces.length == 0) return;
+        PreparedSmoothShiftActivationImage image;
+        image.gizmoValid = gizmoValid; image.anchor = anchor;
+        image.baseAnchor = baseAnchor; image.offsetAxis = offsetAxis;
+        image.scaleAxis = scaleAxis; image.gizmoSelHash = gizmoSelHash;
+        computePreparedGizmoFrame(*mesh, image);
+        gizmoValid = image.gizmoValid; anchor = image.anchor;
+        baseAnchor = image.baseAnchor; offsetAxis = image.offsetAxis;
+        scaleAxis = image.scaleAxis; gizmoSelHash = image.gizmoSelHash;
+    }
+
+    private static void computePreparedGizmoFrame(ref Mesh source,
+            ref PreparedSmoothShiftActivationImage image) {
+        image.gizmoValid = false;
+        if (source.faces.length == 0) return;
         Vec3 sum = Vec3(0,0,0);
-        bool any = mesh.hasAnySelectedFaces();
-        anchor = Vec3(0,0,0);
+        bool any = source.hasAnySelectedFaces();
+        image.anchor = Vec3(0,0,0);
         int cnt = 0;
-        foreach (fi; 0 .. mesh.faces.length) {
-            if (any && !mesh.isFaceSelected(fi)) continue;
-            sum   = sum + mesh.faceNormal(cast(uint)fi);
-            anchor = anchor + mesh.faceCentroid(cast(uint)fi);
+        foreach (fi; 0 .. source.faces.length) {
+            if (any && !source.isFaceSelected(fi)) continue;
+            sum = sum + source.faceNormal(cast(uint)fi);
+            image.anchor = image.anchor + source.faceCentroid(cast(uint)fi);
             ++cnt;
         }
         if (cnt == 0) return;
-        anchor = anchor * (1.0f / cast(float)cnt);
+        image.anchor = image.anchor * (1.0f / cast(float)cnt);
         float len = sqrt(sum.x*sum.x + sum.y*sum.y + sum.z*sum.z);
-        offsetAxis = (len > 1e-6f) ? sum * (1.0f/len) : Vec3(0,1,0);
-        Vec3 up   = (abs(offsetAxis.y) < 0.9f) ? Vec3(0,1,0) : Vec3(1,0,0);
-        Vec3 side = cross(offsetAxis, up);
+        image.offsetAxis = (len > 1e-6f) ? sum * (1.0f/len) : Vec3(0,1,0);
+        Vec3 up = (abs(image.offsetAxis.y) < 0.9f) ?
+            Vec3(0,1,0) : Vec3(1,0,0);
+        Vec3 side = cross(image.offsetAxis, up);
         float slen = sqrt(side.x*side.x + side.y*side.y + side.z*side.z);
-        scaleAxis    = (slen > 1e-6f) ? side * (1.0f/slen) : Vec3(1,0,0);
-        baseAnchor   = anchor;
-        gizmoSelHash = mesh.selectionSignature(EditMode.Polygons);
-        gizmoValid   = true;
+        image.scaleAxis = (slen > 1e-6f) ?
+            side * (1.0f/slen) : Vec3(1,0,0);
+        image.baseAnchor = image.anchor;
+        image.gizmoSelHash = source.selectionSignature(EditMode.Polygons);
+        image.gizmoValid = true;
     }
 
     void rebuildPreview() {
@@ -448,5 +510,52 @@ private:
 
     void refreshCaches() {
         refreshDisplay(mesh, gpu);
+    }
+
+public:
+    version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
+        return preparedToolStateOwner;
+    }
+    version(unittest) final void seedPreparedActivationForTest(
+            ref Mesh oldMesh) {
+        active = false; built = true; dragPart = 9;
+        shift_ = 2; scale_ = 3; maxAngle_ = 4; thicken_ = true; sharp_ = true;
+        gizmoValid = false; anchor = Vec3(1,2,3); baseAnchor = Vec3(4,5,6);
+        offsetAxis = Vec3(7,8,9); scaleAxis = Vec3(10,11,12);
+        gizmoSelHash = 13; dragLastMX = 14; dragLastMY = 15;
+        dragBaseShift = 16; dragBaseScale = 17; cachedVp.view[0] = 18;
+        before = MeshSnapshot.capture(oldMesh);
+    }
+    version(unittest) final bool preparedActivationDirtyForTest() const
+            nothrow @nogc {
+        return !active && built && dragPart == 9 &&
+            shift_ == 2 && scale_ == 3 && maxAngle_ == 4 && thicken_ && sharp_ &&
+            !gizmoValid && anchor == Vec3(1,2,3) &&
+            baseAnchor == Vec3(4,5,6) && offsetAxis == Vec3(7,8,9) &&
+            scaleAxis == Vec3(10,11,12) && gizmoSelHash == 13;
+    }
+    version(unittest) final bool preparedActivationForTest(size_t count,
+            Vec3 first, const Vec3* livePtr, bool expectedValid,
+            Vec3 expectedAnchor, Vec3 expectedBase, Vec3 expectedOffset,
+            Vec3 expectedScale, ulong expectedHash) const nothrow @nogc {
+        return active && !built && dragPart == -1 && before.filled &&
+            before.vertices.length == count &&
+            (count == 0 || (before.vertices[0] == first &&
+                            before.vertices.ptr !is livePtr)) &&
+            gizmoValid == expectedValid && anchor == expectedAnchor &&
+            baseAnchor == expectedBase && offsetAxis == expectedOffset &&
+            scaleAxis == expectedScale && gizmoSelHash == expectedHash &&
+            shift_ == 2 && scale_ == 3 && maxAngle_ == 4 && thicken_ && sharp_ &&
+            dragLastMX == 14 && dragLastMY == 15 &&
+            dragBaseShift == 16 && dragBaseScale == 17 && cachedVp.view[0] == 18;
+    }
+    version(unittest) final PreparedSmoothShiftActivationImage
+            preparedFrameForTest(ref Mesh source) const {
+        PreparedSmoothShiftActivationImage image;
+        image.gizmoValid = gizmoValid; image.anchor = anchor;
+        image.baseAnchor = baseAnchor; image.offsetAxis = offsetAxis;
+        image.scaleAxis = scaleAxis; image.gizmoSelHash = gizmoSelHash;
+        computePreparedGizmoFrame(source, image);
+        return image;
     }
 }

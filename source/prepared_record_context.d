@@ -25,6 +25,7 @@ import prepared_stroke_extrude_activation : PreparedStrokeExtrudeActivationOwner
 import prepared_vertex_merge_activation : PreparedVertexMergeActivationOwner;
 import prepared_poly_inset_activation : PreparedPolyInsetActivationOwner;
 import prepared_poly_extrude_activation : PreparedPolyExtrudeActivationOwner;
+import prepared_smooth_shift_activation : PreparedSmoothShiftActivationOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -37,7 +38,8 @@ private enum PreparedResourceKind : ubyte {
     GpuCreateUpload, RadialArrayTransitionState, TransformActivationState,
     TransformProductActivationState, MoveUpdateState, InheritedNoopState,
     XfrmActivationPreState, XfrmActivationPostState, StrokeExtrudeActivationState,
-    VertexMergeActivationState, PolyInsetActivationState, PolyExtrudeActivationState
+    VertexMergeActivationState, PolyInsetActivationState, PolyExtrudeActivationState,
+    SmoothShiftActivationState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -55,6 +57,7 @@ private struct PreparedResourceEntry {
     PreparedVertexMergeActivationOwner vertexWeldActivation;
     PreparedPolyInsetActivationOwner polyInsetActivation;
     PreparedPolyExtrudeActivationOwner polyExtrudeActivation;
+    PreparedSmoothShiftActivationOwner smoothShiftActivation;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -359,6 +362,17 @@ public:
         PreparedResourceEntry e; e.kind = PreparedResourceKind.PolyExtrudeActivationState;
         e.polyExtrudeActivation = owner; resources_ ~= e; return true;
     }
+    bool prepareSmoothShiftActivation(PreparedSmoothShiftActivationOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected SmoothShift activation enlist failure");
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.SmoothShiftActivationState;
+        e.smoothShiftActivation = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -543,6 +557,9 @@ public:
             case PreparedResourceKind.PolyExtrudeActivationState:
                 ok = e.polyExtrudeActivation !is null &&
                     e.polyExtrudeActivation.validate(); break;
+            case PreparedResourceKind.SmoothShiftActivationState:
+                ok = e.smoothShiftActivation !is null &&
+                    e.smoothShiftActivation.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -667,6 +684,10 @@ public:
             e.polyExtrudeActivation.install();
             version(unittest) installTrace_[installTraceLength_++] = 23;
             break;
+        case PreparedResourceKind.SmoothShiftActivationState:
+            e.smoothShiftActivation.install();
+            version(unittest) installTrace_[installTraceLength_++] = 24;
+            break;
         }
         if (!installedHistory && history_ !is null)
             history_.installPreparedToken(validated_);
@@ -732,6 +753,8 @@ private:
             e.polyInsetActivation.abort(); break;
         case PreparedResourceKind.PolyExtrudeActivationState:
             e.polyExtrudeActivation.abort(); break;
+        case PreparedResourceKind.SmoothShiftActivationState:
+            e.smoothShiftActivation.abort(); break;
         }
         resources_.length = 0;
         historyMarker_ = false;
