@@ -98,6 +98,30 @@ struct MeshSnapshot {
         return true;
     }
 
+    /// Exact deep projection comparison for prepared owners that retain both
+    /// a live-state witness and a detached session baseline.
+    bool matches(in MeshSnapshot other) const nothrow @nogc {
+        if (filled != other.filled || vertices != other.vertices ||
+            edges != other.edges || vertexMarks != other.vertexMarks ||
+            edgeMarks != other.edgeMarks || faceMarks != other.faceMarks ||
+            vertexSelectionOrder != other.vertexSelectionOrder ||
+            edgeSelectionOrder != other.edgeSelectionOrder ||
+            faceSelectionOrder != other.faceSelectionOrder ||
+            vertexSelectionOrderCounter != other.vertexSelectionOrderCounter ||
+            edgeSelectionOrderCounter != other.edgeSelectionOrderCounter ||
+            faceSelectionOrderCounter != other.faceSelectionOrderCounter ||
+            surfaces != other.surfaces || faceMaterial != other.faceMaterial ||
+            facePart != other.facePart || meshMaps != other.meshMaps ||
+            vertexSetNames != other.vertexSetNames ||
+            vertexSetMask != other.vertexSetMask ||
+            edgeSetNames != other.edgeSetNames || edgeSetMask != other.edgeSetMask ||
+            polygonSetNames != other.polygonSetNames ||
+            faceSetMask != other.faceSetMask || faces.length != other.faces.length)
+            return false;
+        foreach (i, face; faces) if (face != other.faces[i]) return false;
+        return true;
+    }
+
     static MeshSnapshot capture(in Mesh mesh) {
         MeshSnapshot s;
         s.vertices             = mesh.vertices.dup;

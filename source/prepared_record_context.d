@@ -43,6 +43,7 @@ import prepared_mirror_activation : PreparedMirrorActivationOwner,
 import prepared_edge_extend_tool_activation : PreparedEdgeExtendToolActivationOwner;
 import prepared_topology_pen_activation : PreparedTopologyPenActivationOwner;
 import prepared_topology_pen_update : PreparedTopologyPenUpdateOwner;
+import prepared_array_param_update : PreparedArrayParamUpdateOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -65,7 +66,7 @@ private enum PreparedResourceKind : ubyte {
     MirrorActivationState, EdgeExtendToolActivationPreState,
     EdgeExtendToolActivationPostState, TopologyPenActivationState,
     TopologyPenUpdateState,
-    MirrorDeactivateState, BridgeDeactivateState
+    MirrorDeactivateState, BridgeDeactivateState, ArrayParamUpdateState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -99,6 +100,7 @@ private struct PreparedResourceEntry {
     PreparedEdgeExtendToolActivationOwner edgeExtendToolActivation;
     PreparedTopologyPenActivationOwner topologyPenActivation;
     PreparedTopologyPenUpdateOwner topologyPenUpdate;
+    PreparedArrayParamUpdateOwner arrayParamUpdate;
     PreparedMirrorDeactivateOwner mirrorDeactivate;
     PreparedBridgeDeactivateOwner bridgeDeactivate;
     ClickPointResourceOwner clickDestroy;
@@ -635,6 +637,17 @@ public:
         e.kind = PreparedResourceKind.TopologyPenUpdateState;
         e.topologyPenUpdate = owner; resources_ ~= e; return true;
     }
+    bool prepareArrayParamUpdate(PreparedArrayParamUpdateOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected Array parameter enlist failure");
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.ArrayParamUpdateState;
+        e.arrayParamUpdate = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -871,6 +884,9 @@ public:
             case PreparedResourceKind.TopologyPenUpdateState:
                 ok = e.topologyPenUpdate !is null &&
                     e.topologyPenUpdate.validate(); break;
+            case PreparedResourceKind.ArrayParamUpdateState:
+                ok = e.arrayParamUpdate !is null &&
+                    e.arrayParamUpdate.validate(); break;
             case PreparedResourceKind.MirrorDeactivateState:
                 ok = e.mirrorDeactivate !is null &&
                     e.mirrorDeactivate.validate(); break;
@@ -1073,6 +1089,10 @@ public:
             e.topologyPenUpdate.install();
             version(unittest) installTrace_[installTraceLength_++] = 42;
             break;
+        case PreparedResourceKind.ArrayParamUpdateState:
+            e.arrayParamUpdate.install();
+            version(unittest) installTrace_[installTraceLength_++] = 43;
+            break;
         case PreparedResourceKind.MirrorDeactivateState:
             e.mirrorDeactivate.install();
             version(unittest) installTrace_[installTraceLength_++] = 40;
@@ -1142,6 +1162,8 @@ private:
             e.topologyPenActivation.abort(); break;
         case PreparedResourceKind.TopologyPenUpdateState:
             e.topologyPenUpdate.abort(); break;
+        case PreparedResourceKind.ArrayParamUpdateState:
+            e.arrayParamUpdate.abort(); break;
         case PreparedResourceKind.MirrorDeactivateState:
             e.mirrorDeactivate.abort(); break;
         case PreparedResourceKind.BridgeDeactivateState:

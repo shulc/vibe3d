@@ -238,6 +238,7 @@ B5O_PREPARED_LEGACY = {
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "activate"),
 }
 B5P_PREPARED_LEGACY = {
+    ("tools.alignment.array_tool", "ArrayTool", "onParamChanged"),
     ("tools.create.pen", "PenTool", "onParamChanged"),
     ("tools.alignment.mirror", "MirrorTool", "deactivate"),
     ("tools.create.box", "BoxTool", "deactivate"),
@@ -304,7 +305,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "97ee0d500ecad1d5947e18576647163d3f01c5d7cf93cce2f84fd5feb438a444"
+    "68234fe90f7aecf94b3962a7323774feae88cbd0580708194cbab85cc2b09aa4"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -455,6 +456,7 @@ for path, text in prepared_source_texts.items():
             "prepared_edge_extend_tool_activation",
             "prepared_topology_pen_activation",
             "prepared_topology_pen_update",
+            "prepared_array_param_update",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
@@ -1909,6 +1911,79 @@ for target, old, new, label in (
         e = e.replace(old, new, 1)
     if pen_param_gate(p, o, e):
         fail(f"Pen parameter mutation did not RED: {label}")
+
+# Array's interactive parameter hook is a live topology preview: baseline
+# restore + kernel + delivery are built under one detached shadow, then the
+# layer image, private `built` flag, GPU upload and NoHistory install in order.
+array_param_sources = {
+    "tool": (ROOT / "source/tools/alignment/array_tool.d").read_text(),
+    "owner": (ROOT / "source/prepared_array_param_update.d").read_text(),
+    "context": record_context,
+    "snapshot": (ROOT / "source/snapshot.d").read_text(),
+}
+def array_param_gate(s):
+    tool, owner, context, snapshot = (s[k] for k in
+        ("tool", "owner", "context", "snapshot"))
+    start = tool.find("final PreparedArrayParamEffect prepareParamChanged(")
+    end = tool.find("override void evaluate()", start)
+    producer = tool[start:end]
+    return (all(x in tool for x in (
+                "image.expectedLive = MeshSnapshot.capture(live);",
+                "image.expectedBefore = MeshSnapshot.capture(baseline);",
+                "auto shadow = beginPreparedShadow(image.candidate);",
+                "image.candidate.arrayFacesGrid(mask, numX_, numY_, numZ_",
+                "drainPreparedShadowDelivery(image.candidate",
+                "image.expectedLive.matches(live)",
+                "image.expectedBefore.matches(before)",
+                "sameFloat(dist, other.dist)")) and
+            all(x in owner for x in (
+                "target.classinfo !is ArrayTool.classinfo",
+                "!target.ownsPreparedLayer(layer)",
+                "&layer_.meshRef() !is source_",
+                "!target_.preparedParamUpdateMatches(image_, *source_)",
+                "target_.installPreparedParamUpdate(image_)",
+                "validatedToken_.generation != generation_")) and
+            all(x in producer for x in (
+                "uploadOwner.owns(gpu)",
+                "context.prepareStampedMeshImage(layer, owner.candidate,",
+                "context.prepareArrayParamUpdate(owner)",
+                "context.prepareUpload(uploadOwner, owner.candidate)",
+                "context.markNoHistoryInstall()",
+                "scope(failure) context.discard();", "if (!ok) context.discard();")) and
+            producer.find("context.prepareStampedMeshImage") <
+                producer.find("context.prepareArrayParamUpdate(owner)") <
+                producer.find("context.prepareUpload(uploadOwner") <
+                producer.find("context.markNoHistoryInstall()") and
+            "bool prepareArrayParamUpdate(PreparedArrayParamUpdateOwner owner)" in context and
+            context.count("case PreparedResourceKind.ArrayParamUpdateState:") == 3 and
+            "e.arrayParamUpdate.install();" in context and
+            "bool matches(in MeshSnapshot other) const nothrow @nogc" in snapshot)
+if not array_param_gate(array_param_sources):
+    fail("Array onParamChanged prepared contract drift")
+for target, old, new, label in (
+    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
+    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop detached shadow"),
+    ("tool", "sameFloat(dist, other.dist)", "true", "drop byte-exact float"),
+    ("owner", "target.classinfo !is ArrayTool.classinfo", "false", "broaden product"),
+    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
+    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
+    ("tool", "context.prepareArrayParamUpdate(owner)", "true", "drop private state"),
+    ("tool", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop GPU upload"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
+    ("context", "e.arrayParamUpdate.install();", "", "drop context install"),
+):
+    mutant = dict(array_param_sources)
+    if target == "tool":
+        text = mutant[target]
+        producer_start = text.find("final PreparedArrayParamEffect prepareParamChanged(")
+        start = producer_start if old in text[producer_start:] else text.find(
+            "struct ArrayParamProjection")
+        pos = text.find(old, start)
+        mutant[target] = text[:pos] + new + text[pos + len(old):]
+    else:
+        mutant[target] = mutant[target].replace(old, new, 1)
+    if mutant[target] == array_param_sources[target] or array_param_gate(mutant):
+        fail(f"Array parameter mutation did not RED: {label}")
 
 # PrimitiveCreateTool.activate is one inherited declaration with six exact
 # products. Its closed projection preserves each leaf's resetSession law and
@@ -4955,14 +5030,16 @@ def b5f_gate(sources):
     for name, source in sources.items():
         expected_kind = {"array":"Array", "clone":"Clone", "magnet":"Magnet",
                          "reduction":"Reduction"}[name]
-        if (source.count("final PreparedSessionActivateEffect prepareActivate(") != 1 or
-            source.count("owner.owns(this)") != 1 or
-            source.count("context.preparePrivateState(owner)") != 1 or
-            source.count("context.markNoHistoryInstall()") != 1 or
-            source.find("context.preparePrivateState(owner)") >
-                source.find("context.markNoHistoryInstall()") or
-            "if (!accepted && context !is null) context.discard();" not in source or
-            f"PreparedActivateKind.{expected_kind}, accepted" not in source):
+        start = source.find("final PreparedSessionActivateEffect prepareActivate(")
+        end = source.find("version(unittest)", start)
+        producer = source[start:end]
+        if (start < 0 or producer.count("owner.owns(this)") != 1 or
+            producer.count("context.preparePrivateState(owner)") != 1 or
+            producer.count("context.markNoHistoryInstall()") != 1 or
+            producer.find("context.preparePrivateState(owner)") >
+                producer.find("context.markNoHistoryInstall()") or
+            "if (!accepted && context !is null) context.discard();" not in producer or
+            f"PreparedActivateKind.{expected_kind}, accepted" not in producer):
             return False
     return True
 if not b5f_gate(b5e_tools):

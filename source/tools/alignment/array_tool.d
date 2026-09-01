@@ -2,6 +2,10 @@ module tools.alignment.array_tool;
 import prepared_record_context : PreparedRecordContext;
 import prepared_private_state : PreparedPrivateStateOwner;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import prepared_tool_effect : PreparedArrayParamEffect, PreparedArrayParamKind;
+import prepared_array_param_update : PreparedArrayParamUpdateOwner;
+import mesh_gpu : GpuUploadOwner;
+import document : Layer;
 
 import bindbc.sdl;
 import operator : VectorStack;
@@ -22,6 +26,8 @@ import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import command_history : PreparedHistoryKind;
+import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
+import core.stdc.string : memcmp;
 
 
 // ---------------------------------------------------------------------------
@@ -91,6 +97,44 @@ import command_history : PreparedHistoryKind;
 //     cloning is the same underlying capability the task's own non-goals
 //     section excludes for Instance/Replica Array (item-level cloning).
 // ---------------------------------------------------------------------------
+struct ArrayParamProjection {
+    int numX, numY, numZ;
+    float offX, offY, offZ, jitX, jitY, jitZ;
+    float sclX, sclY, sclZ, angP, angH, angB;
+    bool between, replace, flip, merge;
+    float dist;
+    int source;
+    string item;
+    bool opEquals(const ArrayParamProjection other) const nothrow @nogc {
+        bool sameFloat(ref const float a, ref const float b) nothrow @nogc {
+            return memcmp(&a, &b, float.sizeof) == 0;
+        }
+        return numX == other.numX && numY == other.numY && numZ == other.numZ &&
+            sameFloat(offX, other.offX) && sameFloat(offY, other.offY) &&
+            sameFloat(offZ, other.offZ) && sameFloat(jitX, other.jitX) &&
+            sameFloat(jitY, other.jitY) && sameFloat(jitZ, other.jitZ) &&
+            sameFloat(sclX, other.sclX) && sameFloat(sclY, other.sclY) &&
+            sameFloat(sclZ, other.sclZ) && sameFloat(angP, other.angP) &&
+            sameFloat(angH, other.angH) && sameFloat(angB, other.angB) &&
+            between == other.between && replace == other.replace &&
+            flip == other.flip && merge == other.merge &&
+            sameFloat(dist, other.dist) && source == other.source && item == other.item;
+    }
+}
+
+struct PreparedArrayParamImage {
+    bool valid, applies, expectedActive, expectedBuilt, nextBuilt;
+    ArrayParamProjection expectedParams;
+    MeshSnapshot expectedLive, expectedBefore;
+    Mesh candidate;
+    uint deliveryFlags, deliveryDomains;
+    void clear() nothrow @nogc {
+        expectedParams.item = null;
+        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
+        candidate = Mesh.init; this.valid = this.applies = false;
+    }
+}
+
 final class ArrayTool : Tool {
 private:
     Mesh* delegate() meshSrc_;
@@ -230,6 +274,18 @@ public:
     version(unittest) bool preparedActivationInstalledForTest() const nothrow @nogc {
         return active && !built && !dragging && before.filled;
     }
+    final bool ownsPreparedLayer(Layer layer) const {
+        return layer !is null && &layer.meshRef() is mesh;
+    }
+    version(unittest) final void seedPreparedParamForTest(ref Mesh live,
+            bool interactive, bool isActive, bool isBuilt) {
+        interactiveParamEdit = interactive; active = isActive; built = isBuilt;
+        before = MeshSnapshot.capture(live);
+    }
+    version(unittest) final void mutatePreparedParamForTest(float value)
+            nothrow @nogc { offX_ = value; }
+    version(unittest) final bool preparedParamStateForTest(bool expectedBuilt)
+            const nothrow @nogc { return built == expectedBuilt; }
 
     override void deactivate() {
         if (active && built) commitEdit();
@@ -267,6 +323,68 @@ public:
 
     override void onParamChanged(string pname) {
         if (interactiveParamEdit) rebuildPreview();
+    }
+    final PreparedArrayParamImage buildPreparedParamUpdate(ref Mesh live) {
+        PreparedArrayParamImage image;
+        image.valid = true; image.expectedActive = active;
+        image.expectedBuilt = built; image.nextBuilt = built;
+        image.expectedParams = paramProjection();
+        image.expectedParams.item = item_.dup;
+        image.expectedLive = MeshSnapshot.capture(live);
+        if (!before.filled) return image;
+        Mesh baseline;
+        auto baselineShadow = beginPreparedShadow(baseline);
+        before.restore(baseline);
+        drainPreparedShadowDelivery(baseline, image.deliveryFlags,
+            image.deliveryDomains);
+        baselineShadow.close();
+        image.expectedBefore = MeshSnapshot.capture(baseline);
+        image.deliveryFlags = image.deliveryDomains = 0;
+        if (!interactiveParamEdit || !active) return image;
+        image.applies = true;
+        image.candidate = baseline;
+        baseline = Mesh.init;
+        auto shadow = beginPreparedShadow(image.candidate);
+        auto mask = image.candidate.operandFaceMask();
+        size_t n = image.candidate.arrayFacesGrid(mask, numX_, numY_, numZ_,
+            offsetVec(), jitterVec(), scaleVec(), rotateVec(), between_,
+            replace_, flip_, merge_, dist_);
+        image.nextBuilt = (n != 0) || replace_;
+        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+            image.deliveryDomains);
+        shadow.close();
+        return image;
+    }
+    final bool preparedParamUpdateMatches(in PreparedArrayParamImage image,
+            ref const Mesh live) const nothrow @nogc {
+        return image.valid &&
+            active == image.expectedActive && built == image.expectedBuilt &&
+            image.expectedParams == paramProjection() &&
+            image.expectedLive.matches(live) && image.expectedBefore.matches(before);
+    }
+    final void installPreparedParamUpdate(ref PreparedArrayParamImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        built = image.nextBuilt; image.clear();
+    }
+    final PreparedArrayParamEffect prepareParamChanged(PreparedRecordContext context,
+            Layer layer, GpuUploadOwner uploadOwner) {
+        if (context is null) return PreparedArrayParamEffect(
+            preparedToolStateOwner, PreparedArrayParamKind.None, false);
+        scope(failure) context.discard();
+        auto owner = PreparedArrayParamUpdateOwner.prepare(this, layer);
+        auto kind = owner is null ? PreparedArrayParamKind.None : owner.effectKind;
+        bool ok = owner !is null;
+        if (ok && owner.applies)
+            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
+                context.prepareStampedMeshImage(layer, owner.candidate,
+                    owner.deliveryFlags, owner.deliveryDomains);
+        if (ok) ok = context.prepareArrayParamUpdate(owner);
+        if (ok && owner.applies)
+            ok = context.prepareUpload(uploadOwner, owner.candidate);
+        if (ok) ok = context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedArrayParamEffect(preparedToolStateOwner, kind, ok);
     }
     override void evaluate() {}
 
@@ -349,6 +467,11 @@ public:
     }
 
 private:
+    ArrayParamProjection paramProjection() const nothrow @nogc {
+        return ArrayParamProjection(numX_, numY_, numZ_, offX_, offY_, offZ_,
+            jitX_, jitY_, jitZ_, sclX_, sclY_, sclZ_, angP_, angH_, angB_,
+            between_, replace_, flip_, merge_, dist_, cast(int)source_, item_);
+    }
     Vec3 offsetVec() const { return Vec3(offX_, offY_, offZ_); }
     Vec3 jitterVec() const { return Vec3(jitX_, jitY_, jitZ_); }
     Vec3 scaleVec()  const { return Vec3(sclX_ / 100.0f, sclY_ / 100.0f, sclZ_ / 100.0f); }
