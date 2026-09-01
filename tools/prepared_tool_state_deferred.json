@@ -32,16 +32,6 @@
   {
     "batch": "P1.0b.3+",
     "key": {
-      "aggregate": "PolyExtrudeTool",
-      "module": "tools.edit.poly_extrude",
-      "signature": "void(string pname)",
-      "symbol": "onParamChanged"
-    },
-    "reason": "Mesh/GpuGl preview or mixed branch requires P1.0b.3+ typed later-owner effects"
-  },
-  {
-    "batch": "P1.0b.3+",
-    "key": {
       "aggregate": "PolyInsetTool",
       "module": "tools.edit.poly_inset_tool",
       "signature": "void(string pname)",

@@ -238,6 +238,7 @@ B5O_PREPARED_LEGACY = {
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "activate"),
 }
 B5P_PREPARED_LEGACY = {
+    ("tools.edit.poly_extrude", "PolyExtrudeTool", "onParamChanged"),
     ("tools.edit.poly_bevel", "PolyBevelTool", "onParamChanged"),
     ("tools.edit.edge_extrude", "EdgeExtrudeTool", "onParamChanged"),
     ("tools.edit.edge_bevel", "EdgeBevelTool", "onParamChanged"),
@@ -311,7 +312,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "e3c9c859ff7e713ab6c0f45efc661cf30df3c91b03a67d5b2857cb6a181771f0"
+    "b3c39fa018b2850c96d278c1bd1973ae575a1e445ac24e605e00fa694e69e5f2"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -468,6 +469,7 @@ for path, text in prepared_source_texts.items():
             "prepared_edge_bevel_param_update",
             "prepared_edge_extrude_param_update",
             "prepared_poly_bevel_param_update",
+            "prepared_poly_extrude_param_update",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
@@ -2334,6 +2336,69 @@ for target, old, new, label in (
     if mutant[target] == poly_bevel_param_sources[target] or poly_bevel_param_gate(mutant):
         fail(f"Poly Bevel parameter mutation did not RED: {label}")
 
+poly_extrude_param_sources = {
+    "tool": (ROOT / "source/tools/edit/poly_extrude.d").read_text(),
+    "owner": (ROOT / "source/prepared_poly_extrude_param_update.d").read_text(),
+    "context": record_context,
+}
+def poly_extrude_param_gate(s):
+    tool, owner, context = (s[k] for k in ("tool", "owner", "context"))
+    start = tool.find("final PreparedPolyExtrudeParamEffect prepareParamChanged(")
+    end = tool.find("override void evaluate()", start)
+    producer = tool[start:end]
+    return (all(x in tool for x in (
+                "image.expectedLive = MeshSnapshot.capture(live);",
+                "image.expectedBefore = MeshSnapshot.capture(image.candidate);",
+                "auto shadow = beginPreparedShadow(image.candidate);",
+                "ed.extrudeFacesByMask(mask, distance_)",
+                "drainPreparedShadowDelivery(image.candidate",
+                "memcmp(&distance, &other.distance, float.sizeof) == 0",
+                "image.expectedLive.matches(live)",
+                "image.expectedBefore.matches(before)")) and
+            all(x in owner for x in (
+                "target.classinfo !is PolyExtrudeTool.classinfo",
+                "!target.ownsPreparedLayer(layer)",
+                "&layer_.meshRef() !is source_",
+                "!target_.preparedParamUpdateMatches(image_, *source_)",
+                "target_.installPreparedParamUpdate(image_)")) and
+            all(x in producer for x in (
+                "uploadOwner.owns(gpu)",
+                "context.prepareStampedMeshImage(layer, owner.candidate,",
+                "context.preparePolyExtrudeParamUpdate(owner)",
+                "context.prepareUpload(uploadOwner, owner.candidate)",
+                "context.markNoHistoryInstall()")) and
+            producer.find("context.prepareStampedMeshImage") <
+                producer.find("context.preparePolyExtrudeParamUpdate(owner)") <
+                producer.find("context.prepareUpload(uploadOwner") <
+                producer.find("context.markNoHistoryInstall()") and
+            context.count("case PreparedResourceKind.PolyExtrudeParamUpdateState:") == 3 and
+            "e.polyExtrudeParamUpdate.install();" in context)
+if not poly_extrude_param_gate(poly_extrude_param_sources):
+    fail("Poly Extrude onParamChanged prepared contract drift")
+for target, old, new, label in (
+    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
+    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
+    ("tool", "memcmp(&distance, &other.distance, float.sizeof) == 0", "true", "drop float identity"),
+    ("owner", "target.classinfo !is PolyExtrudeTool.classinfo", "false", "broaden product"),
+    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
+    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
+    ("tool", "context.preparePolyExtrudeParamUpdate(owner)", "true", "drop state"),
+    ("tool", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop upload"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
+    ("context", "e.polyExtrudeParamUpdate.install();", "", "drop install"),
+):
+    mutant = dict(poly_extrude_param_sources)
+    if target == "tool":
+        text = mutant[target]
+        producer_start = text.find("final PreparedPolyExtrudeParamEffect prepareParamChanged(")
+        start = producer_start if old in text[producer_start:] else 0
+        pos = text.find(old, start)
+        mutant[target] = text[:pos] + new + text[pos + len(old):]
+    else:
+        mutant[target] = mutant[target].replace(old, new, 1)
+    if mutant[target] == poly_extrude_param_sources[target] or poly_extrude_param_gate(mutant):
+        fail(f"Poly Extrude parameter mutation did not RED: {label}")
+
 # PrimitiveCreateTool.activate is one inherited declaration with six exact
 # products. Its closed projection preserves each leaf's resetSession law and
 # installs private state -> legacy-init GL header -> NoHistory atomically.
@@ -2767,7 +2832,7 @@ poly_extrude_activation_tool = (ROOT /
 def poly_extrude_activation_gate(owner, context, tool):
     po = without_unittests(owner); pt = without_unittests(tool)
     start = pt.find("final PreparedSessionActivateEffect prepareActivate(")
-    end = pt.find("version(unittest) final auto preparedOwnerForTest", start)
+    end = pt.find("private void reinitSession()", start)
     producer = pt[start:end] if start >= 0 and end > start else ""
     install_start = pt.find("final void installPreparedActivation(")
     install_end = pt.find("final PreparedSessionActivateEffect prepareActivate(",
@@ -2887,7 +2952,13 @@ for target, old, new, label in (
     o, c, t = poly_extrude_activation_owner, record_context, poly_extrude_activation_tool
     if target == "owner": o = o.replace(old, new, 1)
     elif target == "context": c = c.replace(old, new, 1)
-    else: t = t.replace(old, new, 1)
+    else:
+        if label == "drop failure cleanup":
+            start = t.find("final PreparedSessionActivateEffect prepareActivate(")
+            pos = t.find(old, start)
+            t = t[:pos] + new + t[pos + len(old):]
+        else:
+            t = t.replace(old, new, 1)
     if ((o == poly_extrude_activation_owner and c == record_context and
          t == poly_extrude_activation_tool) or poly_extrude_activation_gate(o,c,t)):
         fail(f"PolyExtrude activation mutation did not RED: {label}")
