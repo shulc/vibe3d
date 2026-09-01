@@ -672,6 +672,25 @@ struct FalloffPacket {
     // FLAT: contributors are never themselves Composite (the combiner
     // flattens on build), so the accumulation is a single linear pass.
     FalloffPacket[] contributors;
+
+    /// Deep owned copy for prepared effects.  Published packets contain
+    /// borrowed slices into stage caches; retaining a plain struct assignment
+    /// past prepare would let a later pipeline evaluation rewrite the payload.
+    FalloffPacket ownedDup() const {
+        FalloffPacket p;
+        p.config = config.dup();
+        p.enabled = enabled;
+        p.pickedCenter = pickedCenter;
+        p.connectMask = connectMask.dup;
+        p.anchorPos = anchorPos.dup;
+        p.selectionWeights = selectionWeights.dup;
+        p.vertexMapWeights = vertexMapWeights.dup;
+        p.compoundPasses = compoundPasses;
+        p.contributors.length = contributors.length;
+        foreach (i, ref contributor; contributors)
+            p.contributors[i] = contributor.ownedDup();
+        return p;
+    }
 }
 
 /// Symmetry packet — populated by SYMM stage in 7.6. v1 ships
@@ -732,6 +751,27 @@ struct SymmetryPacket {
     // reads them keeps working through the migration.
     bool[3]      axisFlags;
     Vec3         pivot = Vec3(0, 0, 0);
+
+    /// Deep owned copy for prepared effects; pairing arrays are stage-cache
+    /// views in a live packet and must not alias the next evaluation.
+    SymmetryPacket ownedDup() const {
+        SymmetryPacket p;
+        p.enabled = enabled;
+        p.axisIndex = axisIndex;
+        p.offset = offset;
+        p.useWorkplane = useWorkplane;
+        p.topology = topology;
+        p.epsilonWorld = epsilonWorld;
+        p.planePoint = planePoint;
+        p.planeNormal = planeNormal;
+        p.pairOf = pairOf.dup;
+        p.onPlane = onPlane.dup;
+        p.vertSign = vertSign.dup;
+        p.baseSide = baseSide;
+        p.axisFlags = axisFlags;
+        p.pivot = pivot;
+        return p;
+    }
 }
 
 // ---------------------------------------------------------------------------

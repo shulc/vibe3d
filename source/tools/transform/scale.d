@@ -39,6 +39,30 @@ import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
     PreparedTransformProductEffect, PreparedTransformProductKind;
 import prepared_transform_product_activation : PreparedTransformProductActivationOwner;
 
+enum PreparedScaleUpdateBranch : ubyte {
+    InactiveNoop,
+    DraggingNoop,
+    IdleRefresh,
+    SelectionRefresh,
+    MutationRefresh,
+    PanelRegrade,
+    WrapperRegrade,
+}
+
+struct PreparedScaleUpdateProjection {
+    PreparedScaleUpdateBranch branch;
+    ulong selectionHash, mutationVersion;
+    bool selectionChanged, mutationChanged, editOpen, packetChanged;
+    bool panelRegrade, wrapperRegrade;
+    bool dragLive, heldNonIdentity, wrapperEligible;
+    FalloffPacket liveFalloff;
+    SnapPacket liveSnap;
+    SymmetryPacket liveSymmetry;
+    Vec3 actionCenter;
+    bool valid;
+    void clear() nothrow @nogc { this = PreparedScaleUpdateProjection.init; }
+}
+
 
 // ---------------------------------------------------------------------------
 // ScaleTool : TransformTool — shows ScaleHandler at selection/mesh center; scales
@@ -382,6 +406,69 @@ public:
         if (!ok) context.discard();
         return PreparedTransformProductEffect(preparedToolStateOwner,
             PreparedTransformProductKind.Scale, ok);
+    }
+
+    /// Pointer-free classification of every `update` arm.  Packet and action-
+    /// centre values are copied now; no VectorStack or wrapper borrow escapes.
+    final PreparedScaleUpdateProjection projectPreparedUpdate(
+            ref VectorStack vts) {
+        PreparedScaleUpdateProjection image;
+        image.valid = true;
+        if (!active) {
+            image.branch = PreparedScaleUpdateBranch.InactiveNoop;
+            return image;
+        }
+        if (dragAxis >= 0) {
+            image.branch = PreparedScaleUpdateBranch.DraggingNoop;
+            return image;
+        }
+
+        image.selectionHash = computeSelectionHash();
+        // recorded remainder (1906 §3.6): dormant prepared twin of the legacy
+        // foreign-structure guard. Position epochs also see this tool's own
+        // version-silent gesture, so they cannot answer this question.
+        image.mutationVersion = mesh.mutationVersion;
+        image.selectionChanged = image.selectionHash != lastSelectionHash;
+        image.mutationChanged = image.mutationVersion != lastMutationVersion;
+        image.editOpen = editIsOpen();
+        image.liveFalloff = currentFalloff(vts);
+        image.liveSnap = currentSnap(vts);
+        image.liveSymmetry = currentSymmetry(vts);
+        image.packetChanged =
+            !falloffPacketsEqual(image.liveFalloff, dragFalloff) ||
+            !snapPacketsEqual(image.liveSnap, dragSnap) ||
+            !symmetryPacketsEqual(image.liveSymmetry, dragSymmetry);
+
+        import tools.transform.xfrm_transform : XfrmTransformTool;
+        XfrmTransformTool wrap;
+        if (wrapperRef !is null)
+            wrap = cast(XfrmTransformTool) wrapperRef;
+        image.dragLive = wrap !is null && wrap.dragInFlight();
+        image.heldNonIdentity = wrap !is null
+            ? wrap.publishedScale() != Vec3(1, 1, 1)
+            : scaleAccum != Vec3(1, 1, 1);
+        image.wrapperEligible = wrap !is null && wrap.refireScaleEligible();
+
+        const bool effectiveEditOpen = image.editOpen && !image.selectionChanged;
+        image.panelRegrade = !image.dragLive && image.heldNonIdentity &&
+            image.packetChanged && effectiveEditOpen;
+        image.wrapperRegrade = !image.dragLive && image.heldNonIdentity &&
+            image.packetChanged && !effectiveEditOpen && image.wrapperEligible;
+
+        if (image.selectionChanged) {
+            image.branch = PreparedScaleUpdateBranch.SelectionRefresh;
+        } else if (image.mutationChanged) {
+            image.branch = PreparedScaleUpdateBranch.MutationRefresh;
+        } else if (image.panelRegrade) {
+            image.branch = PreparedScaleUpdateBranch.PanelRegrade;
+        } else if (image.wrapperRegrade) {
+            image.branch = PreparedScaleUpdateBranch.WrapperRegrade;
+        } else {
+            image.branch = PreparedScaleUpdateBranch.IdleRefresh;
+        }
+        if (!effectiveEditOpen)
+            image.actionCenter = queryActionCenter(vts);
+        return image;
     }
 
     // `xfrm.transform` SX/SY/SZ surfaced for `tool.attr <id> SX 1.5`

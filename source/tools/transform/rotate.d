@@ -39,6 +39,62 @@ import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
     PreparedTransformProductEffect, PreparedTransformProductKind;
 import prepared_transform_product_activation : PreparedTransformProductActivationOwner;
+import snapshot : MeshSnapshot;
+
+/// Closed observation of the branches owned by `RotateTool.update`.  This is
+/// deliberately pointer-free: the future prepared owner can retain the exact
+/// tool separately while this value records which legacy arm must be built.
+enum PreparedRotateUpdateBranch : ubyte {
+    InactiveNoop,
+    DraggingNoop,
+    IdleRefresh,
+    SelectionRefresh,
+    MutationRefresh,
+    PanelRegrade,
+    WrapperRegrade,
+}
+
+struct PreparedRotateUpdateProjection {
+    PreparedRotateUpdateBranch branch;
+    ulong selectionHash, mutationVersion;
+    bool selectionChanged, mutationChanged, editOpen, packetChanged;
+    bool panelRegrade, wrapperRegrade;
+    bool dragLive, heldNonIdentity, wrapperEligible;
+    FalloffPacket liveFalloff;
+    SnapPacket liveSnap;
+    SymmetryPacket liveSymmetry;
+    Vec3 actionCenter;
+    bool valid;
+    void clear() nothrow @nogc { this = PreparedRotateUpdateProjection.init; }
+}
+
+struct PreparedRotateUpdateImage {
+    PreparedRotateUpdateProjection projection;
+    MeshSnapshot expectedLive;
+    Mesh candidate;
+    Vec3 expectedAngle, expectedProp;
+    Vec3 nextAngle, nextProp;
+    Vec3[] expectedOrig, nextOrig;
+    int[] expectedIndices, nextIndices;
+    bool[] expectedMask, nextMask;
+    int expectedCount, nextCount;
+    ulong expectedSelectionHash, expectedMutationVersion;
+    ulong nextSelectionHash, nextMutationVersion;
+    bool expectedCacheDirty, nextCacheDirty;
+    bool expectedCenterManual, nextCenterManual;
+    bool expectedNeedsGpu, nextNeedsGpu;
+    Vec3 expectedCachedCenter, expectedHandlerCenter;
+    Vec3 nextCachedCenter, nextHandlerCenter;
+    FalloffPacket expectedFalloff, nextFalloff;
+    SnapPacket expectedSnap, nextSnap;
+    SymmetryPacket expectedSymmetry, nextSymmetry;
+    uint deliveryFlags, deliveryDomains;
+    bool meshPrepared, valid;
+
+    void clear() nothrow @nogc {
+        this = PreparedRotateUpdateImage.init;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // RotateTool : Tool — shows RotateHandler at selection/mesh center;
@@ -268,6 +324,221 @@ public:
         if (!ok) context.discard();
         return PreparedTransformProductEffect(preparedToolStateOwner,
             PreparedTransformProductKind.Rotate, ok);
+    }
+
+    /// Allocation-free branch projection for the exact update root.  It does
+    /// not retain `vts` or the wrapper; all packet values are copied.  Keeping
+    /// this resolver separate makes the mutually-exclusive history/mesh arms
+    /// explicit before their detached payloads are enlisted.
+    final PreparedRotateUpdateProjection projectPreparedUpdate(
+            ref VectorStack vts) {
+        PreparedRotateUpdateProjection image;
+        image.valid = true;
+        if (!active) {
+            image.branch = PreparedRotateUpdateBranch.InactiveNoop;
+            return image;
+        }
+        if (dragAxis >= 0) {
+            image.branch = PreparedRotateUpdateBranch.DraggingNoop;
+            return image;
+        }
+
+        image.selectionHash = computeSelectionHash();
+        // recorded remainder (1906 §3.6): this is the detached twin of the
+        // legacy update guard below. `mutationVersion` owns detection of a
+        // FOREIGN structural edit; a Position bus epoch would also observe
+        // this tool's own version-silent gesture and would misclassify it.
+        image.mutationVersion = mesh.mutationVersion;
+        image.selectionChanged = image.selectionHash != lastSelectionHash;
+        image.mutationChanged = image.mutationVersion != lastMutationVersion;
+        image.editOpen = editIsOpen();
+        image.liveFalloff = currentFalloff(vts);
+        image.liveSnap = currentSnap(vts);
+        image.liveSymmetry = currentSymmetry(vts);
+        image.packetChanged =
+            !falloffPacketsEqual(image.liveFalloff, dragFalloff) ||
+            !snapPacketsEqual(image.liveSnap, dragSnap) ||
+            !symmetryPacketsEqual(image.liveSymmetry, dragSymmetry);
+
+        import tools.transform.xfrm_transform : XfrmTransformTool;
+        XfrmTransformTool wrap;
+        if (wrapperRef !is null)
+            wrap = cast(XfrmTransformTool) wrapperRef;
+        image.dragLive = wrap !is null && wrap.dragInFlight();
+        image.heldNonIdentity = wrap !is null
+            ? wrap.publishedRotate() != Vec3(0, 0, 0)
+            : angleAccum != Vec3(0, 0, 0);
+        image.wrapperEligible = wrap !is null && wrap.refireRotateEligible();
+
+        const bool effectiveEditOpen = image.editOpen && !image.selectionChanged;
+        image.panelRegrade = !image.dragLive && image.heldNonIdentity &&
+            image.packetChanged && effectiveEditOpen;
+        image.wrapperRegrade = !image.dragLive && image.heldNonIdentity &&
+            image.packetChanged && !effectiveEditOpen && image.wrapperEligible;
+
+        if (image.selectionChanged) {
+            image.branch = PreparedRotateUpdateBranch.SelectionRefresh;
+        } else if (image.mutationChanged) {
+            image.branch = PreparedRotateUpdateBranch.MutationRefresh;
+        } else if (image.panelRegrade) {
+            image.branch = PreparedRotateUpdateBranch.PanelRegrade;
+        } else if (image.wrapperRegrade) {
+            image.branch = PreparedRotateUpdateBranch.WrapperRegrade;
+        } else {
+            image.branch = PreparedRotateUpdateBranch.IdleRefresh;
+        }
+        if (!effectiveEditOpen)
+            image.actionCenter = queryActionCenter(vts);
+        return image;
+    }
+
+    final PreparedRotateUpdateImage buildPreparedUpdate(ref VectorStack vts) {
+        PreparedRotateUpdateImage image;
+        image.projection = projectPreparedUpdate(vts);
+        if (!image.projection.valid) return image;
+
+        auto live = mesh;
+        if (live is null) return image;
+        image.expectedLive = MeshSnapshot.capture(*live);
+        image.expectedAngle = image.nextAngle = angleAccum;
+        image.expectedProp = image.nextProp = propDeg;
+        image.expectedOrig = origVertices.dup;
+        image.nextOrig = origVertices.dup;
+        image.expectedIndices = vertexIndicesToProcess.dup;
+        image.nextIndices = vertexIndicesToProcess.dup;
+        image.expectedMask = toProcess.dup;
+        image.nextMask = toProcess.dup;
+        image.expectedCount = image.nextCount = vertexProcessCount;
+        image.expectedSelectionHash = image.nextSelectionHash = lastSelectionHash;
+        image.expectedMutationVersion = image.nextMutationVersion = lastMutationVersion;
+        image.expectedCacheDirty = image.nextCacheDirty = vertexCacheDirty;
+        image.expectedCenterManual = image.nextCenterManual = centerManual;
+        image.expectedNeedsGpu = image.nextNeedsGpu = needsGpuUpdate;
+        image.expectedCachedCenter = image.nextCachedCenter = cachedCenter;
+        image.expectedHandlerCenter = image.nextHandlerCenter = handler.center;
+        image.expectedFalloff = dragFalloff.ownedDup();
+        image.nextFalloff = dragFalloff.ownedDup();
+        image.expectedSnap = dragSnap;
+        image.nextSnap = dragSnap;
+        image.expectedSymmetry = dragSymmetry.ownedDup();
+        image.nextSymmetry = dragSymmetry.ownedDup();
+
+        if (image.projection.selectionChanged ||
+            image.projection.mutationChanged) {
+            image.nextSelectionHash = image.projection.selectionHash;
+            image.nextMutationVersion = image.projection.mutationVersion;
+            image.nextCacheDirty = true;
+            if (image.projection.selectionChanged) {
+                image.nextAngle = Vec3(0, 0, 0);
+                image.nextProp = Vec3(0, 0, 0);
+                image.nextOrig = live.vertices.dup;
+                image.nextCenterManual = false;
+            }
+        }
+
+        if (image.projection.panelRegrade || image.projection.wrapperRegrade) {
+            image.nextFalloff = image.projection.liveFalloff.ownedDup();
+            image.nextSnap = image.projection.liveSnap;
+            image.nextSymmetry = image.projection.liveSymmetry.ownedDup();
+            if (image.nextCacheDirty) {
+                if (*editMode == EditMode.Vertices)
+                    image.nextIndices = live.selectedVertexIndicesVertices();
+                else if (*editMode == EditMode.Edges)
+                    image.nextIndices = live.selectedVertexIndicesEdges();
+                else
+                    image.nextIndices = live.selectedVertexIndicesFaces();
+                image.nextCount = cast(int)image.nextIndices.length;
+                image.nextMask.length = live.vertices.length;
+                image.nextMask[] = false;
+                foreach (vi; image.nextIndices) image.nextMask[vi] = true;
+                image.nextCacheDirty = false;
+            }
+
+            import tools.transform.xfrm_transform : XfrmTransformTool;
+            if (auto wrap = cast(XfrmTransformTool)wrapperRef) {
+                auto prepared = wrap.buildPreparedRefireCandidate(
+                    image.nextFalloff, image.nextSnap, image.nextSymmetry);
+                image.candidate = prepared.mesh;
+                image.deliveryFlags = prepared.deliveryFlags;
+                image.deliveryDomains = prepared.deliveryDomains;
+                image.meshPrepared = prepared.applied;
+            } else {
+                image.expectedLive.restore(image.candidate);
+                import tools.transform.xform_kernels : applyRotateFromOrig;
+                auto delivery = beginPreparedShadow(image.candidate);
+                applyRotateFromOrig(&image.candidate, image.nextOrig,
+                    image.nextMask, handler.center,
+                    handler.axisX, handler.axisY, handler.axisZ,
+                    image.nextAngle, image.nextFalloff, dragAimSpace(),
+                    queryClusterPivots(vts), queryClusterAxes(vts),
+                    image.nextSymmetry, image.nextMask);
+                drainPreparedShadowDelivery(image.candidate,
+                    image.deliveryFlags, image.deliveryDomains);
+                image.meshPrepared = true;
+            }
+            image.nextNeedsGpu = true;
+        }
+
+        const bool effectiveEditOpen = image.projection.editOpen &&
+            !image.projection.selectionChanged;
+        if (!effectiveEditOpen) {
+            image.nextCachedCenter = image.projection.actionCenter;
+            image.nextHandlerCenter = image.projection.actionCenter;
+        }
+        image.valid = true;
+        return image;
+    }
+
+    final bool preparedUpdateMatches(ref const PreparedRotateUpdateImage image,
+            in Mesh live) const nothrow @nogc {
+        return image.valid && image.expectedLive.matches(live) &&
+            angleAccum == image.expectedAngle && propDeg == image.expectedProp &&
+            origVertices == image.expectedOrig &&
+            vertexIndicesToProcess == image.expectedIndices &&
+            toProcess == image.expectedMask &&
+            vertexProcessCount == image.expectedCount &&
+            lastSelectionHash == image.expectedSelectionHash &&
+            lastMutationVersion == image.expectedMutationVersion &&
+            vertexCacheDirty == image.expectedCacheDirty &&
+            centerManual == image.expectedCenterManual &&
+            needsGpuUpdate == image.expectedNeedsGpu &&
+            cachedCenter == image.expectedCachedCenter &&
+            handler.center == image.expectedHandlerCenter &&
+            falloffPacketsEqual(dragFalloff, image.expectedFalloff) &&
+            snapPacketsEqual(dragSnap, image.expectedSnap) &&
+            symmetryPacketsEqual(dragSymmetry, image.expectedSymmetry);
+    }
+
+    final void installPreparedUpdate(ref PreparedRotateUpdateImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        angleAccum = image.nextAngle;
+        propDeg = image.nextProp;
+        origVertices = image.nextOrig; image.nextOrig = null;
+        vertexIndicesToProcess = image.nextIndices; image.nextIndices = null;
+        toProcess = image.nextMask; image.nextMask = null;
+        vertexProcessCount = image.nextCount;
+        lastSelectionHash = image.nextSelectionHash;
+        lastMutationVersion = image.nextMutationVersion;
+        vertexCacheDirty = image.nextCacheDirty;
+        centerManual = image.nextCenterManual;
+        needsGpuUpdate = image.nextNeedsGpu;
+        cachedCenter = image.nextCachedCenter;
+        handler.center = image.nextHandlerCenter;
+        dragFalloff = image.nextFalloff; image.nextFalloff = FalloffPacket.init;
+        dragSnap = image.nextSnap;
+        dragSymmetry = image.nextSymmetry; image.nextSymmetry = SymmetryPacket.init;
+        image.clear();
+    }
+
+    version(unittest) final void seedPreparedUpdateProjectionForTest(
+            bool isActive, int axis, ulong selectionHash, ulong mutationVersion,
+            Vec3 angles) nothrow @nogc {
+        active = isActive;
+        dragAxis = axis;
+        lastSelectionHash = selectionHash;
+        lastMutationVersion = mutationVersion;
+        angleAccum = angles;
     }
 
     // `xfrm.transform` RX/RY/RZ surfaced for `tool.attr <id> RY 30`

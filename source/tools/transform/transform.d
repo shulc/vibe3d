@@ -1595,7 +1595,8 @@ protected:
     /// CommandWrapperTool and the transform tools share one
     /// implementation. Subclasses access it via the import below.
     protected static bool falloffPacketsEqual(const ref FalloffPacket a,
-                                              const ref FalloffPacket b) {
+                                              const ref FalloffPacket b)
+            pure nothrow @nogc @safe {
         import falloff : fpeq = falloffPacketsEqual;
         return fpeq(a, b);
     }
@@ -1607,12 +1608,14 @@ protected:
     /// three pipe packets. Free functions in snap.d / symmetry.d so the wrapper
     /// + R/S sub-tools share one implementation.
     protected static bool snapPacketsEqual(const ref SnapPacket a,
-                                           const ref SnapPacket b) {
+                                           const ref SnapPacket b)
+            pure nothrow @nogc @safe {
         import snap : speq = snapPacketsEqual;
         return speq(a, b);
     }
     protected static bool symmetryPacketsEqual(const ref SymmetryPacket a,
-                                               const ref SymmetryPacket b) {
+                                               const ref SymmetryPacket b)
+            pure nothrow @nogc @safe {
         import symmetry : syeq = symmetryPacketsEqual;
         return syeq(a, b);
     }

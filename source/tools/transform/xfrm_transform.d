@@ -137,6 +137,7 @@ import toolpipe.stages.symmetry : SymmetryStage;
 import toolpipe.packets  : FalloffType, ElementMode, ElementConnect, FalloffPacket,
                           SnapPacket, SymmetryPacket, SubjectPacket;
 import hover_state       : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
+import snapshot          : MeshSnapshot;
 
 // MS-3.5 — runtime blend-mode toggle. The fold blends the composed matrix toward
 // identity by the falloff weight; MatrixLerp (keep-b) is the decision, confirmed
@@ -376,6 +377,21 @@ struct PreparedXfrmActivationResetImage {
         headlessRotate = Vec3(0, 0, 0);
         moveRunKnown = rotateRunKnown = scaleRunKnown = false;
         priorRotateWasViewRing = valid = false;
+    }
+}
+
+/// Detached geometry product used by the Rotate/Scale update producers.  The
+/// wrapper itself remains untouched; all synchronous mesh delivery is drained
+/// from the private candidate and replayed later by PreparedRecordContext.
+struct PreparedXfrmRefireCandidate {
+    Mesh mesh;
+    uint deliveryFlags;
+    uint deliveryDomains;
+    bool applied;
+    void clear() nothrow @nogc {
+        mesh = Mesh.init;
+        deliveryFlags = deliveryDomains = 0;
+        applied = false;
     }
 }
 
@@ -4463,6 +4479,60 @@ public:
             && regradeStampCurrent();
     }
 
+    /// Evaluate the wrapper's canonical fold on an isolated clone.  This is
+    /// intentionally narrower than cloning the whole tool lifecycle: update
+    /// refire is idle (`activeDrag == null`) and consumes only the held run,
+    /// frozen run/frame state, the run baseline, viewport and live pipe
+    /// packets.  The real wrapper and live mesh are never written.
+    public PreparedXfrmRefireCandidate buildPreparedRefireCandidate(
+            FalloffPacket falloff, SnapPacket snap, SymmetryPacket symmetry) {
+        PreparedXfrmRefireCandidate result;
+        auto live = mesh;
+        if (live is null || editMode is null ||
+            dragBaseline.length != live.vertices.length)
+            return result;
+
+        MeshSnapshot.capture(*live).restore(result.mesh);
+        GpuMesh scratchGpu;
+        EditMode scratchMode = *editMode;
+        auto shadow = new XfrmTransformTool(
+            () => &result.mesh, &scratchGpu, &scratchMode, selTypeSrc_,
+            itemTargetsSrc_);
+        shadow.flagT = flagT;
+        shadow.flagR = flagR;
+        shadow.flagS = flagS;
+        shadow.uniform = uniform;
+        shadow.uniformVal = uniformVal;
+        shadow.negScale = negScale;
+        shadow.slipUV = slipUV;
+        shadow.handleFamily = handleFamily;
+        shadow.handlePresentation = handlePresentation;
+        shadow.run = run;
+        shadow.gestureStart = gestureStart;
+        shadow.headlessRotate = headlessRotate;
+        shadow.rotFalloffBlend = rotFalloffBlend;
+        shadow.dragBaseline = dragBaseline.dup;
+        shadow.dragFalloff = falloff;
+        shadow.dragSnap = snap;
+        shadow.dragSymmetry = symmetry;
+        shadow.cachedVp = cachedVp;
+        shadow.frame = frame;
+        shadow.runFrameValid = runFrameValid;
+        shadow.runFrameOrigin = runFrameOrigin;
+        shadow.runFrameR = runFrameR;
+        shadow.runFrameU = runFrameU;
+        shadow.runFrameF = runFrameF;
+        shadow.runBaselineValid = runBaselineValid;
+        shadow.vertexCacheDirty = true;
+        shadow.activeDrag = null;
+
+        auto delivery = beginPreparedShadow(result.mesh);
+        result.applied = shadow.applyTRS(shadow.dragBaseline);
+        drainPreparedShadowDelivery(result.mesh, result.deliveryFlags,
+                                    result.deliveryDomains);
+        return result;
+    }
+
     // Record forwarders: the sub-tool dup'd the pre-recompute (post-gesture)
     // geometry into `anchor`, ran its absolute recompute (mutating mesh.vertices),
     // and dup'd the result into `after`. These route into the shared helper with
@@ -6339,6 +6409,31 @@ unittest {
             moveRoute, rotateRoute, scaleRoute),
             "consumed Xfrm reset image installed twice");
     }
+
+    // Refire preparation runs the canonical fold on an isolated mesh.  A
+    // non-symmetric vertex distinguishes a real 90-degree apply from a copied
+    // candidate while the source must remain byte-identical.
+    import math : matrixFromEulerZYX;
+    Mesh refireMesh = makeCube();
+    refireMesh.vertices[0] = Vec3(-2, -1, -1);
+    auto beforeRefire = MeshSnapshot.capture(refireMesh);
+    GpuMesh refireGpu;
+    EditMode refireMode = EditMode.Vertices;
+    auto refireTool = new XfrmTransformTool(
+        () => &refireMesh, &refireGpu, &refireMode);
+    refireTool.flagT = false;
+    refireTool.flagR = true;
+    refireTool.flagS = false;
+    refireTool.run.r = matrixFromEulerZYX(Vec3(0, 0, 90));
+    refireTool.headlessRotate = Vec3(0, 0, 90);
+    refireTool.dragBaseline = refireMesh.vertices.dup;
+    refireTool.runBaselineValid = true;
+    refireTool.runFrameValid = true;
+    auto refired = refireTool.buildPreparedRefireCandidate(
+        FalloffPacket.init, SnapPacket.init, SymmetryPacket.init);
+    assert(refired.applied && beforeRefire.matches(refireMesh) &&
+           refired.mesh.vertices != refireMesh.vertices,
+           "prepared Xfrm refire must mutate only the detached candidate");
 }
 
 static assert(!__traits(compiles, { XfrmPreparedState a; XfrmPreparedState b = a; }));

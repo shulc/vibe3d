@@ -837,10 +837,12 @@ private static immutable RemainderFile[] kRemainder = [
       ~ "evaluation. Measured at 1M faces (ldc2 -O3 -release): the hash cost "
       ~ "2.23 ms in Vertices/Polygons and 4.46 ms in Edges, against a 1.02 ms "
       ~ "bbox pass — i.e. the key was more expensive than the walk it guarded"),
-    RemainderFile("source/tools/transform/rotate.d", 1,
-        "RotateTool's gesture boundary (§3.6 row 21's family)"),
-    RemainderFile("source/tools/transform/scale.d", 1,
-        "ScaleTool's gesture boundary (same family)"),
+    RemainderFile("source/tools/transform/rotate.d", 2,
+        "RotateTool's gesture boundary plus its dormant prepared projection "
+      ~ "(§3.6 row 21's family; same counter and argument)"),
+    RemainderFile("source/tools/transform/scale.d", 2,
+        "ScaleTool's gesture boundary plus its dormant prepared projection "
+      ~ "(same family; same counter and argument)"),
     RemainderFile("source/tools/transform/transform.d", 1,
         "computeSelectionHash's marksVersion memo"),
     RemainderFile("source/tools/transform/xfrm_transform.d", 2,

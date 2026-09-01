@@ -763,7 +763,8 @@ float applyShape(float t, FalloffShape shape, float in_, float out_) {
 // / recursive checks (not part of `config` — see FalloffConfig's doc for
 // what's deliberately excluded, e.g. `pickedCenter` / `compoundPasses`).
 // ---------------------------------------------------------------------------
-bool falloffPacketsEqual(const ref FalloffPacket a, const ref FalloffPacket b) {
+bool falloffPacketsEqual(const ref FalloffPacket a, const ref FalloffPacket b)
+        pure nothrow @nogc @safe {
     if (a.enabled != b.enabled) return false;
     if (a.config  != b.config)  return false;
     // Element sphere CENTRE — audit-4 P9 / task 0724. `pickedCenter` is not a
