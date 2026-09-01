@@ -38,6 +38,7 @@ import prepared_tack_activation : PreparedTackActivationOwner;
 import prepared_command_wrapper_activation : PreparedCommandWrapperActivationOwner;
 import prepared_bridge_activation : PreparedBridgeActivationOwner;
 import prepared_mirror_activation : PreparedMirrorActivationOwner;
+import prepared_edge_extend_tool_activation : PreparedEdgeExtendToolActivationOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -56,7 +57,8 @@ private enum PreparedResourceKind : ubyte {
     VertexExtrudeActivationState, EdgeExtrudeActivationState,
     EdgeSliceActivationState, LoopSliceActivationState, SliceActivationState,
     TackActivationState, CommandWrapperActivationState, BridgeActivationState,
-    MirrorActivationState
+    MirrorActivationState, EdgeExtendToolActivationPreState,
+    EdgeExtendToolActivationPostState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -87,6 +89,7 @@ private struct PreparedResourceEntry {
     PreparedCommandWrapperActivationOwner commandWrapperActivation;
     PreparedBridgeActivationOwner bridgeActivation;
     PreparedMirrorActivationOwner mirrorActivation;
+    PreparedEdgeExtendToolActivationOwner edgeExtendToolActivation;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -532,6 +535,34 @@ public:
         PreparedResourceEntry e; e.kind = PreparedResourceKind.MirrorActivationState;
         e.mirrorActivation = owner; resources_ ~= e; return true;
     }
+    bool prepareEdgeExtendToolActivationPre(
+            PreparedEdgeExtendToolActivationOwner owner) {
+        if (!begun_ || validated_Once || owner is null || historyMarker_ ||
+            noHistoryMarker_) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.beginPre()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected EdgeExtend activation pre enlist failure");
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.EdgeExtendToolActivationPreState;
+        e.edgeExtendToolActivation = owner; resources_ ~= e; return true;
+    }
+    bool prepareEdgeExtendToolActivationPost(
+            PreparedEdgeExtendToolActivationOwner owner) {
+        if (!begun_ || validated_Once || owner is null ||
+            xfrmLayoutStage_ != 3 || resources_.length < 4 ||
+            resources_[$ - 1].kind != PreparedResourceKind.XfrmActivationPostState)
+            return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.beginPost()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected EdgeExtend activation post enlist failure");
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.EdgeExtendToolActivationPostState;
+        e.edgeExtendToolActivation = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -753,6 +784,12 @@ public:
                 ok = e.bridgeActivation !is null && e.bridgeActivation.validate(); break;
             case PreparedResourceKind.MirrorActivationState:
                 ok = e.mirrorActivation !is null && e.mirrorActivation.validate(); break;
+            case PreparedResourceKind.EdgeExtendToolActivationPreState:
+                ok = e.edgeExtendToolActivation !is null &&
+                    e.edgeExtendToolActivation.validatePre(); break;
+            case PreparedResourceKind.EdgeExtendToolActivationPostState:
+                ok = e.edgeExtendToolActivation !is null &&
+                    e.edgeExtendToolActivation.validatePost(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -929,6 +966,14 @@ public:
             e.mirrorActivation.install();
             version(unittest) installTrace_[installTraceLength_++] = 36;
             break;
+        case PreparedResourceKind.EdgeExtendToolActivationPreState:
+            e.edgeExtendToolActivation.installPre();
+            version(unittest) installTrace_[installTraceLength_++] = 37;
+            break;
+        case PreparedResourceKind.EdgeExtendToolActivationPostState:
+            e.edgeExtendToolActivation.installPost();
+            version(unittest) installTrace_[installTraceLength_++] = 38;
+            break;
         }
         if (!installedHistory && history_ !is null)
             history_.installPreparedToken(validated_);
@@ -981,6 +1026,9 @@ private:
             e.bridgeActivation.abort(); break;
         case PreparedResourceKind.MirrorActivationState:
             e.mirrorActivation.abort(); break;
+        case PreparedResourceKind.EdgeExtendToolActivationPreState:
+        case PreparedResourceKind.EdgeExtendToolActivationPostState:
+            e.edgeExtendToolActivation.abort(); break;
         case PreparedResourceKind.RadialArrayTransitionState:
             e.radialArrayTransition.abort(); break;
         case PreparedResourceKind.TransformActivationState:

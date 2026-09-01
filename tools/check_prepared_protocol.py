@@ -238,6 +238,7 @@ B5O_PREPARED_LEGACY = {
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "activate"),
 }
 B5P_PREPARED_LEGACY = {
+    ("tools.edit.edge_extend", "EdgeExtendTool", "activate"),
     ("tools.alignment.mirror", "MirrorTool", "activate"),
     ("tools.common.command_wrapper", "CommandWrapperTool", "activate"),
     ("tools.edit.bridge_tool", "BridgeTool", "activate"),
@@ -295,7 +296,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "c36e8ed9dae3b49bf0df2128033c49333d3438827dd7113c9f5506ee0bd9153b"
+    "275f28a8b690f0d2fd72c6b9d174cdaa11d06dbfe95344d35c22dcc0ff72149b"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -443,12 +444,14 @@ for path, text in prepared_source_texts.items():
             "prepared_command_wrapper_activation",
             "prepared_bridge_activation",
             "prepared_mirror_activation",
+            "prepared_edge_extend_tool_activation",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
             "tools.edit.tack",
             "tools.edit.bridge_tool",
             "tools.alignment.mirror",
+            "tools.edit.edge_extend",
             "tools.alignment.radial_sweep_tool",
             "tools.alignment.radial_array_tool",
             "tools.alignment.linear_align_tool",
@@ -3893,6 +3896,101 @@ for fixture in (
     if run.returncode == 0 or ("not copyable" not in run.stdout and
             not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
         fail("Mirror activation token copy was not rejected:\n" + run.stdout)
+
+edge_extend_tool_activation_owner = (
+    ROOT / "source/prepared_edge_extend_tool_activation.d").read_text()
+edge_extend_tool_activation_tool = (
+    ROOT / "source/tools/edit/edge_extend.d").read_text()
+def edge_extend_tool_activation_gate(owner, context, tool):
+    return (owner.count("@disable this(this)") == 4 and
+        "final class PreparedEdgeExtendToolActivationOwner" in owner and
+        "target.classinfo !is EdgeExtendTool.classinfo" in owner and
+        "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
+        "PreparedXfrmActivationSessionOwner.prepare(" in owner and
+        "PreparedTransformProductActivationOwner.prepare(" in owner and
+        "if (!result.image_.moveHandle)" in owner and
+        "target_.preparedActivationMesh() !is source_" in owner and
+        "!image_.baseline.matches(*source_)" in owner and
+        "xfrmOwner_.owns(target_.preparedEmbeddedXfrm())" in owner and
+        "target_.preparedActivationBanksMatch(image_.moveHandle" in owner and
+        "target_.installPreparedActivationPre(image_);" in owner and
+        "if (extraMoveOwner_ !is null) extraMoveOwner_.install();" in owner and
+        "target_.installPreparedActivationPost(image_);" in owner and
+        "if (xfrmOwner_ !is null) xfrmOwner_.abort();" in owner and
+        "image.baseline = MeshSnapshot.capture(*source);" in tool and
+        "image.pivot = source.selectionBBoxCenterEdges();" in tool and
+        "image.moveHandle = moveHandle_; image.rotateHandle = rotateHandle_;" in tool and
+        "active = true;" in tool and
+        "xfrm.flagT = image.moveHandle; xfrm.flagR = image.rotateHandle;" in tool and
+        "built = false; dragBank = DragBank.None; preview_.reset();" in tool and
+        "image.baseline.moveInto(before); initPivot_ = image.pivot;" in tool and
+        "context.prepareEdgeExtendToolActivationPre(owner)" in tool and
+        "context.prepareXfrmActivationPre(xfrmOwner)" in tool and
+        "context.markNoHistoryInstall()" in tool and
+        "context.prepareXfrmActivationPost(xfrmOwner)" in tool and
+        "context.prepareEdgeExtendToolActivationPost(owner)" in tool and
+        tool.find("context.prepareEdgeExtendToolActivationPre(owner)") <
+            tool.find("context.prepareXfrmActivationPre(xfrmOwner)") <
+            tool.find("context.markNoHistoryInstall()", tool.find("context.prepareXfrmActivationPre(xfrmOwner)")) <
+            tool.find("context.prepareXfrmActivationPost(xfrmOwner)") <
+            tool.find("context.prepareEdgeExtendToolActivationPost(owner)") and
+        "PreparedActivateKind.EdgeExtend, ok);" in tool and
+        "EdgeExtendToolActivationPreState" in context and
+        "EdgeExtendToolActivationPostState" in context and
+        "e.edgeExtendToolActivation.validatePre();" in context and
+        "e.edgeExtendToolActivation.validatePost();" in context and
+        "e.edgeExtendToolActivation.installPre();" in context and
+        "e.edgeExtendToolActivation.installPost();" in context and
+        "e.edgeExtendToolActivation.abort();" in context)
+if not edge_extend_tool_activation_gate(edge_extend_tool_activation_owner,
+                                        record_context,
+                                        edge_extend_tool_activation_tool):
+    fail("EdgeExtend activation prepared contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is EdgeExtendTool.classinfo", "false", "broaden product"),
+    ("owner", "if (!result.image_.moveHandle)", "if (false)", "drop off-bank haul activation"),
+    ("owner", "target_.preparedActivationMesh() !is source_", "false", "drop Mesh identity"),
+    ("owner", "!image_.baseline.matches(*source_)", "false", "drop content validation"),
+    ("owner", "xfrmOwner_.owns(target_.preparedEmbeddedXfrm())", "true", "drop embedded Xfrm identity"),
+    ("owner", "target_.preparedActivationBanksMatch(image_.moveHandle", "true || /*", "drop bank identity"),
+    ("owner", "target_.installPreparedActivationPre(image_);", "", "drop outer pre install"),
+    ("owner", "if (extraMoveOwner_ !is null) extraMoveOwner_.install();", "", "drop off-bank Move install"),
+    ("owner", "target_.installPreparedActivationPost(image_);", "", "drop outer post install"),
+    ("owner", "if (xfrmOwner_ !is null) xfrmOwner_.abort();", "", "drop nested abort"),
+    ("tool", "image.baseline = MeshSnapshot.capture(*source);", "", "drop baseline"),
+    ("tool", "image.pivot = source.selectionBBoxCenterEdges();", "", "drop frozen pivot"),
+    ("tool", "image.moveHandle = moveHandle_; image.rotateHandle = rotateHandle_;", "", "drop bank capture"),
+    ("tool", "xfrm.flagT = image.moveHandle; xfrm.flagR = image.rotateHandle;", "", "drop bank pre install"),
+    ("tool", "built = false; dragBank = DragBank.None; preview_.reset();", "built = false;", "drop session reset"),
+    ("tool", "image.baseline.moveInto(before); initPivot_ = image.pivot;", "", "drop baseline/pivot transfer"),
+    ("tool", "context.prepareEdgeExtendToolActivationPre(owner)", "true", "drop outer pre arm"),
+    ("tool", "context.prepareXfrmActivationPre(xfrmOwner)", "true", "drop Xfrm pre arm"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory marker"),
+    ("tool", "context.prepareXfrmActivationPost(xfrmOwner)", "true", "drop Xfrm post arm"),
+    ("tool", "context.prepareEdgeExtendToolActivationPost(owner)", "true", "drop outer post arm"),
+    ("context", "e.edgeExtendToolActivation.validatePre();", "true;", "drop context pre validation"),
+    ("context", "e.edgeExtendToolActivation.validatePost();", "true;", "drop context post validation"),
+    ("context", "e.edgeExtendToolActivation.installPre();", "", "drop context pre install"),
+    ("context", "e.edgeExtendToolActivation.installPost();", "", "drop context post install"),
+    ("context", "e.edgeExtendToolActivation.abort();", "", "drop context abort"),
+):
+    o, c, t = edge_extend_tool_activation_owner, record_context, edge_extend_tool_activation_tool
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    else: t = t.replace(old, new, 1)
+    if edge_extend_tool_activation_gate(o, c, t):
+        fail(f"EdgeExtend activation mutation did not RED: {label}")
+for fixture in (
+    ROOT / "tests/compile_fail/prepared_edge_extend_tool_activation_pre_token_copy.d",
+    ROOT / "tests/compile_fail/prepared_edge_extend_tool_activation_post_token_copy.d",
+    ROOT / "tests/compile_fail/prepared_edge_extend_tool_activation_validated_pre_token_copy.d",
+    ROOT / "tests/compile_fail/prepared_edge_extend_tool_activation_validated_post_token_copy.d",
+):
+    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if run.returncode == 0 or ("not copyable" not in run.stdout and
+            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+        fail("EdgeExtend activation token copy was not rejected:\n" + run.stdout)
 
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
 # detached whole-Mesh adoption with exact caller-supplied change flags, and a

@@ -22,9 +22,24 @@ import pipe_gizmo_host : PipeGizmoHost;
 import tools.transform.move : MoveTool;
 import tools.transform.rotate : RotateTool;
 import tools.transform.scale : ScaleTool;
+import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import prepared_record_context : PreparedRecordContext;
+import prepared_edge_extend_tool_activation : PreparedEdgeExtendToolActivationOwner;
+import prepared_xfrm_activation_session : PreparedXfrmActivationSessionOwner;
 
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
+
+struct PreparedEdgeExtendToolActivationImage {
+    bool valid;
+    MeshSnapshot baseline;
+    Vec3 pivot;
+    bool moveHandle, rotateHandle, scaleHandle;
+    void clear() nothrow @nogc {
+        valid = false; baseline = MeshSnapshot.init; pivot = Vec3.init;
+        moveHandle = rotateHandle = scaleHandle = false;
+    }
+}
 
 /// The interactive tool records into `MeshSessionEdit` — a before/after
 /// `MeshSnapshot` pair OR an operation-log `MeshEditDelta`, the same carrier
@@ -102,8 +117,8 @@ import perf_probe : g_perf, Cat;
 // ---------------------------------------------------------------------------
 class EdgeExtendTool : Tool {
 private:
-    Mesh* delegate() meshSrc_;
-    @property Mesh* mesh() const { return meshSrc_(); }
+    Mesh* delegate() nothrow @nogc meshSrc_;
+    @property Mesh* mesh() const nothrow @nogc { return meshSrc_(); }
     GpuMesh*         gpu;
     EditMode*        editMode;
     LitShader        litShader;
@@ -204,7 +219,8 @@ private:
     PivotOverride dragPivotOverride_;
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader) {
+    this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu, EditMode* editMode,
+         LitShader litShader) {
         this.meshSrc_ = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
@@ -287,6 +303,81 @@ public:
         // online even when that bank is hidden, which xfrm.activate() did not.
         if (!moveHandle_) xfrm.moveBank().activate();
         reinitSession();
+    }
+
+    final PreparedEdgeExtendToolActivationImage buildPreparedActivation(
+            out Mesh* source) {
+        PreparedEdgeExtendToolActivationImage image;
+        if (meshSrc_ is null) return image;
+        source = meshSrc_();
+        if (source is null) return image;
+        image.baseline = MeshSnapshot.capture(*source);
+        image.pivot = source.selectionBBoxCenterEdges();
+        image.moveHandle = moveHandle_; image.rotateHandle = rotateHandle_;
+        image.scaleHandle = scaleHandle_; image.valid = true;
+        return image;
+    }
+    final Mesh* preparedActivationMesh() nothrow @nogc {
+        return meshSrc_ is null ? null : meshSrc_();
+    }
+    final bool preparedActivationBanksMatch(bool move, bool rotate, bool scale)
+            const nothrow @nogc {
+        return moveHandle_ == move && rotateHandle_ == rotate &&
+            scaleHandle_ == scale && xfrm.flagT == move &&
+            xfrm.flagR == rotate && xfrm.flagS == scale;
+    }
+    final XfrmTransformTool preparedEmbeddedXfrm() nothrow @nogc { return xfrm; }
+    final MoveTool preparedEmbeddedMove() { return xfrm.moveBank(); }
+    final void installPreparedActivationPre(
+            ref PreparedEdgeExtendToolActivationImage image) nothrow @nogc {
+        active = true;
+        xfrm.flagT = image.moveHandle; xfrm.flagR = image.rotateHandle;
+        xfrm.flagS = image.scaleHandle;
+    }
+    final void installPreparedActivationPost(
+            ref PreparedEdgeExtendToolActivationImage image) nothrow @nogc {
+        built = false; dragBank = DragBank.None; preview_.reset();
+        image.baseline.moveInto(before); initPivot_ = image.pivot;
+        image.valid = false;
+    }
+    final PreparedSessionActivateEffect prepareActivate(PreparedRecordContext context) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.EdgeExtend, false);
+        scope(failure) context.discard();
+        auto owner = PreparedEdgeExtendToolActivationOwner.prepare(this);
+        auto xfrmOwner = owner is null ? null : owner.xfrmOwner;
+        bool ok = owner !is null && xfrmOwner !is null &&
+            context.prepareEdgeExtendToolActivationPre(owner) &&
+            context.prepareXfrmActivationPre(xfrmOwner) &&
+            context.markNoHistoryInstall() &&
+            context.prepareXfrmActivationPost(xfrmOwner) &&
+            context.prepareEdgeExtendToolActivationPost(owner);
+        if (!ok) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.EdgeExtend, ok);
+    }
+
+    version(unittest) final void seedPreparedActivationForTest() {
+        active = built = true; dragBank = DragBank.Rotate;
+        initPivot_ = Vec3(99,98,97);
+        xfrm.seedPreparedActivationResetForTest(false, true, true, true, true);
+        xfrm.moveBank().seedPreparedProductActivationForTest();
+    }
+    version(unittest) final bool preparedActivationInstalledForTest(
+            Vec3 expectedPivot) const {
+        return active && !built && dragBank == DragBank.None && before.filled &&
+            initPivot_ == expectedPivot;
+    }
+    version(unittest) final void setPreparedBanksForTest(bool move, bool rotate,
+            bool scale) {
+        moveHandle_ = move; rotateHandle_ = rotate; scaleHandle_ = scale;
+        syncBankFlags();
+    }
+    version(unittest) final bool preparedEmbeddedMoveInstalledForTest() {
+        return xfrm.moveBank().preparedProductActivationForTest();
+    }
+    version(unittest) final bool preparedEmbeddedLinksForTest() const nothrow @nogc {
+        return xfrm.preparedWrapperLinksForTest();
     }
 
     // Push the bank switches into the embedded wrapper. flagT/flagR/flagS gate
