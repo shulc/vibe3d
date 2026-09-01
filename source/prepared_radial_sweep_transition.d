@@ -21,7 +21,7 @@ public:
             RadialSweepTool target, PreparedSelectionProfileOwner profile) {
         if (!admit(target) || profile is null) return null;
         RadialSweepProfileImage profileImage;
-        if (!profile.takeUnbegun(profileImage)) return null;
+        if (!profile.takeUnbegun(target, profileImage)) return null;
         auto owner = new PreparedRadialSweepTransitionOwner(target,
             PreparedRadialSweepTransitionKind.Activate);
         owner.image_ = target.buildPreparedActivationImage(profileImage);
@@ -153,9 +153,109 @@ version(unittest) unittest {
                                              &mode, LitShader.init);
     auto producerProfile = PreparedSelectionProfileOwner.radialSweep(
         producerTool, layer.meshRef(), mode);
-    auto producerTransition = PreparedRadialSweepTransitionOwner.activation(
-        producerTool, producerProfile);
-    assert(producerTransition.begin()); producerTransition.install();
+    auto activateContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    activateContext.setResourceIdentity(7, 11);
+    auto activateResult = producerTool.prepareActivate(activateContext,
+        producerProfile, producerTool.fakePreviewCreateUploadOwnerForTest());
+    assert(activateResult.accepted && !producerTool.preparedTransitionForTest(false));
+    assert(activateContext.validate()); activateContext.install();
+    assert(producerTool.preparedTransitionForTest(false));
+    assert(producerTool.preparedActivationForTest(true));
+    assert(activateContext.installTraceForTest() == [10,12,8]);
+    activateContext.install();
+    assert(activateContext.installTraceForTest() == [10,12,8]);
+
+    // Edge and invalid polygon activation retain the same private/GPU/order
+    // transaction; invalid profile still mirrors legacy init+empty upload.
+    auto edgeLayer = new Layer; edgeLayer.meshRef() = makeCube();
+    edgeLayer.meshRef().syncSelection(); edgeLayer.meshRef().selectEdge(0);
+    EditMode edgeMode = EditMode.Edges; GpuMesh edgeMain;
+    auto edgeTool = new RadialSweepTool(() => &edgeLayer.meshRef(), &edgeMain,
+        &edgeMode, LitShader.init);
+    auto edgeContext = new PreparedRecordContext(new CommandHistory(), new RecordObserverHub());
+    edgeContext.setResourceIdentity(7,11);
+    assert(edgeTool.prepareActivate(edgeContext,
+        PreparedSelectionProfileOwner.radialSweep(edgeTool, edgeLayer.meshRef(), edgeMode),
+        edgeTool.fakePreviewCreateUploadOwnerForTest()).accepted);
+    assert(edgeContext.validate()); edgeContext.install();
+    assert(edgeTool.preparedActivationForTest(true) &&
+        edgeContext.installTraceForTest() == [10,12,8]);
+
+    auto invalidLayer = new Layer; invalidLayer.meshRef() = makeCube();
+    invalidLayer.meshRef().syncSelection(); GpuMesh invalidMain;
+    auto invalidTool = new RadialSweepTool(() => &invalidLayer.meshRef(), &invalidMain,
+        &mode, LitShader.init);
+    auto invalidContext = new PreparedRecordContext(new CommandHistory(), new RecordObserverHub());
+    invalidContext.setResourceIdentity(7,11);
+    assert(invalidTool.prepareActivate(invalidContext,
+        PreparedSelectionProfileOwner.radialSweep(invalidTool,
+            invalidLayer.meshRef(), mode),
+        invalidTool.fakePreviewCreateUploadOwnerForTest()).accepted);
+    assert(invalidContext.validate()); invalidContext.install();
+    assert(invalidTool.preparedActivationForTest(false) &&
+        invalidContext.installTraceForTest() == [10,12,8]);
+
+    auto refusedLayer = new Layer; refusedLayer.meshRef() = makeCube();
+    refusedLayer.meshRef().syncSelection(); refusedLayer.meshRef().selectFace(0);
+    GpuMesh refusedMain;
+    auto refusedTool = new RadialSweepTool(() => &refusedLayer.meshRef(),
+        &refusedMain, &mode, LitShader.init);
+    GpuMesh foreignMain;
+    auto foreignTool = new RadialSweepTool(() => &refusedLayer.meshRef(),
+        &foreignMain, &mode, LitShader.init);
+    auto foreignProfile = PreparedSelectionProfileOwner.radialSweep(foreignTool,
+        refusedLayer.meshRef(), mode);
+    auto wrongProfileContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub()); wrongProfileContext.setResourceIdentity(7,11);
+    assert(!refusedTool.prepareActivate(wrongProfileContext, foreignProfile,
+        refusedTool.fakePreviewCreateUploadOwnerForTest()).accepted);
+    assert(!wrongProfileContext.validate() && refusedTool.previewGpuEmptyForTest() &&
+        foreignTool.previewGpuEmptyForTest() &&
+        !foreignTool.preparedProfileValidityForTest());
+    auto foreignRetryContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub()); foreignRetryContext.setResourceIdentity(7,11);
+    assert(foreignTool.prepareActivate(foreignRetryContext, foreignProfile,
+        foreignTool.fakePreviewCreateUploadOwnerForTest()).accepted);
+    assert(foreignRetryContext.validate()); foreignRetryContext.install();
+    assert(foreignTool.preparedActivationForTest(true));
+
+    auto reusableProfile = PreparedSelectionProfileOwner.radialSweep(refusedTool,
+        refusedLayer.meshRef(), mode);
+    auto wrongActivateContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub()); wrongActivateContext.setResourceIdentity(7,11);
+    assert(!refusedTool.prepareActivate(wrongActivateContext, reusableProfile,
+        invalidTool.fakePreviewCreateUploadOwnerForTest()).accepted);
+    auto retryActivateContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub()); retryActivateContext.setResourceIdentity(7,11);
+    assert(refusedTool.prepareActivate(retryActivateContext, reusableProfile,
+        refusedTool.fakePreviewCreateUploadOwnerForTest()).accepted);
+    retryActivateContext.discard();
+
+    auto faultProfile = PreparedSelectionProfileOwner.radialSweep(refusedTool,
+        refusedLayer.meshRef(), mode);
+    auto faultCreateUpload = refusedTool.fakePreviewCreateUploadOwnerForTest();
+    faultCreateUpload.failAfterBuildForTest();
+    auto activateFaultContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub()); activateFaultContext.setResourceIdentity(7,11);
+    bool activateThrew;
+    try refusedTool.prepareActivate(activateFaultContext, faultProfile, faultCreateUpload);
+    catch (Exception) activateThrew = true;
+    assert(activateThrew && !activateFaultContext.validate() &&
+        faultCreateUpload.fakeCreatedForTest() ==
+            [301,302,303,304,305,306,307,308,309] &&
+        faultCreateUpload.fakeDeletedForTest() ==
+            faultCreateUpload.fakeCreatedForTest() &&
+        refusedTool.previewGpuEmptyForTest() &&
+        !refusedTool.preparedProfileValidityForTest());
+    auto faultRetryProfile = PreparedSelectionProfileOwner.radialSweep(refusedTool,
+        refusedLayer.meshRef(), mode);
+    auto faultRetryContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub()); faultRetryContext.setResourceIdentity(7,11);
+    assert(refusedTool.prepareActivate(faultRetryContext, faultRetryProfile,
+        refusedTool.fakePreviewCreateUploadOwnerForTest()).accepted);
+    assert(faultRetryContext.validate()); faultRetryContext.install();
+    assert(refusedTool.preparedActivationForTest(true));
 
     producerTool.seedPreparedHaulForTest(6);
     auto producerParam = PreparedRadialSweepTransitionOwner.param(producerTool, "axis");
