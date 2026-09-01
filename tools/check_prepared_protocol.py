@@ -282,11 +282,15 @@ B5P_PREPARED_LEGACY = {
     ("tools.slice.slice_tool", "SliceTool", "activate"),
     ("tools.edit.tack", "TackTool", "activate"),
 }
+B5Q_PREPARED_LEGACY = {
+    ("tools.transform.rotate", "RotateTool", "update"),
+    ("tools.transform.scale", "ScaleTool", "update"),
+}
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
     B5I_PREPARED_LEGACY | B5J_PREPARED_LEGACY | B5K_PREPARED_LEGACY |
     B5L_PREPARED_LEGACY | B5M_PREPARED_LEGACY | B5N_PREPARED_LEGACY |
-    B5O_PREPARED_LEGACY | B5P_PREPARED_LEGACY)
+    B5O_PREPARED_LEGACY | B5P_PREPARED_LEGACY | B5Q_PREPARED_LEGACY)
 all_hook_keys = {(r["module"], r["aggregate"], r["symbol"])
                  for r in CURRENT_WRITERS["hooks"]}
 if not TOOL_STATE_CONVERTED | PREPARED_LEGACY <= all_hook_keys:
@@ -318,7 +322,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "10dc1fa2168e53348f6bdbf15acf62b2ea6a13a1ef4c21358c2aaf531a4bac78"
+    "f02be43fd3ea6fcdc9f93088790433f5416cb79ea64d87c6764774c269b50133"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -447,6 +451,8 @@ for path, text in prepared_source_texts.items():
             "prepared_transform_activation",
             "prepared_transform_product_activation",
             "prepared_move_update",
+            "prepared_rotate_update",
+            "prepared_scale_update",
             "prepared_inherited_noop",
             "prepared_xfrm_activation_session",
             "prepared_stroke_extrude_activation",
@@ -7005,6 +7011,81 @@ run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(move_update_copy_fixture)],
 if run.returncode == 0 or ("not copyable" not in run.stdout and
         not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
     fail("Move update token copy was not rejected:\n" + run.stdout)
+
+# Exact Rotate/Scale update owners. These are the first update roots whose
+# detached effect jointly owns mesh delivery, optional refire history and two
+# live tool instances (sub-tool + wrapper), so every identity and install rung
+# is pinned here rather than inferred from the passing behavior tests.
+def rs_update_gate(owner, context, tool_source, stem, cls):
+    production = without_unittests(owner)
+    lower = stem.lower()
+    update_match = re.search(r"override\s+void\s+update\s*\(ref VectorStack vts\)\s*\{",
+                             tool_source)
+    if not update_match: return False
+    update_body = tool_source[update_match.end():balanced_source(
+        tool_source, update_match.end())-1]
+    return all(x in owner for x in (
+        f"final class Prepared{stem}UpdateOwner",
+        "@disable this(this);",
+        f"target.classinfo !is {cls}.classinfo",
+        "mesh_ !is &layer_.meshRef()",
+        "target_.preparedWrapperForUpdate() !is wrapper_",
+        "target_.preparedEditModeForUpdate() != mode_",
+        "prepared_.owner != owner_", "prepared_.generation != generation_",
+        "validatedToken_.owner != owner_",
+        "validatedToken_.generation != generation_",
+        f"target_.installPreparedUpdate(image_); consume();",
+        "image_.clear(); target_ = null; layer_ = null; mesh_ = null;")) and \
+        not any(x in production for x in (" delegate", " function(", "void*", "ubyte[]")) and \
+        all(x in context for x in (
+            f"bool prepare{stem}Update(Prepared{stem}UpdateOwner owner)",
+            f"e.{lower}Update.validate();",
+            f"e.{lower}Update.install();",
+            f"e.{lower}Update.abort();")) and \
+        all(x in tool_source for x in (
+            f"final Prepared{stem}UpdateEffect prepareUpdate(",
+            f"Prepared{stem}UpdateOwner.prepare(this, layer, vts, context)",
+            "context.markHistoryInstall()", "context.markNoHistoryInstall()",
+            "context.prepareStampedMeshImage(layer, owner.candidate()",
+            f"context.prepare{stem}Update(owner)",
+            "if (!ok) context.discard();")) and \
+        not any(x in update_body for x in (
+            f"Prepared{stem}UpdateOwner", f"prepare{stem}Update"))
+
+for stem, cls, owner_path, tool_source in (
+    ("Rotate", "RotateTool", "source/prepared_rotate_update.d", rotate_tool),
+    ("Scale", "ScaleTool", "source/prepared_scale_update.d", scale_tool),
+):
+    rs_owner = (ROOT / owner_path).read_text()
+    if not rs_update_gate(rs_owner, record_context, tool_source, stem, cls):
+        fail(f"{stem} update owner contract drift")
+    for target, old, new, label in (
+        ("owner", f"target.classinfo !is {cls}.classinfo", "false", "broaden exact class"),
+        ("owner", "mesh_ !is &layer_.meshRef()", "false", "drop mesh identity"),
+        ("owner", "target_.preparedWrapperForUpdate() !is wrapper_", "false", "drop wrapper identity"),
+        ("owner", "target_.preparedEditModeForUpdate() != mode_", "false", "drop mode identity"),
+        ("owner", "prepared_.generation != generation_", "false", "drop prepared generation"),
+        ("owner", "validatedToken_.generation != generation_", "false", "drop validated generation"),
+        ("owner", "target_.installPreparedUpdate(image_); consume();", "consume();", "drop fixed install"),
+        ("context", f"e.{stem.lower()}Update.validate();", "true;", "drop context validate"),
+        ("context", f"e.{stem.lower()}Update.install();", "", "drop context install"),
+        ("context", f"e.{stem.lower()}Update.abort();", "", "drop context abort"),
+        ("tool", "context.markHistoryInstall()", "true", "drop history marker"),
+        ("tool", "context.prepareStampedMeshImage(layer, owner.candidate()", "context.prepareStampedMeshImageMissing(layer, owner.candidate()", "drop mesh enlist"),
+        ("tool", f"context.prepare{stem}Update(owner)", "true", "drop owner enlist"),
+    ):
+        mo, co, ts = rs_owner, record_context, tool_source
+        if target == "owner": mo = mo.replace(old, new, 1)
+        elif target == "context": co = co.replace(old, new, 1)
+        else: ts = ts.replace(old, new, 1)
+        if rs_update_gate(mo, co, ts, stem, cls):
+            fail(f"{stem} update mutation did not RED: {label}")
+    copy_fixture = ROOT / f"tests/compile_fail/prepared_{stem.lower()}_update_token_copy.d"
+    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(copy_fixture)],
+        cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if run.returncode == 0 or ("not copyable" not in run.stdout and
+            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+        fail(f"{stem} update token copy was not rejected:\n" + run.stdout)
 
 # Closed inherited base-noop owner infrastructure.  The effective product
 # table above proves DragWeldTool is the sole activate/deactivate admission;

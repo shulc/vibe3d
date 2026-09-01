@@ -18,7 +18,9 @@ struct PreparedRotateActivationImage {
 import handler;
 import mesh;
 import editmode;
+import document : Layer;
 import seltype : SelType;
+import tool : Tool;
 import math;
 import shader;
 import toolpipe.packets : FalloffPacket;
@@ -37,8 +39,11 @@ import toolpipe.packets : FalloffPacket, SnapPacket, SymmetryPacket;
 import params : Param;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
-    PreparedTransformProductEffect, PreparedTransformProductKind;
+    PreparedTransformProductEffect, PreparedTransformProductKind,
+    PreparedRotateUpdateEffect, PreparedRotateUpdateKind;
 import prepared_transform_product_activation : PreparedTransformProductActivationOwner;
+import prepared_rotate_update : PreparedRotateUpdateOwner;
+import prepared_xfrm_refire_state : PreparedXfrmRefireStateImage;
 import snapshot : MeshSnapshot;
 
 /// Closed observation of the branches owned by `RotateTool.update`.  This is
@@ -88,6 +93,7 @@ struct PreparedRotateUpdateImage {
     FalloffPacket expectedFalloff, nextFalloff;
     SnapPacket expectedSnap, nextSnap;
     SymmetryPacket expectedSymmetry, nextSymmetry;
+    PreparedXfrmRefireStateImage wrapperRefire;
     uint deliveryFlags, deliveryDomains;
     bool meshPrepared, valid;
 
@@ -175,6 +181,10 @@ private:
     Vec3     headlessRotate;
 
 public:
+    final Mesh* preparedMeshForUpdate() const { return mesh; }
+    final Tool preparedWrapperForUpdate() nothrow @nogc { return wrapperRef; }
+    final EditMode preparedEditModeForUpdate() const nothrow @nogc { return *editMode; }
+
     // ── rotate single-source plumbing (MS-2; doc/rotate_single_source_plan.md) ──
     // Inert until MS-3/MS-4/MS-5 switch the call sites; declared here so the
     // wrapper-side scaffolding compiles against stable members.
@@ -326,6 +336,32 @@ public:
             PreparedTransformProductKind.Rotate, ok);
     }
 
+    final PreparedRotateUpdateEffect prepareUpdate(ref VectorStack vts,
+            PreparedRecordContext context, Layer layer) {
+        if (context is null) return PreparedRotateUpdateEffect(
+            preparedToolStateOwner, PreparedRotateUpdateKind.None, false);
+        scope(failure) context.discard();
+        auto projection = projectPreparedUpdate(vts);
+        bool selectionHistory = projection.valid && projection.selectionChanged &&
+            prepareEditRecord(context, "Rotate");
+        auto owner = PreparedRotateUpdateOwner.prepare(this, layer, vts, context);
+        bool ok = owner !is null;
+        if (ok) {
+            bool hasHistory = selectionHistory || owner.historyPrepared();
+            ok = hasHistory ? context.markHistoryInstall()
+                            : context.markNoHistoryInstall();
+            if (ok && owner.meshPrepared()) {
+                ok = owner.deliveryFlags() != 0 &&
+                    context.prepareStampedMeshImage(layer, owner.candidate(),
+                        owner.deliveryFlags(), owner.deliveryDomains());
+            }
+            if (ok) ok = context.prepareRotateUpdate(owner);
+        }
+        if (!ok) context.discard();
+        return PreparedRotateUpdateEffect(preparedToolStateOwner,
+            owner is null ? PreparedRotateUpdateKind.None : owner.effectKind(), ok);
+    }
+
     /// Allocation-free branch projection for the exact update root.  It does
     /// not retain `vts` or the wrapper; all packet values are copied.  Keeping
     /// this resolver separate makes the mutually-exclusive history/mesh arms
@@ -368,7 +404,7 @@ public:
         image.heldNonIdentity = wrap !is null
             ? wrap.publishedRotate() != Vec3(0, 0, 0)
             : angleAccum != Vec3(0, 0, 0);
-        image.wrapperEligible = wrap !is null && wrap.refireRotateEligible();
+        image.wrapperEligible = wrap !is null && wrap.preparedRefireEligible(true);
 
         const bool effectiveEditOpen = image.editOpen && !image.selectionChanged;
         image.panelRegrade = !image.dragLive && image.heldNonIdentity &&
@@ -392,7 +428,8 @@ public:
         return image;
     }
 
-    final PreparedRotateUpdateImage buildPreparedUpdate(ref VectorStack vts) {
+    final PreparedRotateUpdateImage buildPreparedUpdate(ref VectorStack vts,
+            PreparedRecordContext context = null) {
         PreparedRotateUpdateImage image;
         image.projection = projectPreparedUpdate(vts);
         if (!image.projection.valid) return image;
@@ -462,6 +499,16 @@ public:
                 image.deliveryFlags = prepared.deliveryFlags;
                 image.deliveryDomains = prepared.deliveryDomains;
                 image.meshPrepared = prepared.applied;
+                if (image.projection.wrapperRegrade && image.meshPrepared) {
+                    image.wrapperRefire = wrap.buildPreparedRefireState(
+                        context, "Falloff", image.expectedLive.vertices,
+                        image.candidate.vertices,
+                        image.expectedFalloff, image.nextFalloff,
+                        image.expectedSnap, image.nextSnap,
+                        image.expectedSymmetry, image.nextSymmetry);
+                    if (!image.wrapperRefire.valid)
+                        return PreparedRotateUpdateImage.init;
+                }
             } else {
                 image.expectedLive.restore(image.candidate);
                 import tools.transform.xform_kernels : applyRotateFromOrig;
@@ -491,9 +538,11 @@ public:
 
     final bool preparedUpdateMatches(ref const PreparedRotateUpdateImage image,
             in Mesh live) const nothrow @nogc {
+        import tools.transform.xfrm_transform : XfrmTransformTool;
         return image.valid && image.expectedLive.matches(live) &&
-            angleAccum == image.expectedAngle && propDeg == image.expectedProp &&
-            origVertices == image.expectedOrig &&
+            preparedVec3Equal(angleAccum, image.expectedAngle) &&
+            preparedVec3Equal(propDeg, image.expectedProp) &&
+            preparedVec3SliceEqual(origVertices, image.expectedOrig) &&
             vertexIndicesToProcess == image.expectedIndices &&
             toProcess == image.expectedMask &&
             vertexProcessCount == image.expectedCount &&
@@ -502,15 +551,20 @@ public:
             vertexCacheDirty == image.expectedCacheDirty &&
             centerManual == image.expectedCenterManual &&
             needsGpuUpdate == image.expectedNeedsGpu &&
-            cachedCenter == image.expectedCachedCenter &&
-            handler.center == image.expectedHandlerCenter &&
+            preparedVec3Equal(cachedCenter, image.expectedCachedCenter) &&
+            preparedVec3Equal(handler.center, image.expectedHandlerCenter) &&
             falloffPacketsEqual(dragFalloff, image.expectedFalloff) &&
             snapPacketsEqual(dragSnap, image.expectedSnap) &&
-            symmetryPacketsEqual(dragSymmetry, image.expectedSymmetry);
+            symmetryPacketsEqual(dragSymmetry, image.expectedSymmetry) &&
+            (!image.wrapperRefire.valid ||
+                ((cast(XfrmTransformTool)wrapperRef) !is null &&
+                 (cast(XfrmTransformTool)wrapperRef)
+                    .preparedRefireStateMatches(image.wrapperRefire)));
     }
 
     final void installPreparedUpdate(ref PreparedRotateUpdateImage image)
             nothrow @nogc {
+        import tools.transform.xfrm_transform : XfrmTransformTool;
         if (!image.valid) return;
         angleAccum = image.nextAngle;
         propDeg = image.nextProp;
@@ -528,6 +582,9 @@ public:
         dragFalloff = image.nextFalloff; image.nextFalloff = FalloffPacket.init;
         dragSnap = image.nextSnap;
         dragSymmetry = image.nextSymmetry; image.nextSymmetry = SymmetryPacket.init;
+        if (image.wrapperRefire.valid)
+            if (auto wrap = cast(XfrmTransformTool)wrapperRef)
+                wrap.installPreparedRefireState(image.wrapperRefire);
         image.clear();
     }
 

@@ -19,6 +19,8 @@ import prepared_radial_array_transition : PreparedRadialArrayTransitionOwner;
 import prepared_transform_activation : PreparedTransformActivationOwner;
 import prepared_transform_product_activation : PreparedTransformProductActivationOwner;
 import prepared_move_update : PreparedMoveUpdateOwner;
+import prepared_rotate_update : PreparedRotateUpdateOwner;
+import prepared_scale_update : PreparedScaleUpdateOwner;
 import prepared_inherited_noop : PreparedInheritedNoopOwner;
 import prepared_xfrm_activation_session : PreparedXfrmActivationSessionOwner;
 import prepared_stroke_extrude_activation : PreparedStrokeExtrudeActivationOwner;
@@ -67,7 +69,9 @@ private enum PreparedResourceKind : ubyte {
     ArraySessionState, CloneSessionState, MagnetSessionState, ReductionSessionState,
     RadialSweepProfileState, RadialSweepTransitionState, GestureCarrierMismatch,
     GpuCreateUpload, RadialArrayTransitionState, TransformActivationState,
-    TransformProductActivationState, MoveUpdateState, InheritedNoopState,
+    TransformProductActivationState, MoveUpdateState, RotateUpdateState,
+    ScaleUpdateState,
+    InheritedNoopState,
     XfrmActivationPreState, XfrmActivationPostState, StrokeExtrudeActivationState,
     VertexMergeActivationState, PolyInsetActivationState, PolyExtrudeActivationState,
     SmoothShiftActivationState, EdgeBevelActivationState,
@@ -96,6 +100,8 @@ private struct PreparedResourceEntry {
     PreparedTransformActivationOwner transformActivation;
     PreparedTransformProductActivationOwner transformProductActivation;
     PreparedMoveUpdateOwner moveUpdate;
+    PreparedRotateUpdateOwner rotateUpdate;
+    PreparedScaleUpdateOwner scaleUpdate;
     PreparedInheritedNoopOwner inheritedNoop;
     PreparedXfrmActivationSessionOwner xfrmActivation;
     PreparedStrokeExtrudeActivationOwner strokeExtrudeActivation;
@@ -413,6 +419,26 @@ public:
             throw new Exception("injected move update enlist failure");
         PreparedResourceEntry e; e.kind = PreparedResourceKind.MoveUpdateState;
         e.moveUpdate = owner; resources_ ~= e; return true;
+    }
+    bool prepareRotateUpdate(PreparedRotateUpdateOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected rotate update enlist failure");
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.RotateUpdateState;
+        e.rotateUpdate = owner; resources_ ~= e; return true;
+    }
+    bool prepareScaleUpdate(PreparedScaleUpdateOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected scale update enlist failure");
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.ScaleUpdateState;
+        e.scaleUpdate = owner; resources_ ~= e; return true;
     }
     bool prepareStrokeExtrudeActivation(PreparedStrokeExtrudeActivationOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
@@ -975,6 +1001,10 @@ public:
                     e.transformProductActivation.validate(); break;
             case PreparedResourceKind.MoveUpdateState:
                 ok = e.moveUpdate !is null && e.moveUpdate.validate(); break;
+            case PreparedResourceKind.RotateUpdateState:
+                ok = e.rotateUpdate !is null && e.rotateUpdate.validate(); break;
+            case PreparedResourceKind.ScaleUpdateState:
+                ok = e.scaleUpdate !is null && e.scaleUpdate.validate(); break;
             case PreparedResourceKind.InheritedNoopState:
                 ok = e.inheritedNoop !is null && e.inheritedNoop.validate(); break;
             case PreparedResourceKind.XfrmActivationPreState:
@@ -1188,6 +1218,14 @@ public:
         case PreparedResourceKind.MoveUpdateState:
             e.moveUpdate.install();
             version(unittest) installTrace_[installTraceLength_++] = 16;
+            break;
+        case PreparedResourceKind.RotateUpdateState:
+            e.rotateUpdate.install();
+            version(unittest) installTrace_[installTraceLength_++] = 56;
+            break;
+        case PreparedResourceKind.ScaleUpdateState:
+            e.scaleUpdate.install();
+            version(unittest) installTrace_[installTraceLength_++] = 57;
             break;
         case PreparedResourceKind.InheritedNoopState:
             e.inheritedNoop.install();
@@ -1443,6 +1481,8 @@ private:
         case PreparedResourceKind.TransformProductActivationState:
             e.transformProductActivation.abort(); break;
         case PreparedResourceKind.MoveUpdateState: e.moveUpdate.abort(); break;
+        case PreparedResourceKind.RotateUpdateState: e.rotateUpdate.abort(); break;
+        case PreparedResourceKind.ScaleUpdateState: e.scaleUpdate.abort(); break;
         case PreparedResourceKind.InheritedNoopState: e.inheritedNoop.abort(); break;
         case PreparedResourceKind.XfrmActivationPreState:
         case PreparedResourceKind.XfrmActivationPostState:

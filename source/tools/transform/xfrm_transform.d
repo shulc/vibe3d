@@ -3,6 +3,7 @@ import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedXfrmActivationEffect;
 import prepared_xfrm_activation_session : PreparedXfrmActivationSessionOwner;
+import prepared_xfrm_refire_state : PreparedXfrmRefireStateImage;
 
 // XfrmTransformTool — `xfrm.transform`: ONE tool that can translate,
 // rotate, and scale based on three boolean flags
@@ -117,7 +118,7 @@ import tools.transform.xform_kernels :
     applyScaleFromActivation,   // dormant compoundPasses!=1 pow path only (applyTRS, F2)
     applyXformMatrix,
     BlendMode;
-import command_history : CommandHistory;
+import command_history : CommandHistory, PreparedHistoryKind;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import change_bus : MeshEditScope;
 // Task 0614 Phase 3/4 — the item-mode apply path + its undo command.
@@ -4479,6 +4480,22 @@ public:
             && regradeStampCurrent();
     }
 
+    /// Preparation-time twin of the public eligibility gates.  The legacy
+    /// gates intentionally score the version-vs-undo-epoch census; a detached
+    /// producer must perform zero live writes, including those diagnostic
+    /// counters, so it reads the exact shipped predicate without scoring it.
+    public bool preparedRefireEligible(bool rotateBank) const {
+        // recorded remainder (1906 §3.6): conversion-only twin of row 21's
+        // gesture-identity guard. A Position epoch observes this tool's own
+        // version-silent fold, so it cannot answer whether a foreign edit
+        // invalidated the last landed gesture. This duplicate retires at P1.0c.
+        return history !is null
+            && history.runOpen()
+            && currentRunBank == (rotateBank ? DragBank.Rotate : DragBank.Scale)
+            && mesh !is null
+            && mesh.mutationVersion == lastAppliedGestureMutationVersion;
+    }
+
     /// Evaluate the wrapper's canonical fold on an isolated clone.  This is
     /// intentionally narrower than cloning the whole tool lifecycle: update
     /// refire is idle (`activeDrag == null`) and consumes only the held run,
@@ -4531,6 +4548,118 @@ public:
         drainPreparedShadowDelivery(result.mesh, result.deliveryFlags,
                                     result.deliveryDomains);
         return result;
+    }
+
+    /// Prepare the exact history carrier and wrapper-private tail of
+    /// `recordPipeRefire` without touching the live wrapper, mesh, stages or
+    /// census counters. `anchor` is the live post-gesture image and `after` is
+    /// the already detached recompute candidate.
+    public PreparedXfrmRefireStateImage buildPreparedRefireState(
+            PreparedRecordContext context, string label,
+            const Vec3[] anchor, const Vec3[] after,
+            FalloffPacket preF, FalloffPacket postF,
+            SnapPacket preSn, SnapPacket postSn,
+            SymmetryPacket preSy, SymmetryPacket postSy) {
+        PreparedXfrmRefireStateImage image;
+        if (context is null || history is null || vertexEditFactory is null ||
+            !history.runOpen() || anchor.length != mesh.vertices.length ||
+            after.length != mesh.vertices.length)
+            return image;
+
+        image.expectedAnchor = refireAnchor.dup;
+        image.nextAnchor = refireAnchor.length == 0
+            ? anchor.dup : refireAnchor.dup;
+        image.expectedPreValid = refirePreValid;
+        image.nextPreValid = true;
+        image.expectedPreFalloff = refirePreFalloff.ownedDup();
+        image.expectedPreSnap = refirePreSnap;
+        image.expectedPreSymmetry = refirePreSym.ownedDup();
+        if (refirePreValid) {
+            preF = refirePreFalloff;
+            preSn = refirePreSnap;
+            preSy = refirePreSym;
+        }
+        image.nextPreFalloff = preF.ownedDup();
+        image.nextPreSnap = preSn;
+        image.nextPreSymmetry = preSy.ownedDup();
+        image.expectedLastMutation = lastMutationVersion;
+        image.expectedGestureMutation = lastAppliedGestureMutationVersion;
+        image.expectedUndoEpoch = armedUndoEpoch;
+        image.nextLastMutation = mesh.mutationVersion;
+        image.nextGestureMutation = mesh.mutationVersion;
+        image.nextUndoEpoch = history.undoEpoch();
+
+        uint[] movedIdx;
+        Vec3[] before;
+        Vec3[] movedAfter;
+        movedIdx.reserve(after.length);
+        before.reserve(after.length);
+        movedAfter.reserve(after.length);
+        foreach (vid, a; after) {
+            Vec3 b = image.nextAnchor[vid];
+            if (a == b) continue;
+            movedIdx ~= cast(uint)vid;
+            before ~= b;
+            movedAfter ~= a;
+        }
+
+        auto cmd = vertexEditFactory();
+        if (cmd is null) return PreparedXfrmRefireStateImage.init;
+        cmd.setEdit(movedIdx, before, movedAfter, label);
+
+        FalloffPacket preFCopy = preF.ownedDup();
+        FalloffPacket postFCopy = postF.ownedDup();
+        SnapPacket preSnCopy = preSn, postSnCopy = postSn;
+        SymmetryPacket preSyCopy = preSy.ownedDup();
+        SymmetryPacket postSyCopy = postSy.ownedDup();
+        XformState xfNow = run;
+        GestureFrame frameNow = frame;
+        cmd.setHooks(
+            () {
+                restoreFalloffSetFromCombined(activeFalloffStages(), postFCopy);
+                if (auto sn = activeSnapStage()) sn.restoreConfigFromPacket(postSnCopy);
+                if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(postSyCopy);
+                run = xfNow; headlessRotate = eulerZYXFromMatrix(run.r);
+                frame = frameNow; refreshFrameValid();
+            },
+            () {
+                restoreFalloffSetFromCombined(activeFalloffStages(), preFCopy);
+                if (auto sn = activeSnapStage()) sn.restoreConfigFromPacket(preSnCopy);
+                if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(preSyCopy);
+                run = xfNow; headlessRotate = eulerZYXFromMatrix(run.r);
+                frame = frameNow; refreshFrameValid();
+            });
+        auto prepared = context.prepare(cmd,
+            PreparedHistoryKind.ReplaceInSessionTail, history.currentRunId);
+        if (!prepared.accepted) return PreparedXfrmRefireStateImage.init;
+        image.valid = true;
+        return image;
+    }
+
+    public bool preparedRefireStateMatches(
+            ref const PreparedXfrmRefireStateImage image) const nothrow @nogc {
+        return image.valid && refireAnchor == image.expectedAnchor &&
+            refirePreValid == image.expectedPreValid &&
+            falloffPacketsEqual(refirePreFalloff, image.expectedPreFalloff) &&
+            snapPacketsEqual(refirePreSnap, image.expectedPreSnap) &&
+            symmetryPacketsEqual(refirePreSym, image.expectedPreSymmetry) &&
+            lastMutationVersion == image.expectedLastMutation &&
+            lastAppliedGestureMutationVersion == image.expectedGestureMutation &&
+            armedUndoEpoch == image.expectedUndoEpoch;
+    }
+
+    public void installPreparedRefireState(
+            ref PreparedXfrmRefireStateImage image) nothrow @nogc {
+        if (!image.valid) return;
+        refireAnchor = image.nextAnchor; image.nextAnchor = null;
+        refirePreValid = image.nextPreValid;
+        refirePreFalloff = image.nextPreFalloff;
+        refirePreSnap = image.nextPreSnap;
+        refirePreSym = image.nextPreSymmetry;
+        lastMutationVersion = image.nextLastMutation;
+        lastAppliedGestureMutationVersion = image.nextGestureMutation;
+        armedUndoEpoch = image.nextUndoEpoch;
+        image.clear();
     }
 
     // Record forwarders: the sub-tool dup'd the pre-recompute (post-gesture)

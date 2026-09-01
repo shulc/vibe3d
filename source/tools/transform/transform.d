@@ -1,6 +1,23 @@
 module tools.transform.transform;
 import tool;
 import prepared_record_context : PreparedRecordContext;
+
+/// Exact state-image equality for float channels. Unlike `Vec3.opEquals` this
+/// is reflexive for NaN sentinels and distinguishes signed zero, which is what
+/// a prepared owner's stale-state witness requires.
+bool preparedVec3Equal(Vec3 a, Vec3 b) pure nothrow @nogc @trusted {
+    return *cast(const(uint)*)&a.x == *cast(const(uint)*)&b.x &&
+           *cast(const(uint)*)&a.y == *cast(const(uint)*)&b.y &&
+           *cast(const(uint)*)&a.z == *cast(const(uint)*)&b.z;
+}
+
+bool preparedVec3SliceEqual(const Vec3[] a, const Vec3[] b)
+        pure nothrow @nogc @trusted {
+    if (a.length != b.length) return false;
+    foreach (i; 0 .. a.length)
+        if (!preparedVec3Equal(a[i], b[i])) return false;
+    return true;
+}
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 
 struct PreparedTransformActivationImage {

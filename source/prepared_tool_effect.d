@@ -50,6 +50,14 @@ enum PreparedTransformProductKind : ubyte { Move, Rotate, Scale }
 enum PreparedMoveUpdateKind : ubyte {
     None, InactiveNoop, DraggingNoop, WrapperEditOpenNoop, Refresh
 }
+enum PreparedRotateUpdateKind : ubyte {
+    None, InactiveNoop, DraggingNoop, IdleRefresh, SelectionRefresh,
+    MutationRefresh, PanelRegrade, WrapperRegrade
+}
+enum PreparedScaleUpdateKind : ubyte {
+    None, InactiveNoop, DraggingNoop, IdleRefresh, SelectionRefresh,
+    MutationRefresh, PanelRegrade, WrapperRegrade
+}
 enum PreparedTopologyPenUpdateKind : ubyte { None, PacketAbsent, Packet }
 enum PreparedPenParamKind : ubyte { None, Noop, CurrentPoint, Position }
 enum PreparedArrayParamKind : ubyte { None, Noop, Preview }
@@ -100,6 +108,16 @@ enum PreparedInheritedNoopKind : ubyte { Activate, Deactivate, Update }
 @PreparedAggregate struct PreparedMoveUpdateEffect {
     OwnedId owner;
     PreparedMoveUpdateKind kind;
+    bool accepted;
+}
+@PreparedAggregate struct PreparedRotateUpdateEffect {
+    OwnedId owner;
+    PreparedRotateUpdateKind kind;
+    bool accepted;
+}
+@PreparedAggregate struct PreparedScaleUpdateEffect {
+    OwnedId owner;
+    PreparedScaleUpdateKind kind;
     bool accepted;
 }
 @PreparedAggregate struct PreparedTopologyPenUpdateEffect {

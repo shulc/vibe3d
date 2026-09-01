@@ -845,7 +845,7 @@ private static immutable RemainderFile[] kRemainder = [
       ~ "(same family; same counter and argument)"),
     RemainderFile("source/tools/transform/transform.d", 1,
         "computeSelectionHash's marksVersion memo"),
-    RemainderFile("source/tools/transform/xfrm_transform.d", 2,
+    RemainderFile("source/tools/transform/xfrm_transform.d", 3,
         "the gesture staleness gate (row 21) + the wrapper's gesture boundary"),
 ];
 

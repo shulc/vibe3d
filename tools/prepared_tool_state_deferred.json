@@ -92,26 +92,6 @@
   {
     "batch": "P1.0b.2+",
     "key": {
-      "aggregate": "RotateTool",
-      "module": "tools.transform.rotate",
-      "signature": "void(ref VectorStack vts)",
-      "symbol": "update"
-    },
-    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
-  },
-  {
-    "batch": "P1.0b.2+",
-    "key": {
-      "aggregate": "ScaleTool",
-      "module": "tools.transform.scale",
-      "signature": "void(ref VectorStack vts)",
-      "symbol": "update"
-    },
-    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
-  },
-  {
-    "batch": "P1.0b.2+",
-    "key": {
       "aggregate": "XfrmTransformTool",
       "module": "tools.transform.xfrm_transform",
       "signature": "void(ref VectorStack vts)",
