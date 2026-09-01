@@ -82,16 +82,6 @@
   {
     "batch": "P1.0b.3+",
     "key": {
-      "aggregate": "BridgeTool",
-      "module": "tools.edit.bridge_tool",
-      "signature": "void()",
-      "symbol": "deactivate"
-    },
-    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
-  },
-  {
-    "batch": "P1.0b.3+",
-    "key": {
       "aggregate": "EdgeBevelTool",
       "module": "tools.edit.edge_bevel",
       "signature": "void(string pname)",

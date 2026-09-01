@@ -36,7 +36,8 @@ import prepared_loop_slice_activation : PreparedLoopSliceActivationOwner;
 import prepared_slice_activation : PreparedSliceActivationOwner;
 import prepared_tack_activation : PreparedTackActivationOwner;
 import prepared_command_wrapper_activation : PreparedCommandWrapperActivationOwner;
-import prepared_bridge_activation : PreparedBridgeActivationOwner;
+import prepared_bridge_activation : PreparedBridgeActivationOwner,
+    PreparedBridgeDeactivateOwner;
 import prepared_mirror_activation : PreparedMirrorActivationOwner,
     PreparedMirrorDeactivateOwner;
 import prepared_edge_extend_tool_activation : PreparedEdgeExtendToolActivationOwner;
@@ -61,7 +62,7 @@ private enum PreparedResourceKind : ubyte {
     TackActivationState, CommandWrapperActivationState, BridgeActivationState,
     MirrorActivationState, EdgeExtendToolActivationPreState,
     EdgeExtendToolActivationPostState, TopologyPenActivationState,
-    MirrorDeactivateState
+    MirrorDeactivateState, BridgeDeactivateState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -95,6 +96,7 @@ private struct PreparedResourceEntry {
     PreparedEdgeExtendToolActivationOwner edgeExtendToolActivation;
     PreparedTopologyPenActivationOwner topologyPenActivation;
     PreparedMirrorDeactivateOwner mirrorDeactivate;
+    PreparedBridgeDeactivateOwner bridgeDeactivate;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -530,6 +532,16 @@ public:
         PreparedResourceEntry e; e.kind = PreparedResourceKind.BridgeActivationState;
         e.bridgeActivation = owner; resources_ ~= e; return true;
     }
+    bool prepareBridgeDeactivate(PreparedBridgeDeactivateOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected Bridge deactivation enlist failure");
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.BridgeDeactivateState;
+        e.bridgeDeactivate = owner; resources_ ~= e; return true;
+    }
     bool prepareMirrorActivation(PreparedMirrorActivationOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -822,6 +834,9 @@ public:
             case PreparedResourceKind.MirrorDeactivateState:
                 ok = e.mirrorDeactivate !is null &&
                     e.mirrorDeactivate.validate(); break;
+            case PreparedResourceKind.BridgeDeactivateState:
+                ok = e.bridgeDeactivate !is null &&
+                    e.bridgeDeactivate.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -1014,6 +1029,10 @@ public:
             e.mirrorDeactivate.install();
             version(unittest) installTrace_[installTraceLength_++] = 40;
             break;
+        case PreparedResourceKind.BridgeDeactivateState:
+            e.bridgeDeactivate.install();
+            version(unittest) installTrace_[installTraceLength_++] = 41;
+            break;
         }
         if (!installedHistory && history_ !is null)
             history_.installPreparedToken(validated_);
@@ -1073,6 +1092,8 @@ private:
             e.topologyPenActivation.abort(); break;
         case PreparedResourceKind.MirrorDeactivateState:
             e.mirrorDeactivate.abort(); break;
+        case PreparedResourceKind.BridgeDeactivateState:
+            e.bridgeDeactivate.abort(); break;
         case PreparedResourceKind.RadialArrayTransitionState:
             e.radialArrayTransition.abort(); break;
         case PreparedResourceKind.TransformActivationState:

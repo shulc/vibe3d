@@ -17,10 +17,16 @@ import mesh_edit_delta : MeshEditScope;
 import shader : Shader, LitShader, drawLitPreview;
 import std.json : JSONValue;
 import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind,
-    PreparedSessionActivateEffect, PreparedActivateKind;
+    PreparedSessionActivateEffect, PreparedActivateKind,
+    PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_record_context : PreparedRecordContext;
-import prepared_bridge_activation : PreparedBridgeActivationOwner;
-import mesh_gpu : GpuCreateOwner, GpuCreateUploadOwner;
+import prepared_bridge_activation : PreparedBridgeActivationOwner,
+    PreparedBridgeDeactivateOwner;
+import mesh_gpu : GpuCreateOwner, GpuCreateUploadOwner, GpuUploadOwner,
+    GpuResourceOwner;
+import document : Layer;
+import command_history : PreparedHistoryKind;
+import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 
 version (unittest) import std.conv : to;
 private struct BridgePreparedState {
@@ -41,6 +47,17 @@ struct PreparedBridgeActivationImage {
         loopA = loopB = capFaces = null;
         baseline = MeshSnapshot.init; sessionKey = SessionMeshKey.init;
         preview = Mesh.init;
+    }
+}
+
+struct PreparedBridgeDeactivateImage {
+    bool valid;
+    bool expectedEngaged, expectedValid, expectedPreviewCache, openRows;
+    BridgeParams params;
+    SessionMeshKey sessionKey;
+    uint[] loopA, loopB, capFaces;
+    void clear() nothrow @nogc {
+        this = PreparedBridgeDeactivateImage.init;
     }
 }
 
@@ -440,6 +457,104 @@ public:
             havePreviewCache == expectedValid && baseSnap_.filled &&
             (expectedValid ? loopA_.length > 0 && loopB_.length > 0 :
                 loopA_.length == 0 && loopB_.length == 0);
+    }
+
+    final PreparedBridgeDeactivateImage buildPreparedDeactivateState() const {
+        PreparedBridgeDeactivateImage image;
+        image.valid = true; image.expectedEngaged = engaged;
+        image.expectedValid = valid_; image.expectedPreviewCache = havePreviewCache;
+        image.openRows = openRows_; image.params = params_; image.sessionKey = sessionKey_;
+        image.loopA = loopA_.dup; image.loopB = loopB_.dup;
+        image.capFaces = capFaces_.dup; return image;
+    }
+    final bool preparedDeactivateStateMatches(
+            in PreparedBridgeDeactivateImage image) const nothrow @nogc {
+        return image.valid && engaged == image.expectedEngaged &&
+            valid_ == image.expectedValid &&
+            havePreviewCache == image.expectedPreviewCache &&
+            openRows_ == image.openRows && params_ == image.params &&
+            sessionKey_ == image.sessionKey && loopA_ == image.loopA &&
+            loopB_ == image.loopB && capFaces_ == image.capFaces;
+    }
+    final void installPreparedDeactivateState(
+            ref PreparedBridgeDeactivateImage image) nothrow @nogc {
+        engaged = false; havePreviewCache = false; image.clear();
+    }
+    final bool ownsPreparedMainUpload(GpuUploadOwner owner) nothrow @nogc {
+        return owner !is null && owner.owns(gpu);
+    }
+    final bool ownsPreparedPreviewDestroy(GpuResourceOwner owner) nothrow @nogc {
+        return owner !is null && owner.owns(&previewGpu_);
+    }
+    private size_t buildPreparedDeactivateCandidate(
+            in PreparedBridgeDeactivateImage image, out Mesh candidate,
+            out MeshSnapshot pre, out uint deliveryFlags,
+            out uint deliveryDomains) {
+        if (!(image.expectedEngaged && image.expectedValid &&
+              image.sessionKey.matches(*mesh))) return 0;
+        pre = MeshSnapshot.capture(*mesh); pre.restore(candidate);
+        auto shadow = beginPreparedShadow(candidate);
+        auto result = applyBridgeOp(candidate, image.loopA, image.loopB,
+            image.capFaces, image.params, image.openRows);
+        drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);
+        shadow.close(); return result.added;
+    }
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,
+            Layer layer, GpuUploadOwner mainUpload,
+            GpuResourceOwner previewDestroy) {
+        if (context is null) return PreparedDeactivateEffect(
+            preparedToolStateOwner, PreparedDeactivateKind.Bridge, false, false);
+        scope(failure) context.discard();
+        auto stateOwner = PreparedBridgeDeactivateOwner.prepare(this);
+        bool ok = stateOwner !is null && layer !is null &&
+            &layer.meshRef() is mesh && ownsPreparedPreviewDestroy(previewDestroy);
+        Mesh candidate; MeshSnapshot pre;
+        size_t inserted; uint deliveryFlags, deliveryDomains;
+        if (ok) inserted = buildPreparedDeactivateCandidate(stateOwner.image,
+            candidate, pre, deliveryFlags, deliveryDomains);
+        if (ok && inserted > 0)
+            ok = ownsPreparedMainUpload(mainUpload) &&
+                context.prepareStampedMeshImage(layer, candidate,
+                    deliveryFlags, deliveryDomains) &&
+                context.prepareUpload(mainUpload, candidate);
+        if (ok) ok = context.prepareDestroy(previewDestroy);
+        bool historyPrepared;
+        if (ok && inserted > 0 && history !is null && gestureFactory !is null) {
+            auto cmd = cast(MeshSessionEdit)gestureFactory();
+            if (cmd !is null) {
+                cmd.setSnapshots(pre, MeshSnapshot.capture(candidate), "Bridge");
+                historyPrepared = context.prepare(cmd,
+                    PreparedHistoryKind.Plain).accepted;
+                ok = historyPrepared;
+            } else ok = context.prepareGestureCarrierMismatch();
+        }
+        if (ok) ok = historyPrepared ? context.markHistoryInstall()
+                                     : context.markNoHistoryInstall();
+        if (ok) ok = context.prepareBridgeDeactivate(stateOwner);
+        if (!ok) context.discard();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.Bridge, historyPrepared, ok);
+    }
+
+    version(unittest) final void seedPreparedDeactivateStateForTest()
+            nothrow @nogc {
+        engaged = valid_ = havePreviewCache = true;
+    }
+    version(unittest) final bool seedPreparedDeactivateCommitForTest() {
+        auto resolved = resolveBridgeSelection(*mesh, editModeVal());
+        valid_ = resolved.valid; polygonMode_ = resolved.polygonMode;
+        openRows_ = resolved.openRows; loopA_ = resolved.loopA;
+        loopB_ = resolved.loopB; capFaces_ = resolved.capFaces;
+        baseSnap_ = MeshSnapshot.capture(*mesh); stampSessionMesh();
+        engaged = havePreviewCache = true; return valid_;
+    }
+    version(unittest) final bool preparedDeactivateStateInstalledForTest()
+            const nothrow @nogc {
+        return !engaged && !havePreviewCache;
+    }
+    version(unittest) final void mutatePreparedDeactivateForTest()
+            nothrow @nogc {
+        ++params_.segments;
     }
 
     override void deactivate() {

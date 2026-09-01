@@ -239,6 +239,7 @@ B5O_PREPARED_LEGACY = {
 }
 B5P_PREPARED_LEGACY = {
     ("tools.alignment.mirror", "MirrorTool", "deactivate"),
+    ("tools.edit.bridge_tool", "BridgeTool", "deactivate"),
     ("tools.edit.topology_pen.tool", "TopologyPenTool", "activate"),
     ("tools.edit.edge_extend", "EdgeExtendTool", "activate"),
     ("tools.alignment.mirror", "MirrorTool", "activate"),
@@ -298,7 +299,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "71d618804cfb27a7b5c59834273878a7f7eb217480ace2da186025554d33bb0f"
+    "a5917a9da809c2937e8d55d7cb5b6944f4fe19e1c8835e2b4132bbfc80f5ffdd"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -3743,9 +3744,12 @@ bridge_activation_owner = (ROOT / "source/prepared_bridge_activation.d").read_te
 bridge_activation_tool = (ROOT / "source/tools/edit/bridge_tool.d").read_text()
 def bridge_activation_gate(owner, context, tool, gpu):
     gpu_block = gpu[gpu.find("final class GpuCreateUploadOwner") :]
-    return (owner.count("@disable this(this)") == 2 and
+    activation_block = owner[:owner.find("struct PreparedBridgeDeactivateToken")]
+    tool_activation_block = tool[:tool.find(
+        "final PreparedBridgeDeactivateImage buildPreparedDeactivateState")]
+    return (activation_block.count("@disable this(this)") == 2 and
         "final class PreparedBridgeActivationOwner" in owner and
-        "target.classinfo !is BridgeTool.classinfo" in owner and
+        "target.classinfo !is BridgeTool.classinfo" in activation_block and
         "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
         "target_.preparedActivationMesh() !is source_" in owner and
         "target_.preparedActivationMode() != image_.mode" in owner and
@@ -3763,9 +3767,10 @@ def bridge_activation_gate(owner, context, tool, gpu):
         "if (ok && stateOwner.selectionValid)" in tool and
         "context.prepareCreateUpload(createUploadOwner, stateOwner.previewMesh)" in tool and
         "context.prepareCreate(createOwner)" in tool and
-        tool.find("context.prepareBridgeActivation(stateOwner)") <
-            tool.find("context.prepareCreateUpload(createUploadOwner") <
-            tool.find("context.markNoHistoryInstall()", tool.find("context.prepareCreateUpload(createUploadOwner")) and
+        tool_activation_block.find("context.prepareBridgeActivation(stateOwner)") <
+            tool_activation_block.find("context.prepareCreateUpload(createUploadOwner") <
+            tool_activation_block.find("context.markNoHistoryInstall()",
+                tool_activation_block.find("context.prepareCreateUpload(createUploadOwner")) and
         "createUploadOwner.replacesLikeLegacyInit()" in tool and
         "createOwner.replacesLikeLegacyInit()" in tool and
         "PreparedActivateKind.Bridge, ok);" in tool and
@@ -3954,6 +3959,120 @@ for fixture in (
     if run.returncode == 0 or ("not copyable" not in run.stdout and
             not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
         fail("Mirror deactivation token copy was not rejected:\n" + run.stdout)
+
+def bridge_deactivate_state_gate(owner, context, tool):
+    block = owner[owner.find("struct PreparedBridgeDeactivateToken"):]
+    return (block.count("@disable this(this)") == 2 and
+        "final class PreparedBridgeDeactivateOwner" in block and
+        "target.classinfo !is BridgeTool.classinfo" in block and
+        "result.image_ = target.buildPreparedDeactivateState();" in block and
+        "!target_.preparedDeactivateStateMatches(image_)" in block and
+        "target_.installPreparedDeactivateState(image_); consume();" in block and
+        "image_.clear(); target_ = null;" in block and
+        "image.expectedEngaged = engaged;" in tool and
+        "image.loopA = loopA_.dup; image.loopB = loopB_.dup;" in tool and
+        "sessionKey_ == image.sessionKey" in tool and
+        "engaged = false; havePreviewCache = false; image.clear();" in tool and
+        "BridgeDeactivateState" in context and
+        "e.bridgeDeactivate.validate();" in context and
+        "e.bridgeDeactivate.install();" in context and
+        "e.bridgeDeactivate.abort();" in context)
+if not bridge_deactivate_state_gate(bridge_activation_owner, record_context,
+                                    bridge_activation_tool):
+    fail("Bridge deactivation state owner contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is BridgeTool.classinfo", "false", "broaden product"),
+    ("owner", "result.image_ = target.buildPreparedDeactivateState();", "", "drop capture"),
+    ("owner", "!target_.preparedDeactivateStateMatches(image_)", "false", "drop state validation"),
+    ("owner", "target_.installPreparedDeactivateState(image_); consume();", "consume();", "drop install"),
+    ("owner", "image_.clear(); target_ = null;", "target_ = null;", "drop scrub"),
+    ("tool", "image.loopA = loopA_.dup; image.loopB = loopB_.dup;", "", "drop loop capture"),
+    ("tool", "sessionKey_ == image.sessionKey", "true", "drop session validation"),
+    ("tool", "engaged = false; havePreviewCache = false; image.clear();", "engaged = false; image.clear();", "drop cache reset"),
+    ("context", "e.bridgeDeactivate.validate();", "true;", "drop context validation"),
+    ("context", "e.bridgeDeactivate.install();", "", "drop context install"),
+    ("context", "e.bridgeDeactivate.abort();", "", "drop context abort"),
+):
+    o, c, t = bridge_activation_owner, record_context, bridge_activation_tool
+    if target == "owner":
+        pos = o.find(old, o.find("struct PreparedBridgeDeactivateToken"))
+        if pos >= 0: o = o[:pos] + new + o[pos + len(old):]
+    elif target == "context": c = c.replace(old, new, 1)
+    else:
+        pos = t.find(old, t.find("final PreparedBridgeDeactivateImage"))
+        if pos >= 0: t = t[:pos] + new + t[pos + len(old):]
+    if bridge_deactivate_state_gate(o, c, t):
+        fail(f"Bridge deactivation state mutation did not RED: {label}")
+for fixture in (
+    ROOT / "tests/compile_fail/prepared_bridge_deactivate_token_copy.d",
+    ROOT / "tests/compile_fail/prepared_bridge_deactivate_validated_token_copy.d",
+):
+    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if run.returncode == 0 or ("not copyable" not in run.stdout and
+            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+        fail("Bridge deactivation token copy was not rejected:\n" + run.stdout)
+
+def bridge_deactivate_producer_gate(tool, effect):
+    start = tool.find("final PreparedDeactivateEffect prepareDeactivate(")
+    end = tool.find("version(unittest) final void seedPreparedDeactivateStateForTest", start)
+    body = tool[start:end]
+    effect_block = effect[effect.find("enum PreparedDeactivateKind"):
+        effect.find("enum PreparedActivateKind")]
+    return (start >= 0 and end > start and "Bridge," in effect_block and
+        "scope(failure) context.discard();" in body and
+        "PreparedBridgeDeactivateOwner.prepare(this)" in body and
+        "&layer.meshRef() is mesh" in body and
+        "ownsPreparedPreviewDestroy(previewDestroy)" in body and
+        "image.sessionKey.matches(*mesh)" in tool and
+        "beginPreparedShadow(candidate)" in tool and
+        "applyBridgeOp(candidate, image.loopA, image.loopB," in tool and
+        "drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);" in tool and
+        "ownsPreparedMainUpload(mainUpload)" in body and
+        "context.prepareStampedMeshImage(layer, candidate," in body and
+        "context.prepareUpload(mainUpload, candidate)" in body and
+        "context.prepareDestroy(previewDestroy)" in body and
+        "cmd.setSnapshots(pre, MeshSnapshot.capture(candidate), \"Bridge\");" in body and
+        "context.prepareGestureCarrierMismatch()" in body and
+        "context.markHistoryInstall()" in body and
+        "context.markNoHistoryInstall()" in body and
+        "context.prepareBridgeDeactivate(stateOwner)" in body and
+        body.find("context.prepareStampedMeshImage(layer, candidate,") <
+            body.find("context.prepareUpload(mainUpload, candidate)") <
+            body.find("context.prepareDestroy(previewDestroy)") <
+            body.find("context.markHistoryInstall()") <
+            body.find("context.prepareBridgeDeactivate(stateOwner)") and
+        "PreparedDeactivateKind.Bridge, historyPrepared, ok);" in body)
+bridge_deactivate_effect = (ROOT / "source/prepared_tool_effect.d").read_text()
+if not bridge_deactivate_producer_gate(bridge_activation_tool,
+                                       bridge_deactivate_effect):
+    fail("Bridge deactivation producer contract drift")
+for target, old, new, label in (
+    ("tool", "scope(failure) context.discard();", "", "drop failure cleanup"),
+    ("tool", "&layer.meshRef() is mesh", "true", "drop layer identity"),
+    ("tool", "ownsPreparedPreviewDestroy(previewDestroy)", "true", "drop preview identity"),
+    ("tool", "beginPreparedShadow(candidate)", "beginPreparedShadow(*mesh)", "drop detached shadow"),
+    ("tool", "drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);", "", "drop delivery capture"),
+    ("tool", "ownsPreparedMainUpload(mainUpload)", "true", "drop main GPU identity"),
+    ("tool", "context.prepareStampedMeshImage(layer, candidate,", "false /* dropped mesh enlist */ (", "drop mesh enlist"),
+    ("tool", "context.prepareUpload(mainUpload, candidate)", "true", "drop GPU upload"),
+    ("tool", "context.prepareDestroy(previewDestroy)", "true", "drop preview destroy"),
+    ("tool", "context.prepareGestureCarrierMismatch()", "true", "drop carrier diagnostic"),
+    ("tool", "context.markHistoryInstall()", "true", "drop history marker"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop no-history marker"),
+    ("tool", "context.prepareBridgeDeactivate(stateOwner)", "true", "drop final state"),
+    ("effect", "Bridge,", "None,", "drop closed effect kind"),
+):
+    t, e = bridge_activation_tool, bridge_deactivate_effect
+    if target == "effect":
+        pos = e.find(old, e.find("enum PreparedDeactivateKind"));
+        if pos >= 0: e = e[:pos] + new + e[pos + len(old):]
+    else:
+        pos = t.find(old, t.find("final PreparedDeactivateEffect prepareDeactivate("))
+        if pos < 0: pos = t.find(old, t.find("buildPreparedDeactivateCandidate"))
+        if pos >= 0: t = t[:pos] + new + t[pos + len(old):]
+    if bridge_deactivate_producer_gate(t, e):
+        fail(f"Bridge deactivation producer mutation did not RED: {label}")
 
 mirror_deactivate_effect = (ROOT / "source/prepared_tool_effect.d").read_text()
 def mirror_deactivate_producer_gate(tool, effect):

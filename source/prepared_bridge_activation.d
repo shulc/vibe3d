@@ -2,7 +2,8 @@ module prepared_bridge_activation;
 
 import core.atomic : atomicOp;
 import mesh : Mesh;
-import tools.edit.bridge_tool : BridgeTool, PreparedBridgeActivationImage;
+import tools.edit.bridge_tool : BridgeTool, PreparedBridgeActivationImage,
+    PreparedBridgeDeactivateImage;
 
 struct PreparedBridgeActivationToken {
     @disable this(this); private ulong owner, generation;
@@ -76,16 +77,87 @@ private:
     }
 }
 
+struct PreparedBridgeDeactivateToken {
+    @disable this(this); private ulong owner, generation;
+}
+struct ValidatedBridgeDeactivateToken {
+    @disable this(this); private ulong owner, generation;
+}
+private shared ulong nextBridgeDeactivateOwner;
+
+final class PreparedBridgeDeactivateOwner {
+private:
+    BridgeTool target_;
+    PreparedBridgeDeactivateImage image_;
+    immutable ulong owner_; ulong generation_;
+    bool pending_, validated_, consumed_;
+    PreparedBridgeDeactivateToken prepared_;
+    ValidatedBridgeDeactivateToken validatedToken_;
+public:
+    @disable this();
+    static PreparedBridgeDeactivateOwner prepare(BridgeTool target) {
+        if (target is null || target.classinfo !is BridgeTool.classinfo) return null;
+        auto result = new PreparedBridgeDeactivateOwner(target);
+        result.image_ = target.buildPreparedDeactivateState();
+        return result.image_.valid ? result : null;
+    }
+    @property ref const(PreparedBridgeDeactivateImage) image()
+            return scope nothrow @nogc { return image_; }
+    bool begin() nothrow @nogc {
+        if (pending_ || consumed_ || target_ is null || !image_.valid) return false;
+        ++generation_; pending_ = true;
+        prepared_.owner = owner_; prepared_.generation = generation_; return true;
+    }
+    bool validate() nothrow @nogc {
+        if (!pending_ || validated_ || consumed_ || target_ is null ||
+            target_.classinfo !is BridgeTool.classinfo ||
+            prepared_.owner != owner_ || prepared_.generation != generation_ ||
+            !target_.preparedDeactivateStateMatches(image_)) return false;
+        validated_ = true; validatedToken_.owner = owner_;
+        validatedToken_.generation = generation_;
+        prepared_.owner = prepared_.generation = 0; return true;
+    }
+    void install() nothrow @nogc {
+        if (!pending_ || !validated_ || consumed_ || target_ is null ||
+            validatedToken_.owner != owner_ ||
+            validatedToken_.generation != generation_) return;
+        target_.installPreparedDeactivateState(image_); consume();
+    }
+    void abort() nothrow @nogc { if (!consumed_) { image_.clear(); consume(); } }
+    version(unittest) void corruptPreparedForTest() nothrow @nogc {
+        ++prepared_.generation;
+    }
+    version(unittest) bool payloadEmpty() const nothrow @nogc {
+        return !image_.valid && image_.loopA.length == 0 &&
+            image_.loopB.length == 0 && image_.capFaces.length == 0 &&
+            target_ is null;
+    }
+private:
+    this(BridgeTool target) {
+        target_ = target; owner_ = atomicOp!"+="(nextBridgeDeactivateOwner, 1UL);
+    }
+    void consume() nothrow @nogc {
+        image_.clear(); target_ = null; pending_ = validated_ = false;
+        consumed_ = true; prepared_.owner = prepared_.generation = 0;
+        validatedToken_.owner = validatedToken_.generation = 0;
+    }
+}
+
 version(unittest) unittest {
     import command_history : CommandHistory;
+    import commands.mesh.session_edit : MeshSessionEdit;
+    import document : Layer;
     import editmode : EditMode;
     import math : Vec3;
     import mesh : GpuMesh;
-    import mesh_gpu : GpuCreateOwner, GpuCreateUploadOwner;
+    import mesh_gpu : GpuCreateOwner, GpuCreateUploadOwner, GpuUploadOwner,
+        GpuResourceOwner;
     import prepared_record_context : PreparedRecordContext;
-    import prepared_tool_effect : PreparedActivateKind;
+    import prepared_tool_effect : PreparedActivateKind, PreparedDeactivateKind;
     import record_observer_hub : RecordObserverHub;
     import shader : LitShader;
+    import snapshot : MeshSnapshot;
+    import view : View;
 
     Mesh twoCaps() {
         Mesh m;
@@ -179,4 +251,66 @@ version(unittest) unittest {
     assert(once.payloadEmpty() && !once.begin());
     assert(!tool.prepareActivate(null, create, upload).accepted &&
         PreparedBridgeActivationOwner.prepare(null) is null);
+
+    auto deactLayer = new Layer;
+    auto deactSource = twoCaps();
+    MeshSnapshot.capture(deactSource).restore(deactLayer.meshRef());
+    GpuMesh deactGpu; EditMode deactMode = EditMode.Polygons;
+    auto deactTool = new BridgeTool(() => &deactLayer.meshRef(), &deactGpu,
+        LitShader.init, &deactMode);
+    assert(deactTool.seedPreparedDeactivateCommitForTest());
+    auto deactHistory = new CommandHistory(); auto deactView = new View(0,0,1,1);
+    deactTool.setGestureBindings(deactHistory, () => new MeshSessionEdit(
+        &deactLayer.meshRef(), deactView, deactMode,
+        "test.bridge", "Bridge"));
+    auto deactContext = new PreparedRecordContext(deactHistory,
+        new RecordObserverHub()); deactContext.setResourceIdentity(7,11);
+    auto deactEffect = deactTool.prepareDeactivate(deactContext, deactLayer,
+        GpuUploadOwner.fakeForTest(&deactGpu),
+        GpuResourceOwner.fakeForTest(deactTool.preparedPreviewGpu()));
+    assert(deactEffect.resourceAccepted && deactEffect.historyAccepted &&
+        deactEffect.kind == PreparedDeactivateKind.Bridge &&
+        deactLayer.meshRef().faces.length == 2 && deactContext.validate());
+    deactContext.install(); size_t modelDepth, uiDepth;
+    deactHistory.undoDepthCounts(modelDepth, uiDepth);
+    assert(deactLayer.meshRef().faces.length > 2 && modelDepth == 1 &&
+        uiDepth == 0 && deactTool.preparedDeactivateStateInstalledForTest() &&
+        deactContext.installTraceForTest() == [3,4,2,2,1,41]);
+
+    auto idleLayer = new Layer;
+    MeshSnapshot.capture(deactSource).restore(idleLayer.meshRef());
+    GpuMesh idleGpu; EditMode idleMode = EditMode.Polygons;
+    auto idleTool = new BridgeTool(() => &idleLayer.meshRef(), &idleGpu,
+        LitShader.init, &idleMode);
+    auto idleContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub()); idleContext.setResourceIdentity(7,11);
+    auto idleEffect = idleTool.prepareDeactivate(idleContext, idleLayer,
+        GpuUploadOwner.fakeForTest(&idleGpu),
+        GpuResourceOwner.fakeForTest(idleTool.preparedPreviewGpu()));
+    assert(idleEffect.resourceAccepted && !idleEffect.historyAccepted &&
+        idleContext.validate()); idleContext.install();
+    assert(idleLayer.meshRef().faces.length == 2 &&
+        idleContext.installTraceForTest() == [2,8,41]);
+
+    auto mutationLayer = new Layer;
+    MeshSnapshot.capture(deactSource).restore(mutationLayer.meshRef());
+    GpuMesh mutationGpu; EditMode mutationMode = EditMode.Polygons;
+    auto mutationTool = new BridgeTool(() => &mutationLayer.meshRef(),
+        &mutationGpu, LitShader.init, &mutationMode);
+    assert(mutationTool.seedPreparedDeactivateCommitForTest());
+    auto mutationContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub()); mutationContext.setResourceIdentity(7,11);
+    auto mutationEffect = mutationTool.prepareDeactivate(mutationContext,
+        mutationLayer, GpuUploadOwner.fakeForTest(&mutationGpu),
+        GpuResourceOwner.fakeForTest(mutationTool.preparedPreviewGpu()));
+    assert(mutationEffect.resourceAccepted);
+    mutationTool.mutatePreparedDeactivateForTest();
+    assert(!mutationContext.validate()); mutationContext.discard();
+    assert(mutationLayer.meshRef().faces.length == 2);
+
+    auto corruptDeactivate = PreparedBridgeDeactivateOwner.prepare(idleTool);
+    assert(corruptDeactivate.begin()); corruptDeactivate.corruptPreparedForTest();
+    assert(!corruptDeactivate.validate()); corruptDeactivate.abort();
+    assert(corruptDeactivate.payloadEmpty() &&
+        PreparedBridgeDeactivateOwner.prepare(null) is null);
 }
