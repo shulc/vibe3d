@@ -22,6 +22,7 @@ import prepared_move_update : PreparedMoveUpdateOwner;
 import prepared_inherited_noop : PreparedInheritedNoopOwner;
 import prepared_xfrm_activation_session : PreparedXfrmActivationSessionOwner;
 import prepared_stroke_extrude_activation : PreparedStrokeExtrudeActivationOwner;
+import prepared_vertex_merge_activation : PreparedVertexMergeActivationOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -33,7 +34,8 @@ private enum PreparedResourceKind : ubyte {
     RadialSweepProfileState, RadialSweepTransitionState, GestureCarrierMismatch,
     GpuCreateUpload, RadialArrayTransitionState, TransformActivationState,
     TransformProductActivationState, MoveUpdateState, InheritedNoopState,
-    XfrmActivationPreState, XfrmActivationPostState, StrokeExtrudeActivationState
+    XfrmActivationPreState, XfrmActivationPostState, StrokeExtrudeActivationState,
+    VertexMergeActivationState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -48,6 +50,7 @@ private struct PreparedResourceEntry {
     PreparedInheritedNoopOwner inheritedNoop;
     PreparedXfrmActivationSessionOwner xfrmActivation;
     PreparedStrokeExtrudeActivationOwner strokeExtrudeActivation;
+    PreparedVertexMergeActivationOwner vertexWeldActivation;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -321,6 +324,17 @@ public:
         e.kind = PreparedResourceKind.StrokeExtrudeActivationState;
         e.strokeExtrudeActivation = owner; resources_ ~= e; return true;
     }
+    bool prepareVertexMergeActivation(PreparedVertexMergeActivationOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected VertexMerge activation enlist failure");
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.VertexMergeActivationState;
+        e.vertexWeldActivation = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -496,6 +510,9 @@ public:
             case PreparedResourceKind.StrokeExtrudeActivationState:
                 ok = e.strokeExtrudeActivation !is null &&
                     e.strokeExtrudeActivation.validate(); break;
+            case PreparedResourceKind.VertexMergeActivationState:
+                ok = e.vertexWeldActivation !is null &&
+                    e.vertexWeldActivation.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -608,6 +625,10 @@ public:
             e.strokeExtrudeActivation.install();
             version(unittest) installTrace_[installTraceLength_++] = 20;
             break;
+        case PreparedResourceKind.VertexMergeActivationState:
+            e.vertexWeldActivation.install();
+            version(unittest) installTrace_[installTraceLength_++] = 21;
+            break;
         }
         if (!installedHistory && history_ !is null)
             history_.installPreparedToken(validated_);
@@ -667,6 +688,8 @@ private:
             e.xfrmActivation.abort(); break;
         case PreparedResourceKind.StrokeExtrudeActivationState:
             e.strokeExtrudeActivation.abort(); break;
+        case PreparedResourceKind.VertexMergeActivationState:
+            e.vertexWeldActivation.abort(); break;
         }
         resources_.length = 0;
         historyMarker_ = false;

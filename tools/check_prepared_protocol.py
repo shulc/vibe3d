@@ -242,6 +242,7 @@ B5P_PREPARED_LEGACY = {
     ("tools.create.pen", "PenTool", "activate"),
     ("tools.create.primitive_create_tool", "PrimitiveCreateTool", "activate"),
     ("tools.deform.stroke_extrude_tool", "StrokeExtrudeTool", "activate"),
+    ("tools.edit.vert_merge_tool", "VertexMergeTool", "activate"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
@@ -279,7 +280,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "78010719f61160ae6dea6608b2541891dc2b157f52beb7c1380276d082b2bcc3"
+    "07106ebcaadc19883c92d1b7900baed28ab27408632c5410207b2ff0fd048a00"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -411,12 +412,14 @@ for path, text in prepared_source_texts.items():
             "prepared_inherited_noop",
             "prepared_xfrm_activation_session",
             "prepared_stroke_extrude_activation",
+            "prepared_vertex_merge_activation",
             "tools.alignment.radial_sweep_tool",
             "tools.alignment.radial_array_tool",
             "tools.alignment.linear_align_tool",
             "tools.alignment.radial_align_tool",
             "tools.deform.bend", "tools.deform.push",
-            "tools.deform.stroke_extrude_tool"}:
+            "tools.deform.stroke_extrude_tool",
+            "tools.edit.vert_merge_tool"}:
         fail(f"P1.0b.3d PreparedRecordContext gained an unreviewed import: {module}")
     if "new PreparedRecordContext" in text:
         production_text = without_unittests(text)
@@ -1986,6 +1989,99 @@ for stroke_activation_copy_fixture in (
     if run.returncode == 0 or ("not copyable" not in run.stdout and
             not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
         fail("StrokeExtrude activation token copy was not rejected:\n" + run.stdout)
+
+# Exact VertexMerge activation: full cage baseline plus the four-field legacy
+# reset, followed by NoHistory. The production hook remains frozen for cutover.
+vertex_merge_activation_owner = (ROOT /
+    "source/prepared_vertex_merge_activation.d").read_text()
+vertex_merge_activation_tool = (ROOT /
+    "source/tools/edit/vert_merge_tool.d").read_text()
+def vertex_merge_activation_gate(owner, context, tool):
+    po = without_unittests(owner); pt = without_unittests(tool)
+    start = pt.find("final PreparedSessionActivateEffect prepareActivate(")
+    end = pt.find("version(unittest) final auto preparedOwnerForTest", start)
+    producer = pt[start:end] if start >= 0 and end > start else ""
+    legacy = re.search(r"override void activate\(\)\s*\{", pt)
+    legacy_body = pt[legacy.end():balanced_source(pt, legacy.end())-1] if legacy else ""
+    return (
+        "final class PreparedVertexMergeActivationOwner" in owner and
+        owner.count("@disable this(this);") == 2 and
+        not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
+        "target.classinfo !is VertexMergeTool.classinfo" in owner and
+        "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
+        "target_.preparedActivationMesh() !is source_" in owner and
+        "!image_.before.matches(*source_)" in owner and
+        "target_.installPreparedActivation(image_);\n        consume();" in owner and
+        "image_.clear(); target_ = null; source_ = null;" in owner and
+        "Mesh* delegate() nothrow @nogc meshSrc_;" in tool and
+        "image.before = MeshSnapshot.capture(*source);" in tool and
+        "active = true; built = false; dragging = false; dist_ = 0.001f;\n"
+        "        image.before.moveInto(before);\n        image.valid = false;" in tool and
+        "PreparedVertexMergeActivationOwner.prepare(this)" in producer and
+        "context.prepareVertexMergeActivation(owner)" in producer and
+        "context.markNoHistoryInstall()" in producer and
+        producer.find("context.prepareVertexMergeActivation(owner)") <
+            producer.find("context.markNoHistoryInstall()") and
+        "scope(failure) context.discard();" in producer and
+        "if (!ok) context.discard();" in producer and
+        "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+        "            PreparedActivateKind.VertexMerge, ok);" in producer and
+        not any(x in producer for x in
+                ("context.validate(", "context.install(", "owner.install(")) and
+        not any(x in legacy_body for x in
+                ("prepareActivate(", "PreparedRecordContext")) and
+        "e.vertexWeldActivation.validate();" in context and
+        "e.vertexWeldActivation.install();" in context and
+        "e.vertexWeldActivation.abort();" in context)
+if not vertex_merge_activation_gate(vertex_merge_activation_owner,
+                                    record_context, vertex_merge_activation_tool):
+    fail("VertexMerge activation prepared contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is VertexMergeTool.classinfo", "false", "broaden product"),
+    ("owner", "result.image_ = target.buildPreparedActivation(result.source_);", "", "drop builder/source capture"),
+    ("owner", "target_.preparedActivationMesh() !is source_", "false", "drop identity"),
+    ("owner", "!image_.before.matches(*source_)", "false", "drop content guard"),
+    ("owner", "target_.installPreparedActivation(image_);", "", "drop installer"),
+    ("owner", "image_.clear(); target_ = null; source_ = null;", "target_ = null;", "retain payload"),
+    ("tool", "image.before = MeshSnapshot.capture(*source);", "", "drop snapshot"),
+    ("tool", "active = true; built = false; dragging = false; dist_ = 0.001f;",
+     "active = true; built = false; dragging = false;", "drop distance reset"),
+    ("tool", "active = true; built = false; dragging = false; dist_ = 0.001f;",
+     "built = false; dragging = false; dist_ = 0.001f;", "drop active reset"),
+    ("tool", "active = true; built = false; dragging = false; dist_ = 0.001f;",
+     "active = true; dragging = false; dist_ = 0.001f;", "drop built reset"),
+    ("tool", "active = true; built = false; dragging = false; dist_ = 0.001f;",
+     "active = true; built = false; dist_ = 0.001f;", "drop dragging reset"),
+    ("tool", "image.before.moveInto(before);", "before = image.before;", "shallow snapshot copy"),
+    ("tool", "scope(failure) context.discard();", "", "drop failure cleanup"),
+    ("tool", "context.prepareVertexMergeActivation(owner)", "true", "drop enlist"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop history seal"),
+    ("tool", "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+     "            PreparedActivateKind.VertexMerge, ok);",
+     "return PreparedSessionActivateEffect(OwnedId.init,\n"
+     "            PreparedActivateKind.VertexMerge, ok);", "forge effect owner"),
+    ("tool", "PreparedActivateKind.VertexMerge, ok);",
+     "PreparedActivateKind.VertexMerge, true);", "forge effect acceptance"),
+    ("context", "e.vertexWeldActivation.validate();", "true;", "drop validation"),
+    ("context", "e.vertexWeldActivation.install();", "", "drop context install"),
+    ("context", "e.vertexWeldActivation.abort();", "", "drop context abort"),
+):
+    o, c, t = vertex_merge_activation_owner, record_context, vertex_merge_activation_tool
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    else: t = t.replace(old, new, 1)
+    if ((o == vertex_merge_activation_owner and c == record_context and
+         t == vertex_merge_activation_tool) or vertex_merge_activation_gate(o,c,t)):
+        fail(f"VertexMerge activation mutation did not RED: {label}")
+for fixture in (
+    ROOT / "tests/compile_fail/prepared_vertex_merge_activation_token_copy.d",
+    ROOT / "tests/compile_fail/prepared_vertex_merge_activation_validated_token_copy.d",
+):
+    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if run.returncode == 0 or ("not copyable" not in run.stdout and
+            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+        fail("VertexMerge activation token copy was not rejected:\n" + run.stdout)
 
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
 # detached whole-Mesh adoption with exact caller-supplied change flags, and a

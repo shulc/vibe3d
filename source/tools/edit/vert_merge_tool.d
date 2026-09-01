@@ -20,6 +20,17 @@ import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import command_history : PreparedHistoryKind;
+import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import prepared_vertex_merge_activation : PreparedVertexMergeActivationOwner;
+
+struct PreparedVertexMergeActivationImage {
+    MeshSnapshot before;
+    bool valid;
+    void clear() nothrow @nogc {
+        before = MeshSnapshot.init;
+        valid = false;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // VertexMergeTool — interactive Vertex Merge (factory id `vert.merge`,
@@ -60,7 +71,7 @@ import command_history : PreparedHistoryKind;
 // ---------------------------------------------------------------------------
 class VertexMergeTool : Tool {
 private:
-    Mesh* delegate() meshSrc_;
+    Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
     GpuMesh*         gpu;
     EditMode*        editMode;
@@ -87,7 +98,8 @@ private:
     float localPerPixel;
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader) {
+    this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu,
+            EditMode* editMode, LitShader litShader) {
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
@@ -107,6 +119,60 @@ public:
     override void activate() {
         active = true;
         reinitSession();
+    }
+
+    final PreparedVertexMergeActivationImage buildPreparedActivation(
+            out Mesh* source) {
+        PreparedVertexMergeActivationImage image;
+        source = mesh;
+        if (source is null) return image;
+        image.before = MeshSnapshot.capture(*source);
+        image.valid = true;
+        return image;
+    }
+    final Mesh* preparedActivationMesh() nothrow @nogc { return meshSrc_(); }
+    final void installPreparedActivation(
+            ref PreparedVertexMergeActivationImage image) nothrow @nogc {
+        if (!image.valid) return;
+        active = true; built = false; dragging = false; dist_ = 0.001f;
+        image.before.moveInto(before);
+        image.valid = false;
+    }
+    final PreparedSessionActivateEffect prepareActivate(
+            PreparedRecordContext context) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.VertexMerge, false);
+        scope(failure) context.discard();
+        auto owner = PreparedVertexMergeActivationOwner.prepare(this);
+        bool ok = owner !is null && context.prepareVertexMergeActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.VertexMerge, ok);
+    }
+    version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
+        return preparedToolStateOwner;
+    }
+    version(unittest) final void seedPreparedActivationForTest(
+            ref Mesh oldMesh) {
+        active = false; built = true; dragging = true; dist_ = 7.0f;
+        dragLastMX = 11; dragLastMY = 12; dragBaseDist = 13;
+        localPerPixel = 14; cachedVp.view[0] = 15;
+        before = MeshSnapshot.capture(oldMesh);
+    }
+    version(unittest) final bool preparedActivationDirtyForTest() const
+            nothrow @nogc {
+        return !active && built && dragging && dist_ == 7.0f &&
+            dragLastMX == 11 && dragLastMY == 12 && dragBaseDist == 13 &&
+            localPerPixel == 14 && cachedVp.view[0] == 15;
+    }
+    version(unittest) final bool preparedActivationForTest(size_t count,
+            Vec3 first, const Vec3* livePtr) const nothrow @nogc {
+        return active && !built && !dragging && dist_ == 0.001f &&
+            before.filled && before.vertices.length == count && count != 0 &&
+            before.vertices[0] == first && before.vertices.ptr !is livePtr &&
+            dragLastMX == 11 && dragLastMY == 12 && dragBaseDist == 13 &&
+            localPerPixel == 14 && cachedVp.view[0] == 15;
     }
 
     private void reinitSession() {
