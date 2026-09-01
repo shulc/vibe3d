@@ -50,16 +50,6 @@
     "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
   },
   {
-    "batch": "P1.0b.2+",
-    "key": {
-      "aggregate": "BoxTool",
-      "module": "tools.create.box",
-      "signature": "void()",
-      "symbol": "activate"
-    },
-    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
-  },
-  {
     "batch": "P1.0b.3+",
     "key": {
       "aggregate": "BoxTool",

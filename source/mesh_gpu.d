@@ -1816,6 +1816,8 @@ private:
     ulong generation, requiredThread, requiredContext;
     bool pending, validated;
     GpuMeshNames created;
+    GpuMeshNames expectedTarget;
+    immutable bool replaceLikeInit;
     PreparedGpuCreateToken enlistedPrepared;
     ValidatedGpuCreateToken enlistedValidated;
     Backend backend;
@@ -1827,13 +1829,19 @@ private:
         size_t fakeCreatedLength_, fakeDeletedLength_;
     }
 public:
-    this(GpuMesh* target, ulong threadIdentity, ulong contextIdentity) {
+    this(GpuMesh* target, ulong threadIdentity, ulong contextIdentity,
+         bool replaceLikeInit = false) {
         this.target = target; requiredThread = threadIdentity;
         requiredContext = contextIdentity;
+        this.replaceLikeInit = replaceLikeInit;
         ownerId = atomicOp!"+="(nextGpuCreateOwnerId, 1UL);
     }
     version (unittest) static GpuCreateOwner fakeForTest(GpuMesh* target) {
         auto owner = new GpuCreateOwner(target, 7, 11);
+        owner.backend = Backend.fake; return owner;
+    }
+    version(unittest) static GpuCreateOwner fakeForLegacyInitTest(GpuMesh* target) {
+        auto owner = new GpuCreateOwner(target, 7, 11, true);
         owner.backend = Backend.fake; return owner;
     }
     version (unittest) void failNextCreateForTest() nothrow @nogc {
@@ -1849,8 +1857,11 @@ public:
         return fakeDeleted_[0 .. fakeDeletedLength_];
     }
     bool owns(GpuMesh* candidate) const nothrow @nogc { return target is candidate; }
+    bool replacesLikeLegacyInit() const nothrow @nogc { return replaceLikeInit; }
     bool beginEnlistedCreate() nothrow @nogc {
-        if (pending || target is null || peekGpuMeshNames(*target) != GpuMeshNames.init)
+        if (pending || target is null) return false;
+        expectedTarget = peekGpuMeshNames(*target);
+        if (!replaceLikeInit && expectedTarget != GpuMeshNames.init)
             return false;
         ++generation;
         version (unittest) {
@@ -1901,7 +1912,7 @@ public:
     bool validateEnlisted(ulong threadIdentity, ulong contextIdentity) nothrow @nogc {
         if (!pending || validated || !(threadIdentity == requiredThread) ||
             !(contextIdentity == requiredContext) || target is null ||
-            peekGpuMeshNames(*target) != GpuMeshNames.init) return false;
+            peekGpuMeshNames(*target) != expectedTarget) return false;
         validated = true; enlistedValidated.ownerId = ownerId;
         enlistedValidated.generation = generation; return true;
     }
@@ -1913,7 +1924,8 @@ public:
         target.vertVao = created.vertVao; target.vertVbo = created.vertVbo;
         target.faceIdVbo = created.faceIdVbo; target.matIdVbo = created.matIdVbo;
         target.weightColorVbo = created.weightColorVbo;
-        created = GpuMeshNames.init; pending = validated = false;
+        created = GpuMeshNames.init; expectedTarget = GpuMeshNames.init;
+        pending = validated = false;
         enlistedValidated.ownerId = enlistedValidated.generation = 0;
     }
     void abortEnlisted() nothrow @nogc {
@@ -1925,6 +1937,7 @@ public:
             else { deleteGpuMeshNames(created); }
         } else { deleteGpuMeshNames(created); }
         pending = validated = false;
+        expectedTarget = GpuMeshNames.init;
     }
 }
 

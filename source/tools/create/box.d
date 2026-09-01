@@ -1,6 +1,9 @@
 module tools.create.box;
 import prepared_record_context : PreparedRecordContext;
-import prepared_tool_effect : PreparedBoxParamEffect;
+import prepared_tool_effect : PreparedBoxParamEffect, PreparedSessionActivateEffect,
+    PreparedActivateKind;
+import prepared_private_state : PreparedPrivateStateOwner;
+import mesh_gpu : GpuCreateOwner;
 import command_history : PreparedHistoryKind;
 
 import bindbc.opengl;
@@ -233,6 +236,30 @@ public:
         clearLiveEditTracking();
         toolHandles.clearHaul();
         previewGpu.init();
+    }
+
+    /// Dormant atomic activation producer. GL names are allocated by their
+    /// resource owner during preparation; the private reset and name transfer
+    /// remain ordered exactly like the legacy body and are installed only by
+    /// PreparedRecordContext after joint validation.
+    final PreparedSessionActivateEffect prepareActivate(
+            PreparedRecordContext context, GpuCreateOwner gpuOwner) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.Box, false);
+        scope(failure) context.discard();
+        auto stateOwner = PreparedPrivateStateOwner.box(this);
+        bool ok = stateOwner !is null && gpuOwner !is null &&
+            gpuOwner.replacesLikeLegacyInit() &&
+            gpuOwner.owns(&previewGpu) && context.preparePrivateState(stateOwner) &&
+            context.prepareCreate(gpuOwner) && context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.Box, ok);
+    }
+
+    final GpuMesh* preparedPreviewGpu() nothrow @nogc { return &previewGpu; }
+    version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
+        return preparedToolStateOwner;
     }
 
     final void installPreparedPrivateActivation() nothrow @nogc {
@@ -1559,6 +1586,95 @@ private:
         // publish a Geometry change on the change-notification bus; the app's
         // per-frame flush drives the pick-cache resize. No explicit flag.
     }
+}
+
+version(unittest) unittest {
+    import record_observer_hub : RecordObserverHub;
+
+    Mesh mesh; GpuMesh sceneGpu;
+    auto box = new BoxTool(() => &mesh, &sceneGpu, LitShader.init);
+    box.state = BoxState.DrawingHeight;
+    box.moverDragAxis = 2; box.edgeDragIdx = 1; box.heightHDragIdx = 0;
+    box.liveRunActive = true; box.liveUndoDepth = 7;
+    box.dragBeforeValid = box.paramBeforeValid = true;
+    box.toolHandles.setHaul(9);
+    box.previewGpu.faceVao = 41; box.previewGpu.faceVbo = 42;
+    auto gpuOwner = GpuCreateOwner.fakeForLegacyInitTest(box.preparedPreviewGpu());
+    auto context = new PreparedRecordContext(null, new RecordObserverHub());
+    context.setResourceIdentity(7, 11);
+    auto effect = box.prepareActivate(context, gpuOwner);
+    assert(effect.accepted && effect.kind == PreparedActivateKind.Box &&
+        effect.owner == box.preparedOwnerForTest() &&
+        box.previewGpu.faceVao == 41 && box.previewGpu.faceVbo == 42 &&
+        box.toolHandles.haulForPreparedTest() == 9 &&
+        box.state == BoxState.DrawingHeight && box.liveUndoDepth == 7);
+    assert(context.validate());
+    box.state = BoxState.HeightSet; // commit uses the captured reset, not live shape
+    context.install(); context.install();
+    assert(box.state == BoxState.Idle && box.moverDragAxis == -1 &&
+        box.edgeDragIdx == -1 && box.heightHDragIdx == -1 &&
+        !box.liveRunActive && box.liveUndoDepth == 0 &&
+        !box.dragBeforeValid && !box.paramBeforeValid &&
+        box.toolHandles.haulForPreparedTest() == -1 &&
+        box.previewGpu.faceVao != 0 && box.previewGpu.faceVao != 41 &&
+        context.installTraceForTest() == [7, 5, 8]);
+
+    auto nullContext = new PreparedRecordContext(null, new RecordObserverHub());
+    auto nullEffect = box.prepareActivate(nullContext, null);
+    assert(!nullEffect.accepted && nullEffect.kind == PreparedActivateKind.Box &&
+        nullEffect.owner == box.preparedOwnerForTest() && !nullContext.validate());
+
+    // A failure in joint validation aborts both earlier private enlistment and
+    // owner-held GL names, leaves the live projection intact, and releases the
+    // context for a fresh owner on the same target.
+    auto fault = new BoxTool(() => &mesh, &sceneGpu, LitShader.init);
+    fault.state = BoxState.BaseSet; fault.moverDragAxis = 1;
+    fault.liveRunActive = true; fault.liveUndoDepth = 5;
+    fault.toolHandles.setHaul(4); fault.previewGpu.faceVao = 71;
+    auto faultOwner = GpuCreateOwner.fakeForLegacyInitTest(
+        fault.preparedPreviewGpu());
+    auto faultContext = new PreparedRecordContext(null, new RecordObserverHub());
+    faultContext.setResourceIdentity(99, 100);
+    auto faultEffect = fault.prepareActivate(faultContext, faultOwner);
+    assert(faultEffect.accepted && !faultContext.validate() &&
+        faultOwner.fakeCleanupCountForTest() == 1 &&
+        fault.state == BoxState.BaseSet && fault.moverDragAxis == 1 &&
+        fault.liveRunActive && fault.liveUndoDepth == 5 &&
+        fault.toolHandles.haulForPreparedTest() == 4 &&
+        fault.previewGpu.faceVao == 71 && !faultContext.validate());
+    auto retryOwner = GpuCreateOwner.fakeForLegacyInitTest(
+        fault.preparedPreviewGpu());
+    auto retryContext = new PreparedRecordContext(null, new RecordObserverHub());
+    retryContext.setResourceIdentity(7, 11);
+    auto retryEffect = fault.prepareActivate(retryContext, retryOwner);
+    assert(retryEffect.accepted && retryContext.validate());
+    retryContext.install();
+    assert(retryContext.installTraceForTest() == [7, 5, 8] &&
+        fault.state == BoxState.Idle && fault.previewGpu.faceVao != 71);
+
+    // Exact concrete admission and GPU identity are terminal refusals.
+    class DerivedBox : BoxTool {
+        this(Mesh* delegate() source, GpuMesh* gpu, LitShader shader) {
+            super(source, gpu, shader);
+        }
+    }
+    auto derived = new DerivedBox(() => &mesh, &sceneGpu, LitShader.init);
+    auto derivedContext = new PreparedRecordContext(null, new RecordObserverHub());
+    derivedContext.setResourceIdentity(7, 11);
+    auto derivedGpu = GpuCreateOwner.fakeForLegacyInitTest(derived.preparedPreviewGpu());
+    auto derivedEffect = derived.prepareActivate(derivedContext, derivedGpu);
+    assert(!derivedEffect.accepted && derivedEffect.kind == PreparedActivateKind.Box &&
+        derivedEffect.owner == derived.preparedOwnerForTest() &&
+        !derivedContext.validate());
+
+    GpuMesh foreignGpu;
+    auto foreignOwner = GpuCreateOwner.fakeForLegacyInitTest(&foreignGpu);
+    auto foreignContext = new PreparedRecordContext(null, new RecordObserverHub());
+    foreignContext.setResourceIdentity(7, 11);
+    auto foreignEffect = box.prepareActivate(foreignContext, foreignOwner);
+    assert(!foreignEffect.accepted && foreignEffect.kind == PreparedActivateKind.Box &&
+        foreignEffect.owner == box.preparedOwnerForTest() &&
+        !foreignContext.validate());
 }
 
 private final class BoxLiveEditCommand : Command, GesturePayload {

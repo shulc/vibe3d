@@ -56,6 +56,7 @@ private:
     }
 public:
     static PreparedPrivateStateOwner box(BoxTool target) {
+        if (target is null || target.classinfo !is BoxTool.classinfo) return null;
         auto o = new PreparedPrivateStateOwner(PreparedPrivateStateKind.Box);
         o.boxTarget = target; return o;
     }

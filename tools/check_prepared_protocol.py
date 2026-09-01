@@ -237,11 +237,14 @@ B5O_PREPARED_LEGACY = {
     ("tools.transform.transform", "TransformTool", "activate"),
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "activate"),
 }
+B5P_PREPARED_LEGACY = {
+    ("tools.create.box", "BoxTool", "activate"),
+}
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
     B5I_PREPARED_LEGACY | B5J_PREPARED_LEGACY | B5K_PREPARED_LEGACY |
     B5L_PREPARED_LEGACY | B5M_PREPARED_LEGACY | B5N_PREPARED_LEGACY |
-    B5O_PREPARED_LEGACY)
+    B5O_PREPARED_LEGACY | B5P_PREPARED_LEGACY)
 all_hook_keys = {(r["module"], r["aggregate"], r["symbol"])
                  for r in CURRENT_WRITERS["hooks"]}
 if not TOOL_STATE_CONVERTED | PREPARED_LEGACY <= all_hook_keys:
@@ -273,7 +276,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "21580c0134771bb6f7068c08d49f75c6dc40cefdd2c391772773d4a5d49bd428"
+    "89894c88bc2007d32eb637a4b69d7a8437d22b8682088acd0ef4a29f2cbc513a"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -1530,6 +1533,7 @@ b5c_sources = {
 b5c_contracts = {
     "gpu": ("struct PreparedGpuCreateToken { @disable this(this);",
             "final class GpuCreateOwner", "GpuMeshNames created;",
+            "GpuMeshNames expectedTarget;", "immutable bool replaceLikeInit;",
             "bool validateEnlisted(ulong threadIdentity, ulong contextIdentity) nothrow @nogc",
             "void installEnlisted() nothrow @nogc",
             "else deleteGpuMeshNames(created);",
@@ -1546,11 +1550,13 @@ b5c_contracts = {
 def b5c_gate(sources):
     return (all(all(c in sources[name] for c in contracts)
                 for name, contracts in b5c_contracts.items()) and
-            sources["gpu"].count("peekGpuMeshNames(*target) != GpuMeshNames.init") == 2 and
+            sources["gpu"].count("peekGpuMeshNames(*target)") == 5 and
+            "if (!replaceLikeInit && expectedTarget != GpuMeshNames.init)" in sources["gpu"] and
+            "peekGpuMeshNames(*target) != expectedTarget" in sources["gpu"] and
             sources["gpu"].count("!(threadIdentity == requiredThread)") == 1 and
             sources["gpu"].count("!(contextIdentity == requiredContext)") == 1 and
             sources["gpu"].count("else deleteGpuMeshNames(created);") == 2 and
-            sources["gpu"].count("created = GpuMeshNames.init; pending = validated = false;") == 1 and
+            sources["gpu"].count("created = GpuMeshNames.init; expectedTarget = GpuMeshNames.init;") == 1 and
             sources["snap"].count("g_lastSnap = SnapResult.init; pending = validated = false;") == 1 and
             sources["gpu"].find("glGenVertexArrays(1, &created.faceVao)") <
                 sources["gpu"].find("glGenBuffers(1, &created.weightColorVbo)") and
@@ -1559,16 +1565,18 @@ def b5c_gate(sources):
 if not b5c_gate(b5c_sources):
     fail("P1.0b.5c GL-create/snap owner contract drift")
 for name, old, new, label in (
-    ("gpu", "peekGpuMeshNames(*target) != GpuMeshNames.init", "false",
-     "drop empty-target identity/projection check"),
+    ("gpu", "peekGpuMeshNames(*target) != expectedTarget", "false",
+     "drop captured-target identity/projection check"),
+    ("gpu", "if (!replaceLikeInit && expectedTarget != GpuMeshNames.init)",
+     "if (false)", "broaden ordinary create over occupied target"),
     ("gpu", "!(threadIdentity == requiredThread)", "false",
      "drop GL thread identity"),
     ("gpu", "!(contextIdentity == requiredContext)", "false",
      "drop GL context identity"),
     ("gpu", "else deleteGpuMeshNames(created);", "else created = GpuMeshNames.init;",
      "drop prepared-name cleanup"),
-    ("gpu", "created = GpuMeshNames.init; pending = validated = false;",
-     "pending = validated = false;", "leave installed names aliased in owner"),
+    ("gpu", "created = GpuMeshNames.init; expectedTarget = GpuMeshNames.init;",
+     "expectedTarget = GpuMeshNames.init;", "leave installed names aliased in owner"),
     ("snap", "expected = g_lastSnap;", "expected = SnapResult.init;",
      "read original snap projection after prepare"),
     ("snap", "g_lastSnap != expected", "false", "drop snap projection validation"),
@@ -1590,8 +1598,81 @@ for path in (ROOT / "source/tools").rglob("*.d"):
     if (".prepareCreate(" in body or ".prepareSnapClear(" in body) and \
             path.relative_to(ROOT).as_posix() not in {
                 "source/tools/create/vertex_place.d",
-                "source/tools/alignment/radial_sweep_tool.d"}:
+                "source/tools/alignment/radial_sweep_tool.d",
+                "source/tools/create/box.d"}:
         fail(f"P1.0b.5c dormant owner has production caller: {path.relative_to(ROOT)}")
+
+# P1.0b.5p exact Box activation: private reset, prepared GL-name transfer,
+# then NoHistory. The legacy virtual remains frozen until unified cutover.
+box_activation = (ROOT / "source/tools/create/box.d").read_text()
+def box_activation_gate(box, private, context):
+    start = box.find("final PreparedSessionActivateEffect prepareActivate(")
+    end = box.find("final GpuMesh* preparedPreviewGpu", start)
+    producer = box[start:end] if start >= 0 and end > start else ""
+    return (
+        "final PreparedSessionActivateEffect prepareActivate(" in producer and
+        "PreparedPrivateStateOwner.box(this)" in producer and
+        "gpuOwner !is null" in producer and
+        "gpuOwner.replacesLikeLegacyInit()" in producer and
+        "gpuOwner.owns(&previewGpu)" in producer and
+        "context.preparePrivateState(stateOwner)" in producer and
+        "context.prepareCreate(gpuOwner)" in producer and
+        "context.markNoHistoryInstall()" in producer and
+        producer.find("context.preparePrivateState(stateOwner)") <
+            producer.find("context.prepareCreate(gpuOwner)") <
+            producer.find("context.markNoHistoryInstall()") and
+        "scope(failure) context.discard();" in producer and
+        "if (!ok) context.discard();" in producer and
+        "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+        "            PreparedActivateKind.Box, ok);" in producer and
+        "target.classinfo !is BoxTool.classinfo" in private and
+        "case PreparedPrivateStateKind.Box: boxTarget.installPreparedPrivateActivation();" in private and
+        "state = BoxState.Idle; moverDragAxis = edgeDragIdx = heightHDragIdx = -1;" in box and
+        "liveRunActive = false; liveUndoDepth = 0;" in box and
+        "dragBeforeValid = paramBeforeValid = false; toolHandles.clearHaul();" in box and
+        "e.gpuCreate.installEnlisted();" in context and
+        "e.privateState.install();" in context and
+        not any(x in producer
+                for x in ("context.validate(", "context.install(", "activate();")))
+if not box_activation_gate(box_activation,
+        (ROOT / "source/prepared_private_state.d").read_text(), record_context):
+    fail("Box activation prepared contract drift")
+for target, old, new, label in (
+    ("box", "gpuOwner.owns(&previewGpu)", "true", "drop preview GPU identity"),
+    ("box", "gpuOwner !is null", "true", "drop null GPU guard"),
+    ("box", "gpuOwner.replacesLikeLegacyInit()", "true",
+     "drop legacy occupied-target mode"),
+    ("box", "context.preparePrivateState(stateOwner)", "true", "drop private reset"),
+    ("box", "context.prepareCreate(gpuOwner)", "true", "drop GL create"),
+    ("box", "context.markNoHistoryInstall()", "true", "drop NoHistory seal"),
+    ("box", "scope(failure) context.discard();", "", "drop failure cleanup"),
+    ("box", "PreparedActivateKind.Box, ok", "PreparedActivateKind.Box, true",
+     "forge accepted effect"),
+    ("box", "PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+     "            PreparedActivateKind.Box, ok)",
+     "PreparedSessionActivateEffect(OwnedId.init,\n"
+     "            PreparedActivateKind.Box, ok)", "forge effect owner"),
+    ("box", "state = BoxState.Idle; moverDragAxis = edgeDragIdx = heightHDragIdx = -1;",
+     "state = BoxState.HeightSet; moverDragAxis = edgeDragIdx = heightHDragIdx = -1;",
+     "drop idle reset"),
+    ("box", "moverDragAxis = edgeDragIdx = heightHDragIdx = -1;",
+     "moverDragAxis = -1;", "drop drag-index reset"),
+    ("box", "liveRunActive = false; liveUndoDepth = 0;",
+     "liveRunActive = false;", "drop live-run reset"),
+    ("box", "dragBeforeValid = paramBeforeValid = false;",
+     "dragBeforeValid = false;", "drop live-edit validity reset"),
+    ("box", "dragBeforeValid = paramBeforeValid = false; toolHandles.clearHaul();",
+     "dragBeforeValid = paramBeforeValid = false;", "drop haul reset"),
+    ("private", "target.classinfo !is BoxTool.classinfo", "false",
+     "broaden Box admission"),
+):
+    box, private, context = (box_activation,
+        (ROOT / "source/prepared_private_state.d").read_text(), record_context)
+    if target == "box": box = box.replace(old, new, 1)
+    elif target == "private": private = private.replace(old, new, 1)
+    else: context = context.replace(old, new, 1)
+    if box_activation_gate(box, private, context):
+        fail(f"Box activation mutation did not RED: {label}")
 
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
 # detached whole-Mesh adoption with exact caller-supplied change flags, and a
@@ -1674,7 +1755,8 @@ for path in (ROOT / "source/tools").rglob("*.d"):
                 "source/tools/alignment/clone_tool.d",
                 "source/tools/deform/magnet.d",
                 "source/tools/edit/reduce.d",
-                "source/tools/alignment/radial_sweep_tool.d"}:
+                "source/tools/alignment/radial_sweep_tool.d",
+                "source/tools/create/box.d"}:
         fail(f"P1.0b.5d.1 dormant infrastructure has hook caller: {path.relative_to(ROOT)}")
 
 # P1.0b.5d.2 first fully closed root: Vertex deactivate preserves the exact
@@ -1736,7 +1818,7 @@ def b5e_gate(owner, context, sources, snapshot=b5e_snapshot):
     return (all(kind in owner for kind in
                 ("ArraySession", "CloneSession", "MagnetSession", "ReductionSession")) and
             "MeshSnapshot activationBaseline;" in owner and
-            owner.count("target.classinfo !is") == 3 and
+            owner.count("target.classinfo !is") == 4 and
             "o.activationBaseline = image;" in owner and
             "failSessionPrepareForTest_" in owner and
             all(f"{prefix}Target.installPreparedActivation(activationBaseline);" in owner
