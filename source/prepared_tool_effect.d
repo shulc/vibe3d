@@ -36,6 +36,12 @@ enum PreparedDeactivateKind : ubyte {
     VertexMerge, VertexBevel, VertexExtrude, Xfrm, Move, Rotate, Scale,
     CommandWrapper, Tack, TransformNormalUpload,
 }
+enum PreparedActivateKind : ubyte { None, Vertex }
+
+@PreparedAggregate struct PreparedActivateEffect {
+    OwnedId owner;
+    PreparedActivateKind kind;
+}
 
 /// Scalar-only dormant P1.0b.3d producer result. The concrete tool owns the
 /// interpretation of its reset constants; no reference-bearing history or

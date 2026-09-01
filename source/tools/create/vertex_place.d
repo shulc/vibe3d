@@ -20,6 +20,16 @@ import editmode : EditMode;
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 import operator : VectorStack;
+import prepared_tool_effect : PreparedActivateEffect, PreparedActivateKind;
+
+private struct ValidatedVertexActivate {
+    @disable this(this);
+    bool consumable;
+}
+static assert(!__traits(compiles, {
+    ValidatedVertexActivate first;
+    auto copied = first;
+}));
 
 // ---------------------------------------------------------------------------
 // VertexTool — interactive single-vertex placement.
@@ -76,6 +86,26 @@ public:
     override Param[] params() { return []; }
 
     override void activate() {
+        lastSnap_ = SnapResult.init;
+    }
+
+    final PreparedActivateEffect prepareActivate() const nothrow @nogc {
+        return PreparedActivateEffect(preparedToolStateOwner,
+                                      PreparedActivateKind.Vertex);
+    }
+
+    final bool validatePreparedActivate(ref PreparedActivateEffect prepared,
+            out ValidatedVertexActivate validated) const nothrow @nogc {
+        if (prepared.owner != preparedToolStateOwner ||
+            prepared.kind != PreparedActivateKind.Vertex) return false;
+        validated.consumable = true;
+        return true;
+    }
+
+    final void installPreparedActivate(ref ValidatedVertexActivate validated)
+            nothrow @nogc {
+        if (!validated.consumable) return;
+        validated.consumable = false;
         lastSnap_ = SnapResult.init;
     }
 
@@ -226,4 +256,34 @@ private:
                                        cast(float)x, cast(float)y,
                                        planeOrigin, planeNormal, hitLocal);
     }
+}
+
+version (unittest) unittest {
+    EditMode mode;
+    Mesh mesh = makeCube();
+    GpuMesh gpu;
+    auto tool = new VertexTool(() => &mesh, &gpu, null);
+    auto legacy = new VertexTool(() => &mesh, &gpu, null);
+    tool.lastSnap_.snapped = true;
+    tool.lastSnap_.targetIndex = 7;
+    legacy.lastSnap_ = tool.lastSnap_;
+    auto prepared = tool.prepareActivate();
+    assert(tool.lastSnap_.snapped && tool.lastSnap_.targetIndex == 7);
+    ValidatedVertexActivate validated;
+    assert(tool.validatePreparedActivate(prepared, validated));
+    tool.installPreparedActivate(validated);
+    legacy.activate();
+    assert(!tool.lastSnap_.snapped && tool.lastSnap_.targetIndex == -1);
+    assert(tool.lastSnap_ == legacy.lastSnap_);
+    tool.lastSnap_.snapped = true;
+    tool.installPreparedActivate(validated);
+    assert(tool.lastSnap_.snapped, "prepared activation was not one-shot");
+
+    auto wrong = new VertexTool(() => &mesh, &gpu, null);
+    auto foreign = wrong.prepareActivate();
+    assert(!tool.validatePreparedActivate(foreign, validated));
+    tool.lastSnap_.targetIndex = 9;
+    tool.installPreparedActivate(validated);
+    assert(tool.lastSnap_.targetIndex == 9,
+           "refused foreign activation gained an install handle");
 }

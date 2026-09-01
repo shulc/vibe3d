@@ -138,12 +138,15 @@ B4C_PREPARED_LEGACY = {
     ("tools.edit.tack", "TackTool", "deactivate"),
     ("tools.transform.transform", "TransformTool", "deactivate"),
 }
+B5B_PREPARED_LEGACY = {
+    ("tools.create.vertex_place", "VertexTool", "activate"),
+}
+PREPARED_LEGACY = B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY | B5B_PREPARED_LEGACY
 all_hook_keys = {(r["module"], r["aggregate"], r["symbol"])
                  for r in CURRENT_WRITERS["hooks"]}
-if not TOOL_STATE_CONVERTED | B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY <= all_hook_keys:
+if not TOOL_STATE_CONVERTED | PREPARED_LEGACY <= all_hook_keys:
     fail("P1.0b.1 converted tool-state row left the frozen census")
-TOOL_STATE_DEFERRED = (all_hook_keys - TOOL_STATE_CONVERTED -
-                       B3D_PREPARED_LEGACY - B4C_PREPARED_LEGACY)
+TOOL_STATE_DEFERRED = all_hook_keys - TOOL_STATE_CONVERTED - PREPARED_LEGACY
 
 converted_sources = {
     "source/tool.d": ("prepareBaseParam", "validateBaseParam", "installLegacyPreparedParam"),
@@ -173,13 +176,13 @@ TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
     "1500a754b4b9103d0ff8cc978ad874680a1a8f1e293e3bece17fadd7cbf91c64"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
-            r["key"]["symbol"]) not in B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY]
+            r["key"]["symbol"]) not in PREPARED_LEGACY]
     keys = {(r["key"]["module"], r["key"]["aggregate"],
              r["key"]["symbol"], r["key"]["signature"]) for r in rows}
     expected = {(r["module"], r["aggregate"], r["symbol"], r["signature"])
                 for r in CURRENT_WRITERS["hooks"]
                 if (r["module"], r["aggregate"], r["symbol"])
-                   not in TOOL_STATE_CONVERTED | B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY}
+                   not in TOOL_STATE_CONVERTED | PREPARED_LEGACY}
     if len(keys) != len(rows) or keys != expected:
         fail("P1.0b.1 checked-in deferred row set mismatch")
     for row in rows:
@@ -187,7 +190,7 @@ def validate_deferred_rows(rows, require_canonical=True):
             fail("P1.0b.1 checked-in deferred batch/reason invalid")
     canonical = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
     if require_canonical and hashlib.sha256(canonical).hexdigest() != \
-            "e934dd3b5b952361a85f08b5b9fb2df9be58fbe6d92d4a00ebf91bb76067c28d":
+            "0bda8d60097019bab7e0fd547a887ba56e8e312c758b9548dc26a948f59632f7":
         fail("P1.0b.1 checked-in deferred exact values drifted")
 validate_deferred_rows(TOOL_STATE_DEFERRED_ROWS)
 for field in ("batch", "reason"):
@@ -1354,5 +1357,39 @@ for name, old, new, label in (
     mutant[name] = mutant[name].replace(old, new, 1)
     if mutant[name] == b5_sources[name] or b5_gate(mutant):
         fail(f"P1.0b.5a named mutation did not RED: {label}")
+
+# P1.0b.5b create-family slice: Vertex.activate is the sole row whose full
+# effect is tool-private value reset. The other eight exact rows retain mixed
+# Mesh/GL/history/snap-overlay effects and remain in the deferred ledger.
+vertex_source = (ROOT / "source/tools/create/vertex_place.d").read_text()
+b5b_contracts = (
+    "private struct ValidatedVertexActivate {\n    @disable this(this);",
+    "static assert(!__traits(compiles, {\n    ValidatedVertexActivate first;\n    auto copied = first;",
+    "final PreparedActivateEffect prepareActivate() const nothrow @nogc",
+    "prepared.owner != preparedToolStateOwner",
+    "prepared.kind != PreparedActivateKind.Vertex",
+    "final void installPreparedActivate(ref ValidatedVertexActivate validated)",
+    "validated.consumable = false;\n        lastSnap_ = SnapResult.init;",
+)
+def b5b_gate(source):
+    return all(c in source for c in b5b_contracts)
+if not b5b_gate(vertex_source):
+    fail("P1.0b.5b Vertex activation owner contract drift")
+legacy_activate = re.search(r"override\s+void\s+activate\s*\(\)\s*\{", vertex_source)
+legacy_body = vertex_source[legacy_activate.end():balanced_source(vertex_source, legacy_activate.end())-1]
+if "prepareActivate(" in legacy_body or "installPreparedActivate(" in legacy_body:
+    fail("P1.0b.5b Vertex dormant producer called by production legacy hook")
+for old, new, label in (
+    ("@disable this(this);", "", "make validated handle copyable"),
+    ("prepared.owner != preparedToolStateOwner", "false", "drop owner identity"),
+    ("prepared.kind != PreparedActivateKind.Vertex", "false", "drop closed kind"),
+    ("validated.consumable = false;\n        lastSnap_ = SnapResult.init;",
+     "lastSnap_ = SnapResult.init;", "drop one-shot consumption"),
+    ("validated.consumable = false;\n        lastSnap_ = SnapResult.init;",
+     "validated.consumable = false;", "drop activation reset"),
+):
+    mutant = vertex_source.replace(old, new, 1)
+    if mutant == vertex_source or b5b_gate(mutant):
+        fail(f"P1.0b.5b named mutation did not RED: {label}")
 
 print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures)} compile-fail fixtures)")
