@@ -300,16 +300,6 @@
     "reason": "Mesh/GpuGl preview or mixed branch requires P1.0b.3+ typed later-owner effects"
   },
   {
-    "batch": "P1.0b.2+",
-    "key": {
-      "aggregate": "EdgeSliceTool",
-      "module": "tools.slice.edge_slice_tool",
-      "signature": "void()",
-      "symbol": "activate"
-    },
-    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
-  },
-  {
     "batch": "P1.0b.3+",
     "key": {
       "aggregate": "EdgeSliceTool",

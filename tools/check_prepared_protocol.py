@@ -251,6 +251,7 @@ B5P_PREPARED_LEGACY = {
     ("tools.edit.vertex_bevel_tool", "VertexBevelTool", "activate"),
     ("tools.edit.vertex_extrude_tool", "VertexExtrudeTool", "activate"),
     ("tools.edit.edge_extrude", "EdgeExtrudeTool", "activate"),
+    ("tools.slice.edge_slice_tool", "EdgeSliceTool", "activate"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
@@ -288,7 +289,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "963d0c05fab011fadc93f4878b5854afa836abc6d07600fb254c68f6cfc495c0"
+    "c0ba20c61cafb1aba1e0433a23cec937f22c22f53b17ddf4c83c53c4215c3fd1"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -429,6 +430,8 @@ for path, text in prepared_source_texts.items():
             "prepared_vertex_bevel_activation",
             "prepared_vertex_extrude_activation",
             "prepared_edge_extrude_activation",
+            "prepared_edge_slice_activation",
+            "tools.slice.edge_slice_tool",
             "tools.alignment.radial_sweep_tool",
             "tools.alignment.radial_array_tool",
             "tools.alignment.linear_align_tool",
@@ -3216,6 +3219,119 @@ for fixture in (
     if run.returncode == 0 or ("not copyable" not in run.stdout and
             not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
         fail("EdgeExtrude activation token copy was not rejected:\n" + run.stdout)
+
+edge_slice_activation_owner = (ROOT /
+    "source/prepared_edge_slice_activation.d").read_text()
+edge_slice_activation_tool = (ROOT /
+    "source/tools/slice/edge_slice_tool.d").read_text()
+def edge_slice_activation_gate(owner, context, tool):
+    po = without_unittests(owner); pt = without_unittests(tool)
+    start = pt.find("final PreparedSessionActivateEffect prepareActivate(")
+    end = pt.find("override void deactivate()", start)
+    producer = pt[start:end] if start >= 0 and end > start else ""
+    bstart = pt.find("final PreparedEdgeSliceActivationImage buildPreparedActivation(")
+    bend = pt.find("final void installPreparedActivation(", bstart)
+    builder = pt[bstart:bend] if bstart >= 0 and bend > bstart else ""
+    istart = pt.find("final void installPreparedActivation(")
+    iend = pt.find("final PreparedSessionActivateEffect prepareActivate(", istart)
+    installer = pt[istart:iend] if istart >= 0 and iend > istart else ""
+    legacy = re.search(r"override void activate\(\)\s*\{", pt)
+    legacy_body = pt[legacy.end():balanced_source(pt, legacy.end())-1] if legacy else ""
+    return (
+        "final class PreparedEdgeSliceActivationOwner" in owner and
+        owner.count("@disable this(this);") == 2 and
+        not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
+        "target.classinfo !is EdgeSliceTool.classinfo" in owner and
+        "result.image_ = target.buildPreparedActivation();" in owner and
+        "target_.installPreparedActivation(image_); consume();" in owner and
+        "image_.clear(); target_ = null;" in owner and
+        "return PreparedEdgeSliceActivationImage(true);" in builder and
+        not re.search(r"(?<!\.)\b(active|armed_|scrubbing_|built_|phase_|"
+                      r"latchedPoints_|edgesParam_|dragPart_|activePoint_|armedKey_|"
+                      r"chainBefore_|split_|middle_|snap_|show_|chainArm_|tA_|tB_|"
+                      r"pointProxy_|vpWorld_)\s*=", builder) and
+        "active = true; armed_ = false; scrubbing_ = false; built_ = false;" in installer and
+        "phase_ = Phase.Idle; latchedPoints_ = []; edgesParam_ = [];" in installer and
+        "dragPart_ = -1; activePoint_ = -1;" in installer and
+        "armedKey_ = MeshCacheKey.init; chainBefore_ = MeshSnapshot.init;" in installer and
+        "image.clear();" in installer and
+        not re.search(r"\b(split_|middle_|snap_|show_|chainArm_|tA_|tB_|"
+                      r"pointProxy_|vpWorld_)\s*=", installer) and
+        "PreparedEdgeSliceActivationOwner.prepare(this)" in producer and
+        "context.prepareEdgeSliceActivation(owner)" in producer and
+        "context.markNoHistoryInstall()" in producer and
+        producer.find("context.prepareEdgeSliceActivation(owner)") <
+            producer.find("context.markNoHistoryInstall()") and
+        "scope(failure) context.discard();" in producer and
+        "if (!ok) context.discard();" in producer and
+        "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+        "            PreparedActivateKind.EdgeSlice, ok);" in producer and
+        not any(x in producer for x in ("context.validate(", "context.install(", "owner.install(")) and
+        not any(x in legacy_body for x in ("prepareActivate(", "PreparedRecordContext")) and
+        "e.edgeSliceActivation.validate();" in context and
+        "e.edgeSliceActivation.install();" in context and
+        "e.edgeSliceActivation.abort();" in context)
+if not edge_slice_activation_gate(edge_slice_activation_owner,
+                                  record_context, edge_slice_activation_tool):
+    fail("EdgeSlice activation prepared contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is EdgeSliceTool.classinfo", "false", "broaden product"),
+    ("owner", "result.image_ = target.buildPreparedActivation();", "", "drop builder"),
+    ("owner", "target_.installPreparedActivation(image_);", "", "drop install"),
+    ("owner", "image_.clear(); target_ = null;", "target_ = null;", "retain payload"),
+    ("tool", "return PreparedEdgeSliceActivationImage(true);",
+     "active = false; return PreparedEdgeSliceActivationImage(true);", "write live during prepare"),
+    ("tool", "active = true; armed_ = false; scrubbing_ = false; built_ = false;",
+     "armed_ = false; scrubbing_ = false; built_ = false;", "drop active reset"),
+    ("tool", "active = true; armed_ = false; scrubbing_ = false; built_ = false;",
+     "active = true; scrubbing_ = false; built_ = false;", "drop armed reset"),
+    ("tool", "active = true; armed_ = false; scrubbing_ = false; built_ = false;",
+     "active = true; armed_ = false; built_ = false;", "drop scrub reset"),
+    ("tool", "active = true; armed_ = false; scrubbing_ = false; built_ = false;",
+     "active = true; armed_ = false; scrubbing_ = false;", "drop built reset"),
+    ("tool", "phase_ = Phase.Idle; latchedPoints_ = []; edgesParam_ = [];",
+     "latchedPoints_ = []; edgesParam_ = [];", "drop phase reset"),
+    ("tool", "phase_ = Phase.Idle; latchedPoints_ = []; edgesParam_ = [];",
+     "phase_ = Phase.Idle; edgesParam_ = [];", "retain latched chain"),
+    ("tool", "phase_ = Phase.Idle; latchedPoints_ = []; edgesParam_ = [];",
+     "phase_ = Phase.Idle; latchedPoints_ = [];", "retain edges param"),
+    ("tool", "dragPart_ = -1; activePoint_ = -1;", "activePoint_ = -1;", "drop drag reset"),
+    ("tool", "dragPart_ = -1; activePoint_ = -1;", "dragPart_ = -1;", "drop active point reset"),
+    ("tool", "armedKey_ = MeshCacheKey.init; chainBefore_ = MeshSnapshot.init;",
+     "chainBefore_ = MeshSnapshot.init;", "retain armed key"),
+    ("tool", "armedKey_ = MeshCacheKey.init; chainBefore_ = MeshSnapshot.init;",
+     "armedKey_ = MeshCacheKey.init;", "retain snapshot"),
+    ("tool", "dragPart_ = -1; activePoint_ = -1;",
+     "dragPart_ = -1; activePoint_ = -1; split_ = true;", "reset sticky split"),
+    ("tool", "scope(failure) context.discard();", "", "drop failure cleanup"),
+    ("tool", "context.prepareEdgeSliceActivation(owner)", "true", "drop enlist"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop history seal"),
+    ("tool", "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+     "            PreparedActivateKind.EdgeSlice, ok);",
+     "return PreparedSessionActivateEffect(OwnedId.init,\n"
+     "            PreparedActivateKind.EdgeSlice, ok);", "forge effect owner"),
+    ("tool", "PreparedActivateKind.EdgeSlice, ok);",
+     "PreparedActivateKind.EdgeSlice, true);", "forge acceptance"),
+    ("context", "e.edgeSliceActivation.validate();", "true;", "drop validation"),
+    ("context", "e.edgeSliceActivation.install();", "", "drop context install"),
+    ("context", "e.edgeSliceActivation.abort();", "", "drop context abort"),
+):
+    o, c, t = edge_slice_activation_owner, record_context, edge_slice_activation_tool
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    else: t = t.replace(old, new, 1)
+    if ((o == edge_slice_activation_owner and c == record_context and
+         t == edge_slice_activation_tool) or edge_slice_activation_gate(o,c,t)):
+        fail(f"EdgeSlice activation mutation did not RED: {label}")
+for fixture in (
+    ROOT / "tests/compile_fail/prepared_edge_slice_activation_token_copy.d",
+    ROOT / "tests/compile_fail/prepared_edge_slice_activation_validated_token_copy.d",
+):
+    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if run.returncode == 0 or ("not copyable" not in run.stdout and
+            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+        fail("EdgeSlice activation token copy was not rejected:\n" + run.stdout)
 
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
 # detached whole-Mesh adoption with exact caller-supplied change flags, and a

@@ -31,6 +31,7 @@ import prepared_poly_bevel_activation : PreparedPolyBevelActivationOwner;
 import prepared_vertex_bevel_activation : PreparedVertexBevelActivationOwner;
 import prepared_vertex_extrude_activation : PreparedVertexExtrudeActivationOwner;
 import prepared_edge_extrude_activation : PreparedEdgeExtrudeActivationOwner;
+import prepared_edge_slice_activation : PreparedEdgeSliceActivationOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -46,7 +47,8 @@ private enum PreparedResourceKind : ubyte {
     VertexMergeActivationState, PolyInsetActivationState, PolyExtrudeActivationState,
     SmoothShiftActivationState, EdgeBevelActivationState,
     PolyBevelActivationState, VertexBevelActivationState,
-    VertexExtrudeActivationState, EdgeExtrudeActivationState
+    VertexExtrudeActivationState, EdgeExtrudeActivationState,
+    EdgeSliceActivationState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -70,6 +72,7 @@ private struct PreparedResourceEntry {
     PreparedVertexBevelActivationOwner vertexBevelActivation;
     PreparedVertexExtrudeActivationOwner vertexExtrudeActivation;
     PreparedEdgeExtrudeActivationOwner edgeExtrudeActivation;
+    PreparedEdgeSliceActivationOwner edgeSliceActivation;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -440,6 +443,17 @@ public:
         e.kind = PreparedResourceKind.EdgeExtrudeActivationState;
         e.edgeExtrudeActivation = owner; resources_ ~= e; return true;
     }
+    bool prepareEdgeSliceActivation(PreparedEdgeSliceActivationOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected EdgeSlice activation enlist failure");
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.EdgeSliceActivationState;
+        e.edgeSliceActivation = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -642,6 +656,9 @@ public:
             case PreparedResourceKind.EdgeExtrudeActivationState:
                 ok = e.edgeExtrudeActivation !is null &&
                     e.edgeExtrudeActivation.validate(); break;
+            case PreparedResourceKind.EdgeSliceActivationState:
+                ok = e.edgeSliceActivation !is null &&
+                    e.edgeSliceActivation.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -790,6 +807,10 @@ public:
             e.edgeExtrudeActivation.install();
             version(unittest) installTrace_[installTraceLength_++] = 29;
             break;
+        case PreparedResourceKind.EdgeSliceActivationState:
+            e.edgeSliceActivation.install();
+            version(unittest) installTrace_[installTraceLength_++] = 30;
+            break;
         }
         if (!installedHistory && history_ !is null)
             history_.installPreparedToken(validated_);
@@ -867,6 +888,8 @@ private:
             e.vertexExtrudeActivation.abort(); break;
         case PreparedResourceKind.EdgeExtrudeActivationState:
             e.edgeExtrudeActivation.abort(); break;
+        case PreparedResourceKind.EdgeSliceActivationState:
+            e.edgeSliceActivation.abort(); break;
         }
         resources_.length = 0;
         historyMarker_ = false;

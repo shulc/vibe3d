@@ -26,6 +26,14 @@ import viewport_scheme : schemeColor, SchemeColor;
 import document : primaryModelSpace;
 import overlay_space : OverlaySpace;
 import perf_probe : g_perf, Cat;
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import prepared_edge_slice_activation : PreparedEdgeSliceActivationOwner;
+
+struct PreparedEdgeSliceActivationImage {
+    bool valid;
+    void clear() nothrow @nogc { valid = false; }
+}
 
 /// The `t = %` HUD readout string — mirrors `loopSliceHudLabel`
 /// (loop_slice_tool.d) so both slice-family tools print the same shape.
@@ -306,6 +314,32 @@ public:
     override void activate() {
         active = true;
         reinitSession();
+    }
+
+    final PreparedEdgeSliceActivationImage buildPreparedActivation()
+            nothrow @nogc {
+        return PreparedEdgeSliceActivationImage(true);
+    }
+    final void installPreparedActivation(
+            ref PreparedEdgeSliceActivationImage image) nothrow @nogc {
+        if (!image.valid) return;
+        active = true; armed_ = false; scrubbing_ = false; built_ = false;
+        phase_ = Phase.Idle; latchedPoints_ = []; edgesParam_ = [];
+        dragPart_ = -1; activePoint_ = -1;
+        armedKey_ = MeshCacheKey.init; chainBefore_ = MeshSnapshot.init;
+        image.clear();
+    }
+    final PreparedSessionActivateEffect prepareActivate(
+            PreparedRecordContext context) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.EdgeSlice, false);
+        scope(failure) context.discard();
+        auto owner = PreparedEdgeSliceActivationOwner.prepare(this);
+        bool ok = owner !is null && context.prepareEdgeSliceActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.EdgeSlice, ok);
     }
 
     private void reinitSession() {
@@ -1070,5 +1104,39 @@ private:
 
     void refreshCaches() {
         refreshDisplay(mesh, gpu);
+    }
+
+public:
+    version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
+        return preparedToolStateOwner;
+    }
+    version(unittest) final void seedPreparedActivationForTest(ref Mesh oldMesh) {
+        active = false; armed_ = true; scrubbing_ = true; built_ = true;
+        phase_ = Phase.EdgeB; latchedPoints_ = [ChainPoint(1,2,0.25f)];
+        edgesParam_ = [3,4]; dragPart_ = 5; activePoint_ = 6;
+        split_ = false; middle_ = true; snap_ = 0.75f; show_ = Show.None;
+        chainArm_ = [7,8]; tA_ = 0.2f; tB_ = 0.8f; pointProxy_ = 0.3f;
+        vpWorld_.view[0] = 9; armedKey_.stamp(oldMesh);
+        chainBefore_ = MeshSnapshot.capture(oldMesh);
+    }
+    version(unittest) final bool preparedActivationDirtyForTest(
+            ref Mesh oldMesh) const {
+        return !active && armed_ && scrubbing_ && built_ && phase_ == Phase.EdgeB &&
+            latchedPoints_.length == 1 && latchedPoints_.ptr !is null &&
+            edgesParam_ == [3,4] && edgesParam_.ptr !is null && dragPart_ == 5 &&
+            activePoint_ == 6 && !split_ && middle_ && snap_ == 0.75f &&
+            show_ == Show.None && chainArm_ == [7,8] && tA_ == 0.2f &&
+            tB_ == 0.8f && pointProxy_ == 0.3f && vpWorld_.view[0] == 9 &&
+            armedKey_.matches(oldMesh) && chainBefore_.filled;
+    }
+    version(unittest) final bool preparedActivationForTest(
+            ref Mesh oldMesh) const {
+        return active && !armed_ && !scrubbing_ && !built_ && phase_ == Phase.Idle &&
+            latchedPoints_.length == 0 && latchedPoints_.ptr is null &&
+            edgesParam_.length == 0 && edgesParam_.ptr is null && dragPart_ == -1 &&
+            activePoint_ == -1 && !split_ && middle_ && snap_ == 0.75f &&
+            show_ == Show.None && chainArm_ == [7,8] && tA_ == 0.2f &&
+            tB_ == 0.8f && pointProxy_ == 0.3f && vpWorld_.view[0] == 9 &&
+            armedKey_ == MeshCacheKey.init && !chainBefore_.filled;
     }
 }
