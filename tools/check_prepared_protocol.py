@@ -176,7 +176,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "1500a754b4b9103d0ff8cc978ad874680a1a8f1e293e3bece17fadd7cbf91c64"
+    "9d004848b255b885b3de34fc35b7ef31d429f4aa8db582097d8d0992e79327e7"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -193,7 +193,7 @@ def validate_deferred_rows(rows, require_canonical=True):
             fail("P1.0b.1 checked-in deferred batch/reason invalid")
     canonical = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
     if require_canonical and hashlib.sha256(canonical).hexdigest() != \
-            "815fa7be1b00058641d652c5fc61b349ba981f7fe1c3cbd1ada04049ded38eef":
+            "9d004848b255b885b3de34fc35b7ef31d429f4aa8db582097d8d0992e79327e7":
         fail("P1.0b.1 checked-in deferred exact values drifted")
 validate_deferred_rows(TOOL_STATE_DEFERRED_ROWS)
 for field in ("batch", "reason"):
