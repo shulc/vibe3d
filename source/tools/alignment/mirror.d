@@ -18,12 +18,30 @@ import shader : Shader, LitShader, drawLitPreview;
 import handler : MoveHandler, ToolHandles, Arrow, BoxHandler, gizmoSize, drawThickLinesExt;
 import drag : planeDragDelta, screenAxisDelta, gesturePrevPixel;
 import eventlog : queryMouse;
-import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind;
+import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind,
+    PreparedSessionActivateEffect, PreparedActivateKind;
+import prepared_record_context : PreparedRecordContext;
+import prepared_mirror_activation : PreparedMirrorActivationOwner;
+import mesh_gpu : GpuCreateUploadOwner;
 
 version (unittest) import std.conv : to;
 private struct MirrorPreparedState {
     bool engaged; bool consumable;
     @disable this(this);
+}
+
+struct PreparedMirrorActivationImage {
+    bool valid;
+    MeshSnapshot baseline;
+    bool[] mask;
+    Mesh preview;
+    MirrorParams params;
+    Vec3 left, up;
+    void clear() nothrow @nogc {
+        valid = false; baseline = MeshSnapshot.init; mask = null;
+        preview = Mesh.init; params = MirrorParams.init;
+        left = up = Vec3.init;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -153,8 +171,8 @@ Vec3 derivedLeft(in MirrorParams p) {
 // ---------------------------------------------------------------------------
 class MirrorTool : Tool {
 private:
-    Mesh* delegate() meshSrc_;
-    @property Mesh* mesh() const { return meshSrc_(); }
+    Mesh* delegate() nothrow @nogc meshSrc_;
+    @property Mesh* mesh() const nothrow @nogc { return meshSrc_(); }
     GpuMesh*  gpu;
     LitShader litShader;
 
@@ -220,7 +238,7 @@ private:
     GLuint axisLineVao,  axisLineVbo;
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader) {
+    this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu, LitShader litShader) {
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.litShader = litShader;
@@ -264,6 +282,80 @@ public:
         previewGpu.init();
         havePreviewCache = false;
         evaluate();   // show the preview immediately (§2.2 of the impl plan)
+    }
+
+    final PreparedMirrorActivationImage buildPreparedActivation(out Mesh* source) {
+        PreparedMirrorActivationImage image;
+        if (meshSrc_ is null) return image;
+        source = meshSrc_();
+        if (source is null) return image;
+        image.baseline = MeshSnapshot.capture(*source);
+        image.mask = source.operandFaceMask();
+        image.params = params_;
+        rebuildMirrorPreview(image.baseline, image.preview, image.mask, image.params);
+        image.left = derivedLeft(image.params);
+        image.up = derivedUp(image.params);
+        image.valid = true;
+        return image;
+    }
+    final Mesh* preparedActivationMesh() nothrow @nogc {
+        return meshSrc_ is null ? null : meshSrc_();
+    }
+    final bool preparedActivationParamsMatch(in MirrorParams expected) const
+            nothrow @nogc {
+        return params_.axis == expected.axis && params_.center == expected.center &&
+            params_.invertPolys == expected.invertPolys &&
+            params_.mergeVerts == expected.mergeVerts &&
+            params_.distance == expected.distance && params_.angle == expected.angle &&
+            params_.mode == expected.mode && params_.left == expected.left &&
+            params_.up == expected.up;
+    }
+    final GpuMesh* preparedPreviewGpu() nothrow @nogc { return &previewGpu; }
+    final void installPreparedActivation(ref PreparedMirrorActivationImage image)
+            nothrow @nogc {
+        image.baseline.moveInto(baseSnap);
+        baseMask = image.mask; image.mask = null;
+        previewMesh = image.preview; image.preview = Mesh.init;
+        params_.left = image.left; params_.up = image.up;
+        engaged = false; moverDragAxis = -1; toolHandles.clearHaul();
+        cachedAxis = image.params.axis; cachedCenter = image.params.center;
+        cachedInvert = image.params.invertPolys;
+        cachedMerge = image.params.mergeVerts;
+        cachedDistance = image.params.distance; cachedAngle = image.params.angle;
+        havePreviewCache = true; image.valid = false;
+    }
+    final PreparedSessionActivateEffect prepareActivate(PreparedRecordContext context,
+            GpuCreateUploadOwner uploadOwner) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.Mirror, false);
+        scope(failure) context.discard();
+        auto stateOwner = PreparedMirrorActivationOwner.prepare(this);
+        bool ok = stateOwner !is null && context.prepareMirrorActivation(stateOwner);
+        ok = ok && uploadOwner !is null && uploadOwner.replacesLikeLegacyInit() &&
+            uploadOwner.owns(&previewGpu) &&
+            context.prepareCreateUpload(uploadOwner, stateOwner.previewMesh);
+        ok = ok && context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.Mirror, ok);
+    }
+
+    version(unittest) final void seedPreparedActivationForTest() {
+        baseMask = [true, false]; engaged = true; moverDragAxis = 4;
+        havePreviewCache = false; cachedAxis = 99; cachedDistance = -1;
+    }
+    version(unittest) final void setPreparedAxisForTest(int value) nothrow @nogc {
+        params_.axis = value;
+    }
+    version(unittest) final bool preparedActivationInstalledForTest() const {
+        return baseSnap.filled && baseMask.length > 0 && !engaged &&
+            moverDragAxis == -1 && havePreviewCache &&
+            params_.left == derivedLeft(params_) && params_.up == derivedUp(params_);
+    }
+    version(unittest) final size_t preparedMaskSelectedForTest() const nothrow @nogc {
+        size_t result;
+        foreach (selected; baseMask) if (selected) ++result;
+        return result;
     }
 
     override void deactivate() {

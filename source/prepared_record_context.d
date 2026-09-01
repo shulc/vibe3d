@@ -37,6 +37,7 @@ import prepared_slice_activation : PreparedSliceActivationOwner;
 import prepared_tack_activation : PreparedTackActivationOwner;
 import prepared_command_wrapper_activation : PreparedCommandWrapperActivationOwner;
 import prepared_bridge_activation : PreparedBridgeActivationOwner;
+import prepared_mirror_activation : PreparedMirrorActivationOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -54,7 +55,8 @@ private enum PreparedResourceKind : ubyte {
     PolyBevelActivationState, VertexBevelActivationState,
     VertexExtrudeActivationState, EdgeExtrudeActivationState,
     EdgeSliceActivationState, LoopSliceActivationState, SliceActivationState,
-    TackActivationState, CommandWrapperActivationState, BridgeActivationState
+    TackActivationState, CommandWrapperActivationState, BridgeActivationState,
+    MirrorActivationState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -84,6 +86,7 @@ private struct PreparedResourceEntry {
     PreparedTackActivationOwner tackActivation;
     PreparedCommandWrapperActivationOwner commandWrapperActivation;
     PreparedBridgeActivationOwner bridgeActivation;
+    PreparedMirrorActivationOwner mirrorActivation;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -519,6 +522,16 @@ public:
         PreparedResourceEntry e; e.kind = PreparedResourceKind.BridgeActivationState;
         e.bridgeActivation = owner; resources_ ~= e; return true;
     }
+    bool prepareMirrorActivation(PreparedMirrorActivationOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected Mirror activation enlist failure");
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.MirrorActivationState;
+        e.mirrorActivation = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -738,6 +751,8 @@ public:
                     e.commandWrapperActivation.validate(); break;
             case PreparedResourceKind.BridgeActivationState:
                 ok = e.bridgeActivation !is null && e.bridgeActivation.validate(); break;
+            case PreparedResourceKind.MirrorActivationState:
+                ok = e.mirrorActivation !is null && e.mirrorActivation.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -910,6 +925,10 @@ public:
             e.bridgeActivation.install();
             version(unittest) installTrace_[installTraceLength_++] = 35;
             break;
+        case PreparedResourceKind.MirrorActivationState:
+            e.mirrorActivation.install();
+            version(unittest) installTrace_[installTraceLength_++] = 36;
+            break;
         }
         if (!installedHistory && history_ !is null)
             history_.installPreparedToken(validated_);
@@ -960,6 +979,8 @@ private:
             e.commandWrapperActivation.abort(); break;
         case PreparedResourceKind.BridgeActivationState:
             e.bridgeActivation.abort(); break;
+        case PreparedResourceKind.MirrorActivationState:
+            e.mirrorActivation.abort(); break;
         case PreparedResourceKind.RadialArrayTransitionState:
             e.radialArrayTransition.abort(); break;
         case PreparedResourceKind.TransformActivationState:

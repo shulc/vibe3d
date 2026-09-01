@@ -238,6 +238,7 @@ B5O_PREPARED_LEGACY = {
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "activate"),
 }
 B5P_PREPARED_LEGACY = {
+    ("tools.alignment.mirror", "MirrorTool", "activate"),
     ("tools.common.command_wrapper", "CommandWrapperTool", "activate"),
     ("tools.edit.bridge_tool", "BridgeTool", "activate"),
     ("tools.create.box", "BoxTool", "activate"),
@@ -294,7 +295,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "c34f3bdf8a4e1d3c47d240e8a3d98258899384decc5c6973d17cec913b3eaba4"
+    "c36e8ed9dae3b49bf0df2128033c49333d3438827dd7113c9f5506ee0bd9153b"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -441,11 +442,13 @@ for path, text in prepared_source_texts.items():
             "prepared_tack_activation",
             "prepared_command_wrapper_activation",
             "prepared_bridge_activation",
+            "prepared_mirror_activation",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
             "tools.edit.tack",
             "tools.edit.bridge_tool",
+            "tools.alignment.mirror",
             "tools.alignment.radial_sweep_tool",
             "tools.alignment.radial_array_tool",
             "tools.alignment.linear_align_tool",
@@ -3809,6 +3812,88 @@ for fixture in (
             not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
         fail("Bridge activation token copy was not rejected:\n" + run.stdout)
 
+mirror_activation_owner = (ROOT / "source/prepared_mirror_activation.d").read_text()
+mirror_activation_tool = (ROOT / "source/tools/alignment/mirror.d").read_text()
+def mirror_activation_gate(owner, context, tool, gpu):
+    gpu_block = gpu[gpu.find("final class GpuCreateUploadOwner") :]
+    return (owner.count("@disable this(this)") == 2 and
+        "final class PreparedMirrorActivationOwner" in owner and
+        "target.classinfo !is MirrorTool.classinfo" in owner and
+        "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
+        "target_.preparedActivationMesh() !is source_" in owner and
+        "!target_.preparedActivationParamsMatch(image_.params)" in owner and
+        "!image_.baseline.matches(*source_)" in owner and
+        "target_.installPreparedActivation(image_);" in owner and
+        "image.baseline = MeshSnapshot.capture(*source);" in tool and
+        "image.mask = source.operandFaceMask();" in tool and
+        "image.params = params_;" in tool and
+        "rebuildMirrorPreview(image.baseline, image.preview" in tool and
+        "image.left = derivedLeft(image.params);" in tool and
+        "image.up = derivedUp(image.params);" in tool and
+        "image.baseline.moveInto(baseSnap);" in tool and
+        "baseMask = image.mask; image.mask = null;" in tool and
+        "previewMesh = image.preview; image.preview = Mesh.init;" in tool and
+        "params_.left = image.left; params_.up = image.up;" in tool and
+        "engaged = false; moverDragAxis = -1; toolHandles.clearHaul();" in tool and
+        "cachedAxis = image.params.axis; cachedCenter = image.params.center;" in tool and
+        "cachedDistance = image.params.distance; cachedAngle = image.params.angle;" in tool and
+        "havePreviewCache = true; image.valid = false;" in tool and
+        "context.prepareMirrorActivation(stateOwner)" in tool and
+        "context.prepareCreateUpload(uploadOwner, stateOwner.previewMesh)" in tool and
+        tool.find("context.prepareMirrorActivation(stateOwner)") <
+            tool.find("context.prepareCreateUpload(uploadOwner") <
+            tool.find("context.markNoHistoryInstall()", tool.find("context.prepareCreateUpload(uploadOwner")) and
+        "uploadOwner.replacesLikeLegacyInit()" in tool and
+        "PreparedActivateKind.Mirror, ok);" in tool and
+        "MirrorActivationState" in context and
+        "e.mirrorActivation.validate();" in context and
+        "e.mirrorActivation.install();" in context and
+        "e.mirrorActivation.abort();" in context and
+        "peekGpuMeshNames(*target) != expectedTarget" in gpu_block)
+if not mirror_activation_gate(mirror_activation_owner, record_context,
+                              mirror_activation_tool, mesh_gpu):
+    fail("Mirror activation prepared contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is MirrorTool.classinfo", "false", "broaden product"),
+    ("owner", "target_.preparedActivationMesh() !is source_", "false", "drop Mesh identity"),
+    ("owner", "!target_.preparedActivationParamsMatch(image_.params)", "false", "drop parameter identity"),
+    ("owner", "!image_.baseline.matches(*source_)", "false", "drop content validation"),
+    ("owner", "target_.installPreparedActivation(image_);", "", "drop install"),
+    ("tool", "image.baseline = MeshSnapshot.capture(*source);", "", "drop baseline"),
+    ("tool", "image.mask = source.operandFaceMask();", "", "drop operand mask"),
+    ("tool", "rebuildMirrorPreview(image.baseline, image.preview", "false /*", "drop detached preview"),
+    ("tool", "image.left = derivedLeft(image.params);", "", "drop derived left"),
+    ("tool", "image.up = derivedUp(image.params);", "", "drop derived up"),
+    ("tool", "image.baseline.moveInto(baseSnap);", "", "drop baseline transfer"),
+    ("tool", "baseMask = image.mask; image.mask = null;", "baseMask = image.mask;", "retain mask payload"),
+    ("tool", "previewMesh = image.preview; image.preview = Mesh.init;", "previewMesh = image.preview;", "retain preview payload"),
+    ("tool", "params_.left = image.left; params_.up = image.up;", "", "drop derived readout install"),
+    ("tool", "engaged = false; moverDragAxis = -1; toolHandles.clearHaul();", "engaged = false;", "drop interaction reset"),
+    ("tool", "cachedAxis = image.params.axis; cachedCenter = image.params.center;", "", "drop axis/center cache"),
+    ("tool", "cachedDistance = image.params.distance; cachedAngle = image.params.angle;", "", "drop distance/angle cache"),
+    ("tool", "context.prepareMirrorActivation(stateOwner)", "true", "drop CPU arm"),
+    ("tool", "context.prepareCreateUpload(uploadOwner, stateOwner.previewMesh)", "true", "drop GPU arm"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory seal"),
+    ("context", "e.mirrorActivation.validate();", "true;", "drop context validation"),
+    ("context", "e.mirrorActivation.install();", "", "drop context install"),
+    ("context", "e.mirrorActivation.abort();", "", "drop context abort"),
+):
+    o, c, t = mirror_activation_owner, record_context, mirror_activation_tool
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    else: t = t.replace(old, new, 1)
+    if mirror_activation_gate(o, c, t, mesh_gpu):
+        fail(f"Mirror activation mutation did not RED: {label}")
+for fixture in (
+    ROOT / "tests/compile_fail/prepared_mirror_activation_token_copy.d",
+    ROOT / "tests/compile_fail/prepared_mirror_activation_validated_token_copy.d",
+):
+    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if run.returncode == 0 or ("not copyable" not in run.stdout and
+            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+        fail("Mirror activation token copy was not rejected:\n" + run.stdout)
+
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
 # detached whole-Mesh adoption with exact caller-supplied change flags, and a
 # frozen Primitive product/reset projection set. Install never dispatches the
@@ -4319,7 +4404,7 @@ for target, old, new, label in (
         fail(f"combined GPU create-upload mutation did not RED: {label}")
 for path in (ROOT / "source").rglob("*.d"):
     if path.name in ("mesh_gpu.d", "prepared_record_context.d",
-                     "radial_sweep_tool.d", "bridge_tool.d"): continue
+                     "radial_sweep_tool.d", "bridge_tool.d", "mirror.d"): continue
     if ".prepareCreateUpload(" in without_unittests(path.read_text()):
         fail("combined GPU create-upload gained a pre-cutover caller")
 
