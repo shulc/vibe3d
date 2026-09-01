@@ -17,6 +17,7 @@ import prepared_selection_profile : PreparedSelectionProfileOwner;
 import prepared_radial_sweep_transition : PreparedRadialSweepTransitionOwner;
 import prepared_radial_array_transition : PreparedRadialArrayTransitionOwner;
 import prepared_transform_activation : PreparedTransformActivationOwner;
+import prepared_transform_product_activation : PreparedTransformProductActivationOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -26,7 +27,8 @@ private enum PreparedResourceKind : ubyte {
     , GpuCreate, SnapOverlayClear, BoxState, PenState, PrimitiveState, VertexState,
     ArraySessionState, CloneSessionState, MagnetSessionState, ReductionSessionState,
     RadialSweepProfileState, RadialSweepTransitionState, GestureCarrierMismatch,
-    GpuCreateUpload, RadialArrayTransitionState, TransformActivationState
+    GpuCreateUpload, RadialArrayTransitionState, TransformActivationState,
+    TransformProductActivationState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -36,6 +38,7 @@ private struct PreparedResourceEntry {
     GpuCreateUploadOwner gpuCreateUpload;
     PreparedRadialArrayTransitionOwner radialArrayTransition;
     PreparedTransformActivationOwner transformActivation;
+    PreparedTransformProductActivationOwner transformProductActivation;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -236,6 +239,16 @@ public:
         PreparedResourceEntry e; e.kind = PreparedResourceKind.TransformActivationState;
         e.transformActivation = owner; resources_ ~= e; return true;
     }
+    bool prepareTransformProductActivation(PreparedTransformProductActivationOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected transform product activation enlist failure");
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.TransformProductActivationState;
+        e.transformProductActivation = owner; resources_ ~= e; return true;
+    }
 
     bool prepareGestureCarrierMismatch() {
         if (!begun_ || validated_Once) return false;
@@ -381,6 +394,9 @@ public:
             case PreparedResourceKind.TransformActivationState:
                 ok = e.transformActivation !is null &&
                     e.transformActivation.validate(); break;
+            case PreparedResourceKind.TransformProductActivationState:
+                ok = e.transformProductActivation !is null &&
+                    e.transformProductActivation.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -468,6 +484,10 @@ public:
             e.transformActivation.install();
             version(unittest) installTrace_[installTraceLength_++] = 14;
             break;
+        case PreparedResourceKind.TransformProductActivationState:
+            e.transformProductActivation.install();
+            version(unittest) installTrace_[installTraceLength_++] = 15;
+            break;
         }
         if (!installedHistory) history_.installPreparedToken(validated_);
         resources_.length = 0;
@@ -512,6 +532,8 @@ private:
             e.radialArrayTransition.abort(); break;
         case PreparedResourceKind.TransformActivationState:
             e.transformActivation.abort(); break;
+        case PreparedResourceKind.TransformProductActivationState:
+            e.transformProductActivation.abort(); break;
         }
         resources_.length = 0;
         historyMarker_ = false;

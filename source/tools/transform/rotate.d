@@ -5,6 +5,16 @@ import operator : VectorStack;
 import bindbc.sdl;
 
 import tools.transform.transform;
+
+struct PreparedRotateActivationImage {
+    PreparedTransformActivationImage base;
+    Vec3 angleAccum, propDeg, headlessRotate, pendingRotateViewAxis;
+    Vec3[] origVertices;
+    int pendingRotateAxis;
+    float pendingRotateAngle;
+    bool valid;
+    void clear() nothrow @nogc { this = PreparedRotateActivationImage.init; }
+}
 import handler;
 import mesh;
 import editmode;
@@ -202,6 +212,40 @@ public:
         pendingRotateAxis    = -1;
         pendingRotateAngle   = 0;
         pendingRotateViewAxis = Vec3(0, 0, 0);
+    }
+    final PreparedRotateActivationImage buildPreparedProductActivation() {
+        PreparedRotateActivationImage image;
+        auto live = mesh; if (live is null) return image;
+        image.base = buildPreparedActivationImage();
+        image.origVertices = live.vertices.dup;
+        image.angleAccum = image.propDeg = image.headlessRotate = Vec3(0,0,0);
+        image.pendingRotateAxis = -1; image.pendingRotateAngle = 0;
+        image.pendingRotateViewAxis = Vec3(0,0,0);
+        image.valid = true; return image;
+    }
+    final void installPreparedProductActivation(ref PreparedRotateActivationImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        installPreparedActivation(image.base); angleAccum = image.angleAccum;
+        propDeg = image.propDeg; origVertices = image.origVertices;
+        image.origVertices = null; headlessRotate = image.headlessRotate;
+        pendingRotateAxis = image.pendingRotateAxis;
+        pendingRotateAngle = image.pendingRotateAngle;
+        pendingRotateViewAxis = image.pendingRotateViewAxis; image.clear();
+    }
+    version(unittest) void seedPreparedProductActivationForTest() {
+        seedPreparedActivationForTest(); angleAccum = propDeg = headlessRotate = Vec3(4,5,6);
+        origVertices = [Vec3(9,9,9)]; pendingRotateAxis = 2;
+        pendingRotateAngle = 7; pendingRotateViewAxis = Vec3(8,8,8);
+    }
+    version(unittest) bool preparedProductActivationForTest(size_t count,
+            Vec3 first, const Vec3* livePtr) const nothrow @nogc {
+        return preparedActivationForTest() && angleAccum == Vec3(0,0,0) &&
+            propDeg == Vec3(0,0,0) && headlessRotate == Vec3(0,0,0) &&
+            origVertices.length == count && origVertices.length != 0 &&
+            origVertices[0] == first && origVertices.ptr !is livePtr &&
+            pendingRotateAxis == -1 &&
+            pendingRotateAngle == 0 && pendingRotateViewAxis == Vec3(0,0,0);
     }
 
     // `xfrm.transform` RX/RY/RZ surfaced for `tool.attr <id> RY 30`

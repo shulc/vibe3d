@@ -5,6 +5,13 @@ import operator : VectorStack;
 import bindbc.sdl;
 
 import tools.transform.transform;
+
+struct PreparedMoveActivationImage {
+    PreparedTransformActivationImage base;
+    Vec3 propInput;
+    bool valid;
+    void clear() nothrow @nogc { this = PreparedMoveActivationImage.init; }
+}
 import handler;
 import viewport_scheme : schemeColor, SchemeColor;
 import mesh;
@@ -326,6 +333,22 @@ public:
     override void activate() {
         super.activate();
         propInput = Vec3(0, 0, 0);
+    }
+    final PreparedMoveActivationImage buildPreparedProductActivation() nothrow @nogc {
+        PreparedMoveActivationImage image;
+        image.base = buildPreparedActivationImage();
+        image.propInput = Vec3(0, 0, 0); image.valid = true; return image;
+    }
+    final void installPreparedProductActivation(ref PreparedMoveActivationImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        installPreparedActivation(image.base); propInput = image.propInput; image.clear();
+    }
+    version(unittest) void seedPreparedProductActivationForTest() nothrow @nogc {
+        seedPreparedActivationForTest(); propInput = Vec3(4,5,6);
+    }
+    version(unittest) bool preparedProductActivationForTest() const nothrow @nogc {
+        return preparedActivationForTest() && propInput == Vec3(0,0,0);
     }
 
     // No `params()` override: TX/TY/TZ live on the wrapper now

@@ -321,6 +321,7 @@ for path, text in prepared_source_texts.items():
             "prepared_selection_profile", "prepared_radial_sweep_transition",
             "prepared_radial_array_transition",
             "prepared_transform_activation",
+            "prepared_transform_product_activation",
             "tools.alignment.radial_sweep_tool",
             "tools.alignment.radial_array_tool",
             "tools.alignment.linear_align_tool",
@@ -2224,4 +2225,119 @@ if run.returncode == 0 or ("not copyable" not in run.stdout and
         not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
     fail("Transform activation token copy was not rejected:\n" + run.stdout)
 
-print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures) + 2} compile-fail fixtures)")
+# Exact Move/Rotate/Scale activation owner infrastructure. Xfrm is excluded:
+# its activation owns subtool wiring and history-run lifecycle beyond this image.
+transform_product_owner = (ROOT / "source/prepared_transform_product_activation.d").read_text()
+move_tool = (ROOT / "source/tools/transform/move.d").read_text()
+rotate_tool = (ROOT / "source/tools/transform/rotate.d").read_text()
+scale_tool = (ROOT / "source/tools/transform/scale.d").read_text()
+def transform_product_gate(owner, context, move, rotate, scale):
+    production = without_unittests(owner)
+    return ("final class PreparedTransformProductActivationOwner" in owner and
+        owner.count("@disable this(this);") == 2 and
+        not any(x in production for x in (" delegate", " function(", "void*", "ubyte[]")) and
+        "target.classinfo is MoveTool.classinfo" in owner and
+        "target.classinfo is RotateTool.classinfo" in owner and
+        "target.classinfo is ScaleTool.classinfo" in owner and
+        "prepared_.generation != generation_" in owner and
+        "validatedToken_.generation != generation_" in owner and
+        "final switch (kind_)" in owner and "consume();" in owner and
+        "(cast(MoveTool) target_).installPreparedProductActivation(move_);" in owner and
+        "(cast(RotateTool) target_).installPreparedProductActivation(rotate_);" in owner and
+        "(cast(ScaleTool) target_).installPreparedProductActivation(scale_);" in owner and
+        "void scrub() nothrow @nogc { move_.clear(); rotate_.clear(); scale_.clear(); }" in owner and
+        "return !move_.valid && !rotate_.valid && !scale_.valid" in owner and
+        "rotate_.origVertices.length == 0" in owner and
+        "scale_.activationVertices.length == 0" in owner and
+        "struct PreparedMoveActivationImage" in move and
+        "image.propInput = Vec3(0, 0, 0)" in move and
+        "installPreparedActivation(image.base); propInput = image.propInput; image.clear();" in move and
+        "struct PreparedRotateActivationImage" in rotate and
+        "image.origVertices = live.vertices.dup;" in rotate and
+        "image.angleAccum = image.propDeg = image.headlessRotate = Vec3(0,0,0);" in rotate and
+        "image.pendingRotateAxis = -1; image.pendingRotateAngle = 0;" in rotate and
+        "image.pendingRotateViewAxis = Vec3(0,0,0);" in rotate and
+        "image.origVertices = null;" in rotate and
+        "installPreparedActivation(image.base); angleAccum = image.angleAccum;\n"
+        "        propDeg = image.propDeg; origVertices = image.origVertices;\n"
+        "        image.origVertices = null; headlessRotate = image.headlessRotate;\n"
+        "        pendingRotateAxis = image.pendingRotateAxis;\n"
+        "        pendingRotateAngle = image.pendingRotateAngle;\n"
+        "        pendingRotateViewAxis = image.pendingRotateViewAxis; image.clear();" in rotate and
+        "struct PreparedScaleActivationImage" in scale and
+        "Vec3 scaleAccum = Vec3(1,1,1), propScale = Vec3(1,1,1);" in scale and
+        "Vec3 headlessScale = Vec3(1,1,1), pendingScale = Vec3(1,1,1);" in scale and
+        "bool pendingScaleValid, valid;" in scale and
+        "image.activationVertices = live.vertices.dup;" in scale and
+        "image.activationCenter = handler.center" in scale and
+        "handler.setPosition(Vec3(2,3,4));" in scale and
+        "activationCenter == center" in scale and
+        "image.activationVertices = null;" in scale and
+        "installPreparedActivation(image.base); scaleAccum = image.scaleAccum;\n"
+        "        propScale = image.propScale; activationVertices = image.activationVertices;\n"
+        "        image.activationVertices = null; activationCenter = image.activationCenter;\n"
+        "        headlessScale = image.headlessScale;\n"
+        "        pendingScaleValid = image.pendingScaleValid;\n"
+        "        pendingScale = image.pendingScale; image.clear();" in scale and
+        "bool prepareTransformProductActivation(PreparedTransformProductActivationOwner owner)" in context and
+        "e.transformProductActivation.validate();" in context and
+        "e.transformProductActivation.install();" in context and
+        "e.transformProductActivation.abort();" in context)
+if not transform_product_gate(transform_product_owner, record_context,
+        move_tool, rotate_tool, scale_tool):
+    fail("Transform product activation owner contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo is MoveTool.classinfo", "false", "drop Move admission"),
+    ("owner", "target.classinfo is RotateTool.classinfo", "false", "drop Rotate admission"),
+    ("owner", "target.classinfo is ScaleTool.classinfo", "false", "drop Scale admission"),
+    ("owner", "target.classinfo is MoveTool.classinfo", "cast(MoveTool) target !is null", "broaden Move admission to derived"),
+    ("owner", "validatedToken_.generation != generation_", "false", "drop validated generation"),
+    ("owner", "(cast(ScaleTool) target_).installPreparedProductActivation(scale_);", "", "drop Scale install"),
+    ("owner", "(cast(MoveTool) target_).installPreparedProductActivation(move_);", "", "drop fixed Move switch install"),
+    ("owner", "(cast(RotateTool) target_).installPreparedProductActivation(rotate_);", "", "drop fixed Rotate switch install"),
+    ("owner", "move_.clear(); rotate_.clear(); scale_.clear();", "move_.clear();", "omit union payload scrub"),
+    ("rotate", "image.origVertices = live.vertices.dup;", "image.origVertices = live.vertices;", "shallow Rotate baseline"),
+    ("rotate", "image.pendingRotateAxis = -1", "image.pendingRotateAxis = 0", "change Rotate pending axis"),
+    ("rotate", "image.pendingRotateAngle = 0;", "image.pendingRotateAngle = 1;", "change Rotate pending angle"),
+    ("rotate", "image.angleAccum = image.propDeg = image.headlessRotate = Vec3(0,0,0);", "image.angleAccum = Vec3(1,0,0); image.propDeg = image.headlessRotate = Vec3(0,0,0);", "change Rotate angle accumulator"),
+    ("rotate", "image.angleAccum = image.propDeg = image.headlessRotate = Vec3(0,0,0);", "image.propDeg = Vec3(1,0,0); image.angleAccum = image.headlessRotate = Vec3(0,0,0);", "change Rotate property accumulator"),
+    ("rotate", "image.angleAccum = image.propDeg = image.headlessRotate = Vec3(0,0,0);", "image.headlessRotate = Vec3(1,0,0); image.angleAccum = image.propDeg = Vec3(0,0,0);", "change Rotate headless accumulator"),
+    ("move", "installPreparedActivation(image.base); propInput = image.propInput; image.clear();", "installPreparedActivation(image.base); image.clear();", "drop Move value install"),
+    ("move", "image.propInput = Vec3(0, 0, 0)", "image.propInput = Vec3(1, 0, 0)", "change Move fixed value"),
+    ("rotate", "pendingRotateAngle = image.pendingRotateAngle;\n        pendingRotateViewAxis", "pendingRotateViewAxis = image.pendingRotateViewAxis;\n        pendingRotateAngle", "reorder Rotate fixed install"),
+    ("scale", "image.activationVertices = live.vertices.dup;", "image.activationVertices = live.vertices;", "shallow Scale baseline"),
+    ("scale", "image.activationCenter = handler.center", "image.activationCenter = Vec3.init", "drop Scale center"),
+    ("scale", "handler.setPosition(Vec3(2,3,4));", "handler.setPosition(Vec3(8,8,8));", "collapse old/captured Scale center distinction"),
+    ("scale", "Vec3 scaleAccum = Vec3(1,1,1), propScale = Vec3(1,1,1);", "Vec3 scaleAccum = Vec3(0,0,0), propScale = Vec3(1,1,1);", "change Scale accumulator ones"),
+    ("scale", "Vec3 scaleAccum = Vec3(1,1,1), propScale = Vec3(1,1,1);", "Vec3 scaleAccum = Vec3(1,1,1), propScale = Vec3(0,0,0);", "change Scale property ones"),
+    ("scale", "Vec3 headlessScale = Vec3(1,1,1), pendingScale = Vec3(1,1,1);", "Vec3 headlessScale = Vec3(0,0,0), pendingScale = Vec3(1,1,1);", "change Scale headless ones"),
+    ("scale", "Vec3 headlessScale = Vec3(1,1,1), pendingScale = Vec3(1,1,1);", "Vec3 headlessScale = Vec3(1,1,1), pendingScale = Vec3(0,0,0);", "change Scale pending ones"),
+    ("scale", "bool pendingScaleValid, valid;", "bool pendingScaleValid = true, valid;", "change Scale pending-valid default"),
+    ("scale", "pendingScaleValid = image.pendingScaleValid;\n        pendingScale = image.pendingScale; image.clear();", "pendingScale = image.pendingScale;\n        pendingScaleValid = image.pendingScaleValid; image.clear();", "reorder Scale fixed install tail"),
+    ("context", "e.transformProductActivation.abort();", "", "drop context abort"),
+):
+    owner, context = transform_product_owner, record_context
+    move, rotate, scale = move_tool, rotate_tool, scale_tool
+    if target == "owner": owner = owner.replace(old, new, 1)
+    elif target == "move": move = move.replace(old, new, 1)
+    elif target == "rotate": rotate = rotate.replace(old, new, 1)
+    elif target == "scale": scale = scale.replace(old, new, 1)
+    else: context = context.replace(old, new, 1)
+    if transform_product_gate(owner, context, move, rotate, scale):
+        fail(f"Transform product activation mutation did not RED: {label}")
+for source, name in ((move_tool, "Move"), (rotate_tool, "Rotate"), (scale_tool, "Scale")):
+    start = source.find("override void activate()")
+    body_start = source.find("{", start) + 1
+    body = source[body_start:balanced_source(source, body_start)-1]
+    if "PreparedTransformProductActivationOwner" in body or \
+            "prepareTransformProductActivation" in body:
+        fail(f"Transform product owner reached from production {name} hook")
+
+product_copy_fixture = ROOT / "tests/compile_fail/prepared_transform_product_token_copy.d"
+run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(product_copy_fixture)],
+    cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+if run.returncode == 0 or ("not copyable" not in run.stdout and
+        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+    fail("Transform product activation token copy was not rejected:\n" + run.stdout)
+
+print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures) + 3} compile-fail fixtures)")

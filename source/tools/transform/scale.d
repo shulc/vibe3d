@@ -6,6 +6,16 @@ import bindbc.sdl;
 import sdl.stdinc : SDL_FALSE, SDL_TRUE, SDL_bool;
 
 import tools.transform.transform;
+
+struct PreparedScaleActivationImage {
+    PreparedTransformActivationImage base;
+    Vec3 scaleAccum = Vec3(1,1,1), propScale = Vec3(1,1,1);
+    Vec3 headlessScale = Vec3(1,1,1), pendingScale = Vec3(1,1,1);
+    Vec3 activationCenter;
+    Vec3[] activationVertices;
+    bool pendingScaleValid, valid;
+    void clear() nothrow @nogc { this = PreparedScaleActivationImage.init; }
+}
 import handler;
 import mesh;
 import editmode;
@@ -314,6 +324,41 @@ public:
         // Reset the gesture-producer scratch on (re)activation.
         pendingScaleValid = false;
         pendingScale      = Vec3(1, 1, 1);
+    }
+    final PreparedScaleActivationImage buildPreparedProductActivation() {
+        PreparedScaleActivationImage image;
+        auto live = mesh; if (live is null) return image;
+        image.base = buildPreparedActivationImage();
+        image.activationVertices = live.vertices.dup;
+        image.activationCenter = handler.center; image.valid = true; return image;
+    }
+    final void installPreparedProductActivation(ref PreparedScaleActivationImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        installPreparedActivation(image.base); scaleAccum = image.scaleAccum;
+        propScale = image.propScale; activationVertices = image.activationVertices;
+        image.activationVertices = null; activationCenter = image.activationCenter;
+        headlessScale = image.headlessScale;
+        pendingScaleValid = image.pendingScaleValid;
+        pendingScale = image.pendingScale; image.clear();
+    }
+    version(unittest) void seedPreparedProductActivationForTest() {
+        seedPreparedActivationForTest(); scaleAccum = propScale = headlessScale = Vec3(4,5,6);
+        activationVertices = [Vec3(9,9,9)]; activationCenter = Vec3(8,8,8);
+        handler.setPosition(Vec3(2,3,4));
+        pendingScaleValid = true; pendingScale = Vec3(7,7,7);
+    }
+    version(unittest) void mutatePreparedHandlerForTest(Vec3 center) {
+        handler.setPosition(center);
+    }
+    version(unittest) bool preparedProductActivationForTest(size_t count,
+            Vec3 first, const Vec3* livePtr, Vec3 center) const nothrow @nogc {
+        return preparedActivationForTest() && scaleAccum == Vec3(1,1,1) &&
+            propScale == Vec3(1,1,1) && headlessScale == Vec3(1,1,1) &&
+            activationVertices.length == count && activationVertices.length != 0 &&
+            activationVertices[0] == first && activationVertices.ptr !is livePtr &&
+            activationCenter == center && !pendingScaleValid &&
+            pendingScale == Vec3(1,1,1);
     }
 
     // `xfrm.transform` SX/SY/SZ surfaced for `tool.attr <id> SX 1.5`
