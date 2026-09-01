@@ -238,6 +238,7 @@ B5O_PREPARED_LEGACY = {
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "activate"),
 }
 B5P_PREPARED_LEGACY = {
+    ("tools.edit.vertex_extrude_tool", "VertexExtrudeTool", "onParamChanged"),
     ("tools.edit.vertex_bevel_tool", "VertexBevelTool", "onParamChanged"),
     ("tools.edit.vert_merge_tool", "VertexMergeTool", "onParamChanged"),
     ("tools.edit.reduce", "ReductionTool", "onParamChanged"),
@@ -316,7 +317,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "a223a59133b17b6e8ac1391e75317f48da030cc80cd6562641416a27f4b58dba"
+    "74db1c270fd04a87dec3e77b4d3ae7a08dff0c1a9b83865626b246dffc2ce6ef"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -478,6 +479,7 @@ for path, text in prepared_source_texts.items():
             "prepared_reduction_param_update",
             "prepared_vertex_merge_param_update",
             "prepared_vertex_bevel_param_update",
+            "prepared_vertex_extrude_param_update",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
@@ -2473,6 +2475,81 @@ for target, old, new, label in (
         mutant[target] = mutant[target].replace(old, new, 1)
     if mutant[target] == poly_inset_param_sources[target] or poly_inset_param_gate(mutant):
         fail(f"Poly Inset parameter mutation did not RED: {label}")
+
+vertex_extrude_param_sources = {
+    "tool": (ROOT / "source/tools/edit/vertex_extrude_tool.d").read_text(),
+    "owner": (ROOT / "source/prepared_vertex_extrude_param_update.d").read_text(),
+    "context": record_context,
+}
+def vertex_extrude_param_gate(s):
+    tool, owner, context = (s[k] for k in ("tool", "owner", "context"))
+    start = tool.find("final PreparedVertexExtrudeParamEffect prepareParamChanged(")
+    end = tool.find("override void evaluate()", start)
+    producer = tool[start:end]
+    build_start = tool.find("final PreparedVertexExtrudeParamImage buildPreparedParamUpdate")
+    build = tool[build_start:start]
+    return (tool.count("ed.extrudeVerticesByMask(mask, shift_, width_)") == 3 and
+            all(x in build for x in (
+                "image.expectedLive = MeshSnapshot.capture(live);",
+                "image.expectedBefore = MeshSnapshot.capture(baseline);",
+                "auto shadow = beginPreparedShadow(image.candidate);",
+                "if (width_ == 0.0f)",
+                "ed.extrudeVerticesByMask(mask, shift_, width_)",
+                "drainPreparedShadowDelivery(image.candidate",
+                "image.deliveryFlags = baselineFlags;")) and
+            all(x in tool for x in (
+                "sameFloat(shift, other.shift)",
+                "sameFloat(width, other.width)",
+                "memcmp(&a, &b, float.sizeof) == 0",
+                "image.expectedLive.matches(live)",
+                "image.expectedBefore.matches(before)")) and
+            all(x in owner for x in (
+                "target.classinfo !is VertexExtrudeTool.classinfo",
+                "!target.ownsPreparedLayer(layer)",
+                "&layer_.meshRef() !is source_",
+                "!target_.preparedParamUpdateMatches(image_, *source_)",
+                "target_.installPreparedParamUpdate(image_)")) and
+            all(x in producer for x in (
+                "uploadOwner.owns(gpu)",
+                "context.prepareStampedMeshImage(layer, owner.candidate,",
+                "context.prepareVertexExtrudeParamUpdate(owner)",
+                "context.prepareUpload(uploadOwner, owner.candidate)",
+                "context.markNoHistoryInstall()")) and
+            producer.find("context.prepareStampedMeshImage") <
+                producer.find("context.prepareVertexExtrudeParamUpdate(owner)") <
+                producer.find("context.prepareUpload(uploadOwner") <
+                producer.find("context.markNoHistoryInstall()") and
+            context.count("case PreparedResourceKind.VertexExtrudeParamUpdateState:") == 3 and
+            "e.vertexExtrudeParamUpdate.install();" in context)
+if not vertex_extrude_param_gate(vertex_extrude_param_sources):
+    fail("Vertex Extrude onParamChanged prepared contract drift")
+for target, old, new, label in (
+    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
+    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
+    ("tool", "sameFloat(width, other.width)", "true", "drop width identity"),
+    ("tool", "if (width_ == 0.0f)", "if (false)", "drop zero-width branch"),
+    ("tool", "ed.extrudeVerticesByMask(mask, shift_, width_)", "cast(size_t)0", "drop kernel"),
+    ("owner", "target.classinfo !is VertexExtrudeTool.classinfo", "false", "broaden product"),
+    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
+    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
+    ("tool", "context.prepareVertexExtrudeParamUpdate(owner)", "true", "drop state"),
+    ("tool", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop upload"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
+    ("context", "e.vertexExtrudeParamUpdate.install();", "", "drop install"),
+):
+    mutant = dict(vertex_extrude_param_sources)
+    if target == "tool":
+        text = mutant[target]
+        producer_start = text.find("final PreparedVertexExtrudeParamEffect prepareParamChanged(")
+        build_start = text.find("final PreparedVertexExtrudeParamImage buildPreparedParamUpdate")
+        start = build_start if label == "drop zero-width branch" else \
+            producer_start if old in text[producer_start:] else build_start
+        pos = text.find(old, start)
+        mutant[target] = text[:pos] + new + text[pos + len(old):]
+    else:
+        mutant[target] = mutant[target].replace(old, new, 1)
+    if mutant[target] == vertex_extrude_param_sources[target] or vertex_extrude_param_gate(mutant):
+        fail(f"Vertex Extrude parameter mutation did not RED: {label}")
 
 vertex_bevel_param_sources = {
     "tool": (ROOT / "source/tools/edit/vertex_bevel_tool.d").read_text(),

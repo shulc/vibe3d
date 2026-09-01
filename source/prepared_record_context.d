@@ -54,6 +54,7 @@ import prepared_poly_inset_param_update : PreparedPolyInsetParamUpdateOwner;
 import prepared_reduction_param_update : PreparedReductionParamUpdateOwner;
 import prepared_vertex_merge_param_update : PreparedVertexMergeParamUpdateOwner;
 import prepared_vertex_bevel_param_update : PreparedVertexBevelParamUpdateOwner;
+import prepared_vertex_extrude_param_update : PreparedVertexExtrudeParamUpdateOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -81,7 +82,8 @@ private enum PreparedResourceKind : ubyte {
     EdgeBevelParamUpdateState, EdgeExtrudeParamUpdateState,
     PolyBevelParamUpdateState, PolyExtrudeParamUpdateState,
     PolyInsetParamUpdateState, ReductionParamUpdateState,
-    VertexMergeParamUpdateState, VertexBevelParamUpdateState
+    VertexMergeParamUpdateState, VertexBevelParamUpdateState,
+    VertexExtrudeParamUpdateState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -126,6 +128,7 @@ private struct PreparedResourceEntry {
     PreparedReductionParamUpdateOwner reductionParamUpdate;
     PreparedVertexMergeParamUpdateOwner vertexMergeParamUpdate;
     PreparedVertexBevelParamUpdateOwner vertexBevelParamUpdate;
+    PreparedVertexExtrudeParamUpdateOwner vertexExtrudeParamUpdate;
     PreparedMirrorDeactivateOwner mirrorDeactivate;
     PreparedBridgeDeactivateOwner bridgeDeactivate;
     ClickPointResourceOwner clickDestroy;
@@ -780,6 +783,18 @@ public:
         e.kind = PreparedResourceKind.VertexBevelParamUpdateState;
         e.vertexBevelParamUpdate = owner; resources_ ~= e; return true;
     }
+    bool prepareVertexExtrudeParamUpdate(
+            PreparedVertexExtrudeParamUpdateOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected Vertex Extrude parameter enlist failure");
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.VertexExtrudeParamUpdateState;
+        e.vertexExtrudeParamUpdate = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -1049,6 +1064,9 @@ public:
             case PreparedResourceKind.VertexBevelParamUpdateState:
                 ok = e.vertexBevelParamUpdate !is null &&
                     e.vertexBevelParamUpdate.validate(); break;
+            case PreparedResourceKind.VertexExtrudeParamUpdateState:
+                ok = e.vertexExtrudeParamUpdate !is null &&
+                    e.vertexExtrudeParamUpdate.validate(); break;
             case PreparedResourceKind.MirrorDeactivateState:
                 ok = e.mirrorDeactivate !is null &&
                     e.mirrorDeactivate.validate(); break;
@@ -1295,6 +1313,10 @@ public:
             e.vertexBevelParamUpdate.install();
             version(unittest) installTrace_[installTraceLength_++] = 53;
             break;
+        case PreparedResourceKind.VertexExtrudeParamUpdateState:
+            e.vertexExtrudeParamUpdate.install();
+            version(unittest) installTrace_[installTraceLength_++] = 54;
+            break;
         case PreparedResourceKind.MirrorDeactivateState:
             e.mirrorDeactivate.install();
             version(unittest) installTrace_[installTraceLength_++] = 40;
@@ -1386,6 +1408,8 @@ private:
             e.vertexMergeParamUpdate.abort(); break;
         case PreparedResourceKind.VertexBevelParamUpdateState:
             e.vertexBevelParamUpdate.abort(); break;
+        case PreparedResourceKind.VertexExtrudeParamUpdateState:
+            e.vertexExtrudeParamUpdate.abort(); break;
         case PreparedResourceKind.MirrorDeactivateState:
             e.mirrorDeactivate.abort(); break;
         case PreparedResourceKind.BridgeDeactivateState:

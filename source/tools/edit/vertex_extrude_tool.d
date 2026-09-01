@@ -27,6 +27,38 @@ import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_vertex_extrude_activation : PreparedVertexExtrudeActivationOwner;
 import command_history : PreparedHistoryKind;
+import prepared_vertex_extrude_param_update : PreparedVertexExtrudeParamUpdateOwner;
+import prepared_tool_effect : PreparedVertexExtrudeParamEffect,
+    PreparedVertexExtrudeParamKind;
+import document : Layer;
+import mesh_gpu : GpuUploadOwner;
+import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
+import core.stdc.string : memcmp;
+
+struct VertexExtrudeParamProjection {
+    bool interactive, active, built;
+    float shift, width;
+    bool opEquals(const VertexExtrudeParamProjection other) const nothrow @nogc {
+        bool sameFloat(ref const float a, ref const float b) nothrow @nogc {
+            return memcmp(&a, &b, float.sizeof) == 0;
+        }
+        return interactive == other.interactive && active == other.active &&
+            built == other.built && sameFloat(shift, other.shift) &&
+            sameFloat(width, other.width);
+    }
+}
+
+struct PreparedVertexExtrudeParamImage {
+    bool valid, applies, nextBuilt;
+    VertexExtrudeParamProjection expected;
+    MeshSnapshot expectedLive, expectedBefore;
+    Mesh candidate;
+    uint deliveryFlags, deliveryDomains;
+    void clear() nothrow @nogc {
+        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
+        candidate = Mesh.init; valid = applies = false;
+    }
+}
 
 struct PreparedVertexExtrudeActivationImage {
     MeshSnapshot before;
@@ -213,6 +245,78 @@ public:
 
     override void onParamChanged(string pname) {
         if (interactiveParamEdit) rebuildPreview();
+    }
+    final bool ownsPreparedLayer(Layer layer) const {
+        return layer !is null && &layer.meshRef() is mesh;
+    }
+    private VertexExtrudeParamProjection paramProjection() const nothrow @nogc {
+        return VertexExtrudeParamProjection(interactiveParamEdit, active, built,
+            shift_, width_);
+    }
+    final PreparedVertexExtrudeParamImage buildPreparedParamUpdate(ref Mesh live) {
+        PreparedVertexExtrudeParamImage image;
+        image.valid = true; image.expected = paramProjection();
+        image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
+        if (!before.filled) return image;
+        Mesh baseline;
+        auto baselineShadow = beginPreparedShadow(baseline);
+        before.restore(baseline);
+        uint baselineFlags, baselineDomains;
+        drainPreparedShadowDelivery(baseline, baselineFlags, baselineDomains);
+        baselineShadow.close();
+        image.expectedBefore = MeshSnapshot.capture(baseline);
+        if (!interactiveParamEdit || !active) return image;
+        image.applies = true; image.candidate = baseline; baseline = Mesh.init;
+        auto shadow = beginPreparedShadow(image.candidate);
+        if (width_ == 0.0f) {
+            image.nextBuilt = false;
+        } else {
+            auto mask = image.candidate.operandVertexMask(EditMode.Vertices);
+            auto ed = MeshEditBatch.unrecorded(image.candidate,
+                kExtrudeEditScope);
+            const n = ed.extrudeVerticesByMask(mask, shift_, width_);
+            ed.close(); image.nextBuilt = (n != 0);
+        }
+        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+            image.deliveryDomains);
+        if (image.deliveryFlags == 0) {
+            image.deliveryFlags = baselineFlags;
+            image.deliveryDomains = baselineDomains;
+        }
+        shadow.close(); return image;
+    }
+    final bool preparedParamUpdateMatches(
+            in PreparedVertexExtrudeParamImage image, ref const Mesh live) const
+            nothrow @nogc {
+        return image.valid && image.expected == paramProjection() &&
+            image.expectedLive.matches(live) &&
+            image.expectedBefore.matches(before);
+    }
+    final void installPreparedParamUpdate(
+            ref PreparedVertexExtrudeParamImage image) nothrow @nogc {
+        if (!image.valid) return;
+        built = image.nextBuilt; image.clear();
+    }
+    final PreparedVertexExtrudeParamEffect prepareParamChanged(
+            PreparedRecordContext context, Layer layer,
+            GpuUploadOwner uploadOwner) {
+        if (context is null) return PreparedVertexExtrudeParamEffect(
+            preparedToolStateOwner, PreparedVertexExtrudeParamKind.None, false);
+        scope(failure) context.discard();
+        auto owner = PreparedVertexExtrudeParamUpdateOwner.prepare(this, layer);
+        auto kind = owner is null ? PreparedVertexExtrudeParamKind.None :
+            owner.effectKind;
+        bool ok = owner !is null;
+        if (ok && owner.applies)
+            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
+                context.prepareStampedMeshImage(layer, owner.candidate,
+                    owner.deliveryFlags, owner.deliveryDomains);
+        if (ok) ok = context.prepareVertexExtrudeParamUpdate(owner);
+        if (ok && owner.applies)
+            ok = context.prepareUpload(uploadOwner, owner.candidate);
+        if (ok) ok = context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedVertexExtrudeParamEffect(preparedToolStateOwner, kind, ok);
     }
     override void evaluate() {}
 
@@ -437,6 +541,16 @@ private:
     }
 
 public:
+    version(unittest) final void seedPreparedParamForTest(ref Mesh live,
+            bool interactive = true, float shift = 0.1f, float width = 0.2f) {
+        interactiveParamEdit = interactive; active = true; built = false;
+        shift_ = shift; width_ = width; before = MeshSnapshot.capture(live);
+    }
+    version(unittest) final void mutatePreparedParamForTest(float value)
+            nothrow @nogc { width_ = value; }
+    version(unittest) final bool preparedParamBuiltForTest() const nothrow @nogc {
+        return built;
+    }
     version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
         return preparedToolStateOwner;
     }
