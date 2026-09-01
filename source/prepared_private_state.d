@@ -2,7 +2,9 @@ module prepared_private_state;
 
 import core.atomic : atomicOp;
 import tools.create.box : BoxTool, PreparedBoxDeactivateImage;
-import tools.create.pen : PenTool, PreparedPenDeactivateImage;
+import tools.create.pen : PenTool, PreparedPenDeactivateImage,
+    PreparedPenParamImage;
+import prepared_tool_effect : PreparedPenParamKind;
 import tools.create.primitive_create_tool : PrimitiveCreateTool, HandledCreateTool,
     PreparedPrimitiveDeactivateImage;
 import tools.create.sphere : SphereTool;
@@ -20,7 +22,7 @@ import snapshot : MeshSnapshot;
 import mesh : Mesh;
 
 enum PreparedPrivateStateKind : ubyte {
-    Box, BoxDeactivate, Pen, PenDeactivate, Primitive, PrimitiveDeactivate,
+    Box, BoxDeactivate, Pen, PenDeactivate, PenParam, Primitive, PrimitiveDeactivate,
     Vertex, ArraySession, CloneSession,
     MagnetSession, ReductionSession
 }
@@ -43,6 +45,7 @@ private:
     PreparedBoxDeactivateImage boxDeactivateImage;
     PenTool penTarget;
     PreparedPenDeactivateImage penDeactivateImage;
+    PreparedPenParamImage penParamImage;
     PrimitiveCreateTool primitiveTarget;
     PreparedPrimitiveDeactivateImage primitiveDeactivateImage;
     HandledCreateTool handledTarget;
@@ -94,6 +97,23 @@ public:
         o.penTarget = target;
         o.penDeactivateImage = target.buildPreparedDeactivateState();
         return o.penDeactivateImage.valid ? o : null;
+    }
+    static PreparedPrivateStateOwner penParam(PenTool target, string name) {
+        if (target is null || target.classinfo !is PenTool.classinfo) return null;
+        auto o = new PreparedPrivateStateOwner(PreparedPrivateStateKind.PenParam);
+        o.penTarget = target;
+        o.penParamImage = target.buildPreparedParamImage(name);
+        return o.penParamImage.valid ? o : null;
+    }
+    @property PreparedPenParamKind penParamKind() const nothrow @nogc {
+        return kind_ == PreparedPrivateStateKind.PenParam ?
+            penParamImage.kind : PreparedPenParamKind.None;
+    }
+    @property bool penParamUploads() const nothrow @nogc {
+        return kind_ == PreparedPrivateStateKind.PenParam && penParamImage.upload;
+    }
+    ref const(Mesh) penParamPreview() const return scope nothrow @nogc {
+        return penParamImage.nextPreview;
     }
     static PreparedPrivateStateOwner primitive(PrimitiveCreateTool target) {
         auto o = new PreparedPrivateStateOwner(PreparedPrivateStateKind.Primitive);
@@ -210,6 +230,8 @@ private:
         case PreparedPrivateStateKind.Pen: return penTarget !is null;
         case PreparedPrivateStateKind.PenDeactivate:
             return penTarget !is null && penDeactivateImage.valid;
+        case PreparedPrivateStateKind.PenParam:
+            return penTarget !is null && penParamImage.valid;
         case PreparedPrivateStateKind.Primitive:
             final switch (primitiveProjection) {
             case PrimitiveProjection.Base: return primitiveTarget !is null;
@@ -247,6 +269,8 @@ public:
              !boxTarget.preparedDeactivateStateMatches(boxDeactivateImage)) ||
             (kind_ == PreparedPrivateStateKind.PenDeactivate &&
              !penTarget.preparedDeactivateStateMatches(penDeactivateImage)) ||
+            (kind_ == PreparedPrivateStateKind.PenParam &&
+             !penTarget.preparedParamMatches(penParamImage)) ||
             (kind_ == PreparedPrivateStateKind.PrimitiveDeactivate &&
              !primitiveTarget.preparedDeactivateStateMatches(
                  primitiveDeactivateImage)))
@@ -264,6 +288,8 @@ public:
         case PreparedPrivateStateKind.Pen: penTarget.installPreparedPrivateActivation(); break;
         case PreparedPrivateStateKind.PenDeactivate:
             penTarget.installPreparedDeactivateState(penDeactivateImage); break;
+        case PreparedPrivateStateKind.PenParam:
+            penTarget.installPreparedParam(penParamImage); break;
         case PreparedPrivateStateKind.Primitive:
             final switch (primitiveProjection) {
             case PrimitiveProjection.Base: primitiveTarget.installPreparedPrimitiveReset(); break;
@@ -301,6 +327,7 @@ public:
         activationBaseline = MeshSnapshot.init;
         boxDeactivateImage.clear();
         penDeactivateImage.clear();
+        penParamImage.clear();
         primitiveDeactivateImage.clear();
         pending = validated = false;
     }

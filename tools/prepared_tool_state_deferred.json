@@ -22,16 +22,6 @@
   {
     "batch": "P1.0b.3+",
     "key": {
-      "aggregate": "PenTool",
-      "module": "tools.create.pen",
-      "signature": "void(string name)",
-      "symbol": "onParamChanged"
-    },
-    "reason": "Mesh/GpuGl preview or mixed branch requires P1.0b.3+ typed later-owner effects"
-  },
-  {
-    "batch": "P1.0b.3+",
-    "key": {
       "aggregate": "MagnetTool",
       "module": "tools.deform.magnet",
       "signature": "void(string pname)",

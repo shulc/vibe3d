@@ -275,6 +275,8 @@ public:
         case PreparedPrivateStateKind.Pen: e.kind = PreparedResourceKind.PenState; break;
         case PreparedPrivateStateKind.PenDeactivate:
             e.kind = PreparedResourceKind.PenState; break;
+        case PreparedPrivateStateKind.PenParam:
+            e.kind = PreparedResourceKind.PenState; break;
         case PreparedPrivateStateKind.Primitive: e.kind = PreparedResourceKind.PrimitiveState; break;
         case PreparedPrivateStateKind.PrimitiveDeactivate:
             e.kind = PreparedResourceKind.PrimitiveState; break;

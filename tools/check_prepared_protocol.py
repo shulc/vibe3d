@@ -238,6 +238,7 @@ B5O_PREPARED_LEGACY = {
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "activate"),
 }
 B5P_PREPARED_LEGACY = {
+    ("tools.create.pen", "PenTool", "onParamChanged"),
     ("tools.alignment.mirror", "MirrorTool", "deactivate"),
     ("tools.create.box", "BoxTool", "deactivate"),
     ("tools.create.pen", "PenTool", "deactivate"),
@@ -303,7 +304,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "77ebc44f1589b45d2565c559185d02c69efff625f06583c751e1527b37cfd310"
+    "97ee0d500ecad1d5947e18576647163d3f01c5d7cf93cce2f84fd5feb438a444"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -1841,6 +1842,73 @@ for target, old, new, label in (
     else: context = context.replace(old, new, 1)
     if pen_activation_gate(pen, private, context):
         fail(f"Pen activation mutation did not RED: {label}")
+
+# Pen numeric edits preserve the exact legacy branch split while preparing a
+# detached CPU/private image and, only for position edits, a preview upload.
+def pen_param_gate(pen, private, effect):
+    build_start = pen.find("final PreparedPenParamImage buildPreparedParamImage")
+    build_end = pen.find("final PreparedPenParamEffect prepareParamChanged", build_start)
+    build = pen[build_start:build_end]
+    producer_start = pen.find("final PreparedPenParamEffect prepareParamChanged")
+    producer_end = pen.find("final void installPreparedPrivateActivation", producer_start)
+    producer = pen[producer_start:producer_end]
+    factory_start = private.find("static PreparedPrivateStateOwner penParam")
+    factory_end = private.find("static PreparedPrivateStateOwner primitive", factory_start)
+    factory = private[factory_start:factory_end]
+    return (all(x in build for x in (
+                "image.expectedVertices = vertices_.dup;",
+                "image.nextVertices = vertices_.dup;",
+                "handler !is image.expectedHandlers[i]",
+                "!sameValueBytes(frame.toWorld, image.expectedToWorld)",
+                "!image.expectedPreview.matches(previewMesh)",
+                "if (state != PenState.Drawing) return image;",
+                'if (name == "currentPoint")',
+                'if (name != "posX" && name != "posY" && name != "posZ")',
+                "beginPreparedShadow(image.nextPreview)",
+                "drainPreparedShadowDelivery(image.nextPreview")) and
+            "installPreparedMeshImage(previewMesh, image.nextPreview)" in pen and
+            "target.classinfo !is PenTool.classinfo" in factory and
+            "target.buildPreparedParamImage(name)" in factory and
+            "!penTarget.preparedParamMatches(penParamImage)" in private and
+            "penTarget.installPreparedParam(penParamImage);" in private and
+            all(x in producer for x in (
+                "context.preparePrivateState(stateOwner)",
+                "ownsPreparedPreviewUpload(previewUpload)",
+                "context.prepareUpload(previewUpload, stateOwner.penParamPreview)",
+                "context.markNoHistoryInstall()", "scope(failure) context.discard();",
+                "if (!ok) context.discard();")) and
+            producer.find("context.preparePrivateState(stateOwner)") <
+                producer.find("context.prepareUpload(previewUpload") <
+                producer.find("context.markNoHistoryInstall()") and
+            "enum PreparedPenParamKind : ubyte { None, Noop, CurrentPoint, Position }" in effect and
+            "PreparedPenParamKind kind;" in effect)
+pen_param_sources = (pen_activation,
+    (ROOT / "source/prepared_private_state.d").read_text(),
+    (ROOT / "source/prepared_tool_effect.d").read_text())
+if not pen_param_gate(*pen_param_sources):
+    fail("Pen onParamChanged prepared contract drift")
+for target, old, new, label in (
+    ("build", "image.nextVertices = vertices_.dup;", "image.nextVertices = vertices_;", "borrow vertices"),
+    ("build", "handler !is image.expectedHandlers[i]", "false", "drop handler identity"),
+    ("build", "!sameValueBytes(frame.toWorld, image.expectedToWorld)", "false", "drop frame validation"),
+    ("build", "beginPreparedShadow(image.nextPreview)", "beginPreparedShadow(previewMesh)", "drop detached shadow"),
+    ("private", "target.classinfo !is PenTool.classinfo", "false", "broaden product"),
+    ("private", "!penTarget.preparedParamMatches(penParamImage)", "false", "drop exact validation"),
+    ("producer", "ownsPreparedPreviewUpload(previewUpload)", "true", "drop GPU identity"),
+    ("producer", "context.prepareUpload(previewUpload, stateOwner.penParamPreview)", "true", "drop preview upload"),
+    ("producer", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
+):
+    p, o, e = pen_param_sources
+    if target in ("build", "producer"):
+        start = p.find("final PreparedPenParamImage buildPreparedParamImage") if target == "build" else p.find("final PreparedPenParamEffect prepareParamChanged")
+        pos = p.find(old, start); p = p[:pos] + new + p[pos + len(old):]
+    elif target == "private":
+        start = o.find("static PreparedPrivateStateOwner penParam") if "target.classinfo" in old else 0
+        pos = o.find(old, start); o = o[:pos] + new + o[pos + len(old):]
+    else:
+        e = e.replace(old, new, 1)
+    if pen_param_gate(p, o, e):
+        fail(f"Pen parameter mutation did not RED: {label}")
 
 # PrimitiveCreateTool.activate is one inherited declaration with six exact
 # products. Its closed projection preserves each leaf's resetSession law and
@@ -4206,14 +4274,17 @@ def pen_deactivate_gate(tool, owner, effect, context, handlers):
     body = tool[start:end]
     candidate = tool[tool.find("private bool buildPreparedDeactivateCandidate("):start]
     state = tool[tool.find("final PreparedPenDeactivateImage buildPreparedDeactivateState"):start]
-    owner_block = owner[owner.find("static PreparedPrivateStateOwner penDeactivate"):]
+    owner_start = owner.find("static PreparedPrivateStateOwner penDeactivate")
+    owner_end = owner.find("static PreparedPrivateStateOwner penParam", owner_start)
+    owner_factory = owner[owner_start:owner_end]
+    owner_block = owner[owner_start:]
     effect_block = effect[effect.find("enum PreparedDeactivateKind"):
         effect.find("enum PreparedActivateKind")]
     return (start >= 0 and end > start and "Pen," in effect_block and
         "final class BoxHandlerBatchResourceOwner" in handlers and
         "bool prepareDestroy(BoxHandlerBatchResourceOwner owner)" in context and
-        "target.classinfo !is PenTool.classinfo" in owner_block and
-        "target.buildPreparedDeactivateState()" in owner_block and
+        "target.classinfo !is PenTool.classinfo" in owner_factory and
+        "target.buildPreparedDeactivateState()" in owner_factory and
         "!penTarget.preparedDeactivateStateMatches(penDeactivateImage)" in owner_block and
         "penTarget.installPreparedDeactivateState(penDeactivateImage);" in owner_block and
         "image.vertices = vertices_.dup;" in state and
@@ -4699,7 +4770,7 @@ expected_primitive_products = [
 def b5d1_gate(s):
     return ("enum PreparedPrivateStateKind : ubyte" in s["owner"] and
             all(kind in s["owner"] for kind in
-                ("Box, BoxDeactivate, Pen, PenDeactivate, Primitive, PrimitiveDeactivate,", "Vertex", "ArraySession", "CloneSession",
+                ("Box, BoxDeactivate, Pen, PenDeactivate, PenParam, Primitive, PrimitiveDeactivate,", "Vertex", "ArraySession", "CloneSession",
                  "MagnetSession", "ReductionSession")) and
             s["owner"].count("@disable this(this)") == 2 and
             "delegate" not in s["owner"] and "void*" not in s["owner"] and
@@ -4822,7 +4893,7 @@ def b5e_gate(owner, context, sources, snapshot=b5e_snapshot):
     return (all(kind in owner for kind in
                 ("ArraySession", "CloneSession", "MagnetSession", "ReductionSession")) and
             "MeshSnapshot activationBaseline;" in owner and
-            owner.count("target.classinfo !is") == 7 and
+            owner.count("target.classinfo !is") == 8 and
             "o.activationBaseline = image;" in owner and
             "failSessionPrepareForTest_" in owner and
             all(f"{prefix}Target.installPreparedActivation(activationBaseline);" in owner

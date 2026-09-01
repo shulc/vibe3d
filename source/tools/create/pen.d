@@ -18,7 +18,8 @@ import snapshot : MeshSnapshot;
 import prepared_record_context : PreparedRecordContext;
 import prepared_private_state : PreparedPrivateStateOwner;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
-    PreparedDeactivateEffect, PreparedDeactivateKind;
+    PreparedDeactivateEffect, PreparedDeactivateKind, PreparedPenParamEffect,
+    PreparedPenParamKind;
 import mesh_gpu : GpuCreateOwner, GpuUploadOwner, GpuResourceOwner;
 import command_history : PreparedHistoryKind;
 import document : Layer;
@@ -38,6 +39,15 @@ import snap : SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 
 import std.math : abs;
+import core.stdc.string : memcmp;
+
+private bool sameValueBytes(T)(ref const T a, ref const T b) nothrow @nogc {
+    return memcmp(&a, &b, T.sizeof) == 0;
+}
+private bool sameSliceBytes(T)(const(T)[] a, const(T)[] b) nothrow @nogc {
+    return a.length == b.length && (a.length == 0 ||
+        memcmp(a.ptr, b.ptr, a.length * T.sizeof) == 0);
+}
 
 // Snap-type bits that PenTool handles via applyPenGuide (Pen-local guide
 // constraints). These bits are excluded from snapLocalHit at all Pen call
@@ -215,6 +225,70 @@ version(unittest) unittest {
         new SnapOverlayOwner());
     assert(mutationEffect.resourceAccepted); mutationPen.state = PenState.Drawing;
     assert(!mutationContext.validate()); mutationContext.discard();
+
+    auto pointPen = new PenTool(() => &mesh, &sceneGpu, LitShader.init);
+    pointPen.state = PenState.Drawing;
+    pointPen.vertices_ = [Vec3(1,2,3), Vec3(4,5,6)];
+    pointPen.params_.currentPoint = 9;
+    auto pointImage = pointPen.buildPreparedParamImage("currentPoint");
+    assert(pointImage.expectedState == cast(ubyte)pointPen.state);
+    assert(pointImage.expectedParams == pointPen.params_);
+    assert(pointImage.expectedVertices == pointPen.vertices_);
+    assert(pointImage.expectedPreview.matches(pointPen.previewMesh),
+        "captured preview mismatch");
+    assert(pointPen.preparedParamMatches(pointImage));
+    auto pointContext = new PreparedRecordContext(null, new RecordObserverHub());
+    pointContext.setResourceIdentity(7, 11);
+    auto pointEffect = pointPen.prepareParamChanged(pointContext,
+        "currentPoint", null);
+    assert(pointEffect.accepted, "currentPoint preparation refused");
+    assert(pointEffect.kind == PreparedPenParamKind.CurrentPoint);
+    assert(pointPen.params_.currentPoint == 9, "prepare mutated live params");
+    assert(pointContext.validate(), "currentPoint validation refused");
+    pointContext.install();
+    assert(pointPen.params_.currentPoint == 1 && pointPen.params_.posX == 4 &&
+        pointPen.params_.posY == 5 && pointPen.params_.posZ == 6 &&
+        pointContext.installTraceForTest() == [7,8]);
+
+    auto positionPen = new PenTool(() => &mesh, &sceneGpu, LitShader.init);
+    positionPen.state = PenState.Drawing;
+    positionPen.frame.toWorld = [1,0,0,0, 0,1,0,0,
+                                 0,0,1,0, 0,0,0,1];
+    positionPen.vertices_ = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0)];
+    positionPen.params_.currentPoint = 1;
+    positionPen.params_.posX = 2; positionPen.params_.posY = 3;
+    positionPen.params_.posZ = 4;
+    auto positionContext = new PreparedRecordContext(null,
+        new RecordObserverHub()); positionContext.setResourceIdentity(7, 11);
+    auto positionEffect = positionPen.prepareParamChanged(positionContext,
+        "posX", GpuUploadOwner.fakeForTest(positionPen.preparedPreviewGpu()));
+    assert(positionEffect.accepted && positionEffect.kind ==
+        PreparedPenParamKind.Position &&
+        positionPen.vertices_[1] == Vec3(1,0,0) &&
+        positionPen.previewMesh.vertices.length == 0 &&
+        positionContext.validate());
+    positionContext.install();
+    assert(positionPen.vertices_[1] == Vec3(2,3,4) &&
+        positionPen.previewMesh.vertices == positionPen.vertices_ &&
+        positionContext.installTraceForTest() == [7,2,8]);
+
+    auto stalePen = new PenTool(() => &mesh, &sceneGpu, LitShader.init);
+    stalePen.state = PenState.Drawing; stalePen.vertices_ = [Vec3(1,1,1)];
+    stalePen.params_.currentPoint = 0; stalePen.params_.posX = 8;
+    auto staleContext = new PreparedRecordContext(null, new RecordObserverHub());
+    staleContext.setResourceIdentity(7, 11);
+    assert(stalePen.prepareParamChanged(staleContext, "posX",
+        GpuUploadOwner.fakeForTest(stalePen.preparedPreviewGpu())).accepted);
+    stalePen.params_.posX = 9;
+    assert(!staleContext.validate() && stalePen.vertices_[0] == Vec3(1,1,1));
+
+    GpuMesh wrongPreview;
+    auto wrongContext = new PreparedRecordContext(null, new RecordObserverHub());
+    wrongContext.setResourceIdentity(7, 11); stalePen.params_.posX = 8;
+    auto wrongEffect = stalePen.prepareParamChanged(wrongContext, "posX",
+        GpuUploadOwner.fakeForTest(&wrongPreview));
+    assert(!wrongEffect.accepted && !wrongContext.validate() &&
+        stalePen.vertices_[0] == Vec3(1,1,1));
 }
 
 // ---------------------------------------------------------------------------
@@ -261,6 +335,26 @@ struct PreparedPenDeactivateImage {
     void clear() nothrow @nogc {
         vertices = null; previewClear = Mesh.init;
         this = PreparedPenDeactivateImage.init;
+    }
+}
+
+struct PreparedPenParamImage {
+    bool valid, upload;
+    PreparedPenParamKind kind;
+    ubyte expectedState;
+    PenParams expectedParams, nextParams;
+    Vec3[] expectedVertices, nextVertices;
+    BoxHandler[] expectedHandlers;
+    Vec3[] expectedHandlerPositions, nextHandlerPositions;
+    float[16] expectedToWorld;
+    MeshSnapshot expectedPreview;
+    Mesh nextPreview;
+    void clear() nothrow @nogc {
+        expectedVertices = nextVertices = null;
+        expectedHandlers = null;
+        expectedHandlerPositions = nextHandlerPositions = null;
+        expectedPreview = MeshSnapshot.init; nextPreview = Mesh.init;
+        valid = upload = false; kind = PreparedPenParamKind.None;
     }
 }
 
@@ -384,6 +478,100 @@ public:
         }
     }
 
+    final PreparedPenParamImage buildPreparedParamImage(string name) const {
+        PreparedPenParamImage image;
+        image.valid = true; image.kind = PreparedPenParamKind.Noop;
+        image.expectedState = cast(ubyte)state;
+        image.expectedParams = params_; image.nextParams = params_;
+        image.expectedVertices = vertices_.dup;
+        image.nextVertices = vertices_.dup;
+        image.expectedHandlers.length = vertHandlers.length;
+        image.expectedHandlerPositions.length = vertHandlers.length;
+        image.nextHandlerPositions.length = vertHandlers.length;
+        foreach (i, handler; vertHandlers) {
+            image.expectedHandlers[i] = cast(BoxHandler)handler;
+            image.expectedHandlerPositions[i] = handler.pos;
+            image.nextHandlerPositions[i] = handler.pos;
+        }
+        image.expectedToWorld = frame.toWorld;
+        image.expectedPreview = MeshSnapshot.capture(previewMesh);
+        if (state != PenState.Drawing) return image;
+        if (name == "currentPoint") {
+            image.kind = PreparedPenParamKind.CurrentPoint;
+            int n = cast(int)image.nextVertices.length;
+            if (image.nextParams.currentPoint < -1)
+                image.nextParams.currentPoint = -1;
+            if (image.nextParams.currentPoint >= n)
+                image.nextParams.currentPoint = n - 1;
+            int idx = image.nextParams.currentPoint;
+            if (idx < 0 || idx >= n)
+                image.nextParams.posX = image.nextParams.posY =
+                    image.nextParams.posZ = 0;
+            else {
+                auto p = image.nextVertices[idx];
+                image.nextParams.posX = p.x; image.nextParams.posY = p.y;
+                image.nextParams.posZ = p.z;
+            }
+            return image;
+        }
+        if (name != "posX" && name != "posY" && name != "posZ")
+            return image;
+        int idx = image.nextParams.currentPoint;
+        if (idx < 0 || idx >= cast(int)image.nextVertices.length) return image;
+        image.kind = PreparedPenParamKind.Position; image.upload = true;
+        image.nextVertices[idx] = Vec3(image.nextParams.posX,
+            image.nextParams.posY, image.nextParams.posZ);
+        auto shadow = beginPreparedShadow(image.nextPreview);
+        foreach (v; image.nextVertices)
+            image.nextPreview.addVertex(transformPoint(frame.toWorld, v));
+        size_t minimum = image.nextParams.makeQuads ? 4 : 3;
+        if (image.nextVertices.length >= minimum) {
+            if (image.nextParams.makeQuads) {
+                int count = cast(int)(image.nextVertices.length / 2 * 2);
+                foreach (k; 0 .. (count - 2) / 2)
+                    image.nextPreview.addFace([cast(uint)(2*k),
+                        cast(uint)(2*k+2), cast(uint)(2*k+3), cast(uint)(2*k+1)]);
+            } else {
+                uint[] face; face.length = image.nextVertices.length;
+                foreach (i, _; image.nextVertices) face[i] = cast(uint)i;
+                image.nextPreview.addFace(face);
+            }
+        } else if (image.nextVertices.length >= 2) {
+            foreach (i; 0 .. cast(int)image.nextVertices.length - 1)
+                image.nextPreview.addEdge(cast(uint)i, cast(uint)(i + 1));
+        }
+        foreach (i, v; image.nextVertices)
+            if (i < image.nextHandlerPositions.length)
+                image.nextHandlerPositions[i] = transformPoint(frame.toWorld, v);
+        uint ignoredFlags, ignoredDomains;
+        drainPreparedShadowDelivery(image.nextPreview, ignoredFlags, ignoredDomains);
+        shadow.close();
+        return image;
+    }
+    final bool preparedParamMatches(in PreparedPenParamImage image)
+            const nothrow @nogc {
+        if (!image.valid || cast(ubyte)state != image.expectedState ||
+            !sameValueBytes(params_, image.expectedParams) ||
+            !sameSliceBytes(vertices_, image.expectedVertices) ||
+            !sameValueBytes(frame.toWorld, image.expectedToWorld) ||
+            !image.expectedPreview.matches(previewMesh) ||
+            vertHandlers.length != image.expectedHandlers.length) return false;
+        foreach (i, handler; vertHandlers)
+            if (handler !is image.expectedHandlers[i] ||
+                !sameValueBytes(handler.pos,
+                    image.expectedHandlerPositions[i])) return false;
+        return true;
+    }
+    final void installPreparedParam(ref PreparedPenParamImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        params_ = image.nextParams;
+        vertices_ = image.nextVertices; image.nextVertices = null;
+        if (image.upload) installPreparedMeshImage(previewMesh, image.nextPreview);
+        foreach (i, handler; vertHandlers)
+            handler.pos = image.nextHandlerPositions[i];
+        image.clear();
+    }
     override void activate() {
         state = PenState.Idle;
         vertices_.length = 0;
@@ -411,6 +599,22 @@ public:
     }
 
     final GpuMesh* preparedPreviewGpu() nothrow @nogc { return &previewGpu; }
+    final PreparedPenParamEffect prepareParamChanged(PreparedRecordContext context,
+            string name, GpuUploadOwner previewUpload) {
+        if (context is null) return PreparedPenParamEffect(
+            preparedToolStateOwner, PreparedPenParamKind.None, false);
+        scope(failure) context.discard();
+        auto stateOwner = PreparedPrivateStateOwner.penParam(this, name);
+        auto kind = stateOwner is null ? PreparedPenParamKind.None :
+            stateOwner.penParamKind;
+        bool ok = stateOwner !is null && context.preparePrivateState(stateOwner);
+        if (ok && stateOwner.penParamUploads)
+            ok = ownsPreparedPreviewUpload(previewUpload) &&
+                context.prepareUpload(previewUpload, stateOwner.penParamPreview);
+        if (ok) ok = context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedPenParamEffect(preparedToolStateOwner, kind, ok);
+    }
     version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
         return preparedToolStateOwner;
     }
