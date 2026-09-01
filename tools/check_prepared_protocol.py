@@ -238,6 +238,7 @@ B5O_PREPARED_LEGACY = {
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "activate"),
 }
 B5P_PREPARED_LEGACY = {
+    ("tools.common.command_wrapper", "CommandWrapperTool", "activate"),
     ("tools.create.box", "BoxTool", "activate"),
     ("tools.create.pen", "PenTool", "activate"),
     ("tools.create.primitive_create_tool", "PrimitiveCreateTool", "activate"),
@@ -292,7 +293,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "e49a6ac006fe3102fc6a928e1e053b299d702eda22a9b91c7103f4bde12a8a37"
+    "cbebb8436b53f28ef79ae62ad76f1a217bd9545fe96485fdc7d109cbd3154be9"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -437,6 +438,7 @@ for path, text in prepared_source_texts.items():
             "prepared_loop_slice_activation",
             "prepared_slice_activation",
             "prepared_tack_activation",
+            "prepared_command_wrapper_activation",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
@@ -1438,7 +1440,9 @@ for relative, old, new, label in (
     ("source/tools/common/command_wrapper.d", "context.markHistoryInstall()", "true", "drop history marker"),
     ("source/tools/common/command_wrapper.d", "context.prepareDestroy(clickOwner)", "true", "drop click destroy"),
     ("source/tools/common/command_wrapper.d", "clickOwner.owns(clickHandle)", "true", "drop click owner identity"),
-    ("source/tools/common/command_wrapper.d", "context.discard();", "", "drop terminal discard"),
+    ("source/tools/common/command_wrapper.d",
+     "if (!context.markHistoryInstall()) {\n            context.discard();",
+     "if (!context.markHistoryInstall()) {", "drop terminal discard"),
     ("source/tools/edit/tack.d", "previewOwner.owns(&previewGpu_)", "true", "drop preview owner identity"),
     ("source/tools/edit/tack.d", "prepared = context.prepareDestroy(previewOwner);", "prepared = true;", "drop preview destroy"),
     ("source/tools/edit/tack.d", "if (prepared && !context.markHistoryInstall())", "if (false)", "drop resource-history order"),
@@ -3652,6 +3656,74 @@ for fixture in (
     if run.returncode == 0 or ("not copyable" not in run.stdout and
             not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
         fail("Tack activation token copy was not rejected:\n" + run.stdout)
+
+# CommandWrapper activation is one detached CPU session image. The concrete
+# product roster is closed here and in the owner; ClickPointHandler has no GL
+# allocation until draw(), so this transition intentionally has no GPU arm.
+command_wrapper_activation_owner = \
+    (ROOT / "source/prepared_command_wrapper_activation.d").read_text()
+command_wrapper_activation_tool = \
+    (ROOT / "source/tools/common/command_wrapper.d").read_text()
+def command_wrapper_activation_gate(owner, context, tool):
+    return (owner.count("@disable this(this)") == 2 and
+        "final class PreparedCommandWrapperActivationOwner" in owner and
+        all(("target.classinfo is " + product + ".classinfo") in owner for product in
+            ("XfrmSmoothTool", "XfrmJitterTool", "XfrmQuantizeTool", "EdgeSlideTool")) and
+        "result.source_ = target.preparedActivationMesh();" in owner and
+        "result.image_ = target.buildPreparedActivation();" in owner and
+        "target_.preparedActivationMatches(source_, image_.baseline)" in owner and
+        "target_.installPreparedActivation(image_);" in owner and
+        "image.baseline = meshPtr.vertices.dup;" in tool and
+        "image.falloffs = currentFalloffConfigs();" in tool and
+        "image.clickHandle = new ClickPointHandler();" in tool and
+        "baseline = image.baseline; image.baseline = null;" in tool and
+        "lastAppliedFalloffs = image.falloffs; image.falloffs = null;" in tool and
+        "clickHandle = image.clickHandle; image.clickHandle = null;" in tool and
+        "dirty = false; paramsDirty = false; dragging = false;" in tool and
+        "refireDriving_ = false; refireCommitted_ = false;" in tool and
+        "context.prepareCommandWrapperActivation(owner) &&\n            context.markNoHistoryInstall()" in tool and
+        "PreparedActivateKind.CommandWrapper, ok);" in tool and
+        "CommandWrapperActivationState" in context and
+        "e.commandWrapperActivation.validate();" in context and
+        "e.commandWrapperActivation.install();" in context and
+        "e.commandWrapperActivation.abort();" in context)
+if not command_wrapper_activation_gate(command_wrapper_activation_owner,
+                                       record_context,
+                                       command_wrapper_activation_tool):
+    fail("CommandWrapper activation prepared contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo is EdgeSlideTool.classinfo", "false", "drop product"),
+    ("owner", "result.source_ = target.preparedActivationMesh();", "", "drop source capture"),
+    ("owner", "target_.preparedActivationMatches(source_, image_.baseline)", "true", "drop validation"),
+    ("owner", "target_.installPreparedActivation(image_);", "", "drop install"),
+    ("tool", "image.baseline = meshPtr.vertices.dup;", "", "drop baseline"),
+    ("tool", "image.falloffs = currentFalloffConfigs();", "", "drop falloff set"),
+    ("tool", "image.clickHandle = new ClickPointHandler();", "", "drop click handle"),
+    ("tool", "baseline = image.baseline; image.baseline = null;", "baseline = image.baseline;", "retain baseline payload"),
+    ("tool", "dirty = false; paramsDirty = false; dragging = false;", "dirty = false; dragging = false;", "drop param reset"),
+    ("tool", "context.prepareCommandWrapperActivation(owner)", "true", "drop state arm"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory seal"),
+    ("context", "e.commandWrapperActivation.validate();", "true;", "drop context validation"),
+    ("context", "e.commandWrapperActivation.install();", "", "drop context install"),
+    ("context", "e.commandWrapperActivation.abort();", "", "drop context abort"),
+):
+    o, c, t = command_wrapper_activation_owner, record_context, command_wrapper_activation_tool
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    else: t = t.replace(old, new, 1)
+    if ((o == command_wrapper_activation_owner and c == record_context and
+         t == command_wrapper_activation_tool) or
+            command_wrapper_activation_gate(o, c, t)):
+        fail(f"CommandWrapper activation mutation did not RED: {label}")
+for fixture in (
+    ROOT / "tests/compile_fail/prepared_command_wrapper_activation_token_copy.d",
+    ROOT / "tests/compile_fail/prepared_command_wrapper_activation_validated_token_copy.d",
+):
+    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if run.returncode == 0 or ("not copyable" not in run.stdout and
+            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+        fail("CommandWrapper activation token copy was not rejected:\n" + run.stdout)
 
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
 # detached whole-Mesh adoption with exact caller-supplied change flags, and a

@@ -35,6 +35,7 @@ import prepared_edge_slice_activation : PreparedEdgeSliceActivationOwner;
 import prepared_loop_slice_activation : PreparedLoopSliceActivationOwner;
 import prepared_slice_activation : PreparedSliceActivationOwner;
 import prepared_tack_activation : PreparedTackActivationOwner;
+import prepared_command_wrapper_activation : PreparedCommandWrapperActivationOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -52,7 +53,7 @@ private enum PreparedResourceKind : ubyte {
     PolyBevelActivationState, VertexBevelActivationState,
     VertexExtrudeActivationState, EdgeExtrudeActivationState,
     EdgeSliceActivationState, LoopSliceActivationState, SliceActivationState,
-    TackActivationState
+    TackActivationState, CommandWrapperActivationState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -80,6 +81,7 @@ private struct PreparedResourceEntry {
     PreparedLoopSliceActivationOwner loopSliceActivation;
     PreparedSliceActivationOwner sliceActivation;
     PreparedTackActivationOwner tackActivation;
+    PreparedCommandWrapperActivationOwner commandWrapperActivation;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -494,6 +496,17 @@ public:
         e.kind = PreparedResourceKind.TackActivationState;
         e.tackActivation = owner; resources_ ~= e; return true;
     }
+    bool prepareCommandWrapperActivation(PreparedCommandWrapperActivationOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected CommandWrapper activation enlist failure");
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.CommandWrapperActivationState;
+        e.commandWrapperActivation = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -708,6 +721,9 @@ public:
             case PreparedResourceKind.TackActivationState:
                 ok = e.tackActivation !is null &&
                     e.tackActivation.validate(); break;
+            case PreparedResourceKind.CommandWrapperActivationState:
+                ok = e.commandWrapperActivation !is null &&
+                    e.commandWrapperActivation.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -872,6 +888,10 @@ public:
             e.tackActivation.install();
             version(unittest) installTrace_[installTraceLength_++] = 33;
             break;
+        case PreparedResourceKind.CommandWrapperActivationState:
+            e.commandWrapperActivation.install();
+            version(unittest) installTrace_[installTraceLength_++] = 34;
+            break;
         }
         if (!installedHistory && history_ !is null)
             history_.installPreparedToken(validated_);
@@ -918,6 +938,8 @@ private:
         case PreparedResourceKind.RadialSweepTransitionState: e.radialSweepTransition.abort(); break;
         case PreparedResourceKind.GestureCarrierMismatch: break;
         case PreparedResourceKind.GpuCreateUpload: e.gpuCreateUpload.abortEnlisted(); break;
+        case PreparedResourceKind.CommandWrapperActivationState:
+            e.commandWrapperActivation.abort(); break;
         case PreparedResourceKind.RadialArrayTransitionState:
             e.radialArrayTransition.abort(); break;
         case PreparedResourceKind.TransformActivationState:

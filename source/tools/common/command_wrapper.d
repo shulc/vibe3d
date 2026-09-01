@@ -1,12 +1,24 @@
 module tools.common.command_wrapper;
-import prepared_tool_effect : PreparedParamDelta, PreparedParamKind;
+import prepared_tool_effect : PreparedParamDelta, PreparedParamKind,
+    PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_record_context : PreparedRecordContext;
+import prepared_command_wrapper_activation : PreparedCommandWrapperActivationOwner;
 import handler : ClickPointResourceOwner;
 import command_history : PreparedHistoryKind;
 private struct WrapperPreparedParamHandle {
     bool applyDirty, consumable;
     @disable this(this);
+}
+
+struct PreparedCommandWrapperActivationImage {
+    bool valid;
+    Vec3[] baseline;
+    FalloffPacket[] falloffs;
+    ClickPointHandler clickHandle;
+    void clear() nothrow @nogc {
+        valid = false; baseline = null; falloffs = null; clickHandle = null;
+    }
 }
 
 import bindbc.sdl;
@@ -214,6 +226,65 @@ abstract class CommandWrapperTool : Tool, RefireClient {
         if (meshPtr is null) return;
         reinitSession();
         clickHandle = new ClickPointHandler();
+    }
+
+    final PreparedCommandWrapperActivationImage buildPreparedActivation()
+    {
+        PreparedCommandWrapperActivationImage image;
+        if (meshPtr is null) return image;
+        image.valid = true;
+        image.baseline = meshPtr.vertices.dup;
+        image.falloffs = currentFalloffConfigs();
+        image.clickHandle = new ClickPointHandler();
+        return image;
+    }
+
+    final Mesh* preparedActivationMesh() nothrow @nogc { return meshPtr; }
+    final bool preparedActivationMatches(Mesh* source, const(Vec3)[] vertices)
+            nothrow @nogc {
+        if (source is null || meshPtr !is source || source.vertices.length != vertices.length)
+            return false;
+        foreach (i; 0 .. vertices.length)
+            if (source.vertices[i] != vertices[i]) return false;
+        return true;
+    }
+    final void installPreparedActivation(ref PreparedCommandWrapperActivationImage image)
+            nothrow @nogc {
+        baseline = image.baseline; image.baseline = null;
+        dirty = false; paramsDirty = false; dragging = false;
+        refireDriving_ = false; refireCommitted_ = false;
+        lastAppliedFalloffs = image.falloffs; image.falloffs = null;
+        clickHandle = image.clickHandle; image.clickHandle = null;
+        image.valid = false;
+    }
+    final PreparedSessionActivateEffect prepareActivate(PreparedRecordContext context) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.CommandWrapper, false);
+        scope(failure) { context.discard(); }
+        auto owner = PreparedCommandWrapperActivationOwner.prepare(this);
+        bool ok = owner !is null && context.prepareCommandWrapperActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) { context.discard(); }
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.CommandWrapper, ok);
+    }
+
+    version(unittest) final ClickPointHandler seedPreparedActivationForTest() {
+        baseline = [Vec3(91, 92, 93)];
+        lastAppliedFalloffs = [FalloffPacket.init];
+        dirty = paramsDirty = dragging = true;
+        refireDriving_ = refireCommitted_ = true;
+        clickHandle = new ClickPointHandler();
+        return clickHandle;
+    }
+    version(unittest) final bool preparedActivationInstalledForTest(
+            ClickPointHandler oldHandle = null) {
+        if (baseline.length != (meshPtr is null ? 0 : meshPtr.vertices.length) ||
+            clickHandle is null || clickHandle is oldHandle || dirty || paramsDirty ||
+            dragging || refireDriving_ || refireCommitted_) return false;
+        foreach (i; 0 .. baseline.length)
+            if (baseline[i] != meshPtr.vertices[i]) return false;
+        return falloffSetsEqual(lastAppliedFalloffs, currentFalloffConfigs());
     }
 
     // (Re)capture the session baseline from the CURRENT mesh — shared by
