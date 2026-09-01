@@ -1314,6 +1314,71 @@ private:
     }
 }
 
+private shared ulong nextBoxHandlerBatchOwnerId;
+
+/// Closed prepared owner for a fixed ordered set of BoxHandler VAO/VBO pairs.
+/// Pen uses it to make marker destruction part of the same arm transaction as
+/// its mesh/history/final-state teardown.
+final class BoxHandlerBatchResourceOwner {
+private:
+    immutable ulong ownerId;
+    ulong generation, requiredThread, requiredContext;
+    BoxHandler[] targets;
+    GLuint[] vaos, vbos;
+    bool pending, validated;
+public:
+    this(BoxHandler[] handlers, ulong threadIdentity, ulong contextIdentity) {
+        ownerId = atomicOp!"+="(nextBoxHandlerBatchOwnerId, 1UL);
+        targets = handlers.dup; requiredThread = threadIdentity;
+        requiredContext = contextIdentity;
+    }
+    bool owns(const BoxHandler[] handlers) const nothrow @nogc {
+        if (handlers.length != targets.length) return false;
+        foreach (i, handler; handlers)
+            if (handler !is targets[i]) return false;
+        return true;
+    }
+    bool beginEnlistedDestroy() {
+        if (pending) return false;
+        vaos.length = targets.length; vbos.length = targets.length;
+        foreach (i, target; targets) {
+            if (target is null) return false;
+            vaos[i] = target.vao; vbos[i] = target.vbo;
+        }
+        ++generation; pending = true; validated = false; return true;
+    }
+    bool validateEnlisted(ulong threadIdentity, ulong contextIdentity)
+            nothrow @nogc {
+        if (!pending || validated || threadIdentity != requiredThread ||
+            contextIdentity != requiredContext || targets.length != vaos.length)
+            return false;
+        foreach (i, target; targets)
+            if (target is null || target.vao != vaos[i] || target.vbo != vbos[i])
+                return false;
+        validated = true; return true;
+    }
+    void installEnlisted() nothrow @nogc {
+        if (!pending || !validated) return;
+        foreach (i, target; targets) {
+            glDeleteVertexArrays(1, &vaos[i]);
+            glDeleteBuffers(1, &vbos[i]);
+            target.vao = 0; target.vbo = 0;
+        }
+        consume();
+    }
+    void abortEnlisted() nothrow @nogc {
+        if (pending) consume();
+    }
+    version(unittest) size_t payloadLengthForTest() const nothrow @nogc {
+        return targets.length;
+    }
+private:
+    void consume() nothrow @nogc {
+        targets = null; vaos = null; vbos = null;
+        pending = validated = false; ++generation;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // CircleHandler : Handler
 // Filled disc + outline ring at a given position in a given plane.

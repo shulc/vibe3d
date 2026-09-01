@@ -2,7 +2,7 @@ module prepared_private_state;
 
 import core.atomic : atomicOp;
 import tools.create.box : BoxTool, PreparedBoxDeactivateImage;
-import tools.create.pen : PenTool;
+import tools.create.pen : PenTool, PreparedPenDeactivateImage;
 import tools.create.primitive_create_tool : PrimitiveCreateTool, HandledCreateTool;
 import tools.create.sphere : SphereTool;
 import tools.create.capsule : CapsuleTool;
@@ -18,7 +18,7 @@ import tools.edit.reduce : ReductionTool;
 import snapshot : MeshSnapshot;
 
 enum PreparedPrivateStateKind : ubyte {
-    Box, BoxDeactivate, Pen, Primitive, Vertex, ArraySession, CloneSession,
+    Box, BoxDeactivate, Pen, PenDeactivate, Primitive, Vertex, ArraySession, CloneSession,
     MagnetSession, ReductionSession
 }
 private enum PrimitiveProjection : ubyte {
@@ -39,6 +39,7 @@ private:
     BoxTool boxTarget;
     PreparedBoxDeactivateImage boxDeactivateImage;
     PenTool penTarget;
+    PreparedPenDeactivateImage penDeactivateImage;
     PrimitiveCreateTool primitiveTarget;
     HandledCreateTool handledTarget;
     SphereTool sphereTarget;
@@ -81,6 +82,14 @@ public:
         if (target is null || target.classinfo !is PenTool.classinfo) return null;
         auto o = new PreparedPrivateStateOwner(PreparedPrivateStateKind.Pen);
         o.penTarget = target; return o;
+    }
+    static PreparedPrivateStateOwner penDeactivate(PenTool target) {
+        if (target is null || target.classinfo !is PenTool.classinfo) return null;
+        auto o = new PreparedPrivateStateOwner(
+            PreparedPrivateStateKind.PenDeactivate);
+        o.penTarget = target;
+        o.penDeactivateImage = target.buildPreparedDeactivateState();
+        return o.penDeactivateImage.valid ? o : null;
     }
     static PreparedPrivateStateOwner primitive(PrimitiveCreateTool target) {
         auto o = new PreparedPrivateStateOwner(PreparedPrivateStateKind.Primitive);
@@ -173,6 +182,8 @@ private:
         case PreparedPrivateStateKind.BoxDeactivate:
             return boxTarget !is null && boxDeactivateImage.valid;
         case PreparedPrivateStateKind.Pen: return penTarget !is null;
+        case PreparedPrivateStateKind.PenDeactivate:
+            return penTarget !is null && penDeactivateImage.valid;
         case PreparedPrivateStateKind.Primitive:
             final switch (primitiveProjection) {
             case PrimitiveProjection.Base: return primitiveTarget !is null;
@@ -205,7 +216,9 @@ public:
         if (!pending || validated || prepared.ownerId != ownerId ||
             prepared.generation != generation || !hasTarget() ||
             (kind_ == PreparedPrivateStateKind.BoxDeactivate &&
-             !boxTarget.preparedDeactivateStateMatches(boxDeactivateImage)))
+             !boxTarget.preparedDeactivateStateMatches(boxDeactivateImage)) ||
+            (kind_ == PreparedPrivateStateKind.PenDeactivate &&
+             !penTarget.preparedDeactivateStateMatches(penDeactivateImage)))
             return false;
         validated = true; validatedToken.ownerId = ownerId;
         validatedToken.generation = generation; return true;
@@ -218,6 +231,8 @@ public:
         case PreparedPrivateStateKind.BoxDeactivate:
             boxTarget.installPreparedDeactivateState(boxDeactivateImage); break;
         case PreparedPrivateStateKind.Pen: penTarget.installPreparedPrivateActivation(); break;
+        case PreparedPrivateStateKind.PenDeactivate:
+            penTarget.installPreparedDeactivateState(penDeactivateImage); break;
         case PreparedPrivateStateKind.Primitive:
             final switch (primitiveProjection) {
             case PrimitiveProjection.Base: primitiveTarget.installPreparedPrimitiveReset(); break;
@@ -251,6 +266,7 @@ public:
     void abort() nothrow @nogc {
         activationBaseline = MeshSnapshot.init;
         boxDeactivateImage.clear();
+        penDeactivateImage.clear();
         pending = validated = false;
     }
     version(unittest) bool activationPayloadFilledForTest() const nothrow @nogc {

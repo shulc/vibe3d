@@ -17,8 +17,14 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import prepared_record_context : PreparedRecordContext;
 import prepared_private_state : PreparedPrivateStateOwner;
-import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
-import mesh_gpu : GpuCreateOwner;
+import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
+    PreparedDeactivateEffect, PreparedDeactivateKind;
+import mesh_gpu : GpuCreateOwner, GpuUploadOwner, GpuResourceOwner;
+import command_history : PreparedHistoryKind;
+import document : Layer;
+import handler : BoxHandlerBatchResourceOwner;
+import snap_render : SnapOverlayOwner;
+import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 import display_sync : refreshDisplay;
 import tools.create.create_common : pickWorkplane, BuildPlane,
                               pickWorkplaneFrame, WorkplaneFrame,
@@ -71,6 +77,7 @@ struct PenParams {
 
 version(unittest) unittest {
     import record_observer_hub : RecordObserverHub;
+    import view : View;
 
     Mesh mesh; GpuMesh sceneGpu;
     auto pen = new PenTool(() => &mesh, &sceneGpu, LitShader.init);
@@ -141,6 +148,73 @@ version(unittest) unittest {
     assert(!foreignEffect.accepted && foreignEffect.kind == PreparedActivateKind.Pen &&
         foreignEffect.owner == pen.preparedOwnerForTest() &&
         !foreignContext.validate());
+
+    auto commitLayer = new Layer; GpuMesh commitGpu;
+    auto commitPen = new PenTool(() => &commitLayer.meshRef(), &commitGpu,
+        LitShader.init);
+    commitPen.state = PenState.Drawing;
+    commitPen.vertices_ = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0)];
+    commitPen.params_.currentPoint = 2;
+    commitPen.frame.toWorld = [1,0,0,0, 0,1,0,0,
+                               0,0,1,0, 0,0,0,1];
+    commitPen.previewGpu.faceVao = 71;
+    auto commitHistory = new CommandHistory();
+    auto commitView = new View(0,0,1,1);
+    commitPen.setGestureBindings(commitHistory, () => new MeshSessionEdit(
+        &commitLayer.meshRef(), commitView, EditMode.Vertices,
+        "test.pen", "Pen Polygon"));
+    auto commitContext = new PreparedRecordContext(commitHistory,
+        new RecordObserverHub()); commitContext.setResourceIdentity(7,11);
+    auto commitEffect = commitPen.prepareDeactivate(commitContext, commitLayer,
+        GpuUploadOwner.fakeForTest(&commitGpu),
+        GpuUploadOwner.fakeForTest(&commitGpu),
+        GpuUploadOwner.fakeForTest(commitPen.preparedPreviewGpu()),
+        GpuResourceOwner.fakeForTest(commitPen.preparedPreviewGpu()),
+        new BoxHandlerBatchResourceOwner(commitPen.vertHandlers, 7, 11), null);
+    assert(commitEffect.resourceAccepted && commitEffect.historyAccepted &&
+        commitEffect.kind == PreparedDeactivateKind.Pen &&
+        commitLayer.meshRef().faces.length == 0 && commitContext.validate());
+    commitContext.install(); size_t modelDepth, uiDepth;
+    commitHistory.undoDepthCounts(modelDepth, uiDepth);
+    assert(commitLayer.meshRef().faces.length == 1 && modelDepth == 1 &&
+        uiDepth == 0 && commitPen.state == PenState.Idle &&
+        commitPen.vertices_.length == 0 && commitPen.vertHandlers.length == 0 &&
+        commitPen.params_.currentPoint == -1 && commitPen.meshChanged &&
+        commitContext.installTraceForTest() == [3,4,2,1,2,2,7,2,2]);
+
+    auto shortLayer = new Layer; GpuMesh shortGpu;
+    auto shortPen = new PenTool(() => &shortLayer.meshRef(), &shortGpu,
+        LitShader.init); shortPen.state = PenState.Drawing;
+    shortPen.vertices_ = [Vec3(0,0,0), Vec3(1,0,0)];
+    shortPen.params_.currentPoint = 1; shortPen.previewGpu.faceVao = 81;
+    SnapResult shortSnap; shortSnap.snapped = true; shortSnap.targetIndex = 8;
+    shortPen.lastSnap = shortSnap; publishLastSnap(shortSnap);
+    auto shortContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub()); shortContext.setResourceIdentity(7,11);
+    auto shortEffect = shortPen.prepareDeactivate(shortContext, shortLayer,
+        null, null, null,
+        GpuResourceOwner.fakeForTest(shortPen.preparedPreviewGpu()),
+        new BoxHandlerBatchResourceOwner(shortPen.vertHandlers, 7, 11),
+        new SnapOverlayOwner());
+    assert(shortEffect.resourceAccepted && !shortEffect.historyAccepted &&
+        shortContext.validate()); shortContext.install();
+    assert(shortLayer.meshRef().faces.length == 0 &&
+        shortPen.state == PenState.Idle && shortPen.vertices_.length == 0 &&
+        shortPen.lastSnap == SnapResult.init &&
+        shortContext.installTraceForTest() == [8,2,7,6,2]);
+
+    auto mutationLayer = new Layer; GpuMesh mutationGpu;
+    auto mutationPen = new PenTool(() => &mutationLayer.meshRef(), &mutationGpu,
+        LitShader.init); mutationPen.previewGpu.faceVao = 91;
+    auto mutationContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub()); mutationContext.setResourceIdentity(7,11);
+    auto mutationEffect = mutationPen.prepareDeactivate(mutationContext,
+        mutationLayer, null, null, null,
+        GpuResourceOwner.fakeForTest(mutationPen.preparedPreviewGpu()),
+        new BoxHandlerBatchResourceOwner(mutationPen.vertHandlers, 7, 11),
+        new SnapOverlayOwner());
+    assert(mutationEffect.resourceAccepted); mutationPen.state = PenState.Drawing;
+    assert(!mutationContext.validate()); mutationContext.discard();
 }
 
 // ---------------------------------------------------------------------------
@@ -173,6 +247,22 @@ version(unittest) unittest {
 // ---------------------------------------------------------------------------
 
 private enum PenState { Idle, Drawing }
+
+struct PreparedPenDeactivateImage {
+    bool valid, willCommit;
+    ubyte expectedState;
+    PenParams params;
+    Vec3[] vertices;
+    Mesh previewClear;
+    float[16] toWorld;
+    size_t expectedHandlerCount;
+    SnapResult expectedLastSnap;
+    bool expectedMeshChanged;
+    void clear() nothrow @nogc {
+        vertices = null; previewClear = Mesh.init;
+        this = PreparedPenDeactivateImage.init;
+    }
+}
 
 class PenTool : Tool {
 private:
@@ -329,6 +419,132 @@ public:
         state = PenState.Idle; vertices_.length = 0; params_.currentPoint = -1;
         params_.posX = params_.posY = params_.posZ = 0.0f;
         dragArmed = dragInitiated = false; dragVertIdx = -1;
+    }
+
+    final PreparedPenDeactivateImage buildPreparedDeactivateState() const {
+        PreparedPenDeactivateImage image;
+        image.valid = true; image.expectedState = cast(ubyte)state;
+        image.params = params_; image.vertices = vertices_.dup;
+        image.toWorld = frame.toWorld;
+        image.expectedHandlerCount = vertHandlers.length;
+        image.expectedLastSnap = lastSnap;
+        image.expectedMeshChanged = meshChanged;
+        image.willCommit = state == PenState.Drawing &&
+            vertices_.length >= (params_.makeQuads ? 4 : 3);
+        return image;
+    }
+    final bool preparedDeactivateStateMatches(
+            in PreparedPenDeactivateImage image) const nothrow @nogc {
+        return image.valid && cast(ubyte)state == image.expectedState &&
+            params_ == image.params && vertices_ == image.vertices &&
+            vertHandlers.length == image.expectedHandlerCount &&
+            lastSnap == image.expectedLastSnap &&
+            meshChanged == image.expectedMeshChanged &&
+            (!image.willCommit || frame.toWorld == image.toWorld);
+    }
+    final void installPreparedDeactivateState(
+            ref PreparedPenDeactivateImage image) nothrow @nogc {
+        state = PenState.Idle; vertHandlers = null; vertices_ = null;
+        installPreparedMeshImage(previewMesh, image.previewClear);
+        params_.currentPoint = -1;
+        params_.posX = params_.posY = params_.posZ = 0.0f;
+        if (image.willCommit) meshChanged = true;
+        else lastSnap = SnapResult.init;
+        image.clear();
+    }
+    final bool ownsPreparedMainUpload(GpuUploadOwner owner) nothrow @nogc {
+        return owner !is null && owner.owns(gpu);
+    }
+    final bool ownsPreparedPreviewUpload(GpuUploadOwner owner) nothrow @nogc {
+        return owner !is null && owner.owns(&previewGpu);
+    }
+    final bool ownsPreparedPreviewDestroy(GpuResourceOwner owner) nothrow @nogc {
+        return owner !is null && owner.owns(&previewGpu);
+    }
+    final bool ownsPreparedHandlers(BoxHandlerBatchResourceOwner owner)
+            const nothrow @nogc {
+        return owner !is null && owner.owns(vertHandlers);
+    }
+    private bool buildPreparedDeactivateCandidate(
+            in PreparedPenDeactivateImage image, out Mesh candidate,
+            out MeshSnapshot pre, out uint deliveryFlags,
+            out uint deliveryDomains) {
+        if (!image.willCommit) return true;
+        pre = MeshSnapshot.capture(*mesh); pre.restore(candidate);
+        auto shadow = beginPreparedShadow(candidate);
+        const uint base = cast(uint)candidate.vertices.length;
+        foreach (v; image.vertices)
+            candidate.addVertex(transformPoint(image.toWorld, v));
+        if (image.params.makeQuads) {
+            const int count = cast(int)(image.vertices.length / 2 * 2);
+            foreach (k; 0 .. (count - 2) / 2) {
+                const uint a = base + cast(uint)(2*k);
+                const uint b = base + cast(uint)(2*k+2);
+                const uint c = base + cast(uint)(2*k+3);
+                const uint d = base + cast(uint)(2*k+1);
+                candidate.addFace(image.params.flip ? [d,c,b,a] : [a,b,c,d]);
+            }
+        } else {
+            uint[] face; face.length = image.vertices.length;
+            foreach (i, _; image.vertices)
+                face[i] = base + cast(uint)(image.params.flip
+                    ? image.vertices.length - 1 - i : i);
+            candidate.addFace(face);
+        }
+        candidate.declareCornerAppend(); candidate.buildLoops();
+        candidate.syncSelection();
+        drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);
+        shadow.close(); return true;
+    }
+
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,
+            Layer layer, GpuUploadOwner mainCommitUpload,
+            GpuUploadOwner mainRefreshUpload, GpuUploadOwner previewEmptyUpload,
+            GpuResourceOwner previewDestroy,
+            BoxHandlerBatchResourceOwner handlerDestroy,
+            SnapOverlayOwner snapOwner) {
+        if (context is null) return PreparedDeactivateEffect(
+            preparedToolStateOwner, PreparedDeactivateKind.Pen, false, false);
+        scope(failure) context.discard();
+        auto probe = buildPreparedDeactivateState();
+        bool ok = layer !is null && &layer.meshRef() is mesh &&
+            ownsPreparedPreviewDestroy(previewDestroy) &&
+            ownsPreparedHandlers(handlerDestroy);
+        Mesh candidate, emptyPreview; MeshSnapshot pre;
+        uint deliveryFlags, deliveryDomains;
+        if (ok) ok = buildPreparedDeactivateCandidate(probe, candidate, pre,
+            deliveryFlags, deliveryDomains);
+        if (ok && probe.willCommit)
+            ok = ownsPreparedMainUpload(mainCommitUpload) &&
+                ownsPreparedMainUpload(mainRefreshUpload) &&
+                ownsPreparedPreviewUpload(previewEmptyUpload) &&
+                context.prepareStampedMeshImage(layer, candidate,
+                    deliveryFlags, deliveryDomains) &&
+                context.prepareUpload(mainCommitUpload, candidate);
+        bool historyPrepared;
+        if (ok && probe.willCommit && history !is null && gestureFactory !is null) {
+            auto cmd = cast(MeshSessionEdit)gestureFactory();
+            if (cmd !is null) {
+                cmd.setSnapshots(pre, MeshSnapshot.capture(candidate), "Pen Polygon");
+                historyPrepared = context.prepare(cmd,
+                    PreparedHistoryKind.Plain).accepted; ok = historyPrepared;
+            } else ok = context.prepareGestureCarrierMismatch();
+        }
+        if (ok) ok = historyPrepared ? context.markHistoryInstall()
+                                     : context.markNoHistoryInstall();
+        if (ok && probe.willCommit)
+            ok = context.prepareUpload(mainRefreshUpload, candidate);
+        if (ok) ok = context.prepareDestroy(handlerDestroy);
+        auto stateOwner = ok ? PreparedPrivateStateOwner.penDeactivate(this) : null;
+        if (ok) ok = context.preparePrivateState(stateOwner);
+        if (ok && probe.willCommit)
+            ok = context.prepareUpload(previewEmptyUpload, emptyPreview);
+        if (ok && !probe.willCommit)
+            ok = snapOwner !is null && context.prepareSnapClear(snapOwner);
+        if (ok) ok = context.prepareDestroy(previewDestroy);
+        if (!ok) context.discard();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.Pen, historyPrepared, ok);
     }
 
     override void deactivate() {

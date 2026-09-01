@@ -10,7 +10,7 @@ import record_observer_hub : RecordObserverHub;
 import mesh : Mesh;
 import mesh_gpu : GpuResourceOwner, GpuUploadOwner, GpuCreateOwner,
                   GpuCreateUploadOwner;
-import handler : ClickPointResourceOwner;
+import handler : ClickPointResourceOwner, BoxHandlerBatchResourceOwner;
 import snap_render : SnapOverlayOwner;
 import prepared_private_state : PreparedPrivateStateOwner, PreparedPrivateStateKind;
 import prepared_selection_profile : PreparedSelectionProfileOwner;
@@ -47,7 +47,8 @@ import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
 
 private enum PreparedResourceKind : ubyte {
-    HistoryInstall, NoHistoryInstall, MeshInstall, DeliveryInstall, GpuMeshDestroy, GpuUpload, ClickPointDestroy
+    HistoryInstall, NoHistoryInstall, MeshInstall, DeliveryInstall, GpuMeshDestroy,
+    GpuUpload, ClickPointDestroy, BoxHandlerBatchDestroy
     , GpuCreate, SnapOverlayClear, BoxState, PenState, PrimitiveState, VertexState,
     ArraySessionState, CloneSessionState, MagnetSessionState, ReductionSessionState,
     RadialSweepProfileState, RadialSweepTransitionState, GestureCarrierMismatch,
@@ -98,6 +99,7 @@ private struct PreparedResourceEntry {
     PreparedMirrorDeactivateOwner mirrorDeactivate;
     PreparedBridgeDeactivateOwner bridgeDeactivate;
     ClickPointResourceOwner clickDestroy;
+    BoxHandlerBatchResourceOwner boxHandlersDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
     PreparedSelectionProfileOwner selectionProfile;
@@ -216,6 +218,16 @@ public:
         return true;
     }
 
+    bool prepareDestroy(BoxHandlerBatchResourceOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(resources_.length + 1);
+        if (!owner.beginEnlistedDestroy()) return false;
+        scope(failure) owner.abortEnlisted();
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.BoxHandlerBatchDestroy;
+        e.boxHandlersDestroy = owner; resources_ ~= e; return true;
+    }
+
     bool prepareCreate(GpuCreateOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -258,6 +270,8 @@ public:
         case PreparedPrivateStateKind.BoxDeactivate:
             e.kind = PreparedResourceKind.BoxState; break;
         case PreparedPrivateStateKind.Pen: e.kind = PreparedResourceKind.PenState; break;
+        case PreparedPrivateStateKind.PenDeactivate:
+            e.kind = PreparedResourceKind.PenState; break;
         case PreparedPrivateStateKind.Primitive: e.kind = PreparedResourceKind.PrimitiveState; break;
         case PreparedPrivateStateKind.Vertex: e.kind = PreparedResourceKind.VertexState; break;
         case PreparedPrivateStateKind.ArraySession: e.kind = PreparedResourceKind.ArraySessionState; break;
@@ -735,6 +749,9 @@ public:
                 ok = e.gpuUpload.validateEnlisted(resourceThread_, resourceContext_); break;
             case PreparedResourceKind.ClickPointDestroy:
                 ok = e.clickDestroy.validateEnlisted(resourceThread_, resourceContext_); break;
+            case PreparedResourceKind.BoxHandlerBatchDestroy:
+                ok = e.boxHandlersDestroy.validateEnlisted(
+                    resourceThread_, resourceContext_); break;
             case PreparedResourceKind.GpuCreate:
                 ok = e.gpuCreate.validateEnlisted(resourceThread_, resourceContext_); break;
             case PreparedResourceKind.SnapOverlayClear:
@@ -882,6 +899,10 @@ public:
             break;
         case PreparedResourceKind.ClickPointDestroy:
             e.clickDestroy.installEnlisted();
+            version (unittest) installTrace_[installTraceLength_++] = 2;
+            break;
+        case PreparedResourceKind.BoxHandlerBatchDestroy:
+            e.boxHandlersDestroy.installEnlisted();
             version (unittest) installTrace_[installTraceLength_++] = 2;
             break;
         case PreparedResourceKind.GpuCreate:
@@ -1067,6 +1088,8 @@ private:
         case PreparedResourceKind.GpuMeshDestroy: e.gpuDestroy.abortEnlisted(); break;
         case PreparedResourceKind.GpuUpload: e.gpuUpload.abortEnlisted(); break;
         case PreparedResourceKind.ClickPointDestroy: e.clickDestroy.abortEnlisted(); break;
+        case PreparedResourceKind.BoxHandlerBatchDestroy:
+            e.boxHandlersDestroy.abortEnlisted(); break;
         case PreparedResourceKind.GpuCreate: e.gpuCreate.abortEnlisted(); break;
         case PreparedResourceKind.SnapOverlayClear: e.snapOverlay.abortClear(); break;
         case PreparedResourceKind.BoxState:

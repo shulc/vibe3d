@@ -240,6 +240,7 @@ B5O_PREPARED_LEGACY = {
 B5P_PREPARED_LEGACY = {
     ("tools.alignment.mirror", "MirrorTool", "deactivate"),
     ("tools.create.box", "BoxTool", "deactivate"),
+    ("tools.create.pen", "PenTool", "deactivate"),
     ("tools.edit.bridge_tool", "BridgeTool", "deactivate"),
     ("tools.edit.topology_pen.tool", "TopologyPenTool", "activate"),
     ("tools.edit.edge_extend", "EdgeExtendTool", "activate"),
@@ -300,7 +301,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "e7ec348342faada79924fe918de2efad85efbbca45ba1d3bbd0bd53bf6f2cd09"
+    "5eeebc8ade65fcbf6c85974b82462b62fd5aa389d785b57a1e2dcf22e2f38da8"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -1353,10 +1354,11 @@ record_context = (ROOT / "source/prepared_record_context.d").read_text()
 handler_shapes = (ROOT / "source/handles/shapes.d").read_text()
 resource_contracts = (
     "private enum PreparedResourceKind : ubyte {",
-    "HistoryInstall, MeshInstall, DeliveryInstall, GpuMeshDestroy, GpuUpload, ClickPointDestroy",
+    "GpuUpload, ClickPointDestroy, BoxHandlerBatchDestroy",
     "bool prepareDestroy(GpuResourceOwner owner)",
     "bool prepareUpload(GpuUploadOwner owner, ref const Mesh mesh,",
     "bool prepareDestroy(ClickPointResourceOwner owner)",
+    "bool prepareDestroy(BoxHandlerBatchResourceOwner owner)",
     "if (!ok) { invalidateTransaction(); return false; }",
     "if (resources_.length > 0 && !historyMarker_)",
     "void invalidateTransaction() nothrow @nogc",
@@ -1367,18 +1369,30 @@ resource_contracts = (
 )
 for contract in resource_contracts:
     expected = (2 if contract == "foreach (ref e; resources_) final switch (e.kind)"
-                else 3 if contract == "scope(failure) owner.abortEnlisted();"
-                else 6 if contract == "resources_.reserve(resources_.length + 1);"
+                else 4 if contract == "scope(failure) owner.abortEnlisted();"
+                else 7 if contract == "resources_.reserve(resources_.length + 1);"
                 else 1)
     if record_context.count(contract) != expected:
         fail(f"P1.0b.4c.1 resource-journal contract drift: {contract}")
+click_resource_block = handler_shapes[handler_shapes.find(
+    "final class ClickPointResourceOwner"):]
+box_handler_resource_block = handler_shapes[handler_shapes.find(
+    "final class BoxHandlerBatchResourceOwner"):handler_shapes.find(
+    "final class ClickPointResourceOwner")]
 for contract in (
     "final class ClickPointResourceOwner",
     "target.vao != vao || target.vbo != vbo || target.built != built",
     "void installEnlisted() nothrow @nogc",
 ):
-    if handler_shapes.count(contract) != 1:
+    if click_resource_block.count(contract) != 1:
         fail(f"P1.0b.4c.1 click-resource contract drift: {contract}")
+for contract in (
+    "final class BoxHandlerBatchResourceOwner",
+    "target.vao != vaos[i] || target.vbo != vbos[i]",
+    "targets = null; vaos = null; vbos = null;",
+):
+    if box_handler_resource_block.count(contract) != 1:
+        fail(f"P1.0b.4c.1 box-handler resource contract drift: {contract}")
 for old, new, label in (
     ("if (!ok) { invalidateTransaction(); return false; }", "", "joint refusal"),
     ("history_.installPreparedToken(validated_); installedHistory = true;",
@@ -1395,11 +1409,25 @@ for old, new, label in (
     if context_mutant == record_context and handler_mutant == handler_shapes:
         fail(f"P1.0b.4c.1 {label} mutation anchor vanished")
     journal_gate = (all(c in context_mutant for c in resource_contracts) and
-        context_mutant.count("resources_.reserve(resources_.length + 1);") == 4 and
-        context_mutant.count("scope(failure) owner.abortEnlisted();") == 3 and
-        "target.vao != vao || target.vbo != vbo || target.built != built" in handler_mutant)
+        context_mutant.count("resources_.reserve(resources_.length + 1);") == 7 and
+        context_mutant.count("scope(failure) owner.abortEnlisted();") == 4 and
+        "target.vao != vao || target.vbo != vbo || target.built != built" in handler_mutant and
+        "target.vao != vaos[i] || target.vbo != vbos[i]" in handler_mutant)
     if journal_gate:
         fail(f"P1.0b.4c.1 {label} mutation did not fail")
+for old, new, label in (
+    ("target.vao != vaos[i] || target.vbo != vbos[i]", "false",
+     "batch handler identity"),
+    ("targets = null; vaos = null; vbos = null;", "",
+     "batch payload consumption"),
+):
+    mutant = handler_shapes.replace(old, new, 1)
+    block = mutant[mutant.find("final class BoxHandlerBatchResourceOwner"):
+        mutant.find("final class ClickPointResourceOwner")]
+    if old not in handler_shapes or all(contract in block for contract in (
+            "target.vao != vaos[i] || target.vbo != vbos[i]",
+            "targets = null; vaos = null; vbos = null;")):
+        fail(f"P1.0b.4c.1 {label} mutation did not RED")
 
 # P1.0b.4c.2 dormant producers; legacy override bodies remain covered by the
 # frozen 35-row writer fingerprints above. Transform suppression is an exact
@@ -1750,7 +1778,8 @@ def pen_activation_gate(pen, private, context):
     end = pen.find("final GpuMesh* preparedPreviewGpu", start)
     producer = pen[start:end] if start >= 0 and end > start else ""
     install_start = pen.find("final void installPreparedPrivateActivation()")
-    install_end = pen.find("override void deactivate()", install_start)
+    install_end = pen.find(
+        "final PreparedPenDeactivateImage buildPreparedDeactivateState", install_start)
     installer = pen[install_start:install_end] \
         if install_start >= 0 and install_end > install_start else ""
     return (
@@ -1767,7 +1796,8 @@ def pen_activation_gate(pen, private, context):
         "if (!ok) context.discard();" in producer and
         "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
         "            PreparedActivateKind.Pen, ok);" in producer and
-        "target.classinfo !is PenTool.classinfo" in private and
+        "target.classinfo !is PenTool.classinfo" in private[:private.find(
+            "static PreparedPrivateStateOwner penDeactivate")] and
         "case PreparedPrivateStateKind.Pen: penTarget.installPreparedPrivateActivation();" in private and
         "state = PenState.Idle; vertices_.length = 0; params_.currentPoint = -1;" in installer and
         "params_.posX = params_.posY = params_.posZ = 0.0f;" in installer and
@@ -4164,6 +4194,102 @@ for target, old, new, label in (
     if box_deactivate_gate(t, o, e):
         fail(f"Box deactivation mutation did not RED: {label}")
 
+pen_deactivate_tool = (ROOT / "source/tools/create/pen.d").read_text()
+pen_deactivate_owner = (ROOT / "source/prepared_private_state.d").read_text()
+pen_deactivate_effect = (ROOT / "source/prepared_tool_effect.d").read_text()
+def pen_deactivate_gate(tool, owner, effect, context, handlers):
+    start = tool.find("final PreparedDeactivateEffect prepareDeactivate(")
+    end = tool.find("override void deactivate()", start)
+    body = tool[start:end]
+    candidate = tool[tool.find("private bool buildPreparedDeactivateCandidate("):start]
+    state = tool[tool.find("final PreparedPenDeactivateImage buildPreparedDeactivateState"):start]
+    owner_block = owner[owner.find("static PreparedPrivateStateOwner penDeactivate"):]
+    effect_block = effect[effect.find("enum PreparedDeactivateKind"):
+        effect.find("enum PreparedActivateKind")]
+    return (start >= 0 and end > start and "Pen," in effect_block and
+        "final class BoxHandlerBatchResourceOwner" in handlers and
+        "bool prepareDestroy(BoxHandlerBatchResourceOwner owner)" in context and
+        "target.classinfo !is PenTool.classinfo" in owner_block and
+        "target.buildPreparedDeactivateState()" in owner_block and
+        "!penTarget.preparedDeactivateStateMatches(penDeactivateImage)" in owner_block and
+        "penTarget.installPreparedDeactivateState(penDeactivateImage);" in owner_block and
+        "image.vertices = vertices_.dup;" in state and
+        "frame.toWorld == image.toWorld" in state and
+        "installPreparedMeshImage(previewMesh, image.previewClear);" in state and
+        "beginPreparedShadow(candidate)" in candidate and
+        "foreach (v; image.vertices)" in candidate and
+        "candidate.declareCornerAppend(); candidate.buildLoops();" in candidate and
+        "candidate.syncSelection();" in candidate and
+        "drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);" in candidate and
+        "scope(failure) context.discard();" in body and
+        "&layer.meshRef() is mesh" in body and
+        "ownsPreparedHandlers(handlerDestroy)" in body and
+        "ownsPreparedMainUpload(mainCommitUpload)" in body and
+        "ownsPreparedMainUpload(mainRefreshUpload)" in body and
+        "ownsPreparedPreviewUpload(previewEmptyUpload)" in body and
+        "ownsPreparedPreviewDestroy(previewDestroy)" in body and
+        "context.prepareStampedMeshImage(layer, candidate," in body and
+        "context.prepareUpload(mainCommitUpload, candidate)" in body and
+        "cmd.setSnapshots(pre, MeshSnapshot.capture(candidate), \"Pen Polygon\");" in body and
+        "context.prepareGestureCarrierMismatch()" in body and
+        "context.prepareUpload(mainRefreshUpload, candidate)" in body and
+        "context.prepareDestroy(handlerDestroy)" in body and
+        "PreparedPrivateStateOwner.penDeactivate(this)" in body and
+        "context.preparePrivateState(stateOwner)" in body and
+        "context.prepareUpload(previewEmptyUpload, emptyPreview)" in body and
+        "context.prepareSnapClear(snapOwner)" in body and
+        "context.prepareDestroy(previewDestroy)" in body and
+        body.find("context.prepareStampedMeshImage(layer, candidate,") <
+            body.find("context.prepareUpload(mainCommitUpload, candidate)") <
+            body.find("context.markHistoryInstall()") <
+            body.find("context.prepareUpload(mainRefreshUpload, candidate)") <
+            body.find("context.prepareDestroy(handlerDestroy)") <
+            body.find("context.preparePrivateState(stateOwner)") <
+            body.find("context.prepareUpload(previewEmptyUpload, emptyPreview)") <
+            body.find("context.prepareDestroy(previewDestroy)") and
+        "PreparedDeactivateKind.Pen, historyPrepared, ok);" in body)
+handler_shapes_for_pen = (ROOT / "source/handles/shapes.d").read_text()
+if not pen_deactivate_gate(pen_deactivate_tool, pen_deactivate_owner,
+        pen_deactivate_effect, record_context, handler_shapes_for_pen):
+    fail("Pen deactivation prepared contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is PenTool.classinfo", "false", "broaden product"),
+    ("owner", "!penTarget.preparedDeactivateStateMatches(penDeactivateImage)", "false", "drop state validation"),
+    ("owner", "penTarget.installPreparedDeactivateState(penDeactivateImage);", "", "drop state install"),
+    ("tool", "image.vertices = vertices_.dup;", "image.vertices = vertices_;", "borrow vertex input"),
+    ("tool", "beginPreparedShadow(candidate)", "beginPreparedShadow(*mesh)", "drop detached shadow"),
+    ("tool", "candidate.syncSelection();", "", "drop final selection sync"),
+    ("tool", "drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);", "", "drop delivery"),
+    ("tool", "&layer.meshRef() is mesh", "true", "drop layer identity"),
+    ("tool", "ownsPreparedHandlers(handlerDestroy)", "true", "drop handler identity"),
+    ("tool", "ownsPreparedMainUpload(mainCommitUpload)", "true", "drop commit upload identity"),
+    ("tool", "ownsPreparedMainUpload(mainRefreshUpload)", "true", "drop refresh upload identity"),
+    ("tool", "ownsPreparedPreviewUpload(previewEmptyUpload)", "true", "drop preview upload identity"),
+    ("tool", "ownsPreparedPreviewDestroy(previewDestroy)", "true", "drop preview destroy identity"),
+    ("tool", "context.prepareStampedMeshImage(layer, candidate,", "false /* dropped mesh */ (", "drop mesh enlist"),
+    ("tool", "context.prepareUpload(mainCommitUpload, candidate)", "true", "drop commit upload"),
+    ("tool", "context.prepareGestureCarrierMismatch()", "true", "drop carrier diagnostic"),
+    ("tool", "context.prepareUpload(mainRefreshUpload, candidate)", "true", "drop refresh upload"),
+    ("tool", "context.prepareDestroy(handlerDestroy)", "true", "drop handler destroy"),
+    ("tool", "context.preparePrivateState(stateOwner)", "true", "drop final state"),
+    ("tool", "context.prepareUpload(previewEmptyUpload, emptyPreview)", "true", "drop preview clear upload"),
+    ("tool", "context.prepareSnapClear(snapOwner)", "true", "drop short-stroke snap clear"),
+    ("tool", "context.prepareDestroy(previewDestroy)", "true", "drop preview destroy"),
+    ("effect", "Pen,", "None,", "drop effect kind"),
+):
+    t, o, e = pen_deactivate_tool, pen_deactivate_owner, pen_deactivate_effect
+    if target == "effect":
+        pos = e.find(old, e.find("enum PreparedDeactivateKind"))
+        if pos >= 0: e = e[:pos] + new + e[pos + len(old):]
+    elif target == "owner":
+        pos = o.find(old, o.find("static PreparedPrivateStateOwner penDeactivate"))
+        if pos >= 0: o = o[:pos] + new + o[pos + len(old):]
+    else:
+        pos = t.find(old, t.find("final PreparedPenDeactivateImage"))
+        if pos >= 0: t = t[:pos] + new + t[pos + len(old):]
+    if pen_deactivate_gate(t, o, e, record_context, handler_shapes_for_pen):
+        fail(f"Pen deactivation mutation did not RED: {label}")
+
 mirror_deactivate_effect = (ROOT / "source/prepared_tool_effect.d").read_text()
 def mirror_deactivate_producer_gate(tool, effect):
     start = tool.find("final PreparedDeactivateEffect prepareDeactivate(")
@@ -4441,7 +4567,7 @@ expected_primitive_products = [
 def b5d1_gate(s):
     return ("enum PreparedPrivateStateKind : ubyte" in s["owner"] and
             all(kind in s["owner"] for kind in
-                ("Box, BoxDeactivate, Pen, Primitive, Vertex", "ArraySession", "CloneSession",
+                ("Box, BoxDeactivate, Pen, PenDeactivate, Primitive, Vertex", "ArraySession", "CloneSession",
                  "MagnetSession", "ReductionSession")) and
             s["owner"].count("@disable this(this)") == 2 and
             "delegate" not in s["owner"] and "void*" not in s["owner"] and
@@ -4564,7 +4690,7 @@ def b5e_gate(owner, context, sources, snapshot=b5e_snapshot):
     return (all(kind in owner for kind in
                 ("ArraySession", "CloneSession", "MagnetSession", "ReductionSession")) and
             "MeshSnapshot activationBaseline;" in owner and
-            owner.count("target.classinfo !is") == 6 and
+            owner.count("target.classinfo !is") == 7 and
             "o.activationBaseline = image;" in owner and
             "failSessionPrepareForTest_" in owner and
             all(f"{prefix}Target.installPreparedActivation(activationBaseline);" in owner
