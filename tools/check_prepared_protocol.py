@@ -133,11 +133,16 @@ B3D_PREPARED_LEGACY = {
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "deactivate"),
     ("tools.create.box", "BoxTool", "onParamChanged"),
 }
+B4C_PREPARED_LEGACY = {
+    ("tools.common.command_wrapper", "CommandWrapperTool", "deactivate"),
+    ("tools.edit.tack", "TackTool", "deactivate"),
+}
 all_hook_keys = {(r["module"], r["aggregate"], r["symbol"])
                  for r in CURRENT_WRITERS["hooks"]}
-if not TOOL_STATE_CONVERTED | B3D_PREPARED_LEGACY <= all_hook_keys:
+if not TOOL_STATE_CONVERTED | B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY <= all_hook_keys:
     fail("P1.0b.1 converted tool-state row left the frozen census")
-TOOL_STATE_DEFERRED = all_hook_keys - TOOL_STATE_CONVERTED - B3D_PREPARED_LEGACY
+TOOL_STATE_DEFERRED = (all_hook_keys - TOOL_STATE_CONVERTED -
+                       B3D_PREPARED_LEGACY - B4C_PREPARED_LEGACY)
 
 converted_sources = {
     "source/tool.d": ("prepareBaseParam", "validateBaseParam", "installLegacyPreparedParam"),
@@ -167,13 +172,13 @@ TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
     "1500a754b4b9103d0ff8cc978ad874680a1a8f1e293e3bece17fadd7cbf91c64"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
-            r["key"]["symbol"]) not in B3D_PREPARED_LEGACY]
+            r["key"]["symbol"]) not in B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY]
     keys = {(r["key"]["module"], r["key"]["aggregate"],
              r["key"]["symbol"], r["key"]["signature"]) for r in rows}
     expected = {(r["module"], r["aggregate"], r["symbol"], r["signature"])
                 for r in CURRENT_WRITERS["hooks"]
                 if (r["module"], r["aggregate"], r["symbol"])
-                   not in TOOL_STATE_CONVERTED | B3D_PREPARED_LEGACY}
+                   not in TOOL_STATE_CONVERTED | B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY}
     if len(keys) != len(rows) or keys != expected:
         fail("P1.0b.1 checked-in deferred row set mismatch")
     for row in rows:
@@ -181,7 +186,7 @@ def validate_deferred_rows(rows, require_canonical=True):
             fail("P1.0b.1 checked-in deferred batch/reason invalid")
     canonical = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
     if require_canonical and hashlib.sha256(canonical).hexdigest() != \
-            "9847729de21e69c80b65d2a006d56f2bff8b6d1d97e311c3ec7e6f8fdd563c4e":
+            "ca1d3147bcdb8582db5c1a0c6cc208b673a15a8ba680697408476b4fb8acdb7c":
         fail("P1.0b.1 checked-in deferred exact values drifted")
 validate_deferred_rows(TOOL_STATE_DEFERRED_ROWS)
 for field in ("batch", "reason"):
@@ -281,7 +286,8 @@ prepared_source_texts = {path: path.read_text()
 for path, text in prepared_source_texts.items():
     module = str(path.relative_to(ROOT / "source")).removesuffix(".d").replace("/", ".")
     if "import prepared_record_context" in text and module not in b3d_modules | {
-            "prepared_record_context", "tools.transform.transform"}:
+            "prepared_record_context", "tools.transform.transform",
+            "tools.common.command_wrapper", "tools.edit.tack"}:
         fail(f"P1.0b.3d PreparedRecordContext gained an unreviewed import: {module}")
     if "new PreparedRecordContext" in text:
         production_text = without_unittests(text)
@@ -1205,5 +1211,82 @@ for old, new, label in (
         "target.vao != vao || target.vbo != vbo || target.built != built" in handler_mutant)
     if journal_gate:
         fail(f"P1.0b.4c.1 {label} mutation did not fail")
+
+# P1.0b.4c.2 dormant producers; legacy override bodies remain covered by the
+# frozen 35-row writer fingerprints above. Transform suppression is an exact
+# branch-level Deferred result, never a fake prepared upload.
+b4c2_contracts = {
+    "source/tools/common/command_wrapper.d": (
+        "final PreparedDeactivateEffect prepareDeactivate(",
+        "context.markHistoryInstall()",
+        "clickOwner.owns(clickHandle)",
+        "context.prepareDestroy(clickOwner)",
+    ),
+    "source/tools/edit/tack.d": (
+        "final PreparedDeactivateEffect prepareDeactivate(",
+        "previewOwner.owns(&previewGpu_)",
+        "prepared = context.prepareDestroy(previewOwner);",
+        "context.markHistoryInstall()",
+    ),
+    "source/tools/transform/transform.d": (
+        "final PreparedDeactivateEffect prepareDeactivateGpu(",
+        "uploadOwner is null || gpu is null || !uploadOwner.owns(gpu) ||",
+        "context.markHistoryInstall() &&",
+        "context.prepareUpload(uploadOwner, *mesh)",
+    ),
+}
+b4c2_digests = {
+    "source/tools/common/command_wrapper.d": ("prepareDeactivate", "d4dcfc00ed6d5fb72cf188e38ead7c76c5cb58394bb2c590551dc709d34e9606"),
+    "source/tools/edit/tack.d": ("prepareDeactivate", "0ea8fcdfa7a225b41d81f255ae8d44f55e7a4c6770c1e718f6066b6511cd0be3"),
+    "source/tools/transform/transform.d": ("prepareDeactivateGpu", "084136107d601fb0567a61152c4792aeb41ea60ea30c580e88a9fc85404652ac"),
+}
+for relative, contracts in b4c2_contracts.items():
+    producer_source = (ROOT / relative).read_text()
+    for contract in contracts:
+        if producer_source.count(contract) != 1:
+            fail(f"P1.0b.4c.2 producer contract drift: {relative}: {contract}")
+    legacy = re.search(r"override\s+void\s+deactivate\s*\([^)]*\)\s*\{", producer_source)
+    legacy_body = producer_source[legacy.end():balanced_source(producer_source, legacy.end())-1]
+    if re.search(r"\bprepareDeactivate(?:Gpu)?\s*\(", legacy_body):
+        fail(f"P1.0b.4c.2 producer called early from legacy hook: {relative}")
+    producer, digest = b4c2_digests[relative]
+    match = re.search(r"\bfinal\s+PreparedDeactivateEffect\s+" + producer + r"\s*\([^;{}]*\)[^{]*\{", producer_source)
+    body = producer_source[match.end():balanced_source(producer_source, match.end())-1]
+    if semantic_digest(body) != digest:
+        fail(f"P1.0b.4c.2 exact producer behavior drift: {relative}")
+
+def b4c2_digest_accepts(relative, source):
+    producer, digest = b4c2_digests[relative]
+    match = re.search(r"\bfinal\s+PreparedDeactivateEffect\s+" + producer + r"\s*\([^;{}]*\)[^{]*\{", source)
+    if not match: return False
+    body = source[match.end():balanced_source(source, match.end())-1]
+    return semantic_digest(body) == digest
+
+for relative, old, new, label in (
+    ("source/tools/common/command_wrapper.d", "context.markHistoryInstall()", "true", "drop history marker"),
+    ("source/tools/common/command_wrapper.d", "context.prepareDestroy(clickOwner)", "true", "drop click destroy"),
+    ("source/tools/common/command_wrapper.d", "clickOwner.owns(clickHandle)", "true", "drop click owner identity"),
+    ("source/tools/common/command_wrapper.d", "context.discard();", "", "drop terminal discard"),
+    ("source/tools/edit/tack.d", "previewOwner.owns(&previewGpu_)", "true", "drop preview owner identity"),
+    ("source/tools/edit/tack.d", "prepared = context.prepareDestroy(previewOwner);", "prepared = true;", "drop preview destroy"),
+    ("source/tools/edit/tack.d", "if (prepared && !context.markHistoryInstall())", "if (false)", "drop resource-history order"),
+    ("source/tools/edit/tack.d",
+     "prepared = context.prepareDestroy(previewOwner);\n            if (prepared && !context.markHistoryInstall())",
+     "prepared = context.markHistoryInstall();\n            if (prepared && !context.prepareDestroy(previewOwner))",
+     "reorder preview resource/history"),
+    ("source/tools/transform/transform.d", "context.markHistoryInstall() &&", "", "drop transform history marker"),
+    ("source/tools/transform/transform.d",
+     "context.markHistoryInstall() &&\n                        context.prepareUpload(uploadOwner, *mesh)",
+     "context.prepareUpload(uploadOwner, *mesh) &&\n                        context.markHistoryInstall()",
+     "reorder transform history/upload"),
+    ("source/tools/transform/transform.d", "context.prepareUpload(uploadOwner, *mesh)", "true", "drop transform upload"),
+    ("source/tools/transform/transform.d", "!uploadOwner.owns(gpu)", "false", "drop upload owner identity"),
+    ("source/tools/transform/transform.d", "gpu.suppressCageUpload) {", "false) {", "drop suppress refusal"),
+    ("source/tools/transform/transform.d", "if (!prepared) context.discard();", "", "drop upload failure discard"),
+):
+    source = (ROOT / relative).read_text()
+    mutant = source.replace(old, new, 1)
+    if mutant == source or b4c2_digest_accepts(relative, mutant):
+        fail(f"P1.0b.4c.2 named mutation did not RED exact digest: {label}")
 
 print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures)} compile-fail fixtures)")

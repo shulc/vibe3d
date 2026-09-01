@@ -18,6 +18,8 @@ import shader : Shader, LitShader, drawLitPreview;
 import hover_state : g_hoveredFace;
 import eventlog : queryMouse;
 import document : primaryModelSpace;
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 
 version (unittest) import std.conv : to;
 
@@ -64,6 +66,46 @@ struct TackTransform {
         1,0,0,0,  0,1,0,0,  0,0,1,0,  0,0,0,1,
     ];
     Vec3 translation = Vec3(0, 0, 0);
+}
+
+version (unittest) unittest {
+    import record_observer_hub : RecordObserverHub;
+    Mesh m = makeCube();
+    GpuMesh liveGpu;
+    auto tool = new TackTool(() => &m, &liveGpu, null);
+
+    auto nullResult = tool.prepareDeactivate(null, null);
+    assert(!nullResult.resourceAccepted);
+
+    GpuMesh wrongGpu;
+    auto wrongOwner = GpuResourceOwner.fakeForTest(&wrongGpu);
+    auto wrongContext = new PreparedRecordContext(new CommandHistory(),
+                                                   new RecordObserverHub());
+    auto wrong = tool.prepareDeactivate(wrongContext, wrongOwner);
+    assert(!wrong.resourceAccepted);
+    wrongContext.discard();
+
+    tool.previewGpu_.faceVao = 1; tool.previewGpu_.faceVbo = 2;
+    tool.previewGpu_.edgeVao = 3; tool.previewGpu_.edgeVbo = 4;
+    tool.previewGpu_.vertVao = 5; tool.previewGpu_.vertVbo = 6;
+    tool.previewGpu_.faceIdVbo = 7; tool.previewGpu_.matIdVbo = 8;
+    tool.previewGpu_.weightColorVbo = 9;
+    auto owner = GpuResourceOwner.fakeForTest(&tool.previewGpu_);
+    auto history = new CommandHistory();
+    auto hub = new RecordObserverHub(); hub.setMacroActive(true);
+    auto context = new PreparedRecordContext(history, hub);
+    context.setResourceIdentity(7, 11);
+    tool.previewActive_ = true;
+    auto prepared = tool.prepareDeactivate(context, owner);
+    assert(prepared.resourceAccepted && tool.previewActive_);
+    assert(context.validate());
+    context.install();
+    assert(tool.previewActive_); // reset remains a later scalar installer effect
+    assert(owner.fakeDeletionsForTest() == [1,2,3,4,5,6,7,8,9]);
+    assert(context.installTraceForTest() == [2,1]);
+    size_t models, ui;
+    context.installedDepths(models, ui);
+    assert(models == 0 && ui == 0 && hub.macroLength == 0);
 }
 
 /// Compute the rigid (R, t) that:
@@ -260,6 +302,22 @@ public:
     override void deactivate() {
         previewGpu_.destroy();
         previewActive_ = false;
+    }
+
+    final PreparedDeactivateEffect prepareDeactivate(
+            PreparedRecordContext context, GpuResourceOwner previewOwner) {
+        bool prepared;
+        if (context !is null && previewOwner !is null &&
+            previewOwner.owns(&previewGpu_)) {
+            // Legacy order: preview GL teardown, then previewActive_ reset.
+            prepared = context.prepareDestroy(previewOwner);
+            if (prepared && !context.markHistoryInstall()) {
+                context.discard();
+                prepared = false;
+            }
+        }
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.Tack, false, prepared);
     }
 
     // Every click commits immediately (per-click undo, VertexTool-style) —

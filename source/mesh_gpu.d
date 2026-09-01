@@ -1904,6 +1904,16 @@ final class GpuResourceOwner {
         this(target, 7, 11);
         backend = Backend.fake;
     }
+    version (unittest) static GpuResourceOwner fakeForTest(GpuMesh* target) {
+        return new GpuResourceOwner(target);
+    }
+    version (unittest) size_t fakeDeletionCountForTest() const nothrow @nogc {
+        return fakeDeleteCount;
+    }
+    version (unittest) const(GLuint)[] fakeDeletionsForTest() const nothrow @nogc {
+        return fakeDeleted[0 .. fakeDeleteCount];
+    }
+    bool owns(GpuMesh* candidate) const nothrow @nogc { return target is candidate; }
 
     bool beginPreparedDestroy(out PreparedGpuResourceToken token) nothrow @nogc {
         if (pending || target is null) return false;
@@ -2118,6 +2128,13 @@ public:
         this(target, 7, 11);
         backend = Backend.fake;
     }
+    version (unittest) static GpuUploadOwner fakeForTest(GpuMesh* target) {
+        return new GpuUploadOwner(target);
+    }
+    version (unittest) const(uint)[] fakeCallsForTest() const nothrow @nogc {
+        return fakeCalls[0 .. fakeCallCount];
+    }
+    bool owns(GpuMesh* candidate) const nothrow @nogc { return target is candidate; }
 
     bool beginPreparedUpload(ref const Mesh mesh,
                        const uint[] edgeOrigin,

@@ -1,5 +1,9 @@
 module tools.common.command_wrapper;
 import prepared_tool_effect : PreparedParamDelta, PreparedParamKind;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import prepared_record_context : PreparedRecordContext;
+import handler : ClickPointResourceOwner;
+import command_history : PreparedHistoryKind;
 private struct WrapperPreparedParamHandle {
     bool applyDirty, consumable;
     @disable this(this);
@@ -267,6 +271,50 @@ abstract class CommandWrapperTool : Tool, RefireClient {
         refireDriving_   = false;
         refireCommitted_ = false;
         lastAppliedFalloffs.length = 0;
+    }
+
+    /// Dormant P1.0b.4c.2 producer. The unified installer later applies the
+    /// scalar reset represented by the result; the legacy hook above remains
+    /// the only production path until P1.0c.
+    final PreparedDeactivateEffect prepareDeactivate(
+            PreparedRecordContext context, ClickPointResourceOwner clickOwner) {
+        if (context is null) return PreparedDeactivateEffect(
+            preparedToolStateOwner, PreparedDeactivateKind.CommandWrapper, false, false);
+        bool accepted;
+        if (!refireCommitted_ && dirty && meshPtr !is null && history !is null &&
+            gestureFactory !is null && baseline.length == meshPtr.vertices.length) {
+            uint[] indices;
+            Vec3[] before, after_;
+            foreach (i; 0 .. meshPtr.vertices.length) {
+                auto a = baseline[i], b = meshPtr.vertices[i];
+                if (a.x == b.x && a.y == b.y && a.z == b.z) continue;
+                indices ~= cast(uint)i; before ~= a; after_ ~= b;
+            }
+            if (indices.length) {
+                auto cmd = cast(MeshVertexEdit) gestureFactory();
+                if (cmd !is null) {
+                    cmd.setEdit(indices, before, after_, name());
+                    accepted = context.prepare(cmd, PreparedHistoryKind.Plain).accepted;
+                }
+            }
+        }
+        // Legacy order is commitNow() followed by click-handle destruction.
+        if (!context.markHistoryInstall()) {
+            context.discard();
+            return PreparedDeactivateEffect(preparedToolStateOwner,
+                PreparedDeactivateKind.CommandWrapper, false, false);
+        }
+        bool resourceAccepted = clickHandle is null;
+        if (clickHandle !is null) {
+            if (clickOwner is null || !clickOwner.owns(clickHandle) ||
+                !context.prepareDestroy(clickOwner)) {
+                context.discard();
+                accepted = false;
+            }
+            else resourceAccepted = true;
+        }
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.CommandWrapper, accepted, resourceAccepted);
     }
 
     // ----- History-coordination hooks (undo/redo migration P0) -------------
@@ -913,6 +961,21 @@ unittest {
     assert(tool.validatePreparedParam(suppressed, handle));
     tool.installLegacyPreparedParam(handle);
     assert(!tool.paramsDirty);
+
+    import prepared_record_context : PreparedRecordContext;
+    import record_observer_hub : RecordObserverHub;
+    import handler : ClickPointResourceOwner;
+    auto preparedHistory = new CommandHistory();
+    auto preparedHub = new RecordObserverHub();
+    tool.clickHandle = new ClickPointHandler();
+    auto clickOwner = new ClickPointResourceOwner(tool.clickHandle, 7, 11);
+    auto context = new PreparedRecordContext(preparedHistory, preparedHub);
+    context.setResourceIdentity(7, 11);
+    auto deactivation = tool.prepareDeactivate(context, clickOwner);
+    assert(deactivation.kind == PreparedDeactivateKind.CommandWrapper);
+    assert(deactivation.resourceAccepted && context.validate());
+    context.install();
+    context.install(); // consumed journal cannot replay
 }
 
 static assert(!__traits(compiles, {

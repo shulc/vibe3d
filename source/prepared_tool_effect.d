@@ -34,6 +34,7 @@ enum PreparedDeactivateKind : ubyte {
     None, Array, Clone, RadialArray, Magnet, SmoothShift, StrokeExtrude,
     EdgeBevel, EdgeExtrude, PolyBevel, PolyExtrude, PolyInset, Reduction,
     VertexMerge, VertexBevel, VertexExtrude, Xfrm, Move, Rotate, Scale,
+    CommandWrapper, Tack, TransformNormalUpload,
 }
 
 /// Scalar-only dormant P1.0b.3d producer result. The concrete tool owns the
@@ -43,7 +44,26 @@ enum PreparedDeactivateKind : ubyte {
     OwnedId owner;
     PreparedDeactivateKind kind;
     bool historyAccepted;
+    bool resourceAccepted;
+
+    this(OwnedId owner, PreparedDeactivateKind kind, bool historyAccepted)
+         pure nothrow @safe @nogc {
+        this.owner = owner;
+        this.kind = kind;
+        this.historyAccepted = historyAccepted;
+        this.resourceAccepted = true; // no resource obligation
+    }
+    this(OwnedId owner, PreparedDeactivateKind kind, bool historyAccepted,
+         bool resourceAccepted) pure nothrow @safe @nogc {
+        this.owner = owner;
+        this.kind = kind;
+        this.historyAccepted = historyAccepted;
+        this.resourceAccepted = resourceAccepted;
+    }
 }
+
+static assert(PreparedDeactivateEffect(OwnedId(1),
+    PreparedDeactivateKind.Move, false).resourceAccepted);
 
 @PreparedAggregate struct PreparedBoxParamEffect {
     OwnedId owner;

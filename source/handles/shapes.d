@@ -1948,6 +1948,9 @@ public:
         requiredContext = contextIdentity;
         ownerId = atomicOp!"+="(nextClickPointResourceOwnerId, 1UL);
     }
+    bool owns(ClickPointHandler candidate) const nothrow @nogc {
+        return target is candidate;
+    }
 
     bool beginPreparedDestroy(out PreparedClickPointResourceToken token)
                               nothrow @nogc {

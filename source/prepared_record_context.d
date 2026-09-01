@@ -213,6 +213,9 @@ public:
         modelDepth = 0; uiDepth = 0;
         if (history_ !is null) history_.undoDepthCounts(modelDepth, uiDepth);
     }
+    version (unittest) const(ubyte)[] installTraceForTest() const nothrow @nogc {
+        return installTrace_[0 .. installTraceLength_];
+    }
 }
 
 unittest {
