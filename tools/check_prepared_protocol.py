@@ -238,6 +238,7 @@ B5O_PREPARED_LEGACY = {
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "activate"),
 }
 B5P_PREPARED_LEGACY = {
+    ("tools.edit.poly_inset_tool", "PolyInsetTool", "onParamChanged"),
     ("tools.edit.poly_extrude", "PolyExtrudeTool", "onParamChanged"),
     ("tools.edit.poly_bevel", "PolyBevelTool", "onParamChanged"),
     ("tools.edit.edge_extrude", "EdgeExtrudeTool", "onParamChanged"),
@@ -312,7 +313,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "b3c39fa018b2850c96d278c1bd1973ae575a1e445ac24e605e00fa694e69e5f2"
+    "d9dd00de87d552d9ae1abf2fc6b9d6d76511950553dd5f2df77d3cde7d537b3d"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -470,6 +471,7 @@ for path, text in prepared_source_texts.items():
             "prepared_edge_extrude_param_update",
             "prepared_poly_bevel_param_update",
             "prepared_poly_extrude_param_update",
+            "prepared_poly_inset_param_update",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
@@ -2398,6 +2400,73 @@ for target, old, new, label in (
         mutant[target] = mutant[target].replace(old, new, 1)
     if mutant[target] == poly_extrude_param_sources[target] or poly_extrude_param_gate(mutant):
         fail(f"Poly Extrude parameter mutation did not RED: {label}")
+
+poly_inset_param_sources = {
+    "tool": (ROOT / "source/tools/edit/poly_inset_tool.d").read_text(),
+    "owner": (ROOT / "source/prepared_poly_inset_param_update.d").read_text(),
+    "context": record_context,
+}
+def poly_inset_param_gate(s):
+    tool, owner, context = (s[k] for k in ("tool", "owner", "context"))
+    start = tool.find("final PreparedPolyInsetParamEffect prepareParamChanged(")
+    end = tool.find("override void evaluate()", start)
+    producer = tool[start:end]
+    return (tool.count("ed.insetFacesByMask(mask, inset_)") == 3 and
+            all(x in tool for x in (
+                "image.expectedLive = MeshSnapshot.capture(live);",
+                "image.expectedBefore = MeshSnapshot.capture(image.candidate);",
+                "auto shadow = beginPreparedShadow(image.candidate);",
+                "ed.insetFacesByMask(mask, inset_)",
+                "drainPreparedShadowDelivery(image.candidate",
+                "memcmp(&inset, &other.inset, float.sizeof) == 0",
+                "image.expectedLive.matches(live)",
+                "image.expectedBefore.matches(before)")) and
+            all(x in owner for x in (
+                "target.classinfo !is PolyInsetTool.classinfo",
+                "!target.ownsPreparedLayer(layer)",
+                "&layer_.meshRef() !is source_",
+                "!target_.preparedParamUpdateMatches(image_, *source_)",
+                "target_.installPreparedParamUpdate(image_)")) and
+            all(x in producer for x in (
+                "uploadOwner.owns(gpu)",
+                "context.prepareStampedMeshImage(layer, owner.candidate,",
+                "context.preparePolyInsetParamUpdate(owner)",
+                "context.prepareUpload(uploadOwner, owner.candidate)",
+                "context.markNoHistoryInstall()")) and
+            producer.find("context.prepareStampedMeshImage") <
+                producer.find("context.preparePolyInsetParamUpdate(owner)") <
+                producer.find("context.prepareUpload(uploadOwner") <
+                producer.find("context.markNoHistoryInstall()") and
+            context.count("case PreparedResourceKind.PolyInsetParamUpdateState:") == 3 and
+            "e.polyInsetParamUpdate.install();" in context)
+if not poly_inset_param_gate(poly_inset_param_sources):
+    fail("Poly Inset onParamChanged prepared contract drift")
+for target, old, new, label in (
+    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
+    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
+    ("tool", "memcmp(&inset, &other.inset, float.sizeof) == 0", "true", "drop float identity"),
+    ("tool", "ed.insetFacesByMask(mask, inset_)", "cast(size_t)0", "drop zero-value kernel"),
+    ("owner", "target.classinfo !is PolyInsetTool.classinfo", "false", "broaden product"),
+    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
+    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
+    ("tool", "context.preparePolyInsetParamUpdate(owner)", "true", "drop state"),
+    ("tool", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop upload"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
+    ("context", "e.polyInsetParamUpdate.install();", "", "drop install"),
+):
+    mutant = dict(poly_inset_param_sources)
+    if target == "tool":
+        text = mutant[target]
+        producer_start = text.find("final PreparedPolyInsetParamEffect prepareParamChanged(")
+        build_start = text.find("final PreparedPolyInsetParamImage buildPreparedParamUpdate")
+        start = producer_start if old in text[producer_start:] else \
+            build_start if label == "drop zero-value kernel" else 0
+        pos = text.find(old, start)
+        mutant[target] = text[:pos] + new + text[pos + len(old):]
+    else:
+        mutant[target] = mutant[target].replace(old, new, 1)
+    if mutant[target] == poly_inset_param_sources[target] or poly_inset_param_gate(mutant):
+        fail(f"Poly Inset parameter mutation did not RED: {label}")
 
 # PrimitiveCreateTool.activate is one inherited declaration with six exact
 # products. Its closed projection preserves each leaf's resetSession law and
