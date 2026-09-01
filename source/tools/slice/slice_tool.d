@@ -27,6 +27,20 @@ import tools.create.create_common : currentWorkplaneFrame, pickWorkplaneFrame, W
 // 0286): the SAME screen-direction → world-axis math the Move gizmo's Ctrl lock
 // uses, so Slice's Ctrl constraint is byte-consistent with Move's, not reinvented.
 import tools.transform.move : chooseConstraintAxis;
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import prepared_slice_activation : PreparedSliceActivationOwner;
+
+struct PreparedSliceActivationImage {
+    MeshSnapshot before;
+    MeshCacheKey armedKey;
+    uint[] restrictFaces;
+    bool valid;
+    void clear() nothrow @nogc {
+        before = MeshSnapshot.init; armedKey = MeshCacheKey.init;
+        restrictFaces = null; valid = false;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // SliceAxis (task 0269, S3; owner-revised task 0284) — the OVERRIDE that sets the
@@ -620,8 +634,8 @@ void sliceRingPlaneBasis(Vec3 axis, out Vec3 right, out Vec3 up) {
 // ---------------------------------------------------------------------------
 final class SliceTool : Tool {
 private:
-    Mesh* delegate() meshSrc_;
-    @property Mesh* mesh() { return meshSrc_(); }
+    Mesh* delegate() nothrow @nogc meshSrc_;
+    @property Mesh* mesh() const nothrow @nogc { return meshSrc_(); }
     GpuMesh*         gpu;
     EditMode*        editMode;
     LitShader        litShader;
@@ -932,7 +946,8 @@ private:
     enum float PLANE_ALPHA = 0.18f;
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader) {
+    this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu,
+            EditMode* editMode, LitShader litShader) {
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
@@ -1088,6 +1103,42 @@ public:
         // (no axis override), whatever the sticky `axis_` value shows. The user
         // re-engages the override by writing the `axis` attr (onParamChanged).
         axisLocked_ = false;
+    }
+
+    final PreparedSliceActivationImage buildPreparedActivation(out Mesh* source) {
+        PreparedSliceActivationImage image;
+        source = mesh;
+        if (source is null) return image;
+        image.before = MeshSnapshot.capture(*source);
+        image.restrictFaces = sliceRestrictFaces(*source);
+        image.armedKey.stamp(*source);
+        image.valid = true;
+        return image;
+    }
+    final void installPreparedActivation(ref PreparedSliceActivationImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        active = true; dragPart_ = DragNone; previewLive_ = false;
+        haveBefore_ = true; haveRaw_ = false; snapTempInvert_ = false;
+        haveFrozen_ = false; pendingAxisClassify_ = false;
+        hasLine_ = false; drawGesture_ = false; ctrlPending_ = false;
+        ctrlAxis_ = -1; gapDrag_ = false; axisLocked_ = false;
+        image.before.moveInto(before_);
+        restrictFaces_ = image.restrictFaces; image.restrictFaces = null;
+        armedKey_ = image.armedKey;
+        image.clear();
+    }
+    final PreparedSessionActivateEffect prepareActivate(
+            PreparedRecordContext context) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.Slice, false);
+        scope(failure) context.discard();
+        auto owner = PreparedSliceActivationOwner.prepare(this);
+        bool ok = owner !is null && context.prepareSliceActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.Slice, ok);
     }
 
     override void deactivate() {
@@ -2031,5 +2082,57 @@ private:
         rotRefDir0_  = normalize(grab);
         rotVector0_  = vector_;
         return true;
+    }
+
+public:
+    final Mesh* preparedActivationMesh() const nothrow @nogc { return mesh; }
+    version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
+        return preparedToolStateOwner;
+    }
+    version(unittest) final void seedPreparedActivationForTest() {
+        mesh.syncSelection(); mesh.selectFace(0); mesh.selectFace(2);
+        active = false; dragPart_ = DragRotate; previewLive_ = true;
+        haveBefore_ = false; haveRaw_ = true; snapTempInvert_ = true;
+        haveFrozen_ = true; pendingAxisClassify_ = true;
+        hasLine_ = true; drawGesture_ = true; ctrlPending_ = true;
+        ctrlAxis_ = 2; gapDrag_ = true; axisLocked_ = true;
+        restrictFaces_ = [4,5]; armedKey_.stamp(*mesh);
+        before_ = MeshSnapshot.capture(*mesh);
+        fast_ = true; axis_ = SliceAxis.Custom; vector_ = Vec3(1,2,3);
+        infinite_ = true; split_ = true; caps_ = false; gap_ = 0.7f;
+        gapSide_ = SliceGapSide.Positive; snap_ = true; snapAngle_ = 30;
+        start_ = Vec3(4,5,6); end_ = Vec3(7,8,9);
+        rawStart_ = Vec3(10,11,12); rawEnd_ = Vec3(13,14,15);
+        frozenNormal_ = Vec3(0,0,1); vpWorld_.view[0] = 9;
+    }
+    version(unittest) final bool preparedActivationDirtyForTest() const {
+        return !active && dragPart_ == DragRotate && previewLive_ && !haveBefore_ &&
+            haveRaw_ && snapTempInvert_ && haveFrozen_ && pendingAxisClassify_ &&
+            hasLine_ && drawGesture_ && ctrlPending_ && ctrlAxis_ == 2 && gapDrag_ &&
+            axisLocked_ && restrictFaces_ == [4,5] && armedKey_.matches(*mesh) &&
+            before_.filled && fast_ && axis_ == SliceAxis.Custom &&
+            vector_ == Vec3(1,2,3) && infinite_ && split_ && !caps_ && gap_ == 0.7f &&
+            gapSide_ == SliceGapSide.Positive && snap_ && snapAngle_ == 30 &&
+            start_ == Vec3(4,5,6) && end_ == Vec3(7,8,9) &&
+            rawStart_ == Vec3(10,11,12) && rawEnd_ == Vec3(13,14,15) &&
+            frozenNormal_ == Vec3(0,0,1) && vpWorld_.view[0] == 9;
+    }
+    version(unittest) final bool preparedActivationForTest(bool restricted) const {
+        bool restrictOk = restricted ? restrictFaces_ == [0u,2u] :
+            restrictFaces_.length == 0 && restrictFaces_.ptr is null;
+        return active && dragPart_ == DragNone && !previewLive_ && haveBefore_ &&
+            !haveRaw_ && !snapTempInvert_ && !haveFrozen_ && !pendingAxisClassify_ &&
+            !hasLine_ && !drawGesture_ && !ctrlPending_ && ctrlAxis_ == -1 &&
+            !gapDrag_ && !axisLocked_ && restrictOk &&
+            armedKey_.matches(*mesh) && before_.filled && before_.matches(*mesh) &&
+            fast_ && axis_ == SliceAxis.Custom && vector_ == Vec3(1,2,3) &&
+            infinite_ && split_ && !caps_ && gap_ == 0.7f &&
+            gapSide_ == SliceGapSide.Positive && snap_ && snapAngle_ == 30 &&
+            start_ == Vec3(4,5,6) && end_ == Vec3(7,8,9) &&
+            rawStart_ == Vec3(10,11,12) && rawEnd_ == Vec3(13,14,15) &&
+            frozenNormal_ == Vec3(0,0,1) && vpWorld_.view[0] == 9;
+    }
+    version(unittest) final void clearFaceSelectionForTest() {
+        foreach (fi; 0 .. mesh.faces.length) mesh.deselectFace(cast(int)fi);
     }
 }

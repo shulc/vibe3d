@@ -253,6 +253,7 @@ B5P_PREPARED_LEGACY = {
     ("tools.edit.edge_extrude", "EdgeExtrudeTool", "activate"),
     ("tools.slice.edge_slice_tool", "EdgeSliceTool", "activate"),
     ("tools.slice.loop_slice_tool", "LoopSliceTool", "activate"),
+    ("tools.slice.slice_tool", "SliceTool", "activate"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
@@ -290,7 +291,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "ed0aa90b7d2152378761bcb1d6cb291baa3813eb88930c46d446122d755c2294"
+    "ec5f7f96ff56ccb9148982beb1cfb671f2431157b851e2cb30379eef1f2707e9"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -433,8 +434,10 @@ for path, text in prepared_source_texts.items():
             "prepared_edge_extrude_activation",
             "prepared_edge_slice_activation",
             "prepared_loop_slice_activation",
+            "prepared_slice_activation",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
+            "tools.slice.slice_tool",
             "tools.alignment.radial_sweep_tool",
             "tools.alignment.radial_array_tool",
             "tools.alignment.linear_align_tool",
@@ -3444,6 +3447,106 @@ for fixture in (
     if run.returncode == 0 or ("not copyable" not in run.stdout and
             not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
         fail("LoopSlice activation token copy was not rejected:\n" + run.stdout)
+
+slice_activation_owner = (ROOT / "source/prepared_slice_activation.d").read_text()
+slice_activation_tool = (ROOT / "source/tools/slice/slice_tool.d").read_text()
+def slice_activation_gate(owner, context, tool):
+    po = without_unittests(owner); pt = without_unittests(tool)
+    bs = pt.find("final PreparedSliceActivationImage buildPreparedActivation(")
+    be = pt.find("final void installPreparedActivation(", bs)
+    ins = pt.find("final void installPreparedActivation(")
+    ine = pt.find("final PreparedSessionActivateEffect prepareActivate(", ins)
+    ps = pt.find("final PreparedSessionActivateEffect prepareActivate(")
+    pe = pt.find("override void deactivate()", ps)
+    builder = pt[bs:be] if bs >= 0 and be > bs else ""
+    installer = pt[ins:ine] if ins >= 0 and ine > ins else ""
+    producer = pt[ps:pe] if ps >= 0 and pe > ps else ""
+    return (
+        "final class PreparedSliceActivationOwner" in owner and
+        owner.count("@disable this(this);") == 2 and
+        not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
+        "target.classinfo !is SliceTool.classinfo" in owner and
+        "target_.preparedActivationMesh() !is source_" in owner and
+        "!image_.before.matches(*source_)" in owner and
+        "target_.installPreparedActivation(image_); consume();" in owner and
+        "image_.clear(); target_ = null; source_ = null;" in owner and
+        "image.before = MeshSnapshot.capture(*source);" in builder and
+        "image.restrictFaces = sliceRestrictFaces(*source);" in builder and
+        "image.armedKey.stamp(*source);" in builder and
+        not re.search(r"(?<!\.)\b(active|dragPart_|previewLive_|haveBefore_|"
+                      r"haveRaw_|snapTempInvert_|haveFrozen_|pendingAxisClassify_|"
+                      r"hasLine_|drawGesture_|ctrlPending_|ctrlAxis_|gapDrag_|"
+                      r"axisLocked_|before_|restrictFaces_|armedKey_)\s*=", builder) and
+        "active = true; dragPart_ = DragNone; previewLive_ = false;" in installer and
+        "haveBefore_ = true; haveRaw_ = false; snapTempInvert_ = false;" in installer and
+        "haveFrozen_ = false; pendingAxisClassify_ = false;" in installer and
+        "hasLine_ = false; drawGesture_ = false; ctrlPending_ = false;" in installer and
+        "ctrlAxis_ = -1; gapDrag_ = false; axisLocked_ = false;" in installer and
+        "image.before.moveInto(before_);" in installer and
+        "restrictFaces_ = image.restrictFaces; image.restrictFaces = null;" in installer and
+        "armedKey_ = image.armedKey;" in installer and
+        not re.search(r"\b(start_|end_|fast_|axis_|vector_|infinite_|split_|caps_|"
+                      r"gap_|gapSide_|snap_|snapAngle_|rawStart_|rawEnd_|frozenNormal_|"
+                      r"vpWorld_)\s*=", installer) and
+        "PreparedSliceActivationOwner.prepare(this)" in producer and
+        "context.prepareSliceActivation(owner)" in producer and
+        "context.markNoHistoryInstall()" in producer and
+        producer.find("context.prepareSliceActivation(owner)") <
+            producer.find("context.markNoHistoryInstall()") and
+        "scope(failure) context.discard();" in producer and
+        "if (!ok) context.discard();" in producer and
+        "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+        "            PreparedActivateKind.Slice, ok);" in producer and
+        "e.sliceActivation.validate();" in context and
+        "e.sliceActivation.install();" in context and
+        "e.sliceActivation.abort();" in context)
+if not slice_activation_gate(slice_activation_owner, record_context,
+                             slice_activation_tool):
+    fail("Slice activation prepared contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is SliceTool.classinfo", "false", "broaden product"),
+    ("owner", "target_.preparedActivationMesh() !is source_", "false", "drop identity"),
+    ("owner", "!image_.before.matches(*source_)", "false", "drop content validation"),
+    ("owner", "target_.installPreparedActivation(image_);", "", "drop install"),
+    ("tool", "image.before = MeshSnapshot.capture(*source);", "active = false; image.before = MeshSnapshot.capture(*source);", "write live during prepare"),
+    ("tool", "image.restrictFaces = sliceRestrictFaces(*source);", "image.restrictFaces = null;", "drop restriction capture"),
+    ("tool", "image.armedKey.stamp(*source);", "", "drop armed stamp"),
+    ("tool", "active = true; dragPart_ = DragNone; previewLive_ = false;", "active = true;", "drop primary reset"),
+    ("tool", "haveBefore_ = true; haveRaw_ = false; snapTempInvert_ = false;", "haveBefore_ = true;", "drop raw reset"),
+    ("tool", "haveFrozen_ = false; pendingAxisClassify_ = false;", "haveFrozen_ = false;", "retain pending classify"),
+    ("tool", "hasLine_ = false; drawGesture_ = false; ctrlPending_ = false;", "hasLine_ = false;", "drop line/ctrl reset"),
+    ("tool", "ctrlAxis_ = -1; gapDrag_ = false; axisLocked_ = false;", "ctrlAxis_ = -1;", "drop remaining reset"),
+    ("tool", "image.before.moveInto(before_);", "", "drop baseline"),
+    ("tool", "restrictFaces_ = image.restrictFaces; image.restrictFaces = null;", "restrictFaces_ = image.restrictFaces;", "retain restriction payload"),
+    ("tool", "armedKey_ = image.armedKey;", "", "drop armed key"),
+    ("tool", "context.prepareSliceActivation(owner) &&\n            context.markNoHistoryInstall()",
+     "context.markNoHistoryInstall() &&\n            context.prepareSliceActivation(owner)", "reorder history before owner"),
+    ("tool", "context.prepareSliceActivation(owner)", "true", "drop enlist"),
+    ("tool", "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+     "            PreparedActivateKind.Slice, ok);",
+     "return PreparedSessionActivateEffect(OwnedId.init,\n"
+     "            PreparedActivateKind.Slice, ok);", "forge effect owner"),
+    ("tool", "PreparedActivateKind.Slice, ok);", "PreparedActivateKind.Slice, true);", "forge acceptance"),
+    ("context", "e.sliceActivation.validate();", "true;", "drop validation"),
+    ("context", "e.sliceActivation.install();", "", "drop context install"),
+    ("context", "e.sliceActivation.abort();", "", "drop context abort"),
+):
+    o, c, t = slice_activation_owner, record_context, slice_activation_tool
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    else: t = t.replace(old, new, 1)
+    if ((o == slice_activation_owner and c == record_context and
+         t == slice_activation_tool) or slice_activation_gate(o,c,t)):
+        fail(f"Slice activation mutation did not RED: {label}")
+for fixture in (
+    ROOT / "tests/compile_fail/prepared_slice_activation_token_copy.d",
+    ROOT / "tests/compile_fail/prepared_slice_activation_validated_token_copy.d",
+):
+    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if run.returncode == 0 or ("not copyable" not in run.stdout and
+            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+        fail("Slice activation token copy was not rejected:\n" + run.stdout)
 
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
 # detached whole-Mesh adoption with exact caller-supplied change flags, and a
