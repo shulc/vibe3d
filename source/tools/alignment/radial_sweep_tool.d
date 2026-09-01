@@ -14,6 +14,7 @@ import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import tools.common.session_mesh_key : SessionMeshKey;
 import snapshot : MeshSnapshot;
+import prepared_selection_profile_image : RadialSweepProfileImage;
 import shader : Shader, LitShader, drawLitPreview;
 import handler : ToolHandles, BoxHandler, gizmoSize, drawThickLinesExt;
 import drag : planeDragDelta, screenAxisDelta, gesturePrevPixel;
@@ -319,6 +320,24 @@ public:
     }
 
     override string name() const { return "Radial Sweep"; }
+
+    final void installPreparedSelectionProfile(ref RadialSweepProfileImage image)
+            nothrow @nogc {
+        image.mesh.moveInto(baseSnap);
+        profile_ = image.profile; image.profile = null;
+        sessionKey_ = image.sessionKey;
+        profileClosed_ = image.closed; profileFaceIdx_ = image.face;
+        validProfile_ = image.valid;
+        engaged = false; dragPart = -1; havePreviewCache = false;
+    }
+    version(unittest) bool preparedProfileForTest() const nothrow @nogc {
+        return baseSnap.filled && validProfile_ && profile_.length != 0 &&
+               profileClosed_ && profileFaceIdx_ == 0 && !engaged &&
+               dragPart == -1 && !havePreviewCache;
+    }
+    version(unittest) bool preparedProfileValidityForTest() const nothrow @nogc {
+        return validProfile_;
+    }
 
     override EditMode[] supportedModes() const { return [EditMode.Edges, EditMode.Polygons]; }
 

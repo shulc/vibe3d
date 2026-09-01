@@ -303,7 +303,8 @@ for path, text in prepared_source_texts.items():
             "tools.common.command_wrapper", "tools.edit.tack",
             "tools.create.vertex_place", "tools.alignment.array_tool",
             "tools.alignment.clone_tool", "tools.deform.magnet",
-            "tools.edit.reduce", "prepared_private_state"}:
+            "tools.edit.reduce", "prepared_private_state",
+            "prepared_selection_profile"}:
         fail(f"P1.0b.3d PreparedRecordContext gained an unreviewed import: {module}")
     if "new PreparedRecordContext" in text:
         production_text = without_unittests(text)
@@ -1711,5 +1712,59 @@ for name, source in b5e_tools.items():
     body = source[match.end():balanced_source(source, match.end())-1]
     if "prepareActivate(" in body or "preparePrivateState(" in body:
         fail(f"P1.0b.5f {name} legacy activation calls dormant producer")
+
+# P1.0b.5g isolated closed Radial Sweep selection/profile session owner.
+b5g_owner = (ROOT / "source/prepared_selection_profile.d").read_text()
+b5g_image = (ROOT / "source/prepared_selection_profile_image.d").read_text()
+b5g_tool = (ROOT / "source/tools/alignment/radial_sweep_tool.d").read_text()
+def b5g_gate(owner, image, context, tool):
+    forbidden = ("void*", "delegate", "function(", "Variant", "ubyte[] payload")
+    return (not any(x in without_unittests(owner) for x in forbidden) and
+            "RadialSweepTool target_;" in owner and
+            "target_ is target" in owner and
+            "target.classinfo !is RadialSweepTool.classinfo" in owner and
+            "RadialSweepProfileImage image_;" in owner and
+            "MeshSnapshot mesh;" in image and "uint[] profile;" in image and
+            "SessionMeshKey sessionKey;" in image and
+            "source.extractSelectedEdgeChain(owner.image_.closed)" in owner and
+            "source.faceVertexRing(selected[0]).dup" in owner and
+            "owner.image_.valid = owner.image_.profile.length >= 3;" in owner and
+            "bool begin() nothrow @nogc" in owner and
+            "void install() nothrow @nogc" in owner and
+            "void abort() nothrow @nogc" in owner and
+            owner.count("consumed_ = true") >= 2 and
+            "target_.installPreparedSelectionProfile(image_);" in owner and
+            "target_ = null; image_.clear();" in owner and
+            "final void installPreparedSelectionProfile(ref RadialSweepProfileImage image)" in tool and
+            "image.mesh.moveInto(baseSnap);" in tool and
+            "profile_ = image.profile; image.profile = null;" in tool and
+            "RadialSweepProfileState" in context and
+            "bool prepareSelectionProfile(PreparedSelectionProfileOwner owner)" in context and
+            "e.selectionProfile.install();" in context and
+            "e.selectionProfile.abort();" in context)
+if not b5g_gate(b5g_owner, b5g_image, b5e_context, b5g_tool):
+    fail("P1.0b.5g selection-profile owner drift")
+for target, old, new, label in (
+    ("owner", "target_ is target", "true", "drop exact target identity"),
+    ("owner", "target.classinfo !is RadialSweepTool.classinfo", "false", "admit behaviorful derived product"),
+    ("owner", "owner.image_.profile.length >= 3", "owner.image_.profile.length >= 2", "weaken polygon arity threshold"),
+    ("owner", "source.faceVertexRing(selected[0]).dup", "source.faceVertexRing(selected[0])", "alias profile"),
+    ("owner", "consumed_ = true; begun_ = false; target_ = null; image_.clear();", "begun_ = false;", "re-arm installed owner"),
+    ("owner", "target_.installPreparedSelectionProfile(image_);", "", "drop fixed install"),
+    ("tool", "image.mesh.moveInto(baseSnap);", "", "drop detached mesh install"),
+    ("tool", "profile_ = image.profile; image.profile = null;", "profile_ = image.profile;", "omit profile transfer scrub"),
+    ("context", "e.selectionProfile.abort();", "", "drop context abort"),
+):
+    owner, image, context, tool = b5g_owner, b5g_image, b5e_context, b5g_tool
+    if target == "owner": owner = owner.replace(old, new, 1)
+    elif target == "tool": tool = tool.replace(old, new, 1)
+    else: context = context.replace(old, new, 1)
+    if b5g_gate(owner, image, context, tool):
+        fail(f"P1.0b.5g named mutation did not RED: {label}")
+for hook in ("override void activate()", "override void resyncSession()"):
+    start = b5g_tool.find(hook); body_start = b5g_tool.find("{", start) + 1
+    body = b5g_tool[body_start:balanced_source(b5g_tool, body_start)-1]
+    if "PreparedSelectionProfileOwner" in body or "prepareSelectionProfile" in body:
+        fail("P1.0b.5g owner reached from production hook")
 
 print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures)} compile-fail fixtures)")
