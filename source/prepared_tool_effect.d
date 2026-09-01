@@ -39,7 +39,7 @@ enum PreparedDeactivateKind : ubyte {
 enum PreparedActivateKind : ubyte { None, Vertex, Array, Clone, Magnet, Reduction }
 enum PreparedRadialSweepKind : ubyte { Activate, Param, Deactivate }
 enum PreparedRadialArrayKind : ubyte { Activate, Deactivate }
-enum PreparedTransformActivationKind : ubyte { LinearAlign, RadialAlign }
+enum PreparedTransformActivationKind : ubyte { LinearAlign, RadialAlign, Bend, Push }
 enum PreparedTransformProductKind : ubyte { Move, Rotate, Scale }
 enum PreparedMoveUpdateKind : ubyte {
     None, InactiveNoop, DraggingNoop, WrapperEditOpenNoop, Refresh

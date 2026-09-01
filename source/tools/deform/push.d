@@ -10,6 +10,10 @@ import math : Vec3, Viewport, dot;
 import shader;
 
 import params : Param;
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedTransformActivationEffect,
+    PreparedTransformActivationKind;
+import prepared_transform_activation : PreparedTransformActivationOwner;
 
 /// Push tool — translates each selected vert along its smooth (per-vert
 /// average of incident face normals) by `dist` units, weighted by the
@@ -37,6 +41,19 @@ public:
     // (never-activated) tool still gets 0.0 from the field initializer above.
     override void activate() {
         super.activate();
+    }
+
+    final PreparedTransformActivationEffect prepareActivate(
+            PreparedRecordContext context) {
+        if (context is null) return PreparedTransformActivationEffect(
+            preparedToolStateOwner, PreparedTransformActivationKind.Push, false);
+        scope(failure) context.discard();
+        auto owner = PreparedTransformActivationOwner.prepare(this);
+        bool ok = owner !is null && context.prepareTransformActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedTransformActivationEffect(preparedToolStateOwner,
+            PreparedTransformActivationKind.Push, ok);
     }
 
     override Param[] params() {

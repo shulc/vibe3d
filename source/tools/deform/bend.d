@@ -12,6 +12,10 @@ import math : Vec3, Vec4, Viewport, dot, cross,
 import shader;
 
 import params : Param;
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedTransformActivationEffect,
+    PreparedTransformActivationKind;
+import prepared_transform_activation : PreparedTransformActivationOwner;
 
 import std.math : PI, abs, sqrt;
 
@@ -47,6 +51,19 @@ public:
     // still gets 0/+X from the field initializers above.
     override void activate() {
         super.activate();
+    }
+
+    final PreparedTransformActivationEffect prepareActivate(
+            PreparedRecordContext context) {
+        if (context is null) return PreparedTransformActivationEffect(
+            preparedToolStateOwner, PreparedTransformActivationKind.Bend, false);
+        scope(failure) context.discard();
+        auto owner = PreparedTransformActivationOwner.prepare(this);
+        bool ok = owner !is null && context.prepareTransformActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedTransformActivationEffect(preparedToolStateOwner,
+            PreparedTransformActivationKind.Bend, ok);
     }
 
     override Param[] params() {

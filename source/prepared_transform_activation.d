@@ -4,13 +4,15 @@ import core.atomic : atomicOp;
 import tools.transform.transform : TransformTool, PreparedTransformActivationImage;
 import tools.alignment.linear_align_tool : LinearAlignTool;
 import tools.alignment.radial_align_tool : RadialAlignTool;
+import tools.deform.bend : BendTool;
+import tools.deform.push : PushTool;
 
 struct PreparedTransformActivationToken { @disable this(this); private: ulong owner, generation; }
 struct ValidatedTransformActivationToken { @disable this(this); private: ulong owner, generation; }
 private shared ulong nextTransformActivationOwner;
 
-/// Closed activation projection for the two exact registered alignment
-/// products whose activation is precisely `super.activate()`.
+/// Closed activation projection for exact registered products whose activation
+/// is precisely `super.activate()`.
 final class PreparedTransformActivationOwner {
 private:
     TransformTool target_;
@@ -51,7 +53,9 @@ public:
 private:
     static bool admit(TransformTool target) nothrow @nogc {
         return target !is null && (target.classinfo is LinearAlignTool.classinfo ||
-            target.classinfo is RadialAlignTool.classinfo);
+            target.classinfo is RadialAlignTool.classinfo ||
+            target.classinfo is BendTool.classinfo ||
+            target.classinfo is PushTool.classinfo);
     }
     this(TransformTool target) {
         target_ = target;
@@ -70,11 +74,14 @@ version(unittest) unittest {
     import prepared_record_context : PreparedRecordContext;
     import command_history : CommandHistory;
     import record_observer_hub : RecordObserverHub;
-    import prepared_tool_effect : PreparedTransformActivationKind;
+    import prepared_tool_effect : PreparedTransformActivationEffect,
+        PreparedTransformActivationKind;
     Mesh mesh = makeCube(); GpuMesh gpu; EditMode mode = EditMode.Polygons;
     auto linear = new LinearAlignTool(() => &mesh, &gpu, &mode);
     auto radial = new RadialAlignTool(() => &mesh, &gpu, &mode);
-    foreach (target; [cast(TransformTool) linear, radial]) {
+    auto bend = new BendTool(() => &mesh, &gpu, &mode);
+    auto push = new PushTool(() => &mesh, &gpu, &mode);
+    foreach (target; [cast(TransformTool) linear, radial, bend, push]) {
         target.seedPreparedActivationForTest();
         auto owner = PreparedTransformActivationOwner.prepare(target);
         assert(owner !is null && owner.owns(target) && owner.begin() &&
@@ -192,4 +199,23 @@ version(unittest) unittest {
         radial.preparedActivationSeedForTest() && radialRetry.validate());
     radialRetry.install();
     assert(radial.preparedActivationForTest()); radialRetry.install();
+
+    TransformTool[] productTargets = [bend, push];
+    const productKinds = [PreparedTransformActivationKind.Bend,
+                          PreparedTransformActivationKind.Push];
+    foreach (i, target; productTargets) {
+        target.seedPreparedActivationForTest();
+        auto productContext = new PreparedRecordContext(new CommandHistory(),
+            new RecordObserverHub());
+        PreparedTransformActivationEffect effect;
+        if (target is bend) effect = bend.prepareActivate(productContext);
+        else effect = push.prepareActivate(productContext);
+        assert(effect.accepted && effect.kind == productKinds[i] &&
+            effect.owner == target.preparedOwnerForTest &&
+            target.preparedActivationSeedForTest() &&
+            productContext.validate());
+        productContext.install(); productContext.install();
+        assert(target.preparedActivationForTest() &&
+            productContext.installTraceForTest() == [14, 8]);
+    }
 }

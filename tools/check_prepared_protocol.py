@@ -217,6 +217,8 @@ B5J_PREPARED_LEGACY = {
 B5K_PREPARED_LEGACY = {
     ("tools.alignment.linear_align_tool", "LinearAlignTool", "activate"),
     ("tools.alignment.radial_align_tool", "RadialAlignTool", "activate"),
+    ("tools.deform.bend", "BendTool", "activate"),
+    ("tools.deform.push", "PushTool", "activate"),
 }
 B5L_PREPARED_LEGACY = {
     ("tools.transform.move", "MoveTool", "activate"),
@@ -266,7 +268,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "d563b6017bcbbed98a33d2bef4074acd7a8097c63dede9cb691443a467f508a6"
+    "f2c6edf79df1342be614032d535e0a7f7683f452a1bebd05a05c8c6c74911bad"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -397,7 +399,8 @@ for path, text in prepared_source_texts.items():
             "tools.alignment.radial_sweep_tool",
             "tools.alignment.radial_array_tool",
             "tools.alignment.linear_align_tool",
-            "tools.alignment.radial_align_tool"}:
+            "tools.alignment.radial_align_tool",
+            "tools.deform.bend", "tools.deform.push"}:
         fail(f"P1.0b.3d PreparedRecordContext gained an unreviewed import: {module}")
     if "new PreparedRecordContext" in text:
         production_text = without_unittests(text)
@@ -2176,6 +2179,8 @@ transform_activation_owner = (ROOT / "source/prepared_transform_activation.d").r
 transform_tool = (ROOT / "source/tools/transform/transform.d").read_text()
 linear_align_tool = (ROOT / "source/tools/alignment/linear_align_tool.d").read_text()
 radial_align_tool = (ROOT / "source/tools/alignment/radial_align_tool.d").read_text()
+bend_tool = (ROOT / "source/tools/deform/bend.d").read_text()
+push_tool = (ROOT / "source/tools/deform/push.d").read_text()
 def transform_activation_gate(owner, context, tool):
     production = without_unittests(owner)
     builder_projection = (
@@ -2200,6 +2205,8 @@ def transform_activation_gate(owner, context, tool):
         not any(x in production for x in (" delegate", " function(", "void*", "ubyte[]")) and
         "target.classinfo is LinearAlignTool.classinfo" in owner and
         "target.classinfo is RadialAlignTool.classinfo" in owner and
+        "target.classinfo is BendTool.classinfo" in owner and
+        "target.classinfo is PushTool.classinfo" in owner and
         "prepared_.generation != generation_" in owner and
         "validatedToken_.generation != generation_" in owner and
         "target_.installPreparedActivation(image_); consume();" in owner and
@@ -2218,13 +2225,14 @@ def transform_activation_gate(owner, context, tool):
         "e.transformActivation.abort();" in context)
 if not transform_activation_gate(transform_activation_owner, record_context, transform_tool):
     fail("Transform activation owner contract drift")
-def transform_producer_gate(linear, radial):
+def transform_producer_gate(linear, radial, bend, push):
     def producer_body(source):
         start = source.find("final PreparedTransformActivationEffect prepareActivate(")
         if start < 0: return ""
         body_start = source.find("{", start) + 1
         return source[body_start:balanced_source(source, body_start)-1]
     linear_body, radial_body = producer_body(linear), producer_body(radial)
+    bend_body, push_body = producer_body(bend), producer_body(push)
     common = ("scope(failure) context.discard();",
         "context.prepareTransformActivation(owner) &&",
         "context.markNoHistoryInstall();", "if (!ok) context.discard();")
@@ -2236,13 +2244,24 @@ def transform_producer_gate(linear, radial):
         all(x in radial_body for x in common) and
         "return PreparedTransformActivationEffect(preparedToolStateOwner,\n"
         "            PreparedTransformActivationKind.RadialAlign, ok);" in radial_body and
-        not any(x in linear_body + radial_body for x in
+        "PreparedTransformActivationOwner.prepare(this)" in bend_body and
+        all(x in bend_body for x in common) and
+        "return PreparedTransformActivationEffect(preparedToolStateOwner,\n"
+        "            PreparedTransformActivationKind.Bend, ok);" in bend_body and
+        "PreparedTransformActivationOwner.prepare(this)" in push_body and
+        all(x in push_body for x in common) and
+        "return PreparedTransformActivationEffect(preparedToolStateOwner,\n"
+        "            PreparedTransformActivationKind.Push, ok);" in push_body and
+        not any(x in linear_body + radial_body + bend_body + push_body for x in
             ("owner.install(", "context.install(", "context.validate(")))
-if not transform_producer_gate(linear_align_tool, radial_align_tool):
-    fail("Transform alignment activation producer contract drift")
+if not transform_producer_gate(linear_align_tool, radial_align_tool,
+        bend_tool, push_tool):
+    fail("Transform activation producer contract drift")
 for target, old, new, label in (
     ("owner", "target.classinfo is LinearAlignTool.classinfo", "false", "drop LinearAlign admission"),
     ("owner", "target.classinfo is RadialAlignTool.classinfo", "false", "drop RadialAlign admission"),
+    ("owner", "target.classinfo is BendTool.classinfo", "false", "drop Bend admission"),
+    ("owner", "target.classinfo is PushTool.classinfo", "false", "drop Push admission"),
     ("owner", "target.classinfo is LinearAlignTool.classinfo", "cast(LinearAlignTool) target !is null", "broaden LinearAlign admission to derived behavior"),
     ("owner", "prepared_.generation != generation_", "false", "drop prepared generation"),
     ("owner", "validatedToken_.generation != generation_", "false", "drop validated generation"),
@@ -2274,15 +2293,24 @@ for target, old, new, label in (
     ("radial", "PreparedTransformActivationKind.RadialAlign, ok", "PreparedTransformActivationKind.LinearAlign, ok", "swap RadialAlign accepted kind"),
     ("linear", "return PreparedTransformActivationEffect(preparedToolStateOwner,", "return PreparedTransformActivationEffect(OwnedId.init,", "replace accepted owner"),
     ("radial", "auto owner = PreparedTransformActivationOwner.prepare(this);", "auto owner = PreparedTransformActivationOwner.prepare(this); owner.install();", "mutate live state during prepare"),
+    ("bend", "PreparedTransformActivationOwner.prepare(this)", "null", "drop Bend owner"),
+    ("push", "context.prepareTransformActivation(owner) &&", "true &&", "drop Push enlist"),
+    ("bend", "PreparedTransformActivationKind.Bend, ok", "PreparedTransformActivationKind.Push, ok", "swap Bend accepted kind"),
+    ("push", "scope(failure) context.discard();", "", "drop Push failure cleanup"),
 ):
-    linear, radial = linear_align_tool, radial_align_tool
+    linear, radial, bend, push = (linear_align_tool, radial_align_tool,
+                                  bend_tool, push_tool)
     if target == "linear": linear = linear.replace(old, new, 1)
-    else: radial = radial.replace(old, new, 1)
-    if transform_producer_gate(linear, radial):
-        fail(f"Transform alignment producer mutation did not RED: {label}")
+    elif target == "radial": radial = radial.replace(old, new, 1)
+    elif target == "bend": bend = bend.replace(old, new, 1)
+    else: push = push.replace(old, new, 1)
+    if transform_producer_gate(linear, radial, bend, push):
+        fail(f"Transform activation producer mutation did not RED: {label}")
 for path, aggregate in (("tools/transform/transform.d", "TransformTool"),
                         ("tools/alignment/linear_align_tool.d", "LinearAlignTool"),
-                        ("tools/alignment/radial_align_tool.d", "RadialAlignTool")):
+                        ("tools/alignment/radial_align_tool.d", "RadialAlignTool"),
+                        ("tools/deform/bend.d", "BendTool"),
+                        ("tools/deform/push.d", "PushTool")):
     source = (ROOT / "source" / path).read_text()
     start = source.find("override void activate()")
     body_start = source.find("{", start) + 1
