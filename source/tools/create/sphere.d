@@ -693,6 +693,30 @@ protected:
         axisAtLastSync = params_.axis;
     }
 
+public:
+    final @property bool preparedSphereClearMethod() const nothrow @nogc {
+        return ellipsoidMode_;
+    }
+    final @property int preparedSphereAxis() const nothrow @nogc {
+        return params_.axis;
+    }
+    final void installPreparedSphereReset(bool clearMethod, int nextAxis)
+            nothrow @nogc {
+        installHandledResetProjection();
+        if (clearMethod) params_.method = 0;
+        axisAtLastSync = nextAxis;
+    }
+    version(unittest) void seedPreparedSphereForTest(int axis, int method)
+            nothrow @nogc { params_.axis = axis; params_.method = method; }
+    version(unittest) int preparedSphereMethodForTest() const nothrow @nogc {
+        return params_.method;
+    }
+    version(unittest) int preparedSphereSyncedAxisForTest() const nothrow @nogc {
+        return axisAtLastSync;
+    }
+
+protected:
+
     // ---- axis-aware world<->orig radius mapping [worldSize/setWorldSize --
     // -----override, task 0414 plan sec 1] -----------------------------------
     //

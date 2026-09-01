@@ -114,6 +114,16 @@ public:
         lastSnap_ = SnapResult.init;
     }
 
+    final void installPreparedPrivateDeactivate() nothrow @nogc {
+        lastSnap_ = SnapResult.init;
+    }
+    version(unittest) void seedPreparedSnapForTest(int index) nothrow @nogc {
+        lastSnap_.snapped = true; lastSnap_.targetIndex = index;
+    }
+    version(unittest) int preparedSnapIndexForTest() const nothrow @nogc {
+        return lastSnap_.targetIndex;
+    }
+
     // Cache the viewport each frame so onMouseButtonDown has current camera.
     override void draw(const ref Shader shader, const ref Viewport vp,
                        ref VectorStack vts, bool visualOnly = false)

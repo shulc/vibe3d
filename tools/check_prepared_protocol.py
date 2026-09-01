@@ -1465,4 +1465,78 @@ for path in (ROOT / "source/tools").rglob("*.d"):
     if ".prepareCreate(" in body or ".prepareSnapClear(" in body:
         fail(f"P1.0b.5c dormant owner has production caller: {path.relative_to(ROOT)}")
 
+# P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
+# detached whole-Mesh adoption with exact caller-supplied change flags, and a
+# frozen Primitive product/reset projection set. Install never dispatches the
+# legacy resetSession virtual.
+b5d1_sources = {
+    "owner": (ROOT / "source/prepared_private_state.d").read_text(),
+    "context": record_context,
+    "document": (ROOT / "source/document.d").read_text(),
+    "primitive": (ROOT / "source/tools/create/primitive_create_tool.d").read_text(),
+    "sphere": (ROOT / "source/tools/create/sphere.d").read_text(),
+}
+primitive_products = sorted(
+    str(p.relative_to(ROOT)) for p in (ROOT / "source/tools/create").glob("*.d")
+    if re.search(r"final class \w+\s*:\s*(?:PrimitiveCreateTool|HandledCreateTool|SizedRadialCreateTool)",
+                 p.read_text()))
+expected_primitive_products = [
+    "source/tools/create/capsule.d", "source/tools/create/cone.d",
+    "source/tools/create/cylinder.d", "source/tools/create/sphere.d",
+    "source/tools/create/torus.d", "source/tools/create/tube.d",
+]
+def b5d1_gate(s):
+    return ("enum PreparedPrivateStateKind : ubyte { Box, Pen, Primitive, Vertex }" in s["owner"] and
+            s["owner"].count("@disable this(this)") == 2 and
+            "delegate" not in s["owner"] and "void*" not in s["owner"] and
+            "cast(void*)" not in s["owner"] and
+            "void install() nothrow @nogc" in s["owner"] and
+            "validatedToken.generation != generation" in s["owner"] and
+            "BoxTool boxTarget;" in s["owner"] and "PenTool penTarget;" in s["owner"] and
+            "SphereTool sphereTarget;" in s["owner"] and "VertexTool vertexTarget;" in s["owner"] and
+            "boxTarget.installPreparedPrivateActivation();" in s["owner"] and
+            "penTarget.installPreparedPrivateActivation();" in s["owner"] and
+            "sphereTarget.installPreparedSphereReset(sphereClearMethod, sphereAxis);" in s["owner"] and
+            "vertexTarget.installPreparedPrivateDeactivate();" in s["owner"] and
+            s["owner"].count("pending = validated = false;") == 2 and
+            "bool preparePrivateState(PreparedPrivateStateOwner owner)" in s["context"] and
+            "bool prepareMeshImageCommit(Layer layer, ref const Mesh image, uint flags)" in s["context"] and
+            s["context"].count("layer.replaceEnlistedShadow(image)") == 1 and
+            s["context"].count("layer.enlistedShadow().commitChange(flags)") == 1 and
+            s["context"].count("PreparedDeliveryJournal.prepare([spec])") == 2 and
+            s["context"].find("layer.replaceEnlistedShadow(image)") <
+                s["context"].find("layer.enlistedShadow().commitChange(flags)") <
+                s["context"].find("PreparedDeliveryJournal.prepare([spec])") and
+            "bool replaceEnlistedShadow(ref const Mesh image)" in s["document"] and
+            "final void installPreparedPrimitiveReset() nothrow @nogc" in s["primitive"] and
+            "final void installHandledResetProjection() nothrow @nogc" in s["primitive"] and
+            "final void installPreparedSphereReset(bool clearMethod, int nextAxis)" in s["sphere"] and
+            "installHandledResetProjection();" in s["sphere"] and
+            primitive_products == expected_primitive_products)
+if not b5d1_gate(b5d1_sources):
+    fail("P1.0b.5d.1 private-state/topology infrastructure drift")
+for name, old, new, label in (
+    ("owner", "@disable this(this);", "", "make private-state token copyable"),
+    ("owner", "validatedToken.generation != generation", "false", "drop one-shot generation"),
+    ("owner", "pending = validated = false;", "",
+     "drop private-state consumption"),
+    ("owner", "BoxTool boxTarget;", "void* boxTarget;",
+     "smuggle untyped target"),
+    ("owner", "private enum PrimitiveProjection", "alias Smuggled = void delegate();\nprivate enum PrimitiveProjection",
+     "smuggle caller behavior"),
+    ("context", "layer.replaceEnlistedShadow(image)", "true", "drop detached Mesh image"),
+    ("context", "layer.enlistedShadow().commitChange(flags)", "",
+     "drop exact Mesh flags"),
+    ("context", "PreparedDeliveryJournal.prepare([spec])", "null",
+     "drop topology delivery preparation"),
+    ("sphere", "installHandledResetProjection();", "", "drop inherited leaf reset"),
+):
+    mutant = dict(b5d1_sources); mutant[name] = mutant[name].replace(old, new, 1)
+    if mutant[name] == b5d1_sources[name] or b5d1_gate(mutant):
+        fail(f"P1.0b.5d.1 named mutation did not RED: {label}")
+for path in (ROOT / "source/tools").rglob("*.d"):
+    body = path.read_text()
+    if ".preparePrivateState(" in body or ".prepareMeshImageCommit(" in body:
+        fail(f"P1.0b.5d.1 dormant infrastructure has hook caller: {path.relative_to(ROOT)}")
+
 print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures)} compile-fail fixtures)")

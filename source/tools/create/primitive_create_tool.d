@@ -219,6 +219,8 @@ public:
     /// Default no-op (PrimitiveCreateTool itself has nothing extra).
     protected void resetSession() {}
 
+    final void installPreparedPrimitiveReset() nothrow @nogc {}
+
     /// Virtual: default true (matches every leaf-group pre-refactor, which
     /// had no such gate). TorusTool overrides it (majorRadius/minorRadius
     /// both need to clear an epsilon before a preview is worth drawing).
@@ -584,6 +586,10 @@ public:
 
     protected override void resetSession() {
         super.resetSession();
+        sizeDragIdx = -1;
+    }
+
+    final void installHandledResetProjection() nothrow @nogc {
         sizeDragIdx = -1;
     }
 

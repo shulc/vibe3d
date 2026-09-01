@@ -11,13 +11,14 @@ import mesh : Mesh;
 import mesh_gpu : GpuResourceOwner, GpuUploadOwner, GpuCreateOwner;
 import handler : ClickPointResourceOwner;
 import snap_render : SnapOverlayOwner;
+import prepared_private_state : PreparedPrivateStateOwner, PreparedPrivateStateKind;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
 
 private enum PreparedResourceKind : ubyte {
     HistoryInstall, MeshInstall, DeliveryInstall, GpuMeshDestroy, GpuUpload, ClickPointDestroy
-    , GpuCreate, SnapOverlayClear
+    , GpuCreate, SnapOverlayClear, BoxState, PenState, PrimitiveState, VertexState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -26,6 +27,7 @@ private struct PreparedResourceEntry {
     GpuCreateOwner gpuCreate;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
+    PreparedPrivateStateOwner privateState;
     Layer layerMesh;
     PreparedDeliveryJournal delivery;
 }
@@ -140,6 +142,43 @@ public:
         e.snapOverlay = owner; resources_ ~= e; return true;
     }
 
+    bool preparePrivateState(PreparedPrivateStateOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        PreparedResourceEntry e; e.privateState = owner;
+        final switch (owner.kind) {
+        case PreparedPrivateStateKind.Box: e.kind = PreparedResourceKind.BoxState; break;
+        case PreparedPrivateStateKind.Pen: e.kind = PreparedResourceKind.PenState; break;
+        case PreparedPrivateStateKind.Primitive: e.kind = PreparedResourceKind.PrimitiveState; break;
+        case PreparedPrivateStateKind.Vertex: e.kind = PreparedResourceKind.VertexState; break;
+        }
+        resources_ ~= e; return true;
+    }
+
+    bool prepareMeshImageCommit(Layer layer, ref const Mesh image, uint flags) {
+        if (!begun_ || validated_Once || layer is null || flags == 0) return false;
+        resources_.reserve(resources_.length + 2);
+        if (!layer.beginEnlistedMesh()) return false;
+        scope(failure) { layer.abortEnlistedMesh(); invalidateTransaction(); }
+        if (!layer.replaceEnlistedShadow(image)) {
+            layer.abortEnlistedMesh(); invalidateTransaction(); return false;
+        }
+        {
+            auto shadowScope = layer.beginEnlistedShadowMutation();
+            layer.enlistedShadow().commitChange(flags);
+            shadowScope.close();
+        }
+        auto spec = layer.drainEnlistedDelivery();
+        auto delivery = PreparedDeliveryJournal.prepare([spec]);
+        PreparedResourceEntry meshEntry; meshEntry.kind = PreparedResourceKind.MeshInstall;
+        meshEntry.layerMesh = layer; resources_ ~= meshEntry;
+        PreparedResourceEntry deliveryEntry; deliveryEntry.kind = PreparedResourceKind.DeliveryInstall;
+        deliveryEntry.delivery = delivery; resources_ ~= deliveryEntry;
+        return true;
+    }
+
     bool preparePositionCommit(Layer layer) {
         if (!begun_ || validated_Once || layer is null) return false;
         resources_.reserve(resources_.length + 2);
@@ -208,6 +247,11 @@ public:
                 ok = e.gpuCreate.validateEnlisted(resourceThread_, resourceContext_); break;
             case PreparedResourceKind.SnapOverlayClear:
                 ok = e.snapOverlay.validateClear(); break;
+            case PreparedResourceKind.BoxState:
+            case PreparedResourceKind.PenState:
+            case PreparedResourceKind.PrimitiveState:
+            case PreparedResourceKind.VertexState:
+                ok = e.privateState.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -253,6 +297,13 @@ public:
             e.snapOverlay.installClear();
             version (unittest) installTrace_[installTraceLength_++] = 6;
             break;
+        case PreparedResourceKind.BoxState:
+        case PreparedResourceKind.PenState:
+        case PreparedResourceKind.PrimitiveState:
+        case PreparedResourceKind.VertexState:
+            e.privateState.install();
+            version (unittest) installTrace_[installTraceLength_++] = 7;
+            break;
         }
         if (!installedHistory) history_.installPreparedToken(validated_);
         resources_.length = 0;
@@ -279,6 +330,10 @@ private:
         case PreparedResourceKind.ClickPointDestroy: e.clickDestroy.abortEnlisted(); break;
         case PreparedResourceKind.GpuCreate: e.gpuCreate.abortEnlisted(); break;
         case PreparedResourceKind.SnapOverlayClear: e.snapOverlay.abortClear(); break;
+        case PreparedResourceKind.BoxState:
+        case PreparedResourceKind.PenState:
+        case PreparedResourceKind.PrimitiveState:
+        case PreparedResourceKind.VertexState: e.privateState.abort(); break;
         }
         resources_.length = 0;
         historyMarker_ = false;
@@ -452,4 +507,55 @@ version (unittest) unittest {
     mixed.install();
     assert(createdGpu.faceVao != 0);
     assert(mixed.installTraceForTest() == [1,5,6]);
+
+    import tools.create.vertex_place : VertexTool;
+    GpuMesh privateGpu;
+    auto privateTool = new VertexTool(() => &faultLayer.meshRef(), &privateGpu, null);
+    privateTool.seedPreparedSnapForTest(4);
+    auto privateOwner = PreparedPrivateStateOwner.vertex(privateTool);
+    auto ordered = new PreparedRecordContext(new CommandHistory(),
+                                             new RecordObserverHub());
+    assert(ordered.preparePrivateState(privateOwner));
+    assert(ordered.markHistoryInstall());
+    assert(privateTool.preparedSnapIndexForTest() == 4 && ordered.validate());
+    ordered.install();
+    assert(privateTool.preparedSnapIndexForTest() == -1 &&
+           ordered.installTraceForTest() == [7,1]);
+    privateTool.seedPreparedSnapForTest(8);
+    ordered.install(); assert(privateTool.preparedSnapIndexForTest() == 8);
+
+    auto topologyLayer = new Layer();
+    topologyLayer.meshRef() = makeCube();
+    Mesh emptyImage;
+    auto topology = new PreparedRecordContext(new CommandHistory(),
+                                              new RecordObserverHub());
+    assert(topology.markHistoryInstall());
+    assert(topology.prepareMeshImageCommit(topologyLayer, emptyImage,
+                                           MeshEditScope.Geometry));
+    assert(topologyLayer.meshRef().vertices.length == 8);
+    assert(topology.validate()); topology.install();
+    assert(topologyLayer.meshRef().vertices.length == 0);
+    assert(topology.installTraceForTest() == [1,3,4]);
+
+    auto topologyFaultLayer = new Layer();
+    topologyFaultLayer.meshRef() = makeCube();
+    auto topologyFault = new PreparedRecordContext(new CommandHistory(),
+                                                   new RecordObserverHub());
+    assert(topologyFault.markHistoryInstall());
+    PreparedDeliveryJournal.setFailPrepareForTest(true);
+    threw = false;
+    try topologyFault.prepareMeshImageCommit(topologyFaultLayer, emptyImage,
+                                             MeshEditScope.Geometry);
+    catch (Exception) threw = true;
+    PreparedDeliveryJournal.setFailPrepareForTest(false);
+    assert(threw && topologyFault.resourceCountForTest() == 0);
+    assert(topologyFaultLayer.meshRef().vertices.length == 8);
+    assert(!topologyFault.validate());
+    auto topologyRetry = new PreparedRecordContext(new CommandHistory(),
+                                                   new RecordObserverHub());
+    assert(topologyRetry.markHistoryInstall());
+    assert(topologyRetry.prepareMeshImageCommit(topologyFaultLayer, emptyImage,
+                                                MeshEditScope.Geometry));
+    topologyRetry.discard();
+    assert(topologyFaultLayer.meshRef().vertices.length == 8);
 }

@@ -235,6 +235,12 @@ public:
         previewGpu.init();
     }
 
+    final void installPreparedPrivateActivation() nothrow @nogc {
+        state = BoxState.Idle; moverDragAxis = edgeDragIdx = heightHDragIdx = -1;
+        liveRunActive = false; liveUndoDepth = 0;
+        dragBeforeValid = paramBeforeValid = false; toolHandles.clearHaul();
+    }
+
     override void deactivate() {
         // Decide what (if anything) is going to be committed; capture the
         // pre-commit snapshot ONLY when we're about to mutate the cage,

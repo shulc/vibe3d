@@ -227,7 +227,7 @@ class ToolHandles {
     }
 
     void setHaul(int part) { captured = part; }
-    void clearHaul()       { captured = -1;  }
+    void clearHaul() nothrow @nogc { captured = -1;  }
 
     // Serialize the registered handles for test introspection (task 0234,
     // /api/tool/handles). `entries` stays private to this module; this is the

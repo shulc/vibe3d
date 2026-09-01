@@ -227,6 +227,12 @@ public:
         previewGpu.init();
     }
 
+    final void installPreparedPrivateActivation() nothrow @nogc {
+        state = PenState.Idle; vertices_.length = 0; params_.currentPoint = -1;
+        params_.posX = params_.posY = params_.posZ = 0.0f;
+        dragArmed = dragInitiated = false; dragVertIdx = -1;
+    }
+
     override void deactivate() {
         // If a valid sequence is pending, commit it on deactivate.
         if (state == PenState.Drawing && vertices_.length >= minCommitVerts()) {

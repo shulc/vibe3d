@@ -522,6 +522,9 @@ final class Layer {
     ref Mesh enlistedShadow() return {
         return preparedMeshPending_.image;
     }
+    bool replaceEnlistedShadow(ref const Mesh image) {
+        return prepareMeshImage(enlistedMeshToken_, image);
+    }
     PreparedShadowScope beginEnlistedShadowMutation() {
         return beginPreparedShadow(preparedMeshPending_.image);
     }
