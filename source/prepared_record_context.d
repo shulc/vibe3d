@@ -13,6 +13,7 @@ import handler : ClickPointResourceOwner;
 import snap_render : SnapOverlayOwner;
 import prepared_private_state : PreparedPrivateStateOwner, PreparedPrivateStateKind;
 import prepared_selection_profile : PreparedSelectionProfileOwner;
+import prepared_radial_sweep_transition : PreparedRadialSweepTransitionOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -21,7 +22,7 @@ private enum PreparedResourceKind : ubyte {
     HistoryInstall, NoHistoryInstall, MeshInstall, DeliveryInstall, GpuMeshDestroy, GpuUpload, ClickPointDestroy
     , GpuCreate, SnapOverlayClear, BoxState, PenState, PrimitiveState, VertexState,
     ArraySessionState, CloneSessionState, MagnetSessionState, ReductionSessionState,
-    RadialSweepProfileState
+    RadialSweepProfileState, RadialSweepTransitionState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -32,6 +33,7 @@ private struct PreparedResourceEntry {
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
     PreparedSelectionProfileOwner selectionProfile;
+    PreparedRadialSweepTransitionOwner radialSweepTransition;
     Layer layerMesh;
     PreparedDeliveryJournal delivery;
 }
@@ -184,6 +186,17 @@ public:
         e.selectionProfile = owner; resources_ ~= e; return true;
     }
 
+    bool prepareRadialSweepTransition(PreparedRadialSweepTransitionOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version (unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected radial-sweep transition enlist failure");
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.RadialSweepTransitionState;
+        e.radialSweepTransition = owner; resources_ ~= e; return true;
+    }
+
     bool prepareMeshImageCommit(Layer layer, ref const Mesh image, uint flags) {
         if (!begun_ || validated_Once || layer is null || flags == 0) return false;
         resources_.reserve(resources_.length + 2);
@@ -288,6 +301,8 @@ public:
                 ok = e.privateState.validate(); break;
             case PreparedResourceKind.RadialSweepProfileState:
                 ok = e.selectionProfile !is null && e.selectionProfile.validate(); break;
+            case PreparedResourceKind.RadialSweepTransitionState:
+                ok = e.radialSweepTransition !is null && e.radialSweepTransition.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -355,6 +370,10 @@ public:
             e.selectionProfile.install();
             version (unittest) installTrace_[installTraceLength_++] = 9;
             break;
+        case PreparedResourceKind.RadialSweepTransitionState:
+            e.radialSweepTransition.install();
+            version (unittest) installTrace_[installTraceLength_++] = 10;
+            break;
         }
         if (!installedHistory) history_.installPreparedToken(validated_);
         resources_.length = 0;
@@ -392,6 +411,7 @@ private:
         case PreparedResourceKind.MagnetSessionState:
         case PreparedResourceKind.ReductionSessionState: e.privateState.abort(); break;
         case PreparedResourceKind.RadialSweepProfileState: e.selectionProfile.abort(); break;
+        case PreparedResourceKind.RadialSweepTransitionState: e.radialSweepTransition.abort(); break;
         }
         resources_.length = 0;
         historyMarker_ = false;

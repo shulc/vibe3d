@@ -304,7 +304,7 @@ for path, text in prepared_source_texts.items():
             "tools.create.vertex_place", "tools.alignment.array_tool",
             "tools.alignment.clone_tool", "tools.deform.magnet",
             "tools.edit.reduce", "prepared_private_state",
-            "prepared_selection_profile"}:
+            "prepared_selection_profile", "prepared_radial_sweep_transition"}:
         fail(f"P1.0b.3d PreparedRecordContext gained an unreviewed import: {module}")
     if "new PreparedRecordContext" in text:
         production_text = without_unittests(text)
@@ -1733,6 +1733,7 @@ def b5g_gate(owner, image, context, tool):
             "void install() nothrow @nogc" in owner and
             "void abort() nothrow @nogc" in owner and
             owner.count("consumed_ = true") >= 2 and
+            owner.count("consumed_ = true; begun_ = false; target_ = null; image_.clear();") == 2 and
             "target_.installPreparedSelectionProfile(image_);" in owner and
             "target_ = null; image_.clear();" in owner and
             "final void installPreparedSelectionProfile(ref RadialSweepProfileImage image)" in tool and
@@ -1766,5 +1767,85 @@ for hook in ("override void activate()", "override void resyncSession()"):
     body = b5g_tool[body_start:balanced_source(b5g_tool, body_start)-1]
     if "PreparedSelectionProfileOwner" in body or "prepareSelectionProfile" in body:
         fail("P1.0b.5g owner reached from production hook")
+
+# P1.0b.5h isolated full Radial Sweep private transition owner.
+b5h_owner = (ROOT / "source/prepared_radial_sweep_transition.d").read_text()
+def b5h_gate(owner, context, tool):
+    production = without_unittests(owner)
+    ds = tool.find("final RadialSweepTransitionImage buildPreparedDeactivateImage()")
+    db = tool.find("{", ds) + 1
+    deactivate_builder = tool[db:balanced_source(tool, db)-1] if ds >= 0 else ""
+    ps = tool.find("final RadialSweepTransitionImage buildPreparedParamImage(string name)")
+    pb = tool.find("{", ps) + 1
+    param_builder = tool[pb:balanced_source(tool, pb)-1] if ps >= 0 else ""
+    return ("enum PreparedRadialSweepTransitionKind : ubyte { Activate, Param, Deactivate }" in tool and
+            not any(x in production for x in ("void*", " delegate", " function(", "ubyte[]")) and
+            "RadialSweepTool target_;" in owner and
+            "RadialSweepTransitionImage image_;" in owner and
+            "target.classinfo is RadialSweepTool.classinfo" in owner and
+            "ref const(Mesh) previewForGpuUpload()" in owner and
+            "target_.installPreparedTransition(image_);" in owner and
+            owner.count("target_ = null; image_.clear();") == 2 and
+            "struct RadialSweepTransitionImage" in tool and
+            "PreparedRadialSweepTransitionKind kind;" in tool and
+            "bool engaged, havePreviewCache, hasPreview, clearHaul, valid;" in tool and
+            "baseSnap.restore(detachedBase);" in tool and
+            "result.profile.profile = profile_.dup;" in tool and
+            "final void installPreparedTransition(ref RadialSweepTransitionImage image)" in tool and
+            "profile_ = image.profile.profile; image.profile.profile = null;" in tool and
+            "if (image.hasPreview)" in tool and
+            "previewMesh = image.previewMesh; image.previewMesh = Mesh.init;" in tool and
+            "if (image.kind == PreparedRadialSweepTransitionKind.Deactivate)" in tool and
+            "engaged = false; havePreviewCache = false; image.clear(); return;" in tool and
+            "result.kind = PreparedRadialSweepTransitionKind.Deactivate;" in tool and
+            "result.engaged = false; result.havePreviewCache = false;" in tool and
+            "previewMesh" not in deactivate_builder and "MeshSnapshot" not in deactivate_builder and
+            "clearHaul" not in deactivate_builder and
+            "result.hasPreview = true; result.clearHaul = true;" in tool and
+            "result.clearHaul" not in param_builder and
+            "if (len < 1e-6f) len = 1.0f;" in param_builder and
+            "case 0: result.params.axis = Vec3(len, 0, 0);" in tool and
+            "case 1: result.params.axis = Vec3(0, len, 0);" in tool and
+            "case 2: result.params.axis = Vec3(0, 0, len);" in tool and
+            "else if (name == \"axis\") result.params.axisPreset = 3;" in tool and
+            "if (image.clearHaul) toolHandles.clearHaul();" in tool and
+            "RadialSweepTransitionState" in context and
+            "bool prepareRadialSweepTransition(PreparedRadialSweepTransitionOwner owner)" in context and
+            "e.radialSweepTransition.install();" in context and
+            "e.radialSweepTransition.abort();" in context)
+if not b5h_gate(b5h_owner, b5e_context, b5g_tool):
+    fail("P1.0b.5h Radial Sweep transition owner drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo is RadialSweepTool.classinfo", "target !is null", "admit derived target"),
+    ("owner", "target_.installPreparedTransition(image_);", "", "drop fixed install"),
+    ("owner", "target_ = null; image_.clear();", "", "retain consumed payload"),
+    ("tool", "baseSnap.restore(detachedBase);", "", "alias parameter base"),
+    ("tool", "result.profile.profile = profile_.dup;", "result.profile.profile = profile_;", "alias parameter profile"),
+    ("tool", "image.profile.profile = null;", "", "omit profile source scrub"),
+    ("tool", "image.previewMesh = Mesh.init;", "", "omit preview source scrub"),
+    ("tool", "if (image.hasPreview)", "if (true)", "drop explicit preview obligation"),
+    ("tool", "if (image.clearHaul) toolHandles.clearHaul();", "", "drop exact haul branch"),
+    ("tool", "result.kind = PreparedRadialSweepTransitionKind.Param;", "result.kind = PreparedRadialSweepTransitionKind.Param; result.clearHaul = true;", "add Param haul clear"),
+    ("tool", "if (len < 1e-6f) len = 1.0f;", "len = 1.0f;", "remove collapsed-axis guard"),
+    ("tool", "if (len < 1e-6f) len = 1.0f;", "if (len <= 1e-6f) len = 1.0f;", "change collapsed-axis boundary"),
+    ("tool", "case 0: result.params.axis = Vec3(len, 0, 0);", "case 0: result.params.axis = Vec3(0, len, 0);", "break X quick-axis formula"),
+    ("tool", "case 1: result.params.axis = Vec3(0, len, 0);", "case 1: result.params.axis = Vec3(len, 0, 0);", "break Y quick-axis formula"),
+    ("tool", "case 2: result.params.axis = Vec3(0, 0, len);", "case 2: result.params.axis = Vec3(len, 0, 0);", "break Z quick-axis formula"),
+    ("tool", "else if (name == \"axis\") result.params.axisPreset = 3;", "", "drop manual-axis quick branch"),
+    ("tool", "engaged = false; havePreviewCache = false; image.clear(); return;", "havePreviewCache = false; image.clear(); return;", "drop Deactivate engaged reset"),
+    ("context", "e.radialSweepTransition.abort();", "", "drop context abort"),
+):
+    owner, context, tool = b5h_owner, b5e_context, b5g_tool
+    if target == "owner": owner = owner.replace(old, new, 1)
+    elif target == "tool": tool = tool.replace(old, new, 1)
+    else: context = context.replace(old, new, 1)
+    if b5h_gate(owner, context, tool):
+        fail(f"P1.0b.5h named mutation did not RED: {label}")
+for hook in ("override void activate()", "override void onParamChanged(string name)",
+             "override void deactivate()"):
+    start = b5g_tool.find(hook); body_start = b5g_tool.find("{", start) + 1
+    body = b5g_tool[body_start:balanced_source(b5g_tool, body_start)-1]
+    if "PreparedRadialSweepTransitionOwner" in body or "prepareRadialSweepTransition" in body:
+        fail("P1.0b.5h transition owner reached from production hook")
 
 print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures)} compile-fail fixtures)")

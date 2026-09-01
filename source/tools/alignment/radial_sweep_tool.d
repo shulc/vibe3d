@@ -107,6 +107,30 @@ struct RadialSweepParams {
     //   flip   = false   (reference "Invert Polygons")
 }
 
+enum PreparedRadialSweepTransitionKind : ubyte { Activate, Param, Deactivate }
+
+struct RadialSweepTransitionImage {
+    PreparedRadialSweepTransitionKind kind;
+    RadialSweepProfileImage profile;
+    Mesh previewMesh;
+    RadialSweepParams params;
+    bool engaged, havePreviewCache, hasPreview, clearHaul, valid;
+    int dragPart = -1;
+    int cachedSides, cachedAxisPreset;
+    Vec3 cachedAxis, cachedCenter;
+    float cachedStartAngle, cachedEndAngle, cachedOffset;
+    bool cachedCap0, cachedCap1;
+    bool hasProfile() const nothrow @nogc { return profile.mesh.filled; }
+    void cacheFromParams() nothrow @nogc {
+        cachedSides = params.sides; cachedAxisPreset = params.axisPreset;
+        cachedAxis = params.axis; cachedCenter = params.center;
+        cachedStartAngle = params.startAngleDeg; cachedEndAngle = params.endAngleDeg;
+        cachedOffset = params.offset; cachedCap0 = params.cap0; cachedCap1 = params.cap1;
+        havePreviewCache = true;
+    }
+    void clear() nothrow @nogc { this = RadialSweepTransitionImage.init; }
+}
+
 /// Upper bound on `RadialSweepParams.sides` (reference "Count"). Enforced at
 /// THREE layers (task 0326 review finding B1 — Count was previously
 /// unbounded; task 0365 P1 added the kernel-level backstop as the durable
@@ -321,6 +345,81 @@ public:
 
     override string name() const { return "Radial Sweep"; }
 
+    final RadialSweepTransitionImage buildPreparedActivationImage(
+            ref RadialSweepProfileImage profile) {
+        RadialSweepTransitionImage result;
+        result.profile = profile; profile = RadialSweepProfileImage.init;
+        result.kind = PreparedRadialSweepTransitionKind.Activate;
+        result.params = params_;
+        rebuildRadialSweepPreview(result.profile.mesh, result.previewMesh,
+            result.profile.profile, result.profile.closed, result.profile.face,
+            result.params);
+        result.cacheFromParams(); result.engaged = false; result.dragPart = -1;
+        result.hasPreview = true; result.clearHaul = true; result.valid = true; return result;
+    }
+
+    final RadialSweepTransitionImage buildPreparedParamImage(string name) {
+        RadialSweepTransitionImage result;
+        result.kind = PreparedRadialSweepTransitionKind.Param;
+        Mesh detachedBase;
+        baseSnap.restore(detachedBase);
+        result.profile.mesh = MeshSnapshot.capture(detachedBase);
+        result.profile.profile = profile_.dup;
+        result.profile.sessionKey = sessionKey_;
+        result.profile.closed = profileClosed_; result.profile.face = profileFaceIdx_;
+        result.profile.valid = validProfile_;
+        result.params = params_;
+        if (name == "axisPreset") {
+            float len = result.params.axis.length;
+            if (len < 1e-6f) len = 1.0f;
+            switch (result.params.axisPreset) {
+            case 0: result.params.axis = Vec3(len, 0, 0); break;
+            case 1: result.params.axis = Vec3(0, len, 0); break;
+            case 2: result.params.axis = Vec3(0, 0, len); break;
+            default: break;
+            }
+        } else if (name == "axis") result.params.axisPreset = 3;
+        rebuildRadialSweepPreview(result.profile.mesh, result.previewMesh,
+            result.profile.profile, result.profile.closed, result.profile.face,
+            result.params);
+        result.cacheFromParams(); result.engaged = true; result.dragPart = dragPart;
+        result.hasPreview = true; result.valid = true; return result;
+    }
+
+    final RadialSweepTransitionImage buildPreparedDeactivateImage() {
+        RadialSweepTransitionImage result;
+        result.kind = PreparedRadialSweepTransitionKind.Deactivate;
+        result.engaged = false; result.havePreviewCache = false;
+        result.valid = true; return result;
+    }
+
+    final void installPreparedTransition(ref RadialSweepTransitionImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        if (image.kind == PreparedRadialSweepTransitionKind.Deactivate) {
+            engaged = false; havePreviewCache = false; image.clear(); return;
+        }
+        if (image.hasProfile) {
+            image.profile.mesh.moveInto(baseSnap);
+            profile_ = image.profile.profile; image.profile.profile = null;
+            sessionKey_ = image.profile.sessionKey;
+            profileClosed_ = image.profile.closed; profileFaceIdx_ = image.profile.face;
+            validProfile_ = image.profile.valid;
+        }
+        if (image.hasPreview) {
+            previewMesh = image.previewMesh; image.previewMesh = Mesh.init;
+        }
+        params_ = image.params; engaged = image.engaged; dragPart = image.dragPart;
+        havePreviewCache = image.havePreviewCache;
+        cachedSides = image.cachedSides; cachedAxisPreset = image.cachedAxisPreset;
+        cachedAxis = image.cachedAxis; cachedCenter = image.cachedCenter;
+        cachedStartAngle = image.cachedStartAngle; cachedEndAngle = image.cachedEndAngle;
+        cachedOffset = image.cachedOffset; cachedCap0 = image.cachedCap0;
+        cachedCap1 = image.cachedCap1;
+        if (image.clearHaul) toolHandles.clearHaul();
+        image.clear();
+    }
+
     final void installPreparedSelectionProfile(ref RadialSweepProfileImage image)
             nothrow @nogc {
         image.mesh.moveInto(baseSnap);
@@ -337,6 +436,36 @@ public:
     }
     version(unittest) bool preparedProfileValidityForTest() const nothrow @nogc {
         return validProfile_;
+    }
+    version(unittest) bool preparedTransitionForTest(bool expectedEngaged)
+            const nothrow @nogc {
+        return baseSnap.filled && profile_.length >= 3 && previewMesh.vertices.length > 0 &&
+               havePreviewCache && engaged == expectedEngaged && dragPart == -1 &&
+               cachedSides == params_.sides && cachedAxisPreset == params_.axisPreset &&
+               cachedAxis == params_.axis && cachedCenter == params_.center;
+    }
+    version(unittest) void seedPreparedAxisForTest(int preset, Vec3 axisValue)
+            nothrow @nogc { params_.axisPreset = preset; params_.axis = axisValue; }
+    version(unittest) void seedPreparedHaulForTest(int part) { toolHandles.setHaul(part); }
+    version(unittest) int preparedHaulForTest() const nothrow @nogc {
+        return toolHandles.haulForPreparedTest();
+    }
+    version(unittest) void seedPreparedDeactivateParityForTest() {
+        params_.sides = 37; params_.offset = 4.25f; engaged = true;
+        havePreviewCache = true; dragPart = 2; cachedSides = 91;
+        cachedAxisPreset = 3; cachedAxis = Vec3(7,8,9); cachedCenter = Vec3(3,4,5);
+        cachedStartAngle = 11; cachedEndAngle = 222; cachedOffset = 6.5f;
+        cachedCap0 = false; cachedCap1 = true; toolHandles.setHaul(3);
+    }
+    version(unittest) bool preparedDeactivateParityForTest(size_t previewVerts,
+            size_t profileCount) const nothrow @nogc {
+        return !engaged && !havePreviewCache && dragPart == 2 &&
+            params_.sides == 37 && params_.offset == 4.25f &&
+            cachedSides == 91 && cachedAxisPreset == 3 && cachedAxis == Vec3(7,8,9) &&
+            cachedCenter == Vec3(3,4,5) && cachedStartAngle == 11 &&
+            cachedEndAngle == 222 && cachedOffset == 6.5f && !cachedCap0 && cachedCap1 &&
+            previewMesh.vertices.length == previewVerts && profile_.length == profileCount &&
+            baseSnap.filled && toolHandles.haulForPreparedTest() == 3;
     }
 
     override EditMode[] supportedModes() const { return [EditMode.Edges, EditMode.Polygons]; }
