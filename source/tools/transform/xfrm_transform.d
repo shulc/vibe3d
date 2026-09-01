@@ -94,7 +94,8 @@ import handler  : ToolHandles;
 import eventlog : queryMouse;
 import shader : Shader;
 import params : Param;
-import tools.transform.transform : TransformTool, VertexEditFactory, MorphEditFactory;
+import tools.transform.transform : TransformTool, VertexEditFactory,
+    MorphEditFactory, PreparedTransformActivationImage;
 import tool            : ToolFlag;
 import edit_session    : LiveEvalClient, SlotActivationClient,
                          LifecycleUndoEmitter;
@@ -351,6 +352,29 @@ struct GestureRecord {
     GestureFrame  frameStart;
     Pin           softStart;
     Pin           pinStart;
+}
+
+/// Detached value projection of the wrapper-owned reset state on activation.
+/// Sub-tool activation, wrapper links and the history run live in separate
+/// ordered phases; this image deliberately owns only the state written by the
+/// virtual reset plus the post-history session tail.
+struct PreparedXfrmActivationResetImage {
+    PreparedTransformActivationImage base;
+    XformState run;
+    Vec3 headlessRotate;
+    bool moveRunKnown;
+    bool rotateRunKnown;
+    bool scaleRunKnown;
+    bool priorRotateWasViewRing;
+    bool valid;
+
+    void clear() nothrow @nogc {
+        base.clear();
+        run = XformState.init;
+        headlessRotate = Vec3(0, 0, 0);
+        moveRunKnown = rotateRunKnown = scaleRunKnown = false;
+        priorRotateWasViewRing = valid = false;
+    }
 }
 
 // LiveEvalClient (task 0428): the sole implementor of the live re-evaluation
@@ -685,6 +709,171 @@ public:
         // transform tool was armed as an activation of ITS run.
         lastSlotSigValid = false;
         clearFrame();                 // COMMIT B — fresh session re-derives the basis
+    }
+
+    /// Prepare only the wrapper-owned reset projection. This performs no live
+    /// write and intentionally leaves sub-tool/history preparation to the
+    /// activation-session owner that orders them between pre and post install.
+    final PreparedXfrmActivationResetImage buildPreparedActivationReset()
+            nothrow @nogc {
+        PreparedXfrmActivationResetImage image;
+        image.base = buildPreparedActivationImage();
+        const bool hadRun = runBaselineValid;
+        image.run = resyncPreserveDisplayFields ? run : XformState.init;
+        image.headlessRotate = resyncPreserveDisplayFields
+            ? headlessRotate : Vec3(0, 0, 0);
+        image.moveRunKnown = hadRun ? false : moveRec.runKnown;
+        image.rotateRunKnown = hadRun ? false : rotateRec.runKnown;
+        image.scaleRunKnown = hadRun ? false : scaleRec.runKnown;
+        image.priorRotateWasViewRing = hadRun
+            ? false : runPriorRotateWasViewRing;
+        image.valid = image.base.valid;
+        return image;
+    }
+
+    /// Phase before enabled sub-tool activation and prepared history.nextRun.
+    final void installPreparedActivationResetPre(
+            ref PreparedXfrmActivationResetImage image) nothrow @nogc {
+        if (!image.valid) return;
+        installPreparedActivation(image.base);
+        run = image.run;
+        headlessRotate = image.headlessRotate;
+        activeDrag = null;
+        dragBaseline.length = 0;
+        moveDragFastPath = false;
+        rotDragFastPath = false;
+        rotDragAxisIdx = -1;
+        scaleDragFastPath = false;
+        scaleDragActive = false;
+        accumulatedWorldDelta = Vec3(0, 0, 0);
+        accumulatedAtDragStart = Vec3(0, 0, 0);
+        moveRec.pinKnown = false;
+        moveRec.runKnown = image.moveRunKnown;
+        rotateRec.runKnown = image.rotateRunKnown;
+        scaleRec.runKnown = image.scaleRunKnown;
+        runPriorRotateWasViewRing = image.priorRotateWasViewRing;
+        lastAppliedGestureMutationVersion = ulong.max;
+        armedUndoEpoch = ulong.max;
+        refireAnchor.length = 0;
+        refirePreValid = false;
+        foldSrc_.length = 0;
+        itemEditCapturing_ = false;
+        itemEditTargets_.length = 0;
+        itemEditBefore_.length = 0;
+        runBaselineValid = false;
+        runFrameValid = false;
+        morphRunValid_ = false;
+        itemBaselineValid = false;
+        runGpuBufferDirty = false;
+    }
+
+    /// Phase after sub-tool wiring and prepared history.nextRun. Repeats the
+    /// second resetRun projection at its real sequence position, then installs
+    /// the session routing/latches and clearFrame result.
+    final void installPreparedActivationResetPost(
+            ref PreparedXfrmActivationResetImage image) nothrow @nogc {
+        if (!image.valid) return;
+        recordViaInSession = true;
+        if (flagR) rotateSub.setRecordViaInSession(true);
+        if (flagS) scaleSub.setRecordViaInSession(true);
+        currentRunBank = DragBank.None;
+        runBaselineValid = false;
+        runFrameValid = false;
+        morphRunValid_ = false;
+        itemBaselineValid = false;
+        runGpuBufferDirty = false;
+        lastAcenMode = -1;
+        lastSlotSigValid = false;
+        frame.settled = false;
+        frame.valid = false;
+        image.clear();
+    }
+
+    version(unittest) final void seedPreparedActivationResetForTest(
+            bool preserveDisplay, bool hadRun, bool moveRoute,
+            bool rotateRoute, bool scaleRoute) {
+        seedPreparedActivationForTest();
+        resyncPreserveDisplayFields = preserveDisplay;
+        run.t = Vec3(7, 8, 9); run.s = Vec3(4, 5, 6);
+        run.r[] = 3; headlessRotate = Vec3(10, 11, 12);
+        activeDrag = moveSub;
+        dragBaseline = [Vec3(1, 2, 3)];
+        moveDragFastPath = rotDragFastPath = scaleDragFastPath = true;
+        rotDragAxisIdx = 2; scaleDragActive = true;
+        accumulatedWorldDelta = Vec3(13, 14, 15);
+        accumulatedAtDragStart = Vec3(16, 17, 18);
+        moveRec.pinKnown = true;
+        moveRec.runKnown = rotateRec.runKnown = scaleRec.runKnown = true;
+        runPriorRotateWasViewRing = true;
+        lastAppliedGestureMutationVersion = 22; armedUndoEpoch = 23;
+        refireAnchor = [Vec3(19, 20, 21)]; refirePreValid = true;
+        foldSrc_ = [Vec3(22, 23, 24)];
+        itemEditCapturing_ = true;
+        itemEditTargets_.length = 1; itemEditBefore_.length = 1;
+        runBaselineValid = hadRun; runFrameValid = morphRunValid_ = true;
+        itemBaselineValid = runGpuBufferDirty = true;
+        recordViaInSession = false;
+        moveSub.setRecordViaInSession(moveRoute);
+        rotateSub.setRecordViaInSession(rotateRoute);
+        scaleSub.setRecordViaInSession(scaleRoute);
+        currentRunBank = DragBank.Scale;
+        lastAcenMode = 4; lastSlotSigValid = true;
+        frame.right = Vec3(2, 0, 0); frame.up = Vec3(0, 3, 0);
+        frame.axis = Vec3(0, 0, 4); frame.settled = frame.valid = true;
+    }
+
+    version(unittest) final bool preparedActivationResetSeedForTest()
+            const nothrow @nogc {
+        return activeDrag is moveSub && dragBaseline.length == 1 &&
+            moveDragFastPath && rotDragFastPath && rotDragAxisIdx == 2 &&
+            scaleDragFastPath && scaleDragActive && moveRec.pinKnown &&
+            refireAnchor.length == 1 && refirePreValid && foldSrc_.length == 1 &&
+            itemEditCapturing_ && itemEditTargets_.length == 1 &&
+            itemEditBefore_.length == 1 && lastAcenMode == 4 &&
+            lastSlotSigValid && frame.settled && frame.valid;
+    }
+
+    version(unittest) final bool preparedActivationResetPreForTest(
+            bool preserveDisplay, bool hadRun) const nothrow @nogc {
+        float[16] threes; threes[] = 3;
+        const bool displayOk = preserveDisplay
+            ? run.t == Vec3(7,8,9) && run.s == Vec3(4,5,6) &&
+              run.r == threes && headlessRotate == Vec3(10,11,12)
+            : run == XformState.init && headlessRotate == Vec3(0,0,0);
+        const bool knownOk = hadRun
+            ? !moveRec.runKnown && !rotateRec.runKnown &&
+              !scaleRec.runKnown && !runPriorRotateWasViewRing
+            : moveRec.runKnown && rotateRec.runKnown &&
+              scaleRec.runKnown && runPriorRotateWasViewRing;
+        return preparedActivationForTest() && displayOk && knownOk &&
+            activeDrag is null && dragBaseline.length == 0 &&
+            !moveDragFastPath && !rotDragFastPath && rotDragAxisIdx == -1 &&
+            !scaleDragFastPath && !scaleDragActive &&
+            accumulatedWorldDelta == Vec3(0,0,0) &&
+            accumulatedAtDragStart == Vec3(0,0,0) && !moveRec.pinKnown &&
+            lastAppliedGestureMutationVersion == ulong.max &&
+            armedUndoEpoch == ulong.max && refireAnchor.length == 0 &&
+            !refirePreValid && foldSrc_.length == 0 && !itemEditCapturing_ &&
+            itemEditTargets_.length == 0 && itemEditBefore_.length == 0 &&
+            !runBaselineValid && !runFrameValid && !morphRunValid_ &&
+            !itemBaselineValid && !runGpuBufferDirty && lastAcenMode == 4 &&
+            lastSlotSigValid && frame.settled && frame.valid;
+    }
+
+    version(unittest) final bool preparedActivationResetPostForTest(
+            bool moveRoute, bool rotateRoute, bool scaleRoute)
+            const nothrow @nogc {
+        return recordViaInSession &&
+            moveSub.recordViaInSessionForTest() == moveRoute &&
+            rotateSub.recordViaInSessionForTest() ==
+                (flagR ? true : rotateRoute) &&
+            scaleSub.recordViaInSessionForTest() ==
+                (flagS ? true : scaleRoute) &&
+            currentRunBank == DragBank.None && !runBaselineValid &&
+            !runFrameValid && !morphRunValid_ && !itemBaselineValid &&
+            !runGpuBufferDirty && lastAcenMode == -1 && !lastSlotSigValid &&
+            !frame.settled && !frame.valid && frame.right == Vec3(2,0,0) &&
+            frame.up == Vec3(0,3,0) && frame.axis == Vec3(0,0,4);
     }
 
     // Wrapper-level transient reset (undo/redo migration P1). Extends the base
@@ -6073,6 +6262,34 @@ unittest {
     tool.uniform = false;
     auto disabled = tool.prepareParamState("uniformScale");
     assert(disabled.kind == PreparedToolStateKind.None);
+
+    foreach (mask; 0 .. 8) foreach (routeMask; 0 .. 8)
+        foreach (preserveDisplay; [false, true])
+        foreach (hadRun; [false, true]) {
+        auto resetTool = new XfrmTransformTool(() => &owned, null, &mode);
+        resetTool.flagT = (mask & 1) != 0;
+        resetTool.flagR = (mask & 2) != 0;
+        resetTool.flagS = (mask & 4) != 0;
+        const bool moveRoute = (routeMask & 1) != 0;
+        const bool rotateRoute = (routeMask & 2) != 0;
+        const bool scaleRoute = (routeMask & 4) != 0;
+        resetTool.seedPreparedActivationResetForTest(preserveDisplay, hadRun,
+            moveRoute, rotateRoute, scaleRoute);
+        auto image = resetTool.buildPreparedActivationReset();
+        assert(image.valid && resetTool.preparedActivationResetSeedForTest(),
+            "Xfrm activation reset preparation mutated live state");
+        resetTool.installPreparedActivationResetPre(image);
+        assert(image.valid && resetTool.preparedActivationResetPreForTest(
+            preserveDisplay, hadRun));
+        resetTool.installPreparedActivationResetPost(image);
+        assert(!image.valid && resetTool.preparedActivationResetPostForTest(
+            moveRoute, rotateRoute, scaleRoute));
+        resetTool.installPreparedActivationResetPre(image);
+        resetTool.installPreparedActivationResetPost(image);
+        assert(resetTool.preparedActivationResetPostForTest(
+            moveRoute, rotateRoute, scaleRoute),
+            "consumed Xfrm reset image installed twice");
+    }
 }
 
 static assert(!__traits(compiles, { XfrmPreparedState a; XfrmPreparedState b = a; }));

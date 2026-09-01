@@ -673,7 +673,11 @@ protected:
     // its OWN protected field — legal) lets the wrapper flip the R/S sub-tools'
     // routing at activate/deactivate, mirroring the public commitSessionIfOpen
     // pattern. Same shape as the wrapper setting its own flag in activate().
-    public void setRecordViaInSession(bool on) { recordViaInSession = on; }
+    public final void setRecordViaInSession(bool on) nothrow @nogc {
+        recordViaInSession = on;
+    }
+    version(unittest) final bool recordViaInSessionForTest() const
+            nothrow @nogc { return recordViaInSession; }
 
     // Single routing chokepoint for every commitEdit override. All three
     // commitEdit bodies (base + RotateTool + ScaleTool) funnel their terminal
