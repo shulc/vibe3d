@@ -1592,7 +1592,10 @@ struct FrameWorkProbe {
     void popBackdrop() { if (backdropDepth_ > 0) backdropDepth_--; }
 
     /// One GPU buffer (re)upload covering `verts` mesh vertices.
-    void upload(long verts) { cur_.uploadCalls++; cur_.uploadVerts += verts; }
+    void upload(long verts) nothrow @nogc {
+        cur_.uploadCalls++;
+        cur_.uploadVerts += verts;
+    }
 
     void bumpCellConsidered()  { cur_.cellsConsidered++; }
     void bumpCellRendered()    { cur_.cellsRendered++; }

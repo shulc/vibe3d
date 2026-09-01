@@ -439,6 +439,17 @@ struct GpuMesh {
         // which differs per buffer and would need four separate sums to state
         // honestly.
         g_fc.upload(cast(long)mesh.vertices.length);
+        buildUploadCpu(mesh, vpos, edgeOrigin, vertOrigin, faceOrigin);
+        submitUploadGl();
+    }
+
+    /// Allocation-only half of a full upload. `vpos` is resolved by the caller
+    /// before entering this builder so morph display selection is not hidden in
+    /// the prepared owner and fake backends see the exact bytes production uses.
+    private void buildUploadCpu(ref const Mesh mesh, const(Vec3)[] vpos,
+                                const uint[] edgeOrigin,
+                                const uint[] vertOrigin,
+                                const uint[] faceOrigin) {
         enum FACE_STRIDE = 6;
 
         // P3 counting pre-pass: derive exact final sizes for the four
@@ -577,51 +588,6 @@ struct GpuMesh {
             }
             faceVertCount = cast(int)fw;
         }
-        glBindVertexArray(faceVao);
-        glBindBuffer(GL_ARRAY_BUFFER, faceVbo);
-        glBufferData(GL_ARRAY_BUFFER,
-            cast(GLsizeiptr)(faceVertCount * FACE_STRIDE * float.sizeof),
-            scratchFaceData.ptr, GL_DYNAMIC_DRAW);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
-                              FACE_STRIDE * float.sizeof, cast(void*)0);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE,
-                              FACE_STRIDE * float.sizeof,
-                              cast(void*)(3 * float.sizeof));
-        glEnableVertexAttribArray(1);
-
-        // Parallel face-ID VBO. Always upload at least one sentinel
-        // uint so the buffer is non-zero-sized even for empty meshes.
-        glBindBuffer(GL_ARRAY_BUFFER, faceIdVbo);
-        if (faceVertCount > 0) {
-            glBufferData(GL_ARRAY_BUFFER,
-                cast(GLsizeiptr)(faceVertCount * uint.sizeof),
-                scratchFaceIdData.ptr, GL_DYNAMIC_DRAW);
-        } else {
-            uint zero = 0;
-            glBufferData(GL_ARRAY_BUFFER, uint.sizeof, &zero, GL_DYNAMIC_DRAW);
-        }
-
-        // Material Groups (MG3): parallel matId VBO. Bound into the
-        // faceVao at attrib location 2 with the integer pointer variant
-        // so the lit shader reads it as `flat in uint aMatId`. Bind
-        // happens here so the VAO state is captured alongside the
-        // position + normal pointers.
-        glBindVertexArray(faceVao);
-        glBindBuffer(GL_ARRAY_BUFFER, matIdVbo);
-        if (faceVertCount > 0) {
-            glBufferData(GL_ARRAY_BUFFER,
-                cast(GLsizeiptr)(faceVertCount * uint.sizeof),
-                scratchMatIdData.ptr, GL_DYNAMIC_DRAW);
-        } else {
-            uint zero = 0;
-            glBufferData(GL_ARRAY_BUFFER, uint.sizeof, &zero, GL_DYNAMIC_DRAW);
-        }
-        glVertexAttribIPointer(2, 1, GL_UNSIGNED_INT,
-                               cast(GLsizei)uint.sizeof, cast(void*)0);
-        glEnableVertexAttribArray(2);
-        glBindVertexArray(0);
-
         // ── Edges ─────────────────────────────────────────────────
         immutable size_t needEdgeFloats = totalEdgeKeep * 6;
         if (scratchEdgeData.length < needEdgeFloats)
@@ -668,15 +634,6 @@ struct GpuMesh {
             }
             edgeVertCount = cast(int)(ew / 3);
         }
-        glBindVertexArray(edgeVao);
-        glBindBuffer(GL_ARRAY_BUFFER, edgeVbo);
-        glBufferData(GL_ARRAY_BUFFER,
-            cast(GLsizeiptr)(edgeVertCount * 3 * float.sizeof),
-            scratchEdgeData.ptr, GL_DYNAMIC_DRAW);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
-                              3 * float.sizeof, cast(void*)0);
-        glEnableVertexAttribArray(0);
-
         // ── Vertex points ─────────────────────────────────────────
         immutable size_t needVertFloats = totalVertKeep * 3;
         if (scratchVertData.length < needVertFloats)
@@ -698,17 +655,6 @@ struct GpuMesh {
             }
             vertCount = cast(int)oc;
         }
-        glBindVertexArray(vertVao);
-        glBindBuffer(GL_ARRAY_BUFFER, vertVbo);
-        glBufferData(GL_ARRAY_BUFFER,
-            cast(GLsizeiptr)(vertCount * 3 * float.sizeof),
-            scratchVertData.ptr, GL_DYNAMIC_DRAW);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
-                              3 * float.sizeof, cast(void*)0);
-        glEnableVertexAttribArray(0);
-
-        glBindVertexArray(0);
-
         // ── Weight colours: INVALIDATE (task 1090) ────────────────
         //
         // TWO things go wrong without this, and the second one is a memory
@@ -730,7 +676,64 @@ struct GpuMesh {
         // the top: that path returns before `++uploadVersion`, touches
         // neither `faceVao` nor `faceVertCount`, and publishes a Position
         // change which drives a later real upload through here.
-        disableWeightColors();
+        weightStampValid = false;
+        weightStampMesh  = null;
+        weightStampName  = null;
+    }
+
+    /// GL-only half. All sizes and backing storage were fixed by
+    /// `buildUploadCpu`; this method performs no allocation or callbacks.
+    private void submitUploadGl() nothrow @nogc {
+        enum FACE_STRIDE = 6;
+        glBindVertexArray(faceVao);
+        glBindBuffer(GL_ARRAY_BUFFER, faceVbo);
+        glBufferData(GL_ARRAY_BUFFER,
+            cast(GLsizeiptr)(faceVertCount * FACE_STRIDE * float.sizeof),
+            scratchFaceData.ptr, GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
+                              FACE_STRIDE * float.sizeof, cast(void*)0);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE,
+                              FACE_STRIDE * float.sizeof,
+                              cast(void*)(3 * float.sizeof));
+        glEnableVertexAttribArray(1);
+        glBindBuffer(GL_ARRAY_BUFFER, faceIdVbo);
+        uint zero = 0;
+        glBufferData(GL_ARRAY_BUFFER,
+            faceVertCount > 0 ? cast(GLsizeiptr)(faceVertCount * uint.sizeof)
+                              : cast(GLsizeiptr)uint.sizeof,
+            faceVertCount > 0 ? scratchFaceIdData.ptr : &zero, GL_DYNAMIC_DRAW);
+        glBindVertexArray(faceVao);
+        glBindBuffer(GL_ARRAY_BUFFER, matIdVbo);
+        glBufferData(GL_ARRAY_BUFFER,
+            faceVertCount > 0 ? cast(GLsizeiptr)(faceVertCount * uint.sizeof)
+                              : cast(GLsizeiptr)uint.sizeof,
+            faceVertCount > 0 ? scratchMatIdData.ptr : &zero, GL_DYNAMIC_DRAW);
+        glVertexAttribIPointer(2, 1, GL_UNSIGNED_INT,
+                               cast(GLsizei)uint.sizeof, cast(void*)0);
+        glEnableVertexAttribArray(2);
+        glBindVertexArray(0);
+
+        glBindVertexArray(edgeVao);
+        glBindBuffer(GL_ARRAY_BUFFER, edgeVbo);
+        glBufferData(GL_ARRAY_BUFFER,
+            cast(GLsizeiptr)(edgeVertCount * 3 * float.sizeof),
+            scratchEdgeData.ptr, GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
+                              3 * float.sizeof, cast(void*)0);
+        glEnableVertexAttribArray(0);
+
+        glBindVertexArray(vertVao);
+        glBindBuffer(GL_ARRAY_BUFFER, vertVbo);
+        glBufferData(GL_ARRAY_BUFFER,
+            cast(GLsizeiptr)(vertCount * 3 * float.sizeof),
+            scratchVertData.ptr, GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
+                              3 * float.sizeof, cast(void*)0);
+        glEnableVertexAttribArray(0);
+        glBindVertexArray(faceVao);
+        glDisableVertexAttribArray(3);
+        glBindVertexArray(0);
     }
 
     // ---- Weight display: the per-corner colour buffer (task 1090) --------
@@ -1972,6 +1975,206 @@ final class GpuResourceOwner {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Prepared full-upload owner (P1.0b.4b, dormant infrastructure)
+// ---------------------------------------------------------------------------
+
+private shared ulong nextGpuUploadOwnerId;
+version (unittest) private bool failPreparedGpuUploadAfterBuild;
+
+struct PreparedGpuUploadToken {
+    @disable this(this);
+private:
+    ulong ownerId;
+    ulong generation;
+}
+
+struct ValidatedGpuUploadToken {
+    @disable this(this);
+private:
+    ulong ownerId;
+    ulong generation;
+}
+
+private GpuMesh cloneUploadState(ref GpuMesh src) {
+    GpuMesh dst;
+    // GL identities are borrowed for submission and checked again at validate;
+    // the prepared owner never creates, transfers or destroys them.
+    dst.faceVao = src.faceVao; dst.faceVbo = src.faceVbo;
+    dst.edgeVao = src.edgeVao; dst.edgeVbo = src.edgeVbo;
+    dst.vertVao = src.vertVao; dst.vertVbo = src.vertVbo;
+    dst.faceIdVbo = src.faceIdVbo; dst.matIdVbo = src.matIdVbo;
+    dst.weightColorVbo = src.weightColorVbo;
+    dst.faceVertCount = src.faceVertCount;
+    dst.edgeVertCount = src.edgeVertCount;
+    dst.vertCount = src.vertCount;
+    dst.faceTriStart = src.faceTriStart.dup;
+    dst.faceTriCount = src.faceTriCount.dup;
+    dst.suppressCageUpload = src.suppressCageUpload;
+    dst.edgeOriginGpu = src.edgeOriginGpu.dup;
+    dst.faceOriginGpu = src.faceOriginGpu.dup;
+    dst.vertOriginGpu = src.vertOriginGpu.dup;
+    dst.faceCornerVert = src.faceCornerVert.dup;
+    dst.weightStampMesh = src.weightStampMesh;
+    dst.weightStampName = src.weightStampName.idup;
+    dst.weightStampValid = src.weightStampValid;
+    dst.uploadVersion = src.uploadVersion;
+    dst.scratchFaceData = src.scratchFaceData.dup;
+    dst.scratchFaceIdData = src.scratchFaceIdData.dup;
+    dst.scratchMatIdData = src.scratchMatIdData.dup;
+    dst.scratchWeightColor = src.scratchWeightColor.dup;
+    dst.scratchEdgeData = src.scratchEdgeData.dup;
+    dst.scratchVertData = src.scratchVertData.dup;
+    return dst;
+}
+
+private void installUploadState(ref GpuMesh dst, ref GpuMesh src) nothrow @nogc {
+    dst.faceVertCount = src.faceVertCount;
+    dst.edgeVertCount = src.edgeVertCount;
+    dst.vertCount = src.vertCount;
+    dst.faceTriStart = src.faceTriStart;
+    dst.faceTriCount = src.faceTriCount;
+    dst.edgeOriginGpu = src.edgeOriginGpu;
+    dst.faceOriginGpu = src.faceOriginGpu;
+    dst.vertOriginGpu = src.vertOriginGpu;
+    dst.faceCornerVert = src.faceCornerVert;
+    dst.weightStampMesh = src.weightStampMesh;
+    dst.weightStampName = src.weightStampName;
+    dst.weightStampValid = src.weightStampValid;
+    dst.uploadVersion = src.uploadVersion;
+    dst.scratchFaceData = src.scratchFaceData;
+    dst.scratchFaceIdData = src.scratchFaceIdData;
+    dst.scratchMatIdData = src.scratchMatIdData;
+    dst.scratchWeightColor = src.scratchWeightColor;
+    dst.scratchEdgeData = src.scratchEdgeData;
+    dst.scratchVertData = src.scratchVertData;
+    src.faceTriStart = null; src.faceTriCount = null;
+    src.edgeOriginGpu = null; src.faceOriginGpu = null;
+    src.vertOriginGpu = null; src.faceCornerVert = null;
+    src.weightStampMesh = null; src.weightStampName = null;
+    src.scratchFaceData = null; src.scratchFaceIdData = null;
+    src.scratchMatIdData = null; src.scratchWeightColor = null;
+    src.scratchEdgeData = null; src.scratchVertData = null;
+}
+
+/// Owns one detached CPU upload image for one stable GpuMesh. Preparation is
+/// allocation-only; validation is scalar/identity-only; installation performs
+/// the fixed GL call sequence and header transfer. No production caller exists
+/// before P1.0c.
+final class GpuUploadOwner {
+private:
+    enum Backend : ubyte { openGl, fake }
+    GpuMesh* target;
+    immutable ulong ownerId;
+    ulong generation;
+    ulong requiredThread, requiredContext;
+    ulong baseUploadVersion;
+    GpuMeshNames baseNames;
+    GpuMesh prepared;
+    long uploadedVertexCount;
+    bool pending, validated;
+    Backend backend;
+    version (unittest) {
+        uint[16] fakeCalls;
+        size_t fakeCallCount;
+    }
+
+public:
+    this(GpuMesh* target, ulong threadIdentity, ulong contextIdentity) {
+        this.target = target;
+        requiredThread = threadIdentity;
+        requiredContext = contextIdentity;
+        ownerId = atomicOp!"+="(nextGpuUploadOwnerId, 1UL);
+    }
+
+    version (unittest) private this(GpuMesh* target) {
+        this(target, 7, 11);
+        backend = Backend.fake;
+    }
+
+    bool beginPreparedUpload(ref const Mesh mesh,
+                       const uint[] edgeOrigin,
+                       const uint[] vertOrigin,
+                       const uint[] faceOrigin,
+                       out PreparedGpuUploadToken token) {
+        if (pending || target is null ||
+            (target.suppressCageUpload && edgeOrigin.length == 0 &&
+             vertOrigin.length == 0)) return false;
+        import morph_target : displayVertices;
+        auto dv = displayVertices(&mesh);
+        const(Vec3)[] vpos = (dv.length == mesh.vertices.length)
+                          ? dv : mesh.vertices;
+        auto next = cloneUploadState(*target);
+        next.uploadVersion = target.uploadVersion + 1;
+        next.buildUploadCpu(mesh, vpos, edgeOrigin, vertOrigin, faceOrigin);
+        version (unittest) if (failPreparedGpuUploadAfterBuild)
+            throw new Exception("injected prepared GPU upload failure");
+        ++generation;
+        prepared = next;
+        baseUploadVersion = target.uploadVersion;
+        baseNames = peekGpuMeshNames(*target);
+        uploadedVertexCount = cast(long)mesh.vertices.length;
+        pending = true;
+        validated = false;
+        token.ownerId = ownerId;
+        token.generation = generation;
+        return true;
+    }
+
+    bool validatePreparedUpload(ref PreparedGpuUploadToken token,
+                          ulong threadIdentity, ulong contextIdentity,
+                          out ValidatedGpuUploadToken result) nothrow @nogc {
+        // recorded remainder (1906 §3.6): uploadVersion owns the detached
+        // GpuMesh CPU-image generation; no Mesh change class can establish
+        // that this same GPU target was not uploaded again after preparation.
+        if (!pending || validated || target is null ||
+            token.ownerId != ownerId || token.generation != generation ||
+            requiredThread != threadIdentity ||
+            requiredContext != contextIdentity ||
+            target.uploadVersion != baseUploadVersion ||
+            peekGpuMeshNames(*target) != baseNames) return false;
+        validated = true;
+        result.ownerId = token.ownerId;
+        result.generation = token.generation;
+        token.ownerId = token.generation = 0;
+        return true;
+    }
+
+    void installPreparedUpload(ref ValidatedGpuUploadToken token) nothrow @nogc {
+        if (!pending || !validated || token.ownerId != ownerId ||
+            token.generation != generation) return;
+        g_fc.upload(uploadedVertexCount);
+        version (unittest) {
+            if (backend == Backend.fake) {
+                // The fake sequence names the same seven submission groups as
+                // submitUploadGl: face, face-id, material, edge, vertex,
+                // weight-disable, unbind.
+                fakeCalls[fakeCallCount++] = 1;
+                fakeCalls[fakeCallCount++] = 2;
+                fakeCalls[fakeCallCount++] = 3;
+                fakeCalls[fakeCallCount++] = 4;
+                fakeCalls[fakeCallCount++] = 5;
+                fakeCalls[fakeCallCount++] = 6;
+                fakeCalls[fakeCallCount++] = 7;
+            } else prepared.submitUploadGl();
+        } else prepared.submitUploadGl();
+        installUploadState(*target, prepared);
+        pending = false;
+        validated = false;
+        token.ownerId = token.generation = 0;
+    }
+
+    void discardPreparedUpload(ref PreparedGpuUploadToken token) nothrow @nogc {
+        if (!pending || token.ownerId != ownerId ||
+            token.generation != generation) return;
+        GpuMesh empty;
+        prepared = empty;
+        pending = false;
+        validated = false;
+        token.ownerId = token.generation = 0;
+    }
+}
+
 version (unittest) unittest {
     GpuMesh gpu;
     gpu.faceVao = 1; gpu.faceVbo = 2; gpu.edgeVao = 3; gpu.edgeVbo = 4;
@@ -2051,6 +2254,113 @@ version (unittest) unittest {
 
 version (unittest) static assert(!__traits(compiles, {
     void copyValidatedToken(ValidatedGpuResourceToken source) {
+        auto copy = source;
+    }
+}));
+
+version (unittest) unittest {
+    auto mesh = makeCube();
+    mesh.faceMaterial.length = mesh.faces.length;
+    foreach (i, ref material; mesh.faceMaterial)
+        material = cast(uint)(i + 17);
+
+    GpuMesh gpu;
+    gpu.faceVao = 101; gpu.faceVbo = 102;
+    gpu.edgeVao = 103; gpu.edgeVbo = 104;
+    gpu.vertVao = 105; gpu.vertVbo = 106;
+    gpu.faceIdVbo = 107; gpu.matIdVbo = 108;
+    gpu.weightColorVbo = 109;
+    gpu.uploadVersion = 12;
+    gpu.weightStampMesh = &mesh;
+    gpu.weightStampName = "old weights";
+    gpu.weightStampValid = true;
+
+    // The direct builder is the byte-for-byte legacy oracle. Preparation must
+    // produce the same owned image without changing the live target.
+    auto oracle = cloneUploadState(gpu);
+    oracle.uploadVersion++;
+    oracle.buildUploadCpu(mesh, mesh.vertices, null, null, null);
+    auto liveBefore = cloneUploadState(gpu);
+    auto owner = new GpuUploadOwner(&gpu);
+    PreparedGpuUploadToken token;
+    assert(owner.beginPreparedUpload(mesh, null, null, null, token));
+    assert(gpu.uploadVersion == liveBefore.uploadVersion);
+    assert(gpu.weightStampValid && gpu.weightStampName == "old weights");
+    assert(owner.prepared.faceVertCount == oracle.faceVertCount);
+    assert(owner.prepared.edgeVertCount == oracle.edgeVertCount);
+    assert(owner.prepared.vertCount == oracle.vertCount);
+    assert(owner.prepared.scratchFaceData == oracle.scratchFaceData);
+    assert(owner.prepared.scratchFaceIdData == oracle.scratchFaceIdData);
+    assert(owner.prepared.scratchMatIdData == oracle.scratchMatIdData);
+    assert(owner.prepared.scratchEdgeData == oracle.scratchEdgeData);
+    assert(owner.prepared.scratchVertData == oracle.scratchVertData);
+    assert(owner.prepared.faceTriStart == oracle.faceTriStart);
+    assert(owner.prepared.faceTriCount == oracle.faceTriCount);
+    assert(owner.prepared.faceCornerVert == oracle.faceCornerVert);
+
+    // Prepared bytes own their source lifetime: later source mutation cannot
+    // alias the detached image.
+    auto firstPreparedPosition = owner.prepared.scratchFaceData[0];
+    mesh.vertices[0].x += 500;
+    assert(owner.prepared.scratchFaceData[0] == firstPreparedPosition);
+
+    ValidatedGpuUploadToken refused;
+    assert(!owner.validatePreparedUpload(token, 8, 11, refused));
+    assert(!owner.validatePreparedUpload(token, 7, 12, refused));
+    assert(gpu.uploadVersion == 12 && owner.fakeCallCount == 0);
+    ValidatedGpuUploadToken ready;
+    assert(owner.validatePreparedUpload(token, 7, 11, ready));
+    owner.installPreparedUpload(ready);
+    assert(gpu.uploadVersion == 13);
+    assert(!gpu.weightStampValid && gpu.weightStampMesh is null);
+    assert(gpu.faceVao == 101 && gpu.weightColorVbo == 109);
+    assert(gpu.scratchFaceData == oracle.scratchFaceData);
+    assert(owner.fakeCalls[0 .. owner.fakeCallCount] == [1,2,3,4,5,6,7]);
+    owner.installPreparedUpload(ready);
+    assert(owner.fakeCallCount == 7); // consumed installs are potent no-ops
+
+    // Suppression remains the wrapper's live Position-publish branch; this
+    // dormant owner deliberately refuses to prepare it.
+    GpuMesh suppressed;
+    suppressed.suppressCageUpload = true;
+    auto suppressedOwner = new GpuUploadOwner(&suppressed);
+    PreparedGpuUploadToken suppressedToken;
+    assert(!suppressedOwner.beginPreparedUpload(mesh, null, null, null,
+                                                 suppressedToken));
+
+    // An allocation-path failure leaves both target and owner reusable.
+    GpuMesh faultTarget;
+    faultTarget.uploadVersion = 44;
+    auto faultOwner = new GpuUploadOwner(&faultTarget);
+    PreparedGpuUploadToken faultToken;
+    failPreparedGpuUploadAfterBuild = true;
+    bool threw;
+    try faultOwner.beginPreparedUpload(mesh, null, null, null, faultToken);
+    catch (Exception) threw = true;
+    failPreparedGpuUploadAfterBuild = false;
+    assert(threw && faultTarget.uploadVersion == 44 && !faultOwner.pending);
+    assert(faultOwner.beginPreparedUpload(mesh, null, null, null, faultToken));
+    faultOwner.discardPreparedUpload(faultToken);
+
+    // Resource and version identities are jointly rechecked after prepare.
+    GpuMesh changed;
+    changed.faceVao = 71;
+    changed.uploadVersion = 5;
+    auto changedOwner = new GpuUploadOwner(&changed);
+    PreparedGpuUploadToken changedToken;
+    assert(changedOwner.beginPreparedUpload(mesh, null, null, null,
+                                             changedToken));
+    changed.uploadVersion = 6;
+    assert(!changedOwner.validatePreparedUpload(changedToken, 7, 11, refused));
+    changed.uploadVersion = 5;
+    changed.faceVao = 72;
+    assert(!changedOwner.validatePreparedUpload(changedToken, 7, 11, refused));
+    changed.faceVao = 71;
+    changedOwner.discardPreparedUpload(changedToken);
+}
+
+version (unittest) static assert(!__traits(compiles, {
+    void copyValidatedUploadToken(ValidatedGpuUploadToken source) {
         auto copy = source;
     }
 }));

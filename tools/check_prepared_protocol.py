@@ -1112,4 +1112,43 @@ if run.returncode == 0 or ("not copyable" not in run.stdout
                            and not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
     fail("PreparedArm copy was not rejected by its disabled copy constructor:\n" + run.stdout)
 
+# P1.0b.4b dormant full-upload owner. Keep production at zero callers until
+# P1.0c, and freeze the closed prepare/validate/nothrow-consume boundary plus
+# the original-state identity guards that make refusal zero-live.
+mesh_gpu = (ROOT / "source/mesh_gpu.d").read_text()
+upload_contracts = (
+    "bool beginPreparedUpload(ref const Mesh mesh,",
+    "bool validatePreparedUpload(ref PreparedGpuUploadToken token,",
+    "void installPreparedUpload(ref ValidatedGpuUploadToken token) nothrow @nogc",
+    "requiredThread != threadIdentity",
+    "requiredContext != contextIdentity",
+    "target.uploadVersion != baseUploadVersion",
+    "peekGpuMeshNames(*target) != baseNames",
+    "next.buildUploadCpu(mesh, vpos, edgeOrigin, vertOrigin, faceOrigin)",
+    "installUploadState(*target, prepared)",
+    "private void submitUploadGl() nothrow @nogc",
+)
+for contract in upload_contracts:
+    if mesh_gpu.count(contract) != 1:
+        fail(f"P1.0b.4b upload-owner contract drift: {contract}")
+for path in (ROOT / "source").rglob("*.d"):
+    if path.name == "mesh_gpu.d" and path.parent == ROOT / "source":
+        continue
+    if re.search(r"\.beginPreparedUpload\s*\(", path.read_text()):
+        fail(f"P1.0b.4b early prepared-upload caller: {path.relative_to(ROOT)}")
+
+def upload_owner_gate(text):
+    return all(contract in text for contract in upload_contracts)
+for old, new, label in (
+    ("target.uploadVersion != baseUploadVersion", "false", "version identity"),
+    ("peekGpuMeshNames(*target) != baseNames", "false", "GL-name identity"),
+    ("next.buildUploadCpu(mesh, vpos, edgeOrigin, vertOrigin, faceOrigin)",
+     "next.buildUploadCpu(mesh, mesh.vertices, edgeOrigin, vertOrigin, faceOrigin)",
+     "resolved morph positions"),
+    ("installUploadState(*target, prepared)", "", "owned header transfer"),
+):
+    mutant = mesh_gpu.replace(old, new, 1)
+    if mutant == mesh_gpu or upload_owner_gate(mutant):
+        fail(f"P1.0b.4b {label} mutation did not fail")
+
 print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures)} compile-fail fixtures)")

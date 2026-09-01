@@ -815,6 +815,9 @@ private static immutable RemainderFile[] kRemainder = [
         "BvhPick.pickFace (row 6) — keys on the VBO content it rasterises from"),
     RemainderFile("source/gpu_select.d", 1,
         "GpuSelectBuffer.ensureSlot (row 5) — same, uploadVersion"),
+    RemainderFile("source/mesh_gpu.d", 1,
+        "GpuUploadOwner validation — detached CPU image must still target the "
+      ~ "same VBO-content generation; no Mesh change class answers that"),
     RemainderFile("source/mesh_edit_delta.d", 1,
         "finalize's fast-path structVersion backstop (task 1903 L0.P1) — an "
       ~ "ASSERT that the replay wrote no edges, not a freshness poll: nothing "
