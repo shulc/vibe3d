@@ -73,6 +73,10 @@ import shader : Shader, LitShader, drawLitPreview;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
+import prepared_record_context : PreparedRecordContext;
+import prepared_private_state : PreparedPrivateStateOwner;
+import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import mesh_gpu : GpuCreateOwner;
 import tools.create.create_common : pickWorkplaneFrame, WorkplaneFrame, currentWorkplaneFrame,
                               mostFacingAxis, transformPoint, transformDir, snapLocalHit,
                               frameIsLeftHanded, reverseFaceWinding,
@@ -221,6 +225,13 @@ public:
 
     final void installPreparedPrimitiveReset() nothrow @nogc {}
 
+    final void installPreparedPrimitiveActivationPre() nothrow @nogc {
+        meshChanged = false; moverDragAxis = -1;
+    }
+    final void installPreparedPrimitiveActivationPost() nothrow @nogc {
+        toolHandles.clearHaul();
+    }
+
     /// Virtual: default true (matches every leaf-group pre-refactor, which
     /// had no such gate). TorusTool overrides it (majorRadius/minorRadius
     /// both need to clear an epsilon before a preview is worth drawing).
@@ -255,6 +266,40 @@ public:
         resetSession();
         toolHandles.clearHaul();
         previewGpu.init();
+    }
+
+    final PreparedSessionActivateEffect prepareActivate(
+            PreparedRecordContext context, GpuCreateOwner gpuOwner) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.Primitive, false);
+        scope(failure) context.discard();
+        auto stateOwner = PreparedPrivateStateOwner.primitiveProduct(this);
+        bool ok = stateOwner !is null && gpuOwner !is null &&
+            gpuOwner.replacesLikeLegacyInit() && gpuOwner.owns(&previewGpu) &&
+            context.preparePrivateState(stateOwner) &&
+            context.prepareCreate(gpuOwner) && context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.Primitive, ok);
+    }
+
+    final GpuMesh* preparedPreviewGpu() nothrow @nogc { return &previewGpu; }
+    version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
+        return preparedToolStateOwner;
+    }
+    version(unittest) final void seedPreparedPrimitiveActivationForTest(
+            bool changed, int moverAxis, int haul) {
+        meshChanged = changed; moverDragAxis = moverAxis; toolHandles.setHaul(haul);
+    }
+    version(unittest) final bool preparedPrimitiveActivationBaseForTest()
+            const nothrow @nogc {
+        return !meshChanged && moverDragAxis == -1 &&
+            toolHandles.haulForPreparedTest() == -1;
+    }
+    version(unittest) final bool preparedPrimitiveActivationDirtyForTest()
+            const nothrow @nogc {
+        return meshChanged && moverDragAxis == 2 &&
+            toolHandles.haulForPreparedTest() == 9;
     }
 
     override void deactivate() {
@@ -593,6 +638,17 @@ public:
         sizeDragIdx = -1;
     }
 
+    final void installPreparedHandledActivationPre() nothrow @nogc {
+        installPreparedPrimitiveActivationPre();
+        sizeDragIdx = -1;
+    }
+    version(unittest) final void seedPreparedHandledActivationForTest(int axis)
+            nothrow @nogc { sizeDragIdx = axis; }
+    version(unittest) final bool preparedHandledActivationForTest() const
+            nothrow @nogc { return sizeDragIdx == -1; }
+    version(unittest) final bool preparedHandledActivationDirtyForTest() const
+            nothrow @nogc { return sizeDragIdx == 3; }
+
     /// Update sizeH[i].pos/size for the current frame. Abstract: cylinder-
     /// family default lives in SizedRadialCreateTool!P (drives it off the
     /// virtual worldSize() hook so sphere's ellipsoid permutation Just
@@ -717,6 +773,32 @@ public:
             || (state >= RadialState.DrawingHeight && currentHeight() > 1e-5f);
     }
     protected override void goIdle() { state = RadialState.Idle; }
+
+    final void installPreparedRadialActivation() nothrow @nogc {
+        installPreparedRadialActivationPre();
+        installPreparedPrimitiveActivationPost();
+    }
+    final void installPreparedRadialActivationPre() nothrow @nogc {
+        state = RadialState.Idle;
+        installPreparedHandledActivationPre();
+    }
+    version(unittest) final void seedPreparedRadialActivationForTest() {
+        state = RadialState.HeightSet; dragUniform = true;
+        seedPreparedHandledActivationForTest(3);
+        seedPreparedPrimitiveActivationForTest(true, 2, 9);
+    }
+    version(unittest) final bool preparedRadialActivationForTest() const
+            nothrow @nogc {
+        return state == RadialState.Idle && dragUniform &&
+            preparedHandledActivationForTest() &&
+            preparedPrimitiveActivationBaseForTest();
+    }
+    version(unittest) final bool preparedRadialActivationDirtyForTest() const
+            nothrow @nogc {
+        return state == RadialState.HeightSet && dragUniform &&
+            preparedHandledActivationDirtyForTest() &&
+            preparedPrimitiveActivationDirtyForTest();
+    }
 
     // Exposed for a leaf's drawProperties() (cosmetic UI hint text) so it
     // never needs to reach into RadialState directly.

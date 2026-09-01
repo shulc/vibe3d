@@ -702,9 +702,10 @@ public:
     }
     final void installPreparedSphereReset(bool clearMethod, int nextAxis)
             nothrow @nogc {
-        installHandledResetProjection();
+        installPreparedRadialActivationPre();
         if (clearMethod) params_.method = 0;
         axisAtLastSync = nextAxis;
+        installPreparedPrimitiveActivationPost();
     }
     version(unittest) void seedPreparedSphereForTest(int axis, int method)
             nothrow @nogc { params_.axis = axis; params_.method = method; }

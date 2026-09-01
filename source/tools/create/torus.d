@@ -158,6 +158,26 @@ public:
         super(meshSrc, gpu, litShader);
     }
 
+    final void installPreparedActivation() nothrow @nogc {
+        state = TorusState.Idle;
+        installPreparedHandledActivationPre();
+        installPreparedPrimitiveActivationPost();
+    }
+    version(unittest) void seedPreparedActivationForTest() {
+        state = TorusState.MinorSet;
+        seedPreparedHandledActivationForTest(3);
+        seedPreparedPrimitiveActivationForTest(true, 2, 9);
+    }
+    version(unittest) bool preparedActivationForTest() const nothrow @nogc {
+        return state == TorusState.Idle && preparedHandledActivationForTest() &&
+            preparedPrimitiveActivationBaseForTest();
+    }
+    version(unittest) bool preparedActivationDirtyForTest() const nothrow @nogc {
+        return state == TorusState.MinorSet &&
+            preparedHandledActivationDirtyForTest() &&
+            preparedPrimitiveActivationDirtyForTest();
+    }
+
     override string name() const { return "Torus"; }
 
     override Param[] params() {

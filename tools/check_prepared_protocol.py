@@ -240,6 +240,7 @@ B5O_PREPARED_LEGACY = {
 B5P_PREPARED_LEGACY = {
     ("tools.create.box", "BoxTool", "activate"),
     ("tools.create.pen", "PenTool", "activate"),
+    ("tools.create.primitive_create_tool", "PrimitiveCreateTool", "activate"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
@@ -277,7 +278,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "0c29345da45c9ebfaec360425b76a79c81c1d125fcd83480350029a371d58d67"
+    "e7f28b3746bb2cf60a106f8b0c480cffde9aabe4b9cc0530963b9b5884f7b66f"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -397,6 +398,7 @@ for path, text in prepared_source_texts.items():
             "prepared_record_context", "tools.transform.transform",
             "tools.common.command_wrapper", "tools.edit.tack",
             "tools.create.vertex_place", "tools.create.pen",
+            "tools.create.primitive_create_tool",
             "tools.alignment.array_tool",
             "tools.alignment.clone_tool", "tools.deform.magnet",
             "tools.edit.reduce", "prepared_private_state",
@@ -1602,7 +1604,8 @@ for path in (ROOT / "source/tools").rglob("*.d"):
                 "source/tools/create/vertex_place.d",
                 "source/tools/alignment/radial_sweep_tool.d",
                 "source/tools/create/box.d",
-                "source/tools/create/pen.d"}:
+                "source/tools/create/pen.d",
+                "source/tools/create/primitive_create_tool.d"}:
         fail(f"P1.0b.5c dormant owner has production caller: {path.relative_to(ROOT)}")
 
 # P1.0b.5p exact Box activation: private reset, prepared GL-name transfer,
@@ -1744,6 +1747,104 @@ for target, old, new, label in (
     if pen_activation_gate(pen, private, context):
         fail(f"Pen activation mutation did not RED: {label}")
 
+# PrimitiveCreateTool.activate is one inherited declaration with six exact
+# products. Its closed projection preserves each leaf's resetSession law and
+# installs private state -> legacy-init GL header -> NoHistory atomically.
+primitive_activation_sources = {
+    "base": (ROOT / "source/tools/create/primitive_create_tool.d").read_text(),
+    "private": (ROOT / "source/prepared_private_state.d").read_text(),
+    "sphere": (ROOT / "source/tools/create/sphere.d").read_text(),
+    "torus": (ROOT / "source/tools/create/torus.d").read_text(),
+    "tube": (ROOT / "source/tools/create/tube.d").read_text(),
+}
+def primitive_activation_gate(s):
+    start = s["base"].find("final PreparedSessionActivateEffect prepareActivate(")
+    end = s["base"].find("final GpuMesh* preparedPreviewGpu", start)
+    producer = s["base"][start:end] if start >= 0 and end > start else ""
+    roster = ("SphereTool", "CapsuleTool", "ConeTool", "CylinderTool",
+              "TorusTool", "TubeTool")
+    return (
+        "PreparedPrivateStateOwner.primitiveProduct(this)" in producer and
+        all(x in producer for x in ("gpuOwner !is null",
+            "gpuOwner.replacesLikeLegacyInit()", "gpuOwner.owns(&previewGpu)",
+            "context.preparePrivateState(stateOwner)",
+            "context.prepareCreate(gpuOwner)", "context.markNoHistoryInstall()",
+            "scope(failure) context.discard();", "if (!ok) context.discard();")) and
+        producer.find("context.preparePrivateState(stateOwner)") <
+            producer.find("context.prepareCreate(gpuOwner)") <
+            producer.find("context.markNoHistoryInstall()") and
+        "PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+        "            PreparedActivateKind.Primitive, ok)" in producer and
+        not any(x in producer for x in
+                ("context.validate(", "context.install(", "activate();")) and
+        all(f"target.classinfo is {name}.classinfo" in s["private"]
+            for name in roster) and
+        "else return null;" in s["private"] and
+        "meshChanged = false; moverDragAxis = -1;" in s["base"] and
+        "final void installPreparedPrimitiveActivationPost() nothrow @nogc {\n"
+        "        toolHandles.clearHaul();" in s["base"] and
+        "final void installPreparedHandledActivationPre() nothrow @nogc {\n"
+        "        installPreparedPrimitiveActivationPre();\n        sizeDragIdx = -1;" in s["base"] and
+        "installPreparedRadialActivationPre();\n"
+        "        installPreparedPrimitiveActivationPost();" in s["base"] and
+        "state = RadialState.Idle;\n        installPreparedHandledActivationPre();" in s["base"] and
+        "state = RadialState.Idle; dragUniform = false;" not in s["base"] and
+        "sphereTarget.installPreparedSphereReset(sphereClearMethod, sphereAxis);" in s["private"] and
+        "installPreparedRadialActivationPre();\n"
+        "        if (clearMethod) params_.method = 0;\n"
+        "        axisAtLastSync = nextAxis;\n"
+        "        installPreparedPrimitiveActivationPost();" in s["sphere"] and
+        "state = TorusState.Idle;\n        installPreparedHandledActivationPre();\n"
+        "        installPreparedPrimitiveActivationPost();" in s["torus"] and
+        "state = TubeState.Idle;\n        installPreparedPrimitiveActivationPre();\n"
+        "        installPreparedPrimitiveActivationPost();" in s["tube"])
+if not primitive_activation_gate(primitive_activation_sources):
+    fail("Primitive activation prepared contract drift")
+for name, old, new, label in (
+    ("base", "gpuOwner !is null", "true", "drop null GPU guard"),
+    ("base", "gpuOwner.replacesLikeLegacyInit()", "true", "drop legacy GPU mode"),
+    ("base", "gpuOwner.owns(&previewGpu)", "true", "drop preview identity"),
+    ("base", "context.preparePrivateState(stateOwner)", "true", "drop private reset"),
+    ("base", "context.prepareCreate(gpuOwner)", "true", "drop GL create"),
+    ("base", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
+    ("base", "scope(failure) context.discard();", "", "drop failure cleanup"),
+    ("base", "PreparedActivateKind.Primitive, ok", "PreparedActivateKind.Primitive, true", "forge accepted effect"),
+    ("base", "PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+     "            PreparedActivateKind.Primitive, ok)",
+     "PreparedSessionActivateEffect(OwnedId.init,\n"
+     "            PreparedActivateKind.Primitive, ok)", "forge effect owner"),
+    ("base", "meshChanged = false; moverDragAxis = -1;",
+     "moverDragAxis = -1;", "drop meshChanged reset"),
+    ("base", "final void installPreparedHandledActivationPre() nothrow @nogc {\n"
+     "        installPreparedPrimitiveActivationPre();\n        sizeDragIdx = -1;",
+     "final void installPreparedHandledActivationPre() nothrow @nogc {\n"
+     "        installPreparedPrimitiveActivationPre();", "drop handled reset"),
+    ("base", "state = RadialState.Idle;\n        installPreparedHandledActivationPre();",
+     "dragUniform = false;\n        installPreparedHandledActivationPre();", "drop radial idle/preserve drag mode"),
+    ("base", "final void installPreparedPrimitiveActivationPost() nothrow @nogc {\n"
+     "        toolHandles.clearHaul();",
+     "final void installPreparedPrimitiveActivationPost() nothrow @nogc {",
+     "drop final haul reset"),
+    ("private", "target.classinfo is CapsuleTool.classinfo", "false", "drop Capsule product"),
+    ("private", "target.classinfo is ConeTool.classinfo", "false", "drop Cone product"),
+    ("private", "target.classinfo is CylinderTool.classinfo", "false", "drop Cylinder product"),
+    ("private", "target.classinfo is SphereTool.classinfo", "false", "drop Sphere product"),
+    ("private", "target.classinfo is TorusTool.classinfo", "false", "drop Torus product"),
+    ("private", "target.classinfo is TubeTool.classinfo", "false", "drop Tube product"),
+    ("sphere", "if (clearMethod) params_.method = 0;", "", "drop Sphere method reset"),
+    ("sphere", "if (clearMethod) params_.method = 0;", "if (true) params_.method = 0;",
+     "clear normal-Sphere method"),
+    ("sphere", "axisAtLastSync = nextAxis;\n        installPreparedPrimitiveActivationPost();",
+     "installPreparedPrimitiveActivationPost();\n        axisAtLastSync = nextAxis;",
+     "move haul clear before Sphere reset"),
+    ("torus", "state = TorusState.Idle;", "", "drop Torus idle reset"),
+    ("tube", "state = TubeState.Idle;", "", "drop Tube idle reset"),
+):
+    mutant = dict(primitive_activation_sources)
+    mutant[name] = mutant[name].replace(old, new, 1)
+    if mutant[name] == primitive_activation_sources[name] or primitive_activation_gate(mutant):
+        fail(f"Primitive activation mutation did not RED: {label}")
+
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
 # detached whole-Mesh adoption with exact caller-supplied change flags, and a
 # frozen Primitive product/reset projection set. Install never dispatches the
@@ -1793,7 +1894,7 @@ def b5d1_gate(s):
             "final void installPreparedPrimitiveReset() nothrow @nogc" in s["primitive"] and
             "final void installHandledResetProjection() nothrow @nogc" in s["primitive"] and
             "final void installPreparedSphereReset(bool clearMethod, int nextAxis)" in s["sphere"] and
-            "installHandledResetProjection();" in s["sphere"] and
+            "installPreparedRadialActivationPre();" in s["sphere"] and
             primitive_products == expected_primitive_products)
 if not b5d1_gate(b5d1_sources):
     fail("P1.0b.5d.1 private-state/topology infrastructure drift")
@@ -1811,7 +1912,7 @@ for name, old, new, label in (
      "drop exact Mesh flags"),
     ("context", "PreparedDeliveryJournal.prepare([spec])", "null",
      "drop topology delivery preparation"),
-    ("sphere", "installHandledResetProjection();", "", "drop inherited leaf reset"),
+    ("sphere", "installPreparedRadialActivationPre();", "", "drop inherited leaf reset"),
 ):
     mutant = dict(b5d1_sources); mutant[name] = mutant[name].replace(old, new, 1)
     if mutant[name] == b5d1_sources[name] or b5d1_gate(mutant):
@@ -1827,7 +1928,8 @@ for path in (ROOT / "source/tools").rglob("*.d"):
                 "source/tools/edit/reduce.d",
                 "source/tools/alignment/radial_sweep_tool.d",
                 "source/tools/create/box.d",
-                "source/tools/create/pen.d"}:
+                "source/tools/create/pen.d",
+                "source/tools/create/primitive_create_tool.d"}:
         fail(f"P1.0b.5d.1 dormant infrastructure has hook caller: {path.relative_to(ROOT)}")
 
 # P1.0b.5d.2 first fully closed root: Vertex deactivate preserves the exact

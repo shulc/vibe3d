@@ -198,6 +198,23 @@ public:
         super(meshSrc, gpu, litShader);
     }
 
+    final void installPreparedActivation() nothrow @nogc {
+        state = TubeState.Idle;
+        installPreparedPrimitiveActivationPre();
+        installPreparedPrimitiveActivationPost();
+    }
+    version(unittest) void seedPreparedActivationForTest() {
+        state = TubeState.InnerSet;
+        seedPreparedPrimitiveActivationForTest(true, 2, 9);
+    }
+    version(unittest) bool preparedActivationForTest() const nothrow @nogc {
+        return state == TubeState.Idle && preparedPrimitiveActivationBaseForTest();
+    }
+    version(unittest) bool preparedActivationDirtyForTest() const nothrow @nogc {
+        return state == TubeState.InnerSet &&
+            preparedPrimitiveActivationDirtyForTest();
+    }
+
     override string name() const { return "Tube"; }
 
     override Param[] params() {

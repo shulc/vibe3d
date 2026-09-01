@@ -5,6 +5,11 @@ import tools.create.box : BoxTool;
 import tools.create.pen : PenTool;
 import tools.create.primitive_create_tool : PrimitiveCreateTool, HandledCreateTool;
 import tools.create.sphere : SphereTool;
+import tools.create.capsule : CapsuleTool;
+import tools.create.cone : ConeTool;
+import tools.create.cylinder : CylinderTool;
+import tools.create.torus : TorusTool;
+import tools.create.tube : TubeTool;
 import tools.create.vertex_place : VertexTool;
 import tools.alignment.array_tool : ArrayTool;
 import tools.alignment.clone_tool : CloneTool;
@@ -16,7 +21,9 @@ enum PreparedPrivateStateKind : ubyte {
     Box, Pen, Primitive, Vertex, ArraySession, CloneSession,
     MagnetSession, ReductionSession
 }
-private enum PrimitiveProjection : ubyte { Base, Handled, Sphere }
+private enum PrimitiveProjection : ubyte {
+    Base, Handled, Sphere, Capsule, Cone, Cylinder, Torus, Tube
+}
 struct PreparedPrivateStateToken { @disable this(this); private ulong ownerId, generation; }
 struct ValidatedPrivateStateToken { @disable this(this); private ulong ownerId, generation; }
 private shared ulong nextPrivateStateOwnerId;
@@ -78,6 +85,32 @@ public:
             target.preparedSphereClearMethod, target.preparedSphereAxis);
         o.sphereTarget = target; o.primitiveProjection = PrimitiveProjection.Sphere; return o;
     }
+    static PreparedPrivateStateOwner primitiveProduct(PrimitiveCreateTool target) {
+        if (target is null) return null;
+        PreparedPrivateStateOwner o;
+        if (target.classinfo is SphereTool.classinfo) {
+            auto sphere = cast(SphereTool) target;
+            o = new PreparedPrivateStateOwner(PreparedPrivateStateKind.Primitive,
+                sphere.preparedSphereClearMethod, sphere.preparedSphereAxis);
+            o.sphereTarget = sphere;
+            o.primitiveProjection = PrimitiveProjection.Sphere;
+            return o;
+        }
+        o = new PreparedPrivateStateOwner(PreparedPrivateStateKind.Primitive);
+        o.primitiveTarget = target;
+        if (target.classinfo is CapsuleTool.classinfo)
+            o.primitiveProjection = PrimitiveProjection.Capsule;
+        else if (target.classinfo is ConeTool.classinfo)
+            o.primitiveProjection = PrimitiveProjection.Cone;
+        else if (target.classinfo is CylinderTool.classinfo)
+            o.primitiveProjection = PrimitiveProjection.Cylinder;
+        else if (target.classinfo is TorusTool.classinfo)
+            o.primitiveProjection = PrimitiveProjection.Torus;
+        else if (target.classinfo is TubeTool.classinfo)
+            o.primitiveProjection = PrimitiveProjection.Tube;
+        else return null;
+        return o;
+    }
     static PreparedPrivateStateOwner vertex(VertexTool target) {
         auto o = new PreparedPrivateStateOwner(PreparedPrivateStateKind.Vertex);
         o.vertexTarget = target; return o;
@@ -133,6 +166,11 @@ private:
             case PrimitiveProjection.Base: return primitiveTarget !is null;
             case PrimitiveProjection.Handled: return handledTarget !is null;
             case PrimitiveProjection.Sphere: return sphereTarget !is null;
+            case PrimitiveProjection.Capsule:
+            case PrimitiveProjection.Cone:
+            case PrimitiveProjection.Cylinder:
+            case PrimitiveProjection.Torus:
+            case PrimitiveProjection.Tube: return primitiveTarget !is null;
             }
         case PreparedPrivateStateKind.Vertex: return vertexTarget !is null;
         case PreparedPrivateStateKind.ArraySession:
@@ -169,6 +207,16 @@ public:
             case PrimitiveProjection.Handled: handledTarget.installHandledResetProjection(); break;
             case PrimitiveProjection.Sphere:
                 sphereTarget.installPreparedSphereReset(sphereClearMethod, sphereAxis); break;
+            case PrimitiveProjection.Capsule:
+                (cast(CapsuleTool) primitiveTarget).installPreparedRadialActivation(); break;
+            case PrimitiveProjection.Cone:
+                (cast(ConeTool) primitiveTarget).installPreparedRadialActivation(); break;
+            case PrimitiveProjection.Cylinder:
+                (cast(CylinderTool) primitiveTarget).installPreparedRadialActivation(); break;
+            case PrimitiveProjection.Torus:
+                (cast(TorusTool) primitiveTarget).installPreparedActivation(); break;
+            case PrimitiveProjection.Tube:
+                (cast(TubeTool) primitiveTarget).installPreparedActivation(); break;
             } break;
         case PreparedPrivateStateKind.Vertex: vertexTarget.installPreparedPrivateDeactivate(); break;
         case PreparedPrivateStateKind.ArraySession:
@@ -194,6 +242,10 @@ public:
 
 version(unittest) unittest {
     import mesh : Mesh, GpuMesh, makeCube;
+    import mesh_gpu : GpuCreateOwner;
+    import prepared_record_context : PreparedRecordContext;
+    import prepared_tool_effect : PreparedActivateKind;
+    import record_observer_hub : RecordObserverHub;
     Mesh mesh = makeCube(); GpuMesh gpu;
     auto sphere = new SphereTool(() => &mesh, &gpu, null, true);
     sphere.seedPreparedSphereForTest(2, 7);
@@ -206,6 +258,115 @@ version(unittest) unittest {
            "source mutation changed detached prepared projection");
     sphere.seedPreparedSphereForTest(1, 9); owner.install();
     assert(sphere.preparedSphereMethodForTest() == 9);
+
+    // The inherited activation declaration has six exact concrete products.
+    // Every product keeps its live state and old GL header until the joint
+    // transaction validates, then installs private -> GPU -> no-history once.
+    auto capsule = new CapsuleTool(() => &mesh, &gpu, null);
+    auto cone = new ConeTool(() => &mesh, &gpu, null);
+    auto cylinder = new CylinderTool(() => &mesh, &gpu, null);
+    auto productSphere = new SphereTool(() => &mesh, &gpu, null, true);
+    auto torus = new TorusTool(() => &mesh, &gpu, null);
+    auto tube = new TubeTool(() => &mesh, &gpu, null);
+    capsule.seedPreparedRadialActivationForTest();
+    cone.seedPreparedRadialActivationForTest();
+    cylinder.seedPreparedRadialActivationForTest();
+    productSphere.seedPreparedRadialActivationForTest();
+    productSphere.seedPreparedSphereForTest(2, 7);
+    torus.seedPreparedActivationForTest();
+    tube.seedPreparedActivationForTest();
+
+    void installProduct(PrimitiveCreateTool product, uint oldName, ubyte projection) {
+        product.preparedPreviewGpu().faceVao = oldName;
+        auto gpuOwner = GpuCreateOwner.fakeForLegacyInitTest(
+            product.preparedPreviewGpu());
+        auto context = new PreparedRecordContext(null, new RecordObserverHub());
+        context.setResourceIdentity(7, 11);
+        auto effect = product.prepareActivate(context, gpuOwner);
+        bool projectionStillDirty;
+        switch (projection) {
+        case 0: projectionStillDirty =
+            (cast(CapsuleTool) product).preparedRadialActivationDirtyForTest(); break;
+        case 1: projectionStillDirty =
+            (cast(ConeTool) product).preparedRadialActivationDirtyForTest(); break;
+        case 2: projectionStillDirty =
+            (cast(CylinderTool) product).preparedRadialActivationDirtyForTest(); break;
+        case 3: projectionStillDirty =
+            (cast(SphereTool) product).preparedRadialActivationDirtyForTest() &&
+            (cast(SphereTool) product).preparedSphereMethodForTest() == 7; break;
+        case 4: projectionStillDirty =
+            (cast(TorusTool) product).preparedActivationDirtyForTest(); break;
+        case 5: projectionStillDirty =
+            (cast(TubeTool) product).preparedActivationDirtyForTest(); break;
+        case 6: projectionStillDirty =
+            (cast(SphereTool) product).preparedRadialActivationDirtyForTest() &&
+            (cast(SphereTool) product).preparedSphereMethodForTest() == 6; break;
+        default: assert(false, "unknown primitive test projection");
+        }
+        assert(effect.accepted && effect.kind == PreparedActivateKind.Primitive &&
+            effect.owner == product.preparedOwnerForTest() &&
+            product.preparedPreviewGpu().faceVao == oldName &&
+            projectionStillDirty);
+        assert(context.validate());
+        context.install(); context.install();
+        assert(product.preparedPreviewGpu().faceVao != 0 &&
+            product.preparedPreviewGpu().faceVao != oldName &&
+            context.installTraceForTest() == [7, 5, 8]);
+    }
+    installProduct(capsule, 31, 0); installProduct(cone, 32, 1);
+    installProduct(cylinder, 33, 2); installProduct(productSphere, 34, 3);
+    installProduct(torus, 35, 4); installProduct(tube, 36, 5);
+    assert(capsule.preparedRadialActivationForTest());
+    assert(cone.preparedRadialActivationForTest());
+    assert(cylinder.preparedRadialActivationForTest());
+    assert(productSphere.preparedRadialActivationForTest() &&
+        productSphere.preparedSphereMethodForTest() == 0 &&
+        productSphere.preparedSphereSyncedAxisForTest() == 2);
+    assert(torus.preparedActivationForTest());
+    assert(tube.preparedActivationForTest());
+
+    // prim.sphere shares the exact product class with prim.ellipsoid but its
+    // resetSession preserves method while still synchronizing the axis.
+    auto globe = new SphereTool(() => &mesh, &gpu, null, false);
+    globe.seedPreparedRadialActivationForTest();
+    globe.seedPreparedSphereForTest(1, 6);
+    installProduct(globe, 37, 6);
+    assert(globe.preparedRadialActivationForTest() &&
+        globe.preparedSphereMethodForTest() == 6 &&
+        globe.preparedSphereSyncedAxisForTest() == 1);
+
+    // A joint identity failure aborts both owners without touching live state;
+    // a fresh context and owner can retry the same concrete product.
+    cylinder.seedPreparedRadialActivationForTest();
+    cylinder.preparedPreviewGpu().faceVao = 71;
+    auto faultGpu = GpuCreateOwner.fakeForLegacyInitTest(
+        cylinder.preparedPreviewGpu());
+    auto faultContext = new PreparedRecordContext(null, new RecordObserverHub());
+    faultContext.setResourceIdentity(99, 100);
+    assert(cylinder.prepareActivate(faultContext, faultGpu).accepted);
+    assert(!faultContext.validate() && faultGpu.fakeCleanupCountForTest() == 1 &&
+        cylinder.preparedPreviewGpu().faceVao == 71 &&
+        !cylinder.preparedRadialActivationForTest());
+    auto retryGpu = GpuCreateOwner.fakeForLegacyInitTest(
+        cylinder.preparedPreviewGpu());
+    auto retryContext = new PreparedRecordContext(null, new RecordObserverHub());
+    retryContext.setResourceIdentity(7, 11);
+    assert(cylinder.prepareActivate(retryContext, retryGpu).accepted &&
+        retryContext.validate());
+    retryContext.install();
+    assert(cylinder.preparedRadialActivationForTest() &&
+        retryContext.installTraceForTest() == [7, 5, 8]);
+
+    GpuMesh foreignGpu;
+    auto refuseContext = new PreparedRecordContext(null, new RecordObserverHub());
+    refuseContext.setResourceIdentity(7, 11);
+    auto refused = tube.prepareActivate(refuseContext,
+        GpuCreateOwner.fakeForLegacyInitTest(&foreignGpu));
+    assert(!refused.accepted && refused.kind == PreparedActivateKind.Primitive &&
+        refused.owner == tube.preparedOwnerForTest() && !refuseContext.validate());
+    auto nullGpuContext = new PreparedRecordContext(null, new RecordObserverHub());
+    auto nullGpu = tube.prepareActivate(nullGpuContext, null);
+    assert(!nullGpu.accepted && !nullGpuContext.validate());
 
     import editmode : EditMode;
     EditMode reductionMode = EditMode.Polygons;
@@ -239,9 +400,7 @@ version(unittest) unittest {
     assert(reduction.preparedBaselineFilledForTest(),
            "owner abort cleared or aliased installed tool baseline");
 
-    import prepared_record_context : PreparedRecordContext;
     import command_history : CommandHistory;
-    import record_observer_hub : RecordObserverHub;
     PreparedRecordContext freshContext() {
         return new PreparedRecordContext(new CommandHistory(), new RecordObserverHub());
     }
