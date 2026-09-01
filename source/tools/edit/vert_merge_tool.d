@@ -22,6 +22,35 @@ import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import command_history : PreparedHistoryKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_vertex_merge_activation : PreparedVertexMergeActivationOwner;
+import prepared_vertex_merge_param_update : PreparedVertexMergeParamUpdateOwner;
+import prepared_tool_effect : PreparedVertexMergeParamEffect,
+    PreparedVertexMergeParamKind;
+import document : Layer;
+import mesh_gpu : GpuUploadOwner;
+import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
+import core.stdc.string : memcmp;
+
+struct VertexMergeParamProjection {
+    bool interactive, active, built;
+    float dist;
+    bool opEquals(const VertexMergeParamProjection other) const nothrow @nogc {
+        return interactive == other.interactive && active == other.active &&
+            built == other.built &&
+            memcmp(&dist, &other.dist, float.sizeof) == 0;
+    }
+}
+
+struct PreparedVertexMergeParamImage {
+    bool valid, applies, nextBuilt;
+    VertexMergeParamProjection expected;
+    MeshSnapshot expectedLive, expectedBefore;
+    Mesh candidate;
+    uint deliveryFlags, deliveryDomains;
+    void clear() nothrow @nogc {
+        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
+        candidate = Mesh.init; valid = applies = false;
+    }
+}
 
 struct PreparedVertexMergeActivationImage {
     MeshSnapshot before;
@@ -214,6 +243,87 @@ public:
 
     override void onParamChanged(string pname) {
         if (interactiveParamEdit) rebuildPreview();
+    }
+    final bool ownsPreparedLayer(Layer layer) const {
+        return layer !is null && &layer.meshRef() is mesh;
+    }
+    private VertexMergeParamProjection paramProjection() const nothrow @nogc {
+        return VertexMergeParamProjection(interactiveParamEdit, active, built,
+            dist_);
+    }
+    final PreparedVertexMergeParamImage buildPreparedParamUpdate(ref Mesh live) {
+        PreparedVertexMergeParamImage image;
+        image.valid = true; image.expected = paramProjection();
+        image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
+        if (!before.filled) return image;
+        Mesh baseline;
+        auto baselineShadow = beginPreparedShadow(baseline);
+        before.restore(baseline);
+        uint baselineFlags, baselineDomains;
+        drainPreparedShadowDelivery(baseline, baselineFlags, baselineDomains);
+        baselineShadow.close();
+        image.expectedBefore = MeshSnapshot.capture(baseline);
+        if (!interactiveParamEdit || !active) return image;
+        image.applies = true; image.candidate = baseline; baseline = Mesh.init;
+        auto shadow = beginPreparedShadow(image.candidate);
+        if (!image.candidate.hasAnySelectedVertices()) {
+            image.nextBuilt = false;
+        } else {
+            const double epsSq = cast(double)dist_ * cast(double)dist_;
+            const n = image.candidate.weldVerticesByMask(
+                image.candidate.selectedVertices, epsSq, true);
+            image.nextBuilt = (n != 0);
+        }
+        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+            image.deliveryDomains);
+        if (image.deliveryFlags == 0) {
+            image.deliveryFlags = baselineFlags;
+            image.deliveryDomains = baselineDomains;
+        }
+        shadow.close(); return image;
+    }
+    final bool preparedParamUpdateMatches(
+            in PreparedVertexMergeParamImage image, ref const Mesh live) const
+            nothrow @nogc {
+        return image.valid && image.expected == paramProjection() &&
+            image.expectedLive.matches(live) &&
+            image.expectedBefore.matches(before);
+    }
+    final void installPreparedParamUpdate(
+            ref PreparedVertexMergeParamImage image) nothrow @nogc {
+        if (!image.valid) return;
+        built = image.nextBuilt; image.clear();
+    }
+    final PreparedVertexMergeParamEffect prepareParamChanged(
+            PreparedRecordContext context, Layer layer,
+            GpuUploadOwner uploadOwner) {
+        if (context is null) return PreparedVertexMergeParamEffect(
+            preparedToolStateOwner, PreparedVertexMergeParamKind.None, false);
+        scope(failure) context.discard();
+        auto owner = PreparedVertexMergeParamUpdateOwner.prepare(this, layer);
+        auto kind = owner is null ? PreparedVertexMergeParamKind.None :
+            owner.effectKind;
+        bool ok = owner !is null;
+        if (ok && owner.applies)
+            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
+                context.prepareStampedMeshImage(layer, owner.candidate,
+                    owner.deliveryFlags, owner.deliveryDomains);
+        if (ok) ok = context.prepareVertexMergeParamUpdate(owner);
+        if (ok && owner.applies)
+            ok = context.prepareUpload(uploadOwner, owner.candidate);
+        if (ok) ok = context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedVertexMergeParamEffect(preparedToolStateOwner, kind, ok);
+    }
+    version(unittest) final void seedPreparedParamForTest(ref Mesh live,
+            bool interactive = true) {
+        interactiveParamEdit = interactive; active = true; built = false;
+        dist_ = 3.0f; before = MeshSnapshot.capture(live);
+    }
+    version(unittest) final void mutatePreparedParamForTest(float value)
+            nothrow @nogc { dist_ = value; }
+    version(unittest) final bool preparedParamBuiltForTest() const nothrow @nogc {
+        return built;
     }
     override void evaluate() {}
 

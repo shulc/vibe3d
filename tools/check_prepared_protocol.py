@@ -238,6 +238,7 @@ B5O_PREPARED_LEGACY = {
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "activate"),
 }
 B5P_PREPARED_LEGACY = {
+    ("tools.edit.vert_merge_tool", "VertexMergeTool", "onParamChanged"),
     ("tools.edit.reduce", "ReductionTool", "onParamChanged"),
     ("tools.edit.poly_inset_tool", "PolyInsetTool", "onParamChanged"),
     ("tools.edit.poly_extrude", "PolyExtrudeTool", "onParamChanged"),
@@ -314,7 +315,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "547eb3a5e165df9376ae82e1241afd4f587e2727313cf506c34b3f4c7461a426"
+    "e785922214e99159f266c943fb2c2ff1e741226f8c640e0123ce20542a293cb2"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -474,6 +475,7 @@ for path, text in prepared_source_texts.items():
             "prepared_poly_extrude_param_update",
             "prepared_poly_inset_param_update",
             "prepared_reduction_param_update",
+            "prepared_vertex_merge_param_update",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
@@ -2469,6 +2471,72 @@ for target, old, new, label in (
         mutant[target] = mutant[target].replace(old, new, 1)
     if mutant[target] == poly_inset_param_sources[target] or poly_inset_param_gate(mutant):
         fail(f"Poly Inset parameter mutation did not RED: {label}")
+
+vertex_merge_param_sources = {
+    "tool": (ROOT / "source/tools/edit/vert_merge_tool.d").read_text(),
+    "owner": (ROOT / "source/prepared_vertex_merge_param_update.d").read_text(),
+    "context": record_context,
+}
+def vertex_merge_param_gate(s):
+    tool, owner, context = (s[k] for k in ("tool", "owner", "context"))
+    start = tool.find("final PreparedVertexMergeParamEffect prepareParamChanged(")
+    end = tool.find("override void evaluate()", start)
+    producer = tool[start:end]
+    return (tool.count("image.candidate.weldVerticesByMask(") == 1 and
+            all(x in tool for x in (
+                "image.expectedLive = MeshSnapshot.capture(live);",
+                "image.expectedBefore = MeshSnapshot.capture(baseline);",
+                "auto shadow = beginPreparedShadow(image.candidate);",
+                "image.candidate.weldVerticesByMask(",
+                "drainPreparedShadowDelivery(image.candidate",
+                "memcmp(&dist, &other.dist, float.sizeof) == 0",
+                "image.expectedLive.matches(live)",
+                "image.expectedBefore.matches(before)")) and
+            all(x in owner for x in (
+                "target.classinfo !is VertexMergeTool.classinfo",
+                "!target.ownsPreparedLayer(layer)",
+                "&layer_.meshRef() !is source_",
+                "!target_.preparedParamUpdateMatches(image_, *source_)",
+                "target_.installPreparedParamUpdate(image_)")) and
+            all(x in producer for x in (
+                "uploadOwner.owns(gpu)",
+                "context.prepareStampedMeshImage(layer, owner.candidate,",
+                "context.prepareVertexMergeParamUpdate(owner)",
+                "context.prepareUpload(uploadOwner, owner.candidate)",
+                "context.markNoHistoryInstall()")) and
+            producer.find("context.prepareStampedMeshImage") <
+                producer.find("context.prepareVertexMergeParamUpdate(owner)") <
+                producer.find("context.prepareUpload(uploadOwner") <
+                producer.find("context.markNoHistoryInstall()") and
+            context.count("case PreparedResourceKind.VertexMergeParamUpdateState:") == 3 and
+            "e.vertexMergeParamUpdate.install();" in context)
+if not vertex_merge_param_gate(vertex_merge_param_sources):
+    fail("Vertex Merge onParamChanged prepared contract drift")
+for target, old, new, label in (
+    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
+    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
+    ("tool", "memcmp(&dist, &other.dist, float.sizeof) == 0", "true", "drop float identity"),
+    ("tool", "image.candidate.weldVerticesByMask(", "image.candidate.hasAnySelectedVertices(", "drop kernel"),
+    ("owner", "target.classinfo !is VertexMergeTool.classinfo", "false", "broaden product"),
+    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
+    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
+    ("tool", "context.prepareVertexMergeParamUpdate(owner)", "true", "drop state"),
+    ("tool", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop upload"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
+    ("context", "e.vertexMergeParamUpdate.install();", "", "drop install"),
+):
+    mutant = dict(vertex_merge_param_sources)
+    if target == "tool":
+        text = mutant[target]
+        producer_start = text.find("final PreparedVertexMergeParamEffect prepareParamChanged(")
+        build_start = text.find("final PreparedVertexMergeParamImage buildPreparedParamUpdate")
+        start = producer_start if old in text[producer_start:] else build_start
+        pos = text.find(old, start)
+        mutant[target] = text[:pos] + new + text[pos + len(old):]
+    else:
+        mutant[target] = mutant[target].replace(old, new, 1)
+    if mutant[target] == vertex_merge_param_sources[target] or vertex_merge_param_gate(mutant):
+        fail(f"Vertex Merge parameter mutation did not RED: {label}")
 
 reduction_param_sources = {
     "tool": (ROOT / "source/tools/edit/reduce.d").read_text(),

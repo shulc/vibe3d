@@ -42,16 +42,6 @@
   {
     "batch": "P1.0b.3+",
     "key": {
-      "aggregate": "VertexMergeTool",
-      "module": "tools.edit.vert_merge_tool",
-      "signature": "void(string pname)",
-      "symbol": "onParamChanged"
-    },
-    "reason": "Mesh/GpuGl preview or mixed branch requires P1.0b.3+ typed later-owner effects"
-  },
-  {
-    "batch": "P1.0b.3+",
-    "key": {
       "aggregate": "VertexBevelTool",
       "module": "tools.edit.vertex_bevel_tool",
       "signature": "void(string pname)",
