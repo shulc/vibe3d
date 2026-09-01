@@ -19,6 +19,7 @@ import prepared_radial_array_transition : PreparedRadialArrayTransitionOwner;
 import prepared_transform_activation : PreparedTransformActivationOwner;
 import prepared_transform_product_activation : PreparedTransformProductActivationOwner;
 import prepared_move_update : PreparedMoveUpdateOwner;
+import prepared_inherited_noop : PreparedInheritedNoopOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -29,7 +30,7 @@ private enum PreparedResourceKind : ubyte {
     ArraySessionState, CloneSessionState, MagnetSessionState, ReductionSessionState,
     RadialSweepProfileState, RadialSweepTransitionState, GestureCarrierMismatch,
     GpuCreateUpload, RadialArrayTransitionState, TransformActivationState,
-    TransformProductActivationState, MoveUpdateState
+    TransformProductActivationState, MoveUpdateState, InheritedNoopState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -41,6 +42,7 @@ private struct PreparedResourceEntry {
     PreparedTransformActivationOwner transformActivation;
     PreparedTransformProductActivationOwner transformProductActivation;
     PreparedMoveUpdateOwner moveUpdate;
+    PreparedInheritedNoopOwner inheritedNoop;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -261,6 +263,16 @@ public:
         PreparedResourceEntry e; e.kind = PreparedResourceKind.MoveUpdateState;
         e.moveUpdate = owner; resources_ ~= e; return true;
     }
+    bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected inherited-noop enlist failure");
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.InheritedNoopState;
+        e.inheritedNoop = owner; resources_ ~= e; return true;
+    }
 
     bool prepareGestureCarrierMismatch() {
         if (!begun_ || validated_Once) return false;
@@ -411,6 +423,8 @@ public:
                     e.transformProductActivation.validate(); break;
             case PreparedResourceKind.MoveUpdateState:
                 ok = e.moveUpdate !is null && e.moveUpdate.validate(); break;
+            case PreparedResourceKind.InheritedNoopState:
+                ok = e.inheritedNoop !is null && e.inheritedNoop.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -506,6 +520,10 @@ public:
             e.moveUpdate.install();
             version(unittest) installTrace_[installTraceLength_++] = 16;
             break;
+        case PreparedResourceKind.InheritedNoopState:
+            e.inheritedNoop.install();
+            version(unittest) installTrace_[installTraceLength_++] = 17;
+            break;
         }
         if (!installedHistory) history_.installPreparedToken(validated_);
         resources_.length = 0;
@@ -556,6 +574,7 @@ private:
         case PreparedResourceKind.TransformProductActivationState:
             e.transformProductActivation.abort(); break;
         case PreparedResourceKind.MoveUpdateState: e.moveUpdate.abort(); break;
+        case PreparedResourceKind.InheritedNoopState: e.inheritedNoop.abort(); break;
         }
         resources_.length = 0;
         historyMarker_ = false;

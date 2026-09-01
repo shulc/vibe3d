@@ -388,6 +388,7 @@ for path, text in prepared_source_texts.items():
             "prepared_transform_activation",
             "prepared_transform_product_activation",
             "prepared_move_update",
+            "prepared_inherited_noop",
             "tools.alignment.radial_sweep_tool",
             "tools.alignment.radial_array_tool",
             "tools.alignment.linear_align_tool",
@@ -2575,4 +2576,96 @@ if run.returncode == 0 or ("not copyable" not in run.stdout and
         not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
     fail("Move update token copy was not rejected:\n" + run.stdout)
 
-print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures) + 4} compile-fail fixtures)")
+# Closed inherited base-noop owner infrastructure.  The effective product
+# table above proves DragWeldTool is the sole activate/deactivate admission;
+# this tranche deliberately has no producer or ledger claim yet.
+inherited_noop_owner = (ROOT / "source/prepared_inherited_noop.d").read_text()
+def inherited_noop_gate(owner, context):
+    production = without_unittests(owner)
+    install_match = re.search(r"void install\(\) nothrow @nogc\s*\{", production)
+    if not install_match: return False
+    install_body = production[install_match.end():balanced_source(
+        production, install_match.end())-1]
+    install_normalized = re.sub(r"\s+", " ", install_body).strip()
+    exact_install = (
+        "if (!pending_ || !validated_ || consumed_ || target_ is null || "
+        "validatedToken_.owner != owner_ || "
+        "validatedToken_.generation != generation_) return; consume();"
+    )
+    return (
+        "final class PreparedInheritedNoopOwner" in owner and
+        owner.count("@disable this(this);") == 2 and
+        not any(x in production for x in (" delegate", " function(", "void*", "ubyte[]")) and
+        "target.classinfo !is DragWeldTool.classinfo" in owner and
+        "prepared_.owner != owner_" in owner and
+        "prepared_.generation != generation_" in owner and
+        "validatedToken_.owner != owner_" in owner and
+        "validatedToken_.generation != generation_" in owner and
+        install_normalized == exact_install and
+        "bool prepareInheritedNoop(PreparedInheritedNoopOwner owner)" in context and
+        "e.inheritedNoop.validate();" in context and
+        "e.inheritedNoop.install();" in context and
+        "e.inheritedNoop.abort();" in context)
+if not inherited_noop_gate(inherited_noop_owner, record_context):
+    fail("Inherited base-noop owner contract drift")
+inherited_noop_production_calls = sum(
+    without_unittests(text).count("PreparedInheritedNoopOwner.prepare(") +
+    without_unittests(text).count(".prepareInheritedNoop(")
+    for text in prepared_source_texts.values())
+if inherited_noop_production_calls != 0:
+    fail("Inherited base-noop owner escaped infrastructure with a production caller")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is DragWeldTool.classinfo", "cast(DragWeldTool) target is null", "broaden admission"),
+    ("owner", "prepared_.owner != owner_", "false", "drop prepared owner"),
+    ("owner", "prepared_.generation != generation_", "false", "drop prepared generation"),
+    ("owner", "validatedToken_.owner != owner_", "false", "drop validated owner"),
+    ("owner", "validatedToken_.generation != generation_", "false", "drop validated generation"),
+    ("owner", "void install() nothrow @nogc", "void install()", "drop nothrow install"),
+    ("owner", "        consume();\n    }\n\n    void abort()", "    }\n\n    void abort()", "drop install consume"),
+    ("owner", "        consume();\n    }\n\n    void abort()", "        target_.activate(); consume();\n    }\n\n    void abort()", "smuggle lifecycle call"),
+    ("owner", "        consume();\n    }\n\n    void abort()", "        target_.resyncSession(); consume();\n    }\n\n    void abort()", "smuggle non-lifecycle side effect"),
+    ("owner", "        if (!pending_ || !validated_ || consumed_ || target_ is null ||\n            validatedToken_.owner != owner_ ||\n            validatedToken_.generation != generation_) return;\n        consume();", "        consume();", "drop exact install guard"),
+    ("context", "e.inheritedNoop.validate();", "true;", "drop context validation"),
+    ("context", "e.inheritedNoop.install();", "", "drop context install"),
+    ("context", "e.inheritedNoop.abort();", "", "drop context abort"),
+):
+    owner, context = inherited_noop_owner, record_context
+    if target == "owner": owner = owner.replace(old, new, 1)
+    else: context = context.replace(old, new, 1)
+    if inherited_noop_gate(owner, context):
+        fail(f"Inherited base-noop mutation did not RED: {label}")
+
+context_enlist_contract = (
+    "resources_.reserve(1 + resources_.length);\n"
+    "        if (!owner.begin()) return false;\n"
+    "        scope(failure) owner.abort();"
+)
+def inherited_context_enlist_ok(context):
+    match = re.search(
+        r"bool prepareInheritedNoop\(PreparedInheritedNoopOwner owner\)\s*\{",
+        context)
+    if not match: return False
+    body = context[match.end():balanced_source(context, match.end())-1]
+    return context_enlist_contract in body and \
+        "e.inheritedNoop = owner; resources_ ~= e; return true;" in body
+if not inherited_context_enlist_ok(record_context):
+    fail("Inherited base-noop reserve/begin/failure-cleanup order drift")
+context_method = re.search(
+    r"bool prepareInheritedNoop\(PreparedInheritedNoopOwner owner\)\s*\{",
+    record_context)
+context_body_end = balanced_source(record_context, context_method.end())
+context_mutant = (record_context[:context_method.start()] +
+    record_context[context_method.start():context_body_end].replace(
+        "scope(failure) owner.abort();", "", 1) +
+    record_context[context_body_end:])
+if inherited_context_enlist_ok(context_mutant):
+    fail("Inherited base-noop failure-cleanup mutation did not RED")
+
+inherited_noop_copy_fixture = ROOT / "tests/compile_fail/prepared_inherited_noop_token_copy.d"
+run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(inherited_noop_copy_fixture)],
+    cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+if run.returncode == 0 or ("not copyable" not in run.stdout and
+        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+    fail("Inherited base-noop token copy was not rejected:\n" + run.stdout)
+
+print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures) + 5} compile-fail fixtures)")
