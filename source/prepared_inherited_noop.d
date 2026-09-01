@@ -3,6 +3,45 @@ module prepared_inherited_noop;
 import core.atomic : atomicOp;
 import tool : Tool;
 import tools.edit.drag_weld : DragWeldTool;
+import tools.create.arc : ArcTool;
+import tools.alignment.array_tool : ArrayTool;
+import tools.deform.bend : BendTool;
+import tools.create.box : BoxTool;
+import tools.edit.bridge_tool : BridgeTool;
+import tools.create.capsule : CapsuleTool;
+import tools.alignment.clone_tool : CloneTool;
+import tools.create.cone : ConeTool;
+import tools.create.cylinder : CylinderTool;
+import tools.edit.edge_bevel : EdgeBevelTool;
+import tools.edit.edge_extrude : EdgeExtrudeTool;
+import tools.slice.edge_slice_tool : EdgeSliceTool;
+import tools.slice.edge_slide : EdgeSlideTool;
+import tools.alignment.linear_align_tool : LinearAlignTool;
+import tools.slice.loop_slice_tool : LoopSliceTool;
+import tools.deform.magnet : MagnetTool;
+import tools.alignment.mirror : MirrorTool;
+import tools.create.pen : PenTool;
+import tools.edit.poly_bevel : PolyBevelTool;
+import tools.edit.poly_extrude : PolyExtrudeTool;
+import tools.edit.poly_inset_tool : PolyInsetTool;
+import tools.deform.push : PushTool;
+import tools.alignment.radial_align_tool : RadialAlignTool;
+import tools.alignment.radial_array_tool : RadialArrayTool;
+import tools.alignment.radial_sweep_tool : RadialSweepTool;
+import tools.edit.reduce : ReductionTool;
+import tools.slice.slice_tool : SliceTool;
+import tools.deform.smooth_shift_tool : SmoothShiftTool;
+import tools.create.sphere : SphereTool;
+import tools.deform.stroke_extrude_tool : StrokeExtrudeTool;
+import tools.edit.tack : TackTool;
+import tools.create.torus : TorusTool;
+import tools.create.tube : TubeTool;
+import tools.edit.vertex_bevel_tool : VertexBevelTool;
+import tools.edit.vertex_extrude_tool : VertexExtrudeTool;
+import tools.edit.vert_merge_tool : VertexMergeTool;
+import tools.create.vertex_place : VertexTool;
+import tools.common.command_wrapper : XfrmJitterTool, XfrmQuantizeTool,
+                                      XfrmSmoothTool;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedInheritedNoopEffect,
                               PreparedInheritedNoopKind, OwnedId;
@@ -18,11 +57,8 @@ private:
 PreparedInheritedNoopEffect prepareInheritedNoop(
         Tool target, PreparedInheritedNoopKind kind,
         PreparedRecordContext context) {
-    auto exactTarget = target !is null &&
-        target.classinfo is DragWeldTool.classinfo
-        ? cast(DragWeldTool) target : null;
-    auto targetOwner = exactTarget is null ? OwnedId.init
-                                           : exactTarget.preparedInheritedOwner;
+    auto targetOwner = target is null ? OwnedId.init
+                                      : target.preparedLifecycleOwner;
     if (context is null)
         return PreparedInheritedNoopEffect(targetOwner, kind, false);
     scope(failure) context.discard();
@@ -58,7 +94,7 @@ public:
 
     static PreparedInheritedNoopOwner prepare(
             Tool target, PreparedInheritedNoopKind kind) {
-        if (target is null || target.classinfo !is DragWeldTool.classinfo)
+        if (!admit(target, kind))
             return null;
         return new PreparedInheritedNoopOwner(target, kind);
     }
@@ -74,7 +110,7 @@ public:
 
     bool validate() nothrow @nogc {
         if (!pending_ || validated_ || consumed_ || target_ is null ||
-            target_.classinfo !is DragWeldTool.classinfo ||
+            !admit(target_, kind_) ||
             prepared_.owner != owner_ ||
             prepared_.generation != generation_) return false;
         validated_ = true;
@@ -109,6 +145,54 @@ public:
         else ++validatedToken_.generation;
     }
 private:
+    static bool admit(Tool target, PreparedInheritedNoopKind kind)
+            nothrow @nogc {
+        if (target is null) return false;
+        if (kind != PreparedInheritedNoopKind.Update)
+            return target.classinfo is DragWeldTool.classinfo;
+        return target.classinfo is ArcTool.classinfo ||
+            target.classinfo is ArrayTool.classinfo ||
+            target.classinfo is BendTool.classinfo ||
+            target.classinfo is BoxTool.classinfo ||
+            target.classinfo is BridgeTool.classinfo ||
+            target.classinfo is CapsuleTool.classinfo ||
+            target.classinfo is CloneTool.classinfo ||
+            target.classinfo is ConeTool.classinfo ||
+            target.classinfo is CylinderTool.classinfo ||
+            target.classinfo is DragWeldTool.classinfo ||
+            target.classinfo is EdgeBevelTool.classinfo ||
+            target.classinfo is EdgeExtrudeTool.classinfo ||
+            target.classinfo is EdgeSliceTool.classinfo ||
+            target.classinfo is EdgeSlideTool.classinfo ||
+            target.classinfo is LinearAlignTool.classinfo ||
+            target.classinfo is LoopSliceTool.classinfo ||
+            target.classinfo is MagnetTool.classinfo ||
+            target.classinfo is MirrorTool.classinfo ||
+            target.classinfo is PenTool.classinfo ||
+            target.classinfo is PolyBevelTool.classinfo ||
+            target.classinfo is PolyExtrudeTool.classinfo ||
+            target.classinfo is PolyInsetTool.classinfo ||
+            target.classinfo is PushTool.classinfo ||
+            target.classinfo is RadialAlignTool.classinfo ||
+            target.classinfo is RadialArrayTool.classinfo ||
+            target.classinfo is RadialSweepTool.classinfo ||
+            target.classinfo is ReductionTool.classinfo ||
+            target.classinfo is SliceTool.classinfo ||
+            target.classinfo is SmoothShiftTool.classinfo ||
+            target.classinfo is SphereTool.classinfo ||
+            target.classinfo is StrokeExtrudeTool.classinfo ||
+            target.classinfo is TackTool.classinfo ||
+            target.classinfo is TorusTool.classinfo ||
+            target.classinfo is TubeTool.classinfo ||
+            target.classinfo is VertexBevelTool.classinfo ||
+            target.classinfo is VertexExtrudeTool.classinfo ||
+            target.classinfo is VertexMergeTool.classinfo ||
+            target.classinfo is VertexTool.classinfo ||
+            target.classinfo is XfrmJitterTool.classinfo ||
+            target.classinfo is XfrmQuantizeTool.classinfo ||
+            target.classinfo is XfrmSmoothTool.classinfo;
+    }
+
     this(Tool target, PreparedInheritedNoopKind kind) {
         target_ = target;
         kind_ = kind;
@@ -214,7 +298,7 @@ version(unittest) unittest {
             new RecordObserverHub());
         auto effect = prepareInheritedNoop(target, kind, producerContext);
         assert(effect.accepted && effect.kind == kind &&
-               effect.owner == target.preparedInheritedOwner);
+               effect.owner == target.preparedLifecycleOwner);
         assert(producerContext.validate());
         producerContext.install();
         producerContext.install();
@@ -222,15 +306,17 @@ version(unittest) unittest {
     }
     auto foreignContext = new PreparedRecordContext(new CommandHistory(),
         new RecordObserverHub());
+    auto foreign = new ArcTool(() => &mesh, &gpu, LitShader.init);
     auto foreignEffect = prepareInheritedNoop(
-        new ArcTool(() => &mesh, &gpu, LitShader.init),
+        foreign,
         PreparedInheritedNoopKind.Activate, foreignContext);
-    assert(!foreignEffect.accepted && foreignEffect.owner == OwnedId.init &&
+    assert(!foreignEffect.accepted &&
+           foreignEffect.owner == foreign.preparedLifecycleOwner &&
            foreignEffect.kind == PreparedInheritedNoopKind.Activate &&
            !foreignContext.validate());
     auto nullEffect = prepareInheritedNoop(target,
         PreparedInheritedNoopKind.Deactivate, null);
-    assert(!nullEffect.accepted && nullEffect.owner == target.preparedInheritedOwner &&
+    assert(!nullEffect.accepted && nullEffect.owner == target.preparedLifecycleOwner &&
            nullEffect.kind == PreparedInheritedNoopKind.Deactivate);
 
     auto producerFault = new PreparedRecordContext(new CommandHistory(),
@@ -250,10 +336,22 @@ version(unittest) unittest {
     auto retryEffect = prepareInheritedNoop(target,
         PreparedInheritedNoopKind.Activate, producerRetry);
     assert(retryEffect.accepted &&
-           retryEffect.owner == target.preparedInheritedOwner &&
+           retryEffect.owner == target.preparedLifecycleOwner &&
            retryEffect.kind == PreparedInheritedNoopKind.Activate &&
            producerRetry.validate());
     producerRetry.install();
     producerRetry.install();
     assert(producerRetry.installTraceForTest == [17,8]);
+
+    auto arc = new ArcTool(() => &mesh, &gpu, LitShader.init);
+    auto updateContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    auto updateEffect = prepareInheritedNoop(arc,
+        PreparedInheritedNoopKind.Update, updateContext);
+    assert(updateEffect.accepted && updateEffect.kind ==
+           PreparedInheritedNoopKind.Update &&
+           updateEffect.owner == arc.preparedLifecycleOwner &&
+           updateContext.validate());
+    updateContext.install(); updateContext.install();
+    assert(updateContext.installTraceForTest == [17,8]);
 }

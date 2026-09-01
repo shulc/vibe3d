@@ -13,7 +13,6 @@ import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import editmode : EditMode;
 import operator : VectorStack;
-import prepared_tool_effect : OwnedId;
 
 // Pixel pick radius for DragWeldTool source/target vertex selection.
 // A vertex must project within this many pixels of the mouse to be
@@ -62,10 +61,6 @@ private:
     int  source_   = -1;   // vertex index picked on button-down
 
 public:
-    final OwnedId preparedInheritedOwner() const nothrow @nogc {
-        return preparedToolStateOwner;
-    }
-
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader)
     {
         this.meshSrc_   = meshSrc;

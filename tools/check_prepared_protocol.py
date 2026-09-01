@@ -229,6 +229,7 @@ B5M_PREPARED_LEGACY = {
 B5N_PREPARED_LEGACY = {
     ("tool", "Tool", "activate"),
     ("tool", "Tool", "deactivate"),
+    ("tool", "Tool", "update"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
@@ -265,7 +266,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "fe5198bbb3c754a2e7a7458ece97348cd6903e8d23e9871a42102e87acd93705"
+    "d563b6017bcbbed98a33d2bef4074acd7a8097c63dede9cb691443a467f508a6"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -2596,11 +2597,21 @@ def inherited_noop_gate(owner, context):
         "validatedToken_.owner != owner_ || "
         "validatedToken_.generation != generation_) return; consume();"
     )
+    admit_match = re.search(r"static bool admit\(Tool target, "
+        r"PreparedInheritedNoopKind kind\)\s*nothrow @nogc\s*\{", production)
+    if not admit_match: return False
+    admit_body = production[admit_match.end():balanced_source(
+        production, admit_match.end())-1]
+    admitted = re.findall(r"target\.classinfo is (\w+)\.classinfo", admit_body)
+    expected_admitted = sorted(list(BASE_TOOL_EFFECTIVE_PRODUCTS["update"]) +
+                               ["DragWeldTool"])
     return (
         "final class PreparedInheritedNoopOwner" in owner and
         owner.count("@disable this(this);") == 2 and
         not any(x in production for x in (" delegate", " function(", "void*", "ubyte[]")) and
-        "target.classinfo !is DragWeldTool.classinfo" in owner and
+        "if (kind != PreparedInheritedNoopKind.Update)\n"
+        "            return target.classinfo is DragWeldTool.classinfo;" in owner and
+        sorted(admitted) == expected_admitted and
         "prepared_.owner != owner_" in owner and
         "prepared_.generation != generation_" in owner and
         "validatedToken_.owner != owner_" in owner and
@@ -2626,11 +2637,8 @@ def inherited_noop_producer_gate(owner):
     if not match: return False
     body = production[match.end():balanced_source(production, match.end())-1]
     return all(x in body for x in (
-        "auto exactTarget = target !is null &&\n"
-        "        target.classinfo is DragWeldTool.classinfo\n"
-        "        ? cast(DragWeldTool) target : null;",
-        "auto targetOwner = exactTarget is null ? OwnedId.init\n"
-        "                                           : exactTarget.preparedInheritedOwner;",
+        "auto targetOwner = target is null ? OwnedId.init\n"
+        "                                      : target.preparedLifecycleOwner;",
         "if (context is null)",
         "scope(failure) context.discard();",
         "PreparedInheritedNoopOwner.prepare(target, kind)",
@@ -2661,7 +2669,8 @@ free_call_mutant[next(iter(free_call_mutant))] += \
 if inherited_free_producer_call_count(free_call_mutant) == 2:
     fail("Inherited base-noop free-producer escape mutation did not RED")
 for target, old, new, label in (
-    ("owner", "target.classinfo !is DragWeldTool.classinfo", "cast(DragWeldTool) target is null", "broaden admission"),
+    ("owner", "return target.classinfo is DragWeldTool.classinfo;", "return true;", "broaden lifecycle admission"),
+    ("owner", "target.classinfo is ArcTool.classinfo ||", "", "drop update admission"),
     ("owner", "prepared_.owner != owner_", "false", "drop prepared owner"),
     ("owner", "prepared_.generation != generation_", "false", "drop prepared generation"),
     ("owner", "validatedToken_.owner != owner_", "false", "drop validated owner"),

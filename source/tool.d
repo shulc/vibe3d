@@ -185,6 +185,12 @@ protected:
         return OwnedId(preparedToolOwnerIdentity_);
     }
 public:
+    /// Scalar identity used by the centralized dormant lifecycle producer.
+    /// It exposes no mutable tool state and is stable for this instance.
+    final OwnedId preparedLifecycleOwner() const nothrow @nogc {
+        return OwnedId(preparedToolOwnerIdentity_);
+    }
+
     // Set true only while an interactive property write is notifying the
     // tool, and left false on the headless `tool.attr` path. Tools that build live
     // geometry on a param change (e.g. EdgeExtrudeTool) gate their preview

@@ -44,7 +44,7 @@ enum PreparedTransformProductKind : ubyte { Move, Rotate, Scale }
 enum PreparedMoveUpdateKind : ubyte {
     None, InactiveNoop, DraggingNoop, WrapperEditOpenNoop, Refresh
 }
-enum PreparedInheritedNoopKind : ubyte { Activate, Deactivate }
+enum PreparedInheritedNoopKind : ubyte { Activate, Deactivate, Update }
 
 @PreparedAggregate struct PreparedActivateEffect {
     OwnedId owner;
