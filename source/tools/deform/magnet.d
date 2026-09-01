@@ -1,5 +1,7 @@
 module tools.deform.magnet;
 import prepared_record_context : PreparedRecordContext;
+import prepared_private_state : PreparedPrivateStateOwner;
+import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import command_history : PreparedHistoryKind;
 
@@ -123,6 +125,20 @@ public:
     final void installPreparedActivation(ref MeshSnapshot image) nothrow @nogc {
         active = true; built = false; dragging = false; pickedVi = -1;
         image.moveInto(before);
+    }
+    final PreparedSessionActivateEffect prepareActivate(PreparedRecordContext context,
+            PreparedPrivateStateOwner owner) {
+        bool accepted = context !is null && owner !is null && owner.owns(this) &&
+            context.preparePrivateState(owner) && context.markNoHistoryInstall();
+        if (!accepted && context !is null) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.Magnet, accepted);
+    }
+    version(unittest) void seedPreparedActivationForTest() nothrow @nogc {
+        active = false; built = dragging = true; pickedVi = 17;
+    }
+    version(unittest) bool preparedActivationInstalledForTest() const nothrow @nogc {
+        return active && !built && !dragging && pickedVi == -1 && before.filled;
     }
 
     override void deactivate() {

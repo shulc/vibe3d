@@ -144,7 +144,13 @@ B5B_PREPARED_LEGACY = {
 B5D_PREPARED_LEGACY = {
     ("tools.create.vertex_place", "VertexTool", "deactivate"),
 }
-PREPARED_LEGACY = B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY | B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY
+B5F_PREPARED_LEGACY = {
+    ("tools.alignment.array_tool", "ArrayTool", "activate"),
+    ("tools.alignment.clone_tool", "CloneTool", "activate"),
+    ("tools.deform.magnet", "MagnetTool", "activate"),
+    ("tools.edit.reduce", "ReductionTool", "activate"),
+}
+PREPARED_LEGACY = B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY | B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY
 all_hook_keys = {(r["module"], r["aggregate"], r["symbol"])
                  for r in CURRENT_WRITERS["hooks"]}
 if not TOOL_STATE_CONVERTED | PREPARED_LEGACY <= all_hook_keys:
@@ -176,7 +182,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "9d004848b255b885b3de34fc35b7ef31d429f4aa8db582097d8d0992e79327e7"
+    "c43d402cbc008361f5468e96a98a0e8fcb97384fb028cac7100ade60efc265b2"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -193,7 +199,7 @@ def validate_deferred_rows(rows, require_canonical=True):
             fail("P1.0b.1 checked-in deferred batch/reason invalid")
     canonical = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
     if require_canonical and hashlib.sha256(canonical).hexdigest() != \
-            "9d004848b255b885b3de34fc35b7ef31d429f4aa8db582097d8d0992e79327e7":
+            "c43d402cbc008361f5468e96a98a0e8fcb97384fb028cac7100ade60efc265b2":
         fail("P1.0b.1 checked-in deferred exact values drifted")
 validate_deferred_rows(TOOL_STATE_DEFERRED_ROWS)
 for field in ("batch", "reason"):
@@ -295,7 +301,9 @@ for path, text in prepared_source_texts.items():
     if "import prepared_record_context" in text and module not in b3d_modules | {
             "prepared_record_context", "tools.transform.transform",
             "tools.common.command_wrapper", "tools.edit.tack",
-            "tools.create.vertex_place"}:
+            "tools.create.vertex_place", "tools.alignment.array_tool",
+            "tools.alignment.clone_tool", "tools.deform.magnet",
+            "tools.edit.reduce", "prepared_private_state"}:
         fail(f"P1.0b.3d PreparedRecordContext gained an unreviewed import: {module}")
     if "new PreparedRecordContext" in text:
         production_text = without_unittests(text)
@@ -1545,7 +1553,12 @@ for name, old, new, label in (
 for path in (ROOT / "source/tools").rglob("*.d"):
     body = path.read_text()
     if (".preparePrivateState(" in body or ".prepareMeshImageCommit(" in body) and \
-            path.relative_to(ROOT).as_posix() != "source/tools/create/vertex_place.d":
+            path.relative_to(ROOT).as_posix() not in {
+                "source/tools/create/vertex_place.d",
+                "source/tools/alignment/array_tool.d",
+                "source/tools/alignment/clone_tool.d",
+                "source/tools/deform/magnet.d",
+                "source/tools/edit/reduce.d"}:
         fail(f"P1.0b.5d.1 dormant infrastructure has hook caller: {path.relative_to(ROOT)}")
 
 # P1.0b.5d.2 first fully closed root: Vertex deactivate preserves the exact
@@ -1660,5 +1673,43 @@ for source in b5e_tools.values():
             body = source[body_start:balanced_source(source, body_start)-1]
             if "PreparedPrivateStateOwner" in body or "preparePrivateState" in body:
                 fail("P1.0b.5e owner reached from production activation hook")
+
+# P1.0b.5f four dormant activation producers: private session image first,
+# then explicit no-history token consumption. Legacy hooks remain sole callers.
+def b5f_gate(sources):
+    for name, source in sources.items():
+        expected_kind = {"array":"Array", "clone":"Clone", "magnet":"Magnet",
+                         "reduction":"Reduction"}[name]
+        if (source.count("final PreparedSessionActivateEffect prepareActivate(") != 1 or
+            source.count("owner.owns(this)") != 1 or
+            source.count("context.preparePrivateState(owner)") != 1 or
+            source.count("context.markNoHistoryInstall()") != 1 or
+            source.find("context.preparePrivateState(owner)") >
+                source.find("context.markNoHistoryInstall()") or
+            "if (!accepted && context !is null) context.discard();" not in source or
+            f"PreparedActivateKind.{expected_kind}, accepted" not in source):
+            return False
+    return True
+if not b5f_gate(b5e_tools):
+    fail("P1.0b.5f activation producer contract drift")
+for name, old, new, label in (
+    ("array", "owner.owns(this)", "true", "drop Array identity"),
+    ("clone", "context.preparePrivateState(owner)", "true", "drop Clone install"),
+    ("magnet", "context.markNoHistoryInstall()", "true", "drop Magnet history seal"),
+    ("reduction", "if (!accepted && context !is null) context.discard();", "",
+     "drop Reduction terminal refusal"),
+    ("array",
+     "context.preparePrivateState(owner) && context.markNoHistoryInstall()",
+     "context.markNoHistoryInstall() && context.preparePrivateState(owner)",
+     "reorder Array history before state"),
+):
+    mutant = dict(b5e_tools); mutant[name] = mutant[name].replace(old, new, 1)
+    if mutant[name] == b5e_tools[name] or b5f_gate(mutant):
+        fail(f"P1.0b.5f named mutation did not RED: {label}")
+for name, source in b5e_tools.items():
+    match = re.search(r"override\s+void\s+activate\s*\(\)\s*\{", source)
+    body = source[match.end():balanced_source(source, match.end())-1]
+    if "prepareActivate(" in body or "preparePrivateState(" in body:
+        fail(f"P1.0b.5f {name} legacy activation calls dormant producer")
 
 print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures)} compile-fail fixtures)")

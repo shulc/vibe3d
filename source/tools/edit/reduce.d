@@ -1,4 +1,7 @@
 module tools.edit.reduce;
+import prepared_record_context : PreparedRecordContext;
+import prepared_private_state : PreparedPrivateStateOwner;
+import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 
 import bindbc.sdl;
 import operator : VectorStack;
@@ -86,6 +89,14 @@ public:
     final MeshSnapshot prepareActivationBaseline() { return MeshSnapshot.capture(*mesh); }
     final void installPreparedActivation(ref MeshSnapshot image) nothrow @nogc {
         active = true; built = false; image.moveInto(before);
+    }
+    final PreparedSessionActivateEffect prepareActivate(PreparedRecordContext context,
+            PreparedPrivateStateOwner owner) {
+        bool accepted = context !is null && owner !is null && owner.owns(this) &&
+            context.preparePrivateState(owner) && context.markNoHistoryInstall();
+        if (!accepted && context !is null) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.Reduction, accepted);
     }
     version(unittest) void seedPreparedActivationForTest(bool a, bool b) nothrow @nogc {
         active = a; built = b;

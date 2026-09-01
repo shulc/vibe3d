@@ -30,16 +30,6 @@
     "reason": "base no-op has no exact Tool factory product; inherited product admission requires exact effective-hook product census"
   },
   {
-    "batch": "P1.0b.2+",
-    "key": {
-      "aggregate": "ArrayTool",
-      "module": "tools.alignment.array_tool",
-      "signature": "void()",
-      "symbol": "activate"
-    },
-    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
-  },
-  {
     "batch": "P1.0b.3+",
     "key": {
       "aggregate": "ArrayTool",
@@ -48,16 +38,6 @@
       "symbol": "onParamChanged"
     },
     "reason": "Mesh/GpuGl preview or mixed branch requires P1.0b.3+ typed later-owner effects"
-  },
-  {
-    "batch": "P1.0b.2+",
-    "key": {
-      "aggregate": "CloneTool",
-      "module": "tools.alignment.clone_tool",
-      "signature": "void()",
-      "symbol": "activate"
-    },
-    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
   },
   {
     "batch": "P1.0b.2+",
@@ -234,16 +214,6 @@
     "key": {
       "aggregate": "BendTool",
       "module": "tools.deform.bend",
-      "signature": "void()",
-      "symbol": "activate"
-    },
-    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
-  },
-  {
-    "batch": "P1.0b.2+",
-    "key": {
-      "aggregate": "MagnetTool",
-      "module": "tools.deform.magnet",
       "signature": "void()",
       "symbol": "activate"
     },
@@ -458,16 +428,6 @@
       "symbol": "onParamChanged"
     },
     "reason": "Mesh/GpuGl preview or mixed branch requires P1.0b.3+ typed later-owner effects"
-  },
-  {
-    "batch": "P1.0b.2+",
-    "key": {
-      "aggregate": "ReductionTool",
-      "module": "tools.edit.reduce",
-      "signature": "void()",
-      "symbol": "activate"
-    },
-    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
   },
   {
     "batch": "P1.0b.3+",

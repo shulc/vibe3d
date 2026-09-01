@@ -109,6 +109,18 @@ public:
     bool owns(VertexTool target) const nothrow @nogc {
         return kind_ == PreparedPrivateStateKind.Vertex && vertexTarget is target;
     }
+    bool owns(ArrayTool target) const nothrow @nogc {
+        return kind_ == PreparedPrivateStateKind.ArraySession && arrayTarget is target;
+    }
+    bool owns(CloneTool target) const nothrow @nogc {
+        return kind_ == PreparedPrivateStateKind.CloneSession && cloneTarget is target;
+    }
+    bool owns(MagnetTool target) const nothrow @nogc {
+        return kind_ == PreparedPrivateStateKind.MagnetSession && magnetTarget is target;
+    }
+    bool owns(ReductionTool target) const nothrow @nogc {
+        return kind_ == PreparedPrivateStateKind.ReductionSession && reductionTarget is target;
+    }
 private:
     bool hasTarget() const nothrow @nogc {
         final switch (kind_) {
@@ -224,4 +236,64 @@ version(unittest) unittest {
     assert(!discarded.begin(), "aborted session owner re-armed without an image");
     assert(reduction.preparedBaselineFilledForTest(),
            "owner abort cleared or aliased installed tool baseline");
+
+    import prepared_record_context : PreparedRecordContext;
+    import command_history : CommandHistory;
+    import record_observer_hub : RecordObserverHub;
+    PreparedRecordContext freshContext() {
+        return new PreparedRecordContext(new CommandHistory(), new RecordObserverHub());
+    }
+    auto arrayTool = new ArrayTool(() => &mesh, &gpu, &reductionMode);
+    arrayTool.seedPreparedActivationForTest();
+    auto arrayContext = freshContext();
+    assert(arrayTool.prepareActivate(arrayContext,
+                                     PreparedPrivateStateOwner.arraySession(arrayTool)).accepted);
+    assert(!arrayTool.preparedActivationInstalledForTest());
+    assert(arrayContext.validate()); arrayContext.install();
+    assert(arrayTool.preparedActivationInstalledForTest());
+    assert(arrayContext.installTraceForTest() == [7,8]);
+
+    auto cloneTool = new CloneTool(() => &mesh, &gpu, &reductionMode);
+    cloneTool.seedPreparedActivationForTest();
+    auto cloneContext = freshContext();
+    assert(cloneTool.prepareActivate(cloneContext,
+                                     PreparedPrivateStateOwner.cloneSession(cloneTool)).accepted);
+    assert(cloneContext.validate()); cloneContext.install();
+    assert(cloneTool.preparedActivationInstalledForTest());
+    assert(cloneContext.installTraceForTest() == [7,8]);
+
+    auto magnetTool = new MagnetTool(() => &mesh, &gpu, &reductionMode);
+    magnetTool.seedPreparedActivationForTest();
+    auto magnetContext = freshContext();
+    assert(magnetTool.prepareActivate(magnetContext,
+                                      PreparedPrivateStateOwner.magnetSession(magnetTool)).accepted);
+    assert(magnetContext.validate()); magnetContext.install();
+    assert(magnetTool.preparedActivationInstalledForTest());
+    assert(magnetContext.installTraceForTest() == [7,8]);
+
+    auto reduction2 = new ReductionTool(() => &mesh, &gpu, &reductionMode, null);
+    reduction2.seedPreparedActivationForTest(false, true);
+    auto reductionContext = freshContext();
+    assert(reduction2.prepareActivate(reductionContext,
+                                     PreparedPrivateStateOwner.reductionSession(reduction2)).accepted);
+    assert(reductionContext.validate()); reductionContext.install();
+    assert(reduction2.preparedActiveForTest() && !reduction2.preparedBuiltForTest());
+    assert(reductionContext.installTraceForTest() == [7,8]);
+
+    reduction2.seedPreparedActivationForTest(false, true);
+    reductionContext.install();
+    assert(!reduction2.preparedActiveForTest() && reduction2.preparedBuiltForTest(),
+           "a consumed prepared activation installed twice");
+
+    auto nullContext = arrayTool.prepareActivate(null,
+        PreparedPrivateStateOwner.arraySession(arrayTool));
+    assert(!nullContext.accepted);
+    auto nullOwnerContext = freshContext();
+    auto nullOwner = arrayTool.prepareActivate(nullOwnerContext, null);
+    assert(!nullOwner.accepted && !nullOwnerContext.validate());
+
+    auto wrongContext = freshContext();
+    auto wrong = arrayTool.prepareActivate(wrongContext,
+                                           PreparedPrivateStateOwner.cloneSession(cloneTool));
+    assert(!wrong.accepted && !wrongContext.validate());
 }
