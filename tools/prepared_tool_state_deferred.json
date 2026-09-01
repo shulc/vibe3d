@@ -130,16 +130,6 @@
     "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
   },
   {
-    "batch": "P1.0b.2+",
-    "key": {
-      "aggregate": "EdgeBevelTool",
-      "module": "tools.edit.edge_bevel",
-      "signature": "void()",
-      "symbol": "activate"
-    },
-    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
-  },
-  {
     "batch": "P1.0b.3+",
     "key": {
       "aggregate": "EdgeBevelTool",

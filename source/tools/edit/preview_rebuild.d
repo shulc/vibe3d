@@ -172,11 +172,29 @@ struct PreviewRebuild {
     /// Forget the last key + release the scratch. Call from the tool's
     /// session (re)init, deactivate and live-edit cancel: any of those can
     /// leave the live mesh holding topology this seam did not build.
-    void reset() {
+    void reset() nothrow @nogc {
         hasLast_      = false;
         last_         = PreviewTopologyKey.init;
         lastTopology_ = 0;
         cage_         = Mesh.init;
+    }
+    version(unittest) void seedForTest(ref Mesh cage) {
+        hasLast_ = true; last_.degenerate = true; last_.operand = 16;
+        last_.counts = [1,2,3,4]; lastTopology_ = 17;
+        fullRebuilds = 2; placements = 3; keyMisses = 4;
+        auto snapshot = MeshSnapshot.capture(cage);
+        snapshot.restore(cage_);
+    }
+    version(unittest) bool resetForTest() const nothrow @nogc {
+        return !hasLast_ && last_ == PreviewTopologyKey.init &&
+            lastTopology_ == 0 && !cage_.vertices.length &&
+            fullRebuilds == 2 && placements == 3 && keyMisses == 4;
+    }
+    version(unittest) bool dirtyForTest() const nothrow @nogc {
+        return hasLast_ && last_.degenerate && last_.operand == 16 &&
+            last_.counts == [1,2,3,4] && lastTopology_ == 17 &&
+            cage_.vertices.length != 0 && fullRebuilds == 2 &&
+            placements == 3 && keyMisses == 4;
     }
 
     /// One preview rebuild.

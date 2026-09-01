@@ -246,6 +246,7 @@ B5P_PREPARED_LEGACY = {
     ("tools.edit.poly_inset_tool", "PolyInsetTool", "activate"),
     ("tools.edit.poly_extrude", "PolyExtrudeTool", "activate"),
     ("tools.deform.smooth_shift_tool", "SmoothShiftTool", "activate"),
+    ("tools.edit.edge_bevel", "EdgeBevelTool", "activate"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
@@ -283,7 +284,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "4b6fb02a2f7aa91cbd20f8336aaee59e045208c710874ebbdc61a092632dc6d6"
+    "6fbd54d05249795cca765aa665712e6710802cbe65609fa952e253fe7acb3fa3"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -419,6 +420,7 @@ for path, text in prepared_source_texts.items():
             "prepared_poly_inset_activation",
             "prepared_poly_extrude_activation",
             "prepared_smooth_shift_activation",
+            "prepared_edge_bevel_activation",
             "tools.alignment.radial_sweep_tool",
             "tools.alignment.radial_array_tool",
             "tools.alignment.linear_align_tool",
@@ -2480,6 +2482,167 @@ for fixture in (
     if run.returncode == 0 or ("not copyable" not in run.stdout and
             not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
         fail("SmoothShift activation token copy was not rejected:\n" + run.stdout)
+
+# Exact EdgeBevel activation also resets its private PreviewRebuild scratch;
+# that destructive release belongs only to install, never detached prepare.
+edge_bevel_activation_owner = (ROOT /
+    "source/prepared_edge_bevel_activation.d").read_text()
+edge_bevel_activation_tool = (ROOT /
+    "source/tools/edit/edge_bevel.d").read_text()
+preview_rebuild_source = (ROOT /
+    "source/tools/edit/preview_rebuild.d").read_text()
+def edge_bevel_activation_gate(owner, context, tool, preview):
+    po = without_unittests(owner); pt = without_unittests(tool)
+    start = pt.find("final PreparedSessionActivateEffect prepareActivate(")
+    end = pt.find("private void reinitSession()", start)
+    producer = pt[start:end] if start >= 0 and end > start else ""
+    bstart = pt.find("final PreparedEdgeBevelActivationImage buildPreparedActivation(")
+    bend = pt.find("final Mesh* preparedActivationMesh()", bstart)
+    builder = pt[bstart:bend] if bstart >= 0 and bend > bstart else ""
+    istart = pt.find("final void installPreparedActivation(")
+    iend = pt.find("final PreparedSessionActivateEffect prepareActivate(", istart)
+    installer = pt[istart:iend] if istart >= 0 and iend > istart else ""
+    fstart = pt.find("private static void computePreparedGizmoFrame")
+    fend = pt.find("void rebuildPreview()", fstart)
+    formula = pt[fstart:fend] if fstart >= 0 and fend > fstart else ""
+    legacy = re.search(r"override void activate\(\)\s*\{", pt)
+    legacy_body = pt[legacy.end():balanced_source(pt, legacy.end())-1] if legacy else ""
+    return (
+        "final class PreparedEdgeBevelActivationOwner" in owner and
+        owner.count("@disable this(this);") == 2 and
+        not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
+        "target.classinfo !is EdgeBevelTool.classinfo" in owner and
+        "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
+        "target_.preparedActivationMesh() !is source_" in owner and
+        "!image_.before.matches(*source_)" in owner and
+        "target_.installPreparedActivation(image_); consume();" in owner and
+        "image_.clear(); target_ = null; source_ = null;" in owner and
+        "Mesh* delegate() nothrow @nogc meshSrc_;" in tool and
+        "image.before = MeshSnapshot.capture(*source); image.valid = true;" in tool and
+        "preview_.reset()" not in builder and
+        tool.count("image.gizmoValid = gizmoValid; image.anchor = anchor;") == 3 and
+        tool.count("image.baseAnchor = baseAnchor; image.widthAxis = widthAxis;") == 3 and
+        tool.count("image.gizmoSelHash = gizmoSelHash;") == 3 and
+        "active = true; built = false; dragPart = -1; width_ = 0.0f;" in installer and
+        "preview_.reset(); image.before.moveInto(before);" in installer and
+        "gizmoValid = image.gizmoValid; anchor = image.anchor;" in installer and
+        "baseAnchor = image.baseAnchor; widthAxis = image.widthAxis;" in installer and
+        "gizmoSelHash = image.gizmoSelHash; image.clear();" in installer and
+        not re.search(r"\b(roundLevel_|widthMode_)\s*=", installer) and
+        "void reset() nothrow @nogc" in preview and
+        "hasLast_      = false;" in preview and
+        "last_         = PreviewTopologyKey.init;" in preview and
+        "lastTopology_ = 0;" in preview and
+        "cage_         = Mesh.init;" in preview and
+        "if (source.edges.length == 0) return;" in formula and
+        "image.anchor = source.selectionCentroidEdges();" in formula and
+        "bool any = source.hasAnySelectedEdges();" in formula and
+        "if (!source.isEdgeSelected(ei)) continue;" in formula and
+        "if ((a==u&&b==w)||(a==w&&b==u))" in formula and
+        "if (adj) sum = sum + source.faceNormal(cast(uint)fi);" in formula and
+        "sum = sum + source.faceNormal(cast(uint)fi);" in formula and
+        "image.widthAxis = (len > 1e-6f) ? sum * (1.0f/len) : Vec3(0,1,0);" in formula and
+        "image.baseAnchor = image.anchor;" in formula and
+        "source.selectionSignature(EditMode.Edges)" in formula and
+        "image.gizmoValid = true;" in formula and
+        "PreparedEdgeBevelActivationOwner.prepare(this)" in producer and
+        "context.prepareEdgeBevelActivation(owner)" in producer and
+        "context.markNoHistoryInstall()" in producer and
+        producer.find("context.prepareEdgeBevelActivation(owner)") <
+            producer.find("context.markNoHistoryInstall()") and
+        "scope(failure) context.discard();" in producer and
+        "if (!ok) context.discard();" in producer and
+        "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+        "            PreparedActivateKind.EdgeBevel, ok);" in producer and
+        not any(x in producer for x in
+                ("context.validate(", "context.install(", "owner.install(")) and
+        not any(x in legacy_body for x in
+                ("prepareActivate(", "PreparedRecordContext")) and
+        "e.edgeBevelActivation.validate();" in context and
+        "e.edgeBevelActivation.install();" in context and
+        "e.edgeBevelActivation.abort();" in context)
+if not edge_bevel_activation_gate(edge_bevel_activation_owner, record_context,
+                                  edge_bevel_activation_tool,
+                                  preview_rebuild_source):
+    fail("EdgeBevel activation prepared contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is EdgeBevelTool.classinfo", "false", "broaden product"),
+    ("owner", "result.image_ = target.buildPreparedActivation(result.source_);", "", "drop builder"),
+    ("owner", "target_.preparedActivationMesh() !is source_", "false", "drop identity"),
+    ("owner", "!image_.before.matches(*source_)", "false", "drop content guard"),
+    ("owner", "target_.installPreparedActivation(image_);", "", "drop install"),
+    ("owner", "image_.clear(); target_ = null; source_ = null;", "target_ = null;", "retain payload"),
+    ("tool", "image.before = MeshSnapshot.capture(*source);", "", "drop snapshot"),
+    ("tool", "image.before = MeshSnapshot.capture(*source); image.valid = true;",
+     "preview_.reset(); image.before = MeshSnapshot.capture(*source); image.valid = true;",
+     "clear preview scratch during prepare"),
+    ("tool", "image.gizmoValid = gizmoValid; image.anchor = anchor;", "", "drop frame seed"),
+    ("tool", "active = true; built = false; dragPart = -1; width_ = 0.0f;",
+     "built = false; dragPart = -1; width_ = 0.0f;", "drop active reset"),
+    ("tool", "active = true; built = false; dragPart = -1; width_ = 0.0f;",
+     "active = true; dragPart = -1; width_ = 0.0f;", "drop built reset"),
+    ("tool", "active = true; built = false; dragPart = -1; width_ = 0.0f;",
+     "active = true; built = false; width_ = 0.0f;", "drop drag reset"),
+    ("tool", "active = true; built = false; dragPart = -1; width_ = 0.0f;",
+     "active = true; built = false; dragPart = -1;", "drop width reset"),
+    ("tool", "active = true; built = false; dragPart = -1; width_ = 0.0f;",
+     "active = true; built = false; dragPart = -1; width_ = 0.0f; roundLevel_ = 0;", "reset round preset"),
+    ("tool", "active = true; built = false; dragPart = -1; width_ = 0.0f;",
+     "active = true; built = false; dragPart = -1; width_ = 0.0f; widthMode_ = false;", "reset width mode preset"),
+    ("tool", "preview_.reset(); image.before.moveInto(before);",
+     "image.before.moveInto(before);", "retain preview scratch"),
+    ("tool", "image.before.moveInto(before);", "before = image.before;", "shallow snapshot"),
+    ("tool", "gizmoValid = image.gizmoValid; anchor = image.anchor;",
+     "anchor = image.anchor;", "drop gizmo validity"),
+    ("tool", "gizmoValid = image.gizmoValid; anchor = image.anchor;",
+     "gizmoValid = image.gizmoValid;", "drop anchor"),
+    ("tool", "baseAnchor = image.baseAnchor; widthAxis = image.widthAxis;",
+     "widthAxis = image.widthAxis;", "drop base anchor"),
+    ("tool", "baseAnchor = image.baseAnchor; widthAxis = image.widthAxis;",
+     "baseAnchor = image.baseAnchor;", "drop width axis"),
+    ("tool", "gizmoSelHash = image.gizmoSelHash; image.clear();",
+     "image.clear();", "drop selection hash"),
+    ("tool", "bool any = source.hasAnySelectedEdges();", "bool any = false;", "drop selected-edge branch"),
+    ("tool", "if (!source.isEdgeSelected(ei)) continue;", "", "drop selected-edge guard"),
+    ("tool", "len > 1e-6f", "len >= 0", "drop axis fallback threshold"),
+    ("tool", "image.gizmoValid = true;", "", "drop valid seal"),
+    ("tool", "scope(failure) context.discard();", "", "drop failure cleanup"),
+    ("tool", "context.prepareEdgeBevelActivation(owner)", "true", "drop enlist"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop history seal"),
+    ("tool", "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+     "            PreparedActivateKind.EdgeBevel, ok);",
+     "return PreparedSessionActivateEffect(OwnedId.init,\n"
+     "            PreparedActivateKind.EdgeBevel, ok);", "forge effect owner"),
+    ("tool", "PreparedActivateKind.EdgeBevel, ok);",
+     "PreparedActivateKind.EdgeBevel, true);", "forge effect acceptance"),
+    ("context", "e.edgeBevelActivation.validate();", "true;", "drop validation"),
+    ("context", "e.edgeBevelActivation.install();", "", "drop context install"),
+    ("context", "e.edgeBevelActivation.abort();", "", "drop context abort"),
+    ("preview", "void reset() nothrow @nogc", "void reset()", "weaken reset attributes"),
+    ("preview", "hasLast_      = false;", "", "retain last-key flag"),
+    ("preview", "last_         = PreviewTopologyKey.init;", "", "retain last topology key"),
+    ("preview", "lastTopology_ = 0;", "", "retain last topology digest"),
+    ("preview", "cage_         = Mesh.init;", "", "retain preview cage"),
+):
+    o, c, t, p = (edge_bevel_activation_owner, record_context,
+                  edge_bevel_activation_tool, preview_rebuild_source)
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    elif target == "preview": p = p.replace(old, new, 1)
+    else: t = t.replace(old, new, 1)
+    if ((o == edge_bevel_activation_owner and c == record_context and
+         t == edge_bevel_activation_tool and p == preview_rebuild_source) or
+        edge_bevel_activation_gate(o,c,t,p)):
+        fail(f"EdgeBevel activation mutation did not RED: {label}")
+for fixture in (
+    ROOT / "tests/compile_fail/prepared_edge_bevel_activation_token_copy.d",
+    ROOT / "tests/compile_fail/prepared_edge_bevel_activation_validated_token_copy.d",
+):
+    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if run.returncode == 0 or ("not copyable" not in run.stdout and
+            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+        fail("EdgeBevel activation token copy was not rejected:\n" + run.stdout)
 
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
 # detached whole-Mesh adoption with exact caller-supplied change flags, and a

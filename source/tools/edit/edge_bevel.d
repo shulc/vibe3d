@@ -26,7 +26,19 @@ import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import prepared_edge_bevel_activation : PreparedEdgeBevelActivationOwner;
 import command_history : PreparedHistoryKind;
+
+struct PreparedEdgeBevelActivationImage {
+    MeshSnapshot before;
+    bool valid, gizmoValid;
+    Vec3 anchor, baseAnchor, widthAxis;
+    ulong gizmoSelHash;
+    void clear() nothrow @nogc {
+        this = PreparedEdgeBevelActivationImage.init;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // EdgeBevelTool — interactive Edge Bevel (factory id `edge.bevel`).
@@ -42,7 +54,7 @@ import command_history : PreparedHistoryKind;
 // ---------------------------------------------------------------------------
 class EdgeBevelTool : Tool {
 private:
-    Mesh* delegate() meshSrc_;
+    Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
     GpuMesh*         gpu;
     EditMode*        editMode;
@@ -84,7 +96,8 @@ private:
     enum Vec3 WIDTH_COLOR = schemeColor(SchemeColor.toolOffset);
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader) {
+    this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu,
+            EditMode* editMode, LitShader litShader) {
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
@@ -114,6 +127,40 @@ public:
     override void activate() {
         active = true;
         reinitSession();
+    }
+
+    final PreparedEdgeBevelActivationImage buildPreparedActivation(
+            out Mesh* source) {
+        PreparedEdgeBevelActivationImage image;
+        source = mesh; if (source is null) return image;
+        image.before = MeshSnapshot.capture(*source); image.valid = true;
+        image.gizmoValid = gizmoValid; image.anchor = anchor;
+        image.baseAnchor = baseAnchor; image.widthAxis = widthAxis;
+        image.gizmoSelHash = gizmoSelHash;
+        computePreparedGizmoFrame(*source, image);
+        return image;
+    }
+    final Mesh* preparedActivationMesh() nothrow @nogc { return meshSrc_(); }
+    final void installPreparedActivation(
+            ref PreparedEdgeBevelActivationImage image) nothrow @nogc {
+        if (!image.valid) return;
+        active = true; built = false; dragPart = -1; width_ = 0.0f;
+        preview_.reset(); image.before.moveInto(before);
+        gizmoValid = image.gizmoValid; anchor = image.anchor;
+        baseAnchor = image.baseAnchor; widthAxis = image.widthAxis;
+        gizmoSelHash = image.gizmoSelHash; image.clear();
+    }
+    final PreparedSessionActivateEffect prepareActivate(
+            PreparedRecordContext context) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.EdgeBevel, false);
+        scope(failure) context.discard();
+        auto owner = PreparedEdgeBevelActivationOwner.prepare(this);
+        bool ok = owner !is null && context.prepareEdgeBevelActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.EdgeBevel, ok);
     }
 
     private void reinitSession() {
@@ -318,35 +365,47 @@ private:
     }
 
     void computeGizmoFrame() {
-        gizmoValid = false;
-        if (mesh.edges.length == 0) return;
-        anchor = mesh.selectionCentroidEdges();
+        PreparedEdgeBevelActivationImage image;
+        image.gizmoValid = gizmoValid; image.anchor = anchor;
+        image.baseAnchor = baseAnchor; image.widthAxis = widthAxis;
+        image.gizmoSelHash = gizmoSelHash;
+        computePreparedGizmoFrame(*mesh, image);
+        gizmoValid = image.gizmoValid; anchor = image.anchor;
+        baseAnchor = image.baseAnchor; widthAxis = image.widthAxis;
+        gizmoSelHash = image.gizmoSelHash;
+    }
+
+    private static void computePreparedGizmoFrame(ref Mesh source,
+            ref PreparedEdgeBevelActivationImage image) {
+        image.gizmoValid = false;
+        if (source.edges.length == 0) return;
+        image.anchor = source.selectionCentroidEdges();
         // widthAxis = averaged normal of adjacent faces of selected edges.
         Vec3 sum = Vec3(0,0,0);
-        bool any = mesh.hasAnySelectedEdges();
-        foreach (fi; 0 .. mesh.faces.length) {
+        bool any = source.hasAnySelectedEdges();
+        foreach (fi; 0 .. source.faces.length) {
             if (any) {
                 bool adj = false;
-                auto f = mesh.faces[fi];
+                auto f = source.faces[fi];
                 foreach (k; 0..f.length) {
-                    foreach (ei; 0 .. mesh.edges.length) {
-                        if (!mesh.isEdgeSelected(ei)) continue;
-                        uint a = mesh.edges[ei][0], b = mesh.edges[ei][1];
+                    foreach (ei; 0 .. source.edges.length) {
+                        if (!source.isEdgeSelected(ei)) continue;
+                        uint a = source.edges[ei][0], b = source.edges[ei][1];
                         uint u = f[k], w = f[(k+1)%f.length];
                         if ((a==u&&b==w)||(a==w&&b==u)) { adj = true; break; }
                     }
                     if (adj) break;
                 }
-                if (adj) sum = sum + mesh.faceNormal(cast(uint)fi);
+                if (adj) sum = sum + source.faceNormal(cast(uint)fi);
             } else {
-                sum = sum + mesh.faceNormal(cast(uint)fi);
+                sum = sum + source.faceNormal(cast(uint)fi);
             }
         }
         float len = sqrt(sum.x*sum.x + sum.y*sum.y + sum.z*sum.z);
-        widthAxis    = (len > 1e-6f) ? sum * (1.0f/len) : Vec3(0,1,0);
-        baseAnchor   = anchor;
-        gizmoSelHash = mesh.selectionSignature(EditMode.Edges);
-        gizmoValid   = true;
+        image.widthAxis = (len > 1e-6f) ? sum * (1.0f/len) : Vec3(0,1,0);
+        image.baseAnchor = image.anchor;
+        image.gizmoSelHash = source.selectionSignature(EditMode.Edges);
+        image.gizmoValid = true;
     }
 
     void rebuildPreview() {
@@ -428,5 +487,51 @@ private:
 
     void refreshCaches() {
         refreshDisplay(mesh, gpu);
+    }
+
+public:
+    version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
+        return preparedToolStateOwner;
+    }
+    version(unittest) final void seedPreparedActivationForTest(ref Mesh oldMesh) {
+        active = false; built = true; dragPart = 9; width_ = 7;
+        roundLevel_ = 3; widthMode_ = true;
+        gizmoValid = false; anchor = Vec3(1,2,3); baseAnchor = Vec3(4,5,6);
+        widthAxis = Vec3(7,8,9); gizmoSelHash = 10;
+        dragStartMX = 11; dragStartMY = 12; dragBaseWidth = 13;
+        cachedVp.view[0] = 14; before = MeshSnapshot.capture(oldMesh);
+        preview_.seedForTest(oldMesh);
+    }
+    version(unittest) final bool preparedActivationDirtyForTest() const
+            nothrow @nogc {
+        return !active && built && dragPart == 9 && width_ == 7 &&
+            roundLevel_ == 3 && widthMode_ && !gizmoValid &&
+            anchor == Vec3(1,2,3) && baseAnchor == Vec3(4,5,6) &&
+            widthAxis == Vec3(7,8,9) && gizmoSelHash == 10 &&
+            preview_.dirtyForTest();
+    }
+    version(unittest) final bool preparedActivationForTest(size_t count,
+            Vec3 first, const Vec3* livePtr, bool expectedValid,
+            Vec3 expectedAnchor, Vec3 expectedBase, Vec3 expectedAxis,
+            ulong expectedHash) const nothrow @nogc {
+        return active && !built && dragPart == -1 && width_ == 0 &&
+            roundLevel_ == 3 && widthMode_ && before.filled &&
+            before.vertices.length == count &&
+            (count == 0 || (before.vertices[0] == first &&
+                            before.vertices.ptr !is livePtr)) &&
+            preview_.resetForTest() && gizmoValid == expectedValid &&
+            anchor == expectedAnchor && baseAnchor == expectedBase &&
+            widthAxis == expectedAxis && gizmoSelHash == expectedHash &&
+            dragStartMX == 11 && dragStartMY == 12 && dragBaseWidth == 13 &&
+            cachedVp.view[0] == 14;
+    }
+    version(unittest) final PreparedEdgeBevelActivationImage
+            preparedFrameForTest(ref Mesh source) const {
+        PreparedEdgeBevelActivationImage image;
+        image.gizmoValid = gizmoValid; image.anchor = anchor;
+        image.baseAnchor = baseAnchor; image.widthAxis = widthAxis;
+        image.gizmoSelHash = gizmoSelHash;
+        computePreparedGizmoFrame(source, image);
+        return image;
     }
 }
