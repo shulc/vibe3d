@@ -676,6 +676,9 @@ protected:
     public final void setRecordViaInSession(bool on) nothrow @nogc {
         recordViaInSession = on;
     }
+    final CommandHistory preparedHistoryOwner() nothrow @nogc {
+        return history;
+    }
     version(unittest) final bool recordViaInSessionForTest() const
             nothrow @nogc { return recordViaInSession; }
 

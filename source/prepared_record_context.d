@@ -20,6 +20,7 @@ import prepared_transform_activation : PreparedTransformActivationOwner;
 import prepared_transform_product_activation : PreparedTransformProductActivationOwner;
 import prepared_move_update : PreparedMoveUpdateOwner;
 import prepared_inherited_noop : PreparedInheritedNoopOwner;
+import prepared_xfrm_activation_session : PreparedXfrmActivationSessionOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -30,7 +31,8 @@ private enum PreparedResourceKind : ubyte {
     ArraySessionState, CloneSessionState, MagnetSessionState, ReductionSessionState,
     RadialSweepProfileState, RadialSweepTransitionState, GestureCarrierMismatch,
     GpuCreateUpload, RadialArrayTransitionState, TransformActivationState,
-    TransformProductActivationState, MoveUpdateState, InheritedNoopState
+    TransformProductActivationState, MoveUpdateState, InheritedNoopState,
+    XfrmActivationPreState, XfrmActivationPostState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -43,6 +45,7 @@ private struct PreparedResourceEntry {
     PreparedTransformProductActivationOwner transformProductActivation;
     PreparedMoveUpdateOwner moveUpdate;
     PreparedInheritedNoopOwner inheritedNoop;
+    PreparedXfrmActivationSessionOwner xfrmActivation;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -66,6 +69,8 @@ private:
     ulong resourceThread_, resourceContext_;
     bool historyMarker_;
     bool noHistoryMarker_;
+    PreparedXfrmActivationSessionOwner xfrmLayoutOwner_;
+    ubyte xfrmLayoutStage_; // 0=absent, 1=pre, 2=marker, 3=post
     version (unittest) {
         static bool failAfterResourceBegin_;
         ubyte[16] installTrace_;
@@ -77,8 +82,13 @@ public:
         observers_ = observers;
         if (history_ !is null) {
             token_ = history_.beginPrepared();
-            begun_ = true;
         }
+        begun_ = true;
+    }
+
+    bool hasHistory() const nothrow @nogc { return history_ !is null; }
+    bool ownsHistory(CommandHistory expected) const nothrow @nogc {
+        return history_ is expected;
     }
 
     void setResourceIdentity(ulong threadIdentity, ulong contextIdentity)
@@ -91,20 +101,25 @@ public:
     /// transactions require exactly one marker; history-only transactions keep
     /// their historical direct install path.
     bool markHistoryInstall() {
-        if (!begun_ || validated_Once || historyMarker_ || noHistoryMarker_) return false;
+        if (!begun_ || validated_Once || history_ is null || historyMarker_ || noHistoryMarker_ ||
+            (xfrmLayoutStage_ != 0 && xfrmLayoutStage_ != 1)) return false;
         resources_.reserve(resources_.length + 1);
         PreparedResourceEntry e;
         e.kind = PreparedResourceKind.HistoryInstall;
         resources_ ~= e;
         historyMarker_ = true;
+        if (xfrmLayoutStage_ == 1) xfrmLayoutStage_ = 2;
         return true;
     }
 
     bool markNoHistoryInstall() {
-        if (!begun_ || validated_Once || historyMarker_ || noHistoryMarker_) return false;
+        if (!begun_ || validated_Once || historyMarker_ || noHistoryMarker_ ||
+            (xfrmLayoutStage_ != 0 && xfrmLayoutStage_ != 1)) return false;
         resources_.reserve(1 + resources_.length);
         PreparedResourceEntry e; e.kind = PreparedResourceKind.NoHistoryInstall;
-        resources_ ~= e; noHistoryMarker_ = true; return true;
+        resources_ ~= e; noHistoryMarker_ = true;
+        if (xfrmLayoutStage_ == 1) xfrmLayoutStage_ = 2;
+        return true;
     }
 
     bool prepareDestroy(GpuResourceOwner owner) {
@@ -209,6 +224,36 @@ public:
             throw new Exception("injected selection-profile enlist failure");
         PreparedResourceEntry e; e.kind = PreparedResourceKind.RadialSweepProfileState;
         e.selectionProfile = owner; resources_ ~= e; return true;
+    }
+
+    bool prepareXfrmActivationPre(PreparedXfrmActivationSessionOwner owner) {
+        if (!begun_ || validated_Once || owner is null || xfrmLayoutStage_ != 0 ||
+            historyMarker_ || noHistoryMarker_) return false;
+        resources_.reserve(resources_.length + 1);
+        if (!owner.beginPre()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected Xfrm activation pre enlist failure");
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.XfrmActivationPreState;
+        e.xfrmActivation = owner; resources_ ~= e;
+        xfrmLayoutOwner_ = owner; xfrmLayoutStage_ = 1; return true;
+    }
+
+    bool prepareXfrmActivationPost(PreparedXfrmActivationSessionOwner owner) {
+        if (!begun_ || validated_Once || owner is null ||
+            xfrmLayoutStage_ != 2 || xfrmLayoutOwner_ !is owner ||
+            resources_.length < 2 ||
+            resources_[$ - 2].kind != PreparedResourceKind.XfrmActivationPreState ||
+            resources_[$ - 2].xfrmActivation !is owner ||
+            (resources_[$ - 1].kind != PreparedResourceKind.HistoryInstall &&
+             resources_[$ - 1].kind != PreparedResourceKind.NoHistoryInstall)) return false;
+        resources_.reserve(resources_.length + 1);
+        if (!owner.beginPost()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected Xfrm activation post enlist failure");
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.XfrmActivationPostState;
+        e.xfrmActivation = owner; resources_ ~= e; xfrmLayoutStage_ = 3; return true;
     }
 
     bool prepareRadialSweepTransition(PreparedRadialSweepTransitionOwner owner) {
@@ -353,23 +398,27 @@ public:
     PreparedHistoryResult prepare(Command cmd, PreparedHistoryKind kind,
                                   ulong runId = 0,
                                   string preparedTraceJson = null) {
-        if (!begun_ || validated_Once) return PreparedHistoryResult.init;
+        if (!begun_ || validated_Once || history_ is null) return PreparedHistoryResult.init;
         return history_.prepareRecord(token_, cmd, kind, runId,
                                       observers_, preparedTraceJson);
     }
 
     PreparedHistoryResult consolidate(ulong runId) {
-        if (!begun_ || validated_Once) return PreparedHistoryResult.init;
+        if (!begun_ || validated_Once || history_ is null) return PreparedHistoryResult.init;
         return history_.prepareConsolidate(token_, runId);
     }
 
     ulong nextRun() {
-        if (!begun_ || validated_Once) return 0;
+        if (!begun_ || validated_Once || history_ is null) return 0;
         return history_.prepareNextRun(token_);
     }
 
     bool validate() nothrow @nogc {
         if (!begun_ || validated_Once) return false;
+        if (xfrmLayoutStage_ != 0 && xfrmLayoutStage_ != 3) {
+            invalidateTransaction();
+            return false;
+        }
         if (resources_.length > 0 && !historyMarker_) {
             if (!noHistoryMarker_) {
                 invalidateTransaction();
@@ -425,6 +474,12 @@ public:
                 ok = e.moveUpdate !is null && e.moveUpdate.validate(); break;
             case PreparedResourceKind.InheritedNoopState:
                 ok = e.inheritedNoop !is null && e.inheritedNoop.validate(); break;
+            case PreparedResourceKind.XfrmActivationPreState:
+                ok = e.xfrmActivation !is null &&
+                    e.xfrmActivation.validatePre(); break;
+            case PreparedResourceKind.XfrmActivationPostState:
+                ok = e.xfrmActivation !is null &&
+                    e.xfrmActivation.validatePost(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -446,7 +501,8 @@ public:
             version (unittest) installTrace_[installTraceLength_++] = 1;
             break;
         case PreparedResourceKind.NoHistoryInstall:
-            history_.discardPreparedToken(token_); installedHistory = true;
+            if (history_ !is null) history_.discardPreparedToken(token_);
+            installedHistory = true;
             version (unittest) installTrace_[installTraceLength_++] = 8;
             break;
         case PreparedResourceKind.MeshInstall:
@@ -524,11 +580,22 @@ public:
             e.inheritedNoop.install();
             version(unittest) installTrace_[installTraceLength_++] = 17;
             break;
+        case PreparedResourceKind.XfrmActivationPreState:
+            e.xfrmActivation.installPre();
+            version(unittest) installTrace_[installTraceLength_++] = 18;
+            break;
+        case PreparedResourceKind.XfrmActivationPostState:
+            e.xfrmActivation.installPost();
+            version(unittest) installTrace_[installTraceLength_++] = 19;
+            break;
         }
-        if (!installedHistory) history_.installPreparedToken(validated_);
+        if (!installedHistory && history_ !is null)
+            history_.installPreparedToken(validated_);
         resources_.length = 0;
         historyMarker_ = false;
         noHistoryMarker_ = false;
+        xfrmLayoutOwner_ = null;
+        xfrmLayoutStage_ = 0;
         validated_Once = false;
         begun_ = false;
     }
@@ -538,7 +605,7 @@ public:
         // NoHistory validation never validates/consumes the history token;
         // allow a caller to abandon the fully validated resource journal.
         if (validated_Once && !noHistoryMarker_) return;
-        history_.discardPreparedToken(token_);
+        if (history_ !is null) history_.discardPreparedToken(token_);
         abortResources();
         begun_ = false; validated_Once = false;
     }
@@ -575,15 +642,21 @@ private:
             e.transformProductActivation.abort(); break;
         case PreparedResourceKind.MoveUpdateState: e.moveUpdate.abort(); break;
         case PreparedResourceKind.InheritedNoopState: e.inheritedNoop.abort(); break;
+        case PreparedResourceKind.XfrmActivationPreState:
+        case PreparedResourceKind.XfrmActivationPostState:
+            e.xfrmActivation.abort(); break;
         }
         resources_.length = 0;
         historyMarker_ = false;
         noHistoryMarker_ = false;
+        xfrmLayoutOwner_ = null;
+        xfrmLayoutStage_ = 0;
     }
 
     void invalidateTransaction() nothrow @nogc {
         abortResources();
-        if (begun_ && !validated_Once) history_.discardPreparedToken(token_);
+        if (begun_ && !validated_Once && history_ !is null)
+            history_.discardPreparedToken(token_);
         begun_ = false;
         validated_Once = false;
     }
@@ -646,6 +719,16 @@ unittest {
     retained.install(); retained.install();
     retainedHistory.undoDepthCounts(models, ui);
     assert(models == 1 && ui == 0 && retainedHub.macroLength == 1);
+
+    // A context without a history is a supported NoHistory journal. Every
+    // history-facing operation fails closed without poisoning that journal.
+    auto empty = new PreparedRecordContext(null, new RecordObserverHub());
+    assert(!empty.prepare(new C(), PreparedHistoryKind.Plain).accepted);
+    assert(!empty.consolidate(1).accepted && empty.nextRun() == 0);
+    assert(!empty.markHistoryInstall() && empty.resourceCountForTest() == 0);
+    assert(empty.markNoHistoryInstall() && empty.validate());
+    empty.install();
+    assert(empty.installTraceForTest() == [8]);
 }
 
 version (unittest) unittest {

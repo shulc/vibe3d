@@ -1,6 +1,8 @@
 module tools.transform.xfrm_transform;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import prepared_tool_effect : PreparedXfrmActivationEffect;
+import prepared_xfrm_activation_session : PreparedXfrmActivationSessionOwner;
 
 // XfrmTransformTool — `xfrm.transform`: ONE tool that can translate,
 // rotate, and scale based on three boolean flags
@@ -709,6 +711,33 @@ public:
         // transform tool was armed as an activation of ITS run.
         lastSlotSigValid = false;
         clearFrame();                 // COMMIT B — fresh session re-derives the basis
+    }
+
+    final PreparedXfrmActivationEffect prepareActivate(
+            PreparedRecordContext context) {
+        const ubyte flags = preparedActivationFlags();
+        if (context is null)
+            return PreparedXfrmActivationEffect(preparedToolStateOwner, 0,
+                flags, false);
+        if (!context.ownsHistory(preparedHistoryOwner())) {
+            context.discard();
+            return PreparedXfrmActivationEffect(preparedToolStateOwner, 0,
+                flags, false);
+        }
+        scope(failure) context.discard();
+        auto owner = PreparedXfrmActivationSessionOwner.prepare(this);
+        bool ok = owner !is null && context.prepareXfrmActivationPre(owner);
+        ulong runId;
+        if (ok && context.hasHistory()) {
+            runId = context.nextRun();
+            ok = runId != 0 && context.markHistoryInstall();
+        } else if (ok) {
+            ok = context.markNoHistoryInstall();
+        }
+        if (ok) ok = context.prepareXfrmActivationPost(owner);
+        if (!ok) context.discard();
+        return PreparedXfrmActivationEffect(preparedToolStateOwner, runId,
+            flags, ok);
     }
 
     /// Prepare only the wrapper-owned reset projection. This performs no live
@@ -1763,6 +1792,26 @@ public:
     // session) exactly like MoveTool. No apply-path change.
     public RotateTool rotateBank() { return rotateSub; }
     public ScaleTool  scaleBank()  { return scaleSub; }
+    final ubyte preparedActivationFlags() const nothrow @nogc {
+        return cast(ubyte)((flagT ? 1 : 0) | (flagR ? 2 : 0) |
+                           (flagS ? 4 : 0));
+    }
+    final bool preparedActivationShape(ubyte flags, MoveTool move,
+            RotateTool rotate, ScaleTool scale) const nothrow @nogc {
+        return this.classinfo is XfrmTransformTool.classinfo &&
+            preparedActivationFlags() == flags && moveSub is move &&
+            rotateSub is rotate && scaleSub is scale;
+    }
+    final void installPreparedWrapperLinks() nothrow @nogc {
+        moveSub.wrapperRef = this;
+        rotateSub.wrapperRef = this;
+        scaleSub.wrapperRef = this;
+    }
+    version(unittest) final bool preparedWrapperLinksForTest() const
+            nothrow @nogc {
+        return moveSub.wrapperRef is this && rotateSub.wrapperRef is this &&
+            scaleSub.wrapperRef is this;
+    }
     // ε-exploration silent-hover setter (task 0033, Phase 3). Forwards to the
     // shared ToolHandles instance.  Called from app.d after tool construction
     // when ε-exploration is enabled; default false is byte-identical to before.

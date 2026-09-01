@@ -87,6 +87,12 @@ enum PreparedInheritedNoopKind : ubyte { Activate, Deactivate, Update }
     PreparedInheritedNoopKind kind;
     bool accepted;
 }
+@PreparedAggregate struct PreparedXfrmActivationEffect {
+    OwnedId owner;
+    ulong runId;
+    ubyte flags;
+    bool accepted;
+}
 
 /// Scalar-only dormant P1.0b.3d producer result. The concrete tool owns the
 /// interpretation of its reset constants; no reference-bearing history or

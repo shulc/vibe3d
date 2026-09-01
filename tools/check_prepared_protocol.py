@@ -233,10 +233,15 @@ B5N_PREPARED_LEGACY = {
     ("tool", "Tool", "deactivate"),
     ("tool", "Tool", "update"),
 }
+B5O_PREPARED_LEGACY = {
+    ("tools.transform.transform", "TransformTool", "activate"),
+    ("tools.transform.xfrm_transform", "XfrmTransformTool", "activate"),
+}
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
     B5I_PREPARED_LEGACY | B5J_PREPARED_LEGACY | B5K_PREPARED_LEGACY |
-    B5L_PREPARED_LEGACY | B5M_PREPARED_LEGACY | B5N_PREPARED_LEGACY)
+    B5L_PREPARED_LEGACY | B5M_PREPARED_LEGACY | B5N_PREPARED_LEGACY |
+    B5O_PREPARED_LEGACY)
 all_hook_keys = {(r["module"], r["aggregate"], r["symbol"])
                  for r in CURRENT_WRITERS["hooks"]}
 if not TOOL_STATE_CONVERTED | PREPARED_LEGACY <= all_hook_keys:
@@ -268,7 +273,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "f2c6edf79df1342be614032d535e0a7f7683f452a1bebd05a05c8c6c74911bad"
+    "21580c0134771bb6f7068c08d49f75c6dc40cefdd2c391772773d4a5d49bd428"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -396,6 +401,7 @@ for path, text in prepared_source_texts.items():
             "prepared_transform_product_activation",
             "prepared_move_update",
             "prepared_inherited_noop",
+            "prepared_xfrm_activation_session",
             "tools.alignment.radial_sweep_tool",
             "tools.alignment.radial_array_tool",
             "tools.alignment.linear_align_tool",
@@ -1302,7 +1308,7 @@ resource_contracts = (
 for contract in resource_contracts:
     expected = (2 if contract == "foreach (ref e; resources_) final switch (e.kind)"
                 else 3 if contract == "scope(failure) owner.abortEnlisted();"
-                else 4 if contract == "resources_.reserve(resources_.length + 1);"
+                else 6 if contract == "resources_.reserve(resources_.length + 1);"
                 else 1)
     if record_context.count(contract) != expected:
         fail(f"P1.0b.4c.1 resource-journal contract drift: {contract}")
@@ -1679,8 +1685,9 @@ b5d2_vertex = (ROOT / "source/tools/create/vertex_place.d").read_text()
 def b5d2_gate(context, vertex):
     return ("HistoryInstall, NoHistoryInstall," in context and
             "bool markNoHistoryInstall()" in context and
-            "history_.discardPreparedToken(token_); installedHistory = true;" in context and
-            context.count("historyMarker_ || noHistoryMarker_") == 2 and
+            "if (history_ !is null) history_.discardPreparedToken(token_);\n"
+            "            installedHistory = true;" in context and
+            context.count("historyMarker_ || noHistoryMarker_") == 3 and
             "final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context," in vertex and
             vertex.count("context.prepareSnapClear(snapOwner)") == 1 and
             vertex.count("context.preparePrivateState(stateOwner)") == 1 and
@@ -1695,7 +1702,8 @@ if not b5d2_gate(record_context, b5d2_vertex):
 for target, old, new, label in (
     ("context", "historyMarker_ || noHistoryMarker_", "historyMarker_",
      "allow both history seals"),
-    ("context", "history_.discardPreparedToken(token_); installedHistory = true;",
+    ("context", "if (history_ !is null) history_.discardPreparedToken(token_);\n"
+     "            installedHistory = true;",
      "installedHistory = true;", "drop empty history consumption"),
     ("vertex", "stateOwner.owns(this)", "true", "drop Vertex owner identity"),
     ("vertex", "context.prepareSnapClear(snapOwner)", "true", "drop snap clear"),
@@ -2408,6 +2416,152 @@ for target, old, new, label in (
     if xfrm_activation_reset_gate(xfrm, transform):
         fail(f"Xfrm activation reset mutation did not RED: {label}")
 
+# Exact two-phase Xfrm activation/session composition. The prepared history
+# marker remains between pre and post, matching legacy nextRun placement.
+xfrm_activation_owner = (ROOT / "source/prepared_xfrm_activation_session.d").read_text()
+def xfrm_activation_session_gate(owner, context, xfrm, transform):
+    def method_body(source, signature):
+        start = source.find(signature)
+        if start < 0: return ""
+        body_start = source.find("{", start) + 1
+        return source[body_start:balanced_source(source, body_start)-1]
+    producer = method_body(xfrm,
+        "final PreparedXfrmActivationEffect prepareActivate(")
+    legacy = method_body(xfrm, "override void activate()")
+    pre_install = method_body(owner, "void installPre() nothrow @nogc")
+    post_install = method_body(owner, "void installPost() nothrow @nogc")
+    return (
+        "final class PreparedXfrmActivationSessionOwner" in owner and
+        owner.count("@disable this(this);") == 4 and
+        "target.classinfo !is XfrmTransformTool.classinfo" in owner and
+        "owner.flags_ & 1" in owner and "owner.flags_ & 2" in owner and
+        "owner.flags_ & 4" in owner and
+        owner.count("PreparedTransformProductActivationOwner.prepare(") == 3 and
+        "target_.preparedActivationShape(flags_, move_, rotate_, scale_)" in owner and
+        "pre_.owner != owner_" in owner and "post_.owner != owner_" in owner and
+        "pre_.generation != generation_" in owner and
+        "post_.generation != generation_" in owner and
+        "validatedPre_.owner != owner_" in owner and
+        "validatedPre_.generation != generation_" in owner and
+        "validatedPost_.owner != owner_" in owner and
+        "validatedPost_.generation != generation_" in owner and
+        pre_install.find("target_.installPreparedActivationResetPre(reset_);") <
+            pre_install.find("if (moveOwner_ !is null) moveOwner_.install();") <
+            pre_install.find("if (rotateOwner_ !is null) rotateOwner_.install();") <
+            pre_install.find("if (scaleOwner_ !is null) scaleOwner_.install();") <
+            pre_install.find("target_.installPreparedWrapperLinks();") and
+        "target_.installPreparedActivationResetPost(reset_);" in post_install and
+        "shapeValid()" not in pre_install and "shapeValid()" not in post_install and
+        "bool prepareXfrmActivationPre(PreparedXfrmActivationSessionOwner owner)" in context and
+        "bool prepareXfrmActivationPost(PreparedXfrmActivationSessionOwner owner)" in context and
+        "xfrmLayoutStage_ != 2 || xfrmLayoutOwner_ !is owner" in context and
+        "xfrmLayoutStage_ != 0 && xfrmLayoutStage_ != 3" in context and
+        "resources_[$ - 2].kind != PreparedResourceKind.XfrmActivationPreState" in context and
+        "history_ is null || historyMarker_ || noHistoryMarker_" in context and
+        context.count("|| history_ is null) return PreparedHistoryResult.init;") == 2 and
+        "|| history_ is null) return 0;" in context and
+        "e.xfrmActivation.validatePre();" in context and
+        "e.xfrmActivation.validatePost();" in context and
+        "e.xfrmActivation.installPre();" in context and
+        "e.xfrmActivation.installPost();" in context and
+        context.count("e.xfrmActivation.abort();") == 1 and
+        "begun_ = true;" in context and
+        "bool hasHistory() const nothrow @nogc" in context and
+        "bool ownsHistory(CommandHistory expected) const nothrow @nogc" in context and
+        "if (history_ !is null) history_.discardPreparedToken(token_);" in context and
+        "if (!installedHistory && history_ !is null)" in context and
+        "PreparedXfrmActivationSessionOwner.prepare(this)" in producer and
+        "context.prepareXfrmActivationPre(owner)" in producer and
+        producer.find("context.prepareXfrmActivationPre(owner)") <
+            producer.find("runId = context.nextRun();") <
+            producer.find("context.markHistoryInstall()") <
+            producer.find("context.prepareXfrmActivationPost(owner)") and
+        "else if (ok) {\n            ok = context.markNoHistoryInstall();" in producer and
+        "context.ownsHistory(preparedHistoryOwner())" in producer and
+        "if (!context.ownsHistory(preparedHistoryOwner())) {\n"
+        "            context.discard();" in producer and
+        "scope(failure) context.discard();" in producer and
+        "if (!ok) context.discard();" in producer and
+        "return PreparedXfrmActivationEffect(preparedToolStateOwner, runId,\n"
+        "            flags, ok);" in producer and
+        not any(x in producer for x in ("context.validate(", "context.install(",
+                                         "owner.install")) and
+        "PreparedXfrmActivationSessionOwner" not in legacy and
+        "prepareXfrmActivation" not in legacy and
+        "final CommandHistory preparedHistoryOwner() nothrow @nogc" in transform and
+        "final void installPreparedWrapperLinks() nothrow @nogc" in xfrm)
+if not xfrm_activation_session_gate(xfrm_activation_owner, record_context,
+        xfrm_activation_reset, transform_tool):
+    fail("Xfrm activation session owner contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is XfrmTransformTool.classinfo", "false",
+     "broaden Xfrm admission"),
+    ("owner", "owner.flags_ & 2", "owner.flags_ & 1", "drop Rotate flag"),
+    ("owner", "owner.flags_ & 1", "owner.flags_ & 2", "drop Move flag"),
+    ("owner", "owner.flags_ & 4", "owner.flags_ & 2", "drop Scale flag"),
+    ("owner", "pre_.owner != owner_", "false", "drop pre owner identity"),
+    ("owner", "pre_.generation != generation_", "false", "drop pre generation"),
+    ("owner", "post_.owner != owner_", "false", "drop prepared post owner"),
+    ("owner", "post_.generation != generation_", "false", "drop prepared post generation"),
+    ("owner", "validatedPre_.owner != owner_", "false", "drop validated pre owner"),
+    ("owner", "validatedPre_.generation != generation_", "false", "drop validated pre generation"),
+    ("owner", "validatedPost_.owner != owner_", "false", "drop validated post owner"),
+    ("owner", "validatedPost_.generation != generation_", "false",
+     "drop post generation"),
+    ("owner", "if (rotateOwner_ !is null) rotateOwner_.install();", "",
+     "drop Rotate activation"),
+    ("owner", "target_.installPreparedWrapperLinks();", "",
+     "drop wrapper links"),
+    ("owner", "consumed_ ||\n            validatedPre_.owner",
+     "consumed_ || !shapeValid() ||\n            validatedPre_.owner",
+     "reread live shape during pre install"),
+    ("owner", "consumed_ ||\n            validatedPost_.owner",
+     "consumed_ || !shapeValid() ||\n            validatedPost_.owner",
+     "reread live shape during post install"),
+    ("context", "e.xfrmActivation.installPre();", "", "drop pre install"),
+    ("context", "e.xfrmActivation.installPost();", "", "drop post install"),
+    ("context", "xfrmLayoutStage_ != 2 || xfrmLayoutOwner_ !is owner", "false",
+     "drop phase order/owner"),
+    ("context", "xfrmLayoutStage_ != 0 && xfrmLayoutStage_ != 3", "false",
+     "accept incomplete phase journal"),
+    ("xfrm", "runId = context.nextRun();", "runId = 1;", "drop prepared nextRun"),
+    ("xfrm", "context.markHistoryInstall()", "context.markNoHistoryInstall()",
+     "swap history marker"),
+    ("xfrm", "scope(failure) context.discard();", "", "drop failure cleanup"),
+    ("xfrm", "if (!context.ownsHistory(preparedHistoryOwner())) {\n"
+     "            context.discard();", "if (!context.ownsHistory(preparedHistoryOwner())) {",
+     "drop mismatch cleanup"),
+    ("xfrm", "PreparedXfrmActivationEffect(preparedToolStateOwner, runId,\n"
+     "            flags, ok)", "PreparedXfrmActivationEffect(OwnedId.init, runId,\n"
+     "            flags, ok)", "wrong effect owner"),
+    ("xfrm", "PreparedXfrmActivationEffect(preparedToolStateOwner, runId,\n"
+     "            flags, ok)", "PreparedXfrmActivationEffect(preparedToolStateOwner, 0,\n"
+     "            flags, ok)", "wrong effect run"),
+    ("xfrm", "PreparedXfrmActivationEffect(preparedToolStateOwner, runId,\n"
+     "            flags, ok)", "PreparedXfrmActivationEffect(preparedToolStateOwner, runId,\n"
+     "            0, ok)", "wrong effect flags"),
+    ("xfrm", "PreparedXfrmActivationEffect(preparedToolStateOwner, runId,\n"
+     "            flags, ok)", "PreparedXfrmActivationEffect(preparedToolStateOwner, runId,\n"
+     "            flags, true)", "wrong effect acceptance"),
+    ("transform", "final CommandHistory preparedHistoryOwner() nothrow @nogc",
+     "final CommandHistory preparedHistoryOwner()", "drop history identity seam"),
+):
+    owner, context, xfrm, transform = (xfrm_activation_owner, record_context,
+                                       xfrm_activation_reset, transform_tool)
+    if target == "owner": owner = owner.replace(old, new, 1)
+    elif target == "context": context = context.replace(old, new, 1)
+    elif target == "xfrm": xfrm = xfrm.replace(old, new, 1)
+    else: transform = transform.replace(old, new, 1)
+    if xfrm_activation_session_gate(owner, context, xfrm, transform):
+        fail(f"Xfrm activation session mutation did not RED: {label}")
+
+xfrm_copy_fixture = ROOT / "tests/compile_fail/prepared_xfrm_activation_token_copy.d"
+run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(xfrm_copy_fixture)],
+    cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+if run.returncode == 0 or ("not copyable" not in run.stdout and
+        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+    fail("Xfrm activation token copy was not rejected:\n" + run.stdout)
+
 # Exact Move/Rotate/Scale activation owner infrastructure. Xfrm is excluded:
 # its activation owns subtool wiring and history-run lifecycle beyond this image.
 transform_product_owner = (ROOT / "source/prepared_transform_product_activation.d").read_text()
@@ -2854,4 +3008,4 @@ if run.returncode == 0 or ("not copyable" not in run.stdout and
         not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
     fail("Inherited base-noop token copy was not rejected:\n" + run.stdout)
 
-print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures) + 5} compile-fail fixtures)")
+print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures) + 6} compile-fail fixtures)")
