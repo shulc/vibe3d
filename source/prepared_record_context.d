@@ -47,6 +47,7 @@ import prepared_array_param_update : PreparedArrayParamUpdateOwner;
 import prepared_magnet_param_update : PreparedMagnetParamUpdateOwner;
 import prepared_smooth_shift_param_update : PreparedSmoothShiftParamUpdateOwner;
 import prepared_edge_bevel_param_update : PreparedEdgeBevelParamUpdateOwner;
+import prepared_edge_extrude_param_update : PreparedEdgeExtrudeParamUpdateOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -71,7 +72,7 @@ private enum PreparedResourceKind : ubyte {
     TopologyPenUpdateState,
     MirrorDeactivateState, BridgeDeactivateState, ArrayParamUpdateState,
     MagnetParamUpdateState, SmoothShiftParamUpdateState,
-    EdgeBevelParamUpdateState
+    EdgeBevelParamUpdateState, EdgeExtrudeParamUpdateState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -109,6 +110,7 @@ private struct PreparedResourceEntry {
     PreparedMagnetParamUpdateOwner magnetParamUpdate;
     PreparedSmoothShiftParamUpdateOwner smoothShiftParamUpdate;
     PreparedEdgeBevelParamUpdateOwner edgeBevelParamUpdate;
+    PreparedEdgeExtrudeParamUpdateOwner edgeExtrudeParamUpdate;
     PreparedMirrorDeactivateOwner mirrorDeactivate;
     PreparedBridgeDeactivateOwner bridgeDeactivate;
     ClickPointResourceOwner clickDestroy;
@@ -689,6 +691,17 @@ public:
         e.kind = PreparedResourceKind.EdgeBevelParamUpdateState;
         e.edgeBevelParamUpdate = owner; resources_ ~= e; return true;
     }
+    bool prepareEdgeExtrudeParamUpdate(PreparedEdgeExtrudeParamUpdateOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected Edge Extrude parameter enlist failure");
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.EdgeExtrudeParamUpdateState;
+        e.edgeExtrudeParamUpdate = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -937,6 +950,9 @@ public:
             case PreparedResourceKind.EdgeBevelParamUpdateState:
                 ok = e.edgeBevelParamUpdate !is null &&
                     e.edgeBevelParamUpdate.validate(); break;
+            case PreparedResourceKind.EdgeExtrudeParamUpdateState:
+                ok = e.edgeExtrudeParamUpdate !is null &&
+                    e.edgeExtrudeParamUpdate.validate(); break;
             case PreparedResourceKind.MirrorDeactivateState:
                 ok = e.mirrorDeactivate !is null &&
                     e.mirrorDeactivate.validate(); break;
@@ -1155,6 +1171,10 @@ public:
             e.edgeBevelParamUpdate.install();
             version(unittest) installTrace_[installTraceLength_++] = 46;
             break;
+        case PreparedResourceKind.EdgeExtrudeParamUpdateState:
+            e.edgeExtrudeParamUpdate.install();
+            version(unittest) installTrace_[installTraceLength_++] = 47;
+            break;
         case PreparedResourceKind.MirrorDeactivateState:
             e.mirrorDeactivate.install();
             version(unittest) installTrace_[installTraceLength_++] = 40;
@@ -1232,6 +1252,8 @@ private:
             e.smoothShiftParamUpdate.abort(); break;
         case PreparedResourceKind.EdgeBevelParamUpdateState:
             e.edgeBevelParamUpdate.abort(); break;
+        case PreparedResourceKind.EdgeExtrudeParamUpdateState:
+            e.edgeExtrudeParamUpdate.abort(); break;
         case PreparedResourceKind.MirrorDeactivateState:
             e.mirrorDeactivate.abort(); break;
         case PreparedResourceKind.BridgeDeactivateState:

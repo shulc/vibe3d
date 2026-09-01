@@ -238,6 +238,7 @@ B5O_PREPARED_LEGACY = {
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "activate"),
 }
 B5P_PREPARED_LEGACY = {
+    ("tools.edit.edge_extrude", "EdgeExtrudeTool", "onParamChanged"),
     ("tools.edit.edge_bevel", "EdgeBevelTool", "onParamChanged"),
     ("tools.deform.smooth_shift_tool", "SmoothShiftTool", "onParamChanged"),
     ("tools.deform.magnet", "MagnetTool", "onParamChanged"),
@@ -309,7 +310,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "4a1b7710121d9c1785821462fcde143ea2a0d1a588283122549b956c8477fd73"
+    "ebc7a810b805d2688240e830de729840238a694fca1db4996e19c42f4a97927d"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -464,6 +465,7 @@ for path, text in prepared_source_texts.items():
             "prepared_magnet_param_update",
             "prepared_smooth_shift_param_update",
             "prepared_edge_bevel_param_update",
+            "prepared_edge_extrude_param_update",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
@@ -2198,6 +2200,69 @@ for target, old, new, label in (
         mutant[target] = mutant[target].replace(old, new, 1)
     if mutant[target] == edge_bevel_param_sources[target] or edge_bevel_param_gate(mutant):
         fail(f"Edge Bevel parameter mutation did not RED: {label}")
+
+edge_extrude_param_sources = {
+    "tool": (ROOT / "source/tools/edit/edge_extrude.d").read_text(),
+    "owner": (ROOT / "source/prepared_edge_extrude_param_update.d").read_text(),
+    "context": record_context,
+}
+def edge_extrude_param_gate(s):
+    tool, owner, context = (s[k] for k in ("tool", "owner", "context"))
+    start = tool.find("final PreparedEdgeExtrudeParamEffect prepareParamChanged(")
+    end = tool.find("override void evaluate()", start)
+    producer = tool[start:end]
+    return (all(x in tool for x in (
+                "image.expectedLive = MeshSnapshot.capture(live);",
+                "image.expectedBefore = MeshSnapshot.capture(image.candidate);",
+                "auto shadow = beginPreparedShadow(image.candidate);",
+                "ed.extrudeEdgesByMask(mask, extrude_, width_)",
+                "drainPreparedShadowDelivery(image.candidate",
+                "memcmp(&extrude, &other.extrude, float.sizeof) == 0",
+                "image.expectedLive.matches(live)",
+                "image.expectedBefore.matches(before)")) and
+            all(x in owner for x in (
+                "target.classinfo !is EdgeExtrudeTool.classinfo",
+                "!target.ownsPreparedLayer(layer)",
+                "&layer_.meshRef() !is source_",
+                "!target_.preparedParamUpdateMatches(image_, *source_)",
+                "target_.installPreparedParamUpdate(image_)")) and
+            all(x in producer for x in (
+                "uploadOwner.owns(gpu)",
+                "context.prepareStampedMeshImage(layer, owner.candidate,",
+                "context.prepareEdgeExtrudeParamUpdate(owner)",
+                "context.prepareUpload(uploadOwner, owner.candidate)",
+                "context.markNoHistoryInstall()")) and
+            producer.find("context.prepareStampedMeshImage") <
+                producer.find("context.prepareEdgeExtrudeParamUpdate(owner)") <
+                producer.find("context.prepareUpload(uploadOwner") <
+                producer.find("context.markNoHistoryInstall()") and
+            context.count("case PreparedResourceKind.EdgeExtrudeParamUpdateState:") == 3 and
+            "e.edgeExtrudeParamUpdate.install();" in context)
+if not edge_extrude_param_gate(edge_extrude_param_sources):
+    fail("Edge Extrude onParamChanged prepared contract drift")
+for target, old, new, label in (
+    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
+    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
+    ("tool", "memcmp(&extrude, &other.extrude, float.sizeof) == 0", "true", "drop float identity"),
+    ("owner", "target.classinfo !is EdgeExtrudeTool.classinfo", "false", "broaden product"),
+    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
+    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
+    ("tool", "context.prepareEdgeExtrudeParamUpdate(owner)", "true", "drop state"),
+    ("tool", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop upload"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
+    ("context", "e.edgeExtrudeParamUpdate.install();", "", "drop install"),
+):
+    mutant = dict(edge_extrude_param_sources)
+    if target == "tool":
+        text = mutant[target]
+        producer_start = text.find("final PreparedEdgeExtrudeParamEffect prepareParamChanged(")
+        start = producer_start if old in text[producer_start:] else 0
+        pos = text.find(old, start)
+        mutant[target] = text[:pos] + new + text[pos + len(old):]
+    else:
+        mutant[target] = mutant[target].replace(old, new, 1)
+    if mutant[target] == edge_extrude_param_sources[target] or edge_extrude_param_gate(mutant):
+        fail(f"Edge Extrude parameter mutation did not RED: {label}")
 
 # PrimitiveCreateTool.activate is one inherited declaration with six exact
 # products. Its closed projection preserves each leaf's resetSession law and

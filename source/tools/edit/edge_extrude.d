@@ -3,6 +3,13 @@ import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_edge_extrude_activation : PreparedEdgeExtrudeActivationOwner;
+import prepared_edge_extrude_param_update : PreparedEdgeExtrudeParamUpdateOwner;
+import prepared_tool_effect : PreparedEdgeExtrudeParamEffect,
+    PreparedEdgeExtrudeParamKind;
+import document : Layer;
+import mesh_gpu : GpuUploadOwner;
+import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
+import core.stdc.string : memcmp;
 import command_history : PreparedHistoryKind;
 import mesh : detachedPreparedMesh;
 
@@ -37,6 +44,29 @@ struct PreparedEdgeExtrudeActivationImage {
     Vec3 anchor, baseAnchor, extrudeAxis, widthAxis;
     ulong gizmoSelHash;
     void clear() nothrow @nogc { this = PreparedEdgeExtrudeActivationImage.init; }
+}
+
+struct EdgeExtrudeParamProjection {
+    bool interactive, active, built;
+    float extrude, width;
+    bool opEquals(const EdgeExtrudeParamProjection other) const nothrow @nogc {
+        return interactive == other.interactive && active == other.active &&
+            built == other.built &&
+            memcmp(&extrude, &other.extrude, float.sizeof) == 0 &&
+            memcmp(&width, &other.width, float.sizeof) == 0;
+    }
+}
+
+struct PreparedEdgeExtrudeParamImage {
+    bool valid, applies, nextBuilt;
+    EdgeExtrudeParamProjection expected;
+    MeshSnapshot expectedLive, expectedBefore;
+    Mesh candidate;
+    uint deliveryFlags, deliveryDomains;
+    void clear() nothrow @nogc {
+        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
+        candidate = Mesh.init; valid = applies = false;
+    }
 }
 
 /// The interactive tool records into `MeshSessionEdit` — a before/after
@@ -308,6 +338,67 @@ public:
     //     ToolDoApplyCommand's pre-snapshot (captured AFTER the attr writes).
     override void onParamChanged(string name) {
         if (interactiveParamEdit) rebuildPreview();
+    }
+    final bool ownsPreparedLayer(Layer layer) const {
+        return layer !is null && &layer.meshRef() is mesh;
+    }
+    private EdgeExtrudeParamProjection paramProjection() const nothrow @nogc {
+        return EdgeExtrudeParamProjection(interactiveParamEdit, active, built,
+            extrude_, width_);
+    }
+    final PreparedEdgeExtrudeParamImage buildPreparedParamUpdate(ref Mesh live) {
+        PreparedEdgeExtrudeParamImage image;
+        image.valid = true; image.expected = paramProjection();
+        image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
+        if (!before.filled) return image;
+        auto shadow = beginPreparedShadow(image.candidate);
+        before.restore(image.candidate);
+        image.expectedBefore = MeshSnapshot.capture(image.candidate);
+        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+            image.deliveryDomains);
+        image.deliveryFlags = image.deliveryDomains = 0;
+        if (!interactiveParamEdit || !active) { shadow.close(); return image; }
+        image.applies = true;
+        if (extrude_ == 0.0f && width_ == 0.0f) image.nextBuilt = false;
+        else {
+            auto mask = image.candidate.operandEdgeMask();
+            auto ed = MeshEditBatch.unrecorded(image.candidate, kExtrudeEditScope);
+            const n = ed.extrudeEdgesByMask(mask, extrude_, width_);
+            ed.close(); image.nextBuilt = (n != 0);
+        }
+        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+            image.deliveryDomains);
+        shadow.close(); return image;
+    }
+    final bool preparedParamUpdateMatches(in PreparedEdgeExtrudeParamImage image,
+            ref const Mesh live) const nothrow @nogc {
+        return image.valid && image.expected == paramProjection() &&
+            image.expectedLive.matches(live) && image.expectedBefore.matches(before);
+    }
+    final void installPreparedParamUpdate(ref PreparedEdgeExtrudeParamImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        built = image.nextBuilt; image.clear();
+    }
+    final PreparedEdgeExtrudeParamEffect prepareParamChanged(
+            PreparedRecordContext context, Layer layer,
+            GpuUploadOwner uploadOwner) {
+        if (context is null) return PreparedEdgeExtrudeParamEffect(
+            preparedToolStateOwner, PreparedEdgeExtrudeParamKind.None, false);
+        scope(failure) context.discard();
+        auto owner = PreparedEdgeExtrudeParamUpdateOwner.prepare(this, layer);
+        auto kind = owner is null ? PreparedEdgeExtrudeParamKind.None : owner.effectKind;
+        bool ok = owner !is null;
+        if (ok && owner.applies)
+            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
+                context.prepareStampedMeshImage(layer, owner.candidate,
+                    owner.deliveryFlags, owner.deliveryDomains);
+        if (ok) ok = context.prepareEdgeExtrudeParamUpdate(owner);
+        if (ok && owner.applies)
+            ok = context.prepareUpload(uploadOwner, owner.candidate);
+        if (ok) ok = context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedEdgeExtrudeParamEffect(preparedToolStateOwner, kind, ok);
     }
     override void evaluate() {}
 
@@ -841,6 +932,16 @@ private:
     }
 
 public:
+    version(unittest) final void seedPreparedParamForTest(ref Mesh live,
+            bool interactive = true) {
+        interactiveParamEdit = interactive; active = true; built = false;
+        extrude_ = 0.5f; width_ = 0.1f; before = MeshSnapshot.capture(live);
+    }
+    version(unittest) final void mutatePreparedParamForTest(float value)
+            nothrow @nogc { extrude_ = value; }
+    version(unittest) final bool preparedParamBuiltForTest() const nothrow @nogc {
+        return built;
+    }
     version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
         return preparedToolStateOwner;
     }
