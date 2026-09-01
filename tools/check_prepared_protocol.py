@@ -238,6 +238,7 @@ B5O_PREPARED_LEGACY = {
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "activate"),
 }
 B5P_PREPARED_LEGACY = {
+    ("tools.edit.reduce", "ReductionTool", "onParamChanged"),
     ("tools.edit.poly_inset_tool", "PolyInsetTool", "onParamChanged"),
     ("tools.edit.poly_extrude", "PolyExtrudeTool", "onParamChanged"),
     ("tools.edit.poly_bevel", "PolyBevelTool", "onParamChanged"),
@@ -313,7 +314,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "d9dd00de87d552d9ae1abf2fc6b9d6d76511950553dd5f2df77d3cde7d537b3d"
+    "547eb3a5e165df9376ae82e1241afd4f587e2727313cf506c34b3f4c7461a426"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -472,6 +473,7 @@ for path, text in prepared_source_texts.items():
             "prepared_poly_bevel_param_update",
             "prepared_poly_extrude_param_update",
             "prepared_poly_inset_param_update",
+            "prepared_reduction_param_update",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
@@ -2467,6 +2469,72 @@ for target, old, new, label in (
         mutant[target] = mutant[target].replace(old, new, 1)
     if mutant[target] == poly_inset_param_sources[target] or poly_inset_param_gate(mutant):
         fail(f"Poly Inset parameter mutation did not RED: {label}")
+
+reduction_param_sources = {
+    "tool": (ROOT / "source/tools/edit/reduce.d").read_text(),
+    "owner": (ROOT / "source/prepared_reduction_param_update.d").read_text(),
+    "context": record_context,
+}
+def reduction_param_gate(s):
+    tool, owner, context = (s[k] for k in ("tool", "owner", "context"))
+    start = tool.find("final PreparedReductionParamEffect prepareParamChanged(")
+    end = tool.find("override void evaluate()", start)
+    producer = tool[start:end]
+    return (tool.count("ed.reduceToTarget(target, pb_)") == 3 and
+            all(x in tool for x in (
+                "image.expectedLive = MeshSnapshot.capture(live);",
+                "image.expectedBefore = MeshSnapshot.capture(baseline);",
+                "auto shadow = beginPreparedShadow(image.candidate);",
+                "ed.reduceToTarget(target, pb_)",
+                "drainPreparedShadowDelivery(image.candidate",
+                "memcmp(&ratio, &other.ratio, float.sizeof) == 0",
+                "image.expectedLive.matches(live)",
+                "image.expectedBefore.matches(before)")) and
+            all(x in owner for x in (
+                "target.classinfo !is ReductionTool.classinfo",
+                "!target.ownsPreparedLayer(layer)",
+                "&layer_.meshRef() !is source_",
+                "!target_.preparedParamUpdateMatches(image_, *source_)",
+                "target_.installPreparedParamUpdate(image_)")) and
+            all(x in producer for x in (
+                "uploadOwner.owns(gpu)",
+                "context.prepareStampedMeshImage(layer, owner.candidate,",
+                "context.prepareReductionParamUpdate(owner)",
+                "context.prepareUpload(uploadOwner, owner.candidate)",
+                "context.markNoHistoryInstall()")) and
+            producer.find("context.prepareStampedMeshImage") <
+                producer.find("context.prepareReductionParamUpdate(owner)") <
+                producer.find("context.prepareUpload(uploadOwner") <
+                producer.find("context.markNoHistoryInstall()") and
+            context.count("case PreparedResourceKind.ReductionParamUpdateState:") == 3 and
+            "e.reductionParamUpdate.install();" in context)
+if not reduction_param_gate(reduction_param_sources):
+    fail("Reduction onParamChanged prepared contract drift")
+for target, old, new, label in (
+    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
+    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
+    ("tool", "memcmp(&ratio, &other.ratio, float.sizeof) == 0", "true", "drop float identity"),
+    ("tool", "ed.reduceToTarget(target, pb_)", "cast(size_t)0", "drop kernel"),
+    ("owner", "target.classinfo !is ReductionTool.classinfo", "false", "broaden product"),
+    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
+    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
+    ("tool", "context.prepareReductionParamUpdate(owner)", "true", "drop state"),
+    ("tool", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop upload"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
+    ("context", "e.reductionParamUpdate.install();", "", "drop install"),
+):
+    mutant = dict(reduction_param_sources)
+    if target == "tool":
+        text = mutant[target]
+        producer_start = text.find("final PreparedReductionParamEffect prepareParamChanged(")
+        build_start = text.find("final PreparedReductionParamImage buildPreparedParamUpdate")
+        start = producer_start if old in text[producer_start:] else build_start
+        pos = text.find(old, start)
+        mutant[target] = text[:pos] + new + text[pos + len(old):]
+    else:
+        mutant[target] = mutant[target].replace(old, new, 1)
+    if mutant[target] == reduction_param_sources[target] or reduction_param_gate(mutant):
+        fail(f"Reduction parameter mutation did not RED: {label}")
 
 # PrimitiveCreateTool.activate is one inherited declaration with six exact
 # products. Its closed projection preserves each leaf's resetSession law and

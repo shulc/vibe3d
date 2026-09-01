@@ -32,16 +32,6 @@
   {
     "batch": "P1.0b.3+",
     "key": {
-      "aggregate": "ReductionTool",
-      "module": "tools.edit.reduce",
-      "signature": "void(string pname)",
-      "symbol": "onParamChanged"
-    },
-    "reason": "Mesh/GpuGl preview or mixed branch requires P1.0b.3+ typed later-owner effects"
-  },
-  {
-    "batch": "P1.0b.3+",
-    "key": {
       "aggregate": "TopologyPenTool",
       "module": "tools.edit.topology_pen.tool",
       "signature": "void()",

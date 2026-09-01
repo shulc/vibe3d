@@ -60,6 +60,7 @@ enum PreparedEdgeExtrudeParamKind : ubyte { None, Noop, Preview }
 enum PreparedPolyBevelParamKind : ubyte { None, Noop, Preview }
 enum PreparedPolyExtrudeParamKind : ubyte { None, Noop, Preview }
 enum PreparedPolyInsetParamKind : ubyte { None, Noop, Preview }
+enum PreparedReductionParamKind : ubyte { None, Noop, Preview }
 enum PreparedInheritedNoopKind : ubyte { Activate, Deactivate, Update }
 
 @PreparedAggregate struct PreparedActivateEffect {
@@ -121,6 +122,11 @@ enum PreparedInheritedNoopKind : ubyte { Activate, Deactivate, Update }
 @PreparedAggregate struct PreparedSmoothShiftParamEffect {
     OwnedId owner;
     PreparedSmoothShiftParamKind kind;
+    bool accepted;
+}
+@PreparedAggregate struct PreparedReductionParamEffect {
+    OwnedId owner;
+    PreparedReductionParamKind kind;
     bool accepted;
 }
 @PreparedAggregate struct PreparedEdgeBevelParamEffect {

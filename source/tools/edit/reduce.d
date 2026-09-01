@@ -23,6 +23,35 @@ import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import command_history : PreparedHistoryKind;
+import prepared_reduction_param_update : PreparedReductionParamUpdateOwner;
+import prepared_tool_effect : PreparedReductionParamEffect,
+    PreparedReductionParamKind;
+import document : Layer;
+import mesh_gpu : GpuUploadOwner;
+import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
+import core.stdc.string : memcmp;
+
+struct ReductionParamProjection {
+    bool interactive, active, built, preserveBoundary;
+    float ratio;
+    bool opEquals(const ReductionParamProjection other) const nothrow @nogc {
+        return interactive == other.interactive && active == other.active &&
+            built == other.built && preserveBoundary == other.preserveBoundary &&
+            memcmp(&ratio, &other.ratio, float.sizeof) == 0;
+    }
+}
+
+struct PreparedReductionParamImage {
+    bool valid, applies, nextBuilt;
+    ReductionParamProjection expected;
+    MeshSnapshot expectedLive, expectedBefore;
+    Mesh candidate;
+    uint deliveryFlags, deliveryDomains;
+    void clear() nothrow @nogc {
+        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
+        candidate = Mesh.init; valid = applies = false;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // ReductionTool — interactive polygon reduction (factory id `mesh.reduceTool`).
@@ -147,6 +176,94 @@ public:
 
     override void onParamChanged(string pname) {
         if (interactiveParamEdit) rebuildPreview();
+    }
+    final bool ownsPreparedLayer(Layer layer) const {
+        return layer !is null && &layer.meshRef() is mesh;
+    }
+    private ReductionParamProjection paramProjection() const nothrow @nogc {
+        return ReductionParamProjection(interactiveParamEdit, active, built,
+            pb_, ratio_);
+    }
+    final PreparedReductionParamImage buildPreparedParamUpdate(ref Mesh live) {
+        PreparedReductionParamImage image;
+        image.valid = true; image.expected = paramProjection();
+        image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
+        if (!before.filled) return image;
+        Mesh baseline;
+        auto baselineShadow = beginPreparedShadow(baseline);
+        before.restore(baseline);
+        uint baselineFlags, baselineDomains;
+        drainPreparedShadowDelivery(baseline, baselineFlags, baselineDomains);
+        baselineShadow.close();
+        image.expectedBefore = MeshSnapshot.capture(baseline);
+        image.deliveryFlags = image.deliveryDomains = 0;
+        if (!interactiveParamEdit || !active) return image;
+        image.applies = true; image.candidate = baseline; baseline = Mesh.init;
+        auto shadow = beginPreparedShadow(image.candidate);
+        if (image.candidate.faces.length == 0) {
+            image.nextBuilt = false;
+        } else {
+            immutable size_t origFaces = image.candidate.faces.length;
+            size_t target = cast(size_t)lround(ratio_ * cast(double)origFaces);
+            if (target < 1) target = 1;
+            if (target >= origFaces) {
+                image.nextBuilt = false;
+            } else {
+                auto ed = MeshEditBatch.unrecorded(image.candidate,
+                    kReduceEditScope);
+                const n = ed.reduceToTarget(target, pb_);
+                ed.close(); image.nextBuilt = (n != 0);
+            }
+        }
+        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+            image.deliveryDomains);
+        if (image.deliveryFlags == 0) {
+            image.deliveryFlags = baselineFlags;
+            image.deliveryDomains = baselineDomains;
+        }
+        shadow.close(); return image;
+    }
+    final bool preparedParamUpdateMatches(in PreparedReductionParamImage image,
+            ref const Mesh live) const nothrow @nogc {
+        return image.valid && image.expected == paramProjection() &&
+            image.expectedLive.matches(live) &&
+            image.expectedBefore.matches(before);
+    }
+    final void installPreparedParamUpdate(ref PreparedReductionParamImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        built = image.nextBuilt; image.clear();
+    }
+    final PreparedReductionParamEffect prepareParamChanged(
+            PreparedRecordContext context, Layer layer,
+            GpuUploadOwner uploadOwner) {
+        if (context is null) return PreparedReductionParamEffect(
+            preparedToolStateOwner, PreparedReductionParamKind.None, false);
+        scope(failure) context.discard();
+        auto owner = PreparedReductionParamUpdateOwner.prepare(this, layer);
+        auto kind = owner is null ? PreparedReductionParamKind.None :
+            owner.effectKind;
+        bool ok = owner !is null;
+        if (ok && owner.applies)
+            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
+                context.prepareStampedMeshImage(layer, owner.candidate,
+                    owner.deliveryFlags, owner.deliveryDomains);
+        if (ok) ok = context.prepareReductionParamUpdate(owner);
+        if (ok && owner.applies)
+            ok = context.prepareUpload(uploadOwner, owner.candidate);
+        if (ok) ok = context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedReductionParamEffect(preparedToolStateOwner, kind, ok);
+    }
+    version(unittest) final void seedPreparedParamForTest(ref Mesh live,
+            bool interactive = true) {
+        interactiveParamEdit = interactive; active = true; built = false;
+        ratio_ = 0.5f; pb_ = true; before = MeshSnapshot.capture(live);
+    }
+    version(unittest) final void mutatePreparedParamForTest(float value)
+            nothrow @nogc { ratio_ = value; }
+    version(unittest) final bool preparedParamBuiltForTest() const nothrow @nogc {
+        return built;
     }
 
     override void evaluate() {}

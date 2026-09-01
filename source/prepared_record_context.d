@@ -51,6 +51,7 @@ import prepared_edge_extrude_param_update : PreparedEdgeExtrudeParamUpdateOwner;
 import prepared_poly_bevel_param_update : PreparedPolyBevelParamUpdateOwner;
 import prepared_poly_extrude_param_update : PreparedPolyExtrudeParamUpdateOwner;
 import prepared_poly_inset_param_update : PreparedPolyInsetParamUpdateOwner;
+import prepared_reduction_param_update : PreparedReductionParamUpdateOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -77,7 +78,7 @@ private enum PreparedResourceKind : ubyte {
     MagnetParamUpdateState, SmoothShiftParamUpdateState,
     EdgeBevelParamUpdateState, EdgeExtrudeParamUpdateState,
     PolyBevelParamUpdateState, PolyExtrudeParamUpdateState,
-    PolyInsetParamUpdateState
+    PolyInsetParamUpdateState, ReductionParamUpdateState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -119,6 +120,7 @@ private struct PreparedResourceEntry {
     PreparedPolyBevelParamUpdateOwner polyBevelParamUpdate;
     PreparedPolyExtrudeParamUpdateOwner polyExtrudeParamUpdate;
     PreparedPolyInsetParamUpdateOwner polyInsetParamUpdate;
+    PreparedReductionParamUpdateOwner reductionParamUpdate;
     PreparedMirrorDeactivateOwner mirrorDeactivate;
     PreparedBridgeDeactivateOwner bridgeDeactivate;
     ClickPointResourceOwner clickDestroy;
@@ -740,6 +742,17 @@ public:
         PreparedResourceEntry e; e.kind = PreparedResourceKind.PolyInsetParamUpdateState;
         e.polyInsetParamUpdate = owner; resources_ ~= e; return true;
     }
+    bool prepareReductionParamUpdate(PreparedReductionParamUpdateOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected Reduction parameter enlist failure");
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.ReductionParamUpdateState;
+        e.reductionParamUpdate = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -1000,6 +1013,9 @@ public:
             case PreparedResourceKind.PolyInsetParamUpdateState:
                 ok = e.polyInsetParamUpdate !is null &&
                     e.polyInsetParamUpdate.validate(); break;
+            case PreparedResourceKind.ReductionParamUpdateState:
+                ok = e.reductionParamUpdate !is null &&
+                    e.reductionParamUpdate.validate(); break;
             case PreparedResourceKind.MirrorDeactivateState:
                 ok = e.mirrorDeactivate !is null &&
                     e.mirrorDeactivate.validate(); break;
@@ -1234,6 +1250,10 @@ public:
             e.polyInsetParamUpdate.install();
             version(unittest) installTrace_[installTraceLength_++] = 50;
             break;
+        case PreparedResourceKind.ReductionParamUpdateState:
+            e.reductionParamUpdate.install();
+            version(unittest) installTrace_[installTraceLength_++] = 51;
+            break;
         case PreparedResourceKind.MirrorDeactivateState:
             e.mirrorDeactivate.install();
             version(unittest) installTrace_[installTraceLength_++] = 40;
@@ -1319,6 +1339,8 @@ private:
             e.polyExtrudeParamUpdate.abort(); break;
         case PreparedResourceKind.PolyInsetParamUpdateState:
             e.polyInsetParamUpdate.abort(); break;
+        case PreparedResourceKind.ReductionParamUpdateState:
+            e.reductionParamUpdate.abort(); break;
         case PreparedResourceKind.MirrorDeactivateState:
             e.mirrorDeactivate.abort(); break;
         case PreparedResourceKind.BridgeDeactivateState:
