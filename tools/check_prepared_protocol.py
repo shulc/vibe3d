@@ -254,6 +254,7 @@ B5P_PREPARED_LEGACY = {
     ("tools.slice.edge_slice_tool", "EdgeSliceTool", "activate"),
     ("tools.slice.loop_slice_tool", "LoopSliceTool", "activate"),
     ("tools.slice.slice_tool", "SliceTool", "activate"),
+    ("tools.edit.tack", "TackTool", "activate"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
@@ -291,7 +292,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "ec5f7f96ff56ccb9148982beb1cfb671f2431157b851e2cb30379eef1f2707e9"
+    "e49a6ac006fe3102fc6a928e1e053b299d702eda22a9b91c7103f4bde12a8a37"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -435,9 +436,11 @@ for path, text in prepared_source_texts.items():
             "prepared_edge_slice_activation",
             "prepared_loop_slice_activation",
             "prepared_slice_activation",
+            "prepared_tack_activation",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
+            "tools.edit.tack",
             "tools.alignment.radial_sweep_tool",
             "tools.alignment.radial_array_tool",
             "tools.alignment.linear_align_tool",
@@ -1638,7 +1641,8 @@ for path in (ROOT / "source/tools").rglob("*.d"):
                 "source/tools/alignment/radial_sweep_tool.d",
                 "source/tools/create/box.d",
                 "source/tools/create/pen.d",
-                "source/tools/create/primitive_create_tool.d"}:
+                "source/tools/create/primitive_create_tool.d",
+                "source/tools/edit/tack.d"}:
         fail(f"P1.0b.5c dormant owner has production caller: {path.relative_to(ROOT)}")
 
 # P1.0b.5p exact Box activation: private reset, prepared GL-name transfer,
@@ -3547,6 +3551,107 @@ for fixture in (
     if run.returncode == 0 or ("not copyable" not in run.stdout and
             not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
         fail("Slice activation token copy was not rejected:\n" + run.stdout)
+
+tack_activation_owner = (ROOT / "source/prepared_tack_activation.d").read_text()
+tack_activation_tool = (ROOT / "source/tools/edit/tack.d").read_text()
+def tack_activation_gate(owner, context, tool):
+    po = without_unittests(owner); pt = without_unittests(tool)
+    bs = pt.find("final PreparedTackActivationImage buildPreparedActivation(")
+    be = pt.find("final void installPreparedActivation(", bs)
+    ins = pt.find("final void installPreparedActivation(")
+    ine = pt.find("final PreparedSessionActivateEffect prepareActivate(", ins)
+    ps = pt.find("final PreparedSessionActivateEffect prepareActivate(")
+    pe = pt.find("final Mesh* preparedActivationMesh", ps)
+    builder = pt[bs:be] if bs >= 0 and be > bs else ""
+    installer = pt[ins:ine] if ins >= 0 and ine > ins else ""
+    producer = pt[ps:pe] if ps >= 0 and pe > ps else ""
+    return (
+        "final class PreparedTackActivationOwner" in owner and
+        owner.count("@disable this(this);") == 2 and
+        not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
+        "target.classinfo !is TackTool.classinfo" in owner and
+        "target_.preparedActivationMesh() !is source_" in owner and
+        "!image_.baseline.matches(*source_)" in owner and
+        "target_.installPreparedActivation(image_); consume();" in owner and
+        "image_.clear(); target_ = null; source_ = null;" in owner and
+        "image.sourceFace = firstSelectedFace(*source);" in builder and
+        "private static int firstSelectedFace(ref const Mesh source)" in pt and
+        "source.connectedComponentVertices(cast(uint)image.sourceFace) : [];" in builder and
+        "image.baseline = MeshSnapshot.capture(*source);" in builder and
+        not re.search(r"(?<!\.)\b(sourceFace_|islandMask_|baseSnap_|"
+                      r"hoveredTargetFace_|previewActive_)\s*=", builder) and
+        "sourceFace_ = image.sourceFace;" in installer and
+        "islandMask_ = image.islandMask; image.islandMask = null;" in installer and
+        "image.baseline.moveInto(baseSnap_);" in installer and
+        "hoveredTargetFace_ = -1; previewActive_ = false;" in installer and
+        not re.search(r"\b(params_|previewMesh_|clickedPoint_|targetNormal_|vpWorld_)\s*=", installer) and
+        "PreparedTackActivationOwner.prepare(this)" in producer and
+        "gpuOwner.replacesLikeLegacyInit()" in producer and
+        "gpuOwner.owns(&previewGpu_)" in producer and
+        "context.prepareTackActivation(stateOwner)" in producer and
+        "context.prepareCreate(gpuOwner)" in producer and
+        "context.markNoHistoryInstall()" in producer and
+        producer.find("context.prepareTackActivation(stateOwner)") <
+            producer.find("context.prepareCreate(gpuOwner)") <
+            producer.find("context.markNoHistoryInstall()") and
+        "scope(failure) context.discard();" in producer and
+        "if (!ok) context.discard();" in producer and
+        "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+        "            PreparedActivateKind.Tack, ok);" in producer and
+        "e.tackActivation.validate();" in context and
+        "e.tackActivation.install();" in context and
+        "e.tackActivation.abort();" in context)
+if not tack_activation_gate(tack_activation_owner, record_context,
+                            tack_activation_tool):
+    fail("Tack activation prepared contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is TackTool.classinfo", "false", "broaden product"),
+    ("owner", "target_.preparedActivationMesh() !is source_", "false", "drop identity"),
+    ("owner", "!image_.baseline.matches(*source_)", "false", "drop content validation"),
+    ("owner", "target_.installPreparedActivation(image_);", "", "drop install"),
+    ("tool", "image.sourceFace = firstSelectedFace(*source);", "sourceFace_ = -1; image.sourceFace = firstSelectedFace(*source);", "write live during prepare"),
+    ("tool", "image.sourceFace = firstSelectedFace(*source);", "image.sourceFace = firstSelectedFace();", "re-read provider for source face"),
+    ("tool", "source.connectedComponentVertices(cast(uint)image.sourceFace) : [];", "[];", "drop island capture"),
+    ("tool", "image.baseline = MeshSnapshot.capture(*source);", "", "drop baseline"),
+    ("tool", "sourceFace_ = image.sourceFace;", "", "drop source install"),
+    ("tool", "islandMask_ = image.islandMask; image.islandMask = null;", "islandMask_ = image.islandMask;", "retain island payload"),
+    ("tool", "image.baseline.moveInto(baseSnap_);", "", "drop baseline install"),
+    ("tool", "hoveredTargetFace_ = -1; previewActive_ = false;", "previewActive_ = false;", "drop hover reset"),
+    ("tool", "gpuOwner.replacesLikeLegacyInit()", "true", "drop legacy replace"),
+    ("tool", "gpuOwner.owns(&previewGpu_)", "true", "drop GPU identity"),
+    ("tool", "context.prepareTackActivation(stateOwner) &&\n            context.prepareCreate(gpuOwner) && context.markNoHistoryInstall()",
+     "context.prepareCreate(gpuOwner) &&\n            context.prepareTackActivation(stateOwner) && context.markNoHistoryInstall()", "reorder GPU before state"),
+    ("tool", "context.prepareTackActivation(stateOwner)", "true", "drop state enlist"),
+    ("tool", "context.prepareCreate(gpuOwner)", "true", "drop GPU enlist"),
+    ("tool", "context.prepareCreate(gpuOwner) && context.markNoHistoryInstall()",
+     "context.prepareCreate(gpuOwner) && true", "drop NoHistory seal"),
+    ("tool", "context.prepareCreate(gpuOwner) && context.markNoHistoryInstall()",
+     "context.markNoHistoryInstall() && context.prepareCreate(gpuOwner)", "reorder NoHistory before GPU"),
+    ("tool", "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+     "            PreparedActivateKind.Tack, ok);",
+     "return PreparedSessionActivateEffect(OwnedId.init,\n"
+     "            PreparedActivateKind.Tack, ok);", "forge effect owner"),
+    ("tool", "PreparedActivateKind.Tack, ok);", "PreparedActivateKind.Tack, true);", "forge acceptance"),
+    ("context", "e.tackActivation.validate();", "true;", "drop validation"),
+    ("context", "e.tackActivation.install();", "", "drop context install"),
+    ("context", "e.tackActivation.abort();", "", "drop context abort"),
+):
+    o, c, t = tack_activation_owner, record_context, tack_activation_tool
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    else: t = t.replace(old, new, 1)
+    if ((o == tack_activation_owner and c == record_context and
+         t == tack_activation_tool) or tack_activation_gate(o,c,t)):
+        fail(f"Tack activation mutation did not RED: {label}")
+for fixture in (
+    ROOT / "tests/compile_fail/prepared_tack_activation_token_copy.d",
+    ROOT / "tests/compile_fail/prepared_tack_activation_validated_token_copy.d",
+):
+    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if run.returncode == 0 or ("not copyable" not in run.stdout and
+            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+        fail("Tack activation token copy was not rejected:\n" + run.stdout)
 
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
 # detached whole-Mesh adoption with exact caller-supplied change flags, and a

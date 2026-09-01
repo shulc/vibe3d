@@ -19,7 +19,21 @@ import hover_state : g_hoveredFace;
 import eventlog : queryMouse;
 import document : primaryModelSpace;
 import prepared_record_context : PreparedRecordContext;
-import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
+    PreparedSessionActivateEffect, PreparedActivateKind;
+import prepared_tack_activation : PreparedTackActivationOwner;
+import mesh_gpu : GpuCreateOwner;
+
+struct PreparedTackActivationImage {
+    MeshSnapshot baseline;
+    bool[] islandMask;
+    int sourceFace = -1;
+    bool valid;
+    void clear() nothrow @nogc {
+        baseline = MeshSnapshot.init; islandMask = null;
+        sourceFace = -1; valid = false;
+    }
+}
 
 version (unittest) import std.conv : to;
 
@@ -236,8 +250,8 @@ struct TackParams {
 // ---------------------------------------------------------------------------
 class TackTool : Tool {
 private:
-    Mesh* delegate() meshSrc_;
-    @property Mesh* mesh() const { return meshSrc_(); }
+    Mesh* delegate() nothrow @nogc meshSrc_;
+    @property Mesh* mesh() const nothrow @nogc { return meshSrc_(); }
     GpuMesh*  gpu;
     LitShader litShader;
 
@@ -273,7 +287,8 @@ private:
     Viewport vpWorld_;
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader) {
+    this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu,
+            LitShader litShader) {
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.litShader = litShader;
@@ -297,6 +312,76 @@ public:
         hoveredTargetFace_ = -1;
         previewActive_     = false;
         previewGpu_.init();
+    }
+
+    final PreparedTackActivationImage buildPreparedActivation(out Mesh* source) {
+        PreparedTackActivationImage image;
+        source = mesh;
+        if (source is null) return image;
+        image.sourceFace = firstSelectedFace(*source);
+        image.islandMask = image.sourceFace >= 0
+            ? source.connectedComponentVertices(cast(uint)image.sourceFace) : [];
+        image.baseline = MeshSnapshot.capture(*source);
+        image.valid = true;
+        return image;
+    }
+    final void installPreparedActivation(ref PreparedTackActivationImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        sourceFace_ = image.sourceFace;
+        islandMask_ = image.islandMask; image.islandMask = null;
+        image.baseline.moveInto(baseSnap_);
+        hoveredTargetFace_ = -1; previewActive_ = false;
+        image.clear();
+    }
+    final PreparedSessionActivateEffect prepareActivate(
+            PreparedRecordContext context, GpuCreateOwner gpuOwner) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.Tack, false);
+        scope(failure) context.discard();
+        auto stateOwner = PreparedTackActivationOwner.prepare(this);
+        bool ok = stateOwner !is null && gpuOwner !is null &&
+            gpuOwner.replacesLikeLegacyInit() && gpuOwner.owns(&previewGpu_) &&
+            context.prepareTackActivation(stateOwner) &&
+            context.prepareCreate(gpuOwner) && context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.Tack, ok);
+    }
+    final Mesh* preparedActivationMesh() const nothrow @nogc { return mesh; }
+    final GpuMesh* preparedPreviewGpu() nothrow @nogc { return &previewGpu_; }
+    version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
+        return preparedToolStateOwner;
+    }
+    version(unittest) final void seedPreparedActivationForTest(bool selected) {
+        mesh.syncSelection();
+        foreach (fi; 0 .. mesh.faces.length) mesh.deselectFace(cast(int)fi);
+        if (selected) mesh.selectFace(0);
+        sourceFace_ = 5; islandMask_ = [false, true];
+        baseSnap_ = MeshSnapshot.capture(*mesh);
+        hoveredTargetFace_ = 4; previewActive_ = true;
+        params_.targetFace = 3; params_.targetPoint = Vec3(1,2,3);
+        clickedPoint_ = Vec3(4,5,6); targetNormal_ = Vec3(0,1,0);
+        vpWorld_.view[0] = 9;
+        previewGpu_.faceVao = 51; previewGpu_.faceVbo = 52;
+    }
+    version(unittest) final bool preparedActivationDirtyForTest() const {
+        return sourceFace_ == 5 && islandMask_ == [false,true] && baseSnap_.filled &&
+            hoveredTargetFace_ == 4 && previewActive_ && params_.targetFace == 3 &&
+            params_.targetPoint == Vec3(1,2,3) && clickedPoint_ == Vec3(4,5,6) &&
+            targetNormal_ == Vec3(0,1,0) && vpWorld_.view[0] == 9 &&
+            previewGpu_.faceVao == 51 && previewGpu_.faceVbo == 52;
+    }
+    version(unittest) final bool preparedActivationForTest(bool selected) const {
+        bool islandOk = selected ? sourceFace_ == 0 &&
+            islandMask_.length == mesh.vertices.length :
+            sourceFace_ == -1 && islandMask_.length == 0 && islandMask_.ptr is null;
+        if (selected) foreach (b; islandMask_) if (!b) islandOk = false;
+        return islandOk && baseSnap_.filled && baseSnap_.matches(*mesh) &&
+            hoveredTargetFace_ == -1 && !previewActive_ && params_.targetFace == 3 &&
+            params_.targetPoint == Vec3(1,2,3) && clickedPoint_ == Vec3(4,5,6) &&
+            targetNormal_ == Vec3(0,1,0) && vpWorld_.view[0] == 9 &&
+            previewGpu_.faceVao != 0 && previewGpu_.faceVao != 51;
     }
 
     override void deactivate() {
@@ -337,7 +422,10 @@ public:
     }
 
     private int firstSelectedFace() const {
-        foreach (i, b; mesh.selectedFaces)
+        return firstSelectedFace(*mesh);
+    }
+    private static int firstSelectedFace(ref const Mesh source) {
+        foreach (i, b; source.selectedFaces)
             if (b) return cast(int)i;
         return -1;
     }

@@ -232,16 +232,6 @@
   {
     "batch": "P1.0b.2+",
     "key": {
-      "aggregate": "TackTool",
-      "module": "tools.edit.tack",
-      "signature": "void()",
-      "symbol": "activate"
-    },
-    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
-  },
-  {
-    "batch": "P1.0b.2+",
-    "key": {
       "aggregate": "TopologyPenTool",
       "module": "tools.edit.topology_pen.tool",
       "signature": "void()",
