@@ -238,6 +238,7 @@ B5O_PREPARED_LEGACY = {
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "activate"),
 }
 B5P_PREPARED_LEGACY = {
+    ("tools.slice.slice_tool", "SliceTool", "deactivate"),
     ("tools.edit.vertex_extrude_tool", "VertexExtrudeTool", "onParamChanged"),
     ("tools.edit.vertex_bevel_tool", "VertexBevelTool", "onParamChanged"),
     ("tools.edit.vert_merge_tool", "VertexMergeTool", "onParamChanged"),
@@ -317,7 +318,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "74db1c270fd04a87dec3e77b4d3ae7a08dff0c1a9b83865626b246dffc2ce6ef"
+    "10dc1fa2168e53348f6bdbf15acf62b2ea6a13a1ef4c21358c2aaf531a4bac78"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -480,6 +481,7 @@ for path, text in prepared_source_texts.items():
             "prepared_vertex_merge_param_update",
             "prepared_vertex_bevel_param_update",
             "prepared_vertex_extrude_param_update",
+            "prepared_slice_deactivate",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
@@ -2475,6 +2477,87 @@ for target, old, new, label in (
         mutant[target] = mutant[target].replace(old, new, 1)
     if mutant[target] == poly_inset_param_sources[target] or poly_inset_param_gate(mutant):
         fail(f"Poly Inset parameter mutation did not RED: {label}")
+
+slice_deactivate_sources = {
+    "tool": (ROOT / "source/tools/slice/slice_tool.d").read_text(),
+    "owner": (ROOT / "source/prepared_slice_deactivate.d").read_text(),
+    "context": record_context,
+    "effect": (ROOT / "source/prepared_tool_effect.d").read_text(),
+}
+def slice_deactivate_gate(s):
+    tool, owner, context, effect = (s[k] for k in
+        ("tool", "owner", "context", "effect"))
+    start = tool.find("final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,")
+    end = tool.find("version(unittest) final void seedPreparedDeactivateForTest", start)
+    producer = tool[start:end]
+    install_start = tool.find("final void installPreparedDeactivateState(")
+    install_end = tool.find("final PreparedDeactivateEffect prepareDeactivate", install_start)
+    installer = tool[install_start:install_end]
+    return (all(x in tool for x in (
+                "image.expectedLive = MeshSnapshot.capture(live);",
+                "image.expectedBefore = before_;",
+                "armedKey_.matches(live)",
+                "image.expectedLive.matches(live)",
+                "image.expectedBefore.matches(before_)")) and
+            all(x in installer for x in (
+                "active = false", "dragPart_ = DragNone",
+                "previewLive_ = false", "haveBefore_ = false",
+                "hasLine_ = false", "ctrlAxis_ = -1",
+                "armedKey_.addr = size_t.max",
+                "armedKey_.mutVer = ulong.max")) and
+            all(x in owner for x in (
+                "target.classinfo !is SliceTool.classinfo",
+                "!target.ownsPreparedLayer(layer)",
+                "&layer_.meshRef() !is source_",
+                "!target_.preparedDeactivateStateMatches(image_, *source_)",
+                "target_.installPreparedDeactivateState(image_)")) and
+            all(x in producer for x in (
+                "context.prepare(cmd,",
+                "PreparedHistoryKind.Plain",
+                "context.prepareGestureCarrierMismatch()",
+                "context.markHistoryInstall()",
+                "context.markNoHistoryInstall()",
+                "context.prepareSliceDeactivate(stateOwner)")) and
+            producer.find("context.markHistoryInstall()") <
+                producer.find("context.prepareSliceDeactivate(stateOwner)") and
+            context.count("case PreparedResourceKind.SliceDeactivateState:") == 3 and
+            "e.sliceDeactivate.install();" in context and
+            "Mirror, Bridge, Box, Pen, Primitive, Slice," in effect)
+if not slice_deactivate_gate(slice_deactivate_sources):
+    fail("Slice deactivate prepared contract drift")
+for target, old, new, label in (
+    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
+    ("tool", "armedKey_.matches(live)", "true", "drop armed identity"),
+    ("tool", "active = false", "active = true", "drop active reset"),
+    ("tool", "previewLive_ = false", "previewLive_ = true", "drop preview reset"),
+    ("tool", "armedKey_.addr = size_t.max", "armedKey_.addr = 0", "drop key reset"),
+    ("owner", "target.classinfo !is SliceTool.classinfo", "false", "broaden product"),
+    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
+    ("tool", "context.prepare(cmd,", "context.prepare_DISABLED(cmd,", "drop history"),
+    ("tool", "context.prepareGestureCarrierMismatch()", "true", "drop carrier diagnostic"),
+    ("tool", "context.prepareSliceDeactivate(stateOwner)", "true", "drop final state"),
+    ("context", "e.sliceDeactivate.install();", "", "drop context install"),
+    ("effect", "Mirror, Bridge, Box, Pen, Primitive, Slice,",
+     "Mirror, Bridge, Box, Pen, Primitive,", "drop closed effect kind"),
+):
+    mutant = dict(slice_deactivate_sources)
+    if target == "tool":
+        text = mutant[target]
+        prepare_start = text.find("final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,")
+        install_start = text.find("final void installPreparedDeactivateState(")
+        build_start = text.find("final PreparedSliceDeactivateImage buildPreparedDeactivateState")
+        if label in ("drop history", "drop carrier diagnostic", "drop final state"):
+            start = prepare_start
+        elif label in ("drop active reset", "drop preview reset", "drop key reset"):
+            start = install_start
+        else:
+            start = build_start
+        pos = text.find(old, start)
+        mutant[target] = text[:pos] + new + text[pos + len(old):]
+    else:
+        mutant[target] = mutant[target].replace(old, new, 1)
+    if mutant[target] == slice_deactivate_sources[target] or slice_deactivate_gate(mutant):
+        fail(f"Slice deactivate mutation did not RED: {label}")
 
 vertex_extrude_param_sources = {
     "tool": (ROOT / "source/tools/edit/vertex_extrude_tool.d").read_text(),

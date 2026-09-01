@@ -83,7 +83,7 @@ version(unittest) unittest {
     import shader : LitShader;
 
     auto layer = new Layer; layer.meshRef() = makeCube();
-    auto triMask = new bool[](layer.meshRef().faces.length); triMask[] = true;
+    auto triMask = layer.meshRef().operandFaceMask();
     layer.meshRef().triangulateFacesByMask(triMask);
     GpuMesh gpu; EditMode mode = EditMode.Polygons;
     auto tool = new ReductionTool(() => &layer.meshRef(), &gpu, &mode,
@@ -116,8 +116,8 @@ version(unittest) unittest {
         noopContext.installTraceForTest() == [51,8]);
 
     auto staleLayer = new Layer; staleLayer.meshRef() = makeCube();
-    auto staleMask = new bool[](staleLayer.meshRef().faces.length);
-    staleMask[] = true; staleLayer.meshRef().triangulateFacesByMask(staleMask);
+    auto staleMask = staleLayer.meshRef().operandFaceMask();
+    staleLayer.meshRef().triangulateFacesByMask(staleMask);
     GpuMesh staleGpu;
     auto staleTool = new ReductionTool(() => &staleLayer.meshRef(), &staleGpu,
         &mode, LitShader.init);
@@ -130,8 +130,8 @@ version(unittest) unittest {
     assert(!staleContext.validate() && staleLayer.meshRef().faces.length == 12);
 
     auto wrongLayer = new Layer; wrongLayer.meshRef() = makeCube();
-    auto wrongMask = new bool[](wrongLayer.meshRef().faces.length);
-    wrongMask[] = true; wrongLayer.meshRef().triangulateFacesByMask(wrongMask);
+    auto wrongMask = wrongLayer.meshRef().operandFaceMask();
+    wrongLayer.meshRef().triangulateFacesByMask(wrongMask);
     auto wrongTool = new ReductionTool(() => &wrongLayer.meshRef(), &staleGpu,
         &mode, LitShader.init);
     wrongTool.seedPreparedParamForTest(wrongLayer.meshRef());

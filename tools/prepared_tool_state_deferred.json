@@ -84,16 +84,6 @@
     "key": {
       "aggregate": "SliceTool",
       "module": "tools.slice.slice_tool",
-      "signature": "void()",
-      "symbol": "deactivate"
-    },
-    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
-  },
-  {
-    "batch": "P1.0b.3+",
-    "key": {
-      "aggregate": "SliceTool",
-      "module": "tools.slice.slice_tool",
       "signature": "void(string pname)",
       "symbol": "onParamChanged"
     },

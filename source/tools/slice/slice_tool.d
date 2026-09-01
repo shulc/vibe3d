@@ -30,6 +30,11 @@ import tools.transform.move : chooseConstraintAxis;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_slice_activation : PreparedSliceActivationOwner;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import prepared_slice_deactivate : PreparedSliceDeactivateOwner;
+import command_history : PreparedHistoryKind;
+import document : Layer;
+import mesh_edit_delta : MeshEditScope;
 
 struct PreparedSliceActivationImage {
     MeshSnapshot before;
@@ -39,6 +44,21 @@ struct PreparedSliceActivationImage {
     void clear() nothrow @nogc {
         before = MeshSnapshot.init; armedKey = MeshCacheKey.init;
         restrictFaces = null; valid = false;
+    }
+}
+
+struct PreparedSliceDeactivateImage {
+    bool valid, expectedActive, expectedPreviewLive, expectedHaveBefore;
+    int expectedDragPart, expectedCtrlAxis;
+    bool expectedHaveRaw, expectedSnapTempInvert, expectedHaveFrozen;
+    bool expectedPendingAxisClassify, expectedHasLine, expectedDrawGesture;
+    bool expectedCtrlPending, expectedGapDrag;
+    size_t expectedArmedAddr; ulong expectedArmedMutVer;
+    MeshSnapshot expectedLive, expectedBefore;
+    bool commitEligible;
+    void clear() nothrow @nogc {
+        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
+        valid = commitEligible = false;
     }
 }
 
@@ -1151,6 +1171,111 @@ public:
         active = false;
         dropPreview();
     }
+
+    final bool ownsPreparedLayer(Layer layer) const {
+        return layer !is null && &layer.meshRef() is mesh;
+    }
+    final PreparedSliceDeactivateImage buildPreparedDeactivateState(
+            ref Mesh live) {
+        PreparedSliceDeactivateImage image;
+        image.valid = true; image.expectedActive = active;
+        image.expectedPreviewLive = previewLive_;
+        image.expectedHaveBefore = haveBefore_;
+        image.expectedDragPart = dragPart_; image.expectedCtrlAxis = ctrlAxis_;
+        image.expectedHaveRaw = haveRaw_;
+        image.expectedSnapTempInvert = snapTempInvert_;
+        image.expectedHaveFrozen = haveFrozen_;
+        image.expectedPendingAxisClassify = pendingAxisClassify_;
+        image.expectedHasLine = hasLine_;
+        image.expectedDrawGesture = drawGesture_;
+        image.expectedCtrlPending = ctrlPending_;
+        image.expectedGapDrag = gapDrag_;
+        image.expectedArmedAddr = armedKey_.addr;
+        image.expectedArmedMutVer = armedKey_.mutVer;
+        image.expectedLive = MeshSnapshot.capture(live);
+        image.expectedBefore = before_;
+        image.commitEligible = active && previewLive_ && haveBefore_ &&
+            before_.filled && armedKey_.matches(live);
+        return image;
+    }
+    final bool preparedDeactivateStateMatches(
+            in PreparedSliceDeactivateImage image, ref const Mesh live) const
+            nothrow @nogc {
+        return image.valid && active == image.expectedActive &&
+            previewLive_ == image.expectedPreviewLive &&
+            haveBefore_ == image.expectedHaveBefore &&
+            dragPart_ == image.expectedDragPart && ctrlAxis_ == image.expectedCtrlAxis &&
+            haveRaw_ == image.expectedHaveRaw &&
+            snapTempInvert_ == image.expectedSnapTempInvert &&
+            haveFrozen_ == image.expectedHaveFrozen &&
+            pendingAxisClassify_ == image.expectedPendingAxisClassify &&
+            hasLine_ == image.expectedHasLine &&
+            drawGesture_ == image.expectedDrawGesture &&
+            ctrlPending_ == image.expectedCtrlPending &&
+            gapDrag_ == image.expectedGapDrag &&
+            armedKey_.addr == image.expectedArmedAddr &&
+            armedKey_.mutVer == image.expectedArmedMutVer &&
+            image.expectedLive.matches(live) &&
+            image.expectedBefore.matches(before_);
+    }
+    final void installPreparedDeactivateState(
+            ref PreparedSliceDeactivateImage image) nothrow @nogc {
+        if (!image.valid) return;
+        active = false; dragPart_ = DragNone; previewLive_ = false;
+        haveBefore_ = false; haveRaw_ = false; snapTempInvert_ = false;
+        haveFrozen_ = false; pendingAxisClassify_ = false;
+        hasLine_ = false; drawGesture_ = false; ctrlPending_ = false;
+        ctrlAxis_ = -1; gapDrag_ = false;
+        armedKey_.addr = size_t.max; armedKey_.mutVer = ulong.max;
+        image.clear();
+    }
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,
+            Layer layer) {
+        if (context is null) return PreparedDeactivateEffect(
+            preparedToolStateOwner, PreparedDeactivateKind.Slice, false, false);
+        scope(failure) context.discard();
+        auto stateOwner = PreparedSliceDeactivateOwner.prepare(this, layer);
+        bool ok = stateOwner !is null;
+        bool historyPrepared;
+        if (ok && stateOwner.commitEligible && history !is null &&
+                gestureFactory !is null) {
+            auto cmd = cast(MeshSessionEdit)gestureFactory();
+            if (cmd !is null) {
+                cmd.setSnapshots(before_, MeshSnapshot.capture(layer.meshRef()),
+                    "Slice");
+                historyPrepared = context.prepare(cmd,
+                    PreparedHistoryKind.Plain).accepted;
+                ok = historyPrepared;
+            } else ok = context.prepareGestureCarrierMismatch();
+        }
+        if (ok) ok = historyPrepared ? context.markHistoryInstall()
+                                     : context.markNoHistoryInstall();
+        if (ok) ok = context.prepareSliceDeactivate(stateOwner);
+        if (!ok) context.discard();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.Slice, historyPrepared, ok);
+    }
+
+    version(unittest) final void seedPreparedDeactivateForTest(ref Mesh live) {
+        active = true; previewLive_ = true; haveBefore_ = true;
+        before_ = MeshSnapshot.capture(live);
+        live.vertices[0].x += 0.25f;
+        live.commitChange(MeshEditScope.Position);
+        armedKey_.stamp(live); dragPart_ = DragRotate; haveRaw_ = true;
+        snapTempInvert_ = haveFrozen_ = pendingAxisClassify_ = true;
+        hasLine_ = drawGesture_ = ctrlPending_ = gapDrag_ = true;
+        ctrlAxis_ = 2;
+    }
+    version(unittest) final bool preparedDeactivateInstalledForTest() const
+            nothrow @nogc {
+        return !active && dragPart_ == DragNone && !previewLive_ &&
+            !haveBefore_ && !haveRaw_ && !snapTempInvert_ && !haveFrozen_ &&
+            !pendingAxisClassify_ && !hasLine_ && !drawGesture_ &&
+            !ctrlPending_ && ctrlAxis_ == -1 && !gapDrag_ &&
+            armedKey_.addr == size_t.max && armedKey_.mutVer == ulong.max;
+    }
+    version(unittest) final void mutatePreparedDeactivateForTest()
+            nothrow @nogc { gapDrag_ = false; }
 
     // Clear per-session preview/drag state WITHOUT touching the mesh or
     // history — the safe teardown for a mesh swapped out from under us.
