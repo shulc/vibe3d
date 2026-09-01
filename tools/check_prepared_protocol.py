@@ -1152,7 +1152,8 @@ upload_contracts = (
     "void installPreparedUpload(ref ValidatedGpuUploadToken token) nothrow @nogc",
     "requiredThread != threadIdentity",
     "requiredContext != contextIdentity",
-    "target.uploadVersion != baseUploadVersion",
+    "private bool sameGpuUploadVersion(const(GpuMesh)* target, ulong expected)",
+    "return target !is null && target.uploadVersion == expected;",
     "peekGpuMeshNames(*target) != baseNames",
     "next.buildUploadCpu(mesh, vpos, edgeOrigin, vertOrigin, faceOrigin)",
     "installUploadState(*target, prepared)",
@@ -1170,7 +1171,7 @@ for path in (ROOT / "source").rglob("*.d"):
 def upload_owner_gate(text):
     return all(contract in text for contract in upload_contracts)
 for old, new, label in (
-    ("target.uploadVersion != baseUploadVersion", "false", "version identity"),
+    ("return target !is null && target.uploadVersion == expected;", "return true;", "version identity"),
     ("peekGpuMeshNames(*target) != baseNames", "false", "GL-name identity"),
     ("next.buildUploadCpu(mesh, vpos, edgeOrigin, vertOrigin, faceOrigin)",
      "next.buildUploadCpu(mesh, mesh.vertices, edgeOrigin, vertOrigin, faceOrigin)",
@@ -1904,5 +1905,67 @@ for old, new, label in (
     mutant = b5i_tool.replace(old, new, 1)
     if mutant == b5i_tool or b5i_gate(mutant):
         fail(f"P1.0b.5i named mutation did not RED: {label}")
+
+# Dormant combined first-upload owner. It is the only admissible bridge from
+# an empty target to a fully uploaded target: names and CPU payload share one
+# owner/generation and one context entry, with no create-only install state.
+def combined_upload_gate(gpu, context):
+    start = gpu.find("final class GpuCreateUploadOwner")
+    block = gpu[start:] if start >= 0 else ""
+    return (start >= 0 and
+            "struct PreparedGpuCreateUploadToken" in gpu and
+            "struct ValidatedGpuCreateUploadToken" in gpu and
+            gpu.count("@disable this(this);") >= 6 and
+            "GpuMeshNames created;" in block and "GpuMesh prepared;" in block and
+            "private bool isDefaultEmptyGpuMesh(ref GpuMesh gpu)" in gpu and
+            block.count("isDefaultEmptyGpuMesh(*target)") == 2 and
+            "setNames(next, created);" in block and
+            "next.buildUploadCpu(mesh, vpos, null, null, null);" in block and
+            "scope(failure) cleanupPrepared();" in block and
+            "(threadIdentity ^ requiredThread) != 0" in block and
+            "(contextIdentity ^ requiredContext) != 0" in block and
+            "enlistedPrepared.generation != generation" in block and
+            "enlistedValidated.generation != generation" in block and
+            "!sameGpuUploadVersion(target, baseUploadVersion)" in block and
+            block.count("prepared.submitUploadGl();") == 2 and
+            "g_fc.upload(uploadedVertexCount);" in block and
+            "fakeUsedNames[fakeCallLength++] = used[i];" in block and
+            block.find("prepared.submitUploadGl();") <
+                block.find("setNames(*target, created);") <
+                block.find("installUploadState(target[0], prepared);") and
+            "void installEnlisted() nothrow @nogc" in block and
+            "void abortEnlisted() nothrow @nogc" in block and
+            "bool prepareCreateUpload(GpuCreateUploadOwner owner, ref const Mesh mesh)" in context and
+            "e.gpuCreateUpload.validateEnlisted(resourceThread_, resourceContext_)" in context and
+            "e.gpuCreateUpload.installEnlisted();" in context and
+            "e.gpuCreateUpload.abortEnlisted();" in context)
+if not combined_upload_gate(mesh_gpu, record_context):
+    fail("combined GPU create-upload owner contract drift")
+for target, old, new, label in (
+    ("gpu", "setNames(next, created);", "", "build payload against zero names"),
+    ("gpu", "!isDefaultEmptyGpuMesh(*target)", "false", "admit dirty target projection"),
+    ("gpu", "scope(failure) cleanupPrepared();", "", "leak names on prepare throw"),
+    ("gpu", "(threadIdentity ^ requiredThread) != 0", "false", "drop thread identity"),
+    ("gpu", "enlistedValidated.generation != generation", "false", "drop validated generation"),
+    ("gpu", "!sameGpuUploadVersion(target, baseUploadVersion)", "false", "drop target generation"),
+    ("gpu", "prepared.submitUploadGl();", "", "drop first upload submission"),
+    ("gpu", "g_fc.upload(uploadedVertexCount);", "", "drop upload work counter"),
+    ("gpu", "setNames(*target, created);", "", "drop atomic header transfer"),
+    ("gpu", "setNames(*target, created);\n        installUploadState(target[0], prepared);",
+     "installUploadState(target[0], prepared);\n        setNames(*target, created);",
+     "reorder payload before header transfer"),
+    ("context", "e.gpuCreateUpload.abortEnlisted();", "", "drop context abort"),
+):
+    gpu, context = mesh_gpu, record_context
+    if target == "gpu":
+        pos = gpu.find(old, gpu.find("final class GpuCreateUploadOwner"))
+        if pos >= 0: gpu = gpu[:pos] + new + gpu[pos + len(old):]
+    else: context = context.replace(old, new, 1)
+    if (target == "gpu" and pos < 0) or combined_upload_gate(gpu, context):
+        fail(f"combined GPU create-upload mutation did not RED: {label}")
+for path in (ROOT / "source").rglob("*.d"):
+    if path.name in ("mesh_gpu.d", "prepared_record_context.d"): continue
+    if ".prepareCreateUpload(" in without_unittests(path.read_text()):
+        fail("combined GPU create-upload gained a pre-cutover caller")
 
 print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures)} compile-fail fixtures)")

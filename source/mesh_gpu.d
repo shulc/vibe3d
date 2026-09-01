@@ -1922,8 +1922,8 @@ public:
             if (backend == Backend.fake) {
                 deleteFakeCreated(); ++fakeCleanupCount_;
             }
-            else deleteGpuMeshNames(created);
-        } else deleteGpuMeshNames(created);
+            else { deleteGpuMeshNames(created); }
+        } else { deleteGpuMeshNames(created); }
         pending = validated = false;
     }
 }
@@ -2213,6 +2213,28 @@ private GpuMesh cloneUploadState(ref GpuMesh src) {
     return dst;
 }
 
+// recorded remainder (1906 §3.6): uploadVersion owns the detached GpuMesh
+// CPU-image generation; no Mesh change class proves this target was not
+// uploaded again after preparation.
+private bool sameGpuUploadVersion(const(GpuMesh)* target, ulong expected)
+        nothrow @nogc {
+    return target !is null && target.uploadVersion == expected;
+}
+
+private bool isDefaultEmptyGpuMesh(ref GpuMesh gpu) nothrow @nogc {
+    return peekGpuMeshNames(gpu) == GpuMeshNames.init &&
+        gpu.faceVertCount == 0 && gpu.edgeVertCount == 0 && gpu.vertCount == 0 &&
+        gpu.faceTriStart.length == 0 && gpu.faceTriCount.length == 0 &&
+        !gpu.suppressCageUpload && gpu.edgeOriginGpu.length == 0 &&
+        gpu.faceOriginGpu.length == 0 && gpu.vertOriginGpu.length == 0 &&
+        gpu.faceCornerVert.length == 0 && gpu.weightStampMesh is null &&
+        gpu.weightStampName.length == 0 && !gpu.weightStampValid &&
+        sameGpuUploadVersion(&gpu, 0) && gpu.scratchFaceData.length == 0 &&
+        gpu.scratchFaceIdData.length == 0 && gpu.scratchMatIdData.length == 0 &&
+        gpu.scratchWeightColor.length == 0 && gpu.scratchEdgeData.length == 0 &&
+        gpu.scratchVertData.length == 0;
+}
+
 private void installUploadState(ref GpuMesh dst, ref GpuMesh src) nothrow @nogc {
     dst.faceVertCount = src.faceVertCount;
     dst.edgeVertCount = src.edgeVertCount;
@@ -2327,7 +2349,7 @@ public:
             token.ownerId != ownerId || token.generation != generation ||
             requiredThread != threadIdentity ||
             requiredContext != contextIdentity ||
-            target.uploadVersion != baseUploadVersion ||
+            !sameGpuUploadVersion(target, baseUploadVersion) ||
             peekGpuMeshNames(*target) != baseNames) return false;
         validated = true;
         result.ownerId = token.ownerId;
@@ -2395,6 +2417,230 @@ public:
         GpuMesh empty; prepared = empty;
         pending = false; validated = false;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Prepared combined GL create + first upload owner (dormant infrastructure)
+// ---------------------------------------------------------------------------
+
+private shared ulong nextGpuCreateUploadOwnerId;
+struct PreparedGpuCreateUploadToken {
+    @disable this(this);
+private: ulong ownerId, generation;
+}
+struct ValidatedGpuCreateUploadToken {
+    @disable this(this);
+private: ulong ownerId, generation;
+}
+
+/// One closed transaction for an empty GpuMesh's first upload. Preparation
+/// owns both the newly generated names and the detached CPU upload image;
+/// install submits through those off-target names and publishes the complete
+/// header only after submission. There is no observable create-only state.
+final class GpuCreateUploadOwner {
+private:
+    enum Backend : ubyte { openGl, fake }
+    GpuMesh* target;
+    immutable ulong ownerId;
+    ulong generation, requiredThread, requiredContext, baseUploadVersion;
+    GpuMeshNames created;
+    GpuMesh prepared;
+    long uploadedVertexCount;
+    bool pending, validated, consumed;
+    PreparedGpuCreateUploadToken enlistedPrepared;
+    ValidatedGpuCreateUploadToken enlistedValidated;
+    Backend backend;
+    version(unittest) {
+        GLuint nextFake = 301;
+        GLuint[32] fakeCreated, fakeDeleted;
+        size_t fakeCreatedLength, fakeDeletedLength;
+        uint[16] fakeCalls;
+        GLuint[16] fakeUsedNames;
+        size_t fakeCallLength;
+        bool failAfterBuild;
+    }
+public:
+    this(GpuMesh* target, ulong threadIdentity, ulong contextIdentity) {
+        this.target = target; requiredThread = threadIdentity;
+        requiredContext = contextIdentity;
+        ownerId = atomicOp!"+="(nextGpuCreateUploadOwnerId, 1UL);
+    }
+    version(unittest) static GpuCreateUploadOwner fakeForTest(GpuMesh* target) {
+        auto result = new GpuCreateUploadOwner(target, 7, 11);
+        result.backend = Backend.fake; return result;
+    }
+    version(unittest) void failAfterBuildForTest() nothrow @nogc { failAfterBuild = true; }
+    version(unittest) const(GLuint)[] fakeCreatedForTest() const nothrow @nogc {
+        return fakeCreated[0 .. fakeCreatedLength];
+    }
+    version(unittest) const(GLuint)[] fakeDeletedForTest() const nothrow @nogc {
+        return fakeDeleted[0 .. fakeDeletedLength];
+    }
+    version(unittest) const(uint)[] fakeCallsForTest() const nothrow @nogc {
+        return fakeCalls[0 .. fakeCallLength];
+    }
+    version(unittest) const(GLuint)[] fakeUsedNamesForTest() const nothrow @nogc {
+        return fakeUsedNames[0 .. fakeCallLength];
+    }
+    bool owns(GpuMesh* candidate) const nothrow @nogc { return target is candidate; }
+
+    bool beginEnlisted(ref const Mesh mesh) {
+        if (pending || consumed || target is null || !isDefaultEmptyGpuMesh(*target))
+            return false;
+        baseUploadVersion = target.uploadVersion;
+        scope(failure) cleanupPrepared();
+        version(unittest) {
+            if (backend == Backend.fake) {
+                GLuint next() nothrow @nogc { return nextFake++; }
+                created = GpuMeshNames(next(), next(), next(), next(), next(), next(),
+                    next(), next(), next());
+                recordCreated();
+            } else createNames();
+        } else createNames();
+        auto next = cloneUploadState(*target);
+        setNames(next, created);
+        import morph_target : displayVertices;
+        auto dv = displayVertices(&mesh);
+        const(Vec3)[] vpos = dv.length == mesh.vertices.length ? dv : mesh.vertices;
+        next.uploadVersion = baseUploadVersion + 1;
+        next.buildUploadCpu(mesh, vpos, null, null, null);
+        version(unittest) if (failAfterBuild) {
+            failAfterBuild = false;
+            throw new Exception("injected combined create-upload build failure");
+        }
+        prepared = next; uploadedVertexCount = cast(long)mesh.vertices.length;
+        ++generation; pending = true; validated = false;
+        enlistedPrepared.ownerId = ownerId;
+        enlistedPrepared.generation = generation; return true;
+    }
+    bool validateEnlisted(ulong threadIdentity, ulong contextIdentity) nothrow @nogc {
+        if (!pending || validated || target is null ||
+            enlistedPrepared.ownerId != ownerId ||
+            enlistedPrepared.generation != generation ||
+            (threadIdentity ^ requiredThread) != 0 ||
+            (contextIdentity ^ requiredContext) != 0 ||
+            !sameGpuUploadVersion(target, baseUploadVersion) ||
+            !isDefaultEmptyGpuMesh(*target)) return false;
+        validated = true; enlistedValidated.ownerId = ownerId;
+        enlistedValidated.generation = generation;
+        enlistedPrepared.ownerId = enlistedPrepared.generation = 0; return true;
+    }
+    void installEnlisted() nothrow @nogc {
+        if (!pending || !validated || target is null ||
+            enlistedValidated.ownerId != ownerId ||
+            enlistedValidated.generation != generation) return;
+        g_fc.upload(uploadedVertexCount);
+        version(unittest) {
+            if (backend == Backend.fake) {
+                immutable GLuint[7] used = [created.faceVao, created.faceIdVbo,
+                    created.matIdVbo, created.edgeVao, created.vertVao,
+                    created.faceVao, 0];
+                foreach (i; 0 .. 7) {
+                    fakeCalls[fakeCallLength] = cast(uint)(i + 1);
+                    fakeUsedNames[fakeCallLength++] = used[i];
+                }
+            }
+            else prepared.submitUploadGl();
+        } else prepared.submitUploadGl();
+        setNames(*target, created);
+        installUploadState(target[0], prepared);
+        created = GpuMeshNames.init;
+        pending = validated = false; consumed = true;
+        enlistedValidated.ownerId = enlistedValidated.generation = 0;
+    }
+    void abortEnlisted() nothrow @nogc { if (pending) cleanupPrepared(); }
+private:
+    static void setNames(ref GpuMesh gpu, GpuMeshNames names) nothrow @nogc {
+        gpu.faceVao=names.faceVao; gpu.faceVbo=names.faceVbo;
+        gpu.edgeVao=names.edgeVao; gpu.edgeVbo=names.edgeVbo;
+        gpu.vertVao=names.vertVao; gpu.vertVbo=names.vertVbo;
+        gpu.faceIdVbo=names.faceIdVbo; gpu.matIdVbo=names.matIdVbo;
+        gpu.weightColorVbo=names.weightColorVbo;
+    }
+    void createNames() nothrow @nogc {
+        glGenVertexArrays(1,&created.faceVao); glGenBuffers(1,&created.faceVbo);
+        glGenVertexArrays(1,&created.edgeVao); glGenBuffers(1,&created.edgeVbo);
+        glGenVertexArrays(1,&created.vertVao); glGenBuffers(1,&created.vertVbo);
+        glGenBuffers(1,&created.faceIdVbo); glGenBuffers(1,&created.matIdVbo);
+        glGenBuffers(1,&created.weightColorVbo);
+    }
+    version(unittest) void recordCreated() nothrow @nogc {
+        foreach (name; [created.faceVao,created.faceVbo,created.edgeVao,
+                created.edgeVbo,created.vertVao,created.vertVbo,
+                created.faceIdVbo,created.matIdVbo,created.weightColorVbo])
+            fakeCreated[fakeCreatedLength++] = name;
+    }
+    void cleanupPrepared() nothrow @nogc {
+        version(unittest) {
+            if (backend == Backend.fake) foreach (name; [created.faceVao,
+                    created.faceVbo,created.edgeVao,created.edgeVbo,created.vertVao,
+                    created.vertVbo,created.faceIdVbo,created.matIdVbo,
+                    created.weightColorVbo]) fakeDeleted[fakeDeletedLength++] = name;
+            else deleteGpuMeshNames(created);
+        } else deleteGpuMeshNames(created);
+        created = GpuMeshNames.init; GpuMesh empty; prepared = empty;
+        pending = validated = false; consumed = true;
+        enlistedPrepared.ownerId = enlistedPrepared.generation = 0;
+        enlistedValidated.ownerId = enlistedValidated.generation = 0;
+    }
+}
+
+version(unittest) unittest {
+    static assert(!__traits(compiles, {
+        PreparedGpuCreateUploadToken a; auto b = a;
+    }));
+    static assert(!__traits(compiles, {
+        ValidatedGpuCreateUploadToken a; auto b = a;
+    }));
+    Mesh source = makeCube(); GpuMesh target;
+    GpuMesh namesDirty; namesDirty.faceVao = 77;
+    auto namesRefused = GpuCreateUploadOwner.fakeForTest(&namesDirty);
+    assert(!namesRefused.beginEnlisted(source) && namesDirty.faceVao == 77);
+    GpuMesh suppressDirty; suppressDirty.suppressCageUpload = true;
+    auto suppressRefused = GpuCreateUploadOwner.fakeForTest(&suppressDirty);
+    assert(!suppressRefused.beginEnlisted(source) &&
+        suppressDirty.suppressCageUpload && suppressDirty.faceVao == 0);
+    GpuMesh projectionDirty; projectionDirty.faceVertCount = 4;
+    auto projectionRefused = GpuCreateUploadOwner.fakeForTest(&projectionDirty);
+    assert(!projectionRefused.beginEnlisted(source) && projectionDirty.faceVertCount == 4);
+    auto failed = GpuCreateUploadOwner.fakeForTest(&target);
+    failed.failAfterBuildForTest(); bool threw;
+    try failed.beginEnlisted(source); catch (Exception) threw = true;
+    assert(threw && target.faceVao == 0 &&
+        failed.fakeCreatedForTest() == failed.fakeDeletedForTest());
+    auto owner = GpuCreateUploadOwner.fakeForTest(&target);
+    assert(owner.beginEnlisted(source)); source.vertices.length = 0;
+    GpuMesh other;
+    assert(owner.owns(&target) && !owner.owns(&other));
+    assert(target.faceVao == 0 && !owner.validateEnlisted(8,11) &&
+        !owner.validateEnlisted(7,12));
+    owner.abortEnlisted();
+    assert(!owner.beginEnlisted(source));
+    auto retry = GpuCreateUploadOwner.fakeForTest(&target);
+    source = makeCube(); assert(retry.beginEnlisted(source));
+    auto uploadsBefore = g_fc.uploadCallsForTest();
+    assert(retry.validateEnlisted(7,11)); retry.installEnlisted();
+    assert(target.faceVao == 301 && target.weightColorVbo == 309);
+    assert(target.uploadVersion == 1 && target.faceVertCount == 36 &&
+        target.edgeVertCount == 24 && target.vertCount == 8);
+    assert(target.faceTriStart.length == 6 && target.faceTriCount.length == 6 &&
+        target.faceCornerVert.length == 36);
+    assert(target.edgeOriginGpu.length == 0 && target.faceOriginGpu.length == 0 &&
+        target.vertOriginGpu.length == 8 && target.vertOriginGpu[7] == 7);
+    assert(target.weightStampMesh is null && target.weightStampName.length == 0 &&
+        !target.weightStampValid);
+    assert(!target.suppressCageUpload);
+    assert(target.scratchFaceData.length == 216 &&
+        target.scratchFaceIdData.length == 36 && target.scratchMatIdData.length == 36 &&
+        target.scratchWeightColor.length == 0 && target.scratchEdgeData.length == 72 &&
+        target.scratchVertData.length == 24);
+    assert(retry.fakeCallsForTest() == [1,2,3,4,5,6,7] &&
+        retry.fakeUsedNamesForTest() == [301,307,308,303,305,301,0] &&
+        g_fc.uploadCallsForTest() == uploadsBefore + 1);
+    retry.installEnlisted();
+    assert(retry.fakeCallsForTest() == [1,2,3,4,5,6,7] &&
+        g_fc.uploadCallsForTest() == uploadsBefore + 1 &&
+        !retry.beginEnlisted(source));
 }
 
 version (unittest) unittest {

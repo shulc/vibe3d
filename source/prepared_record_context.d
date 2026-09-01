@@ -8,7 +8,8 @@ import command_history : CommandHistory, PreparedHistoryKind,
                          ValidatedPreparedHistoryToken;
 import record_observer_hub : RecordObserverHub;
 import mesh : Mesh;
-import mesh_gpu : GpuResourceOwner, GpuUploadOwner, GpuCreateOwner;
+import mesh_gpu : GpuResourceOwner, GpuUploadOwner, GpuCreateOwner,
+                  GpuCreateUploadOwner;
 import handler : ClickPointResourceOwner;
 import snap_render : SnapOverlayOwner;
 import prepared_private_state : PreparedPrivateStateOwner, PreparedPrivateStateKind;
@@ -22,13 +23,15 @@ private enum PreparedResourceKind : ubyte {
     HistoryInstall, NoHistoryInstall, MeshInstall, DeliveryInstall, GpuMeshDestroy, GpuUpload, ClickPointDestroy
     , GpuCreate, SnapOverlayClear, BoxState, PenState, PrimitiveState, VertexState,
     ArraySessionState, CloneSessionState, MagnetSessionState, ReductionSessionState,
-    RadialSweepProfileState, RadialSweepTransitionState, GestureCarrierMismatch
+    RadialSweepProfileState, RadialSweepTransitionState, GestureCarrierMismatch,
+    GpuCreateUpload
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
     GpuResourceOwner gpuDestroy;
     GpuUploadOwner gpuUpload;
     GpuCreateOwner gpuCreate;
+    GpuCreateUploadOwner gpuCreateUpload;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -145,6 +148,17 @@ public:
             throw new Exception("injected GPU create enlist failure");
         PreparedResourceEntry e; e.kind = PreparedResourceKind.GpuCreate;
         e.gpuCreate = owner; resources_ ~= e; return true;
+    }
+
+    bool prepareCreateUpload(GpuCreateUploadOwner owner, ref const Mesh mesh) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.beginEnlisted(mesh)) return false;
+        scope(failure) { if (owner !is null) owner.abortEnlisted(); }
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected combined create-upload enlist failure");
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.GpuCreateUpload;
+        e.gpuCreateUpload = owner; resources_ ~= e; return true;
     }
 
     bool prepareSnapClear(SnapOverlayOwner owner) {
@@ -332,6 +346,9 @@ public:
             case PreparedResourceKind.RadialSweepTransitionState:
                 ok = e.radialSweepTransition !is null && e.radialSweepTransition.validate(); break;
             case PreparedResourceKind.GestureCarrierMismatch: ok = true; break;
+            case PreparedResourceKind.GpuCreateUpload:
+                ok = e.gpuCreateUpload !is null &&
+                    e.gpuCreateUpload.validateEnlisted(resourceThread_, resourceContext_); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -407,6 +424,10 @@ public:
             ++changeBus.gestureCarrierMismatch;
             version (unittest) installTrace_[installTraceLength_++] = 11;
             break;
+        case PreparedResourceKind.GpuCreateUpload:
+            e.gpuCreateUpload.installEnlisted();
+            version(unittest) installTrace_[installTraceLength_++] = 12;
+            break;
         }
         if (!installedHistory) history_.installPreparedToken(validated_);
         resources_.length = 0;
@@ -446,6 +467,7 @@ private:
         case PreparedResourceKind.RadialSweepProfileState: e.selectionProfile.abort(); break;
         case PreparedResourceKind.RadialSweepTransitionState: e.radialSweepTransition.abort(); break;
         case PreparedResourceKind.GestureCarrierMismatch: break;
+        case PreparedResourceKind.GpuCreateUpload: e.gpuCreateUpload.abortEnlisted(); break;
         }
         resources_.length = 0;
         historyMarker_ = false;
@@ -657,4 +679,54 @@ version (unittest) unittest {
                                                 MeshEditScope.Geometry));
     topologyRetry.discard();
     assert(topologyFaultLayer.meshRef().vertices.length == 8);
+
+    GpuMesh firstUploadGpu; Mesh firstUploadMesh = makeCube();
+    GpuMesh failedFirstUploadGpu;
+    auto failedCombinedOwner = GpuCreateUploadOwner.fakeForTest(&failedFirstUploadGpu);
+    auto failedCombined = new PreparedRecordContext(new CommandHistory(),
+                                                     new RecordObserverHub());
+    failedCombined.setResourceIdentity(7, 11);
+    PreparedRecordContext.failAfterResourceBegin_ = true;
+    threw = false;
+    try failedCombined.prepareCreateUpload(failedCombinedOwner, firstUploadMesh);
+    catch (Exception) threw = true;
+    PreparedRecordContext.failAfterResourceBegin_ = false;
+    assert(threw && failedFirstUploadGpu.faceVao == 0 &&
+        failedCombinedOwner.fakeCreatedForTest() ==
+            failedCombinedOwner.fakeDeletedForTest());
+    GpuMesh staleFirstUploadGpu;
+    auto staleOwner = GpuCreateUploadOwner.fakeForTest(&staleFirstUploadGpu);
+    auto staleContext = new PreparedRecordContext(new CommandHistory(),
+                                                  new RecordObserverHub());
+    staleContext.setResourceIdentity(7, 11);
+    assert(staleContext.prepareCreateUpload(staleOwner, firstUploadMesh));
+    staleFirstUploadGpu.uploadVersion = 1;
+    assert(!staleContext.validate() &&
+        staleOwner.fakeCreatedForTest() == staleOwner.fakeDeletedForTest());
+    staleFirstUploadGpu.uploadVersion = 0;
+    auto freshStaleOwner = GpuCreateUploadOwner.fakeForTest(&staleFirstUploadGpu);
+    auto freshStaleContext = new PreparedRecordContext(new CommandHistory(),
+                                                       new RecordObserverHub());
+    freshStaleContext.setResourceIdentity(7, 11);
+    assert(freshStaleContext.prepareCreateUpload(freshStaleOwner, firstUploadMesh));
+    freshStaleContext.discard();
+    auto combinedOwner = GpuCreateUploadOwner.fakeForTest(&firstUploadGpu);
+    auto combined = new PreparedRecordContext(new CommandHistory(),
+                                               new RecordObserverHub());
+    combined.setResourceIdentity(7, 11);
+    assert(combined.prepareCreateUpload(combinedOwner, firstUploadMesh));
+    assert(combined.markNoHistoryInstall() && firstUploadGpu.faceVao == 0);
+    assert(combined.validate()); combined.install();
+    assert(firstUploadGpu.faceVao == 301 && firstUploadGpu.vertCount > 0);
+    assert(combined.installTraceForTest() == [12,8]);
+
+    GpuMesh abortedGpu;
+    auto abortedOwner = GpuCreateUploadOwner.fakeForTest(&abortedGpu);
+    auto abortedContext = new PreparedRecordContext(new CommandHistory(),
+                                                    new RecordObserverHub());
+    abortedContext.setResourceIdentity(7, 11);
+    assert(abortedContext.prepareCreateUpload(abortedOwner, firstUploadMesh));
+    abortedContext.discard();
+    assert(abortedGpu.faceVao == 0 &&
+        abortedOwner.fakeCreatedForTest() == abortedOwner.fakeDeletedForTest());
 }
