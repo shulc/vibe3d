@@ -24,7 +24,17 @@ import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import prepared_vertex_bevel_activation : PreparedVertexBevelActivationOwner;
 import command_history : PreparedHistoryKind;
+
+struct PreparedVertexBevelActivationImage {
+    MeshSnapshot before;
+    bool valid, gizmoValid;
+    Vec3 anchor, baseAnchor, insetAxis;
+    ulong gizmoSelHash;
+    void clear() nothrow @nogc { this = PreparedVertexBevelActivationImage.init; }
+}
 
 // ---------------------------------------------------------------------------
 // VertexBevelTool — interactive Vertex Bevel (factory id `mesh.vertexBevel`,
@@ -64,7 +74,7 @@ import command_history : PreparedHistoryKind;
 // ---------------------------------------------------------------------------
 class VertexBevelTool : Tool {
 private:
-    Mesh* delegate() meshSrc_;
+    Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
     GpuMesh*         gpu;
     EditMode*        editMode;
@@ -94,7 +104,8 @@ private:
     enum Vec3 INSET_COLOR = schemeColor(SchemeColor.toolWidth);
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader) {
+    this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu,
+            EditMode* editMode, LitShader litShader) {
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
@@ -118,6 +129,39 @@ public:
     override void activate() {
         active = true;
         reinitSession();
+    }
+
+    final PreparedVertexBevelActivationImage buildPreparedActivation(
+            out Mesh* source) {
+        PreparedVertexBevelActivationImage image;
+        source = mesh; if (source is null) return image;
+        image.before = MeshSnapshot.capture(*source); image.valid = true;
+        image.gizmoValid = gizmoValid; image.anchor = anchor;
+        image.baseAnchor = baseAnchor; image.insetAxis = insetAxis;
+        image.gizmoSelHash = gizmoSelHash;
+        computePreparedGizmoFrame(*source, image); return image;
+    }
+    final Mesh* preparedActivationMesh() nothrow @nogc { return meshSrc_(); }
+    final void installPreparedActivation(
+            ref PreparedVertexBevelActivationImage image) nothrow @nogc {
+        if (!image.valid) return;
+        active = true; built = false; dragPart = -1; inset_ = 0.0f;
+        image.before.moveInto(before);
+        gizmoValid = image.gizmoValid; anchor = image.anchor;
+        baseAnchor = image.baseAnchor; insetAxis = image.insetAxis;
+        gizmoSelHash = image.gizmoSelHash; image.clear();
+    }
+    final PreparedSessionActivateEffect prepareActivate(
+            PreparedRecordContext context) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.VertexBevel, false);
+        scope(failure) context.discard();
+        auto owner = PreparedVertexBevelActivationOwner.prepare(this);
+        bool ok = owner !is null && context.prepareVertexBevelActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.VertexBevel, ok);
     }
 
     private void reinitSession() {
@@ -310,21 +354,33 @@ private:
     // incident to the selected vertices (mirrors EdgeBevelTool's
     // width-axis derivation, one level down the element hierarchy).
     void computeGizmoFrame() {
-        gizmoValid = false;
-        if (mesh.vertices.length == 0) return;
-        bool any = mesh.hasAnySelectedVertices();
+        PreparedVertexBevelActivationImage image;
+        image.gizmoValid = gizmoValid; image.anchor = anchor;
+        image.baseAnchor = baseAnchor; image.insetAxis = insetAxis;
+        image.gizmoSelHash = gizmoSelHash;
+        computePreparedGizmoFrame(*mesh, image);
+        gizmoValid = image.gizmoValid; anchor = image.anchor;
+        baseAnchor = image.baseAnchor; insetAxis = image.insetAxis;
+        gizmoSelHash = image.gizmoSelHash;
+    }
+
+    private static void computePreparedGizmoFrame(ref Mesh source,
+            ref PreparedVertexBevelActivationImage image) {
+        image.gizmoValid = false;
+        if (source.vertices.length == 0) return;
+        bool any = source.hasAnySelectedVertices();
         Vec3 sum = Vec3(0, 0, 0);
-        foreach (vi; 0 .. mesh.vertices.length) {
-            if (any && !mesh.isVertexSelected(vi)) continue;
-            foreach (fi; mesh.facesAroundVertex(cast(uint)vi))
-                sum = sum + mesh.faceNormal(cast(uint)fi);
+        foreach (vi; 0 .. source.vertices.length) {
+            if (any && !source.isVertexSelected(vi)) continue;
+            foreach (fi; source.facesAroundVertex(cast(uint)vi))
+                sum = sum + source.faceNormal(cast(uint)fi);
         }
-        anchor = mesh.selectionCentroidVertices();
+        image.anchor = source.selectionCentroidVertices();
         float len = sqrt(sum.x*sum.x + sum.y*sum.y + sum.z*sum.z);
-        insetAxis    = (len > 1e-6f) ? sum * (1.0f/len) : Vec3(0,1,0);
-        baseAnchor   = anchor;
-        gizmoSelHash = mesh.selectionSignature(EditMode.Vertices);
-        gizmoValid   = true;
+        image.insetAxis = (len > 1e-6f) ? sum * (1.0f/len) : Vec3(0,1,0);
+        image.baseAnchor = image.anchor;
+        image.gizmoSelHash = source.selectionSignature(EditMode.Vertices);
+        image.gizmoValid = true;
     }
 
     void rebuildPreview() {
@@ -387,5 +443,46 @@ private:
 
     void refreshCaches() {
         refreshDisplay(mesh, gpu);
+    }
+
+public:
+    version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
+        return preparedToolStateOwner;
+    }
+    version(unittest) final void seedPreparedActivationForTest(ref Mesh oldMesh) {
+        active = false; built = true; dragPart = 9; inset_ = 7;
+        gizmoValid = false; anchor = Vec3(1,2,3); baseAnchor = Vec3(4,5,6);
+        insetAxis = Vec3(7,8,9); gizmoSelHash = 10;
+        dragLastMX = 11; dragLastMY = 12; dragBaseInset = 13;
+        cachedVp.view[0] = 14; before = MeshSnapshot.capture(oldMesh);
+    }
+    version(unittest) final bool preparedActivationDirtyForTest() const
+            nothrow @nogc {
+        return !active && built && dragPart == 9 && inset_ == 7 && !gizmoValid &&
+            anchor == Vec3(1,2,3) && baseAnchor == Vec3(4,5,6) &&
+            insetAxis == Vec3(7,8,9) && gizmoSelHash == 10 &&
+            dragLastMX == 11 && dragLastMY == 12 && dragBaseInset == 13 &&
+            cachedVp.view[0] == 14;
+    }
+    version(unittest) final bool preparedActivationForTest(size_t count,
+            Vec3 first, const Vec3* livePtr, bool expectedValid,
+            Vec3 expectedAnchor, Vec3 expectedBase, Vec3 expectedAxis,
+            ulong expectedHash) const nothrow @nogc {
+        return active && !built && dragPart == -1 && inset_ == 0 && before.filled &&
+            before.vertices.length == count &&
+            (count == 0 || (before.vertices[0] == first && before.vertices.ptr !is livePtr)) &&
+            gizmoValid == expectedValid && anchor == expectedAnchor &&
+            baseAnchor == expectedBase && insetAxis == expectedAxis &&
+            gizmoSelHash == expectedHash && dragLastMX == 11 && dragLastMY == 12 &&
+            dragBaseInset == 13 && cachedVp.view[0] == 14;
+    }
+    version(unittest) final PreparedVertexBevelActivationImage
+            preparedFrameForTest(ref Mesh source) const {
+        PreparedVertexBevelActivationImage image;
+        image.before = MeshSnapshot.capture(source);
+        image.gizmoValid = gizmoValid; image.anchor = anchor;
+        image.baseAnchor = baseAnchor; image.insetAxis = insetAxis;
+        image.gizmoSelHash = gizmoSelHash;
+        computePreparedGizmoFrame(source, image); return image;
     }
 }

@@ -248,6 +248,7 @@ B5P_PREPARED_LEGACY = {
     ("tools.deform.smooth_shift_tool", "SmoothShiftTool", "activate"),
     ("tools.edit.edge_bevel", "EdgeBevelTool", "activate"),
     ("tools.edit.poly_bevel", "PolyBevelTool", "activate"),
+    ("tools.edit.vertex_bevel_tool", "VertexBevelTool", "activate"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
@@ -285,7 +286,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "f472e605e89b02b2234a844fce9b34e6c13037f288217a9c5511ea76e983a432"
+    "f6b0bccccc7ac3a79ab7c334d11b4720daed30592de8627d134a297ea3dac7ea"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -423,6 +424,7 @@ for path, text in prepared_source_texts.items():
             "prepared_smooth_shift_activation",
             "prepared_edge_bevel_activation",
             "prepared_poly_bevel_activation",
+            "prepared_vertex_bevel_activation",
             "tools.alignment.radial_sweep_tool",
             "tools.alignment.radial_array_tool",
             "tools.alignment.linear_align_tool",
@@ -2793,6 +2795,138 @@ for fixture in (
     if run.returncode == 0 or ("not copyable" not in run.stdout and
             not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
         fail("PolyBevel activation token copy was not rejected:\n" + run.stdout)
+
+# Exact VertexBevel activation owns its detached baseline and vertex-normal
+# gizmo frame; prepare must not touch any live session field.
+vertex_bevel_activation_owner = (ROOT /
+    "source/prepared_vertex_bevel_activation.d").read_text()
+vertex_bevel_activation_tool = (ROOT /
+    "source/tools/edit/vertex_bevel_tool.d").read_text()
+def vertex_bevel_activation_gate(owner, context, tool):
+    po = without_unittests(owner); pt = without_unittests(tool)
+    start = pt.find("final PreparedSessionActivateEffect prepareActivate(")
+    end = pt.find("private void reinitSession()", start)
+    producer = pt[start:end] if start >= 0 and end > start else ""
+    bstart = pt.find("final PreparedVertexBevelActivationImage buildPreparedActivation(")
+    bend = pt.find("final Mesh* preparedActivationMesh()", bstart)
+    builder = pt[bstart:bend] if bstart >= 0 and bend > bstart else ""
+    istart = pt.find("final void installPreparedActivation(")
+    iend = pt.find("final PreparedSessionActivateEffect prepareActivate(", istart)
+    installer = pt[istart:iend] if istart >= 0 and iend > istart else ""
+    fstart = pt.find("private static void computePreparedGizmoFrame")
+    fend = pt.find("void rebuildPreview()", fstart)
+    formula = pt[fstart:fend] if fstart >= 0 and fend > fstart else ""
+    legacy = re.search(r"override void activate\(\)\s*\{", pt)
+    legacy_body = pt[legacy.end():balanced_source(pt, legacy.end())-1] if legacy else ""
+    return (
+        "final class PreparedVertexBevelActivationOwner" in owner and
+        owner.count("@disable this(this);") == 2 and
+        not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
+        "target.classinfo !is VertexBevelTool.classinfo" in owner and
+        "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
+        "target_.preparedActivationMesh() !is source_" in owner and
+        "!image_.before.matches(*source_)" in owner and
+        "target_.installPreparedActivation(image_); consume();" in owner and
+        "image_.clear(); target_ = null; source_ = null;" in owner and
+        "Mesh* delegate() nothrow @nogc meshSrc_;" in tool and
+        "image.before = MeshSnapshot.capture(*source); image.valid = true;" in builder and
+        not re.search(r"(?<!\.)\b(active|built|dragPart|inset_|gizmoValid|anchor|"
+                      r"baseAnchor|insetAxis|gizmoSelHash|dragLastMX|dragLastMY|"
+                      r"dragBaseInset|cachedVp)\s*=", builder) and
+        tool.count("image.gizmoValid = gizmoValid; image.anchor = anchor;") == 3 and
+        tool.count("image.baseAnchor = baseAnchor; image.insetAxis = insetAxis;") == 3 and
+        "active = true; built = false; dragPart = -1; inset_ = 0.0f;" in installer and
+        "image.before.moveInto(before);" in installer and
+        "gizmoValid = image.gizmoValid; anchor = image.anchor;" in installer and
+        "baseAnchor = image.baseAnchor; insetAxis = image.insetAxis;" in installer and
+        "gizmoSelHash = image.gizmoSelHash; image.clear();" in installer and
+        "image.gizmoValid = false;" in formula and
+        "if (source.vertices.length == 0) return;" in formula and
+        "bool any = source.hasAnySelectedVertices();" in formula and
+        "if (any && !source.isVertexSelected(vi)) continue;" in formula and
+        "source.facesAroundVertex(cast(uint)vi)" in formula and
+        "sum = sum + source.faceNormal(cast(uint)fi);" in formula and
+        "image.anchor = source.selectionCentroidVertices();" in formula and
+        "image.insetAxis = (len > 1e-6f) ? sum * (1.0f/len) : Vec3(0,1,0);" in formula and
+        "image.baseAnchor = image.anchor;" in formula and
+        "source.selectionSignature(EditMode.Vertices)" in formula and
+        "image.gizmoValid = true;" in formula and
+        "PreparedVertexBevelActivationOwner.prepare(this)" in producer and
+        "context.prepareVertexBevelActivation(owner)" in producer and
+        "context.markNoHistoryInstall()" in producer and
+        producer.find("context.prepareVertexBevelActivation(owner)") <
+            producer.find("context.markNoHistoryInstall()") and
+        "scope(failure) context.discard();" in producer and
+        "if (!ok) context.discard();" in producer and
+        "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+        "            PreparedActivateKind.VertexBevel, ok);" in producer and
+        not any(x in producer for x in ("context.validate(", "context.install(", "owner.install(")) and
+        not any(x in legacy_body for x in ("prepareActivate(", "PreparedRecordContext")) and
+        "e.vertexBevelActivation.validate();" in context and
+        "e.vertexBevelActivation.install();" in context and
+        "e.vertexBevelActivation.abort();" in context)
+if not vertex_bevel_activation_gate(vertex_bevel_activation_owner,
+                                    record_context, vertex_bevel_activation_tool):
+    fail("VertexBevel activation prepared contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is VertexBevelTool.classinfo", "false", "broaden product"),
+    ("owner", "result.image_ = target.buildPreparedActivation(result.source_);", "", "drop builder"),
+    ("owner", "target_.preparedActivationMesh() !is source_", "false", "drop identity"),
+    ("owner", "!image_.before.matches(*source_)", "false", "drop content guard"),
+    ("owner", "target_.installPreparedActivation(image_);", "", "drop install"),
+    ("owner", "image_.clear(); target_ = null; source_ = null;", "target_ = null;", "retain payload"),
+    ("tool", "image.before = MeshSnapshot.capture(*source);", "", "drop snapshot"),
+    ("tool", "image.before = MeshSnapshot.capture(*source); image.valid = true;",
+     "dragLastMX = 0; image.before = MeshSnapshot.capture(*source); image.valid = true;",
+     "write live state during prepare"),
+    ("tool", "image.gizmoValid = gizmoValid; image.anchor = anchor;", "", "drop frame seed"),
+    ("tool", "active = true; built = false; dragPart = -1; inset_ = 0.0f;",
+     "built = false; dragPart = -1; inset_ = 0.0f;", "drop active reset"),
+    ("tool", "active = true; built = false; dragPart = -1; inset_ = 0.0f;",
+     "active = true; dragPart = -1; inset_ = 0.0f;", "drop built reset"),
+    ("tool", "active = true; built = false; dragPart = -1; inset_ = 0.0f;",
+     "active = true; built = false; inset_ = 0.0f;", "drop drag reset"),
+    ("tool", "active = true; built = false; dragPart = -1; inset_ = 0.0f;",
+     "active = true; built = false; dragPart = -1;", "drop inset reset"),
+    ("tool", "image.before.moveInto(before);", "before = image.before;", "shallow snapshot"),
+    ("tool", "gizmoValid = image.gizmoValid; anchor = image.anchor;", "anchor = image.anchor;", "drop validity"),
+    ("tool", "baseAnchor = image.baseAnchor; insetAxis = image.insetAxis;", "insetAxis = image.insetAxis;", "drop base anchor"),
+    ("tool", "gizmoSelHash = image.gizmoSelHash; image.clear();", "image.clear();", "drop hash"),
+    ("tool", "bool any = source.hasAnySelectedVertices();", "bool any = false;", "drop selection branch"),
+    ("tool", "if (any && !source.isVertexSelected(vi)) continue;", "", "drop selection guard"),
+    ("tool", "source.facesAroundVertex(cast(uint)vi)", "source.facesAroundVertex(0)", "drop incident vertex"),
+    ("tool", "image.insetAxis = (len > 1e-6f) ? sum * (1.0f/len) : Vec3(0,1,0);",
+     "image.insetAxis = (len >= 0) ? sum * (1.0f/len) : Vec3(0,1,0);", "drop fallback threshold"),
+    ("tool", "image.gizmoValid = true;", "", "drop valid seal"),
+    ("tool", "scope(failure) context.discard();", "", "drop failure cleanup"),
+    ("tool", "context.prepareVertexBevelActivation(owner)", "true", "drop enlist"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop history seal"),
+    ("tool", "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+     "            PreparedActivateKind.VertexBevel, ok);",
+     "return PreparedSessionActivateEffect(OwnedId.init,\n"
+     "            PreparedActivateKind.VertexBevel, ok);", "forge effect owner"),
+    ("tool", "PreparedActivateKind.VertexBevel, ok);",
+     "PreparedActivateKind.VertexBevel, true);", "forge effect acceptance"),
+    ("context", "e.vertexBevelActivation.validate();", "true;", "drop validation"),
+    ("context", "e.vertexBevelActivation.install();", "", "drop context install"),
+    ("context", "e.vertexBevelActivation.abort();", "", "drop context abort"),
+):
+    o, c, t = vertex_bevel_activation_owner, record_context, vertex_bevel_activation_tool
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    else: t = t.replace(old, new, 1)
+    if ((o == vertex_bevel_activation_owner and c == record_context and
+         t == vertex_bevel_activation_tool) or vertex_bevel_activation_gate(o,c,t)):
+        fail(f"VertexBevel activation mutation did not RED: {label}")
+for fixture in (
+    ROOT / "tests/compile_fail/prepared_vertex_bevel_activation_token_copy.d",
+    ROOT / "tests/compile_fail/prepared_vertex_bevel_activation_validated_token_copy.d",
+):
+    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if run.returncode == 0 or ("not copyable" not in run.stdout and
+            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+        fail("VertexBevel activation token copy was not rejected:\n" + run.stdout)
 
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
 # detached whole-Mesh adoption with exact caller-supplied change flags, and a

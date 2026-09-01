@@ -28,6 +28,7 @@ import prepared_poly_extrude_activation : PreparedPolyExtrudeActivationOwner;
 import prepared_smooth_shift_activation : PreparedSmoothShiftActivationOwner;
 import prepared_edge_bevel_activation : PreparedEdgeBevelActivationOwner;
 import prepared_poly_bevel_activation : PreparedPolyBevelActivationOwner;
+import prepared_vertex_bevel_activation : PreparedVertexBevelActivationOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -42,7 +43,7 @@ private enum PreparedResourceKind : ubyte {
     XfrmActivationPreState, XfrmActivationPostState, StrokeExtrudeActivationState,
     VertexMergeActivationState, PolyInsetActivationState, PolyExtrudeActivationState,
     SmoothShiftActivationState, EdgeBevelActivationState,
-    PolyBevelActivationState
+    PolyBevelActivationState, VertexBevelActivationState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -63,6 +64,7 @@ private struct PreparedResourceEntry {
     PreparedSmoothShiftActivationOwner smoothShiftActivation;
     PreparedEdgeBevelActivationOwner edgeBevelActivation;
     PreparedPolyBevelActivationOwner polyBevelActivation;
+    PreparedVertexBevelActivationOwner vertexBevelActivation;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -400,6 +402,17 @@ public:
         e.kind = PreparedResourceKind.PolyBevelActivationState;
         e.polyBevelActivation = owner; resources_ ~= e; return true;
     }
+    bool prepareVertexBevelActivation(PreparedVertexBevelActivationOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected VertexBevel activation enlist failure");
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.VertexBevelActivationState;
+        e.vertexBevelActivation = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -593,6 +606,9 @@ public:
             case PreparedResourceKind.PolyBevelActivationState:
                 ok = e.polyBevelActivation !is null &&
                     e.polyBevelActivation.validate(); break;
+            case PreparedResourceKind.VertexBevelActivationState:
+                ok = e.vertexBevelActivation !is null &&
+                    e.vertexBevelActivation.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -729,6 +745,10 @@ public:
             e.polyBevelActivation.install();
             version(unittest) installTrace_[installTraceLength_++] = 26;
             break;
+        case PreparedResourceKind.VertexBevelActivationState:
+            e.vertexBevelActivation.install();
+            version(unittest) installTrace_[installTraceLength_++] = 27;
+            break;
         }
         if (!installedHistory && history_ !is null)
             history_.installPreparedToken(validated_);
@@ -800,6 +820,8 @@ private:
             e.edgeBevelActivation.abort(); break;
         case PreparedResourceKind.PolyBevelActivationState:
             e.polyBevelActivation.abort(); break;
+        case PreparedResourceKind.VertexBevelActivationState:
+            e.vertexBevelActivation.abort(); break;
         }
         resources_.length = 0;
         historyMarker_ = false;

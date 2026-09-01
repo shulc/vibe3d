@@ -39,7 +39,7 @@ enum PreparedDeactivateKind : ubyte {
 enum PreparedActivateKind : ubyte {
     None, Vertex, Array, Clone, Magnet, Reduction, Box, Pen, Primitive,
     StrokeExtrude, VertexMerge, PolyInset, PolyExtrude, SmoothShift, EdgeBevel,
-    PolyBevel
+    PolyBevel, VertexBevel
 }
 enum PreparedRadialSweepKind : ubyte { Activate, Param, Deactivate }
 enum PreparedRadialArrayKind : ubyte { Activate, Deactivate }
