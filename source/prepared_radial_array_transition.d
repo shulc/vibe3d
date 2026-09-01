@@ -148,4 +148,135 @@ version(unittest) unittest {
     auto retry = new PreparedRecordContext(new CommandHistory(), new RecordObserverHub());
     assert(retry.prepareRadialArrayTransition(retryOwner)); retry.discard();
     assert(retryOwner.payloadEmpty() && !faultTool.preparedTransitionForTest(true));
+
+    auto activateTool = new RadialArrayTool(() => &source, &gpu, &mode,
+        LitShader.init);
+    activateTool.seedPreparedTransitionForTest();
+    auto activateContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    auto activateEffect = activateTool.prepareActivate(activateContext);
+    assert(activateEffect.accepted && activateContext.validate());
+    activateContext.install();
+    assert(activateTool.preparedTransitionForTest(true) &&
+        activateContext.installTraceForTest() == [13, 8]);
+
+    activateTool.seedPreparedTransitionForTest();
+    auto deactivateContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    auto deactivateEffect = activateTool.prepareSessionDeactivate(deactivateContext);
+    assert(deactivateEffect.accepted && deactivateContext.validate());
+    deactivateContext.install();
+    assert(activateTool.preparedTransitionForTest(false) &&
+        deactivateContext.installTraceForTest() == [8, 13]);
+
+    import commands.mesh.session_edit : MeshSessionEdit;
+    import view : View;
+    auto historyTool = new RadialArrayTool(() => &source, &gpu, &mode,
+        LitShader.init);
+    historyTool.seedPreparedBuiltTransitionForTest(source);
+    auto producerHistory = new CommandHistory();
+    auto producerView = new View(0, 0, 1, 1);
+    historyTool.setGestureBindings(producerHistory, () => new MeshSessionEdit(
+        &source, producerView, mode, "test.radialArray", "Radial Array"));
+    auto historyContext = new PreparedRecordContext(producerHistory,
+        new RecordObserverHub());
+    assert(historyTool.prepareSessionDeactivate(historyContext).accepted &&
+        historyContext.validate());
+    historyContext.install();
+    assert(historyTool.preparedTransitionForTest(false) &&
+        historyContext.installTraceForTest() == [1, 13]);
+
+    Mesh foreignHistoryMesh = makeCube();
+    historyTool.seedPreparedBuiltTransitionForTest(source);
+    historyTool.setGestureBindings(producerHistory, () => new MeshSessionEdit(
+        &foreignHistoryMesh, producerView, mode, "test.foreign", "Foreign"));
+    auto mismatchContext = new PreparedRecordContext(producerHistory,
+        new RecordObserverHub());
+    assert(historyTool.prepareSessionDeactivate(mismatchContext).accepted &&
+        mismatchContext.validate());
+    mismatchContext.install();
+    assert(mismatchContext.installTraceForTest() == [11, 8, 13] &&
+        historyTool.preparedTransitionForTest(false));
+
+    historyTool.seedPreparedBuiltTransitionForTest(source);
+    historyTool.bindPreparedHistoryOnlyForTest(producerHistory);
+    auto nullFactoryContext = new PreparedRecordContext(producerHistory,
+        new RecordObserverHub());
+    assert(historyTool.prepareSessionDeactivate(nullFactoryContext).accepted &&
+        nullFactoryContext.validate()); nullFactoryContext.install();
+    assert(nullFactoryContext.installTraceForTest() == [8, 13]);
+    historyTool.seedPreparedBuiltTransitionForTest(source);
+    historyTool.bindPreparedFactoryOnlyForTest(() => new MeshSessionEdit(
+        &source, producerView, mode, "test.radialArray", "Radial Array"));
+    auto nullHistoryContext = new PreparedRecordContext(producerHistory,
+        new RecordObserverHub());
+    assert(historyTool.prepareSessionDeactivate(nullHistoryContext).accepted &&
+        nullHistoryContext.validate()); nullHistoryContext.install();
+    assert(nullHistoryContext.installTraceForTest() == [8, 13]);
+
+    historyTool.seedPreparedBuiltTransitionForTest(source);
+    auto faultHistory = new CommandHistory();
+    historyTool.setGestureBindings(faultHistory, () => new MeshSessionEdit(
+        &source, producerView, mode, "test.radialArray", "Radial Array"));
+    auto historyFault = new PreparedRecordContext(faultHistory,
+        new RecordObserverHub());
+    PreparedRecordContext.failAfterResourceBeginForTest(true); threw = false;
+    try historyTool.prepareSessionDeactivate(historyFault);
+    catch (Exception) threw = true;
+    PreparedRecordContext.failAfterResourceBeginForTest(false);
+    size_t modelDepth, uiDepth; historyFault.installedDepths(modelDepth, uiDepth);
+    assert(threw && !historyFault.validate() && modelDepth == 0 && uiDepth == 0 &&
+        historyTool.preparedBuiltSeedUnchangedForTest());
+    auto historyRetry = new PreparedRecordContext(faultHistory,
+        new RecordObserverHub());
+    assert(historyTool.prepareSessionDeactivate(historyRetry).accepted &&
+        historyRetry.validate()); historyRetry.discard();
+    assert(historyTool.preparedBuiltSeedUnchangedForTest());
+
+    size_t meshReads;
+    Mesh* changingMeshSource() { ++meshReads; return &source; }
+    auto singleReadTool = new RadialArrayTool(&changingMeshSource, &gpu, &mode,
+        LitShader.init);
+    singleReadTool.seedPreparedBuiltTransitionForTest(source);
+    auto singleReadHistory = new CommandHistory();
+    singleReadTool.setGestureBindings(singleReadHistory,
+        () => new MeshSessionEdit(&source, producerView, mode,
+            "test.radialArray", "Radial Array"));
+    auto singleReadContext = new PreparedRecordContext(singleReadHistory,
+        new RecordObserverHub());
+    assert(singleReadTool.prepareSessionDeactivate(singleReadContext).accepted &&
+        meshReads == 1); singleReadContext.discard();
+
+    Mesh* missingDeactivateMesh;
+    auto missingDeactivateTool = new RadialArrayTool(
+        () => missingDeactivateMesh, &gpu, &mode, LitShader.init);
+    missingDeactivateTool.seedPreparedBuiltTransitionForTest(source);
+    auto missingDeactivateHistory = new CommandHistory();
+    missingDeactivateTool.setGestureBindings(missingDeactivateHistory,
+        () => new MeshSessionEdit(&source, producerView, mode,
+            "test.radialArray", "Radial Array"));
+    auto missingDeactivateHub = new RecordObserverHub();
+    auto missingDeactivateContext = new PreparedRecordContext(
+        missingDeactivateHistory, missingDeactivateHub);
+    assert(!missingDeactivateTool.prepareSessionDeactivate(
+        missingDeactivateContext).accepted &&
+        !missingDeactivateContext.validate() &&
+        missingDeactivateContext.installTraceForTest().length == 0 &&
+        missingDeactivateTool.preparedBuiltSeedUnchangedForTest());
+    missingDeactivateContext.installedDepths(modelDepth, uiDepth);
+    assert(modelDepth == 0 && uiDepth == 0);
+
+    Mesh* missing;
+    auto missingTool = new RadialArrayTool(() => missing, &gpu, &mode,
+        LitShader.init);
+    auto missingContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    assert(!missingTool.prepareActivate(missingContext).accepted &&
+        !missingContext.validate());
+    auto producerFault = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    PreparedRecordContext.failAfterResourceBeginForTest(true); threw = false;
+    try activateTool.prepareActivate(producerFault); catch (Exception) threw = true;
+    PreparedRecordContext.failAfterResourceBeginForTest(false);
+    assert(threw && !producerFault.validate());
 }

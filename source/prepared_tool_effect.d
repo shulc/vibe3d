@@ -38,6 +38,7 @@ enum PreparedDeactivateKind : ubyte {
 }
 enum PreparedActivateKind : ubyte { None, Vertex, Array, Clone, Magnet, Reduction }
 enum PreparedRadialSweepKind : ubyte { Activate, Param, Deactivate }
+enum PreparedRadialArrayKind : ubyte { Activate, Deactivate }
 
 @PreparedAggregate struct PreparedActivateEffect {
     OwnedId owner;
@@ -54,6 +55,11 @@ enum PreparedRadialSweepKind : ubyte { Activate, Param, Deactivate }
     PreparedRadialSweepKind kind;
     bool accepted;
     size_t inserted;
+}
+@PreparedAggregate struct PreparedRadialArrayEffect {
+    OwnedId owner;
+    PreparedRadialArrayKind kind;
+    bool accepted;
 }
 
 /// Scalar-only dormant P1.0b.3d producer result. The concrete tool owns the

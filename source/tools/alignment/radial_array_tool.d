@@ -15,6 +15,7 @@ import drag : screenAxisDelta, gesturePrevPixel;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
+import command : Command;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
@@ -24,7 +25,8 @@ import std.math : sin, cos, atan2, PI;
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext;
-import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import prepared_tool_effect : PreparedRadialArrayEffect, PreparedRadialArrayKind;
+import prepared_radial_array_transition : PreparedRadialArrayTransitionOwner;
 import command_history : PreparedHistoryKind;
 
 enum PreparedRadialArrayTransitionKind : ubyte { Activate, Deactivate }
@@ -231,6 +233,21 @@ public:
     version(unittest) void seedPreparedTransitionForTest() {
         active = false; built = true; dragPart = 4; toolHandles.setHaul(3);
     }
+    version(unittest) void seedPreparedBuiltTransitionForTest(ref Mesh source) {
+        before = MeshSnapshot.capture(source); active = true; built = true;
+        dragPart = 4; toolHandles.setHaul(3);
+    }
+    version(unittest) bool preparedBuiltSeedUnchangedForTest() const
+            nothrow @nogc {
+        return active && built && dragPart == 4 &&
+            toolHandles.haulForPreparedTest() == 3 && before.filled;
+    }
+    version(unittest) void bindPreparedHistoryOnlyForTest(CommandHistory value) {
+        history = value; gestureFactory = null;
+    }
+    version(unittest) void bindPreparedFactoryOnlyForTest(Command delegate() value) {
+        history = null; gestureFactory = value;
+    }
     version(unittest) bool preparedTransitionForTest(bool expectedActive)
             const nothrow @nogc {
         return active == expectedActive && !built && dragPart == -1 &&
@@ -295,6 +312,56 @@ public:
         built      = false;
         dragPart   = -1;
         toolHandles.clearHaul();
+    }
+
+    final PreparedRadialArrayEffect prepareActivate(PreparedRecordContext context) {
+        if (context is null)
+            return PreparedRadialArrayEffect(preparedToolStateOwner,
+                PreparedRadialArrayKind.Activate, false);
+        scope(failure) context.discard();
+        auto live = mesh;
+        auto transition = live !is null
+            ? PreparedRadialArrayTransitionOwner.activation(this, *live) : null;
+        bool ok = transition !is null &&
+            context.prepareRadialArrayTransition(transition) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedRadialArrayEffect(preparedToolStateOwner,
+            PreparedRadialArrayKind.Activate, ok);
+    }
+
+    final PreparedRadialArrayEffect prepareSessionDeactivate(
+            PreparedRecordContext context) {
+        if (context is null)
+            return PreparedRadialArrayEffect(preparedToolStateOwner,
+                PreparedRadialArrayKind.Deactivate, false);
+        scope(failure) context.discard();
+        auto live = mesh;
+        if (live is null) {
+            context.discard();
+            return PreparedRadialArrayEffect(preparedToolStateOwner,
+                PreparedRadialArrayKind.Deactivate, false);
+        }
+        bool ok = true, historyPrepared;
+        if (active && built && history !is null && gestureFactory !is null &&
+            before.filled) {
+            auto cmd = cast(MeshSessionEdit) gestureFactory();
+            if (cmd !is null && cmd.meshPtr() is live) {
+                cmd.setSnapshots(before, MeshSnapshot.capture(*live), "Radial Array");
+                historyPrepared = context.prepare(cmd,
+                    PreparedHistoryKind.Plain).accepted;
+                ok = historyPrepared;
+            } else ok = context.prepareGestureCarrierMismatch();
+        }
+        if (ok) ok = historyPrepared ? context.markHistoryInstall()
+                                     : context.markNoHistoryInstall();
+        auto transition = ok
+            ? PreparedRadialArrayTransitionOwner.deactivation(this) : null;
+        ok = transition !is null &&
+            context.prepareRadialArrayTransition(transition);
+        if (!ok) context.discard();
+        return PreparedRadialArrayEffect(preparedToolStateOwner,
+            PreparedRadialArrayKind.Deactivate, ok);
     }
 
     public override bool hasUncommittedEdit() const { return active && built; }
@@ -578,17 +645,6 @@ private:
                                          angle_ * PI / 180.0f, extraShift, weld_);
         built = (n != 0);
         refreshCaches();
-    }
-
-    // Records through the base seam (task 1905 phase C, group G2). Trigger
-    // unchanged — reached from `deactivate()`.
-    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
-        bool accepted;
-        if (active && built && context !is null && history !is null && gestureFactory !is null && before.filled) {
-            auto cmd = cast(MeshSessionEdit) gestureFactory();
-            if (cmd !is null) { cmd.setSnapshots(before, MeshSnapshot.capture(*mesh), "Radial Array"); accepted = context.prepare(cmd, PreparedHistoryKind.Plain).accepted; }
-        }
-        return PreparedDeactivateEffect(preparedToolStateOwner, PreparedDeactivateKind.RadialArray, accepted);
     }
 
     void commitEdit() {

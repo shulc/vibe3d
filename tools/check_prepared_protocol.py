@@ -114,7 +114,6 @@ TOOL_STATE_CONVERTED = {
 B3D_PREPARED_LEGACY = {
     ("tools.alignment.array_tool", "ArrayTool", "deactivate"),
     ("tools.alignment.clone_tool", "CloneTool", "deactivate"),
-    ("tools.alignment.radial_array_tool", "RadialArrayTool", "deactivate"),
     ("tools.deform.magnet", "MagnetTool", "deactivate"),
     ("tools.deform.smooth_shift_tool", "SmoothShiftTool", "deactivate"),
     ("tools.deform.stroke_extrude_tool", "StrokeExtrudeTool", "deactivate"),
@@ -155,9 +154,13 @@ B5I_PREPARED_LEGACY = {
     ("tools.alignment.radial_sweep_tool", "RadialSweepTool", "onParamChanged"),
     ("tools.alignment.radial_sweep_tool", "RadialSweepTool", "deactivate"),
 }
+B5J_PREPARED_LEGACY = {
+    ("tools.alignment.radial_array_tool", "RadialArrayTool", "activate"),
+    ("tools.alignment.radial_array_tool", "RadialArrayTool", "deactivate"),
+}
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
-    B5I_PREPARED_LEGACY)
+    B5I_PREPARED_LEGACY | B5J_PREPARED_LEGACY)
 all_hook_keys = {(r["module"], r["aggregate"], r["symbol"])
                  for r in CURRENT_WRITERS["hooks"]}
 if not TOOL_STATE_CONVERTED | PREPARED_LEGACY <= all_hook_keys:
@@ -189,7 +192,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "00676a6125c7f14d7e0feb56d92ac7b2e6fb3120b1e88f46e43779d1a91147df"
+    "d5be323ffdd61f8a784ebec234735f934707b7452c067da443efd3f54142cbfa"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -206,7 +209,7 @@ def validate_deferred_rows(rows, require_canonical=True):
             fail("P1.0b.1 checked-in deferred batch/reason invalid")
     canonical = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
     if require_canonical and hashlib.sha256(canonical).hexdigest() != \
-            "00676a6125c7f14d7e0feb56d92ac7b2e6fb3120b1e88f46e43779d1a91147df":
+            "d5be323ffdd61f8a784ebec234735f934707b7452c067da443efd3f54142cbfa":
         fail("P1.0b.1 checked-in deferred exact values drifted")
 validate_deferred_rows(TOOL_STATE_DEFERRED_ROWS)
 for field in ("batch", "reason"):
@@ -313,7 +316,8 @@ for path, text in prepared_source_texts.items():
             "tools.edit.reduce", "prepared_private_state",
             "prepared_selection_profile", "prepared_radial_sweep_transition",
             "prepared_radial_array_transition",
-            "tools.alignment.radial_sweep_tool"}:
+            "tools.alignment.radial_sweep_tool",
+            "tools.alignment.radial_array_tool"}:
         fail(f"P1.0b.3d PreparedRecordContext gained an unreviewed import: {module}")
     if "new PreparedRecordContext" in text:
         production_text = without_unittests(text)
@@ -2033,9 +2037,25 @@ def radial_array_owner_gate(owner, context, tool):
             "bool prepareRadialArrayTransition(PreparedRadialArrayTransitionOwner owner)" in context and
             "e.radialArrayTransition.validate();" in context and
             "e.radialArrayTransition.install();" in context and
-            "e.radialArrayTransition.abort();" in context)
+            "e.radialArrayTransition.abort();" in context and
+            "final PreparedRadialArrayEffect prepareActivate(PreparedRecordContext context)" in tool and
+            "PreparedRadialArrayTransitionOwner.activation(this, *live)" in tool and
+            "context.prepareRadialArrayTransition(transition) &&" in tool and
+            "context.markNoHistoryInstall();" in tool and
+            "final PreparedRadialArrayEffect prepareSessionDeactivate(" in tool and
+            tool.count("auto live = mesh;") == 2 and
+            "if (live is null) {" in tool and
+            "cmd !is null && cmd.meshPtr() is live" in tool and
+            "MeshSnapshot.capture(*live)" in tool and
+            "else ok = context.prepareGestureCarrierMismatch();" in tool and
+            "historyPrepared ? context.markHistoryInstall()" in tool and
+            "PreparedRadialArrayTransitionOwner.deactivation(this)" in tool and
+            tool.count("scope(failure) context.discard();") >= 2)
 if not radial_array_owner_gate(radial_array_owner, record_context, radial_array_tool):
     fail("RadialArray transition owner contract drift")
+if re.search(r"final\s+PreparedDeactivateEffect\s+prepareDeactivate\s*\(",
+             radial_array_tool):
+    fail("RadialArray retained a second root-shaped deactivation producer")
 for target, old, new, label in (
     ("owner", "target.classinfo is RadialArrayTool.classinfo", "target !is null", "admit derived product"),
     ("owner", "target.ownsPreparedMesh(&source)", "true", "admit foreign mesh"),
@@ -2048,6 +2068,14 @@ for target, old, new, label in (
     ("tool", "image.before = MeshSnapshot.capture(source);", "image.before = MeshSnapshot.init;", "replace deep snapshot with empty/shallow image"),
     ("tool", "if (image.clearHaul) toolHandles.clearHaul(); image.clear();", "image.clear();", "drop haul reset"),
     ("context", "e.radialArrayTransition.abort();", "", "drop context abort"),
+    ("tool", "PreparedRadialArrayTransitionOwner.activation(this, *live)", "null", "drop activation owner"),
+    ("tool", "historyPrepared ? context.markHistoryInstall()", "false ? context.markHistoryInstall()", "drop history branch"),
+    ("tool", "auto live = mesh;", "auto live = cast(Mesh*) null;", "drop cached live subject"),
+    ("tool", "if (live is null) {", "if (false) {", "drop null subject refusal"),
+    ("tool", "cmd !is null && cmd.meshPtr() is live", "cmd !is null", "admit wrong-Mesh history carrier"),
+    ("tool", "else ok = context.prepareGestureCarrierMismatch();", "else ok = true;", "drop mismatch diagnostic"),
+    ("tool", "PreparedRadialArrayTransitionOwner.deactivation(this)", "null", "drop deactivate owner"),
+    ("tool", "scope(failure) context.discard();", "", "drop producer failure cleanup"),
 ):
     owner, context, tool = radial_array_owner, record_context, radial_array_tool
     if target == "owner": owner = owner.replace(old, new, 1)
