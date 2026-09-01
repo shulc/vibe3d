@@ -3,13 +3,34 @@ module prepared_inherited_noop;
 import core.atomic : atomicOp;
 import tool : Tool;
 import tools.edit.drag_weld : DragWeldTool;
-
-enum PreparedInheritedNoopKind : ubyte { Activate, Deactivate }
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedInheritedNoopEffect,
+                              PreparedInheritedNoopKind, OwnedId;
 
 struct PreparedInheritedNoopToken {
     @disable this(this);
 private:
     ulong owner, generation;
+}
+
+/// Dormant Prepared+Legacy producer for the two inherited base lifecycle
+/// roots.  No production door calls this before the unified cutover.
+PreparedInheritedNoopEffect prepareInheritedNoop(
+        Tool target, PreparedInheritedNoopKind kind,
+        PreparedRecordContext context) {
+    auto exactTarget = target !is null &&
+        target.classinfo is DragWeldTool.classinfo
+        ? cast(DragWeldTool) target : null;
+    auto targetOwner = exactTarget is null ? OwnedId.init
+                                           : exactTarget.preparedInheritedOwner;
+    if (context is null)
+        return PreparedInheritedNoopEffect(targetOwner, kind, false);
+    scope(failure) context.discard();
+    auto owner = PreparedInheritedNoopOwner.prepare(target, kind);
+    const bool accepted = owner !is null &&
+        context.prepareInheritedNoop(owner) && context.markNoHistoryInstall();
+    if (!accepted) context.discard();
+    return PreparedInheritedNoopEffect(targetOwner, kind, accepted);
 }
 
 struct ValidatedInheritedNoopToken {
@@ -184,4 +205,55 @@ version(unittest) unittest {
            retry.markNoHistoryInstall() && retry.validate());
     retry.discard();
     assert(retryOwner.consumedForTest && !retry.validate());
+
+    // Dormant producer preserves zero-live/no-history behavior for both exact
+    // effective roots and never validates or installs early.
+    foreach (kind; [PreparedInheritedNoopKind.Activate,
+                    PreparedInheritedNoopKind.Deactivate]) {
+        auto producerContext = new PreparedRecordContext(new CommandHistory(),
+            new RecordObserverHub());
+        auto effect = prepareInheritedNoop(target, kind, producerContext);
+        assert(effect.accepted && effect.kind == kind &&
+               effect.owner == target.preparedInheritedOwner);
+        assert(producerContext.validate());
+        producerContext.install();
+        producerContext.install();
+        assert(producerContext.installTraceForTest == [17,8]);
+    }
+    auto foreignContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    auto foreignEffect = prepareInheritedNoop(
+        new ArcTool(() => &mesh, &gpu, LitShader.init),
+        PreparedInheritedNoopKind.Activate, foreignContext);
+    assert(!foreignEffect.accepted && foreignEffect.owner == OwnedId.init &&
+           foreignEffect.kind == PreparedInheritedNoopKind.Activate &&
+           !foreignContext.validate());
+    auto nullEffect = prepareInheritedNoop(target,
+        PreparedInheritedNoopKind.Deactivate, null);
+    assert(!nullEffect.accepted && nullEffect.owner == target.preparedInheritedOwner &&
+           nullEffect.kind == PreparedInheritedNoopKind.Deactivate);
+
+    auto producerFault = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    PreparedRecordContext.failAfterResourceBeginForTest(true);
+    threw = false;
+    try prepareInheritedNoop(target, PreparedInheritedNoopKind.Activate,
+                             producerFault);
+    catch (Exception) threw = true;
+    PreparedRecordContext.failAfterResourceBeginForTest(false);
+    assert(threw && producerFault.resourceCountForTest == 0);
+    producerFault.discard();
+    assert(!producerFault.validate());
+
+    auto producerRetry = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    auto retryEffect = prepareInheritedNoop(target,
+        PreparedInheritedNoopKind.Activate, producerRetry);
+    assert(retryEffect.accepted &&
+           retryEffect.owner == target.preparedInheritedOwner &&
+           retryEffect.kind == PreparedInheritedNoopKind.Activate &&
+           producerRetry.validate());
+    producerRetry.install();
+    producerRetry.install();
+    assert(producerRetry.installTraceForTest == [17,8]);
 }

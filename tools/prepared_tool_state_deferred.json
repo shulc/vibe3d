@@ -4,26 +4,6 @@
     "key": {
       "aggregate": "Tool",
       "module": "tool",
-      "signature": "void()",
-      "symbol": "activate"
-    },
-    "reason": "base no-op has no exact Tool factory product; inherited product admission requires exact effective-hook product census"
-  },
-  {
-    "batch": "P1.0b.3+",
-    "key": {
-      "aggregate": "Tool",
-      "module": "tool",
-      "signature": "void()",
-      "symbol": "deactivate"
-    },
-    "reason": "base no-op has no exact Tool factory product; inherited product admission requires exact effective-hook product census"
-  },
-  {
-    "batch": "P1.0b.2+",
-    "key": {
-      "aggregate": "Tool",
-      "module": "tool",
       "signature": "void(ref VectorStack vts)",
       "symbol": "update"
     },

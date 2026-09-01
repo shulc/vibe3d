@@ -226,10 +226,14 @@ B5L_PREPARED_LEGACY = {
 B5M_PREPARED_LEGACY = {
     ("tools.transform.move", "MoveTool", "update"),
 }
+B5N_PREPARED_LEGACY = {
+    ("tool", "Tool", "activate"),
+    ("tool", "Tool", "deactivate"),
+}
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
     B5I_PREPARED_LEGACY | B5J_PREPARED_LEGACY | B5K_PREPARED_LEGACY |
-    B5L_PREPARED_LEGACY | B5M_PREPARED_LEGACY)
+    B5L_PREPARED_LEGACY | B5M_PREPARED_LEGACY | B5N_PREPARED_LEGACY)
 all_hook_keys = {(r["module"], r["aggregate"], r["symbol"])
                  for r in CURRENT_WRITERS["hooks"]}
 if not TOOL_STATE_CONVERTED | PREPARED_LEGACY <= all_hook_keys:
@@ -261,7 +265,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "a1a34d020ac29742b7f37d514772085111eeb804d5d2b41382ebba0208b92b91"
+    "fe5198bbb3c754a2e7a7458ece97348cd6903e8d23e9871a42102e87acd93705"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -278,7 +282,7 @@ def validate_deferred_rows(rows, require_canonical=True):
             fail("P1.0b.1 checked-in deferred batch/reason invalid")
     canonical = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
     if require_canonical and hashlib.sha256(canonical).hexdigest() != \
-            "a1a34d020ac29742b7f37d514772085111eeb804d5d2b41382ebba0208b92b91":
+            TOOL_STATE_DEFERRED_CANONICAL_SHA256:
         fail("P1.0b.1 checked-in deferred exact values drifted")
 validate_deferred_rows(TOOL_STATE_DEFERRED_ROWS)
 for field in ("batch", "reason"):
@@ -2612,8 +2616,50 @@ inherited_noop_production_calls = sum(
     without_unittests(text).count("PreparedInheritedNoopOwner.prepare(") +
     without_unittests(text).count(".prepareInheritedNoop(")
     for text in prepared_source_texts.values())
-if inherited_noop_production_calls != 0:
-    fail("Inherited base-noop owner escaped infrastructure with a production caller")
+if inherited_noop_production_calls != 2:
+    fail("Inherited base-noop owner escaped its one dormant producer")
+def inherited_noop_producer_gate(owner):
+    production = without_unittests(owner)
+    match = re.search(r"PreparedInheritedNoopEffect prepareInheritedNoop\(\s*"
+        r"Tool target, PreparedInheritedNoopKind kind,\s*"
+        r"PreparedRecordContext context\)\s*\{", production)
+    if not match: return False
+    body = production[match.end():balanced_source(production, match.end())-1]
+    return all(x in body for x in (
+        "auto exactTarget = target !is null &&\n"
+        "        target.classinfo is DragWeldTool.classinfo\n"
+        "        ? cast(DragWeldTool) target : null;",
+        "auto targetOwner = exactTarget is null ? OwnedId.init\n"
+        "                                           : exactTarget.preparedInheritedOwner;",
+        "if (context is null)",
+        "scope(failure) context.discard();",
+        "PreparedInheritedNoopOwner.prepare(target, kind)",
+        "context.prepareInheritedNoop(owner) && context.markNoHistoryInstall();",
+        "if (!accepted) context.discard();",
+        "return PreparedInheritedNoopEffect(targetOwner, kind, accepted);")) and \
+        body.count("PreparedInheritedNoopEffect(") == 2 and \
+        not any(x in body for x in ("owner.install(", "context.install(",
+                                    "context.validate("))
+if not inherited_noop_producer_gate(inherited_noop_owner):
+    fail("Inherited base-noop dormant producer contract drift")
+
+def inherited_free_producer_call_count(source_texts):
+    total = 0
+    for text in source_texts.values():
+        production = without_unittests(text)
+        total += len(re.findall(r"(?<![\w.])prepareInheritedNoop\s*\(",
+                                production))
+    return total
+# The two matches are the free function definition and the context method
+# definition; method calls are dot-prefixed and counted by the owner census.
+if inherited_free_producer_call_count(prepared_source_texts) != 2:
+    fail("Inherited base-noop free producer gained a production caller")
+free_call_mutant = dict(prepared_source_texts)
+free_call_mutant[next(iter(free_call_mutant))] += \
+    "\nvoid inheritedNoopEscapeForMutation() { prepareInheritedNoop(null, " \
+    "PreparedInheritedNoopKind.Activate, null); }\n"
+if inherited_free_producer_call_count(free_call_mutant) == 2:
+    fail("Inherited base-noop free-producer escape mutation did not RED")
 for target, old, new, label in (
     ("owner", "target.classinfo !is DragWeldTool.classinfo", "cast(DragWeldTool) target is null", "broaden admission"),
     ("owner", "prepared_.owner != owner_", "false", "drop prepared owner"),
@@ -2660,6 +2706,26 @@ context_mutant = (record_context[:context_method.start()] +
     record_context[context_body_end:])
 if inherited_context_enlist_ok(context_mutant):
     fail("Inherited base-noop failure-cleanup mutation did not RED")
+
+for old, new, label in (
+    ("scope(failure) context.discard();", "", "drop producer failure cleanup"),
+    ("PreparedInheritedNoopOwner.prepare(target, kind)", "null", "drop producer owner"),
+    ("context.prepareInheritedNoop(owner) &&", "true &&", "drop producer enlist"),
+    ("context.markNoHistoryInstall();", "true;", "drop producer NoHistory"),
+    ("if (!accepted) context.discard();", "", "drop producer refusal discard"),
+    ("return PreparedInheritedNoopEffect(targetOwner, kind, accepted);",
+     "return PreparedInheritedNoopEffect(OwnedId.init, kind, accepted);",
+     "wrong accepted owner"),
+    ("return PreparedInheritedNoopEffect(targetOwner, kind, accepted);",
+     "return PreparedInheritedNoopEffect(targetOwner, PreparedInheritedNoopKind.Deactivate, accepted);",
+     "substitute result kind"),
+    ("auto owner = PreparedInheritedNoopOwner.prepare(target, kind);",
+     "auto owner = PreparedInheritedNoopOwner.prepare(target, kind); owner.install();",
+     "early producer install"),
+):
+    mutant = inherited_noop_owner.replace(old, new, 1)
+    if inherited_noop_producer_gate(mutant):
+        fail(f"Inherited base-noop producer mutation did not RED: {label}")
 
 inherited_noop_copy_fixture = ROOT / "tests/compile_fail/prepared_inherited_noop_token_copy.d"
 run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(inherited_noop_copy_fixture)],
