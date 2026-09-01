@@ -54,6 +54,28 @@ owned_rows = CURRENT_WRITERS["hooks"] + CURRENT_WRITERS["params"]
 modules = sorted({row["module"] for row in owned_rows})
 modules = sorted(set(modules) | {row["module"] for row in CURRENT_WRITERS["products"]})
 module_alias = {module: f"m{i}" for i, module in enumerate(modules)}
+# Compiler-measured effective products for Tool's three literal no-op hooks.
+# A declaration row is converted only when every product in its corresponding
+# set has a closed prepared admission path; this table prevents both the old
+# "there is no exact Tool product" false closure and accidental widening.
+BASE_TOOL_EFFECTIVE_PRODUCTS = {
+    "activate": {"DragWeldTool"},
+    "deactivate": {"DragWeldTool"},
+    "update": {
+        "ArcTool", "ArrayTool", "BendTool", "BoxTool", "BridgeTool",
+        "CapsuleTool", "CloneTool", "ConeTool", "CylinderTool",
+        "DragWeldTool", "EdgeBevelTool", "EdgeExtrudeTool",
+        "EdgeSliceTool", "EdgeSlideTool", "LinearAlignTool",
+        "LoopSliceTool", "MagnetTool", "MirrorTool", "PenTool",
+        "PolyBevelTool", "PolyExtrudeTool", "PolyInsetTool", "PushTool",
+        "RadialAlignTool", "RadialArrayTool", "RadialSweepTool",
+        "ReductionTool", "SliceTool", "SmoothShiftTool", "SphereTool",
+        "StrokeExtrudeTool", "TackTool", "TorusTool", "TubeTool",
+        "VertexBevelTool", "VertexExtrudeTool", "VertexMergeTool",
+        "VertexTool", "XfrmJitterTool", "XfrmQuantizeTool",
+        "XfrmSmoothTool",
+    },
+}
 with tempfile.TemporaryDirectory(prefix="vibe3d-writer-traits-") as td:
     lines = ["module prepared_writer_traits;",
              "import std.traits : ReturnType, Parameters, ParameterStorageClassTuple, functionAttributes;",
@@ -75,15 +97,49 @@ with tempfile.TemporaryDirectory(prefix="vibe3d-writer-traits-") as td:
                   f'static assert(is(Parameters!writerMember{i} == Parameters!{expected}));',
                   f'static assert(ParameterStorageClassTuple!writerMember{i} == ParameterStorageClassTuple!{expected});',
                   f'static assert(functionAttributes!writerMember{i} == functionAttributes!{expected});']
-    for row in CURRENT_WRITERS["products"]:
+    effective_assertions = {}
+    product_names = {row["aggregate"] for row in CURRENT_WRITERS["products"]}
+    for hook, expected_products in BASE_TOOL_EFFECTIVE_PRODUCTS.items():
+        if not expected_products <= product_names:
+            fail(f"P1.0b.0 base Tool {hook} product left frozen census")
+    for product_i, row in enumerate(CURRENT_WRITERS["products"]):
         product = f"{module_alias[row['module']]}.{row['aggregate']}"
         lines.append(f"static assert(is({product} == class));")
+        base_tool = f"{module_alias['tool']}.Tool"
+        for hook, expected_products in BASE_TOOL_EFFECTIVE_PRODUCTS.items():
+            alias_name = f"effectiveToolHook{product_i}_{hook}"
+            condition = (f"__traits(isSame, __traits(parent, {alias_name}), "
+                         f"{base_tool})")
+            expected = row["aggregate"] in expected_products
+            assertion = condition if expected else "!" + condition
+            lines += [f'alias {alias_name} = __traits(getMember, {product}, "{hook}");',
+                      f"static assert({assertion});"]
+            effective_assertions[(hook, row["aggregate"])] = \
+                (f"static assert({assertion});",
+                 f"static assert({condition if not expected else '!' + condition});")
     path = Path(td) / "prepared_writer_traits.d"
     path.write_text("\n".join(lines))
     compile_traits = subprocess.run(["dmd", "-o-", *DMD_FLAGS, str(path)], cwd=ROOT,
                                     text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if compile_traits.returncode:
         fail("P1.0b.0 compiler-backed owner/signature census failed:\n" + compile_traits.stdout)
+    # Named potency mutations: flip one measured member on each lifecycle axis
+    # and require the compiler census itself (not a name table) to redden.
+    for hook, aggregate in (("activate", "DragWeldTool"),
+                            ("deactivate", "DragWeldTool"),
+                            ("update", "ArcTool")):
+        original, inverted = effective_assertions[(hook, aggregate)]
+        mutant_lines = list(lines)
+        index = mutant_lines.index(original)
+        mutant_lines[index] = inverted
+        mutant_path = Path(td) / f"prepared_writer_traits_{hook}_mutant.d"
+        mutant_path.write_text("\n".join(mutant_lines).replace(
+            "module prepared_writer_traits;",
+            f"module prepared_writer_traits_{hook}_mutant;", 1))
+        mutant_run = subprocess.run(["dmd", "-o-", *DMD_FLAGS, str(mutant_path)],
+            cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        if mutant_run.returncode == 0:
+            fail(f"P1.0b.0 base Tool {hook} effective-product mutation did not RED")
 
 deactivations = [r for r in CURRENT_WRITERS["hooks"]
                  if r["symbol"] == "deactivate" and r["module"] != "tool"]
