@@ -53,6 +53,7 @@ enum PreparedMoveUpdateKind : ubyte {
 enum PreparedTopologyPenUpdateKind : ubyte { None, PacketAbsent, Packet }
 enum PreparedPenParamKind : ubyte { None, Noop, CurrentPoint, Position }
 enum PreparedArrayParamKind : ubyte { None, Noop, Preview }
+enum PreparedMagnetParamKind : ubyte { None, Noop, Preview }
 enum PreparedInheritedNoopKind : ubyte { Activate, Deactivate, Update }
 
 @PreparedAggregate struct PreparedActivateEffect {
@@ -104,6 +105,11 @@ enum PreparedInheritedNoopKind : ubyte { Activate, Deactivate, Update }
 @PreparedAggregate struct PreparedArrayParamEffect {
     OwnedId owner;
     PreparedArrayParamKind kind;
+    bool accepted;
+}
+@PreparedAggregate struct PreparedMagnetParamEffect {
+    OwnedId owner;
+    PreparedMagnetParamKind kind;
     bool accepted;
 }
 @PreparedAggregate struct PreparedInheritedNoopEffect {

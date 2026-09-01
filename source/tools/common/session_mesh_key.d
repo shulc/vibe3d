@@ -63,7 +63,7 @@ struct SessionMeshKey {
     /// Freeze the identity of `m`. Call this exactly where the mesh-indexed
     /// state it protects is (re-)derived — including from a `resyncSession()`,
     /// or the guard refuses a commit undo/redo legitimately re-baselined.
-    void stamp(ref Mesh m) {
+    void stamp(ref Mesh m) nothrow @nogc {
         key_   = MeshTopoKey.init;
         key_.stamp(m);
         verts_ = m.vertices.length;
@@ -71,7 +71,7 @@ struct SessionMeshKey {
     }
 
     /// Is `m` still the mesh this gesture was armed over?
-    bool matches(ref Mesh m) const {
+    bool matches(ref Mesh m) const nothrow @nogc {
         return key_.matches(m)
             && verts_ == m.vertices.length
             && faces_ == m.faces.length;
@@ -79,7 +79,7 @@ struct SessionMeshKey {
 
     /// Forget the stamp — a fresh key matches nothing (`MeshTopoKey`'s own
     /// sentinels are `size_t.max` / `ulong.max`, which no live mesh can hold).
-    void invalidate() {
+    void invalidate() nothrow @nogc {
         key_.invalidate();
         verts_ = size_t.max;
         faces_ = size_t.max;

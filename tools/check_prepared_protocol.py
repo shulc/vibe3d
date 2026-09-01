@@ -238,6 +238,7 @@ B5O_PREPARED_LEGACY = {
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "activate"),
 }
 B5P_PREPARED_LEGACY = {
+    ("tools.deform.magnet", "MagnetTool", "onParamChanged"),
     ("tools.alignment.radial_array_tool", "RadialArrayTool", "onParamChanged"),
     ("tools.alignment.array_tool", "ArrayTool", "onParamChanged"),
     ("tools.create.pen", "PenTool", "onParamChanged"),
@@ -306,7 +307,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "8674efca65cac94a6ea753c03d59f59ad6622ec29fdc22c777747265fb5eef91"
+    "d64b9c14bf33ee9ea669829f02ebc6ba42bb3950ed41ddbfe2ebe67d7ea83cf5"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -458,6 +459,7 @@ for path, text in prepared_source_texts.items():
             "prepared_topology_pen_activation",
             "prepared_topology_pen_update",
             "prepared_array_param_update",
+            "prepared_magnet_param_update",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
@@ -1985,6 +1987,75 @@ for target, old, new, label in (
         mutant[target] = mutant[target].replace(old, new, 1)
     if mutant[target] == array_param_sources[target] or array_param_gate(mutant):
         fail(f"Array parameter mutation did not RED: {label}")
+
+# Magnet's radius hook rebuilds the current drag from its frozen baseline in a
+# detached mesh and installs mesh, gesture state, upload, then NoHistory.
+magnet_param_sources = {
+    "tool": (ROOT / "source/tools/deform/magnet.d").read_text(),
+    "owner": (ROOT / "source/prepared_magnet_param_update.d").read_text(),
+    "context": record_context,
+}
+def magnet_param_gate(s):
+    tool, owner, context = (s[k] for k in ("tool", "owner", "context"))
+    start = tool.find("final PreparedMagnetParamEffect prepareParamChanged(")
+    end = tool.find("override void evaluate()", start)
+    producer = tool[start:end]
+    return (all(x in tool for x in (
+                "image.expectedLive = MeshSnapshot.capture(live);",
+                "image.expectedBefore = MeshSnapshot.capture(baseline);",
+                "auto shadow = beginPreparedShadow(image.candidate);",
+                "image.nextBuilt = applyMagnet(&image.candidate",
+                "drainPreparedShadowDelivery(image.candidate",
+                "sameSliceBytes(touchedPrev_, image.expectedTouchedPrev)",
+                "image.expectedLive.matches(live)",
+                "image.expectedBefore.matches(before)")) and
+            all(x in owner for x in (
+                "target.classinfo !is MagnetTool.classinfo",
+                "!target.ownsPreparedLayer(layer)",
+                "&layer_.meshRef() !is source_",
+                "!target_.preparedParamMatches(image_, *source_)",
+                "target_.installPreparedParam(image_)",
+                "validatedToken_.generation != generation_")) and
+            all(x in producer for x in (
+                "uploadOwner.owns(gpu)",
+                "context.prepareStampedMeshImage(layer, owner.candidate,",
+                "context.prepareMagnetParamUpdate(owner)",
+                "context.prepareUpload(uploadOwner, owner.candidate)",
+                "context.markNoHistoryInstall()",
+                "scope(failure) context.discard();", "if (!ok) context.discard();")) and
+            producer.find("context.prepareStampedMeshImage") <
+                producer.find("context.prepareMagnetParamUpdate(owner)") <
+                producer.find("context.prepareUpload(uploadOwner") <
+                producer.find("context.markNoHistoryInstall()") and
+            "bool prepareMagnetParamUpdate(PreparedMagnetParamUpdateOwner owner)" in context and
+            context.count("case PreparedResourceKind.MagnetParamUpdateState:") == 3 and
+            "e.magnetParamUpdate.install();" in context)
+if not magnet_param_gate(magnet_param_sources):
+    fail("Magnet onParamChanged prepared contract drift")
+for target, old, new, label in (
+    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
+    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop detached shadow"),
+    ("tool", "sameSliceBytes(touchedPrev_, image.expectedTouchedPrev)", "true", "drop exact touched witness"),
+    ("owner", "target.classinfo !is MagnetTool.classinfo", "false", "broaden product"),
+    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
+    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
+    ("tool", "context.prepareMagnetParamUpdate(owner)", "true", "drop private state"),
+    ("tool", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop GPU upload"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
+    ("context", "e.magnetParamUpdate.install();", "", "drop context install"),
+):
+    mutant = dict(magnet_param_sources)
+    if target == "tool":
+        text = mutant[target]
+        start = text.find("final PreparedMagnetParamEffect prepareParamChanged(") \
+            if old in text[text.find("final PreparedMagnetParamEffect prepareParamChanged("):] \
+            else 0
+        pos = text.find(old, start)
+        mutant[target] = text[:pos] + new + text[pos + len(old):]
+    else:
+        mutant[target] = mutant[target].replace(old, new, 1)
+    if mutant[target] == magnet_param_sources[target] or magnet_param_gate(mutant):
+        fail(f"Magnet parameter mutation did not RED: {label}")
 
 # PrimitiveCreateTool.activate is one inherited declaration with six exact
 # products. Its closed projection preserves each leaf's resetSession law and

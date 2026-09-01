@@ -44,6 +44,7 @@ import prepared_edge_extend_tool_activation : PreparedEdgeExtendToolActivationOw
 import prepared_topology_pen_activation : PreparedTopologyPenActivationOwner;
 import prepared_topology_pen_update : PreparedTopologyPenUpdateOwner;
 import prepared_array_param_update : PreparedArrayParamUpdateOwner;
+import prepared_magnet_param_update : PreparedMagnetParamUpdateOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -66,7 +67,8 @@ private enum PreparedResourceKind : ubyte {
     MirrorActivationState, EdgeExtendToolActivationPreState,
     EdgeExtendToolActivationPostState, TopologyPenActivationState,
     TopologyPenUpdateState,
-    MirrorDeactivateState, BridgeDeactivateState, ArrayParamUpdateState
+    MirrorDeactivateState, BridgeDeactivateState, ArrayParamUpdateState,
+    MagnetParamUpdateState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -101,6 +103,7 @@ private struct PreparedResourceEntry {
     PreparedTopologyPenActivationOwner topologyPenActivation;
     PreparedTopologyPenUpdateOwner topologyPenUpdate;
     PreparedArrayParamUpdateOwner arrayParamUpdate;
+    PreparedMagnetParamUpdateOwner magnetParamUpdate;
     PreparedMirrorDeactivateOwner mirrorDeactivate;
     PreparedBridgeDeactivateOwner bridgeDeactivate;
     ClickPointResourceOwner clickDestroy;
@@ -648,6 +651,17 @@ public:
         e.kind = PreparedResourceKind.ArrayParamUpdateState;
         e.arrayParamUpdate = owner; resources_ ~= e; return true;
     }
+    bool prepareMagnetParamUpdate(PreparedMagnetParamUpdateOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected Magnet parameter enlist failure");
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.MagnetParamUpdateState;
+        e.magnetParamUpdate = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -887,6 +901,9 @@ public:
             case PreparedResourceKind.ArrayParamUpdateState:
                 ok = e.arrayParamUpdate !is null &&
                     e.arrayParamUpdate.validate(); break;
+            case PreparedResourceKind.MagnetParamUpdateState:
+                ok = e.magnetParamUpdate !is null &&
+                    e.magnetParamUpdate.validate(); break;
             case PreparedResourceKind.MirrorDeactivateState:
                 ok = e.mirrorDeactivate !is null &&
                     e.mirrorDeactivate.validate(); break;
@@ -1093,6 +1110,10 @@ public:
             e.arrayParamUpdate.install();
             version(unittest) installTrace_[installTraceLength_++] = 43;
             break;
+        case PreparedResourceKind.MagnetParamUpdateState:
+            e.magnetParamUpdate.install();
+            version(unittest) installTrace_[installTraceLength_++] = 44;
+            break;
         case PreparedResourceKind.MirrorDeactivateState:
             e.mirrorDeactivate.install();
             version(unittest) installTrace_[installTraceLength_++] = 40;
@@ -1164,6 +1185,8 @@ private:
             e.topologyPenUpdate.abort(); break;
         case PreparedResourceKind.ArrayParamUpdateState:
             e.arrayParamUpdate.abort(); break;
+        case PreparedResourceKind.MagnetParamUpdateState:
+            e.magnetParamUpdate.abort(); break;
         case PreparedResourceKind.MirrorDeactivateState:
             e.mirrorDeactivate.abort(); break;
         case PreparedResourceKind.BridgeDeactivateState:

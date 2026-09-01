@@ -741,14 +741,14 @@ struct MeshTopoKey {
     // only ever advances for a mesh that IS owned, so an epoch key would read
     // permanently fresh there. That reachability argument, not the class, is
     // why this row kept a counter.
-    bool matches(ref Mesh m) const {
+    bool matches(ref Mesh m) const nothrow @nogc {
         return addr == cast(size_t)&m && topoVer == m.topologyVersion;
     }
-    void stamp(ref Mesh m) {
+    void stamp(ref Mesh m) nothrow @nogc {
         addr    = cast(size_t)&m;
         topoVer = m.topologyVersion;
     }
-    void invalidate() {
+    void invalidate() nothrow @nogc {
         addr    = size_t.max;
         topoVer = ulong.max;
     }

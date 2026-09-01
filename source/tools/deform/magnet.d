@@ -3,6 +3,8 @@ import prepared_record_context : PreparedRecordContext;
 import prepared_private_state : PreparedPrivateStateOwner;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import prepared_tool_effect : PreparedMagnetParamEffect, PreparedMagnetParamKind;
+import prepared_magnet_param_update : PreparedMagnetParamUpdateOwner;
 import command_history : PreparedHistoryKind;
 
 import bindbc.sdl;
@@ -23,10 +25,33 @@ import deform_magnet : applyMagnet;
 import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, ElementConnect;
 import hover_state : g_hoveredVertex;
 import change_bus : MeshEditScope;
-import document : primaryModelSpace;
+import document : primaryModelSpace, Layer;
+import mesh_gpu : GpuUploadOwner;
+import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
+import core.stdc.string : memcmp;
 
 import std.math : sqrt;
 import perf_probe : g_perf, Cat;
+
+struct PreparedMagnetParamImage {
+    bool valid, applies, expectedActive, expectedDragging, expectedBuilt;
+    bool nextBuilt, expectedSessionMatches;
+    int expectedPickedVi;
+    Vec3 expectedCenter, expectedTarget;
+    float expectedStrength, expectedDist;
+    MeshSnapshot expectedLive, expectedBefore;
+    uint[] expectedTouchedIdx, nextTouchedIdx;
+    Vec3[] expectedTouchedPrev, nextTouchedPrev;
+    SessionMeshKey nextSessionKey;
+    Mesh candidate;
+    uint deliveryFlags, deliveryDomains;
+    void clear() nothrow @nogc {
+        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
+        expectedTouchedIdx = nextTouchedIdx = null;
+        expectedTouchedPrev = nextTouchedPrev = null;
+        candidate = Mesh.init; this.valid = this.applies = false;
+    }
+}
 
 /// Convergent attraction deformer tool (`xfrm.magnet`).
 ///
@@ -140,6 +165,25 @@ public:
     version(unittest) bool preparedActivationInstalledForTest() const nothrow @nogc {
         return active && !built && !dragging && pickedVi == -1 && before.filled;
     }
+    version(unittest) void seedPreparedParamForTest(ref Mesh source,
+            bool dragBuilt = true) {
+        active = true; dragging = dragBuilt; built = dragBuilt; pickedVi = 0;
+        center_ = source.vertices[0]; target_ = center_ + Vec3(1, 0, 0);
+        strength_ = 1.0f; dist_ = 100.0f;
+        before = MeshSnapshot.capture(source);
+        touchedIdx_ = null; touchedPrev_ = null; sessionKey_.stamp(source);
+    }
+    version(unittest) void mutatePreparedParamForTest(float value) nothrow @nogc {
+        dist_ = value;
+    }
+    version(unittest) bool preparedParamStateForTest(bool installed)
+            const nothrow @nogc {
+        return built && (installed ? touchedIdx_.length > 0 :
+            touchedIdx_.length == 0);
+    }
+    final bool ownsPreparedLayer(Layer layer) const {
+        return layer !is null && &layer.meshRef() is mesh;
+    }
 
     override void deactivate() {
         if (active) {
@@ -191,6 +235,102 @@ public:
     override void onParamChanged(string pname) {
         // dist changed while dragging — rebuild with new radius.
         if (pname == "dist" && dragging && built) rebuildPreview();
+    }
+    final PreparedMagnetParamImage buildPreparedParamImage(string pname,
+            ref Mesh live) {
+        PreparedMagnetParamImage image;
+        image.valid = true; image.expectedActive = active;
+        image.expectedDragging = dragging; image.expectedBuilt = built;
+        image.nextBuilt = built; image.expectedPickedVi = pickedVi;
+        image.expectedCenter = center_; image.expectedTarget = target_;
+        image.expectedStrength = strength_; image.expectedDist = dist_;
+        image.expectedLive = MeshSnapshot.capture(live);
+        image.expectedTouchedIdx = touchedIdx_.dup;
+        image.nextTouchedIdx = touchedIdx_.dup;
+        image.expectedTouchedPrev = touchedPrev_.dup;
+        image.nextTouchedPrev = touchedPrev_.dup;
+        image.expectedSessionMatches = sessionKey_.matches(live);
+        image.nextSessionKey = sessionKey_;
+        if (!before.filled) return image;
+        Mesh baseline;
+        auto baselineShadow = beginPreparedShadow(baseline);
+        before.restore(baseline);
+        drainPreparedShadowDelivery(baseline, image.deliveryFlags,
+            image.deliveryDomains);
+        baselineShadow.close();
+        image.expectedBefore = MeshSnapshot.capture(baseline);
+        image.deliveryFlags = image.deliveryDomains = 0;
+        if (pname != "dist" || !dragging || !built) return image;
+        image.applies = true; image.candidate = baseline; baseline = Mesh.init;
+        auto shadow = beginPreparedShadow(image.candidate);
+        if (strength_ <= 0.0f) image.nextBuilt = false;
+        else {
+            int[] indices = image.candidate.selectedVertexIndicesVertices();
+            FalloffPacket fp;
+            fp.type = FalloffType.Element; fp.enabled = true;
+            fp.pickedCenter = center_; fp.pickedRadius = dist_;
+            fp.connect = ElementConnect.Ignore; fp.shape = FalloffShape.Smooth;
+            fp.anchorPos = [center_]; fp.anchorRing = [cast(uint)pickedVi];
+            const auto aim = aimSpace(vpWorld_, primaryModelSpace());
+            image.nextBuilt = applyMagnet(&image.candidate, indices, target_,
+                strength_, fp, aim, image.nextTouchedIdx, image.nextTouchedPrev);
+            if (image.nextBuilt) {
+                image.nextSessionKey.stamp(image.candidate);
+                image.candidate.commitChange(MeshEditScope.Position);
+            }
+        }
+        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+            image.deliveryDomains);
+        shadow.close(); return image;
+    }
+    final bool preparedParamMatches(in PreparedMagnetParamImage image,
+            ref Mesh live) const nothrow @nogc {
+        bool sameBytes(T)(ref const T a, ref const T b) nothrow @nogc {
+            return memcmp(&a, &b, T.sizeof) == 0;
+        }
+        bool sameSliceBytes(T)(const(T)[] a, const(T)[] b) nothrow @nogc {
+            return a.length == b.length && (a.length == 0 ||
+                memcmp(a.ptr, b.ptr, a.length * T.sizeof) == 0);
+        }
+        return image.valid && active == image.expectedActive &&
+            dragging == image.expectedDragging && built == image.expectedBuilt &&
+            pickedVi == image.expectedPickedVi &&
+            sameBytes(center_, image.expectedCenter) &&
+            sameBytes(target_, image.expectedTarget) &&
+            sameBytes(strength_, image.expectedStrength) &&
+            sameBytes(dist_, image.expectedDist) &&
+            sameSliceBytes(touchedIdx_, image.expectedTouchedIdx) &&
+            sameSliceBytes(touchedPrev_, image.expectedTouchedPrev) &&
+            sessionKey_.matches(live) == image.expectedSessionMatches &&
+            image.expectedLive.matches(live) &&
+            (!before.filled || image.expectedBefore.matches(before));
+    }
+    final void installPreparedParam(ref PreparedMagnetParamImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        built = image.nextBuilt;
+        touchedIdx_ = image.nextTouchedIdx; image.nextTouchedIdx = null;
+        touchedPrev_ = image.nextTouchedPrev; image.nextTouchedPrev = null;
+        sessionKey_ = image.nextSessionKey; image.clear();
+    }
+    final PreparedMagnetParamEffect prepareParamChanged(PreparedRecordContext context,
+            string pname, Layer layer, GpuUploadOwner uploadOwner) {
+        if (context is null) return PreparedMagnetParamEffect(
+            preparedToolStateOwner, PreparedMagnetParamKind.None, false);
+        scope(failure) context.discard();
+        auto owner = PreparedMagnetParamUpdateOwner.prepare(this, pname, layer);
+        auto kind = owner is null ? PreparedMagnetParamKind.None : owner.effectKind;
+        bool ok = owner !is null;
+        if (ok && owner.applies)
+            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
+                context.prepareStampedMeshImage(layer, owner.candidate,
+                    owner.deliveryFlags, owner.deliveryDomains);
+        if (ok) ok = context.prepareMagnetParamUpdate(owner);
+        if (ok && owner.applies)
+            ok = context.prepareUpload(uploadOwner, owner.candidate);
+        if (ok) ok = context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedMagnetParamEffect(preparedToolStateOwner, kind, ok);
     }
     override void evaluate() {}
 
