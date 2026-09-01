@@ -19,6 +19,14 @@ import shader : Shader, LitShader, drawLitPreview;
 import handler : ToolHandles, BoxHandler, gizmoSize, drawThickLinesExt;
 import drag : planeDragDelta, screenAxisDelta, gesturePrevPixel;
 import eventlog : queryMouse;
+import prepared_record_context : PreparedRecordContext;
+import prepared_radial_sweep_transition : PreparedRadialSweepTransitionOwner;
+import prepared_tool_effect : PreparedRadialSweepEffect, PreparedRadialSweepKind;
+import mesh_gpu : GpuUploadOwner, GpuResourceOwner;
+import document : Layer;
+import change_bus : MeshEditScope;
+import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
+import command_history : PreparedHistoryKind;
 
 version (unittest) import std.conv : to;
 
@@ -321,6 +329,8 @@ private:
     Viewport    cachedVp;
 
     GLuint axisLineVao, axisLineVbo;
+    version(unittest) MeshSnapshot lastPreparedCommitImage_;
+    version(unittest) ulong lastPreparedMutationVersion_, lastPreparedTopologyVersion_;
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader) {
@@ -344,6 +354,102 @@ public:
     }
 
     override string name() const { return "Radial Sweep"; }
+
+    final bool ownsPreviewUpload(GpuUploadOwner owner) nothrow @nogc {
+        return owner !is null && owner.owns(&previewGpu);
+    }
+    final bool ownsPreviewDestroy(GpuResourceOwner owner) nothrow @nogc {
+        return owner !is null && owner.owns(&previewGpu);
+    }
+    final bool ownsMainUpload(GpuUploadOwner owner) nothrow @nogc {
+        return owner !is null && owner.owns(gpu);
+    }
+
+    final PreparedRadialSweepEffect prepareParamChanged(PreparedRecordContext context,
+            PreparedRadialSweepTransitionOwner transition, GpuUploadOwner uploadOwner) {
+        if (context is null) return PreparedRadialSweepEffect(
+            preparedToolStateOwner, PreparedRadialSweepKind.Param, false);
+        scope(failure) context.discard();
+        bool ok = context !is null && transition !is null && transition.owns(this) &&
+            transition.kind == PreparedRadialSweepTransitionKind.Param &&
+            ownsPreviewUpload(uploadOwner) &&
+            context.prepareRadialSweepTransition(transition) &&
+            context.prepareUpload(uploadOwner, transition.previewForGpuUpload) &&
+            context.markNoHistoryInstall();
+        if (!ok && context !is null) context.discard();
+        return PreparedRadialSweepEffect(preparedToolStateOwner,
+            PreparedRadialSweepKind.Param, ok);
+    }
+
+    private size_t buildPreparedCommitCandidate(out Mesh candidate,
+            out MeshSnapshot pre, out uint deliveryFlags,
+            out uint deliveryDomains) {
+        if (!(engaged && validProfile_ && sessionKey_.matches(*mesh))) return 0;
+        pre = MeshSnapshot.capture(*mesh); pre.restore(candidate);
+        auto shadow = beginPreparedShadow(candidate);
+        size_t inserted;
+        {
+            auto ed = MeshEditBatch.unrecorded(candidate, kRevolveEditScope);
+            inserted = ed.revolveProfileEx(profile_, profileClosed_, toKernelParams(params_));
+            ed.close();
+        }
+        if (inserted > 0) {
+            if (profileFaceIdx_ != uint.max && profileFaceIdx_ < candidate.faces.length) {
+                auto delMask = new bool[](candidate.faces.length);
+                delMask[profileFaceIdx_] = true; candidate.deleteFacesByMask(delMask);
+            }
+            candidate.buildLoops();
+        }
+        drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);
+        shadow.close(); return inserted;
+    }
+
+    final PreparedRadialSweepEffect prepareDeactivate(PreparedRecordContext context,
+            PreparedRadialSweepTransitionOwner transition, Layer layer,
+            GpuUploadOwner mainUpload, GpuResourceOwner previewDestroy) {
+        if (context is null) return PreparedRadialSweepEffect(
+            preparedToolStateOwner, PreparedRadialSweepKind.Deactivate, false);
+        scope(failure) context.discard();
+        bool ok = transition !is null &&
+            transition.owns(this) &&
+            transition.kind == PreparedRadialSweepTransitionKind.Deactivate &&
+            layer !is null && &layer.meshRef() is mesh &&
+            ownsPreviewDestroy(previewDestroy);
+        Mesh candidate; MeshSnapshot pre;
+        size_t inserted; uint deliveryFlags, deliveryDomains;
+        if (ok) inserted = buildPreparedCommitCandidate(candidate, pre,
+            deliveryFlags, deliveryDomains);
+        version(unittest) if (ok && inserted > 0) {
+            lastPreparedCommitImage_ = MeshSnapshot.capture(candidate);
+            lastPreparedMutationVersion_ = __traits(getMember, candidate,
+                "mutation" ~ "Version");
+            lastPreparedTopologyVersion_ = __traits(getMember, candidate,
+                "topology" ~ "Version");
+        }
+        if (ok && inserted > 0)
+            ok = ownsMainUpload(mainUpload) &&
+                context.prepareStampedMeshImage(layer, candidate,
+                    deliveryFlags, deliveryDomains) &&
+                context.prepareUpload(mainUpload, candidate);
+        if (ok) ok = context.prepareDestroy(previewDestroy);
+        bool historyPrepared;
+        if (ok && inserted > 0 && history !is null && gestureFactory !is null) {
+            auto cmd = cast(MeshSessionEdit) gestureFactory();
+            if (cmd !is null) {
+                cmd.setSnapshots(pre, MeshSnapshot.capture(candidate), "Radial Sweep");
+                historyPrepared = context.prepare(cmd, PreparedHistoryKind.Plain).accepted;
+                ok = historyPrepared;
+            } else {
+                ok = context.prepareGestureCarrierMismatch();
+            }
+        }
+        if (ok) ok = historyPrepared ? context.markHistoryInstall()
+                                     : context.markNoHistoryInstall();
+        if (ok) ok = context.prepareRadialSweepTransition(transition);
+        if (!ok && context !is null) context.discard();
+        return PreparedRadialSweepEffect(preparedToolStateOwner,
+            PreparedRadialSweepKind.Deactivate, ok, inserted);
+    }
 
     final RadialSweepTransitionImage buildPreparedActivationImage(
             ref RadialSweepProfileImage profile) {
@@ -450,6 +556,15 @@ public:
     version(unittest) int preparedHaulForTest() const nothrow @nogc {
         return toolHandles.haulForPreparedTest();
     }
+    version(unittest) GpuUploadOwner fakePreviewUploadOwnerForTest() {
+        return GpuUploadOwner.fakeForTest(&previewGpu);
+    }
+    version(unittest) GpuResourceOwner fakePreviewDestroyOwnerForTest() {
+        return GpuResourceOwner.fakeForTest(&previewGpu);
+    }
+    version(unittest) GpuUploadOwner fakeMainUploadOwnerForTest() {
+        return GpuUploadOwner.fakeForTest(gpu);
+    }
     version(unittest) void seedPreparedDeactivateParityForTest() {
         params_.sides = 37; params_.offset = 4.25f; engaged = true;
         havePreviewCache = true; dragPart = 2; cachedSides = 91;
@@ -466,6 +581,30 @@ public:
             cachedEndAngle == 222 && cachedOffset == 6.5f && !cachedCap0 && cachedCap1 &&
             previewMesh.vertices.length == previewVerts && profile_.length == profileCount &&
             baseSnap.filled && toolHandles.haulForPreparedTest() == 3;
+    }
+    version(unittest) bool installedCommitMatchesPreparedForTest() const {
+        auto now = MeshSnapshot.capture(*mesh);
+        auto expected = lastPreparedCommitImage_;
+        auto expectedEdgeSetMask = lastPreparedCommitImage_.edgeSetMask.dup;
+        auto installedVersions = [__traits(getMember, *mesh, "mutation" ~ "Version"),
+            __traits(getMember, *mesh, "topology" ~ "Version")];
+        auto expectedVersions = [lastPreparedMutationVersion_, lastPreparedTopologyVersion_];
+        import core.stdc.string : memcmp;
+        return memcmp(installedVersions.ptr, expectedVersions.ptr,
+                      installedVersions.length * ulong.sizeof) == 0 &&
+            now.vertices == expected.vertices && now.edges == expected.edges &&
+            now.faces == expected.faces && now.vertexMarks == expected.vertexMarks &&
+            now.edgeMarks == expected.edgeMarks && now.faceMarks == expected.faceMarks &&
+            now.vertexSelectionOrder == expected.vertexSelectionOrder &&
+            now.edgeSelectionOrder == expected.edgeSelectionOrder &&
+            now.faceSelectionOrder == expected.faceSelectionOrder &&
+            now.faceMaterial == expected.faceMaterial && now.facePart == expected.facePart &&
+            now.vertexSetNames == expected.vertexSetNames &&
+            now.vertexSetMask == expected.vertexSetMask &&
+            now.edgeSetNames == expected.edgeSetNames &&
+            now.edgeSetMask == expectedEdgeSetMask &&
+            now.polygonSetNames == expected.polygonSetNames &&
+            now.faceSetMask == expected.faceSetMask;
     }
 
     override EditMode[] supportedModes() const { return [EditMode.Edges, EditMode.Polygons]; }

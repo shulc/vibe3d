@@ -150,7 +150,13 @@ B5F_PREPARED_LEGACY = {
     ("tools.deform.magnet", "MagnetTool", "activate"),
     ("tools.edit.reduce", "ReductionTool", "activate"),
 }
-PREPARED_LEGACY = B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY | B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY
+B5I_PREPARED_LEGACY = {
+    ("tools.alignment.radial_sweep_tool", "RadialSweepTool", "onParamChanged"),
+    ("tools.alignment.radial_sweep_tool", "RadialSweepTool", "deactivate"),
+}
+PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
+    B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
+    B5I_PREPARED_LEGACY)
 all_hook_keys = {(r["module"], r["aggregate"], r["symbol"])
                  for r in CURRENT_WRITERS["hooks"]}
 if not TOOL_STATE_CONVERTED | PREPARED_LEGACY <= all_hook_keys:
@@ -182,7 +188,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "c43d402cbc008361f5468e96a98a0e8fcb97384fb028cac7100ade60efc265b2"
+    "3c7ec308eed6624aee7b3430206bfd2943e44b2025dcc5105b16dc5fd410fc66"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -199,7 +205,7 @@ def validate_deferred_rows(rows, require_canonical=True):
             fail("P1.0b.1 checked-in deferred batch/reason invalid")
     canonical = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
     if require_canonical and hashlib.sha256(canonical).hexdigest() != \
-            "c43d402cbc008361f5468e96a98a0e8fcb97384fb028cac7100ade60efc265b2":
+            "3c7ec308eed6624aee7b3430206bfd2943e44b2025dcc5105b16dc5fd410fc66":
         fail("P1.0b.1 checked-in deferred exact values drifted")
 validate_deferred_rows(TOOL_STATE_DEFERRED_ROWS)
 for field in ("batch", "reason"):
@@ -304,7 +310,8 @@ for path, text in prepared_source_texts.items():
             "tools.create.vertex_place", "tools.alignment.array_tool",
             "tools.alignment.clone_tool", "tools.deform.magnet",
             "tools.edit.reduce", "prepared_private_state",
-            "prepared_selection_profile", "prepared_radial_sweep_transition"}:
+            "prepared_selection_profile", "prepared_radial_sweep_transition",
+            "tools.alignment.radial_sweep_tool"}:
         fail(f"P1.0b.3d PreparedRecordContext gained an unreviewed import: {module}")
     if "new PreparedRecordContext" in text:
         production_text = without_unittests(text)
@@ -1476,7 +1483,9 @@ for name, old, new, label in (
 for path in (ROOT / "source/tools").rglob("*.d"):
     body = path.read_text()
     if (".prepareCreate(" in body or ".prepareSnapClear(" in body) and \
-            path.relative_to(ROOT).as_posix() != "source/tools/create/vertex_place.d":
+            path.relative_to(ROOT).as_posix() not in {
+                "source/tools/create/vertex_place.d",
+                "source/tools/alignment/radial_sweep_tool.d"}:
         fail(f"P1.0b.5c dormant owner has production caller: {path.relative_to(ROOT)}")
 
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
@@ -1518,7 +1527,7 @@ def b5d1_gate(s):
             s["owner"].count("pending = validated = false;") == 2 and
             "bool preparePrivateState(PreparedPrivateStateOwner owner)" in s["context"] and
             "bool prepareMeshImageCommit(Layer layer, ref const Mesh image, uint flags)" in s["context"] and
-            s["context"].count("layer.replaceEnlistedShadow(image)") == 1 and
+            s["context"].count("layer.replaceEnlistedShadow(image)") >= 1 and
             s["context"].count("layer.enlistedShadow().commitChange(flags)") == 1 and
             s["context"].count("PreparedDeliveryJournal.prepare([spec])") == 2 and
             s["context"].find("layer.replaceEnlistedShadow(image)") <
@@ -1559,7 +1568,8 @@ for path in (ROOT / "source/tools").rglob("*.d"):
                 "source/tools/alignment/array_tool.d",
                 "source/tools/alignment/clone_tool.d",
                 "source/tools/deform/magnet.d",
-                "source/tools/edit/reduce.d"}:
+                "source/tools/edit/reduce.d",
+                "source/tools/alignment/radial_sweep_tool.d"}:
         fail(f"P1.0b.5d.1 dormant infrastructure has hook caller: {path.relative_to(ROOT)}")
 
 # P1.0b.5d.2 first fully closed root: Vertex deactivate preserves the exact
@@ -1847,5 +1857,52 @@ for hook in ("override void activate()", "override void onParamChanged(string na
     body = b5g_tool[body_start:balanced_source(b5g_tool, body_start)-1]
     if "PreparedRadialSweepTransitionOwner" in body or "prepareRadialSweepTransition" in body:
         fail("P1.0b.5h transition owner reached from production hook")
+
+# P1.0b.5i dormant Radial Sweep producers. Param is private transition ->
+# preview upload -> no-history. Deactivate conditionally installs mesh/delivery
+# -> main upload, always destroys preview GPU, conditionally installs history,
+# then installs the exact private reset. Activate honestly remains deferred:
+# separate create/upload owners cannot make upload borrow names not yet live.
+b5i_tool = b5g_tool
+def b5i_gate(tool):
+    return (tool.count("final PreparedRadialSweepEffect prepareParamChanged(") == 1 and
+            tool.count("final PreparedRadialSweepEffect prepareDeactivate(") == 1 and
+            "final PreparedRadialSweepEffect prepareActivate(" not in tool and
+            tool.count("transition.owns(this)") == 2 and
+            tool.find("context.prepareRadialSweepTransition(transition)") <
+                tool.find("context.prepareUpload(uploadOwner, transition.previewForGpuUpload)") <
+                tool.find("context.markNoHistoryInstall()") and
+            tool.count("scope(failure) context.discard();") == 2 and
+            "if (ok) inserted = buildPreparedCommitCandidate(candidate, pre," in tool and
+            "context.prepareStampedMeshImage(layer, candidate," in tool and
+            "installedCommitMatchesPreparedForTest" in tool and
+            "auto expectedVersions = [lastPreparedMutationVersion_, lastPreparedTopologyVersion_];" in tool and
+            "memcmp(installedVersions.ptr, expectedVersions.ptr," in tool and
+            "bool prepareStampedMeshImage(Layer layer, ref const Mesh image," in b5e_context and
+            "enlistedDeliveryForStampedImage(flags, domains)" in b5e_context and
+            "context.prepareUpload(mainUpload, candidate)" in tool and
+            "if (ok) ok = context.prepareDestroy(previewDestroy);" in tool and
+            "ok = context.prepareGestureCarrierMismatch();" in tool and
+            "historyPrepared ? context.markHistoryInstall()" in tool and
+            "context.prepareRadialSweepTransition(transition);" in tool and
+            tool.count("if (!ok && context !is null) context.discard();") == 2)
+if not b5i_gate(b5i_tool):
+    fail("P1.0b.5i Radial Sweep producer contract drift")
+for old, new, label in (
+    ("transition.owns(this)", "true", "drop transition owner identity"),
+    ("context.prepareRadialSweepTransition(transition) &&\n            context.prepareUpload(uploadOwner, transition.previewForGpuUpload)",
+     "context.prepareUpload(uploadOwner, transition.previewForGpuUpload) &&\n            context.prepareRadialSweepTransition(transition)", "reorder Param upload"),
+    ("scope(failure) context.discard();", "", "drop function exception cleanup"),
+    ("if (ok) inserted = buildPreparedCommitCandidate(candidate, pre,", "if (true) inserted = buildPreparedCommitCandidate(candidate, pre,", "build before validation"),
+    ("context.prepareStampedMeshImage(layer, candidate,", "context.prepareMeshImageCommit(layer, candidate, kRevolveEditScope) && false /*", "re-stamp detached candidate"),
+    ("[lastPreparedMutationVersion_, lastPreparedTopologyVersion_]", "[lastPreparedMutationVersion_ + 1, lastPreparedTopologyVersion_]", "accept extra mutation stamp"),
+    ("if (ok) ok = context.prepareDestroy(previewDestroy);", "", "drop preview destroy"),
+    ("ok = context.prepareGestureCarrierMismatch();", "ok = true;", "drop carrier mismatch diagnostic"),
+    ("historyPrepared ? context.markHistoryInstall()", "context.markNoHistoryInstall()", "drop history branch"),
+    ("if (ok) ok = context.prepareRadialSweepTransition(transition);", "", "drop private reset"),
+):
+    mutant = b5i_tool.replace(old, new, 1)
+    if mutant == b5i_tool or b5i_gate(mutant):
+        fail(f"P1.0b.5i named mutation did not RED: {label}")
 
 print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures)} compile-fail fixtures)")

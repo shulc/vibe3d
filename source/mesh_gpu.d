@@ -2284,6 +2284,8 @@ public:
     version (unittest) const(uint)[] fakeCallsForTest() const nothrow @nogc {
         return fakeCalls[0 .. fakeCallCount];
     }
+    version (unittest) static void failPreparedUploadForTest(bool value)
+            nothrow @nogc { failPreparedGpuUploadAfterBuild = value; }
     bool owns(GpuMesh* candidate) const nothrow @nogc { return target is candidate; }
 
     bool beginPreparedUpload(ref const Mesh mesh,

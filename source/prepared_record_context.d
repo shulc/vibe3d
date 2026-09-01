@@ -22,7 +22,7 @@ private enum PreparedResourceKind : ubyte {
     HistoryInstall, NoHistoryInstall, MeshInstall, DeliveryInstall, GpuMeshDestroy, GpuUpload, ClickPointDestroy
     , GpuCreate, SnapOverlayClear, BoxState, PenState, PrimitiveState, VertexState,
     ArraySessionState, CloneSessionState, MagnetSessionState, ReductionSessionState,
-    RadialSweepProfileState, RadialSweepTransitionState
+    RadialSweepProfileState, RadialSweepTransitionState, GestureCarrierMismatch
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -197,6 +197,13 @@ public:
         e.radialSweepTransition = owner; resources_ ~= e; return true;
     }
 
+    bool prepareGestureCarrierMismatch() {
+        if (!begun_ || validated_Once) return false;
+        resources_.reserve(1 + resources_.length);
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.GestureCarrierMismatch;
+        resources_ ~= e; return true;
+    }
+
     bool prepareMeshImageCommit(Layer layer, ref const Mesh image, uint flags) {
         if (!begun_ || validated_Once || layer is null || flags == 0) return false;
         resources_.reserve(resources_.length + 2);
@@ -212,6 +219,27 @@ public:
         }
         auto spec = layer.drainEnlistedDelivery();
         auto delivery = PreparedDeliveryJournal.prepare([spec]);
+        PreparedResourceEntry meshEntry; meshEntry.kind = PreparedResourceKind.MeshInstall;
+        meshEntry.layerMesh = layer; resources_ ~= meshEntry;
+        PreparedResourceEntry deliveryEntry; deliveryEntry.kind = PreparedResourceKind.DeliveryInstall;
+        deliveryEntry.delivery = delivery; resources_ ~= deliveryEntry;
+        return true;
+    }
+
+    /// Adopt an image whose detached kernel already performed the exact
+    /// legacy commitChange. Its pending delivery was drained by that kernel;
+    /// do not stamp or derive the image a second time here.
+    bool prepareStampedMeshImage(Layer layer, ref const Mesh image,
+                                 uint flags, uint domains) {
+        if (!begun_ || validated_Once || layer is null || flags == 0) return false;
+        resources_.reserve(resources_.length + 2);
+        if (!layer.beginEnlistedMesh()) return false;
+        scope(failure) { layer.abortEnlistedMesh(); invalidateTransaction(); }
+        if (!layer.replaceEnlistedShadow(image)) {
+            layer.abortEnlistedMesh(); invalidateTransaction(); return false;
+        }
+        auto delivery = PreparedDeliveryJournal.prepare(
+            [layer.enlistedDeliveryForStampedImage(flags, domains)]);
         PreparedResourceEntry meshEntry; meshEntry.kind = PreparedResourceKind.MeshInstall;
         meshEntry.layerMesh = layer; resources_ ~= meshEntry;
         PreparedResourceEntry deliveryEntry; deliveryEntry.kind = PreparedResourceKind.DeliveryInstall;
@@ -303,6 +331,7 @@ public:
                 ok = e.selectionProfile !is null && e.selectionProfile.validate(); break;
             case PreparedResourceKind.RadialSweepTransitionState:
                 ok = e.radialSweepTransition !is null && e.radialSweepTransition.validate(); break;
+            case PreparedResourceKind.GestureCarrierMismatch: ok = true; break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -374,6 +403,10 @@ public:
             e.radialSweepTransition.install();
             version (unittest) installTrace_[installTraceLength_++] = 10;
             break;
+        case PreparedResourceKind.GestureCarrierMismatch:
+            ++changeBus.gestureCarrierMismatch;
+            version (unittest) installTrace_[installTraceLength_++] = 11;
+            break;
         }
         if (!installedHistory) history_.installPreparedToken(validated_);
         resources_.length = 0;
@@ -412,6 +445,7 @@ private:
         case PreparedResourceKind.ReductionSessionState: e.privateState.abort(); break;
         case PreparedResourceKind.RadialSweepProfileState: e.selectionProfile.abort(); break;
         case PreparedResourceKind.RadialSweepTransitionState: e.radialSweepTransition.abort(); break;
+        case PreparedResourceKind.GestureCarrierMismatch: break;
         }
         resources_.length = 0;
         historyMarker_ = false;
@@ -436,6 +470,8 @@ public:
     version (unittest) size_t resourceCountForTest() const nothrow @nogc {
         return resources_.length;
     }
+    version (unittest) static void failAfterResourceBeginForTest(bool value)
+            nothrow @nogc { failAfterResourceBegin_ = value; }
 }
 
 unittest {

@@ -534,6 +534,11 @@ final class Layer {
         return PreparedDeliverySpec(preparedSubjectOwner_,
             preparedSubjectOwner_.issue(), flags, domains);
     }
+    PreparedDeliverySpec enlistedDeliveryForStampedImage(uint flags,
+                                                          uint domains) {
+        return PreparedDeliverySpec(preparedSubjectOwner_,
+            preparedSubjectOwner_.issue(), flags, domains);
+    }
     bool validateEnlistedMesh() nothrow @nogc {
         enlistedMeshValidated_ = validatesPreparedMesh(enlistedMeshToken_);
         return enlistedMeshValidated_.valid;
