@@ -27,6 +27,35 @@ import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_vertex_bevel_activation : PreparedVertexBevelActivationOwner;
 import command_history : PreparedHistoryKind;
+import prepared_vertex_bevel_param_update : PreparedVertexBevelParamUpdateOwner;
+import prepared_tool_effect : PreparedVertexBevelParamEffect,
+    PreparedVertexBevelParamKind;
+import document : Layer;
+import mesh_gpu : GpuUploadOwner;
+import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
+import core.stdc.string : memcmp;
+
+struct VertexBevelParamProjection {
+    bool interactive, active, built;
+    float inset;
+    bool opEquals(const VertexBevelParamProjection other) const nothrow @nogc {
+        return interactive == other.interactive && active == other.active &&
+            built == other.built &&
+            memcmp(&inset, &other.inset, float.sizeof) == 0;
+    }
+}
+
+struct PreparedVertexBevelParamImage {
+    bool valid, applies, nextBuilt;
+    VertexBevelParamProjection expected;
+    MeshSnapshot expectedLive, expectedBefore;
+    Mesh candidate;
+    uint deliveryFlags, deliveryDomains;
+    void clear() nothrow @nogc {
+        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
+        candidate = Mesh.init; valid = applies = false;
+    }
+}
 
 struct PreparedVertexBevelActivationImage {
     MeshSnapshot before;
@@ -207,6 +236,78 @@ public:
 
     override void onParamChanged(string pname) {
         if (interactiveParamEdit) rebuildPreview();
+    }
+    final bool ownsPreparedLayer(Layer layer) const {
+        return layer !is null && &layer.meshRef() is mesh;
+    }
+    private VertexBevelParamProjection paramProjection() const nothrow @nogc {
+        return VertexBevelParamProjection(interactiveParamEdit, active, built,
+            inset_);
+    }
+    final PreparedVertexBevelParamImage buildPreparedParamUpdate(ref Mesh live) {
+        PreparedVertexBevelParamImage image;
+        image.valid = true; image.expected = paramProjection();
+        image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
+        if (!before.filled) return image;
+        Mesh baseline;
+        auto baselineShadow = beginPreparedShadow(baseline);
+        before.restore(baseline);
+        uint baselineFlags, baselineDomains;
+        drainPreparedShadowDelivery(baseline, baselineFlags, baselineDomains);
+        baselineShadow.close();
+        image.expectedBefore = MeshSnapshot.capture(baseline);
+        if (!interactiveParamEdit || !active) return image;
+        image.applies = true; image.candidate = baseline; baseline = Mesh.init;
+        auto shadow = beginPreparedShadow(image.candidate);
+        if (inset_ == 0.0f) {
+            image.nextBuilt = false;
+        } else {
+            auto mask = image.candidate.operandVertexMask(EditMode.Vertices);
+            auto ed = MeshEditBatch.unrecorded(image.candidate,
+                kBevelVertexEditScope);
+            const n = ed.bevelVerticesByMask(mask, inset_);
+            ed.close(); image.nextBuilt = (n != 0);
+        }
+        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+            image.deliveryDomains);
+        if (image.deliveryFlags == 0) {
+            image.deliveryFlags = baselineFlags;
+            image.deliveryDomains = baselineDomains;
+        }
+        shadow.close(); return image;
+    }
+    final bool preparedParamUpdateMatches(
+            in PreparedVertexBevelParamImage image, ref const Mesh live) const
+            nothrow @nogc {
+        return image.valid && image.expected == paramProjection() &&
+            image.expectedLive.matches(live) &&
+            image.expectedBefore.matches(before);
+    }
+    final void installPreparedParamUpdate(
+            ref PreparedVertexBevelParamImage image) nothrow @nogc {
+        if (!image.valid) return;
+        built = image.nextBuilt; image.clear();
+    }
+    final PreparedVertexBevelParamEffect prepareParamChanged(
+            PreparedRecordContext context, Layer layer,
+            GpuUploadOwner uploadOwner) {
+        if (context is null) return PreparedVertexBevelParamEffect(
+            preparedToolStateOwner, PreparedVertexBevelParamKind.None, false);
+        scope(failure) context.discard();
+        auto owner = PreparedVertexBevelParamUpdateOwner.prepare(this, layer);
+        auto kind = owner is null ? PreparedVertexBevelParamKind.None :
+            owner.effectKind;
+        bool ok = owner !is null;
+        if (ok && owner.applies)
+            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
+                context.prepareStampedMeshImage(layer, owner.candidate,
+                    owner.deliveryFlags, owner.deliveryDomains);
+        if (ok) ok = context.prepareVertexBevelParamUpdate(owner);
+        if (ok && owner.applies)
+            ok = context.prepareUpload(uploadOwner, owner.candidate);
+        if (ok) ok = context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedVertexBevelParamEffect(preparedToolStateOwner, kind, ok);
     }
     override void evaluate() {}
 
@@ -446,6 +547,16 @@ private:
     }
 
 public:
+    version(unittest) final void seedPreparedParamForTest(ref Mesh live,
+            bool interactive = true, float inset = 0.2f) {
+        interactiveParamEdit = interactive; active = true; built = false;
+        inset_ = inset; before = MeshSnapshot.capture(live);
+    }
+    version(unittest) final void mutatePreparedParamForTest(float value)
+            nothrow @nogc { inset_ = value; }
+    version(unittest) final bool preparedParamBuiltForTest() const nothrow @nogc {
+        return built;
+    }
     version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
         return preparedToolStateOwner;
     }

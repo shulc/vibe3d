@@ -53,6 +53,7 @@ import prepared_poly_extrude_param_update : PreparedPolyExtrudeParamUpdateOwner;
 import prepared_poly_inset_param_update : PreparedPolyInsetParamUpdateOwner;
 import prepared_reduction_param_update : PreparedReductionParamUpdateOwner;
 import prepared_vertex_merge_param_update : PreparedVertexMergeParamUpdateOwner;
+import prepared_vertex_bevel_param_update : PreparedVertexBevelParamUpdateOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -80,7 +81,7 @@ private enum PreparedResourceKind : ubyte {
     EdgeBevelParamUpdateState, EdgeExtrudeParamUpdateState,
     PolyBevelParamUpdateState, PolyExtrudeParamUpdateState,
     PolyInsetParamUpdateState, ReductionParamUpdateState,
-    VertexMergeParamUpdateState
+    VertexMergeParamUpdateState, VertexBevelParamUpdateState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -124,6 +125,7 @@ private struct PreparedResourceEntry {
     PreparedPolyInsetParamUpdateOwner polyInsetParamUpdate;
     PreparedReductionParamUpdateOwner reductionParamUpdate;
     PreparedVertexMergeParamUpdateOwner vertexMergeParamUpdate;
+    PreparedVertexBevelParamUpdateOwner vertexBevelParamUpdate;
     PreparedMirrorDeactivateOwner mirrorDeactivate;
     PreparedBridgeDeactivateOwner bridgeDeactivate;
     ClickPointResourceOwner clickDestroy;
@@ -767,6 +769,17 @@ public:
         e.kind = PreparedResourceKind.VertexMergeParamUpdateState;
         e.vertexMergeParamUpdate = owner; resources_ ~= e; return true;
     }
+    bool prepareVertexBevelParamUpdate(PreparedVertexBevelParamUpdateOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected Vertex Bevel parameter enlist failure");
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.VertexBevelParamUpdateState;
+        e.vertexBevelParamUpdate = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -1033,6 +1046,9 @@ public:
             case PreparedResourceKind.VertexMergeParamUpdateState:
                 ok = e.vertexMergeParamUpdate !is null &&
                     e.vertexMergeParamUpdate.validate(); break;
+            case PreparedResourceKind.VertexBevelParamUpdateState:
+                ok = e.vertexBevelParamUpdate !is null &&
+                    e.vertexBevelParamUpdate.validate(); break;
             case PreparedResourceKind.MirrorDeactivateState:
                 ok = e.mirrorDeactivate !is null &&
                     e.mirrorDeactivate.validate(); break;
@@ -1275,6 +1291,10 @@ public:
             e.vertexMergeParamUpdate.install();
             version(unittest) installTrace_[installTraceLength_++] = 52;
             break;
+        case PreparedResourceKind.VertexBevelParamUpdateState:
+            e.vertexBevelParamUpdate.install();
+            version(unittest) installTrace_[installTraceLength_++] = 53;
+            break;
         case PreparedResourceKind.MirrorDeactivateState:
             e.mirrorDeactivate.install();
             version(unittest) installTrace_[installTraceLength_++] = 40;
@@ -1364,6 +1384,8 @@ private:
             e.reductionParamUpdate.abort(); break;
         case PreparedResourceKind.VertexMergeParamUpdateState:
             e.vertexMergeParamUpdate.abort(); break;
+        case PreparedResourceKind.VertexBevelParamUpdateState:
+            e.vertexBevelParamUpdate.abort(); break;
         case PreparedResourceKind.MirrorDeactivateState:
             e.mirrorDeactivate.abort(); break;
         case PreparedResourceKind.BridgeDeactivateState:
