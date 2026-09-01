@@ -136,6 +136,7 @@ B3D_PREPARED_LEGACY = {
 B4C_PREPARED_LEGACY = {
     ("tools.common.command_wrapper", "CommandWrapperTool", "deactivate"),
     ("tools.edit.tack", "TackTool", "deactivate"),
+    ("tools.transform.transform", "TransformTool", "deactivate"),
 }
 all_hook_keys = {(r["module"], r["aggregate"], r["symbol"])
                  for r in CURRENT_WRITERS["hooks"]}
@@ -186,7 +187,7 @@ def validate_deferred_rows(rows, require_canonical=True):
             fail("P1.0b.1 checked-in deferred batch/reason invalid")
     canonical = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
     if require_canonical and hashlib.sha256(canonical).hexdigest() != \
-            "ca1d3147bcdb8582db5c1a0c6cc208b673a15a8ba680697408476b4fb8acdb7c":
+            "e934dd3b5b952361a85f08b5b9fb2df9be58fbe6d92d4a00ebf91bb76067c28d":
         fail("P1.0b.1 checked-in deferred exact values drifted")
 validate_deferred_rows(TOOL_STATE_DEFERRED_ROWS)
 for field in ("batch", "reason"):
@@ -963,7 +964,7 @@ NO_LIVE_ROOTS = {
          ("prepared_tool_transition", "PreparedCandidateOwner.prepareFrom", "void(ToolFactory,Tool)"),
          ("prepared_tool_transition", "PreparedCandidateOwner.discardCandidate", "void() nothrow"),
          ("command_history", "CommandHistory.prepareCurrentImage", "PreparedHistoryImage()"),
-         ("change_bus", "PreparedDeliveryJournal.copyOf", "PreparedDeliveryJournal(const(PreparedJournalEntry)[])")},
+         ("change_bus", "PreparedDeliveryJournal.prepare", "PreparedDeliveryJournal(const(PreparedDeliverySpec)[])")},
 }
 NO_LIVE_LEAVES = {
     ("prepared_tool_effect", "OwnedBytes.copyOf", "OwnedBytes(const(ubyte)[])"),
@@ -1012,7 +1013,7 @@ with tempfile.TemporaryDirectory(prefix="vibe3d-prepared-ast-") as td:
     for name in ("prepared_tool_effect", "prepared_tool_transition"):
         (ast_dir / f"{name}.d").write_text((ROOT / f"source/{name}.d").read_text())
     (ast_dir / "command_history.d").write_text("module command_history; struct PreparedHistoryImage{} class CommandHistory{PreparedHistoryImage prepareCurrentImage(){return PreparedHistoryImage();} void installPreparedImage(ref PreparedHistoryImage) nothrow{}}")
-    (ast_dir / "change_bus.d").write_text("module change_bus; import prepared_tool_effect; struct ChangeBus{} struct PreparedDeliveryJournal{static PreparedDeliveryJournal copyOf(const(PreparedJournalEntry)[]){return PreparedDeliveryJournal();} void replay(ref ChangeBus) nothrow{}}")
+    (ast_dir / "change_bus.d").write_text("module change_bus; struct ChangeBus{} struct PreparedDeliverySpec{} class PreparedDeliveryJournal{static PreparedDeliveryJournal prepare(const(PreparedDeliverySpec)[]){return new PreparedDeliveryJournal();} void replay(ref ChangeBus) nothrow{}}")
     (ast_dir / "tool.d").write_text("module tool; class Tool{}")
     (ast_dir / "registry.d").write_text("module registry; import tool; alias ToolFactory=Tool delegate();")
     ast_run = subprocess.run([
@@ -1047,14 +1048,14 @@ for root, allowed_edges in NO_LIVE_ROOTS.items():
         calls.add(("prepared_tool_transition", "PreparedCandidateOwner.discardCandidate", "void() nothrow"))
     if re.search(r"\bhistory\.prepareCurrentImage\s*\(", body):
         calls.add(("command_history", "CommandHistory.prepareCurrentImage", "PreparedHistoryImage()"))
-    if re.search(r"\b(?:PreparedDeliveryJournal\.)?copyOf\s*\(", body):
-        calls.add(("change_bus", "PreparedDeliveryJournal.copyOf", "PreparedDeliveryJournal(const(PreparedJournalEntry)[])"))
+    if re.search(r"\b(?:PreparedDeliveryJournal\.)?prepare\s*\(", body):
+        calls.add(("change_bus", "PreparedDeliveryJournal.prepare", "PreparedDeliveryJournal(const(PreparedDeliverySpec)[])"))
     known_syntax = re.sub(r"\b(?:OwnedBytes\.)?copyOf\s*\(", "(", body)
     known_syntax = re.sub(r"\b(?:result\.effects\.)?append\s*\(", "(", known_syntax)
     known_syntax = re.sub(r"\bresult\.candidate_\.prepareFrom\s*\(", "(", known_syntax)
     known_syntax = re.sub(r"\bresult\.candidate_\.discardCandidate\s*\(", "(", known_syntax)
     known_syntax = re.sub(r"\bhistory\.prepareCurrentImage\s*\(", "(", known_syntax)
-    known_syntax = re.sub(r"\b(?:PreparedDeliveryJournal\.)?copyOf\s*\(", "(", known_syntax)
+    known_syntax = re.sub(r"\b(?:PreparedDeliveryJournal\.)?prepare\s*\(", "(", known_syntax)
     # Compiler-lowered owned-array growth. This exact druntime allocator is
     # permitted only in prepare, never in the nothrow commit graph.
     known_syntax = re.sub(r"\b_d_arrayappendcTX\s*\(", "(", known_syntax)
@@ -1108,7 +1109,7 @@ with tempfile.TemporaryDirectory(prefix="vibe3d-prepared-copy-") as td:
     for name in ("prepared_tool_effect", "prepared_tool_transition"):
         (copy_dir / f"{name}.d").write_text((ROOT / f"source/{name}.d").read_text())
     (copy_dir / "command_history.d").write_text("module command_history; struct PreparedHistoryImage{} class CommandHistory{PreparedHistoryImage prepareCurrentImage(){return PreparedHistoryImage();} void installPreparedImage(ref PreparedHistoryImage) nothrow{}}")
-    (copy_dir / "change_bus.d").write_text("module change_bus; import prepared_tool_effect; struct ChangeBus{} struct PreparedDeliveryJournal{static PreparedDeliveryJournal copyOf(const(PreparedJournalEntry)[]){return PreparedDeliveryJournal();} void replay(ref ChangeBus) nothrow{}}")
+    (copy_dir / "change_bus.d").write_text("module change_bus; struct ChangeBus{} struct PreparedDeliverySpec{} class PreparedDeliveryJournal{static PreparedDeliveryJournal prepare(const(PreparedDeliverySpec)[]){return new PreparedDeliveryJournal();} void replay(ref ChangeBus) nothrow{}}")
     (copy_dir / "tool.d").write_text("module tool; class Tool{}")
     (copy_dir / "registry.d").write_text("module registry; import tool; alias ToolFactory=Tool delegate();")
     (copy_dir / copy_fixture.name).write_text(copy_fixture.read_text())
@@ -1164,7 +1165,7 @@ record_context = (ROOT / "source/prepared_record_context.d").read_text()
 handler_shapes = (ROOT / "source/handles/shapes.d").read_text()
 resource_contracts = (
     "private enum PreparedResourceKind : ubyte {",
-    "HistoryInstall, GpuMeshDestroy, GpuUpload, ClickPointDestroy",
+    "HistoryInstall, MeshInstall, DeliveryInstall, GpuMeshDestroy, GpuUpload, ClickPointDestroy",
     "bool prepareDestroy(GpuResourceOwner owner)",
     "bool prepareUpload(GpuUploadOwner owner, ref const Mesh mesh,",
     "bool prepareDestroy(ClickPointResourceOwner owner)",
@@ -1230,7 +1231,7 @@ b4c2_contracts = {
     ),
     "source/tools/transform/transform.d": (
         "final PreparedDeactivateEffect prepareDeactivateGpu(",
-        "uploadOwner is null || gpu is null || !uploadOwner.owns(gpu) ||",
+        "uploadOwner is null || gpu is null || !uploadOwner.owns(gpu)",
         "context.markHistoryInstall() &&",
         "context.prepareUpload(uploadOwner, *mesh)",
     ),
@@ -1238,7 +1239,7 @@ b4c2_contracts = {
 b4c2_digests = {
     "source/tools/common/command_wrapper.d": ("prepareDeactivate", "d4dcfc00ed6d5fb72cf188e38ead7c76c5cb58394bb2c590551dc709d34e9606"),
     "source/tools/edit/tack.d": ("prepareDeactivate", "0ea8fcdfa7a225b41d81f255ae8d44f55e7a4c6770c1e718f6066b6511cd0be3"),
-    "source/tools/transform/transform.d": ("prepareDeactivateGpu", "084136107d601fb0567a61152c4792aeb41ea60ea30c580e88a9fc85404652ac"),
+    "source/tools/transform/transform.d": ("prepareDeactivateGpu", "50cd6d5c97ea2325bafd53a8b76ec530cee4a9144dc0a1ce79bbcbb6171ec0c5"),
 }
 for relative, contracts in b4c2_contracts.items():
     producer_source = (ROOT / relative).read_text()
@@ -1288,5 +1289,70 @@ for relative, old, new, label in (
     mutant = source.replace(old, new, 1)
     if mutant == source or b4c2_digest_accepts(relative, mutant):
         fail(f"P1.0b.4c.2 named mutation did not RED exact digest: {label}")
+
+# P1.0b.5a stable prepared delivery: scalar tokens are owner-resolved, Mesh
+# evolution is intercepted on its detached address, and one context journal
+# installs history -> Mesh -> delivery. The dormant Transform producer closes
+# both upload and suppress branches without entering a legacy hook.
+b5_sources = {
+    "effect": (ROOT / "source/prepared_tool_effect.d").read_text(),
+    "bus": (ROOT / "source/change_bus.d").read_text(),
+    "mesh": (ROOT / "source/mesh.d").read_text(),
+    "document": (ROOT / "source/document.d").read_text(),
+    "context": record_context,
+    "transform": (ROOT / "source/tools/transform/transform.d").read_text(),
+}
+b5_contracts = {
+    "effect": ("struct PreparedSubjectToken", "PreparedSubjectToken subject;"),
+    "bus": ("PreparedMeshSubjectOwner owner;", "bool validate() const nothrow @nogc",
+            "e.owner.resolve(e.token, address)", "bus.deliverMesh(e.address,"),
+    "mesh": ("g_preparedShadowMeshes", "beginPreparedShadow(ref Mesh mesh)",
+             "drainPreparedShadowDelivery(ref Mesh mesh",
+             "foreach (p; g_preparedShadowMeshes) if (p is m) return false;",
+             "mesh.undeliveredChanges_ = 0;"),
+    "document": ("new PreparedMeshSubjectOwner(", "beginEnlistedMesh()",
+                 "preparedSubjectOwner_.issue()",),
+    "context": ("HistoryInstall, MeshInstall, DeliveryInstall,",
+                "bool preparePositionCommit(Layer layer)",
+                "auto delivery = PreparedDeliveryJournal.prepare([spec]);",
+                "layer.abortEnlistedMesh();\n            invalidateTransaction();",
+                "e.layerMesh.installEnlistedMesh();", "e.delivery.replay(changeBus);"),
+    "transform": ("suppressLayer.ownsMesh(mesh)",
+                  "context.preparePositionCommit(suppressLayer)",),
+}
+def b5_gate(sources):
+    return ("OwnedId subject;" not in sources["effect"] and
+            sources["bus"].count("e.owner.resolve(e.token, address)") == 2 and
+            sources["context"].find("e.layerMesh.installEnlistedMesh();") <
+                sources["context"].find("e.delivery.replay(changeBus);") and
+            sources["context"].find("auto delivery = PreparedDeliveryJournal.prepare([spec]);") <
+                sources["context"].find("resources_ ~= meshEntry;") and
+            all(all(c in sources[name] for c in contracts)
+                for name, contracts in b5_contracts.items()))
+if not b5_gate(b5_sources):
+    fail("P1.0b.5a prepared Mesh/delivery owner contract drift")
+for name, old, new, label in (
+    ("bus", "e.owner.resolve(e.token, address)", "true", "drop stable subject validation"),
+    ("mesh", "foreach (p; g_preparedShadowMeshes) if (p is m) return false;",
+     "", "mutate/publish original instead of shadow"),
+    ("mesh", "mesh.undeliveredChanges_ = 0;", "", "drop delivery drain clear"),
+    ("context", "e.layerMesh.installEnlistedMesh();", "", "drop Mesh install"),
+    ("context", "e.delivery.replay(changeBus);", "", "drop delivery install"),
+    ("context", "layer.abortEnlistedMesh();\n            invalidateTransaction();",
+     "layer.abortEnlistedMesh();", "drop prepare failure invalidation"),
+    ("context", "auto delivery = PreparedDeliveryJournal.prepare([spec]);", "",
+     "drop delivery preparation before context append"),
+    ("context",
+     "e.layerMesh.installEnlistedMesh();\n            version (unittest) installTrace_[installTraceLength_++] = 3;",
+     "e.delivery.replay(changeBus);\n            version (unittest) installTrace_[installTraceLength_++] = 3;",
+     "reorder delivery before Mesh"),
+    ("transform", "suppressLayer.ownsMesh(mesh)", "true", "drop Layer/Mesh identity"),
+    ("transform", "context.preparePositionCommit(suppressLayer)", "true",
+     "drop suppress Mesh/delivery enlist"),
+):
+    mutant = dict(b5_sources)
+    mutant[name] = mutant[name].replace(old, new, 1)
+    if mutant[name] == b5_sources[name] or b5_gate(mutant):
+        fail(f"P1.0b.5a named mutation did not RED: {label}")
 
 print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures)} compile-fail fixtures)")

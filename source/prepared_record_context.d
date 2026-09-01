@@ -10,15 +10,20 @@ import record_observer_hub : RecordObserverHub;
 import mesh : Mesh;
 import mesh_gpu : GpuResourceOwner, GpuUploadOwner;
 import handler : ClickPointResourceOwner;
+import document : Layer;
+import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
+import change_bus : MeshEditScope;
 
 private enum PreparedResourceKind : ubyte {
-    HistoryInstall, GpuMeshDestroy, GpuUpload, ClickPointDestroy
+    HistoryInstall, MeshInstall, DeliveryInstall, GpuMeshDestroy, GpuUpload, ClickPointDestroy
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
     GpuResourceOwner gpuDestroy;
     GpuUploadOwner gpuUpload;
     ClickPointResourceOwner clickDestroy;
+    Layer layerMesh;
+    PreparedDeliveryJournal delivery;
 }
 
 /// One fallible prepare transaction jointly owns the detached history and
@@ -111,6 +116,32 @@ public:
         return true;
     }
 
+    bool preparePositionCommit(Layer layer) {
+        if (!begun_ || validated_Once || layer is null) return false;
+        resources_.reserve(resources_.length + 2);
+        if (!layer.beginEnlistedMesh()) return false;
+        scope(failure) {
+            layer.abortEnlistedMesh();
+            invalidateTransaction();
+        }
+        {
+            auto shadowScope = layer.beginEnlistedShadowMutation();
+            layer.enlistedShadow().commitChange(MeshEditScope.Position);
+            shadowScope.close();
+        }
+        auto spec = layer.drainEnlistedDelivery();
+        auto delivery = PreparedDeliveryJournal.prepare([spec]);
+        PreparedResourceEntry meshEntry;
+        meshEntry.kind = PreparedResourceKind.MeshInstall;
+        meshEntry.layerMesh = layer;
+        resources_ ~= meshEntry;
+        PreparedResourceEntry deliveryEntry;
+        deliveryEntry.kind = PreparedResourceKind.DeliveryInstall;
+        deliveryEntry.delivery = delivery;
+        resources_ ~= deliveryEntry;
+        return true;
+    }
+
     PreparedHistoryResult prepare(Command cmd, PreparedHistoryKind kind,
                                   ulong runId = 0,
                                   string preparedTraceJson = null) {
@@ -139,6 +170,10 @@ public:
             bool ok;
             final switch (e.kind) {
             case PreparedResourceKind.HistoryInstall: ok = true; break;
+            case PreparedResourceKind.MeshInstall:
+                ok = e.layerMesh.validateEnlistedMesh(); break;
+            case PreparedResourceKind.DeliveryInstall:
+                ok = e.delivery !is null && e.delivery.validate(); break;
             case PreparedResourceKind.GpuMeshDestroy:
                 ok = e.gpuDestroy.validateEnlisted(resourceThread_, resourceContext_); break;
             case PreparedResourceKind.GpuUpload:
@@ -154,13 +189,21 @@ public:
         return validated_Once;
     }
 
-    void install() nothrow @nogc {
+    void install() nothrow {
         if (!validated_Once) return;
         bool installedHistory;
         foreach (ref e; resources_) final switch (e.kind) {
         case PreparedResourceKind.HistoryInstall:
             history_.installPreparedToken(validated_); installedHistory = true;
             version (unittest) installTrace_[installTraceLength_++] = 1;
+            break;
+        case PreparedResourceKind.MeshInstall:
+            e.layerMesh.installEnlistedMesh();
+            version (unittest) installTrace_[installTraceLength_++] = 3;
+            break;
+        case PreparedResourceKind.DeliveryInstall:
+            e.delivery.replay(changeBus);
+            version (unittest) installTrace_[installTraceLength_++] = 4;
             break;
         case PreparedResourceKind.GpuMeshDestroy:
             e.gpuDestroy.installEnlisted();
@@ -193,6 +236,8 @@ private:
     void abortResources() nothrow @nogc {
         foreach (ref e; resources_) final switch (e.kind) {
         case PreparedResourceKind.HistoryInstall: break;
+        case PreparedResourceKind.MeshInstall: e.layerMesh.abortEnlistedMesh(); break;
+        case PreparedResourceKind.DeliveryInstall: break;
         case PreparedResourceKind.GpuMeshDestroy: e.gpuDestroy.abortEnlisted(); break;
         case PreparedResourceKind.GpuUpload: e.gpuUpload.abortEnlisted(); break;
         case PreparedResourceKind.ClickPointDestroy: e.clickDestroy.abortEnlisted(); break;
@@ -215,6 +260,9 @@ public:
     }
     version (unittest) const(ubyte)[] installTraceForTest() const nothrow @nogc {
         return installTrace_[0 .. installTraceLength_];
+    }
+    version (unittest) size_t resourceCountForTest() const nothrow @nogc {
+        return resources_.length;
     }
 }
 
@@ -250,8 +298,9 @@ unittest {
 }
 
 version (unittest) unittest {
-    import mesh : GpuMesh;
+    import mesh : GpuMesh, makeCube;
     import handler : ClickPointHandler, ClickPointResourceOwner;
+    import change_bus : changeBus;
     auto history = new CommandHistory();
     auto hub = new RecordObserverHub();
 
@@ -311,4 +360,33 @@ version (unittest) unittest {
     afterRefusal.setResourceIdentity(7, 11);
     assert(afterRefusal.prepareDestroy(refusedOwner));
     afterRefusal.discard();
+
+    // A delivery allocation failure happens before either Mesh/Delivery row
+    // is appended and terminally clears the earlier history marker. Live
+    // state stays unchanged; the Layer is immediately reusable by a fresh
+    // context.
+    auto faultLayer = new Layer();
+    faultLayer.meshRef() = makeCube();
+    const faultVersion = faultLayer.meshRef().mutationVersion;
+    const faultDeliveries = changeBus.deliveryCount;
+    auto meshFault = new PreparedRecordContext(new CommandHistory(),
+                                               new RecordObserverHub());
+    assert(meshFault.markHistoryInstall());
+    PreparedDeliveryJournal.setFailPrepareForTest(true);
+    threw = false;
+    try meshFault.preparePositionCommit(faultLayer);
+    catch (Exception) threw = true;
+    PreparedDeliveryJournal.setFailPrepareForTest(false);
+    assert(threw && meshFault.resourceCountForTest() == 0);
+    assert(faultLayer.meshRef().mutationVersion == faultVersion);
+    assert(changeBus.deliveryCount == faultDeliveries);
+    assert(!meshFault.validate());
+    auto meshRetry = new PreparedRecordContext(new CommandHistory(),
+                                               new RecordObserverHub());
+    assert(meshRetry.markHistoryInstall());
+    assert(meshRetry.preparePositionCommit(faultLayer));
+    assert(meshRetry.validate());
+    meshRetry.install();
+    assert(faultLayer.meshRef().mutationVersion == faultVersion + 1);
+    assert(changeBus.deliveryCount == faultDeliveries + 1);
 }

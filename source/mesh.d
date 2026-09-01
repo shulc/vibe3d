@@ -813,6 +813,60 @@ private Mesh*[] g_hideDerivePendingMeshes;
 // `commitChange` defers delivery with it — there is no second seam.
 private int     g_deliveryDepth;
 private Mesh*[] g_deliveryPendingMeshes;
+private Mesh*[] g_preparedShadowMeshes;
+
+final class PreparedShadowScope {
+private:
+    Mesh* mesh_;
+public:
+    this(ref Mesh mesh) nothrow @nogc { mesh_ = &mesh; }
+    void close() nothrow @nogc {
+        if (mesh_ is null) return;
+        foreach (i, p; g_preparedShadowMeshes) if (p is mesh_) {
+            g_preparedShadowMeshes[i] = g_preparedShadowMeshes[$ - 1];
+            g_preparedShadowMeshes = g_preparedShadowMeshes[0 .. $ - 1];
+            break;
+        }
+        mesh_ = null;
+    }
+    ~this() nothrow @nogc { close(); }
+}
+
+PreparedShadowScope beginPreparedShadow(ref Mesh mesh) {
+    auto result = new PreparedShadowScope(mesh);
+    g_preparedShadowMeshes.reserve(g_preparedShadowMeshes.length + 1);
+    g_preparedShadowMeshes ~= &mesh;
+    return result;
+}
+
+void drainPreparedShadowDelivery(ref Mesh mesh, out uint flags,
+                                 out uint selectionDomains) nothrow @nogc {
+    flags = mesh.undeliveredChanges_;
+    selectionDomains = mesh.undeliveredSelDomains_;
+    mesh.undeliveredChanges_ = 0;
+    mesh.undeliveredSelDomains_ = 0;
+}
+
+version (unittest) unittest {
+    import change_bus : changeBus;
+    Mesh shadow = makeCube();
+    ulong before;
+    {
+        auto guard = beginPreparedShadow(shadow);
+        shadow = makeCube(); // address-based interception survives replacement
+        before = changeBus.deliveryCount; // exclude scratch RHS construction
+        shadow.commitChange(MeshEditScope.Position);
+        assert(changeBus.deliveryCount == before);
+        uint flags, domains;
+        drainPreparedShadowDelivery(shadow, flags, domains);
+        assert(flags == MeshEditScope.Position && domains == 0);
+        drainPreparedShadowDelivery(shadow, flags, domains);
+        assert(flags == 0 && domains == 0);
+        guard.close();
+    }
+    shadow.commitChange(MeshEditScope.Position);
+    assert(changeBus.deliveryCount == before + 1);
+}
 
 // ---- Is this mesh a DOCUMENT mesh? (task 1906 review B1) ------------------
 // The resolver that answers "does some `Layer` own the storage at this
@@ -862,6 +916,7 @@ __gshared bool delegate(const(Mesh)*) g_isDocumentMesh;
 
 // The one place that rule is spelled: uninstalled ⇒ deliver.
 private bool deliverySubjectAccepted(const(Mesh)* m) {
+    foreach (p; g_preparedShadowMeshes) if (p is m) return false;
     if (g_isDocumentMesh is null) return true;
     return g_isDocumentMesh(m);
 }

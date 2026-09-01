@@ -9,7 +9,7 @@ import mesh;
 import editmode;
 import seltype : SelType;
 import math : Vec3, Viewport, AimViewport, aimSpace;
-import change_bus : MeshEditScope;
+import change_bus : MeshEditScope, changeBus;
 import command : Command;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
@@ -25,7 +25,7 @@ import pipe_gizmo_host : PipeGizmoHost;
 // Task 0617 Stage 4: transform tools drag the active/primary mesh only, so
 // its ModelSpace is the same resolver every other picking/snap call site
 // uses.
-import document : primaryModelSpace;
+import document : primaryModelSpace, Layer;
 
 // Factory: builds a fresh MeshVertexEdit (the tools share a registry-driven
 // constructor that wires the mesh, the camera view and the edit mode; the tool
@@ -91,6 +91,60 @@ version (unittest) unittest {
     assert(suppressOwner.fakeCallsForTest().length == 0);
     assert(gpu.faceVao == 11 && gpu.weightColorVbo == 19 &&
            gpu.faceVertCount == 0 && gpu.uploadVersion == 0);
+
+    // The prepared suppression branch evolves only the detached Layer image,
+    // then installs mesh before publishing its stable live subject.
+    auto layer = new Layer();
+    layer.meshRef() = makeCube();
+    GpuMesh suppressedGpu;
+    suppressedGpu.suppressCageUpload = true;
+    auto suppressTool = new TransformTool(() => &layer.meshRef(),
+                                          &suppressedGpu, &mode);
+    suppressTool.needsGpuUpdate = true;
+    auto preparedSuppressHistory = new CommandHistory();
+    auto preparedSuppressHub = new RecordObserverHub();
+    preparedSuppressHub.setMacroActive(true);
+    auto preparedSuppressContext = new PreparedRecordContext(
+        preparedSuppressHistory, preparedSuppressHub);
+    assert(preparedSuppressContext.prepare(new PreparedProbeCommand(),
+        PreparedHistoryKind.Plain).accepted);
+    const liveVersion = layer.meshRef().mutationVersion;
+    const deliveryCount = changeBus.deliveryCount;
+    const subscriberCheckpoint = changeBus.meshSubscriberCheckpointForTest();
+    scope (exit) changeBus.restoreMeshSubscribersForTest(subscriberCheckpoint);
+    bool exactSubjectSeen;
+    ulong deliveredVersion;
+    size_t deliveredVertexCount;
+    Vec3 deliveredFirstVertex;
+    Mesh* deliveredMesh = &layer.meshRef();
+    changeBus.onMeshChanged((size_t subject, uint) nothrow {
+        if (subject != cast(size_t)deliveredMesh) return;
+        exactSubjectSeen = true;
+        deliveredVersion = deliveredMesh.mutationVersion;
+        deliveredVertexCount = deliveredMesh.vertices.length;
+        deliveredFirstVertex = deliveredMesh.vertices[0];
+    });
+    auto preparedSuppress = suppressTool.prepareDeactivateGpu(
+        preparedSuppressContext, null, layer);
+    assert(preparedSuppress.resourceAccepted);
+    assert(layer.meshRef().mutationVersion == liveVersion);
+    assert(changeBus.deliveryCount == deliveryCount);
+    assert(preparedSuppressContext.validate());
+    preparedSuppressContext.install();
+    assert(layer.meshRef().mutationVersion == liveVersion + 1);
+    assert(changeBus.deliveryCount == deliveryCount + 1);
+    assert(changeBus.lastDeliverySubject == cast(size_t)&layer.meshRef());
+    assert(changeBus.lastDeliveryFlags == MeshEditScope.Position);
+    assert(changeBus.lastDeliverySelDomains == 0);
+    assert(exactSubjectSeen && deliveredVersion == liveVersion + 1);
+    assert(deliveredVertexCount == layer.meshRef().vertices.length);
+    assert(deliveredFirstVertex == layer.meshRef().vertices[0]);
+    assert(preparedSuppressContext.installTraceForTest() == [1,3,4]);
+    preparedSuppressContext.installedDepths(models, ui);
+    assert(models == 1 && ui == 0 && preparedSuppressHub.macroLength == 1);
+    preparedSuppressContext.install();
+    assert(layer.meshRef().mutationVersion == liveVersion + 1);
+    assert(changeBus.deliveryCount == deliveryCount + 1);
 
     gpu.suppressCageUpload = false;
     auto owner = GpuUploadOwner.fakeForTest(&gpu);
@@ -797,11 +851,12 @@ protected:
         active = false;
     }
 
-    /// Dormant normal-upload branch only. A suppressed cage upload publishes a
-    /// live Position change and therefore remains Deferred+Legacy until the
-    /// prepared Mesh delivery journal exists.
+    /// Dormant upload and suppressed-cage branches. Suppression commits a
+    /// Position change only to the Layer's detached Mesh image, then enlists
+    /// Mesh install and stable-subject delivery in the shared context journal.
     final PreparedDeactivateEffect prepareDeactivateGpu(
-            PreparedRecordContext context, GpuUploadOwner uploadOwner) {
+            PreparedRecordContext context, GpuUploadOwner uploadOwner,
+            Layer suppressLayer = null) {
         const bool wantsUpload = wholeMeshDrag || propsDragging || needsGpuUpdate;
         if (!wantsUpload)
             return PreparedDeactivateEffect(preparedToolStateOwner,
@@ -809,8 +864,18 @@ protected:
         if (context is null)
             return PreparedDeactivateEffect(preparedToolStateOwner,
                 PreparedDeactivateKind.TransformNormalUpload, false, false);
-        if (uploadOwner is null || gpu is null || !uploadOwner.owns(gpu) ||
-            gpu.suppressCageUpload) {
+        if (gpu !is null && gpu.suppressCageUpload) {
+            if (suppressLayer is null || !suppressLayer.ownsMesh(mesh) ||
+                !context.markHistoryInstall() ||
+                !context.preparePositionCommit(suppressLayer)) {
+                context.discard();
+                return PreparedDeactivateEffect(preparedToolStateOwner,
+                    PreparedDeactivateKind.TransformNormalUpload, false, false);
+            }
+            return PreparedDeactivateEffect(preparedToolStateOwner,
+                PreparedDeactivateKind.TransformNormalUpload, false, true);
+        }
+        if (uploadOwner is null || gpu is null || !uploadOwner.owns(gpu)) {
             context.discard();
             return PreparedDeactivateEffect(preparedToolStateOwner,
                 PreparedDeactivateKind.TransformNormalUpload, false, false);

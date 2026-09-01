@@ -1,7 +1,10 @@
 module document;
 
 import mesh    : Mesh, detachedPreparedMesh, canBeginPreparedMesh,
-                 installPreparedMeshImage;
+                 installPreparedMeshImage, beginPreparedShadow,
+                 drainPreparedShadowDelivery, PreparedShadowScope;
+import change_bus : PreparedMeshSubjectOwner,
+                    PreparedDeliverySpec;
 import seltype : SelMode;
 import document_selection : DocumentSelection;
 // Task 0721: down to ONE name. The other six were the matrix helpers
@@ -440,6 +443,8 @@ final class Layer {
     /// argument `Command.apply`'s `final` carries.
     this() {
         birthId = ++g_nextLayerBirthId;
+        preparedSubjectOwner_ = new PreparedMeshSubjectOwner(
+            this, cast(size_t)&mesh_, birthId);
         import mesh_dirty : noteMeshBirth;
         noteMeshBirth(cast(size_t)&mesh_, birthId);
     }
@@ -450,8 +455,11 @@ final class Layer {
     // list IS the audit (§Consumer inventory, tier 1). Reach it only through
     // `hasMesh()` / `meshOrNull()` / `meshRef()` / `Document.meshLayers()`.
     private Mesh mesh_;         ///< the layer's geometry (stable heap address)
+    private PreparedMeshSubjectOwner preparedSubjectOwner_;
     private ulong preparedMeshGeneration_;
     private PendingPreparedMeshImage preparedMeshPending_;
+    private PreparedLayerMeshToken enlistedMeshToken_;
+    private ValidatedLayerMeshToken enlistedMeshValidated_;
 
     PreparedLayerMeshToken beginPreparedMesh() {
         PreparedLayerMeshToken token;
@@ -502,6 +510,36 @@ final class Layer {
         if (!ownsPrepared(token)) return;
         preparedMeshPending_ = null;
         token.birthId = 0; token.generation = 0;
+    }
+
+    bool ownsMesh(const(Mesh)* candidate) const nothrow @nogc {
+        return candidate is &mesh_;
+    }
+    bool beginEnlistedMesh() {
+        enlistedMeshToken_ = beginPreparedMesh();
+        return preparedMeshPending_ !is null;
+    }
+    ref Mesh enlistedShadow() return {
+        return preparedMeshPending_.image;
+    }
+    PreparedShadowScope beginEnlistedShadowMutation() {
+        return beginPreparedShadow(preparedMeshPending_.image);
+    }
+    PreparedDeliverySpec drainEnlistedDelivery() {
+        uint flags, domains;
+        drainPreparedShadowDelivery(preparedMeshPending_.image, flags, domains);
+        return PreparedDeliverySpec(preparedSubjectOwner_,
+            preparedSubjectOwner_.issue(), flags, domains);
+    }
+    bool validateEnlistedMesh() nothrow @nogc {
+        enlistedMeshValidated_ = validatesPreparedMesh(enlistedMeshToken_);
+        return enlistedMeshValidated_.valid;
+    }
+    void installEnlistedMesh() nothrow @nogc {
+        installPreparedMesh(enlistedMeshValidated_);
+    }
+    void abortEnlistedMesh() nothrow @nogc {
+        if (preparedMeshPending_ !is null) preparedMeshPending_ = null;
     }
     // Task 0615: a plain DEFAULTED field, so every pre-existing `new Layer`
     // site (~15 of them) keeps compiling and keeps meaning "mesh item"

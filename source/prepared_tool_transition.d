@@ -4,7 +4,7 @@ module prepared_tool_transition;
 import std.algorithm.mutation : move;
 import prepared_tool_effect;
 import command_history : CommandHistory, PreparedHistoryImage;
-import change_bus : ChangeBus, PreparedDeliveryJournal;
+import change_bus : ChangeBus, PreparedDeliveryJournal, PreparedDeliverySpec;
 import tool : Tool;
 import registry : ToolFactory;
 
@@ -75,7 +75,7 @@ public:
 
 PreparedArm prepareArm(ToolFactory factory, Tool retainedOld,
                        CommandHistory history,
-                       const(PreparedJournalEntry)[] journalRows,
+                       const(PreparedDeliverySpec)[] journalRows,
                        const(ubyte)[] copiedInput) {
     PreparedArm result;
     result.candidate_.prepareFrom(factory, retainedOld);
@@ -90,7 +90,7 @@ PreparedArm prepareArm(ToolFactory factory, Tool retainedOld,
             throw new Exception("prepared arm injected failure after factory");
     }
     result.history_ = history.prepareCurrentImage();
-    result.journal_ = PreparedDeliveryJournal.copyOf(journalRows);
+    result.journal_ = PreparedDeliveryJournal.prepare(journalRows);
     PreparedToolEffect effect;
     effect.kind = PreparedEffectKind.OwnedBuffer;
     effect.ownedBuffer = OwnedBytes.copyOf(copiedInput);

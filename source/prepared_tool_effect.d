@@ -155,8 +155,17 @@ public:
 @PreparedAggregate struct PreparedInstall { OwnedId owner; OwnedBytes bytes; }
 @PreparedAggregate struct PreparedHistoryInstall { OwnedId owner; OwnedBytes bytes; }
 
+/// Scalar identity issued by the subject owner. It contains no dereferenceable
+/// address; only that owner can resolve the current generation to its retained
+/// subject.
+@PreparedAggregate struct PreparedSubjectToken {
+    ulong ownerId;
+    ulong generation;
+    ulong birthId;
+}
+
 @PreparedAggregate struct PreparedJournalEntry {
-    OwnedId subject;
+    PreparedSubjectToken subject;
     uint flags;
     uint selectionDomains;
 }

@@ -57,26 +57,86 @@ module change_bus;
 // ---------------------------------------------------------------------------
 
 public import mesh_edit_delta : MeshEditScope;
+import prepared_tool_effect : PreparedSubjectToken;
 import seltype : SelType;
-import prepared_tool_effect : PreparedJournalEntry;
+import core.atomic : atomicOp;
+
+private shared ulong nextPreparedSubjectOwnerId;
+
+final class PreparedMeshSubjectOwner {
+private:
+    Object lifetimeAnchor_;
+    size_t address_;
+    immutable ulong birthId_, ownerId_;
+    ulong generation_;
+public:
+    this(Object lifetimeAnchor, size_t address, ulong birthId) {
+        lifetimeAnchor_ = lifetimeAnchor;
+        address_ = address;
+        birthId_ = birthId;
+        ownerId_ = atomicOp!"+="(nextPreparedSubjectOwnerId, 1UL);
+    }
+    PreparedSubjectToken issue() nothrow @nogc {
+        return PreparedSubjectToken(ownerId_, ++generation_, birthId_);
+    }
+    bool resolve(PreparedSubjectToken token, out size_t address)
+                 const nothrow @nogc {
+        if (token.ownerId != ownerId_ || token.generation != generation_ ||
+            token.birthId != birthId_ || lifetimeAnchor_ is null) return false;
+        address = address_;
+        return true;
+    }
+}
+
+struct PreparedDeliverySpec {
+    PreparedMeshSubjectOwner owner;
+    PreparedSubjectToken token;
+    uint flags, selectionDomains;
+}
+
+private struct PreparedResolvedDelivery {
+    const PreparedMeshSubjectOwner owner; // retains the Layer lifetime anchor
+    PreparedSubjectToken token;
+    size_t address;
+    uint flags, selectionDomains;
+}
 
 /// Owner-prepared synchronous deliveries. Private copied storage prevents a
 /// caller from aliasing/reordering entries after prepare; replay preserves one
 /// deliverMesh call per row and performs no allocation.
-struct PreparedDeliveryJournal {
+final class PreparedDeliveryJournal {
 private:
-    PreparedJournalEntry[] entries_;
+    PreparedResolvedDelivery[] entries_;
+    version (unittest) static bool failPrepareForTest_;
 public:
-    @disable this(this);
-    static PreparedDeliveryJournal copyOf(const(PreparedJournalEntry)[] src) {
-        PreparedDeliveryJournal j;
-        j.entries_ = src.dup;
+    version (unittest) static void setFailPrepareForTest(bool fail)
+            nothrow @nogc { failPrepareForTest_ = fail; }
+    static PreparedDeliveryJournal prepare(const(PreparedDeliverySpec)[] src) {
+        auto j = new PreparedDeliveryJournal();
+        j.entries_.reserve(src.length);
+        version (unittest) if (failPrepareForTest_)
+            throw new Exception("injected prepared delivery allocation failure");
+        foreach (ref e; src) {
+            size_t address;
+            if (e.owner is null || !e.owner.resolve(e.token, address))
+                throw new Exception("prepared delivery subject refused");
+            j.entries_ ~= PreparedResolvedDelivery(e.owner, e.token, address, e.flags,
+                                                    e.selectionDomains);
+        }
         return j;
     }
     size_t length() const pure nothrow @safe @nogc { return entries_.length; }
+    bool validate() const nothrow @nogc {
+        foreach (ref e; entries_) {
+            size_t address;
+            if (!e.owner.resolve(e.token, address) || address != e.address)
+                return false;
+        }
+        return true;
+    }
     void replay(ref ChangeBus bus) nothrow {
         foreach (ref e; entries_)
-            bus.deliverMesh(cast(size_t)e.subject.value, e.flags, e.selectionDomains);
+            bus.deliverMesh(e.address, e.flags, e.selectionDomains);
         entries_ = null;
     }
 }
@@ -518,6 +578,14 @@ struct ChangeBus {
     // first parameter.
     void onMeshChanged(MeshSubscriber dg) {
         if (dg !is null) meshSubs ~= dg;
+    }
+
+    version (unittest) size_t meshSubscriberCheckpointForTest() const
+            nothrow @nogc { return meshSubs.length; }
+    version (unittest) void restoreMeshSubscribersForTest(size_t checkpoint)
+            nothrow @nogc {
+        assert(checkpoint <= meshSubs.length);
+        meshSubs = meshSubs[0 .. checkpoint];
     }
 
     void onSelectionChanged(SelSubscriber dg) {
