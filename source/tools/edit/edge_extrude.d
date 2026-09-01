@@ -1,6 +1,8 @@
 module tools.edit.edge_extrude;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import prepared_edge_extrude_activation : PreparedEdgeExtrudeActivationOwner;
 import command_history : PreparedHistoryKind;
 import mesh : detachedPreparedMesh;
 
@@ -28,6 +30,14 @@ import mesh_edit_delta : MeshEditDelta, MeshEditScope;
 import std.math : abs, sqrt;
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
+
+struct PreparedEdgeExtrudeActivationImage {
+    MeshSnapshot before;
+    bool valid, gizmoValid;
+    Vec3 anchor, baseAnchor, extrudeAxis, widthAxis;
+    ulong gizmoSelHash;
+    void clear() nothrow @nogc { this = PreparedEdgeExtrudeActivationImage.init; }
+}
 
 /// The interactive tool records into `MeshSessionEdit` — a before/after
 /// `MeshSnapshot` pair, or an operation-log `MeshEditDelta` — with the label
@@ -83,7 +93,7 @@ import perf_probe : g_perf, Cat;
 // ---------------------------------------------------------------------------
 class EdgeExtrudeTool : Tool {
 private:
-    Mesh* delegate() meshSrc_;
+    Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
     GpuMesh*         gpu;
     EditMode*        editMode;
@@ -151,7 +161,8 @@ private:
     enum Vec3 WIDTH_COLOR   = schemeColor(SchemeColor.toolWidth);
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader) {
+    this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu,
+            EditMode* editMode, LitShader litShader) {
         this.meshSrc_ = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
@@ -183,6 +194,41 @@ public:
     override void activate() {
         active   = true;
         reinitSession();
+    }
+
+    final PreparedEdgeExtrudeActivationImage buildPreparedActivation(
+            out Mesh* source) {
+        PreparedEdgeExtrudeActivationImage image;
+        source = mesh; if (source is null) return image;
+        image.before = MeshSnapshot.capture(*source); image.valid = true;
+        image.gizmoValid = gizmoValid; image.anchor = anchor;
+        image.baseAnchor = baseAnchor; image.extrudeAxis = extrudeAxis;
+        image.widthAxis = widthAxis; image.gizmoSelHash = gizmoSelHash;
+        computePreparedGizmoFrame(*source, image); return image;
+    }
+    final Mesh* preparedActivationMesh() nothrow @nogc { return meshSrc_(); }
+    final void installPreparedActivation(
+            ref PreparedEdgeExtrudeActivationImage image) nothrow @nogc {
+        if (!image.valid) return;
+        active = true; built = false; dragPart = -1;
+        extrude_ = 0.0f; width_ = 0.0f;
+        image.before.moveInto(before);
+        gizmoValid = image.gizmoValid; anchor = image.anchor;
+        baseAnchor = image.baseAnchor; extrudeAxis = image.extrudeAxis;
+        widthAxis = image.widthAxis; gizmoSelHash = image.gizmoSelHash;
+        image.clear();
+    }
+    final PreparedSessionActivateEffect prepareActivate(
+            PreparedRecordContext context) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.EdgeExtrude, false);
+        scope(failure) context.discard();
+        auto owner = PreparedEdgeExtrudeActivationOwner.prepare(this);
+        bool ok = owner !is null && context.prepareEdgeExtrudeActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.EdgeExtrude, ok);
     }
 
     // (Re)initialise the edit session against the CURRENT mesh — shared by
@@ -694,32 +740,44 @@ private:
     //                 perpendicular to extrudeAxis when degenerate.
     // -----------------------------------------------------------------------
     void computeGizmoFrame() {
-        gizmoValid   = false;
-        gizmoSelHash = mesh.selectionSignature(EditMode.Edges);
-        if (mesh.edges.length == 0) return;
+        PreparedEdgeExtrudeActivationImage image;
+        image.gizmoValid = gizmoValid; image.anchor = anchor;
+        image.baseAnchor = baseAnchor; image.extrudeAxis = extrudeAxis;
+        image.widthAxis = widthAxis; image.gizmoSelHash = gizmoSelHash;
+        computePreparedGizmoFrame(*mesh, image);
+        gizmoValid = image.gizmoValid; anchor = image.anchor;
+        baseAnchor = image.baseAnchor; extrudeAxis = image.extrudeAxis;
+        widthAxis = image.widthAxis; gizmoSelHash = image.gizmoSelHash;
+    }
+
+    private static void computePreparedGizmoFrame(ref Mesh source,
+            ref PreparedEdgeExtrudeActivationImage image) {
+        image.gizmoValid = false;
+        image.gizmoSelHash = source.selectionSignature(EditMode.Edges);
+        if (source.edges.length == 0) return;
 
         // L1 funnel (task 0613, S5) — same operand set as currentMask(), so the
         // gizmo is framed on exactly the edges the apply will extrude (see the
         // matching note in tools/edit/poly_extrude.d).
-        auto opEdges = mesh.operandEdgeMask();
+        auto opEdges = source.operandEdgeMask();
 
         Vec3 centSum  = Vec3(0, 0, 0);
         size_t centN  = 0;
         Vec3 normSum  = Vec3(0, 0, 0);
         Vec3 insetSum = Vec3(0, 0, 0);
 
-        foreach (i; 0 .. mesh.edges.length) {
+        foreach (i; 0 .. source.edges.length) {
             bool selected = i < opEdges.length && opEdges[i];
             if (!selected) continue;
-            uint va = mesh.edges[i][0];
-            uint vb = mesh.edges[i][1];
-            Vec3 pa = mesh.vertices[va];
-            Vec3 pb = mesh.vertices[vb];
+            uint va = source.edges[i][0];
+            uint vb = source.edges[i][1];
+            Vec3 pa = source.vertices[va];
+            Vec3 pb = source.vertices[vb];
             centSum = centSum + pa + pb;
             centN  += 2;
 
             // Averaged neighbour-polygon normal for this edge (ridge dir).
-            Vec3 ne = edgeAveragedNormal(cast(uint)i);
+            Vec3 ne = preparedEdgeAveragedNormal(source, cast(uint)i);
             normSum = normSum + ne;
 
             // In-plane inset direction for this edge: perpendicular to the
@@ -737,46 +795,95 @@ private:
         }
 
         if (centN == 0) return;
-        anchor = Vec3(centSum.x / centN, centSum.y / centN, centSum.z / centN);
+        image.anchor = Vec3(centSum.x / centN, centSum.y / centN, centSum.z / centN);
         // Freeze the ORIGINAL pre-extrude centroid. The per-frame gizmo anchor
         // is computed analytically from this base + the extrude VALUE (see
         // draw()), so the handle slides out predictively even when width==0
         // (which makes the kernel a no-op, leaving the live selection put).
-        baseAnchor = anchor;
+        image.baseAnchor = image.anchor;
 
         // Extrude axis = averaged normal; fall back to world +Y if degenerate.
         float nl = sqrt(normSum.x*normSum.x + normSum.y*normSum.y + normSum.z*normSum.z);
-        extrudeAxis = (nl > 1e-6f) ? (normSum / nl) : Vec3(0, 1, 0);
+        image.extrudeAxis = (nl > 1e-6f) ? (normSum / nl) : Vec3(0, 1, 0);
 
         // Width axis = averaged in-plane inset; orthogonalize against the
         // extrude axis and fall back to any perpendicular if degenerate (e.g.
         // per-edge inward dirs cancelled out on a closed loop).
-        Vec3 w = insetSum - extrudeAxis * dot(insetSum, extrudeAxis);
+        Vec3 w = insetSum - image.extrudeAxis * dot(insetSum, image.extrudeAxis);
         float wl = sqrt(w.x*w.x + w.y*w.y + w.z*w.z);
         if (wl > 1e-6f) {
-            widthAxis = w / wl;
+            image.widthAxis = w / wl;
         } else {
             // Any vector perpendicular to extrudeAxis.
-            Vec3 tmp = (abs(extrudeAxis.x) < 0.9f) ? Vec3(1, 0, 0) : Vec3(0, 1, 0);
-            Vec3 perp = cross(extrudeAxis, tmp);
+            Vec3 tmp = (abs(image.extrudeAxis.x) < 0.9f) ? Vec3(1, 0, 0) : Vec3(0, 1, 0);
+            Vec3 perp = cross(image.extrudeAxis, tmp);
             float pl = sqrt(perp.x*perp.x + perp.y*perp.y + perp.z*perp.z);
-            widthAxis = (pl > 1e-6f) ? (perp / pl) : Vec3(1, 0, 0);
+            image.widthAxis = (pl > 1e-6f) ? (perp / pl) : Vec3(1, 0, 0);
         }
-        gizmoValid = true;
+        image.gizmoValid = true;
     }
 
     // Averaged normal of the 1–2 faces adjacent to edge `ei` — the same notion
     // the kernel's per-edge `ne` uses for the ridge-lift direction.
     Vec3 edgeAveragedNormal(uint ei) {
+        return preparedEdgeAveragedNormal(*mesh, ei);
+    }
+    private static Vec3 preparedEdgeAveragedNormal(ref Mesh source, uint ei) {
         Vec3 sum = Vec3(0, 0, 0);
         size_t n = 0;
-        foreach (fi; mesh.facesAroundEdge(ei)) {
-            sum = sum + mesh.faceNormal(fi);
+        foreach (fi; source.facesAroundEdge(ei)) {
+            sum = sum + source.faceNormal(fi);
             ++n;
         }
         if (n == 0) return Vec3(0, 1, 0);
         float l = sqrt(sum.x*sum.x + sum.y*sum.y + sum.z*sum.z);
         return (l > 1e-6f) ? (sum / l) : Vec3(0, 1, 0);
+    }
+
+public:
+    version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
+        return preparedToolStateOwner;
+    }
+    version(unittest) final void seedPreparedActivationForTest(ref Mesh oldMesh) {
+        active = false; built = true; dragPart = 9; extrude_ = 7; width_ = 8;
+        gizmoValid = false; anchor = Vec3(1,2,3); baseAnchor = Vec3(4,5,6);
+        extrudeAxis = Vec3(7,8,9); widthAxis = Vec3(10,11,12);
+        gizmoSelHash = 13; dragLastMX = 14; dragLastMY = 15;
+        dragStartMX = 16; dragStartMY = 17; dragBaseExtrude = 18;
+        dragBaseWidth = 19; freeLockAxis = 2; cachedVp.view[0] = 20;
+        before = MeshSnapshot.capture(oldMesh);
+    }
+    version(unittest) final bool preparedActivationDirtyForTest() const
+            nothrow @nogc {
+        return !active && built && dragPart == 9 && extrude_ == 7 && width_ == 8 &&
+            !gizmoValid && anchor == Vec3(1,2,3) && baseAnchor == Vec3(4,5,6) &&
+            extrudeAxis == Vec3(7,8,9) && widthAxis == Vec3(10,11,12) &&
+            gizmoSelHash == 13 && dragLastMX == 14 && dragLastMY == 15 &&
+            dragStartMX == 16 && dragStartMY == 17 && dragBaseExtrude == 18 &&
+            dragBaseWidth == 19 && freeLockAxis == 2 && cachedVp.view[0] == 20;
+    }
+    version(unittest) final bool preparedActivationForTest(size_t count,
+            Vec3 first, const Vec3* livePtr, bool expectedValid,
+            Vec3 expectedAnchor, Vec3 expectedBase, Vec3 expectedExtrude,
+            Vec3 expectedWidth, ulong expectedHash) const nothrow @nogc {
+        return active && !built && dragPart == -1 && extrude_ == 0 && width_ == 0 &&
+            before.filled && before.vertices.length == count &&
+            (count == 0 || (before.vertices[0] == first && before.vertices.ptr !is livePtr)) &&
+            gizmoValid == expectedValid && anchor == expectedAnchor &&
+            baseAnchor == expectedBase && extrudeAxis == expectedExtrude &&
+            widthAxis == expectedWidth && gizmoSelHash == expectedHash &&
+            dragLastMX == 14 && dragLastMY == 15 && dragStartMX == 16 &&
+            dragStartMY == 17 && dragBaseExtrude == 18 && dragBaseWidth == 19 &&
+            freeLockAxis == 2 && cachedVp.view[0] == 20;
+    }
+    version(unittest) final PreparedEdgeExtrudeActivationImage
+            preparedFrameForTest(ref Mesh source) const {
+        PreparedEdgeExtrudeActivationImage image;
+        image.before = MeshSnapshot.capture(source);
+        image.gizmoValid = gizmoValid; image.anchor = anchor;
+        image.baseAnchor = baseAnchor; image.extrudeAxis = extrudeAxis;
+        image.widthAxis = widthAxis; image.gizmoSelHash = gizmoSelHash;
+        computePreparedGizmoFrame(source, image); return image;
     }
 }
 

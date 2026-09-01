@@ -250,6 +250,7 @@ B5P_PREPARED_LEGACY = {
     ("tools.edit.poly_bevel", "PolyBevelTool", "activate"),
     ("tools.edit.vertex_bevel_tool", "VertexBevelTool", "activate"),
     ("tools.edit.vertex_extrude_tool", "VertexExtrudeTool", "activate"),
+    ("tools.edit.edge_extrude", "EdgeExtrudeTool", "activate"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
@@ -287,7 +288,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "1dd34fdd905d43e7c4efbe365cb694dd525dcc0597b9715c946c95fcb3731c2c"
+    "963d0c05fab011fadc93f4878b5854afa836abc6d07600fb254c68f6cfc495c0"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -427,6 +428,7 @@ for path, text in prepared_source_texts.items():
             "prepared_poly_bevel_activation",
             "prepared_vertex_bevel_activation",
             "prepared_vertex_extrude_activation",
+            "prepared_edge_extrude_activation",
             "tools.alignment.radial_sweep_tool",
             "tools.alignment.radial_array_tool",
             "tools.alignment.linear_align_tool",
@@ -3070,6 +3072,150 @@ for fixture in (
     if run.returncode == 0 or ("not copyable" not in run.stdout and
             not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
         fail("VertexExtrude activation token copy was not rejected:\n" + run.stdout)
+
+edge_extrude_activation_owner = (ROOT /
+    "source/prepared_edge_extrude_activation.d").read_text()
+edge_extrude_activation_tool = (ROOT /
+    "source/tools/edit/edge_extrude.d").read_text()
+def edge_extrude_activation_gate(owner, context, tool):
+    po = without_unittests(owner); pt = without_unittests(tool)
+    start = pt.find("final PreparedSessionActivateEffect prepareActivate(")
+    end = pt.find("private void reinitSession()", start)
+    producer = pt[start:end] if start >= 0 and end > start else ""
+    bstart = pt.find("final PreparedEdgeExtrudeActivationImage buildPreparedActivation(")
+    bend = pt.find("final Mesh* preparedActivationMesh()", bstart)
+    builder = pt[bstart:bend] if bstart >= 0 and bend > bstart else ""
+    istart = pt.find("final void installPreparedActivation(")
+    iend = pt.find("final PreparedSessionActivateEffect prepareActivate(", istart)
+    installer = pt[istart:iend] if istart >= 0 and iend > istart else ""
+    fstart = pt.find("private static void computePreparedGizmoFrame")
+    fend = len(pt)
+    formula = pt[fstart:fend] if fstart >= 0 and fend > fstart else ""
+    legacy = re.search(r"override void activate\(\)\s*\{", pt)
+    legacy_body = pt[legacy.end():balanced_source(pt, legacy.end())-1] if legacy else ""
+    return (
+        "final class PreparedEdgeExtrudeActivationOwner" in owner and
+        owner.count("@disable this(this);") == 2 and
+        not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
+        "target.classinfo !is EdgeExtrudeTool.classinfo" in owner and
+        "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
+        "target_.preparedActivationMesh() !is source_" in owner and
+        "!image_.before.matches(*source_)" in owner and
+        "target_.installPreparedActivation(image_); consume();" in owner and
+        "image_.clear(); target_ = null; source_ = null;" in owner and
+        "Mesh* delegate() nothrow @nogc meshSrc_;" in tool and
+        "image.before = MeshSnapshot.capture(*source); image.valid = true;" in builder and
+        not re.search(r"(?<!\.)\b(active|built|dragPart|extrude_|width_|gizmoValid|"
+                      r"anchor|baseAnchor|extrudeAxis|widthAxis|gizmoSelHash|"
+                      r"dragLastMX|dragLastMY|dragStartMX|dragStartMY|"
+                      r"dragBaseExtrude|dragBaseWidth|freeLockAxis|cachedVp)\s*=", builder) and
+        tool.count("image.gizmoValid = gizmoValid; image.anchor = anchor;") == 3 and
+        tool.count("image.baseAnchor = baseAnchor; image.extrudeAxis = extrudeAxis;") == 3 and
+        tool.count("image.widthAxis = widthAxis; image.gizmoSelHash = gizmoSelHash;") == 3 and
+        "active = true; built = false; dragPart = -1;" in installer and
+        "extrude_ = 0.0f; width_ = 0.0f;" in installer and
+        "image.before.moveInto(before);" in installer and
+        "gizmoValid = image.gizmoValid; anchor = image.anchor;" in installer and
+        "baseAnchor = image.baseAnchor; extrudeAxis = image.extrudeAxis;" in installer and
+        "widthAxis = image.widthAxis; gizmoSelHash = image.gizmoSelHash;" in installer and
+        "image.gizmoValid = false;" in formula and
+        "image.gizmoSelHash = source.selectionSignature(EditMode.Edges);" in formula and
+        "if (source.edges.length == 0) return;" in formula and
+        "auto opEdges = source.operandEdgeMask();" in formula and
+        "bool selected = i < opEdges.length && opEdges[i];" in formula and
+        "if (!selected) continue;" in formula and
+        "centSum = centSum + pa + pb;" in formula and "centN  += 2;" in formula and
+        "preparedEdgeAveragedNormal(source, cast(uint)i)" in formula and
+        "if (tl > 1e-6f)" in formula and "Vec3 inward = cross(ne, t);" in formula and
+        "if (il > 1e-6f) insetSum = insetSum + (inward / il);" in formula and
+        "if (centN == 0) return;" in formula and
+        "image.anchor = Vec3(centSum.x / centN, centSum.y / centN, centSum.z / centN);" in formula and
+        "image.baseAnchor = image.anchor;" in formula and
+        "image.extrudeAxis = (nl > 1e-6f) ? (normSum / nl) : Vec3(0, 1, 0);" in formula and
+        "Vec3 w = insetSum - image.extrudeAxis * dot(insetSum, image.extrudeAxis);" in formula and
+        "if (wl > 1e-6f)" in formula and "image.widthAxis = w / wl;" in formula and
+        "abs(image.extrudeAxis.x) < 0.9f" in formula and
+        "image.widthAxis = (pl > 1e-6f) ? (perp / pl) : Vec3(1, 0, 0);" in formula and
+        "source.facesAroundEdge(ei)" in formula and
+        "return (l > 1e-6f) ? (sum / l) : Vec3(0, 1, 0);" in formula and
+        "image.gizmoValid = true;" in formula and
+        "PreparedEdgeExtrudeActivationOwner.prepare(this)" in producer and
+        "context.prepareEdgeExtrudeActivation(owner)" in producer and
+        "context.markNoHistoryInstall()" in producer and
+        producer.find("context.prepareEdgeExtrudeActivation(owner)") <
+            producer.find("context.markNoHistoryInstall()") and
+        "scope(failure) context.discard();" in producer and
+        "if (!ok) context.discard();" in producer and
+        "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+        "            PreparedActivateKind.EdgeExtrude, ok);" in producer and
+        not any(x in producer for x in ("context.validate(", "context.install(", "owner.install(")) and
+        not any(x in legacy_body for x in ("prepareActivate(", "PreparedRecordContext")) and
+        "e.edgeExtrudeActivation.validate();" in context and
+        "e.edgeExtrudeActivation.install();" in context and
+        "e.edgeExtrudeActivation.abort();" in context)
+if not edge_extrude_activation_gate(edge_extrude_activation_owner,
+                                    record_context, edge_extrude_activation_tool):
+    fail("EdgeExtrude activation prepared contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is EdgeExtrudeTool.classinfo", "false", "broaden product"),
+    ("owner", "result.image_ = target.buildPreparedActivation(result.source_);", "", "drop builder"),
+    ("owner", "target_.preparedActivationMesh() !is source_", "false", "drop identity"),
+    ("owner", "!image_.before.matches(*source_)", "false", "drop content guard"),
+    ("owner", "target_.installPreparedActivation(image_);", "", "drop install"),
+    ("owner", "image_.clear(); target_ = null; source_ = null;", "target_ = null;", "retain payload"),
+    ("tool", "image.before = MeshSnapshot.capture(*source);", "", "drop snapshot"),
+    ("tool", "image.before = MeshSnapshot.capture(*source); image.valid = true;",
+     "dragLastMX = 0; image.before = MeshSnapshot.capture(*source); image.valid = true;", "write live during prepare"),
+    ("tool", "image.gizmoValid = gizmoValid; image.anchor = anchor;", "", "drop frame seed"),
+    ("tool", "active = true; built = false; dragPart = -1;", "built = false; dragPart = -1;", "drop active reset"),
+    ("tool", "active = true; built = false; dragPart = -1;", "active = true; dragPart = -1;", "drop built reset"),
+    ("tool", "active = true; built = false; dragPart = -1;", "active = true; built = false;", "drop drag reset"),
+    ("tool", "extrude_ = 0.0f; width_ = 0.0f;", "width_ = 0.0f;", "drop extrude reset"),
+    ("tool", "extrude_ = 0.0f; width_ = 0.0f;", "extrude_ = 0.0f;", "drop width reset"),
+    ("tool", "image.before.moveInto(before);", "before = image.before;", "shallow snapshot"),
+    ("tool", "gizmoValid = image.gizmoValid; anchor = image.anchor;", "anchor = image.anchor;", "drop valid install"),
+    ("tool", "baseAnchor = image.baseAnchor; extrudeAxis = image.extrudeAxis;", "extrudeAxis = image.extrudeAxis;", "drop base anchor"),
+    ("tool", "widthAxis = image.widthAxis; gizmoSelHash = image.gizmoSelHash;", "gizmoSelHash = image.gizmoSelHash;", "drop width axis"),
+    ("tool", "image.gizmoSelHash = source.selectionSignature(EditMode.Edges);", "", "drop empty hash law"),
+    ("tool", "auto opEdges = source.operandEdgeMask();", "auto opEdges = new bool[](source.edges.length);", "drop operand funnel"),
+    ("tool", "if (!selected) continue;", "", "drop operand guard"),
+    ("tool", "preparedEdgeAveragedNormal(source, cast(uint)i)", "Vec3(0,1,0)", "drop adjacent normals"),
+    ("tool", "if (centN == 0) return;", "", "drop centroid guard"),
+    ("tool", "image.extrudeAxis = (nl > 1e-6f) ? (normSum / nl) : Vec3(0, 1, 0);",
+     "image.extrudeAxis = (nl >= 0) ? (normSum / nl) : Vec3(0, 1, 0);", "drop normal fallback"),
+    ("tool", "Vec3 w = insetSum - image.extrudeAxis * dot(insetSum, image.extrudeAxis);",
+     "Vec3 w = insetSum;", "drop width orthogonalization"),
+    ("tool", "if (wl > 1e-6f)", "if (wl >= 0)", "drop width fallback"),
+    ("tool", "abs(image.extrudeAxis.x) < 0.9f", "false", "drop perpendicular choice"),
+    ("tool", "image.gizmoValid = true;", "", "drop valid seal"),
+    ("tool", "scope(failure) context.discard();", "", "drop failure cleanup"),
+    ("tool", "context.prepareEdgeExtrudeActivation(owner)", "true", "drop enlist"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop history seal"),
+    ("tool", "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+     "            PreparedActivateKind.EdgeExtrude, ok);",
+     "return PreparedSessionActivateEffect(OwnedId.init,\n"
+     "            PreparedActivateKind.EdgeExtrude, ok);", "forge effect owner"),
+    ("tool", "PreparedActivateKind.EdgeExtrude, ok);", "PreparedActivateKind.EdgeExtrude, true);", "forge acceptance"),
+    ("context", "e.edgeExtrudeActivation.validate();", "true;", "drop validation"),
+    ("context", "e.edgeExtrudeActivation.install();", "", "drop context install"),
+    ("context", "e.edgeExtrudeActivation.abort();", "", "drop context abort"),
+):
+    o, c, t = edge_extrude_activation_owner, record_context, edge_extrude_activation_tool
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    else: t = t.replace(old, new, 1)
+    if ((o == edge_extrude_activation_owner and c == record_context and
+         t == edge_extrude_activation_tool) or edge_extrude_activation_gate(o,c,t)):
+        fail(f"EdgeExtrude activation mutation did not RED: {label}")
+for fixture in (
+    ROOT / "tests/compile_fail/prepared_edge_extrude_activation_token_copy.d",
+    ROOT / "tests/compile_fail/prepared_edge_extrude_activation_validated_token_copy.d",
+):
+    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if run.returncode == 0 or ("not copyable" not in run.stdout and
+            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+        fail("EdgeExtrude activation token copy was not rejected:\n" + run.stdout)
 
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
 # detached whole-Mesh adoption with exact caller-supplied change flags, and a

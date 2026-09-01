@@ -30,6 +30,7 @@ import prepared_edge_bevel_activation : PreparedEdgeBevelActivationOwner;
 import prepared_poly_bevel_activation : PreparedPolyBevelActivationOwner;
 import prepared_vertex_bevel_activation : PreparedVertexBevelActivationOwner;
 import prepared_vertex_extrude_activation : PreparedVertexExtrudeActivationOwner;
+import prepared_edge_extrude_activation : PreparedEdgeExtrudeActivationOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -45,7 +46,7 @@ private enum PreparedResourceKind : ubyte {
     VertexMergeActivationState, PolyInsetActivationState, PolyExtrudeActivationState,
     SmoothShiftActivationState, EdgeBevelActivationState,
     PolyBevelActivationState, VertexBevelActivationState,
-    VertexExtrudeActivationState
+    VertexExtrudeActivationState, EdgeExtrudeActivationState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -68,6 +69,7 @@ private struct PreparedResourceEntry {
     PreparedPolyBevelActivationOwner polyBevelActivation;
     PreparedVertexBevelActivationOwner vertexBevelActivation;
     PreparedVertexExtrudeActivationOwner vertexExtrudeActivation;
+    PreparedEdgeExtrudeActivationOwner edgeExtrudeActivation;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -427,6 +429,17 @@ public:
         e.kind = PreparedResourceKind.VertexExtrudeActivationState;
         e.vertexExtrudeActivation = owner; resources_ ~= e; return true;
     }
+    bool prepareEdgeExtrudeActivation(PreparedEdgeExtrudeActivationOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected EdgeExtrude activation enlist failure");
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.EdgeExtrudeActivationState;
+        e.edgeExtrudeActivation = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -626,6 +639,9 @@ public:
             case PreparedResourceKind.VertexExtrudeActivationState:
                 ok = e.vertexExtrudeActivation !is null &&
                     e.vertexExtrudeActivation.validate(); break;
+            case PreparedResourceKind.EdgeExtrudeActivationState:
+                ok = e.edgeExtrudeActivation !is null &&
+                    e.edgeExtrudeActivation.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -770,6 +786,10 @@ public:
             e.vertexExtrudeActivation.install();
             version(unittest) installTrace_[installTraceLength_++] = 28;
             break;
+        case PreparedResourceKind.EdgeExtrudeActivationState:
+            e.edgeExtrudeActivation.install();
+            version(unittest) installTrace_[installTraceLength_++] = 29;
+            break;
         }
         if (!installedHistory && history_ !is null)
             history_.installPreparedToken(validated_);
@@ -845,6 +865,8 @@ private:
             e.vertexBevelActivation.abort(); break;
         case PreparedResourceKind.VertexExtrudeActivationState:
             e.vertexExtrudeActivation.abort(); break;
+        case PreparedResourceKind.EdgeExtrudeActivationState:
+            e.edgeExtrudeActivation.abort(); break;
         }
         resources_.length = 0;
         historyMarker_ = false;
