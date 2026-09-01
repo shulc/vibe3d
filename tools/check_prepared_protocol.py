@@ -328,6 +328,7 @@ for path, text in prepared_source_texts.items():
             "prepared_radial_array_transition",
             "prepared_transform_activation",
             "prepared_transform_product_activation",
+            "prepared_move_update",
             "tools.alignment.radial_sweep_tool",
             "tools.alignment.radial_array_tool",
             "tools.alignment.linear_align_tool",
@@ -2393,4 +2394,82 @@ if run.returncode == 0 or ("not copyable" not in run.stdout and
         not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
     fail("Transform product activation token copy was not rejected:\n" + run.stdout)
 
-print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures) + 3} compile-fail fixtures)")
+# Exact Move update owner infrastructure. This deliberately has no producer:
+# the production update root remains Legacy until P1.0c.
+move_update_owner = (ROOT / "source/prepared_move_update.d").read_text()
+def move_update_gate(owner, context, move):
+    production = without_unittests(owner)
+    update_match = re.search(r"override\s+void\s+update\s*\(ref VectorStack vts\)\s*\{", move)
+    if not update_match: return False
+    update_body = move[update_match.end():balanced_source(move, update_match.end())-1]
+    return (
+        "final class PreparedMoveUpdateOwner" in owner and
+        owner.count("@disable this(this);") == 2 and
+        not any(x in production for x in (" delegate", " function(", "void*", "ubyte[]")) and
+        production.count("VectorStack") == 2 and
+        "target.classinfo !is MoveTool.classinfo" in owner and
+        "prepared_.owner != owner_" in owner and
+        "prepared_.generation != generation_" in owner and
+        "validatedToken_.owner != owner_" in owner and
+        "validatedToken_.generation != generation_" in owner and
+        "target_.installPreparedMoveUpdate(image_);\n        consume();" in owner and
+        "image_.clear(); pending_ = validated_ = false; consumed_ = true;" in owner and
+        "enum PreparedMoveUpdateBranch : ubyte" in move and
+        "InactiveNoop, DraggingNoop, WrapperEditOpenNoop, Refresh" in move and
+        "if (!active) { image.branch = PreparedMoveUpdateBranch.InactiveNoop; return image; }" in move and
+        "if (dragAxis >= 0) { image.branch = PreparedMoveUpdateBranch.DraggingNoop; return image; }" in move and
+        "auto wrapper = cast(XfrmTransformTool) wrapperRef;" in move and
+        "if (wrapper !is null) wrapEditOpen = wrapper.publicEditIsOpen();" in move and
+        "image.branch = PreparedMoveUpdateBranch.WrapperEditOpenNoop;" in move and
+        "image.branch = PreparedMoveUpdateBranch.Refresh;\n        image.center = queryActionCenter(vts);" in move and
+        "final void installPreparedMoveUpdate(ref PreparedMoveUpdateImage image)\n            nothrow @nogc" in move and
+        "cachedCenter = image.center;\n            handler.setPosition(image.center);\n        }\n        image.clear();" in move and
+        "bool prepareMoveUpdate(PreparedMoveUpdateOwner owner)" in context and
+        "e.moveUpdate.validate();" in context and
+        "e.moveUpdate.install();" in context and
+        "e.moveUpdate.abort();" in context and
+        "PreparedMoveUpdateOwner" not in update_body and
+        "prepareMoveUpdate" not in update_body)
+if not move_update_gate(move_update_owner, record_context, move_tool):
+    fail("Move update owner contract drift")
+move_update_production_calls = sum(
+    without_unittests(text).count("PreparedMoveUpdateOwner.prepare(") +
+    without_unittests(text).count(".prepareMoveUpdate(")
+    for text in prepared_source_texts.values())
+if move_update_production_calls != 0:
+    fail("Move update owner reached from a production caller")
+
+for target, old, new, label in (
+    ("owner", "target.classinfo !is MoveTool.classinfo", "cast(MoveTool) target is null", "broaden exact Move admission"),
+    ("owner", "prepared_.owner != owner_", "false", "drop prepared owner identity"),
+    ("owner", "prepared_.generation != generation_", "false", "drop prepared generation"),
+    ("owner", "validatedToken_.owner != owner_", "false", "drop validated owner identity"),
+    ("owner", "validatedToken_.generation != generation_", "false", "drop validated generation"),
+    ("owner", "target_.installPreparedMoveUpdate(image_);", "", "drop fixed install"),
+    ("owner", "image_.clear(); pending_ = validated_ = false; consumed_ = true;", "pending_ = validated_ = false; consumed_ = true;", "omit payload scrub"),
+    ("move", "if (!active) { image.branch = PreparedMoveUpdateBranch.InactiveNoop; return image; }", "", "drop inactive guard"),
+    ("move", "if (dragAxis >= 0) { image.branch = PreparedMoveUpdateBranch.DraggingNoop; return image; }", "", "drop drag guard"),
+    ("move", "auto wrapper = cast(XfrmTransformTool) wrapperRef;", "auto wrapper = cast(XfrmTransformTool) null;", "drop wrapper cast observation"),
+    ("move", "if (wrapper !is null) wrapEditOpen = wrapper.publicEditIsOpen();", "", "drop wrapper edit-open observation"),
+    ("move", "image.center = queryActionCenter(vts);", "image.center = Vec3.init;", "drop captured center"),
+    ("move", "cachedCenter = image.center;", "", "drop cached-center install"),
+    ("move", "cachedCenter = image.center;\n            handler.setPosition(image.center);", "handler.setPosition(image.center);\n            cachedCenter = image.center;", "reorder fixed install"),
+    ("context", "e.moveUpdate.validate();", "true;", "drop context validation"),
+    ("context", "e.moveUpdate.install();", "", "drop context install"),
+    ("context", "e.moveUpdate.abort();", "", "drop context abort"),
+):
+    owner, context, move = move_update_owner, record_context, move_tool
+    if target == "owner": owner = owner.replace(old, new, 1)
+    elif target == "move": move = move.replace(old, new, 1)
+    else: context = context.replace(old, new, 1)
+    if move_update_gate(owner, context, move):
+        fail(f"Move update mutation did not RED: {label}")
+
+move_update_copy_fixture = ROOT / "tests/compile_fail/prepared_move_update_token_copy.d"
+run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(move_update_copy_fixture)],
+    cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+if run.returncode == 0 or ("not copyable" not in run.stdout and
+        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+    fail("Move update token copy was not rejected:\n" + run.stdout)
+
+print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures) + 4} compile-fail fixtures)")

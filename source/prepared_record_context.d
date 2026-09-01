@@ -18,6 +18,7 @@ import prepared_radial_sweep_transition : PreparedRadialSweepTransitionOwner;
 import prepared_radial_array_transition : PreparedRadialArrayTransitionOwner;
 import prepared_transform_activation : PreparedTransformActivationOwner;
 import prepared_transform_product_activation : PreparedTransformProductActivationOwner;
+import prepared_move_update : PreparedMoveUpdateOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -28,7 +29,7 @@ private enum PreparedResourceKind : ubyte {
     ArraySessionState, CloneSessionState, MagnetSessionState, ReductionSessionState,
     RadialSweepProfileState, RadialSweepTransitionState, GestureCarrierMismatch,
     GpuCreateUpload, RadialArrayTransitionState, TransformActivationState,
-    TransformProductActivationState
+    TransformProductActivationState, MoveUpdateState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -39,6 +40,7 @@ private struct PreparedResourceEntry {
     PreparedRadialArrayTransitionOwner radialArrayTransition;
     PreparedTransformActivationOwner transformActivation;
     PreparedTransformProductActivationOwner transformProductActivation;
+    PreparedMoveUpdateOwner moveUpdate;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -249,6 +251,16 @@ public:
         PreparedResourceEntry e; e.kind = PreparedResourceKind.TransformProductActivationState;
         e.transformProductActivation = owner; resources_ ~= e; return true;
     }
+    bool prepareMoveUpdate(PreparedMoveUpdateOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected move update enlist failure");
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.MoveUpdateState;
+        e.moveUpdate = owner; resources_ ~= e; return true;
+    }
 
     bool prepareGestureCarrierMismatch() {
         if (!begun_ || validated_Once) return false;
@@ -397,6 +409,8 @@ public:
             case PreparedResourceKind.TransformProductActivationState:
                 ok = e.transformProductActivation !is null &&
                     e.transformProductActivation.validate(); break;
+            case PreparedResourceKind.MoveUpdateState:
+                ok = e.moveUpdate !is null && e.moveUpdate.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -488,6 +502,10 @@ public:
             e.transformProductActivation.install();
             version(unittest) installTrace_[installTraceLength_++] = 15;
             break;
+        case PreparedResourceKind.MoveUpdateState:
+            e.moveUpdate.install();
+            version(unittest) installTrace_[installTraceLength_++] = 16;
+            break;
         }
         if (!installedHistory) history_.installPreparedToken(validated_);
         resources_.length = 0;
@@ -537,6 +555,7 @@ private:
             e.transformActivation.abort(); break;
         case PreparedResourceKind.TransformProductActivationState:
             e.transformProductActivation.abort(); break;
+        case PreparedResourceKind.MoveUpdateState: e.moveUpdate.abort(); break;
         }
         resources_.length = 0;
         historyMarker_ = false;

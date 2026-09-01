@@ -38,6 +38,17 @@ import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
     PreparedTransformProductEffect, PreparedTransformProductKind;
 import prepared_transform_product_activation : PreparedTransformProductActivationOwner;
 
+enum PreparedMoveUpdateBranch : ubyte {
+    InactiveNoop, DraggingNoop, WrapperEditOpenNoop, Refresh
+}
+
+struct PreparedMoveUpdateImage {
+    PreparedMoveUpdateBranch branch;
+    Vec3 center;
+    bool valid;
+    void clear() nothrow @nogc { this = PreparedMoveUpdateImage.init; }
+}
+
 // ---------------------------------------------------------------------------
 // MoveTool : TransformTool — shows MoveHandler at selection/mesh center
 //
@@ -345,6 +356,51 @@ public:
             nothrow @nogc {
         if (!image.valid) return;
         installPreparedActivation(image.base); propInput = image.propInput; image.clear();
+    }
+
+    /// Detached image for the exact Move update root. VectorStack and wrapper
+    /// references are observations only: neither escapes this call.
+    final PreparedMoveUpdateImage buildPreparedMoveUpdate(ref VectorStack vts) {
+        PreparedMoveUpdateImage image;
+        image.valid = true;
+        if (!active) { image.branch = PreparedMoveUpdateBranch.InactiveNoop; return image; }
+        if (dragAxis >= 0) { image.branch = PreparedMoveUpdateBranch.DraggingNoop; return image; }
+        bool wrapEditOpen;
+        if (wrapperRef !is null) {
+            import tools.transform.xfrm_transform : XfrmTransformTool;
+            auto wrapper = cast(XfrmTransformTool) wrapperRef;
+            if (wrapper !is null) wrapEditOpen = wrapper.publicEditIsOpen();
+        }
+        if (wrapEditOpen) {
+            image.branch = PreparedMoveUpdateBranch.WrapperEditOpenNoop;
+            return image;
+        }
+        image.branch = PreparedMoveUpdateBranch.Refresh;
+        image.center = queryActionCenter(vts);
+        return image;
+    }
+
+    /// Fixed carrier-free commit projection. The only mutating branch preserves
+    /// the legacy cached-center then handler-position order.
+    final void installPreparedMoveUpdate(ref PreparedMoveUpdateImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        if (image.branch == PreparedMoveUpdateBranch.Refresh) {
+            cachedCenter = image.center;
+            handler.setPosition(image.center);
+        }
+        image.clear();
+    }
+
+    version(unittest) final void seedPreparedMoveUpdateForTest(
+            bool isActive, int axis, TransformTool wrapper, Vec3 cached,
+            Vec3 handlerCenter) nothrow @nogc {
+        active = isActive; dragAxis = axis; wrapperRef = wrapper;
+        cachedCenter = cached; handler.center = handlerCenter;
+    }
+    version(unittest) final bool preparedMoveUpdateStateForTest(
+            Vec3 cached, Vec3 handlerCenter) const nothrow @nogc {
+        return cachedCenter == cached && handler.center == handlerCenter;
     }
     version(unittest) void seedPreparedProductActivationForTest() nothrow @nogc {
         seedPreparedActivationForTest(); propInput = Vec3(4,5,6);

@@ -873,7 +873,7 @@ class MoveHandler : Handler {
         circleXZ.destroy();
     }
 
-    void setPosition(Vec3 pos) {
+    void setPosition(Vec3 pos) nothrow @nogc {
         center = pos;
     }
 
