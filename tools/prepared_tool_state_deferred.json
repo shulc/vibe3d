@@ -90,16 +90,6 @@
     "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
   },
   {
-    "batch": "P1.0b.2+",
-    "key": {
-      "aggregate": "RadialSweepTool",
-      "module": "tools.alignment.radial_sweep_tool",
-      "signature": "void()",
-      "symbol": "activate"
-    },
-    "reason": "prepared create and upload cannot share the newly-created GL header; requires a combined create+upload owner"
-  },
-  {
     "batch": "P1.0b.3+",
     "key": {
       "aggregate": "RadialArrayTool",

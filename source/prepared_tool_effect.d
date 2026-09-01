@@ -37,7 +37,7 @@ enum PreparedDeactivateKind : ubyte {
     CommandWrapper, Tack, TransformNormalUpload, Vertex,
 }
 enum PreparedActivateKind : ubyte { None, Vertex, Array, Clone, Magnet, Reduction }
-enum PreparedRadialSweepKind : ubyte { Param, Deactivate }
+enum PreparedRadialSweepKind : ubyte { Activate, Param, Deactivate }
 
 @PreparedAggregate struct PreparedActivateEffect {
     OwnedId owner;

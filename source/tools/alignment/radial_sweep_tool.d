@@ -22,7 +22,8 @@ import eventlog : queryMouse;
 import prepared_record_context : PreparedRecordContext;
 import prepared_radial_sweep_transition : PreparedRadialSweepTransitionOwner;
 import prepared_tool_effect : PreparedRadialSweepEffect, PreparedRadialSweepKind;
-import mesh_gpu : GpuUploadOwner, GpuResourceOwner;
+import mesh_gpu : GpuUploadOwner, GpuResourceOwner, GpuCreateUploadOwner;
+import prepared_selection_profile : PreparedSelectionProfileOwner;
 import document : Layer;
 import change_bus : MeshEditScope;
 import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
@@ -364,6 +365,28 @@ public:
     final bool ownsMainUpload(GpuUploadOwner owner) nothrow @nogc {
         return owner !is null && owner.owns(gpu);
     }
+    final bool ownsPreviewCreateUpload(GpuCreateUploadOwner owner) nothrow @nogc {
+        return owner !is null && owner.owns(&previewGpu);
+    }
+
+    final PreparedRadialSweepEffect prepareActivate(PreparedRecordContext context,
+            PreparedSelectionProfileOwner profile,
+            GpuCreateUploadOwner createUpload) {
+        if (context is null) return PreparedRadialSweepEffect(
+            preparedToolStateOwner, PreparedRadialSweepKind.Activate, false);
+        scope(failure) context.discard();
+        bool ok = profile !is null && ownsPreviewCreateUpload(createUpload);
+        auto transition = ok
+            ? PreparedRadialSweepTransitionOwner.activation(this, profile) : null;
+        ok = transition !is null &&
+            context.prepareRadialSweepTransition(transition) &&
+            context.prepareCreateUpload(createUpload,
+                transition.previewForGpuUpload) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedRadialSweepEffect(preparedToolStateOwner,
+            PreparedRadialSweepKind.Activate, ok);
+    }
 
     final PreparedRadialSweepEffect prepareParamChanged(PreparedRecordContext context,
             PreparedRadialSweepTransitionOwner transition, GpuUploadOwner uploadOwner) {
@@ -543,6 +566,12 @@ public:
     version(unittest) bool preparedProfileValidityForTest() const nothrow @nogc {
         return validProfile_;
     }
+    version(unittest) bool preparedActivationForTest(bool expectedValid)
+            const nothrow @nogc {
+        return baseSnap.filled && validProfile_ == expectedValid && !engaged &&
+            dragPart == -1 && havePreviewCache &&
+            toolHandles.haulForPreparedTest() == -1 && previewGpu.faceVao != 0;
+    }
     version(unittest) bool preparedTransitionForTest(bool expectedEngaged)
             const nothrow @nogc {
         return baseSnap.filled && profile_.length >= 3 && previewMesh.vertices.length > 0 &&
@@ -558,6 +587,13 @@ public:
     }
     version(unittest) GpuUploadOwner fakePreviewUploadOwnerForTest() {
         return GpuUploadOwner.fakeForTest(&previewGpu);
+    }
+    version(unittest) GpuCreateUploadOwner fakePreviewCreateUploadOwnerForTest() {
+        return GpuCreateUploadOwner.fakeForTest(&previewGpu);
+    }
+    version(unittest) bool previewGpuEmptyForTest() const nothrow @nogc {
+        return previewGpu.faceVao == 0 && previewGpu.faceVbo == 0 &&
+            previewGpu.vertCount == 0;
     }
     version(unittest) GpuResourceOwner fakePreviewDestroyOwnerForTest() {
         return GpuResourceOwner.fakeForTest(&previewGpu);

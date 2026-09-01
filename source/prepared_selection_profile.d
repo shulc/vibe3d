@@ -64,8 +64,10 @@ public:
     version(unittest) bool payloadEmpty() const nothrow @nogc {
         return !image_.filled && image_.profile.length == 0;
     }
-    bool takeUnbegun(ref RadialSweepProfileImage destination) nothrow @nogc {
-        if (begun_ || consumed_ || target_ is null || !image_.filled) return false;
+    bool takeUnbegun(RadialSweepTool expected,
+                     ref RadialSweepProfileImage destination) nothrow @nogc {
+        if (begun_ || consumed_ || target_ is null || target_ !is expected ||
+            !image_.filled) return false;
         destination = image_;
         image_ = RadialSweepProfileImage.init;
         consumed_ = true; target_ = null;

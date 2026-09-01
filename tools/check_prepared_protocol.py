@@ -151,6 +151,7 @@ B5F_PREPARED_LEGACY = {
     ("tools.edit.reduce", "ReductionTool", "activate"),
 }
 B5I_PREPARED_LEGACY = {
+    ("tools.alignment.radial_sweep_tool", "RadialSweepTool", "activate"),
     ("tools.alignment.radial_sweep_tool", "RadialSweepTool", "onParamChanged"),
     ("tools.alignment.radial_sweep_tool", "RadialSweepTool", "deactivate"),
 }
@@ -188,7 +189,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "3c7ec308eed6624aee7b3430206bfd2943e44b2025dcc5105b16dc5fd410fc66"
+    "00676a6125c7f14d7e0feb56d92ac7b2e6fb3120b1e88f46e43779d1a91147df"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -205,7 +206,7 @@ def validate_deferred_rows(rows, require_canonical=True):
             fail("P1.0b.1 checked-in deferred batch/reason invalid")
     canonical = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
     if require_canonical and hashlib.sha256(canonical).hexdigest() != \
-            "3c7ec308eed6624aee7b3430206bfd2943e44b2025dcc5105b16dc5fd410fc66":
+            "00676a6125c7f14d7e0feb56d92ac7b2e6fb3120b1e88f46e43779d1a91147df":
         fail("P1.0b.1 checked-in deferred exact values drifted")
 validate_deferred_rows(TOOL_STATE_DEFERRED_ROWS)
 for field in ("batch", "reason"):
@@ -1862,18 +1863,19 @@ for hook in ("override void activate()", "override void onParamChanged(string na
 # P1.0b.5i dormant Radial Sweep producers. Param is private transition ->
 # preview upload -> no-history. Deactivate conditionally installs mesh/delivery
 # -> main upload, always destroys preview GPU, conditionally installs history,
-# then installs the exact private reset. Activate honestly remains deferred:
-# separate create/upload owners cannot make upload borrow names not yet live.
+# then installs the exact private reset. Activate composes the reviewed profile,
+# transition and atomic create-upload owners while remaining dormant.
 b5i_tool = b5g_tool
 def b5i_gate(tool):
     return (tool.count("final PreparedRadialSweepEffect prepareParamChanged(") == 1 and
             tool.count("final PreparedRadialSweepEffect prepareDeactivate(") == 1 and
-            "final PreparedRadialSweepEffect prepareActivate(" not in tool and
+            tool.count("final PreparedRadialSweepEffect prepareActivate(") == 1 and
+            "profile !is null && ownsPreviewCreateUpload(createUpload)" in tool and
+            "PreparedRadialSweepTransitionOwner.activation(this, profile)" in tool and
             tool.count("transition.owns(this)") == 2 and
-            tool.find("context.prepareRadialSweepTransition(transition)") <
-                tool.find("context.prepareUpload(uploadOwner, transition.previewForGpuUpload)") <
-                tool.find("context.markNoHistoryInstall()") and
-            tool.count("scope(failure) context.discard();") == 2 and
+            "context.prepareRadialSweepTransition(transition) &&\n            context.prepareCreateUpload(createUpload," in tool and
+            "context.prepareRadialSweepTransition(transition) &&\n            context.prepareUpload(uploadOwner, transition.previewForGpuUpload)" in tool and
+            tool.count("scope(failure) context.discard();") == 3 and
             "if (ok) inserted = buildPreparedCommitCandidate(candidate, pre," in tool and
             "context.prepareStampedMeshImage(layer, candidate," in tool and
             "installedCommitMatchesPreparedForTest" in tool and
@@ -1891,6 +1893,11 @@ if not b5i_gate(b5i_tool):
     fail("P1.0b.5i Radial Sweep producer contract drift")
 for old, new, label in (
     ("transition.owns(this)", "true", "drop transition owner identity"),
+    ("profile !is null && ownsPreviewCreateUpload(createUpload)", "profile !is null", "drop Activate GPU target identity"),
+    ("PreparedRadialSweepTransitionOwner.activation(this, profile)", "null", "drop Activate profile/private image"),
+    ("context.prepareRadialSweepTransition(transition) &&\n            context.prepareCreateUpload(createUpload,",
+     "context.prepareCreateUpload(createUpload, transition.previewForGpuUpload) &&\n            context.prepareRadialSweepTransition(transition) && false /*",
+     "reorder Activate GPU before private image"),
     ("context.prepareRadialSweepTransition(transition) &&\n            context.prepareUpload(uploadOwner, transition.previewForGpuUpload)",
      "context.prepareUpload(uploadOwner, transition.previewForGpuUpload) &&\n            context.prepareRadialSweepTransition(transition)", "reorder Param upload"),
     ("scope(failure) context.discard();", "", "drop function exception cleanup"),
@@ -1905,6 +1912,23 @@ for old, new, label in (
     mutant = b5i_tool.replace(old, new, 1)
     if mutant == b5i_tool or b5i_gate(mutant):
         fail(f"P1.0b.5i named mutation did not RED: {label}")
+
+def radial_activate_profile_gate(selection, transition):
+    return ("bool takeUnbegun(RadialSweepTool expected," in selection and
+            "target_ !is expected" in selection and
+            "profile.takeUnbegun(target, profileImage)" in transition)
+if not radial_activate_profile_gate(b5g_owner, b5h_owner):
+    fail("Radial Sweep Activate profile target identity drift")
+for target, old, new, label in (
+    ("selection", "target_ !is expected", "false", "drop profile target identity"),
+    ("transition", "profile.takeUnbegun(target, profileImage)",
+     "profile.takeUnbegun(null, profileImage)", "drop expected target forwarding"),
+):
+    selection, transition = b5g_owner, b5h_owner
+    if target == "selection": selection = selection.replace(old, new, 1)
+    else: transition = transition.replace(old, new, 1)
+    if radial_activate_profile_gate(selection, transition):
+        fail(f"Radial Sweep Activate profile mutation did not RED: {label}")
 
 # Dormant combined first-upload owner. It is the only admissible bridge from
 # an empty target to a fully uploaded target: names and CPU payload share one
@@ -1964,7 +1988,8 @@ for target, old, new, label in (
     if (target == "gpu" and pos < 0) or combined_upload_gate(gpu, context):
         fail(f"combined GPU create-upload mutation did not RED: {label}")
 for path in (ROOT / "source").rglob("*.d"):
-    if path.name in ("mesh_gpu.d", "prepared_record_context.d"): continue
+    if path.name in ("mesh_gpu.d", "prepared_record_context.d",
+                     "radial_sweep_tool.d"): continue
     if ".prepareCreateUpload(" in without_unittests(path.read_text()):
         fail("combined GPU create-upload gained a pre-cutover caller")
 
