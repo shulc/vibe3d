@@ -4303,9 +4303,11 @@ private struct PreviewSeamRow {
 }
 
 private static immutable PreviewSeamRow[] kPreviewSeam = [
-    PreviewSeamRow("source/tools/edit/poly_bevel.d", 2, 0,
-        "Stage F2. Two UNRECORDED opens — `applyHeadless` (the tool.doApply "
-      ~ "path) and the per-frame preview kernel lambda. NO recording open: "
+    PreviewSeamRow("source/tools/edit/poly_bevel.d", 3, 0,
+        "Stage F2 plus ARM/RECORD's detached prepared-parameter door. Three "
+      ~ "UNRECORDED opens — `applyHeadless` (the tool.doApply path), the "
+      ~ "per-frame preview kernel lambda, and the prepared candidate's exact "
+      ~ "PreviewRebuild run. NO recording open: "
       ~ "`commitEdit` captures a whole-mesh MeshSnapshot and re-runs nothing"),
     PreviewSeamRow("source/tools/edit/edge_bevel.d", 3, 0,
         "Stage G plus ARM/RECORD's detached prepared-parameter door. The "

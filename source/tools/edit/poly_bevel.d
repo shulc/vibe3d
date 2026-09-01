@@ -19,7 +19,7 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
-    PreviewRebuildCounts;
+    PreviewRebuildCounts, PreparedPreviewRebuildImage;
 
 import std.math : abs, sqrt;
 import std.json : JSONValue;
@@ -28,6 +28,13 @@ import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_poly_bevel_activation : PreparedPolyBevelActivationOwner;
+import prepared_poly_bevel_param_update : PreparedPolyBevelParamUpdateOwner;
+import prepared_tool_effect : PreparedPolyBevelParamEffect,
+    PreparedPolyBevelParamKind;
+import document : Layer;
+import mesh_gpu : GpuUploadOwner;
+import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
+import core.stdc.string : memcmp;
 import command_history : PreparedHistoryKind;
 
 struct PreparedPolyBevelActivationImage {
@@ -36,6 +43,32 @@ struct PreparedPolyBevelActivationImage {
     Vec3 anchor, baseAnchor, shiftAxis, insetAxis;
     ulong gizmoSelHash;
     void clear() nothrow @nogc { this = PreparedPolyBevelActivationImage.init; }
+}
+
+struct PolyBevelParamProjection {
+    bool interactive, active, built, group, square;
+    float inset, shift;
+    int segments;
+    bool opEquals(const PolyBevelParamProjection other) const nothrow @nogc {
+        return interactive == other.interactive && active == other.active &&
+            built == other.built && group == other.group && square == other.square &&
+            segments == other.segments &&
+            memcmp(&inset, &other.inset, float.sizeof) == 0 &&
+            memcmp(&shift, &other.shift, float.sizeof) == 0;
+    }
+}
+
+struct PreparedPolyBevelParamImage {
+    bool valid, applies, nextBuilt;
+    PolyBevelParamProjection expected;
+    MeshSnapshot expectedLive, expectedBefore;
+    PreparedPreviewRebuildImage preview;
+    Mesh candidate;
+    uint deliveryFlags, deliveryDomains;
+    void clear() nothrow @nogc {
+        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
+        preview.clear(); candidate = Mesh.init; valid = applies = false;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -233,6 +266,76 @@ public:
 
     override void onParamChanged(string pname) {
         if (interactiveParamEdit) rebuildPreview();
+    }
+    final bool ownsPreparedLayer(Layer layer) const {
+        return layer !is null && &layer.meshRef() is mesh;
+    }
+    private PolyBevelParamProjection paramProjection() const nothrow @nogc {
+        return PolyBevelParamProjection(interactiveParamEdit, active, built,
+            group_, square_, inset_, shift_, segments_);
+    }
+    final PreparedPolyBevelParamImage buildPreparedParamUpdate(ref Mesh live) {
+        PreparedPolyBevelParamImage image;
+        image.valid = true; image.expected = paramProjection();
+        image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
+        if (!before.filled) return image;
+        Mesh baseline;
+        auto baselineShadow = beginPreparedShadow(baseline);
+        before.restore(baseline); image.expectedBefore = MeshSnapshot.capture(baseline);
+        image.expectedLive.restore(image.candidate); preview_.prepareImage(image.preview);
+        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+            image.deliveryDomains);
+        baselineShadow.close(); image.deliveryFlags = image.deliveryDomains = 0;
+        if (!interactiveParamEdit || !active) return image;
+        image.applies = true;
+        auto shadow = beginPreparedShadow(image.candidate);
+        PreviewRebuild preparedPreview; preparedPreview.loadPreparedNext(image.preview);
+        const n = preparedPreview.run(image.candidate, before,
+            (ref Mesh cage) => PreviewTopologyKey.make(cage.operandFaceMask(),
+                inset_ == 0.0f && shift_ == 0.0f, segments_,
+                group_ ? 1 : 0, square_ ? 1 : 0),
+            (ref Mesh target) {
+                if (inset_ == 0.0f && shift_ == 0.0f) return cast(size_t)0;
+                auto ed = MeshEditBatch.unrecorded(target, kPolyBevelEditScope);
+                const result = ed.bevelFacesByMask(ed.operandFaceMask(), inset_,
+                    shift_, group_, segments_, square_);
+                ed.close(); return result;
+            });
+        image.nextBuilt = (n != 0); preparedPreview.savePreparedNext(image.preview);
+        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+            image.deliveryDomains);
+        shadow.close(); return image;
+    }
+    final bool preparedParamUpdateMatches(in PreparedPolyBevelParamImage image,
+            ref const Mesh live) const nothrow @nogc {
+        return image.valid && image.expected == paramProjection() &&
+            image.expectedLive.matches(live) && image.expectedBefore.matches(before) &&
+            preview_.matchesImage(image.preview);
+    }
+    final void installPreparedParamUpdate(ref PreparedPolyBevelParamImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        built = image.nextBuilt; preview_.installImage(image.preview); image.clear();
+    }
+    final PreparedPolyBevelParamEffect prepareParamChanged(
+            PreparedRecordContext context, Layer layer,
+            GpuUploadOwner uploadOwner) {
+        if (context is null) return PreparedPolyBevelParamEffect(
+            preparedToolStateOwner, PreparedPolyBevelParamKind.None, false);
+        scope(failure) context.discard();
+        auto owner = PreparedPolyBevelParamUpdateOwner.prepare(this, layer);
+        auto kind = owner is null ? PreparedPolyBevelParamKind.None : owner.effectKind;
+        bool ok = owner !is null;
+        if (ok && owner.applies)
+            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
+                context.prepareStampedMeshImage(layer, owner.candidate,
+                    owner.deliveryFlags, owner.deliveryDomains);
+        if (ok) ok = context.preparePolyBevelParamUpdate(owner);
+        if (ok && owner.applies)
+            ok = context.prepareUpload(uploadOwner, owner.candidate);
+        if (ok) ok = context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedPolyBevelParamEffect(preparedToolStateOwner, kind, ok);
     }
     override void evaluate() {}
 
@@ -573,6 +676,18 @@ private:
     }
 
 public:
+    version(unittest) final void seedPreparedParamForTest(ref Mesh live,
+            bool interactive = true) {
+        interactiveParamEdit = interactive; active = true; built = false;
+        inset_ = 0.2f; shift_ = 0.1f; group_ = true; segments_ = 1;
+        square_ = false; before = MeshSnapshot.capture(live); preview_.reset();
+    }
+    version(unittest) final void mutatePreparedParamForTest(float value)
+            nothrow @nogc { inset_ = value; }
+    version(unittest) final bool preparedParamInstalledForTest() const
+            nothrow @nogc {
+        return built && preview_.counts().fullRebuilds == 1;
+    }
     version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
         return preparedToolStateOwner;
     }
