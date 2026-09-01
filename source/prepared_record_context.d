@@ -32,6 +32,7 @@ import prepared_vertex_bevel_activation : PreparedVertexBevelActivationOwner;
 import prepared_vertex_extrude_activation : PreparedVertexExtrudeActivationOwner;
 import prepared_edge_extrude_activation : PreparedEdgeExtrudeActivationOwner;
 import prepared_edge_slice_activation : PreparedEdgeSliceActivationOwner;
+import prepared_loop_slice_activation : PreparedLoopSliceActivationOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -48,7 +49,7 @@ private enum PreparedResourceKind : ubyte {
     SmoothShiftActivationState, EdgeBevelActivationState,
     PolyBevelActivationState, VertexBevelActivationState,
     VertexExtrudeActivationState, EdgeExtrudeActivationState,
-    EdgeSliceActivationState
+    EdgeSliceActivationState, LoopSliceActivationState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -73,6 +74,7 @@ private struct PreparedResourceEntry {
     PreparedVertexExtrudeActivationOwner vertexExtrudeActivation;
     PreparedEdgeExtrudeActivationOwner edgeExtrudeActivation;
     PreparedEdgeSliceActivationOwner edgeSliceActivation;
+    PreparedLoopSliceActivationOwner loopSliceActivation;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -454,6 +456,17 @@ public:
         e.kind = PreparedResourceKind.EdgeSliceActivationState;
         e.edgeSliceActivation = owner; resources_ ~= e; return true;
     }
+    bool prepareLoopSliceActivation(PreparedLoopSliceActivationOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected LoopSlice activation enlist failure");
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.LoopSliceActivationState;
+        e.loopSliceActivation = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -659,6 +672,9 @@ public:
             case PreparedResourceKind.EdgeSliceActivationState:
                 ok = e.edgeSliceActivation !is null &&
                     e.edgeSliceActivation.validate(); break;
+            case PreparedResourceKind.LoopSliceActivationState:
+                ok = e.loopSliceActivation !is null &&
+                    e.loopSliceActivation.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -811,6 +827,10 @@ public:
             e.edgeSliceActivation.install();
             version(unittest) installTrace_[installTraceLength_++] = 30;
             break;
+        case PreparedResourceKind.LoopSliceActivationState:
+            e.loopSliceActivation.install();
+            version(unittest) installTrace_[installTraceLength_++] = 31;
+            break;
         }
         if (!installedHistory && history_ !is null)
             history_.installPreparedToken(validated_);
@@ -890,6 +910,8 @@ private:
             e.edgeExtrudeActivation.abort(); break;
         case PreparedResourceKind.EdgeSliceActivationState:
             e.edgeSliceActivation.abort(); break;
+        case PreparedResourceKind.LoopSliceActivationState:
+            e.loopSliceActivation.abort(); break;
         }
         resources_.length = 0;
         historyMarker_ = false;

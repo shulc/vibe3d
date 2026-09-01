@@ -252,6 +252,7 @@ B5P_PREPARED_LEGACY = {
     ("tools.edit.vertex_extrude_tool", "VertexExtrudeTool", "activate"),
     ("tools.edit.edge_extrude", "EdgeExtrudeTool", "activate"),
     ("tools.slice.edge_slice_tool", "EdgeSliceTool", "activate"),
+    ("tools.slice.loop_slice_tool", "LoopSliceTool", "activate"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
@@ -289,7 +290,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "c0ba20c61cafb1aba1e0433a23cec937f22c22f53b17ddf4c83c53c4215c3fd1"
+    "ed0aa90b7d2152378761bcb1d6cb291baa3813eb88930c46d446122d755c2294"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -431,7 +432,9 @@ for path, text in prepared_source_texts.items():
             "prepared_vertex_extrude_activation",
             "prepared_edge_extrude_activation",
             "prepared_edge_slice_activation",
+            "prepared_loop_slice_activation",
             "tools.slice.edge_slice_tool",
+            "tools.slice.loop_slice_tool",
             "tools.alignment.radial_sweep_tool",
             "tools.alignment.radial_array_tool",
             "tools.alignment.linear_align_tool",
@@ -3332,6 +3335,115 @@ for fixture in (
     if run.returncode == 0 or ("not copyable" not in run.stdout and
             not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
         fail("EdgeSlice activation token copy was not rejected:\n" + run.stdout)
+
+loop_slice_activation_owner = (ROOT /
+    "source/prepared_loop_slice_activation.d").read_text()
+loop_slice_activation_tool = (ROOT /
+    "source/tools/slice/loop_slice_tool.d").read_text()
+def loop_slice_activation_gate(owner, context, tool):
+    po = without_unittests(owner); pt = without_unittests(tool)
+    bs = pt.find("final PreparedLoopSliceActivationImage buildPreparedActivation(")
+    be = pt.find("final void installPreparedActivation(", bs)
+    ins = pt.find("final void installPreparedActivation(")
+    ine = pt.find("final PreparedSessionActivateEffect prepareActivate(", ins)
+    ps = pt.find("final PreparedSessionActivateEffect prepareActivate(")
+    pe = pt.find("private void reinitSession()", ps)
+    builder = pt[bs:be] if bs >= 0 and be > bs else ""
+    installer = pt[ins:ine] if ins >= 0 and ine > ins else ""
+    producer = pt[ps:pe] if ps >= 0 and pe > ps else ""
+    return (
+        "final class PreparedLoopSliceActivationOwner" in owner and
+        owner.count("@disable this(this);") == 2 and
+        not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
+        "target.classinfo !is LoopSliceTool.classinfo" in owner and
+        "target_.preparedActivationMesh() !is source_" in owner and
+        "!image_.before.matches(*source_)" in owner and
+        "target_.installPreparedActivation(image_); consume();" in owner and
+        "image_.clear(); target_ = null; source_ = null;" in owner and
+        "image.count = count_ < 1 ? 1 : count_;" in builder and
+        "image.positions = positions_.dup;" in builder and
+        "image.positions ~= 0.5f;" in builder and
+        "image.positions.length = cast(size_t)image.count;" in builder and
+        "image.count > 1 && mode_ != Mode.Free" in builder and
+        "image.positions[k] = (k + 1.0f) / (image.count + 1.0f);" in builder and
+        "image.positionProxy = image.positions.length ? image.positions[0] : 0.5f;" in builder and
+        "image.before = MeshSnapshot.capture(*source);" in builder and
+        not re.search(r"(?<!\.)\b(active|armed_|scrubbing_|built_|seeds_|armedSelFaces_|"
+                      r"insertAt_|removeTrigger_|count_|current_|positions_|positionProxy_|"
+                      r"armedKey_|before_)\s*=", builder) and
+        "active = true; armed_ = false; scrubbing_ = false; built_ = false;" in installer and
+        "seeds_ = []; armedSelFaces_ = [];" in installer and
+        "insertAt_ = 0.5f; removeTrigger_ = false;" in installer and
+        "count_ = image.count; current_ = 0;" in installer and
+        "positions_ = image.positions; image.positions = null;" in installer and
+        "positionProxy_ = image.positionProxy;" in installer and
+        "armedKey_ = MeshCacheKey.init;" in installer and
+        "image.before.moveInto(before_);" in installer and
+        not re.search(r"\b(mode_|selectNew_|sliceSelected_|keepQuads_|sliceNgon_|"
+                      r"sliceSplit_|sliceCaps_|gap_|curvature_|curveTension_|profile_|"
+                      r"depth_|reverseX_|reverseY_|aspect_|length_|sliderX_|sliderY_|"
+                      r"seedA_|seedB_|vpWorld_)\s*=", installer) and
+        "PreparedLoopSliceActivationOwner.prepare(this)" in producer and
+        "context.prepareLoopSliceActivation(owner)" in producer and
+        "context.markNoHistoryInstall()" in producer and
+        producer.find("context.prepareLoopSliceActivation(owner)") <
+            producer.find("context.markNoHistoryInstall()") and
+        "scope(failure) context.discard();" in producer and
+        "if (!ok) context.discard();" in producer and
+        "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+        "            PreparedActivateKind.LoopSlice, ok);" in producer and
+        "e.loopSliceActivation.validate();" in context and
+        "e.loopSliceActivation.install();" in context and
+        "e.loopSliceActivation.abort();" in context)
+if not loop_slice_activation_gate(loop_slice_activation_owner,
+                                  record_context, loop_slice_activation_tool):
+    fail("LoopSlice activation prepared contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is LoopSliceTool.classinfo", "false", "broaden product"),
+    ("owner", "target_.preparedActivationMesh() !is source_", "false", "drop identity"),
+    ("owner", "!image_.before.matches(*source_)", "false", "drop content validation"),
+    ("owner", "target_.installPreparedActivation(image_);", "", "drop install"),
+    ("tool", "image.positions = positions_.dup;", "positions_ = []; image.positions = positions_.dup;", "write live during prepare"),
+    ("tool", "image.count = count_ < 1 ? 1 : count_;", "image.count = count_;", "drop count lower bound"),
+    ("tool", "image.positions ~= 0.5f;", "", "drop grow"),
+    ("tool", "image.positions.length = cast(size_t)image.count;", "", "drop shrink"),
+    ("tool", "image.count > 1 && mode_ != Mode.Free", "image.count > 1", "drop free mode"),
+    ("tool", "active = true; armed_ = false; scrubbing_ = false; built_ = false;", "active = true;", "drop flags"),
+    ("tool", "seeds_ = []; armedSelFaces_ = [];", "seeds_ = [];", "retain face latch"),
+    ("tool", "insertAt_ = 0.5f; removeTrigger_ = false;", "", "drop triggers"),
+    ("tool", "count_ = image.count; current_ = 0;", "current_ = 0;", "drop count normalization"),
+    ("tool", "positions_ = image.positions; image.positions = null;", "positions_ = image.positions;", "alias retained payload"),
+    ("tool", "armedKey_ = MeshCacheKey.init;", "", "retain armed key"),
+    ("tool", "image.before.moveInto(before_);", "", "drop baseline"),
+    ("tool", "context.prepareLoopSliceActivation(owner)", "true", "drop enlist"),
+    ("tool", "context.prepareLoopSliceActivation(owner) &&\n            context.markNoHistoryInstall()",
+     "context.markNoHistoryInstall() &&\n            context.prepareLoopSliceActivation(owner)", "reorder history before owner"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop history seal"),
+    ("tool", "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+     "            PreparedActivateKind.LoopSlice, ok);",
+     "return PreparedSessionActivateEffect(OwnedId.init,\n"
+     "            PreparedActivateKind.LoopSlice, ok);", "forge effect owner"),
+    ("tool", "PreparedActivateKind.LoopSlice, ok);", "PreparedActivateKind.LoopSlice, true);", "forge acceptance"),
+    ("context", "e.loopSliceActivation.validate();", "true;", "drop validation"),
+    ("context", "e.loopSliceActivation.install();", "", "drop context install"),
+    ("context", "e.loopSliceActivation.abort();", "", "drop context abort"),
+):
+    o, c, t = loop_slice_activation_owner, record_context, loop_slice_activation_tool
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    else: t = t.replace(old, new, 1)
+    if ((o == loop_slice_activation_owner and c == record_context and
+         t == loop_slice_activation_tool) or loop_slice_activation_gate(o,c,t)):
+        fail(f"LoopSlice activation mutation did not RED: {label}")
+for fixture in (
+    ROOT / "tests/compile_fail/prepared_loop_slice_activation_token_copy.d",
+    ROOT / "tests/compile_fail/prepared_loop_slice_activation_validated_token_copy.d",
+):
+    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if run.returncode == 0 or ("not copyable" not in run.stdout and
+            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+        fail("LoopSlice activation token copy was not rejected:\n" + run.stdout)
 
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
 # detached whole-Mesh adoption with exact caller-supplied change flags, and a

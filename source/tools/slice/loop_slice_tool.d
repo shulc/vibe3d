@@ -27,6 +27,21 @@ import selection_product : addNewLoopEdgesAndVerts;
 import display_sync : refreshDisplay;
 import document : primaryModelSpace;
 import perf_probe : g_perf, Cat;
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import prepared_loop_slice_activation : PreparedLoopSliceActivationOwner;
+
+struct PreparedLoopSliceActivationImage {
+    MeshSnapshot before;
+    float[] positions;
+    int count;
+    float positionProxy;
+    bool valid;
+    void clear() nothrow @nogc {
+        before = MeshSnapshot.init; positions = null;
+        count = 0; positionProxy = 0; valid = false;
+    }
+}
 
 /// The Loop Slice Slider HUD readout string. `position` is the authoritative
 /// 0..1 slice offset; the slider shows it as a TRUE PERCENT (0.13 -> "13.00 %",
@@ -181,8 +196,8 @@ public:
     enum Mode { Free, Uniform, Symmetry }
 
 private:
-    Mesh* delegate() meshSrc_;
-    @property Mesh* mesh() const { return meshSrc_(); }
+    Mesh* delegate() nothrow @nogc meshSrc_;
+    @property Mesh* mesh() const nothrow @nogc { return meshSrc_(); }
     GpuMesh*         gpu;
     EditMode*        editMode;
     LitShader        litShader;
@@ -367,7 +382,8 @@ private:
     uint[]       armedSelFaces_;
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader) {
+    this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu,
+            EditMode* editMode, LitShader litShader) {
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
@@ -712,6 +728,53 @@ public:
     override void activate() {
         active = true;
         reinitSession();
+    }
+
+    final PreparedLoopSliceActivationImage buildPreparedActivation(
+            out Mesh* source) {
+        PreparedLoopSliceActivationImage image;
+        source = mesh;
+        if (source is null) return image;
+        image.count = count_ < 1 ? 1 : count_;
+        image.positions = positions_.dup;
+        if (image.positions.length < cast(size_t)image.count) {
+            while (image.positions.length < cast(size_t)image.count)
+                image.positions ~= 0.5f;
+        } else if (image.positions.length > cast(size_t)image.count) {
+            image.positions.length = cast(size_t)image.count;
+        }
+        if (image.count > 1 && mode_ != Mode.Free)
+            foreach (k; 0 .. image.count)
+                image.positions[k] = (k + 1.0f) / (image.count + 1.0f);
+        image.positionProxy = image.positions.length ? image.positions[0] : 0.5f;
+        image.before = MeshSnapshot.capture(*source);
+        image.valid = true;
+        return image;
+    }
+    final void installPreparedActivation(
+            ref PreparedLoopSliceActivationImage image) nothrow @nogc {
+        if (!image.valid) return;
+        active = true; armed_ = false; scrubbing_ = false; built_ = false;
+        seeds_ = []; armedSelFaces_ = [];
+        insertAt_ = 0.5f; removeTrigger_ = false;
+        count_ = image.count; current_ = 0;
+        positions_ = image.positions; image.positions = null;
+        positionProxy_ = image.positionProxy;
+        armedKey_ = MeshCacheKey.init;
+        image.before.moveInto(before_);
+        image.clear();
+    }
+    final PreparedSessionActivateEffect prepareActivate(
+            PreparedRecordContext context) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.LoopSlice, false);
+        scope(failure) context.discard();
+        auto owner = PreparedLoopSliceActivationOwner.prepare(this);
+        bool ok = owner !is null && context.prepareLoopSliceActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.LoopSlice, ok);
     }
 
     private void reinitSession() {
@@ -1631,5 +1694,62 @@ private:
 
     void refreshCaches() {
         refreshDisplay(mesh, gpu);
+    }
+
+public:
+    final Mesh* preparedActivationMesh() const nothrow @nogc { return mesh; }
+    version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
+        return preparedToolStateOwner;
+    }
+    version(unittest) final void seedPreparedActivationForTest() {
+        active = false; armed_ = true; scrubbing_ = true; built_ = true;
+        seeds_ = [7,8]; armedSelFaces_ = [4,5]; insertAt_ = 0.8f;
+        removeTrigger_ = true; mode_ = Mode.Symmetry; count_ = 3; current_ = 2;
+        positions_ = [0.9f]; positionProxy_ = 0.9f;
+        selectNew_ = false; sliceSelected_ = true; keepQuads_ = true;
+        length_ = 321; sliderX_ = 32; sliderY_ = 54;
+        seedA_ = Vec3(1,2,3); seedB_ = Vec3(4,5,6);
+        vpWorld_.view[0] = 9; armedKey_.stamp(*mesh);
+        before_ = MeshSnapshot.capture(*mesh);
+    }
+    version(unittest) final bool preparedActivationDirtyForTest() const {
+        return !active && armed_ && scrubbing_ && built_ && seeds_ == [7,8] &&
+            armedSelFaces_ == [4,5] && insertAt_ == 0.8f && removeTrigger_ &&
+            mode_ == Mode.Symmetry && count_ == 3 && current_ == 2 &&
+            positions_ == [0.9f] && positionProxy_ == 0.9f && !selectNew_ &&
+            sliceSelected_ && keepQuads_ && length_ == 321 && sliderX_ == 32 &&
+            sliderY_ == 54 && seedA_ == Vec3(1,2,3) && seedB_ == Vec3(4,5,6) &&
+            vpWorld_.view[0] == 9 && armedKey_.matches(*mesh) && before_.filled;
+    }
+    version(unittest) final bool preparedActivationForTest() const {
+        return active && !armed_ && !scrubbing_ && !built_ &&
+            seeds_.length == 0 && seeds_.ptr is null && armedSelFaces_.length == 0 &&
+            armedSelFaces_.ptr is null && insertAt_ == 0.5f && !removeTrigger_ &&
+            mode_ == Mode.Symmetry && count_ == 3 && current_ == 0 &&
+            positions_ == [0.25f,0.5f,0.75f] && positionProxy_ == 0.25f &&
+            !selectNew_ && sliceSelected_ && keepQuads_ && length_ == 321 &&
+            sliderX_ == 32 && sliderY_ == 54 && seedA_ == Vec3(1,2,3) &&
+            seedB_ == Vec3(4,5,6) && vpWorld_.view[0] == 9 &&
+            armedKey_ == MeshCacheKey.init && before_.filled && before_.matches(*mesh);
+    }
+    version(unittest) final void seedPreparedActivationFreeForTest() {
+        seedPreparedActivationForTest();
+        mode_ = Mode.Free; count_ = 2; positions_ = [0.2f,0.7f,0.9f];
+        current_ = 2; positionProxy_ = 0.9f;
+    }
+    version(unittest) final bool preparedActivationFreeForTest() const {
+        return active && mode_ == Mode.Free && count_ == 2 && current_ == 0 &&
+            positions_ == [0.2f,0.7f] && positionProxy_ == 0.2f &&
+            before_.filled && before_.matches(*mesh);
+    }
+    version(unittest) final void seedPreparedActivationBoundaryForTest() {
+        seedPreparedActivationForTest();
+        mode_ = Mode.Free; count_ = 0; positions_ = null;
+        current_ = -3; positionProxy_ = 0.9f;
+    }
+    version(unittest) final bool preparedActivationBoundaryForTest() const {
+        return active && mode_ == Mode.Free && count_ == 1 && current_ == 0 &&
+            positions_ == [0.5f] && positionProxy_ == 0.5f &&
+            before_.filled && before_.matches(*mesh);
     }
 }
