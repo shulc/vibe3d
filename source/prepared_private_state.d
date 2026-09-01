@@ -67,6 +67,9 @@ public:
         o.vertexTarget = target; return o;
     }
     @property PreparedPrivateStateKind kind() const nothrow @nogc { return kind_; }
+    bool owns(VertexTool target) const nothrow @nogc {
+        return kind_ == PreparedPrivateStateKind.Vertex && vertexTarget is target;
+    }
 private:
     bool hasTarget() const nothrow @nogc {
         final switch (kind_) {

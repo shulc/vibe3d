@@ -141,7 +141,10 @@ B4C_PREPARED_LEGACY = {
 B5B_PREPARED_LEGACY = {
     ("tools.create.vertex_place", "VertexTool", "activate"),
 }
-PREPARED_LEGACY = B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY | B5B_PREPARED_LEGACY
+B5D_PREPARED_LEGACY = {
+    ("tools.create.vertex_place", "VertexTool", "deactivate"),
+}
+PREPARED_LEGACY = B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY | B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY
 all_hook_keys = {(r["module"], r["aggregate"], r["symbol"])
                  for r in CURRENT_WRITERS["hooks"]}
 if not TOOL_STATE_CONVERTED | PREPARED_LEGACY <= all_hook_keys:
@@ -190,7 +193,7 @@ def validate_deferred_rows(rows, require_canonical=True):
             fail("P1.0b.1 checked-in deferred batch/reason invalid")
     canonical = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
     if require_canonical and hashlib.sha256(canonical).hexdigest() != \
-            "0bda8d60097019bab7e0fd547a887ba56e8e312c758b9548dc26a948f59632f7":
+            "815fa7be1b00058641d652c5fc61b349ba981f7fe1c3cbd1ada04049ded38eef":
         fail("P1.0b.1 checked-in deferred exact values drifted")
 validate_deferred_rows(TOOL_STATE_DEFERRED_ROWS)
 for field in ("batch", "reason"):
@@ -291,7 +294,8 @@ for path, text in prepared_source_texts.items():
     module = str(path.relative_to(ROOT / "source")).removesuffix(".d").replace("/", ".")
     if "import prepared_record_context" in text and module not in b3d_modules | {
             "prepared_record_context", "tools.transform.transform",
-            "tools.common.command_wrapper", "tools.edit.tack"}:
+            "tools.common.command_wrapper", "tools.edit.tack",
+            "tools.create.vertex_place"}:
         fail(f"P1.0b.3d PreparedRecordContext gained an unreviewed import: {module}")
     if "new PreparedRecordContext" in text:
         production_text = without_unittests(text)
@@ -1462,7 +1466,8 @@ for name, old, new, label in (
         fail(f"P1.0b.5c named mutation did not RED: {label}")
 for path in (ROOT / "source/tools").rglob("*.d"):
     body = path.read_text()
-    if ".prepareCreate(" in body or ".prepareSnapClear(" in body:
+    if (".prepareCreate(" in body or ".prepareSnapClear(" in body) and \
+            path.relative_to(ROOT).as_posix() != "source/tools/create/vertex_place.d":
         fail(f"P1.0b.5c dormant owner has production caller: {path.relative_to(ROOT)}")
 
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
@@ -1536,7 +1541,47 @@ for name, old, new, label in (
         fail(f"P1.0b.5d.1 named mutation did not RED: {label}")
 for path in (ROOT / "source/tools").rglob("*.d"):
     body = path.read_text()
-    if ".preparePrivateState(" in body or ".prepareMeshImageCommit(" in body:
+    if (".preparePrivateState(" in body or ".prepareMeshImageCommit(" in body) and \
+            path.relative_to(ROOT).as_posix() != "source/tools/create/vertex_place.d":
         fail(f"P1.0b.5d.1 dormant infrastructure has hook caller: {path.relative_to(ROOT)}")
+
+# P1.0b.5d.2 first fully closed root: Vertex deactivate preserves the exact
+# snap-global -> private-field order without introducing an empty history
+# transition. The no-history marker consumes the prepared history image and is
+# mutually exclusive with HistoryInstall.
+b5d2_vertex = (ROOT / "source/tools/create/vertex_place.d").read_text()
+def b5d2_gate(context, vertex):
+    return ("HistoryInstall, NoHistoryInstall," in context and
+            "bool markNoHistoryInstall()" in context and
+            "history_.discardPreparedToken(token_); installedHistory = true;" in context and
+            context.count("historyMarker_ || noHistoryMarker_") == 2 and
+            "final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context," in vertex and
+            vertex.count("context.prepareSnapClear(snapOwner)") == 1 and
+            vertex.count("context.preparePrivateState(stateOwner)") == 1 and
+            vertex.count("context.markNoHistoryInstall()") == 1 and
+            vertex.find("context.prepareSnapClear(snapOwner)") <
+                vertex.find("context.preparePrivateState(stateOwner)") <
+                vertex.find("context.markNoHistoryInstall()") and
+            "stateOwner.owns(this)" in vertex and
+            "if (!accepted && context !is null) context.discard();" in vertex)
+if not b5d2_gate(record_context, b5d2_vertex):
+    fail("P1.0b.5d.2 Vertex deactivate contract drift")
+for target, old, new, label in (
+    ("context", "historyMarker_ || noHistoryMarker_", "historyMarker_",
+     "allow both history seals"),
+    ("context", "history_.discardPreparedToken(token_); installedHistory = true;",
+     "installedHistory = true;", "drop empty history consumption"),
+    ("vertex", "stateOwner.owns(this)", "true", "drop Vertex owner identity"),
+    ("vertex", "context.prepareSnapClear(snapOwner)", "true", "drop snap clear"),
+    ("vertex", "context.preparePrivateState(stateOwner)", "true", "drop private reset"),
+    ("vertex", "context.markNoHistoryInstall()", "true", "drop no-history seal"),
+    ("vertex", "if (!accepted && context !is null) context.discard();", "",
+     "drop terminal refusal"),
+):
+    c, v = record_context, b5d2_vertex
+    if target == "context": c = c.replace(old, new, 1)
+    else: v = v.replace(old, new, 1)
+    if (c == record_context and v == b5d2_vertex) or b5d2_gate(c, v):
+        fail(f"P1.0b.5d.2 named mutation did not RED: {label}")
 
 print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures)} compile-fail fixtures)")

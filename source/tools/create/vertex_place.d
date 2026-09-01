@@ -18,9 +18,13 @@ import tools.create.create_common : pickWorkplaneFrame, WorkplaneFrame,
 import toolpipe.packets : SnapType;
 import editmode : EditMode;
 import snap : SnapResult;
-import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
+import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap, g_lastSnap;
 import operator : VectorStack;
 import prepared_tool_effect : PreparedActivateEffect, PreparedActivateKind;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import prepared_record_context : PreparedRecordContext;
+import prepared_private_state : PreparedPrivateStateOwner;
+import snap_render : SnapOverlayOwner;
 
 private struct ValidatedVertexActivate {
     @disable this(this);
@@ -116,6 +120,20 @@ public:
 
     final void installPreparedPrivateDeactivate() nothrow @nogc {
         lastSnap_ = SnapResult.init;
+    }
+
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,
+            SnapOverlayOwner snapOwner, PreparedPrivateStateOwner stateOwner) {
+        bool accepted;
+        if (context !is null && snapOwner !is null && stateOwner !is null &&
+            stateOwner.owns(this)) {
+            accepted = context.prepareSnapClear(snapOwner) &&
+                       context.preparePrivateState(stateOwner) &&
+                       context.markNoHistoryInstall();
+        }
+        if (!accepted && context !is null) context.discard();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.Vertex, accepted, accepted);
     }
     version(unittest) void seedPreparedSnapForTest(int index) nothrow @nogc {
         lastSnap_.snapped = true; lastSnap_.targetIndex = index;
@@ -269,6 +287,7 @@ private:
 }
 
 version (unittest) unittest {
+    import record_observer_hub : RecordObserverHub;
     EditMode mode;
     Mesh mesh = makeCube();
     GpuMesh gpu;
@@ -296,4 +315,30 @@ version (unittest) unittest {
     tool.installPreparedActivate(validated);
     assert(tool.lastSnap_.targetIndex == 9,
            "refused foreign activation gained an install handle");
+
+    SnapResult globalSeed; globalSeed.snapped = true; globalSeed.targetIndex = 21;
+    publishLastSnap(globalSeed); tool.seedPreparedSnapForTest(22);
+    auto context = new PreparedRecordContext(new CommandHistory(),
+                                             new RecordObserverHub());
+    auto snapOwner = new SnapOverlayOwner();
+    auto stateOwner = PreparedPrivateStateOwner.vertex(tool);
+    auto deactivation = tool.prepareDeactivate(context, snapOwner, stateOwner);
+    assert(deactivation.historyAccepted && deactivation.resourceAccepted);
+    assert(g_lastSnap.targetIndex == 21 && tool.preparedSnapIndexForTest() == 22);
+    assert(context.validate()); context.install();
+    assert(g_lastSnap == SnapResult.init && tool.preparedSnapIndexForTest() == -1);
+    size_t modelDepth, uiDepth; context.installedDepths(modelDepth, uiDepth);
+    assert(modelDepth == 0 && uiDepth == 0);
+    tool.seedPreparedSnapForTest(23); publishLastSnap(globalSeed);
+    context.install();
+    assert(g_lastSnap == globalSeed && tool.preparedSnapIndexForTest() == 23);
+
+    auto refusedContext = new PreparedRecordContext(new CommandHistory(),
+                                                    new RecordObserverHub());
+    auto wrongOwner = PreparedPrivateStateOwner.vertex(wrong);
+    auto refused = tool.prepareDeactivate(refusedContext, new SnapOverlayOwner(),
+                                          wrongOwner);
+    assert(!refused.historyAccepted && !refused.resourceAccepted);
+    assert(!refusedContext.validate());
+    clearLastSnap();
 }

@@ -17,7 +17,7 @@ import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
 
 private enum PreparedResourceKind : ubyte {
-    HistoryInstall, MeshInstall, DeliveryInstall, GpuMeshDestroy, GpuUpload, ClickPointDestroy
+    HistoryInstall, NoHistoryInstall, MeshInstall, DeliveryInstall, GpuMeshDestroy, GpuUpload, ClickPointDestroy
     , GpuCreate, SnapOverlayClear, BoxState, PenState, PrimitiveState, VertexState
 }
 private struct PreparedResourceEntry {
@@ -45,6 +45,7 @@ private:
     PreparedResourceEntry[] resources_;
     ulong resourceThread_, resourceContext_;
     bool historyMarker_;
+    bool noHistoryMarker_;
     version (unittest) {
         static bool failAfterResourceBegin_;
         ubyte[16] installTrace_;
@@ -70,13 +71,20 @@ public:
     /// transactions require exactly one marker; history-only transactions keep
     /// their historical direct install path.
     bool markHistoryInstall() {
-        if (!begun_ || validated_Once || historyMarker_) return false;
+        if (!begun_ || validated_Once || historyMarker_ || noHistoryMarker_) return false;
         resources_.reserve(resources_.length + 1);
         PreparedResourceEntry e;
         e.kind = PreparedResourceKind.HistoryInstall;
         resources_ ~= e;
         historyMarker_ = true;
         return true;
+    }
+
+    bool markNoHistoryInstall() {
+        if (!begun_ || validated_Once || historyMarker_ || noHistoryMarker_) return false;
+        resources_.reserve(1 + resources_.length);
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.NoHistoryInstall;
+        resources_ ~= e; noHistoryMarker_ = true; return true;
     }
 
     bool prepareDestroy(GpuResourceOwner owner) {
@@ -226,13 +234,16 @@ public:
     bool validate() nothrow @nogc {
         if (!begun_ || validated_Once) return false;
         if (resources_.length > 0 && !historyMarker_) {
-            invalidateTransaction();
-            return false;
+            if (!noHistoryMarker_) {
+                invalidateTransaction();
+                return false;
+            }
         }
         foreach (ref e; resources_) {
             bool ok;
             final switch (e.kind) {
             case PreparedResourceKind.HistoryInstall: ok = true; break;
+            case PreparedResourceKind.NoHistoryInstall: ok = true; break;
             case PreparedResourceKind.MeshInstall:
                 ok = e.layerMesh.validateEnlistedMesh(); break;
             case PreparedResourceKind.DeliveryInstall:
@@ -255,8 +266,11 @@ public:
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
-        validated_ = history_.validatesPreparedToken(token_, observers_);
-        validated_Once = validated_.valid;
+        if (noHistoryMarker_) validated_Once = true;
+        else {
+            validated_ = history_.validatesPreparedToken(token_, observers_);
+            validated_Once = validated_.valid;
+        }
         if (!validated_Once) invalidateTransaction();
         return validated_Once;
     }
@@ -268,6 +282,10 @@ public:
         case PreparedResourceKind.HistoryInstall:
             history_.installPreparedToken(validated_); installedHistory = true;
             version (unittest) installTrace_[installTraceLength_++] = 1;
+            break;
+        case PreparedResourceKind.NoHistoryInstall:
+            history_.discardPreparedToken(token_); installedHistory = true;
+            version (unittest) installTrace_[installTraceLength_++] = 8;
             break;
         case PreparedResourceKind.MeshInstall:
             e.layerMesh.installEnlistedMesh();
@@ -308,6 +326,7 @@ public:
         if (!installedHistory) history_.installPreparedToken(validated_);
         resources_.length = 0;
         historyMarker_ = false;
+        noHistoryMarker_ = false;
         validated_Once = false;
         begun_ = false;
     }
@@ -323,6 +342,7 @@ private:
     void abortResources() nothrow @nogc {
         foreach (ref e; resources_) final switch (e.kind) {
         case PreparedResourceKind.HistoryInstall: break;
+        case PreparedResourceKind.NoHistoryInstall: break;
         case PreparedResourceKind.MeshInstall: e.layerMesh.abortEnlistedMesh(); break;
         case PreparedResourceKind.DeliveryInstall: break;
         case PreparedResourceKind.GpuMeshDestroy: e.gpuDestroy.abortEnlisted(); break;
@@ -337,6 +357,7 @@ private:
         }
         resources_.length = 0;
         historyMarker_ = false;
+        noHistoryMarker_ = false;
     }
 
     void invalidateTransaction() nothrow @nogc {
@@ -507,22 +528,6 @@ version (unittest) unittest {
     mixed.install();
     assert(createdGpu.faceVao != 0);
     assert(mixed.installTraceForTest() == [1,5,6]);
-
-    import tools.create.vertex_place : VertexTool;
-    GpuMesh privateGpu;
-    auto privateTool = new VertexTool(() => &faultLayer.meshRef(), &privateGpu, null);
-    privateTool.seedPreparedSnapForTest(4);
-    auto privateOwner = PreparedPrivateStateOwner.vertex(privateTool);
-    auto ordered = new PreparedRecordContext(new CommandHistory(),
-                                             new RecordObserverHub());
-    assert(ordered.preparePrivateState(privateOwner));
-    assert(ordered.markHistoryInstall());
-    assert(privateTool.preparedSnapIndexForTest() == 4 && ordered.validate());
-    ordered.install();
-    assert(privateTool.preparedSnapIndexForTest() == -1 &&
-           ordered.installTraceForTest() == [7,1]);
-    privateTool.seedPreparedSnapForTest(8);
-    ordered.install(); assert(privateTool.preparedSnapIndexForTest() == 8);
 
     auto topologyLayer = new Layer();
     topologyLayer.meshRef() = makeCube();

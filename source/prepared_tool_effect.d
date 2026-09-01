@@ -34,7 +34,7 @@ enum PreparedDeactivateKind : ubyte {
     None, Array, Clone, RadialArray, Magnet, SmoothShift, StrokeExtrude,
     EdgeBevel, EdgeExtrude, PolyBevel, PolyExtrude, PolyInset, Reduction,
     VertexMerge, VertexBevel, VertexExtrude, Xfrm, Move, Rotate, Scale,
-    CommandWrapper, Tack, TransformNormalUpload,
+    CommandWrapper, Tack, TransformNormalUpload, Vertex,
 }
 enum PreparedActivateKind : ubyte { None, Vertex }
 
