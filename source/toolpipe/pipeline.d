@@ -137,6 +137,14 @@ public:
         return null;
     }
 
+    /// Allocation-free identity check used by prepared stage transitions.
+    bool ownsTaskStage(TaskCode task, Stage expected) const nothrow @nogc {
+        foreach (s; stages_)
+            if (s.taskCode() == task)
+                return s is expected;
+        return expected is null;
+    }
+
     /// Return EVERY registered stage with the given task, in pipeline
     /// (ordinal) order. The stacking counterpart to `findByTask` (which
     /// returns only the first / primary): callers that must iterate all

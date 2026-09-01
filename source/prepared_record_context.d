@@ -39,6 +39,7 @@ import prepared_command_wrapper_activation : PreparedCommandWrapperActivationOwn
 import prepared_bridge_activation : PreparedBridgeActivationOwner;
 import prepared_mirror_activation : PreparedMirrorActivationOwner;
 import prepared_edge_extend_tool_activation : PreparedEdgeExtendToolActivationOwner;
+import prepared_topology_pen_activation : PreparedTopologyPenActivationOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -58,7 +59,7 @@ private enum PreparedResourceKind : ubyte {
     EdgeSliceActivationState, LoopSliceActivationState, SliceActivationState,
     TackActivationState, CommandWrapperActivationState, BridgeActivationState,
     MirrorActivationState, EdgeExtendToolActivationPreState,
-    EdgeExtendToolActivationPostState
+    EdgeExtendToolActivationPostState, TopologyPenActivationState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -90,6 +91,7 @@ private struct PreparedResourceEntry {
     PreparedBridgeActivationOwner bridgeActivation;
     PreparedMirrorActivationOwner mirrorActivation;
     PreparedEdgeExtendToolActivationOwner edgeExtendToolActivation;
+    PreparedTopologyPenActivationOwner topologyPenActivation;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -563,6 +565,17 @@ public:
         e.kind = PreparedResourceKind.EdgeExtendToolActivationPostState;
         e.edgeExtendToolActivation = owner; resources_ ~= e; return true;
     }
+    bool prepareTopologyPenActivation(PreparedTopologyPenActivationOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected TopologyPen activation enlist failure");
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.TopologyPenActivationState;
+        e.topologyPenActivation = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -790,6 +803,9 @@ public:
             case PreparedResourceKind.EdgeExtendToolActivationPostState:
                 ok = e.edgeExtendToolActivation !is null &&
                     e.edgeExtendToolActivation.validatePost(); break;
+            case PreparedResourceKind.TopologyPenActivationState:
+                ok = e.topologyPenActivation !is null &&
+                    e.topologyPenActivation.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -974,6 +990,10 @@ public:
             e.edgeExtendToolActivation.installPost();
             version(unittest) installTrace_[installTraceLength_++] = 38;
             break;
+        case PreparedResourceKind.TopologyPenActivationState:
+            e.topologyPenActivation.install();
+            version(unittest) installTrace_[installTraceLength_++] = 39;
+            break;
         }
         if (!installedHistory && history_ !is null)
             history_.installPreparedToken(validated_);
@@ -1029,6 +1049,8 @@ private:
         case PreparedResourceKind.EdgeExtendToolActivationPreState:
         case PreparedResourceKind.EdgeExtendToolActivationPostState:
             e.edgeExtendToolActivation.abort(); break;
+        case PreparedResourceKind.TopologyPenActivationState:
+            e.topologyPenActivation.abort(); break;
         case PreparedResourceKind.RadialArrayTransitionState:
             e.radialArrayTransition.abort(); break;
         case PreparedResourceKind.TransformActivationState:

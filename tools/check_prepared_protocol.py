@@ -238,6 +238,7 @@ B5O_PREPARED_LEGACY = {
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "activate"),
 }
 B5P_PREPARED_LEGACY = {
+    ("tools.edit.topology_pen.tool", "TopologyPenTool", "activate"),
     ("tools.edit.edge_extend", "EdgeExtendTool", "activate"),
     ("tools.alignment.mirror", "MirrorTool", "activate"),
     ("tools.common.command_wrapper", "CommandWrapperTool", "activate"),
@@ -296,7 +297,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "275f28a8b690f0d2fd72c6b9d174cdaa11d06dbfe95344d35c22dcc0ff72149b"
+    "4c2879346b3909adf509ac1b3955d5b9837463f40fbb34b52801ea08c34cf63d"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -445,6 +446,7 @@ for path, text in prepared_source_texts.items():
             "prepared_bridge_activation",
             "prepared_mirror_activation",
             "prepared_edge_extend_tool_activation",
+            "prepared_topology_pen_activation",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
@@ -452,6 +454,7 @@ for path, text in prepared_source_texts.items():
             "tools.edit.bridge_tool",
             "tools.alignment.mirror",
             "tools.edit.edge_extend",
+            "tools.edit.topology_pen.tool",
             "tools.alignment.radial_sweep_tool",
             "tools.alignment.radial_array_tool",
             "tools.alignment.linear_align_tool",
@@ -3991,6 +3994,105 @@ for fixture in (
     if run.returncode == 0 or ("not copyable" not in run.stdout and
             not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
         fail("EdgeExtend activation token copy was not rejected:\n" + run.stdout)
+
+topology_pen_activation_owner = (
+    ROOT / "source/prepared_topology_pen_activation.d").read_text()
+topology_pen_activation_tool = (
+    ROOT / "source/tools/edit/topology_pen/tool.d").read_text()
+topology_pen_snap = (ROOT / "source/toolpipe/stages/snap.d").read_text()
+topology_pen_constrain = (ROOT / "source/toolpipe/stages/constrain.d").read_text()
+topology_pen_pipeline = (ROOT / "source/toolpipe/pipeline.d").read_text()
+topology_pen_popup = (ROOT / "source/popup_state.d").read_text()
+def topology_pen_activation_gate(owner, context, tool, snap, constrain,
+                                 pipeline, popup):
+    return (owner.count("@disable this(this)") == 2 and
+        "final class PreparedTopologyPenActivationOwner" in owner and
+        "target.classinfo !is TopologyPenTool.classinfo" in owner and
+        "result.pipe_ = g_pipeCtx;" in owner and
+        "capturePreparedPushProjection()" in owner and
+        "capturePreparedCompositionProjection()" in owner and
+        "g_pipeCtx !is pipe_" in owner and
+        "pipeline.ownsTaskStage(TaskCode.Snap, snap_)" in owner and
+        "pipeline.ownsTaskStage(TaskCode.Cons, constrain_)" in owner and
+        "matchesPreparedPushProjection(snapProjection_)" in owner and
+        "matchesPreparedCompositionProjection(" in owner and
+        "target_.installPreparedActivation(image_);" in owner and
+        "snap_.installPreparedPushEnabled(snapOwner_, true);" in owner and
+        "!constrainProjection_.userLocked" in owner and
+        "constrain_.installPreparedPointComposition();" in owner and
+        owner.find("target_.installPreparedActivation(image_);") <
+            owner.find("snap_.installPreparedPushEnabled(snapOwner_, true);") <
+            owner.find("constrain_.installPreparedPointComposition();") and
+        "image.expectedHit = lastHit_; image.expectedTarget = lastTarget_;" in tool and
+        "image.expectedDecline = slideDecline_;" in tool and
+        "image.expectedDeclineSeed = slideDeclineSeed_;" in tool and
+        "lastHit_ = ConstrainHitPacket.init; lastTarget_ = HoverTarget.init;" in tool and
+        "slideDecline_ = SlideDecline.None; slideDeclineSeed_ = -1;" in tool and
+        "context.prepareTopologyPenActivation(owner)" in tool and
+        "context.markNoHistoryInstall()" in tool and
+        tool.find("context.prepareTopologyPenActivation(owner)") <
+            tool.find("context.markNoHistoryInstall()", tool.find("context.prepareTopologyPenActivation(owner)")) and
+        "PreparedActivateKind.TopologyPen, ok);" in tool and
+        "TopologyPenActivationState" in context and
+        "e.topologyPenActivation.validate();" in context and
+        "e.topologyPenActivation.install();" in context and
+        "e.topologyPenActivation.abort();" in context and
+        "PreparedSnapPushProjection capturePreparedPushProjection()" in snap and
+        "matchesPreparedPushProjection" in snap and
+        "installPreparedPushEnabled(string owner, bool value) nothrow" in snap and
+        "PreparedConstrainCompositionProjection capturePreparedCompositionProjection()" in constrain and
+        "matchesPreparedCompositionProjection" in constrain and
+        "installPreparedPointComposition() nothrow" in constrain and
+        "bool ownsTaskStage(TaskCode task, Stage expected) const nothrow @nogc" in pipeline and
+        "void installPreparedStatePath(string path, string value) nothrow" in popup)
+if not topology_pen_activation_gate(topology_pen_activation_owner, record_context,
+        topology_pen_activation_tool, topology_pen_snap, topology_pen_constrain,
+        topology_pen_pipeline, topology_pen_popup):
+    fail("TopologyPen activation prepared contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is TopologyPenTool.classinfo", "false", "broaden product"),
+    ("owner", "result.pipe_ = g_pipeCtx;", "result.pipe_ = null;", "drop pipeline capture"),
+    ("owner", "g_pipeCtx !is pipe_", "false", "drop pipeline identity"),
+    ("owner", "pipeline.ownsTaskStage(TaskCode.Snap, snap_)", "true", "drop Snap stage identity"),
+    ("owner", "pipeline.ownsTaskStage(TaskCode.Cons, constrain_)", "true", "drop CONS stage identity"),
+    ("owner", "matchesPreparedPushProjection(snapProjection_)", "true", "drop Snap projection"),
+    ("owner", "matchesPreparedCompositionProjection(", "true || (", "drop CONS projection"),
+    ("owner", "target_.installPreparedActivation(image_);", "", "drop local reset"),
+    ("owner", "snap_.installPreparedPushEnabled(snapOwner_, true);", "", "drop Snap arm"),
+    ("owner", "!constrainProjection_.userLocked", "false", "drop unlocked composition"),
+    ("owner", "constrain_.installPreparedPointComposition();", "", "drop CONS composition"),
+    ("tool", "image.expectedHit = lastHit_; image.expectedTarget = lastTarget_;", "", "drop local capture"),
+    ("tool", "slideDecline_ = SlideDecline.None; slideDeclineSeed_ = -1;", "", "drop local install"),
+    ("tool", "context.prepareTopologyPenActivation(owner)", "true", "drop owner arm"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory seal"),
+    ("context", "e.topologyPenActivation.validate();", "true;", "drop context validation"),
+    ("context", "e.topologyPenActivation.install();", "", "drop context install"),
+    ("context", "e.topologyPenActivation.abort();", "", "drop context abort"),
+    ("snap", "installPreparedPushEnabled(string owner, bool value) nothrow", "installPreparedPushEnabled(string owner, bool value)", "drop Snap nothrow"),
+    ("constrain", "installPreparedPointComposition() nothrow", "installPreparedPointComposition()", "drop CONS nothrow"),
+    ("pipeline", "ownsTaskStage(TaskCode task, Stage expected) const nothrow @nogc", "ownsTaskStage(TaskCode task, Stage expected) const", "drop stage-check guarantees"),
+    ("popup", "installPreparedStatePath(string path, string value) nothrow", "installPreparedStatePath(string path, string value)", "drop popup nothrow"),
+):
+    o, c, t = topology_pen_activation_owner, record_context, topology_pen_activation_tool
+    s, co, p, po = topology_pen_snap, topology_pen_constrain, topology_pen_pipeline, topology_pen_popup
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    elif target == "tool": t = t.replace(old, new, 1)
+    elif target == "snap": s = s.replace(old, new, 1)
+    elif target == "constrain": co = co.replace(old, new, 1)
+    elif target == "pipeline": p = p.replace(old, new, 1)
+    else: po = po.replace(old, new, 1)
+    if topology_pen_activation_gate(o, c, t, s, co, p, po):
+        fail(f"TopologyPen activation mutation did not RED: {label}")
+for fixture in (
+    ROOT / "tests/compile_fail/prepared_topology_pen_activation_token_copy.d",
+    ROOT / "tests/compile_fail/prepared_topology_pen_activation_validated_token_copy.d",
+):
+    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if run.returncode == 0 or ("not copyable" not in run.stdout and
+            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+        fail("TopologyPen activation token copy was not rejected:\n" + run.stdout)
 
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
 # detached whole-Mesh adoption with exact caller-supplied change flags, and a

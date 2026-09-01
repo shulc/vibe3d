@@ -4,7 +4,7 @@ import toolpipe.stage   : Stage, TaskCode, ordCons, ToolSwitchTransient;
 import toolpipe.packets : ConstrainPacket, ConstrainGeom, ConstrainHitPacket,
                           SubjectPacket;
 import operator         : Operator, Task, VectorStack, PacketKind;
-import popup_state      : setStatePath;
+import popup_state      : setStatePath, installPreparedStatePath;
 import params           : Param, IntEnumEntry, wireTagForValue;
 import bvh_pick         : BvhPick, SurfaceHit;
 import constraint        : BackgroundSource;
@@ -67,6 +67,11 @@ private static immutable IntEnumEntry[] constrainGeomEntries = [
 //   `handle`   : "true" / "false" (default true)
 //   `dblSided` : "true" / "false" (default false)
 // ---------------------------------------------------------------------------
+
+struct PreparedConstrainCompositionProjection {
+    bool enabled, userLocked;
+    ConstrainGeom geom;
+}
 
 class ConstrainStage : Stage, Operator, ToolSwitchTransient {
 private:
@@ -419,6 +424,21 @@ public:
     // transient CONS composition cleanly reverts. Cleared by reset() and by
     // an explicit `enabled=false` write through either command-layer path.
     bool userLocked = false;
+
+    PreparedConstrainCompositionProjection capturePreparedCompositionProjection()
+            const nothrow @nogc {
+        return PreparedConstrainCompositionProjection(enabled, userLocked, geom);
+    }
+    bool matchesPreparedCompositionProjection(
+            in PreparedConstrainCompositionProjection expected) const nothrow @nogc {
+        return enabled == expected.enabled && userLocked == expected.userLocked &&
+            geom == expected.geom;
+    }
+    void installPreparedPointComposition() nothrow {
+        enabled = true; geom = ConstrainGeom.Point;
+        installPreparedStatePath("constrain/enabled", "true");
+        installPreparedStatePath("constrain/geometry", "point");
+    }
 
     this() { publishState(); }
 

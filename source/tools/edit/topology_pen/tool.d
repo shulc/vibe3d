@@ -80,11 +80,28 @@ import tool_input            : ToolAction, PassThrough, InputPhase, InputButton,
                                 resolveToolAction, toButton, toMods;
 import drag                  : planeDragDelta;
 import eventlog               : queryMouse;
+import prepared_tool_effect   : PreparedSessionActivateEffect,
+                                 PreparedActivateKind;
+import prepared_record_context : PreparedRecordContext;
+import prepared_topology_pen_activation : PreparedTopologyPenActivationOwner;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
 
 import tools.edit.topology_pen.defs;
+
+struct PreparedTopologyPenActivationImage {
+    bool valid;
+    ConstrainHitPacket expectedHit;
+    HoverTarget expectedTarget;
+    SlideDecline expectedDecline;
+    int expectedDeclineSeed;
+    void clear() nothrow @nogc {
+        valid = false; expectedHit = ConstrainHitPacket.init;
+        expectedTarget = HoverTarget.init;
+        expectedDecline = SlideDecline.None; expectedDeclineSeed = -1;
+    }
+}
 
 // Corner-provenance (task 0901): verified NOT APPLICABLE across this package.
 // Every face this tool creates goes exclusively through `Mesh.makePolygonFromVerts`
@@ -1423,6 +1440,57 @@ public:
         if (cs.userLocked) return;
         cs.setAttr("enabled", "true");
         cs.setAttr("geometry", "point");
+    }
+
+    final PreparedTopologyPenActivationImage buildPreparedActivation()
+            const nothrow @nogc {
+        PreparedTopologyPenActivationImage image;
+        image.expectedHit = lastHit_; image.expectedTarget = lastTarget_;
+        image.expectedDecline = slideDecline_;
+        image.expectedDeclineSeed = slideDeclineSeed_;
+        image.valid = true; return image;
+    }
+    final string preparedSnapArmOwner() const pure nothrow @nogc {
+        return kSnapArmOwner;
+    }
+    final bool preparedActivationLocalMatches(
+            in PreparedTopologyPenActivationImage image) const nothrow @nogc {
+        return image.valid && lastHit_ == image.expectedHit &&
+            lastTarget_ == image.expectedTarget &&
+            slideDecline_ == image.expectedDecline &&
+            slideDeclineSeed_ == image.expectedDeclineSeed;
+    }
+    final void installPreparedActivation(
+            ref PreparedTopologyPenActivationImage image) nothrow @nogc {
+        lastHit_ = ConstrainHitPacket.init; lastTarget_ = HoverTarget.init;
+        slideDecline_ = SlideDecline.None; slideDeclineSeed_ = -1;
+        image.valid = false;
+    }
+    final PreparedSessionActivateEffect prepareActivate(PreparedRecordContext context) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.TopologyPen, false);
+        scope(failure) context.discard();
+        auto owner = PreparedTopologyPenActivationOwner.prepare(this);
+        bool ok = owner !is null && context.prepareTopologyPenActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.TopologyPen, ok);
+    }
+
+    version(unittest) final void seedPreparedActivationForTest() nothrow @nogc {
+        lastHit_.hit = true; lastHit_.layer = 7; lastTarget_.kind = HoverTargetKind.Edge;
+        lastTarget_.edge = 9; slideDecline_ = SlideDecline.NoContinuation;
+        slideDeclineSeed_ = 11;
+    }
+    version(unittest) final bool preparedActivationInstalledForTest()
+            const nothrow @nogc {
+        return lastHit_ == ConstrainHitPacket.init &&
+            lastTarget_ == HoverTarget.init && slideDecline_ == SlideDecline.None &&
+            slideDeclineSeed_ == -1;
+    }
+    version(unittest) final void mutatePreparedActivationForTest() nothrow @nogc {
+        ++slideDeclineSeed_;
     }
 
     override void deactivate() {

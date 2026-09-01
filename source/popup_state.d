@@ -29,6 +29,15 @@ void setStatePath(string path, string value) {
     g_state[path] = value;
 }
 
+/// Commit-time counterpart for a prepared transition. Prepared producers run
+/// after each stage constructor has published these fixed keys, so install is
+/// an overwrite rather than a map-shape change. Any ordinary Exception here
+/// is a broken prepared-install invariant, not a recoverable partial commit.
+void installPreparedStatePath(string path, string value) nothrow {
+    try g_state[path] = value;
+    catch (Exception) assert(false);
+}
+
 /// Read the current value at `path`, or empty string when unset.
 string getStatePath(string path) {
     if (auto p = path in g_state) return *p;

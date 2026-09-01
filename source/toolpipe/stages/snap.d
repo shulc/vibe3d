@@ -10,7 +10,7 @@ import toolpipe.stage    : Stage, TaskCode, ordSnap;
 import toolpipe.packets  : SnapPacket, SnapConfig, SnapHitPacket, SnapType, SnapMode;
 import toolpipe.guide    : SnapGuide, GuideDrawState;
 import operator          : Operator, Task, VectorStack, PacketKind;
-import popup_state       : setStatePath;
+import popup_state       : setStatePath, installPreparedStatePath;
 import params            : Param, IntEnumEntry;
 
 // ---------------------------------------------------------------------------
@@ -86,6 +86,11 @@ enum kSnapDisplayName = "Snapping";
 //   `fixedGrid`     : "true" / "false"
 //   `fixedGridSize` : float, world units
 // ---------------------------------------------------------------------------
+struct PreparedSnapPushProjection {
+    bool enabled, pushedEnabled;
+    string pushedOwner;
+}
+
 class SnapStage : Stage, Operator {
     // Phase 1 of doc/operator_refactor_plan.md.
     private SnapPacket _publishedPacket;
@@ -427,6 +432,20 @@ class SnapStage : Stage, Operator {
     /// product path reads it; the push/pop pair is self-balancing.
     bool hasPushedEnabled(string owner) const {
         return owner.length != 0 && _pushedOwner == owner;
+    }
+
+    PreparedSnapPushProjection capturePreparedPushProjection() const {
+        return PreparedSnapPushProjection(enabled, _pushedEnabled, _pushedOwner);
+    }
+    bool matchesPreparedPushProjection(in PreparedSnapPushProjection expected)
+            const nothrow @nogc {
+        return enabled == expected.enabled &&
+            _pushedEnabled == expected.pushedEnabled &&
+            _pushedOwner == expected.pushedOwner;
+    }
+    void installPreparedPushEnabled(string owner, bool value) nothrow {
+        _pushedEnabled = enabled; _pushedOwner = owner; enabled = value;
+        installPreparedStatePath("snap/enabled", enabled ? "true" : "false");
     }
 
     this() { publishState(); }
