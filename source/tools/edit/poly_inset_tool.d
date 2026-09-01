@@ -19,6 +19,14 @@ import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import command_history : PreparedHistoryKind;
+import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import prepared_poly_inset_activation : PreparedPolyInsetActivationOwner;
+
+struct PreparedPolyInsetActivationImage {
+    MeshSnapshot before;
+    bool valid;
+    void clear() nothrow @nogc { before = MeshSnapshot.init; valid = false; }
+}
 
 // ---------------------------------------------------------------------------
 // PolyInsetTool — interactive Polygon Inset (factory id `mesh.polyInsetTool`,
@@ -65,7 +73,7 @@ import command_history : PreparedHistoryKind;
 // ---------------------------------------------------------------------------
 class PolyInsetTool : Tool {
 private:
-    Mesh* delegate() meshSrc_;
+    Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
     GpuMesh*         gpu;
     EditMode*        editMode;
@@ -97,7 +105,8 @@ private:
     float localPerPixel;
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader) {
+    this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu,
+            EditMode* editMode, LitShader litShader) {
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
@@ -117,6 +126,56 @@ public:
     override void activate() {
         active = true;
         reinitSession();
+    }
+
+    final PreparedPolyInsetActivationImage buildPreparedActivation(
+            out Mesh* source) {
+        PreparedPolyInsetActivationImage image;
+        source = mesh;
+        if (source is null) return image;
+        image.before = MeshSnapshot.capture(*source); image.valid = true;
+        return image;
+    }
+    final Mesh* preparedActivationMesh() nothrow @nogc { return meshSrc_(); }
+    final void installPreparedActivation(
+            ref PreparedPolyInsetActivationImage image) nothrow @nogc {
+        if (!image.valid) return;
+        active = true; built = false; dragging = false; inset_ = 0.0f;
+        image.before.moveInto(before); image.valid = false;
+    }
+    final PreparedSessionActivateEffect prepareActivate(
+            PreparedRecordContext context) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.PolyInset, false);
+        scope(failure) context.discard();
+        auto owner = PreparedPolyInsetActivationOwner.prepare(this);
+        bool ok = owner !is null && context.preparePolyInsetActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.PolyInset, ok);
+    }
+    version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
+        return preparedToolStateOwner;
+    }
+    version(unittest) final void seedPreparedActivationForTest(ref Mesh oldMesh) {
+        active = false; built = dragging = true; inset_ = 7;
+        dragLastMX = 11; dragLastMY = 12; dragBaseInset = 13;
+        localPerPixel = 14; cachedVp.view[0] = 15;
+        before = MeshSnapshot.capture(oldMesh);
+    }
+    version(unittest) final bool preparedActivationDirtyForTest() const nothrow @nogc {
+        return !active && built && dragging && inset_ == 7 &&
+            dragLastMX == 11 && dragLastMY == 12 && dragBaseInset == 13 &&
+            localPerPixel == 14 && cachedVp.view[0] == 15;
+    }
+    version(unittest) final bool preparedActivationForTest(size_t count,
+            Vec3 first, const Vec3* livePtr) const nothrow @nogc {
+        return active && !built && !dragging && inset_ == 0 && before.filled &&
+            before.vertices.length == count && count && before.vertices[0] == first &&
+            before.vertices.ptr !is livePtr && dragLastMX == 11 &&
+            dragLastMY == 12 && dragBaseInset == 13 && localPerPixel == 14 &&
+            cachedVp.view[0] == 15;
     }
 
     private void reinitSession() {

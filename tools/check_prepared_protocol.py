@@ -243,6 +243,7 @@ B5P_PREPARED_LEGACY = {
     ("tools.create.primitive_create_tool", "PrimitiveCreateTool", "activate"),
     ("tools.deform.stroke_extrude_tool", "StrokeExtrudeTool", "activate"),
     ("tools.edit.vert_merge_tool", "VertexMergeTool", "activate"),
+    ("tools.edit.poly_inset_tool", "PolyInsetTool", "activate"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
@@ -280,7 +281,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "07106ebcaadc19883c92d1b7900baed28ab27408632c5410207b2ff0fd048a00"
+    "582f18d4c25a2f9e965aaae44ba1cf9579d8c618c547eb5acddb47427ca35d6a"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -413,13 +414,15 @@ for path, text in prepared_source_texts.items():
             "prepared_xfrm_activation_session",
             "prepared_stroke_extrude_activation",
             "prepared_vertex_merge_activation",
+            "prepared_poly_inset_activation",
             "tools.alignment.radial_sweep_tool",
             "tools.alignment.radial_array_tool",
             "tools.alignment.linear_align_tool",
             "tools.alignment.radial_align_tool",
             "tools.deform.bend", "tools.deform.push",
             "tools.deform.stroke_extrude_tool",
-            "tools.edit.vert_merge_tool"}:
+            "tools.edit.vert_merge_tool",
+            "tools.edit.poly_inset_tool"}:
         fail(f"P1.0b.3d PreparedRecordContext gained an unreviewed import: {module}")
     if "new PreparedRecordContext" in text:
         production_text = without_unittests(text)
@@ -2082,6 +2085,99 @@ for fixture in (
     if run.returncode == 0 or ("not copyable" not in run.stdout and
             not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
         fail("VertexMerge activation token copy was not rejected:\n" + run.stdout)
+
+# Exact PolyInset activation uses the same deep-baseline atomic grammar, but
+# its closed product/reset/effect are independently mutation-proven.
+poly_inset_activation_owner = (ROOT /
+    "source/prepared_poly_inset_activation.d").read_text()
+poly_inset_activation_tool = (ROOT /
+    "source/tools/edit/poly_inset_tool.d").read_text()
+def poly_inset_activation_gate(owner, context, tool):
+    po = without_unittests(owner); pt = without_unittests(tool)
+    start = pt.find("final PreparedSessionActivateEffect prepareActivate(")
+    end = pt.find("version(unittest) final auto preparedOwnerForTest", start)
+    producer = pt[start:end] if start >= 0 and end > start else ""
+    legacy = re.search(r"override void activate\(\)\s*\{", pt)
+    legacy_body = pt[legacy.end():balanced_source(pt, legacy.end())-1] if legacy else ""
+    return (
+        "final class PreparedPolyInsetActivationOwner" in owner and
+        owner.count("@disable this(this);") == 2 and
+        not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
+        "target.classinfo !is PolyInsetTool.classinfo" in owner and
+        "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
+        "target_.preparedActivationMesh() !is source_" in owner and
+        "!image_.before.matches(*source_)" in owner and
+        "target_.installPreparedActivation(image_); consume();" in owner and
+        "image_.clear(); target_ = null; source_ = null;" in owner and
+        "Mesh* delegate() nothrow @nogc meshSrc_;" in tool and
+        "image.before = MeshSnapshot.capture(*source); image.valid = true;" in tool and
+        "active = true; built = false; dragging = false; inset_ = 0.0f;\n"
+        "        image.before.moveInto(before); image.valid = false;" in tool and
+        "PreparedPolyInsetActivationOwner.prepare(this)" in producer and
+        "context.preparePolyInsetActivation(owner)" in producer and
+        "context.markNoHistoryInstall()" in producer and
+        producer.find("context.preparePolyInsetActivation(owner)") <
+            producer.find("context.markNoHistoryInstall()") and
+        "scope(failure) context.discard();" in producer and
+        "if (!ok) context.discard();" in producer and
+        "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+        "            PreparedActivateKind.PolyInset, ok);" in producer and
+        not any(x in producer for x in
+                ("context.validate(", "context.install(", "owner.install(")) and
+        not any(x in legacy_body for x in
+                ("prepareActivate(", "PreparedRecordContext")) and
+        "e.polyInsetActivation.validate();" in context and
+        "e.polyInsetActivation.install();" in context and
+        "e.polyInsetActivation.abort();" in context)
+if not poly_inset_activation_gate(poly_inset_activation_owner, record_context,
+                                  poly_inset_activation_tool):
+    fail("PolyInset activation prepared contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is PolyInsetTool.classinfo", "false", "broaden product"),
+    ("owner", "result.image_ = target.buildPreparedActivation(result.source_);", "", "drop builder/source"),
+    ("owner", "target_.preparedActivationMesh() !is source_", "false", "drop identity"),
+    ("owner", "!image_.before.matches(*source_)", "false", "drop content guard"),
+    ("owner", "target_.installPreparedActivation(image_);", "", "drop install"),
+    ("owner", "image_.clear(); target_ = null; source_ = null;", "target_ = null;", "retain payload"),
+    ("tool", "image.before = MeshSnapshot.capture(*source);", "", "drop snapshot"),
+    ("tool", "active = true; built = false; dragging = false; inset_ = 0.0f;",
+     "built = false; dragging = false; inset_ = 0.0f;", "drop active reset"),
+    ("tool", "active = true; built = false; dragging = false; inset_ = 0.0f;",
+     "active = true; dragging = false; inset_ = 0.0f;", "drop built reset"),
+    ("tool", "active = true; built = false; dragging = false; inset_ = 0.0f;",
+     "active = true; built = false; inset_ = 0.0f;", "drop dragging reset"),
+    ("tool", "active = true; built = false; dragging = false; inset_ = 0.0f;",
+     "active = true; built = false; dragging = false;", "drop inset reset"),
+    ("tool", "image.before.moveInto(before);", "before = image.before;", "shallow snapshot"),
+    ("tool", "scope(failure) context.discard();", "", "drop failure cleanup"),
+    ("tool", "context.preparePolyInsetActivation(owner)", "true", "drop enlist"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop history seal"),
+    ("tool", "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+     "            PreparedActivateKind.PolyInset, ok);",
+     "return PreparedSessionActivateEffect(OwnedId.init,\n"
+     "            PreparedActivateKind.PolyInset, ok);", "forge effect owner"),
+    ("tool", "PreparedActivateKind.PolyInset, ok);",
+     "PreparedActivateKind.PolyInset, true);", "forge acceptance"),
+    ("context", "e.polyInsetActivation.validate();", "true;", "drop validation"),
+    ("context", "e.polyInsetActivation.install();", "", "drop context install"),
+    ("context", "e.polyInsetActivation.abort();", "", "drop context abort"),
+):
+    o, c, t = poly_inset_activation_owner, record_context, poly_inset_activation_tool
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    else: t = t.replace(old, new, 1)
+    if ((o == poly_inset_activation_owner and c == record_context and
+         t == poly_inset_activation_tool) or poly_inset_activation_gate(o,c,t)):
+        fail(f"PolyInset activation mutation did not RED: {label}")
+for fixture in (
+    ROOT / "tests/compile_fail/prepared_poly_inset_activation_token_copy.d",
+    ROOT / "tests/compile_fail/prepared_poly_inset_activation_validated_token_copy.d",
+):
+    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if run.returncode == 0 or ("not copyable" not in run.stdout and
+            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+        fail("PolyInset activation token copy was not rejected:\n" + run.stdout)
 
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
 # detached whole-Mesh adoption with exact caller-supplied change flags, and a

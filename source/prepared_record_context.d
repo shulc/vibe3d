@@ -23,6 +23,7 @@ import prepared_inherited_noop : PreparedInheritedNoopOwner;
 import prepared_xfrm_activation_session : PreparedXfrmActivationSessionOwner;
 import prepared_stroke_extrude_activation : PreparedStrokeExtrudeActivationOwner;
 import prepared_vertex_merge_activation : PreparedVertexMergeActivationOwner;
+import prepared_poly_inset_activation : PreparedPolyInsetActivationOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -35,7 +36,7 @@ private enum PreparedResourceKind : ubyte {
     GpuCreateUpload, RadialArrayTransitionState, TransformActivationState,
     TransformProductActivationState, MoveUpdateState, InheritedNoopState,
     XfrmActivationPreState, XfrmActivationPostState, StrokeExtrudeActivationState,
-    VertexMergeActivationState
+    VertexMergeActivationState, PolyInsetActivationState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -51,6 +52,7 @@ private struct PreparedResourceEntry {
     PreparedXfrmActivationSessionOwner xfrmActivation;
     PreparedStrokeExtrudeActivationOwner strokeExtrudeActivation;
     PreparedVertexMergeActivationOwner vertexWeldActivation;
+    PreparedPolyInsetActivationOwner polyInsetActivation;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -335,6 +337,16 @@ public:
         e.kind = PreparedResourceKind.VertexMergeActivationState;
         e.vertexWeldActivation = owner; resources_ ~= e; return true;
     }
+    bool preparePolyInsetActivation(PreparedPolyInsetActivationOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected PolyInset activation enlist failure");
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.PolyInsetActivationState;
+        e.polyInsetActivation = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -513,6 +525,9 @@ public:
             case PreparedResourceKind.VertexMergeActivationState:
                 ok = e.vertexWeldActivation !is null &&
                     e.vertexWeldActivation.validate(); break;
+            case PreparedResourceKind.PolyInsetActivationState:
+                ok = e.polyInsetActivation !is null &&
+                    e.polyInsetActivation.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -629,6 +644,10 @@ public:
             e.vertexWeldActivation.install();
             version(unittest) installTrace_[installTraceLength_++] = 21;
             break;
+        case PreparedResourceKind.PolyInsetActivationState:
+            e.polyInsetActivation.install();
+            version(unittest) installTrace_[installTraceLength_++] = 22;
+            break;
         }
         if (!installedHistory && history_ !is null)
             history_.installPreparedToken(validated_);
@@ -690,6 +709,8 @@ private:
             e.strokeExtrudeActivation.abort(); break;
         case PreparedResourceKind.VertexMergeActivationState:
             e.vertexWeldActivation.abort(); break;
+        case PreparedResourceKind.PolyInsetActivationState:
+            e.polyInsetActivation.abort(); break;
         }
         resources_.length = 0;
         historyMarker_ = false;
