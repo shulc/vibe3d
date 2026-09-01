@@ -15,6 +15,10 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
+import prepared_record_context : PreparedRecordContext;
+import prepared_private_state : PreparedPrivateStateOwner;
+import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import mesh_gpu : GpuCreateOwner;
 import display_sync : refreshDisplay;
 import tools.create.create_common : pickWorkplane, BuildPlane,
                               pickWorkplaneFrame, WorkplaneFrame,
@@ -63,6 +67,80 @@ struct PenParams {
     // the docs imply by "polygon strips"). Only meaningful in `polygons`
     // mode.
     bool  makeQuads    = false;
+}
+
+version(unittest) unittest {
+    import record_observer_hub : RecordObserverHub;
+
+    Mesh mesh; GpuMesh sceneGpu;
+    auto pen = new PenTool(() => &mesh, &sceneGpu, LitShader.init);
+    pen.state = PenState.Drawing; pen.vertices_ = [Vec3(1,2,3), Vec3(4,5,6)];
+    pen.params_.currentPoint = 1;
+    pen.params_.posX = 4; pen.params_.posY = 5; pen.params_.posZ = 6;
+    pen.dragArmed = pen.dragInitiated = true; pen.dragVertIdx = 1;
+    pen.previewGpu.faceVao = 51; pen.previewGpu.faceVbo = 52;
+    auto gpuOwner = GpuCreateOwner.fakeForLegacyInitTest(pen.preparedPreviewGpu());
+    auto context = new PreparedRecordContext(null, new RecordObserverHub());
+    context.setResourceIdentity(7, 11);
+    auto effect = pen.prepareActivate(context, gpuOwner);
+    assert(effect.accepted && effect.kind == PreparedActivateKind.Pen &&
+        effect.owner == pen.preparedOwnerForTest() &&
+        pen.state == PenState.Drawing && pen.vertices_.length == 2 &&
+        pen.previewGpu.faceVao == 51);
+    assert(context.validate()); context.install(); context.install();
+    assert(pen.state == PenState.Idle && pen.vertices_.length == 0 &&
+        pen.params_.currentPoint == -1 && pen.params_.posX == 0 &&
+        pen.params_.posY == 0 && pen.params_.posZ == 0 &&
+        !pen.dragArmed && !pen.dragInitiated && pen.dragVertIdx == -1 &&
+        pen.previewGpu.faceVao != 0 && pen.previewGpu.faceVao != 51 &&
+        context.installTraceForTest() == [7, 5, 8]);
+
+    auto nullContext = new PreparedRecordContext(null, new RecordObserverHub());
+    auto nullEffect = pen.prepareActivate(nullContext, null);
+    assert(!nullEffect.accepted && nullEffect.kind == PreparedActivateKind.Pen &&
+        nullEffect.owner == pen.preparedOwnerForTest() && !nullContext.validate());
+
+    auto fault = new PenTool(() => &mesh, &sceneGpu, LitShader.init);
+    fault.state = PenState.Drawing; fault.vertices_ = [Vec3(9,8,7)];
+    fault.dragArmed = true; fault.previewGpu.faceVao = 61;
+    auto faultOwner = GpuCreateOwner.fakeForLegacyInitTest(fault.preparedPreviewGpu());
+    auto faultContext = new PreparedRecordContext(null, new RecordObserverHub());
+    faultContext.setResourceIdentity(99, 100);
+    assert(fault.prepareActivate(faultContext, faultOwner).accepted &&
+        !faultContext.validate() && faultOwner.fakeCleanupCountForTest() == 1 &&
+        fault.state == PenState.Drawing && fault.vertices_.length == 1 &&
+        fault.dragArmed && fault.previewGpu.faceVao == 61);
+    auto retryOwner = GpuCreateOwner.fakeForLegacyInitTest(fault.preparedPreviewGpu());
+    auto retry = new PreparedRecordContext(null, new RecordObserverHub());
+    retry.setResourceIdentity(7, 11);
+    assert(fault.prepareActivate(retry, retryOwner).accepted && retry.validate());
+    retry.install();
+    assert(retry.installTraceForTest() == [7, 5, 8] &&
+        fault.state == PenState.Idle && fault.previewGpu.faceVao != 61);
+
+    class DerivedPen : PenTool {
+        this(Mesh* delegate() source, GpuMesh* gpu, LitShader shader) {
+            super(source, gpu, shader);
+        }
+    }
+    auto derived = new DerivedPen(() => &mesh, &sceneGpu, LitShader.init);
+    auto derivedOwner = GpuCreateOwner.fakeForLegacyInitTest(
+        derived.preparedPreviewGpu());
+    auto derivedContext = new PreparedRecordContext(null, new RecordObserverHub());
+    derivedContext.setResourceIdentity(7, 11);
+    auto derivedEffect = derived.prepareActivate(derivedContext, derivedOwner);
+    assert(!derivedEffect.accepted && derivedEffect.kind == PreparedActivateKind.Pen &&
+        derivedEffect.owner == derived.preparedOwnerForTest() &&
+        !derivedContext.validate());
+
+    GpuMesh foreignGpu;
+    auto foreignOwner = GpuCreateOwner.fakeForLegacyInitTest(&foreignGpu);
+    auto foreignContext = new PreparedRecordContext(null, new RecordObserverHub());
+    foreignContext.setResourceIdentity(7, 11);
+    auto foreignEffect = pen.prepareActivate(foreignContext, foreignOwner);
+    assert(!foreignEffect.accepted && foreignEffect.kind == PreparedActivateKind.Pen &&
+        foreignEffect.owner == pen.preparedOwnerForTest() &&
+        !foreignContext.validate());
 }
 
 // ---------------------------------------------------------------------------
@@ -225,6 +303,26 @@ public:
         dragInitiated = false;
         dragVertIdx   = -1;
         previewGpu.init();
+    }
+
+    final PreparedSessionActivateEffect prepareActivate(
+            PreparedRecordContext context, GpuCreateOwner gpuOwner) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.Pen, false);
+        scope(failure) context.discard();
+        auto stateOwner = PreparedPrivateStateOwner.pen(this);
+        bool ok = stateOwner !is null && gpuOwner !is null &&
+            gpuOwner.replacesLikeLegacyInit() && gpuOwner.owns(&previewGpu) &&
+            context.preparePrivateState(stateOwner) &&
+            context.prepareCreate(gpuOwner) && context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.Pen, ok);
+    }
+
+    final GpuMesh* preparedPreviewGpu() nothrow @nogc { return &previewGpu; }
+    version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
+        return preparedToolStateOwner;
     }
 
     final void installPreparedPrivateActivation() nothrow @nogc {

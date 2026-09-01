@@ -239,6 +239,7 @@ B5O_PREPARED_LEGACY = {
 }
 B5P_PREPARED_LEGACY = {
     ("tools.create.box", "BoxTool", "activate"),
+    ("tools.create.pen", "PenTool", "activate"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
@@ -276,7 +277,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "89894c88bc2007d32eb637a4b69d7a8437d22b8682088acd0ef4a29f2cbc513a"
+    "0c29345da45c9ebfaec360425b76a79c81c1d125fcd83480350029a371d58d67"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -395,7 +396,8 @@ for path, text in prepared_source_texts.items():
     if "import prepared_record_context" in text and module not in b3d_modules | {
             "prepared_record_context", "tools.transform.transform",
             "tools.common.command_wrapper", "tools.edit.tack",
-            "tools.create.vertex_place", "tools.alignment.array_tool",
+            "tools.create.vertex_place", "tools.create.pen",
+            "tools.alignment.array_tool",
             "tools.alignment.clone_tool", "tools.deform.magnet",
             "tools.edit.reduce", "prepared_private_state",
             "prepared_selection_profile", "prepared_radial_sweep_transition",
@@ -1599,7 +1601,8 @@ for path in (ROOT / "source/tools").rglob("*.d"):
             path.relative_to(ROOT).as_posix() not in {
                 "source/tools/create/vertex_place.d",
                 "source/tools/alignment/radial_sweep_tool.d",
-                "source/tools/create/box.d"}:
+                "source/tools/create/box.d",
+                "source/tools/create/pen.d"}:
         fail(f"P1.0b.5c dormant owner has production caller: {path.relative_to(ROOT)}")
 
 # P1.0b.5p exact Box activation: private reset, prepared GL-name transfer,
@@ -1673,6 +1676,73 @@ for target, old, new, label in (
     else: context = context.replace(old, new, 1)
     if box_activation_gate(box, private, context):
         fail(f"Box activation mutation did not RED: {label}")
+
+# Exact Pen activation uses the same closed private→legacy-init GPU→NoHistory
+# grammar but a distinct fixed private projection.
+pen_activation = (ROOT / "source/tools/create/pen.d").read_text()
+def pen_activation_gate(pen, private, context):
+    start = pen.find("final PreparedSessionActivateEffect prepareActivate(")
+    end = pen.find("final GpuMesh* preparedPreviewGpu", start)
+    producer = pen[start:end] if start >= 0 and end > start else ""
+    install_start = pen.find("final void installPreparedPrivateActivation()")
+    install_end = pen.find("override void deactivate()", install_start)
+    installer = pen[install_start:install_end] \
+        if install_start >= 0 and install_end > install_start else ""
+    return (
+        "PreparedPrivateStateOwner.pen(this)" in producer and
+        "gpuOwner !is null" in producer and
+        "gpuOwner.replacesLikeLegacyInit()" in producer and
+        "gpuOwner.owns(&previewGpu)" in producer and
+        all(x in producer for x in ("context.preparePrivateState(stateOwner)",
+            "context.prepareCreate(gpuOwner)", "context.markNoHistoryInstall()")) and
+        producer.find("context.preparePrivateState(stateOwner)") <
+            producer.find("context.prepareCreate(gpuOwner)") <
+            producer.find("context.markNoHistoryInstall()") and
+        "scope(failure) context.discard();" in producer and
+        "if (!ok) context.discard();" in producer and
+        "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+        "            PreparedActivateKind.Pen, ok);" in producer and
+        "target.classinfo !is PenTool.classinfo" in private and
+        "case PreparedPrivateStateKind.Pen: penTarget.installPreparedPrivateActivation();" in private and
+        "state = PenState.Idle; vertices_.length = 0; params_.currentPoint = -1;" in installer and
+        "params_.posX = params_.posY = params_.posZ = 0.0f;" in installer and
+        "dragArmed = dragInitiated = false; dragVertIdx = -1;" in installer and
+        "e.privateState.install();" in context and "e.gpuCreate.installEnlisted();" in context and
+        not any(x in producer for x in ("context.validate(", "context.install(", "activate();")))
+if not pen_activation_gate(pen_activation,
+        (ROOT / "source/prepared_private_state.d").read_text(), record_context):
+    fail("Pen activation prepared contract drift")
+for target, old, new, label in (
+    ("pen", "gpuOwner !is null", "true", "drop null GPU guard"),
+    ("pen", "gpuOwner.replacesLikeLegacyInit()", "true", "drop legacy GPU mode"),
+    ("pen", "gpuOwner.owns(&previewGpu)", "true", "drop preview identity"),
+    ("pen", "context.preparePrivateState(stateOwner)", "true", "drop private reset"),
+    ("pen", "context.prepareCreate(gpuOwner)", "true", "drop GL create"),
+    ("pen", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
+    ("pen", "scope(failure) context.discard();", "", "drop failure cleanup"),
+    ("pen", "PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+     "            PreparedActivateKind.Pen, ok)",
+     "PreparedSessionActivateEffect(OwnedId.init,\n"
+     "            PreparedActivateKind.Pen, ok)", "forge effect owner"),
+    ("pen", "state = PenState.Idle; vertices_.length = 0; params_.currentPoint = -1;",
+     "state = PenState.Idle; params_.currentPoint = -1;", "drop vertices reset"),
+    ("pen", "params_.posX = params_.posY = params_.posZ = 0.0f;\n"
+     "        dragArmed = dragInitiated = false; dragVertIdx = -1;",
+     "params_.posX = 0.0f;\n"
+     "        dragArmed = dragInitiated = false; dragVertIdx = -1;",
+     "drop position reset"),
+    ("pen", "dragArmed = dragInitiated = false; dragVertIdx = -1;",
+     "dragArmed = false;", "drop drag reset"),
+    ("private", "target.classinfo !is PenTool.classinfo", "false",
+     "broaden Pen admission"),
+):
+    pen, private, context = (pen_activation,
+        (ROOT / "source/prepared_private_state.d").read_text(), record_context)
+    if target == "pen": pen = pen.replace(old, new, 1)
+    elif target == "private": private = private.replace(old, new, 1)
+    else: context = context.replace(old, new, 1)
+    if pen_activation_gate(pen, private, context):
+        fail(f"Pen activation mutation did not RED: {label}")
 
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
 # detached whole-Mesh adoption with exact caller-supplied change flags, and a
@@ -1756,7 +1826,8 @@ for path in (ROOT / "source/tools").rglob("*.d"):
                 "source/tools/deform/magnet.d",
                 "source/tools/edit/reduce.d",
                 "source/tools/alignment/radial_sweep_tool.d",
-                "source/tools/create/box.d"}:
+                "source/tools/create/box.d",
+                "source/tools/create/pen.d"}:
         fail(f"P1.0b.5d.1 dormant infrastructure has hook caller: {path.relative_to(ROOT)}")
 
 # P1.0b.5d.2 first fully closed root: Vertex deactivate preserves the exact
@@ -1818,7 +1889,7 @@ def b5e_gate(owner, context, sources, snapshot=b5e_snapshot):
     return (all(kind in owner for kind in
                 ("ArraySession", "CloneSession", "MagnetSession", "ReductionSession")) and
             "MeshSnapshot activationBaseline;" in owner and
-            owner.count("target.classinfo !is") == 4 and
+            owner.count("target.classinfo !is") == 5 and
             "o.activationBaseline = image;" in owner and
             "failSessionPrepareForTest_" in owner and
             all(f"{prefix}Target.installPreparedActivation(activationBaseline);" in owner

@@ -61,6 +61,7 @@ public:
         o.boxTarget = target; return o;
     }
     static PreparedPrivateStateOwner pen(PenTool target) {
+        if (target is null || target.classinfo !is PenTool.classinfo) return null;
         auto o = new PreparedPrivateStateOwner(PreparedPrivateStateKind.Pen);
         o.penTarget = target; return o;
     }
