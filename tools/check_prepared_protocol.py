@@ -220,7 +220,7 @@ for label, mutant in (
 observer_source = (ROOT / "source/record_observer_hub.d").read_text()
 production_hub_refs = 0
 for path in (ROOT / "source").rglob("*.d"):
-    if path.name != "record_observer_hub.d":
+    if path.name not in ("record_observer_hub.d", "command_history.d"):
         production_hub_refs += path.read_text().count("RecordObserverHub")
 if production_hub_refs:
     fail("P1.0b.3a record observer hub gained a pre-cutover caller")
@@ -231,7 +231,8 @@ if not install_match:
 install_body = observer_source[install_match.end():balanced_source(observer_source, install_match.end())-1]
 if re.search(r"\b(?:assert|enforce|throw|dup|idup|onRecord|append)\b", install_body):
     fail("P1.0b.3a record observer installer gained fallible/open work")
-RECORD_OBSERVER_PREPARE_SHA256 = "6a14ef9808c1ae91bc20c25c1a965098faf48da865a1dbe8098a8e68184f9e6c"
+RECORD_OBSERVER_PREPARE_SHA256 = "22e1bf3fab5884f39a1b89a792f858c2be272fc418f0fc016c2b4194d526c01e"
+RECORD_OBSERVER_EVOLVE_SHA256 = "df8994c02943fc9c4e2fa7517c101d17633c888ba625bcd2c2dfa7f891910991"
 def validate_record_observer_prepare(source):
     match = re.search(r"PreparedRecordObserverImage\s+prepareRecord\s*\([^;{}]*\)\s*\{",
                       source)
@@ -240,13 +241,19 @@ def validate_record_observer_prepare(source):
     body = source[match.end():balanced_source(source, match.end())-1]
     if semantic_digest(body) != RECORD_OBSERVER_PREPARE_SHA256:
         fail("P1.0b.3a record observer prepare exact behavior drifted")
+    evolve = re.search(r"bool\s+evolvePrepared\s*\([^;{}]*\)\s*\{", source)
+    if not evolve:
+        fail("P1.0b.3a record observer evolve seam vanished")
+    evolve_body = source[evolve.end():balanced_source(source, evolve.end())-1]
+    if semantic_digest(evolve_body) != RECORD_OBSERVER_EVOLVE_SHA256:
+        fail("P1.0b.3a record observer prepare exact behavior drifted")
 validate_record_observer_prepare(observer_source)
 
 filter_expression = ("HistoryFlags.InSession | HistoryFlags.Refire |\n"
                      "                       HistoryFlags.ToolLifecycle")
 observer_prepare_mutations = (
-    ("empty macro line", "if (macroActive_ && line.length)",
-     "if (macroActive_)"),
+    ("empty macro line", "if (result.macroActive && line.length)",
+     "if (result.macroActive)"),
     ("Refire filter", filter_expression,
      "HistoryFlags.InSession |\n                       HistoryFlags.ToolLifecycle"),
     ("ToolLifecycle filter", filter_expression,
@@ -266,6 +273,138 @@ for label, contract, wrong in observer_prepare_mutations:
             fail(f"P1.0b.3a {label} mutation failed for wrong reason")
     else:
         fail(f"P1.0b.3a {label} mutation did not RED")
+
+# P1.0b.3b history owner infrastructure remains unreachable from production.
+history_source = (ROOT / "source/command_history.d").read_text()
+for path in (ROOT / "source").rglob("*.d"):
+    if path.name != "command_history.d" and ".prepareRecordBatch(" in path.read_text():
+        fail("P1.0b.3b prepared history gained a pre-cutover caller")
+
+def validate_prepared_history(source):
+    expected = {
+        "prepareRecord": ("PreparedHistoryResult", "b1562eca7f69448b1b5b446824856772bfa3dac0e65f9d4c0b9e8f1a64c7492a"),
+        "consolidatePrepared": (r"private\s+static\s+void", "ccaa223f13adc059804536520163db81c16a1343dda172d0c965e4a7b27d70f4"),
+        "prepareConsolidate": ("PreparedHistoryResult", "3ad88567f5495afac0c68db6f9d627afb5c407afe9152446d15b3271e12db818"),
+        "prepareLifecycle": ("PreparedHistoryResult", "a53797c1a2ae58675b40b96a8567c22931f20ff60a2bb0072c56372a5e306bb2"),
+        "installPreparedToken": ("void", "15772113e5f3f97b80bb8f6d403f80297f53d0b97810571c18a3fc2ca67e8603"),
+    }
+    for name, (returns, digest) in expected.items():
+        match = re.search(returns + r"\s+" + name + r"\s*\([^;{}]*\)[^{]*\{", source)
+        if not match:
+            fail(f"P1.0b.3b {name} seam vanished")
+        body = source[match.end():balanced_source(source, match.end())-1]
+        if semantic_digest(body) != digest:
+            fail(f"P1.0b.3b {name} exact behavior drifted")
+validate_prepared_history(history_source)
+if not re.search(r"struct\s+PreparedHistoryToken\s*\{\s*private:\s*ulong\s+owner,\s*generation;",
+                 history_source):
+    fail("P1.0b.3b scalar-only prepared history token changed")
+if not re.search(r"private\s+struct\s+PreparedHistoryBatch", history_source):
+    fail("P1.0b.3b reference-bearing pending history image escaped owner")
+if re.search(r"(?:prepareRecord|prepareConsolidate|prepareLifecycle|installPreparedToken)\s*\([^)]*PreparedHistoryBatch",
+             history_source):
+    fail("P1.0b.3b pending history image escaped through owner API")
+
+replace_run_tail_calls = []
+for path in (ROOT / "source/tools").rglob("*.d"):
+    source = path.read_text()
+    for match in re.finditer(r"recordGestureEdit\s*\([^;]*GestureRecordMode\.ReplaceRunTail\s*\)\s*;", source):
+        replace_run_tail_calls.append((path.relative_to(ROOT).as_posix(), semantic_digest(match.group(0))))
+if replace_run_tail_calls != [("source/tools/create/box.d",
+        semantic_digest("recordGestureEdit(cmd, GestureRecordMode.ReplaceRunTail);"))]:
+    fail("P1.0b.3b exact ReplaceRunTail production reachability changed")
+
+# Coalescing is deliberately outside P1.0b.3: its legacy mergeFrom mutates the
+# live top Command object. Freeze its exact doors/providers and forbid that
+# open mutation vocabulary from every prepared surface.
+coalescing_doors = {
+    "source/input_router.d": ("app.history.recordCoalescing(cmd);",),
+    "source/app.d": ("case RecordMode.Coalescing: history.recordCoalescing(cmd); break;",),
+    "source/http_providers.d": (
+        "runUiCommand(cmd, RecordMode.Coalescing, id);",
+        "applyOrRefire(cmd, RecordMode.Coalescing)",),
+}
+for relative, fingerprints in coalescing_doors.items():
+    source = (ROOT / relative).read_text()
+    for fingerprint in fingerprints:
+        if source.count(fingerprint) != 1:
+            fail("P1.0b.3b exact legacy coalescing door census changed")
+if sum(len(re.findall(r"[\w.]+\.recordCoalescing\(cmd\);", path.read_text()))
+       for path in (ROOT / "source").rglob("*.d")
+       if path.name != "command_history.d") != 2:
+    fail("P1.0b.3b direct legacy coalescing callsite set changed")
+coalescing_pairs = (
+    "source/commands/mesh/vertex_edit.d",
+    "source/commands/mesh/selection_edit.d",
+    "source/commands/mesh/morph_edit.d",
+    "source/commands/layer/commands.d",
+)
+for relative in coalescing_pairs:
+    source = (ROOT / relative).read_text()
+    if len(re.findall(r"override\s+CompareResult\s+compareOp\s*\(", source)) != 1 or \
+       len(re.findall(r"override\s+bool\s+mergeFrom\s*\(", source)) != 1:
+        fail("P1.0b.3b exact compareOp/mergeFrom provider census changed")
+def validate_no_prepared_coalescing(source):
+    prepared = re.search(r"PreparedHistoryResult\s+prepareRecord\s*\([^;{}]*\)[^{]*\{", source)
+    if not prepared:
+        fail("P1.0b.3b prepared history seam vanished")
+    prepared_text = source[prepared.end():balanced_source(source, prepared.end())-1]
+    if re.search(r"\b(?:recordCoalescing|mergeFrom|CompareResult)\b", prepared_text):
+        fail("P1.0b.3b live-top coalescing escaped into prepared history")
+validate_no_prepared_coalescing(history_source)
+coalescing_mutant = history_source.replace(
+    "if (!ownsPrepared(token)) return PreparedHistoryResult.init;",
+    "if (!ownsPrepared(token)) return PreparedHistoryResult.init;\n        cmd.mergeFrom(cmd);", 1)
+try:
+    validate_no_prepared_coalescing(coalescing_mutant)
+except SystemExit as error:
+    if "live-top coalescing escaped" not in str(error):
+        fail("P1.0b.3b live-top merge mutation failed for wrong reason")
+else:
+    fail("P1.0b.3b live-top merge mutation did not RED")
+
+for path in (ROOT / "source").rglob("*.d"):
+    source = path.read_text()
+    if not path.as_posix().endswith("command_history.d") and \
+       "prepared_tool" in path.name and re.search(
+            r"\b(?:recordCoalescing|mergeFrom|CompareResult)\b", source):
+        fail("P1.0b.3b coalescing escaped into prepared tool surface")
+
+history_mutations = (
+    ("redo invalidation", "batch.history.redoStack = null;",
+     "batch.history.redoStack = batch.history.redoStack;"),
+    ("same-generation replace", "batch.history.undoStack[$-1].tweakGeneration == batch.history.tweakGeneration",
+     "batch.history.undoStack[$-1].tweakGeneration != batch.history.tweakGeneration"),
+    ("observer ordering", "installPreparedImage(pendingPrepared_.history);\n        if (pendingPrepared_.hasObserver",
+     "if (pendingPrepared_.hasObserver"),
+    ("one-shot consume", "preparedPending_ = false;",
+     "preparedPending_ = true;"),
+    ("block redo preservation", "if (!batch.history.blockDepth) {",
+     "if (true) {"),
+    ("ReplaceRunTail timestamp", "entry.timestampMs = batch.history.undoStack[start].timestampMs;",
+     "entry.timestampMs = nowMs();"),
+    ("ReplaceRunTail must-install", "batch.accepted || kind == PreparedHistoryKind.ReplaceRunTail",
+     "batch.accepted"),
+    ("lifecycle empty args", "HistoryEntry(cmd.label, \"\", cmd.name, cmd, nowMs(),",
+     "HistoryEntry(cmd.label, serializeParams(cmd.params()), cmd.name, cmd, nowMs(),"),
+    ("observer shadow evolution", "observerHub.evolvePrepared(batch.observer, line,",
+     "batch.observer = observerHub.prepareRecord(line,"),
+    ("observer owner stability", "batch.hasObserver && observerHub !is batch.observerOwner",
+     "false"),
+    ("block ordinary observer flags", "observerFlags = historyFlagsFor(cmd);",
+     "observerFlags = entry.flags;"),
+)
+for label, contract, wrong in history_mutations:
+    mutant = history_source.replace(contract, wrong, 1)
+    if mutant == history_source:
+        fail(f"P1.0b.3b {label} mutation anchor vanished")
+    try:
+        validate_prepared_history(mutant)
+    except SystemExit as error:
+        if "exact behavior drifted" not in str(error):
+            fail(f"P1.0b.3b {label} mutation failed for wrong reason")
+    else:
+        fail(f"P1.0b.3b {label} mutation did not RED")
 
 # Potency: changing the Arc producer to copy the original Drawing state must
 # RED the named producer contract, independently of the hook-body fingerprint.

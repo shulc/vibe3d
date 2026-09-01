@@ -3,9 +3,12 @@ module command_history;
 import command;
 import command : CmdFlags;
 import argstring : serializeParams, serializeCommandLine;
+import params : Param;
 // Byte-neutral in the default build (perf_probe.g_perf.count is a no-op
 // inline stub without version(PerfProbe) — task 0200's undoApply counter).
 import perf_probe : g_perf, Cat;
+import core.atomic : atomicOp;
+import record_observer_hub : RecordObserverHub, PreparedRecordObserverImage;
 
 // ---------------------------------------------------------------------------
 // CommandHistory — linear undo/redo stack of Command instances.
@@ -110,6 +113,140 @@ enum HistoryFlags : uint {
                              // that re-activates the dropped tool. Never counted in
                              // modelDepth / uiDepth; excluded from /api/history serialization.
 }
+
+version (unittest) private HistoryEntry preparedTestEntry(Command cmd,
+        string name, uint extra = 0, ulong runId = 0, ulong generation = 0) {
+    return HistoryEntry(name, "x=1", name, cmd, 17,
+        HistoryFlags.Succeeded | HistoryFlags.Undoable | extra,
+        runId, generation);
+}
+
+unittest { // P1.0b.3b scalar token, ordered shadow, joint observer ownership.
+    auto cmd = new _EpochTestCmd();
+    auto h = new CommandHistory();
+    auto hub = new RecordObserverHub(); hub.setMacroActive(true);
+    auto token = h.beginPrepared();
+    auto overlap = h.beginPrepared();
+    auto invalidOverlap = h.validatesPreparedToken(overlap);
+    assert(!invalidOverlap.valid);
+    auto result = h.prepareRecord(token, cmd, PreparedHistoryKind.Plain, 0, hub);
+    assert(result.accepted && result.undoDepth == 1 && h.undoStack.length == 0);
+    auto wrongHub = new RecordObserverHub();
+    auto wrongValidated = h.validatesPreparedToken(token, wrongHub);
+    assert(!wrongValidated.valid);
+    auto valid = h.validatesPreparedToken(token, hub); assert(valid.valid);
+    h.installPreparedToken(valid);
+    assert(h.undoStack.length == 1 && hub.macroLength == 1);
+    h.installPreparedToken(valid);
+    assert(h.undoStack.length == 1); // consumed token is inert.
+
+    auto ordered = new CommandHistory(); ordered._currentRunId = 55;
+    auto orderedToken = ordered.beginPrepared();
+    ordered.prepareRecord(orderedToken, cmd, PreparedHistoryKind.InSession, 7);
+    ordered.prepareRecord(orderedToken, cmd,
+        PreparedHistoryKind.ReplaceInSessionTail, 7);
+    ordered.prepareConsolidate(orderedToken, 7);
+    auto orderedValid = ordered.validatesPreparedToken(orderedToken); assert(orderedValid.valid);
+    ordered.installPreparedToken(orderedValid);
+    assert(ordered._currentRunId == 55 && !ordered._runOpen);
+
+    auto blocked = new CommandHistory(); blocked.blockBegin("b");
+    blocked.redoStack = [preparedTestEntry(cmd, "redo")];
+    auto blockedToken = blocked.beginPrepared();
+    blocked.prepareRecord(blockedToken, cmd, PreparedHistoryKind.Plain, 0);
+    auto blockedValid = blocked.validatesPreparedToken(blockedToken); assert(blockedValid.valid);
+    blocked.installPreparedToken(blockedValid);
+    assert(blocked.blockChildren.length == 1 && blocked.redoStack.length == 1);
+
+    auto discarded = new CommandHistory(); auto discardedToken = discarded.beginPrepared();
+    discarded.prepareRecord(discardedToken, cmd, PreparedHistoryKind.Plain, 0);
+    discarded.discardPreparedToken(discardedToken);
+    assert(discarded.undoStack.length == 0);
+
+    auto replace = new CommandHistory(); replace._runOpen = true;
+    replace.undoStack = [preparedTestEntry(cmd, "before"),
+        preparedTestEntry(cmd, "g1", HistoryFlags.InSession, 8),
+        preparedTestEntry(cmd, "g2", HistoryFlags.InSession, 8)];
+    replace.undoStack[1].timestampMs = 123;
+    replace.redoStack = [preparedTestEntry(cmd, "redo")];
+    auto replaceToken = replace.beginPrepared();
+    auto replaced = replace.prepareRecord(replaceToken, cmd,
+        PreparedHistoryKind.ReplaceRunTail, 8, hub);
+    assert(replaced.accepted && replaced.mustInstall && !replaced.runOpen &&
+           replaced.undoDepth == 2 && replaced.redoDepth == 0);
+    auto replaceValid = replace.validatesPreparedToken(replaceToken, hub); assert(replaceValid.valid);
+    replace.installPreparedToken(replaceValid);
+    assert(replace.undoStack[$-1].timestampMs == 123 &&
+           !(replace.undoStack[$-1].flags & HistoryFlags.InSession));
+
+    auto refusal = new CommandHistory(); refusal._runOpen = true;
+    refusal.setLockout(true); auto refusalToken = refusal.beginPrepared();
+    auto refused = refusal.prepareRecord(refusalToken, cmd,
+        PreparedHistoryKind.ReplaceRunTail, 3);
+    assert(!refused.accepted && refused.mustInstall && !refused.runOpen);
+    assert(refusal._runOpen); // close exists only in the pending shadow.
+    auto refusalValid = refusal.validatesPreparedToken(refusalToken); assert(refusalValid.valid);
+    refusal.installPreparedToken(refusalValid);
+    assert(!refusal._runOpen);
+
+    auto lifecycle = new CommandHistory(); auto lifecycleCmd = new _ThrowingParamsCmd();
+    auto lifecycleToken = lifecycle.beginPrepared();
+    assert(lifecycle.prepareLifecycle(lifecycleToken, lifecycleCmd).accepted);
+    assert(lifecycleCmd.paramCalls == 0);
+    auto lifecycleValid = lifecycle.validatesPreparedToken(lifecycleToken); assert(lifecycleValid.valid);
+    lifecycle.installPreparedToken(lifecycleValid);
+    assert(lifecycle.undoStack[0].args == "" && lifecycleCmd.paramCalls == 0);
+
+    auto many = new CommandHistory(); auto manyHub = new RecordObserverHub();
+    manyHub.setMacroActive(true); manyHub.setTraceArmed(true);
+    auto manyToken = many.beginPrepared();
+    many.prepareRecord(manyToken, cmd, PreparedHistoryKind.Plain, 0,
+                       manyHub, `{"n":1}`);
+    many.prepareRecord(manyToken, cmd, PreparedHistoryKind.Plain, 0,
+                       manyHub, `{"n":2}`);
+    auto switchedHub = new RecordObserverHub();
+    assert(!many.prepareRecord(manyToken, cmd, PreparedHistoryKind.Plain, 0,
+                               switchedHub).accepted);
+    auto manyValid = many.validatesPreparedToken(manyToken, manyHub);
+    assert(manyValid.valid); many.installPreparedToken(manyValid);
+    assert(many.undoStack.length == 2 && manyHub.macroLength == 2 &&
+           manyHub.traceLength == 2 && manyHub.traceAt(0) == `{"n":1}` &&
+           manyHub.traceAt(1) == `{"n":2}`);
+
+    foreach (mode; [PreparedHistoryKind.InSession,
+                    PreparedHistoryKind.ReplaceInSessionTail,
+                    PreparedHistoryKind.ReplaceRunTail]) {
+        auto block = new CommandHistory(); block.blockBegin("b"); block._runOpen = true;
+        auto blockHub = new RecordObserverHub(); blockHub.setTraceArmed(true);
+        auto blockToken = block.beginPrepared();
+        auto blockResult = block.prepareRecord(blockToken, cmd, mode, 4,
+                                               blockHub, `{"plain":true}`);
+        assert(blockResult.accepted);
+        auto blockValid = block.validatesPreparedToken(blockToken, blockHub);
+        assert(blockValid.valid); block.installPreparedToken(blockValid);
+        assert(block.blockChildren.length == 1 && blockHub.traceLength == 1);
+    }
+
+    auto appendTail = new CommandHistory(); appendTail._runOpen = true;
+    appendTail.undoStack = [preparedTestEntry(cmd, "foreign")];
+    auto appendHub = new RecordObserverHub(); appendHub.setMacroActive(true);
+    auto appendToken = appendTail.beginPrepared();
+    auto appended = appendTail.prepareRecord(appendToken, cmd,
+        PreparedHistoryKind.ReplaceRunTail, 99, appendHub);
+    assert(appended.accepted && appended.undoDepth == 2 && appended.mustInstall);
+    auto appendValid = appendTail.validatesPreparedToken(appendToken, appendHub);
+    assert(appendValid.valid); appendTail.installPreparedToken(appendValid);
+    assert(appendTail.undoStack.length == 2 && !appendTail._runOpen &&
+           appendHub.macroLength == 1);
+}
+
+static assert(!__traits(compiles, {
+    PreparedHistoryToken a; PreparedHistoryToken b = a;
+}));
+static assert(!__traits(compiles, {
+    CommandHistory h; PreparedHistoryToken t; HistoryEntry e;
+    h.prepareRecord(t, e, PreparedHistoryKind.Plain, 0);
+}));
 
 struct HistoryEntry {
     string  label;          // human-readable
@@ -268,7 +405,57 @@ public:
     @disable this(this);
 }
 
+/// Closed detached recording operations admitted by the future atomic arm
+/// transaction. The caller supplies only its Command; CommandHistory owns all
+/// entry metadata and never invokes the legacy open observer delegate.
+enum PreparedHistoryKind : ubyte {
+    Plain, InSession, ReplaceInSessionTail, ReplaceRunTail
+}
+
+private shared ulong nextPreparedHistoryOwnerId_;
+
+/// Owner-issued, noncopyable, one-shot history+observer transaction image.
+/// All allocating work is complete before this value becomes valid.
+private struct PreparedHistoryBatch {
+private:
+    PreparedHistoryImage history;
+    PreparedRecordObserverImage observer;
+    RecordObserverHub observerOwner;
+    bool hasObserver, accepted, validated;
+public:
+    @disable this(this);
+}
+
+/// The only history value allowed to escape into a future PreparedArm.
+struct PreparedHistoryToken {
+private:
+    ulong owner, generation;
+public:
+    @disable this(this);
+}
+
+struct ValidatedPreparedHistoryToken {
+private:
+    ulong owner, generation;
+public:
+    @disable this(this);
+    bool valid() const nothrow @nogc { return owner != 0; }
+}
+
+/// Scalar result safe to inspect without exposing any owned containers.
+struct PreparedHistoryResult {
+    bool accepted;
+    size_t undoDepth, redoDepth;
+    bool runOpen;
+    ulong runId, tweakGeneration;
+    bool mustInstall;
+}
+
 final class CommandHistory {
+    private immutable ulong preparedOwner_;
+    private ulong preparedGeneration_;
+    private bool preparedPending_;
+    private PreparedHistoryBatch pendingPrepared_;
     private HistoryEntry[] undoStack;
     private HistoryEntry[] redoStack;
     private size_t maxDepth = 50;
@@ -372,6 +559,284 @@ final class CommandHistory {
     // sees pure REPLACE — the historical Refire-keyed behaviour, unchanged.
     private ulong _tweakGeneration = 0;
 
+    this() nothrow @nogc {
+        preparedOwner_ = atomicOp!"+="(nextPreparedHistoryOwnerId_, 1UL);
+    }
+
+    private static HistoryEntry preparedEntry(Command cmd, uint flags,
+            ulong runId, ulong tweakGeneration) {
+        auto args = serializeParams(cmd.params());
+        return HistoryEntry(cmd.label, args, cmd.name, cmd, nowMs(), flags,
+                            runId, tweakGeneration);
+    }
+
+    private static void consolidatePrepared(ref PreparedHistoryImage p,
+                                             ulong runId) {
+        scope(exit) p.runOpen = false;
+        size_t end = p.undoStack.length, start = end;
+        while (start && (p.undoStack[start-1].flags & HistoryFlags.InSession) &&
+               p.undoStack[start-1].runId == runId) --start;
+        size_t n = end - start;
+        if (!n) return;
+        import commands.mesh.vertex_edit : MeshVertexEdit;
+        MeshVertexEdit[] gathered;
+        gathered.reserve(n);
+        bool allVertexEdits = true;
+        foreach (i; start .. end) {
+            auto edit = cast(MeshVertexEdit) p.undoStack[i].cmd;
+            if (edit is null) { allVertexEdits = false; break; }
+            gathered ~= edit;
+        }
+        if (allVertexEdits) {
+            if (n == 1) {
+                p.undoStack[start].flags &=
+                    ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
+                p.undoStack[start].runId = 0;
+                return;
+            }
+            auto merged = MeshVertexEdit.mergeRun(gathered);
+            auto first = p.undoStack[start];
+            auto entry = HistoryEntry(merged.label, serializeParams(merged.params()),
+                merged.name, merged, first.timestampMs, historyFlagsFor(merged), 0, 0);
+            p.undoStack = p.undoStack[0..start] ~ entry ~ p.undoStack[end..$];
+            return;
+        }
+        auto mergeable = cast(RunMergeable) p.undoStack[start].cmd;
+        if (mergeable is null) return;
+        if (n == 1) {
+            p.undoStack[start].flags &=
+                ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
+            p.undoStack[start].runId = 0;
+            return;
+        }
+        Command[] later;
+        later.reserve(n - 1);
+        foreach (i; start + 1 .. end) later ~= p.undoStack[i].cmd;
+        auto merged = mergeable.mergeRunTail(later);
+        if (merged is null) return;
+        auto first = p.undoStack[start];
+        auto entry = HistoryEntry(merged.label, serializeParams(merged.params()),
+            merged.name, merged, first.timestampMs, historyFlagsFor(merged), 0, 0);
+        p.undoStack = p.undoStack[0..start] ~ entry ~ p.undoStack[end..$];
+    }
+
+    PreparedHistoryToken beginPrepared() {
+        PreparedHistoryToken token;
+        if (preparedPending_) return token;
+        preparedPending_ = true;
+        ++preparedGeneration_;
+        pendingPrepared_.history = prepareCurrentImage();
+        pendingPrepared_.observerOwner = null;
+        pendingPrepared_.hasObserver = false;
+        pendingPrepared_.accepted = false;
+        pendingPrepared_.validated = false;
+        token.owner = preparedOwner_;
+        token.generation = preparedGeneration_;
+        return token;
+    }
+
+    private bool ownsPrepared(ref PreparedHistoryToken token) const nothrow @nogc {
+        return preparedPending_ && token.owner == preparedOwner_ &&
+               token.generation == preparedGeneration_;
+    }
+
+    /// Evolve the owner-held detached image from the Command itself. Metadata
+    /// and HistoryEntry construction remain private owner responsibilities.
+    PreparedHistoryResult prepareRecord(ref PreparedHistoryToken token,
+            Command cmd, PreparedHistoryKind kind, ulong runId,
+            RecordObserverHub observerHub = null,
+            string preparedTraceJson = null) {
+        if (!ownsPrepared(token)) return PreparedHistoryResult.init;
+        ref batch = pendingPrepared_;
+        batch.accepted = false;
+        batch.validated = false;
+        if (batch.hasObserver && observerHub !is batch.observerOwner)
+            return PreparedHistoryResult.init;
+
+        bool wasRunOpen = batch.history.runOpen;
+        bool guarded = batch.history.lockout || cmd is null ||
+            !cmd.isUndoable || batch.history.state != UndoState.Active;
+        if (kind == PreparedHistoryKind.ReplaceRunTail)
+            batch.history.runOpen = false;
+        HistoryEntry entry;
+        uint observerFlags;
+        if (!guarded) {
+            uint flags = historyFlagsFor(cmd);
+            observerFlags = flags;
+            final switch (kind) {
+            case PreparedHistoryKind.Plain:
+                entry = preparedEntry(cmd, flags, 0, 0); break;
+            case PreparedHistoryKind.InSession:
+                entry = preparedEntry(cmd, flags | HistoryFlags.InSession,
+                    runId, batch.history.tweakGeneration); break;
+            case PreparedHistoryKind.ReplaceInSessionTail:
+                entry = preparedEntry(cmd, flags | HistoryFlags.InSession |
+                    HistoryFlags.Refire, runId, batch.history.tweakGeneration); break;
+            case PreparedHistoryKind.ReplaceRunTail:
+                entry = preparedEntry(cmd, flags, 0, 0); break;
+            }
+        }
+        if (!guarded) final switch (kind) {
+        case PreparedHistoryKind.Plain:
+            if (batch.history.runOpen)
+                consolidatePrepared(batch.history, batch.history.currentRunId);
+            if (batch.history.blockDepth) batch.history.blockChildren ~= cmd;
+            else batch.history.undoStack ~= entry;
+            break;
+        case PreparedHistoryKind.InSession:
+            if (batch.history.blockDepth) {
+                if (wasRunOpen)
+                    consolidatePrepared(batch.history, batch.history.currentRunId);
+                batch.history.blockChildren ~= cmd;
+                observerFlags = historyFlagsFor(cmd);
+                break;
+            }
+            batch.history.undoStack ~= entry;
+            batch.history.runOpen = true;
+            break;
+        case PreparedHistoryKind.ReplaceInSessionTail:
+            if (batch.history.blockDepth) {
+                if (batch.history.runOpen)
+                    consolidatePrepared(batch.history, batch.history.currentRunId);
+                batch.history.blockChildren ~= cmd;
+                observerFlags = historyFlagsFor(cmd);
+                break;
+            }
+            bool replace = batch.history.undoStack.length &&
+                (batch.history.undoStack[$-1].flags & HistoryFlags.InSession) &&
+                (batch.history.undoStack[$-1].flags & HistoryFlags.Refire) &&
+                batch.history.undoStack[$-1].runId == runId &&
+                batch.history.undoStack[$-1].tweakGeneration == batch.history.tweakGeneration;
+            if (replace) batch.history.undoStack[$-1] = entry;
+            else batch.history.undoStack ~= entry;
+            batch.history.runOpen = true;
+            break;
+        case PreparedHistoryKind.ReplaceRunTail:
+            if (batch.history.blockDepth) {
+                if (wasRunOpen)
+                    consolidatePrepared(batch.history, batch.history.currentRunId);
+                batch.history.blockChildren ~= cmd;
+                observerFlags = historyFlagsFor(cmd);
+                break;
+            }
+            size_t end = batch.history.undoStack.length, start = end;
+            while (start &&
+                   (batch.history.undoStack[start-1].flags & HistoryFlags.InSession) &&
+                   batch.history.undoStack[start-1].runId == runId) --start;
+            if (start < end) {
+                entry.timestampMs = batch.history.undoStack[start].timestampMs;
+                batch.history.undoStack = batch.history.undoStack[0..start] ~
+                    entry ~ batch.history.undoStack[end..$];
+            } else batch.history.undoStack ~= entry;
+            break;
+        }
+        if (!guarded) {
+            if (!batch.history.blockDepth) {
+                if (batch.history.undoStack.length > batch.history.maxDepth)
+                    batch.history.undoStack =
+                        batch.history.undoStack[$-batch.history.maxDepth..$].dup;
+                batch.history.redoStack = null;
+            }
+            batch.accepted = true;
+            if (observerHub !is null) {
+                string line = entry.commandName ~
+                    (entry.args.length ? " " ~ entry.args : "");
+                if (batch.hasObserver) {
+                    if (!observerHub.evolvePrepared(batch.observer, line,
+                            observerFlags, preparedTraceJson))
+                        return PreparedHistoryResult.init;
+                } else {
+                    batch.observer = observerHub.prepareRecord(line, observerFlags,
+                                                                preparedTraceJson);
+                    batch.observerOwner = observerHub;
+                    batch.hasObserver = true;
+                }
+            }
+        }
+        return PreparedHistoryResult(batch.accepted,
+            batch.history.undoStack.length, batch.history.redoStack.length,
+            batch.history.runOpen, batch.history.currentRunId,
+            batch.history.tweakGeneration,
+            batch.accepted || kind == PreparedHistoryKind.ReplaceRunTail);
+    }
+
+    PreparedHistoryResult prepareConsolidate(ref PreparedHistoryToken token,
+                                              ulong runId) {
+        if (!ownsPrepared(token)) return PreparedHistoryResult.init;
+        ref batch = pendingPrepared_;
+        batch.validated = false;
+        consolidatePrepared(batch.history, runId);
+        batch.accepted = true;
+        return PreparedHistoryResult(true, batch.history.undoStack.length,
+            batch.history.redoStack.length, batch.history.runOpen,
+            batch.history.currentRunId, batch.history.tweakGeneration);
+    }
+
+    PreparedHistoryResult prepareLifecycle(ref PreparedHistoryToken token,
+                                            Command cmd) {
+        if (!ownsPrepared(token)) return PreparedHistoryResult.init;
+        ref batch = pendingPrepared_;
+        batch.validated = false;
+        bool accepted = !batch.history.lockout && cmd !is null &&
+                        batch.history.state == UndoState.Active;
+        if (accepted) {
+            auto entry = HistoryEntry(cmd.label, "", cmd.name, cmd, nowMs(),
+                historyFlagsFor(cmd), 0, 0);
+            batch.history.undoStack ~= entry;
+            if (batch.history.undoStack.length > batch.history.maxDepth)
+                batch.history.undoStack = batch.history.undoStack[$-batch.history.maxDepth..$].dup;
+            batch.history.redoStack = null;
+        }
+        batch.accepted = accepted;
+        return PreparedHistoryResult(accepted, batch.history.undoStack.length,
+            batch.history.redoStack.length, batch.history.runOpen,
+            batch.history.currentRunId, batch.history.tweakGeneration);
+    }
+
+    ValidatedPreparedHistoryToken validatesPreparedToken(ref PreparedHistoryToken token,
+                                RecordObserverHub observerHub = null) nothrow @nogc {
+        ValidatedPreparedHistoryToken validated;
+        if (!ownsPrepared(token)) return validated;
+        if (pendingPrepared_.hasObserver &&
+            (observerHub !is pendingPrepared_.observerOwner ||
+             !observerHub.validates(pendingPrepared_.observer))) return validated;
+        pendingPrepared_.validated = true;
+        validated.owner = token.owner; validated.generation = token.generation;
+        token.owner = 0; token.generation = 0;
+        return validated;
+    }
+
+    bool ownsValidated(ref ValidatedPreparedHistoryToken token) const nothrow @nogc {
+        return preparedPending_ && pendingPrepared_.validated &&
+               token.owner == preparedOwner_ && token.generation == preparedGeneration_;
+    }
+
+    /// Consume after all fallible validation. History installs first; the
+    /// detached observer image follows at the legacy post-history point.
+    void installPreparedToken(ref ValidatedPreparedHistoryToken token) nothrow @nogc {
+        if (!ownsValidated(token)) return;
+        preparedPending_ = false;
+        token.owner = 0; token.generation = 0;
+        installPreparedImage(pendingPrepared_.history);
+        if (pendingPrepared_.hasObserver)
+            pendingPrepared_.observerOwner.installPrepared(pendingPrepared_.observer);
+        pendingPrepared_.observerOwner = null;
+        pendingPrepared_.hasObserver = false;
+        pendingPrepared_.validated = false;
+    }
+
+    void discardPreparedToken(ref PreparedHistoryToken token) nothrow @nogc {
+        if (!ownsPrepared(token)) return;
+        preparedPending_ = false;
+        token.owner = 0; token.generation = 0;
+        pendingPrepared_.history.undoStack = null;
+        pendingPrepared_.history.redoStack = null;
+        pendingPrepared_.history.blockChildren = null;
+        pendingPrepared_.observerOwner = null;
+        pendingPrepared_.hasObserver = false;
+        pendingPrepared_.validated = false;
+    }
+
     /// Fallible prepare half: duplicate every mutable history-owned container.
     /// This is inert until installPreparedImage is called by the future P1.0c
     /// commit; no existing recorder or navigation door calls either method.
@@ -402,7 +867,7 @@ final class CommandHistory {
 
     /// Nonallocating owner install. Assignments transfer already-prepared
     /// array/string headers; no command hooks or history callbacks run.
-    void installPreparedImage(ref PreparedHistoryImage p) nothrow {
+    void installPreparedImage(ref PreparedHistoryImage p) nothrow @nogc {
         undoStack = p.undoStack; redoStack = p.redoStack;
         maxDepth = p.maxDepth; _state = p.state; _undoEpoch = p.undoEpoch;
         _lockout = p.lockout; _coalesceBarrier = p.coalesceBarrier;
@@ -1750,6 +2215,18 @@ version (unittest) {
         protected override bool applyImpl()  { return true; }
     }
 
+    private final class _ThrowingParamsCmd : Command {
+        import mesh : Mesh; import view : View; import editmode : EditMode;
+        private Mesh mesh_; private View view_ = new View(0, 0, 1, 1);
+        int paramCalls;
+        this() { super(&mesh_, view_, EditMode.Vertices); }
+        override string name() const { return "test.lifecycle"; }
+        override string label() const { return "Lifecycle"; }
+        override CmdFlags cmdFlags() const { return CmdFlags.ToolLifecycle; }
+        override Param[] params() { ++paramCalls; throw new Exception("params called"); }
+        protected override bool applyImpl() { return true; }
+    }
+
     // Stub command for class-aware stepping unit tests.
     // Tracks how many times apply()/revert() were called — used to verify
     // UI entries are carried INERT during a model step (no revert()).
@@ -1890,6 +2367,99 @@ version (unittest) {
         override CmdFlags cmdFlags() const { return CmdFlags.Model; }
         protected override bool applyImpl()  { return true; }
     }
+
+    private final class _DecliningRunMergeCmd : Command, RunMergeable {
+        import mesh : Mesh; import view : View; import editmode : EditMode;
+        private Mesh mesh_; private View view_ = new View(0, 0, 1, 1);
+        bool throws_;
+        this(bool throws = false) { super(&mesh_, view_, EditMode.Vertices); throws_ = throws; }
+        override string name() const { return "test.decliningRunMerge"; }
+        override string label() const { return "DecliningRunMerge"; }
+        override CmdFlags cmdFlags() const { return CmdFlags.Model; }
+        protected override bool applyImpl() { return true; }
+        Command mergeRunTail(Command[] later) {
+            if (throws_) throw new Exception("prepared merge fault");
+            return null;
+        }
+    }
+}
+
+unittest { // P1.0b.3b real detached consolidation matrix.
+    import commands.mesh.vertex_edit : MeshVertexEdit;
+    import mesh : Mesh; import view : View; import editmode : EditMode;
+    import math : Vec3;
+
+    // Single and multi MeshVertexEdit use the production merge primitive.
+    foreach (count; [1, 2]) {
+        auto h = new CommandHistory(); auto run = h.nextRun();
+        Mesh mesh; auto view = new View(0, 0, 1, 1);
+        foreach (i; 0 .. count) {
+            auto edit = new MeshVertexEdit(&mesh, view, EditMode.Vertices);
+            edit.setEdit([0u], [Vec3(cast(float)i,0,0)],
+                         [Vec3(cast(float)i+1,0,0)], "mve");
+            h.recordInSession(edit, run);
+        }
+        auto batch = h.beginPrepared();
+        auto result = h.prepareConsolidate(batch, run);
+        assert(result.accepted && result.undoDepth == 1 && !result.runOpen);
+        assert(h.undoStack.length == count); // zero-live prepare.
+        auto valid = h.validatesPreparedToken(batch); assert(valid.valid); h.installPreparedToken(valid);
+        assert(h.undoStack.length == 1 &&
+               !(h.undoStack[0].flags & HistoryFlags.InSession));
+    }
+
+    // RunMergeable single strips; multi merges; null and neither preserve tail.
+    auto single = new CommandHistory(); auto singleRun = single.nextRun();
+    single.recordInSession(new _RunMergeableTestCmd(0, 1), singleRun);
+    auto singleBatch = single.beginPrepared();
+    single.prepareConsolidate(singleBatch, singleRun);
+    auto singleValid = single.validatesPreparedToken(singleBatch); assert(singleValid.valid); single.installPreparedToken(singleValid);
+    assert(!(single.undoStack[0].flags & HistoryFlags.InSession));
+
+    auto multi = new CommandHistory(); auto multiRun = multi.nextRun();
+    multi.recordInSession(new _RunMergeableTestCmd(0, 1), multiRun);
+    multi.recordInSession(new _RunMergeableTestCmd(1, 3), multiRun);
+    auto multiBatch = multi.beginPrepared();
+    assert(multi.prepareConsolidate(multiBatch, multiRun).undoDepth == 1);
+    auto multiValid = multi.validatesPreparedToken(multiBatch); assert(multiValid.valid); multi.installPreparedToken(multiValid);
+    assert((cast(_RunMergeableTestCmd) multi.undoStack[0].cmd).after == 3);
+
+    foreach (first; [cast(Command)new _DecliningRunMergeCmd(),
+                     cast(Command)new _PlainTestCmd()]) {
+        auto h = new CommandHistory(); auto run = h.nextRun();
+        h.recordInSession(first, run); h.recordInSession(new _PlainTestCmd(), run);
+        auto batch = h.beginPrepared();
+        assert(h.prepareConsolidate(batch, run).undoDepth == 2);
+        auto valid = h.validatesPreparedToken(batch); assert(valid.valid); h.installPreparedToken(valid);
+        assert(h.undoStack.length == 2 &&
+               (h.undoStack[0].flags & HistoryFlags.InSession));
+    }
+
+    // Mixed MVE/non-MVE tail declines both arms byte-for-byte.
+    auto mixed = new CommandHistory(); auto mixedRun = mixed.nextRun();
+    Mesh mixedMesh; auto mixedView = new View(0, 0, 1, 1);
+    auto mixedEdit = new MeshVertexEdit(&mixedMesh, mixedView, EditMode.Vertices);
+    mixedEdit.setEdit([0u], [Vec3(0,0,0)], [Vec3(1,0,0)], "mixed");
+    mixed.recordInSession(mixedEdit, mixedRun);
+    mixed.recordInSession(new _PlainTestCmd(), mixedRun);
+    auto mixedBatch = mixed.beginPrepared();
+    assert(mixed.prepareConsolidate(mixedBatch, mixedRun).undoDepth == 2);
+    auto mixedValid = mixed.validatesPreparedToken(mixedBatch); assert(mixedValid.valid); mixed.installPreparedToken(mixedValid);
+    assert(mixed.undoStack.length == 2);
+
+    // A throwing virtual leaves every live history field untouched.
+    auto fault = new CommandHistory(); auto faultRun = fault.nextRun();
+    fault.recordInSession(new _DecliningRunMergeCmd(true), faultRun);
+    fault.recordInSession(new _PlainTestCmd(), faultRun);
+    auto faultBatch = fault.beginPrepared();
+    try {
+        fault.prepareConsolidate(faultBatch, faultRun);
+        assert(false, "injected virtual must throw");
+    } catch (Exception e) {
+        assert(e.msg == "prepared merge fault");
+    }
+    assert(fault.undoStack.length == 2 && fault.runOpen);
+    fault.discardPreparedToken(faultBatch);
 }
 
 unittest { // RunMergeable arm: a run of 2 collapses to ONE surviving entry.

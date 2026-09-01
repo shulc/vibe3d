@@ -45,16 +45,26 @@ public:
         result.traceEntries = traceEntries_.dup;
         result.macroActive = macroActive_;
         result.traceArmed = traceArmed_;
-        if (macroActive_ && line.length) result.macroLines ~= line.idup;
-        if (traceArmed_ && preparedTraceJson.length &&
+        result.consumable = true;
+        evolvePrepared(result, line, flags, preparedTraceJson);
+        return result;
+    }
+
+    /// Evolve an already-detached owner image in producer order. This never
+    /// rereads or clones the live hub, so a multi-effect arm cannot lose an
+    /// earlier prepared observation.
+    bool evolvePrepared(ref PreparedRecordObserverImage result, string line,
+                        uint flags, string preparedTraceJson = null) {
+        if (!validates(result)) return false;
+        if (result.macroActive && line.length) result.macroLines ~= line.idup;
+        if (result.traceArmed && preparedTraceJson.length &&
             !(flags & (HistoryFlags.InSession | HistoryFlags.Refire |
                        HistoryFlags.ToolLifecycle))) {
             result.traceEntries ~= preparedTraceJson.idup;
             if (result.traceEntries.length > 500)
                 result.traceEntries = result.traceEntries[$ - 500 .. $].dup;
         }
-        result.consumable = true;
-        return result;
+        return true;
     }
 
     bool validates(ref PreparedRecordObserverImage image) const nothrow @nogc {
