@@ -1,4 +1,7 @@
 module tools.deform.stroke_extrude_tool;
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import command_history : PreparedHistoryKind;
 
 import bindbc.sdl;
 import operator : VectorStack;
@@ -318,6 +321,15 @@ private:
         }
         built_ = (n != 0);
         refreshCaches();
+    }
+
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
+        bool accepted;
+        if (active && built_ && context !is null && history !is null && gestureFactory !is null && before.filled) {
+            auto cmd = cast(MeshSessionEdit) gestureFactory();
+            if (cmd !is null) { cmd.setSnapshots(before, MeshSnapshot.capture(*mesh), "Stroke Extrude"); accepted = context.prepare(cmd, PreparedHistoryKind.Plain).accepted; }
+        }
+        return PreparedDeactivateEffect(preparedToolStateOwner, PreparedDeactivateKind.StrokeExtrude, accepted);
     }
 
     void commitEdit() {

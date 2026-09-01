@@ -22,6 +22,9 @@ import display_sync : refreshDisplay;
 import std.math : abs, sqrt;
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import command_history : PreparedHistoryKind;
 
 // ---------------------------------------------------------------------------
 // SmoothShiftTool — interactive Smooth Shift + Thicken (factory id
@@ -414,6 +417,15 @@ private:
         ed.close();
         built = (n != 0);
         refreshCaches();
+    }
+
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
+        bool accepted;
+        if (active && built && context !is null && history !is null && gestureFactory !is null && before.filled) {
+            auto cmd = cast(MeshSessionEdit) gestureFactory();
+            if (cmd !is null) { cmd.setSnapshots(before, MeshSnapshot.capture(*mesh), "Smooth Shift"); accepted = context.prepare(cmd, PreparedHistoryKind.Plain).accepted; }
+        }
+        return PreparedDeactivateEffect(preparedToolStateOwner, PreparedDeactivateKind.SmoothShift, accepted);
     }
 
     void commitEdit() {

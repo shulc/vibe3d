@@ -17,6 +17,9 @@ import mesh_edit_delta : MeshEditScope;
 
 import std.math : lround;
 import perf_probe : g_perf, Cat;
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import command_history : PreparedHistoryKind;
 
 // ---------------------------------------------------------------------------
 // ReductionTool — interactive polygon reduction (factory id `mesh.reduceTool`).
@@ -207,6 +210,10 @@ private:
     }
 
     // Record the interactive session as one snapshot-pair undo entry.
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext c) {
+        bool ok; if (active && built && c !is null && history !is null && gestureFactory !is null && before.filled) { auto cmd=cast(MeshSessionEdit)gestureFactory(); if(cmd !is null){cmd.setSnapshots(before,MeshSnapshot.capture(*mesh),"Reduce");ok=c.prepare(cmd,PreparedHistoryKind.Plain).accepted;}}
+        return PreparedDeactivateEffect(preparedToolStateOwner,PreparedDeactivateKind.Reduction,ok);
+    }
     void commitEdit() {
         if (history is null || gestureFactory is null) return;
         if (!before.filled) return;

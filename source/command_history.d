@@ -772,6 +772,12 @@ final class CommandHistory {
             batch.history.currentRunId, batch.history.tweakGeneration);
     }
 
+    ulong prepareNextRun(ref PreparedHistoryToken token) {
+        if (!ownsPrepared(token)) return 0;
+        pendingPrepared_.validated = false;
+        return ++pendingPrepared_.history.currentRunId;
+    }
+
     PreparedHistoryResult prepareLifecycle(ref PreparedHistoryToken token,
                                             Command cmd) {
         if (!ownsPrepared(token)) return PreparedHistoryResult.init;

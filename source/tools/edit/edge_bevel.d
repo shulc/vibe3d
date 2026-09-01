@@ -24,6 +24,9 @@ import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
 import std.math : abs, sqrt;
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import command_history : PreparedHistoryKind;
 
 // ---------------------------------------------------------------------------
 // EdgeBevelTool — interactive Edge Bevel (factory id `edge.bevel`).
@@ -400,6 +403,10 @@ private:
         refreshCaches();
     }
 
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext c) {
+        bool ok; if (active && built && width_ != 0 && c !is null && history !is null && gestureFactory !is null && before.filled) { auto cmd=cast(MeshSessionEdit)gestureFactory(); if(cmd !is null){cmd.setSnapshots(before,MeshSnapshot.capture(*mesh),"Edge Bevel");ok=c.prepare(cmd,PreparedHistoryKind.Plain).accepted;}}
+        return PreparedDeactivateEffect(preparedToolStateOwner,PreparedDeactivateKind.EdgeBevel,ok);
+    }
     void commitEdit() {
         if (history is null || gestureFactory is null) return;
         if (!before.filled) return;

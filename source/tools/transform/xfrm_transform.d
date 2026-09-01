@@ -1,4 +1,6 @@
 module tools.transform.xfrm_transform;
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 
 // XfrmTransformTool — `xfrm.transform`: ONE tool that can translate,
 // rotate, and scale based on three boolean flags
@@ -736,6 +738,17 @@ public:
         itemEditCapturing_       = false;
         itemEditTargets_.length  = 0;
         itemEditBefore_.length   = 0;
+    }
+
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
+        bool accepted = prepareEditRecord(context, "Move");
+        if (flagT) accepted = moveSub.prepareDeactivate(context).historyAccepted || accepted;
+        if (flagR) accepted = rotateSub.prepareDeactivate(context).historyAccepted || accepted;
+        if (flagS) accepted = scaleSub.prepareDeactivate(context).historyAccepted || accepted;
+        if (context !is null && history !is null)
+            context.consolidate(history.currentRunId);
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.Xfrm, accepted);
     }
 
     override void deactivate() {

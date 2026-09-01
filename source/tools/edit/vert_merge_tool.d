@@ -17,6 +17,9 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import perf_probe : g_perf, Cat;
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import command_history : PreparedHistoryKind;
 
 // ---------------------------------------------------------------------------
 // VertexMergeTool — interactive Vertex Merge (factory id `vert.merge`,
@@ -254,6 +257,10 @@ private:
         refreshCaches();
     }
 
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext c) {
+        bool ok; if (active && built && c !is null && history !is null && gestureFactory !is null && before.filled) { auto cmd=cast(MeshSessionEdit)gestureFactory(); if(cmd !is null){cmd.setSnapshots(before,MeshSnapshot.capture(*mesh),"Merge Vertices");ok=c.prepare(cmd,PreparedHistoryKind.Plain).accepted;}}
+        return PreparedDeactivateEffect(preparedToolStateOwner,PreparedDeactivateKind.VertexMerge,ok);
+    }
     void commitEdit() {
         if (history is null || gestureFactory is null) return;
         if (!before.filled) return;

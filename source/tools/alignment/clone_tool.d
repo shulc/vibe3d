@@ -1,4 +1,7 @@
 module tools.alignment.clone_tool;
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import command_history : PreparedHistoryKind;
 
 import bindbc.sdl;
 import operator : VectorStack;
@@ -208,6 +211,15 @@ private:
 
     // Records through the base seam (task 1905 phase C, group G2). Trigger
     // unchanged — `onMouseButtonUp`, inside the gesture.
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
+        bool accepted;
+        if (active && built && context !is null && history !is null && gestureFactory !is null && before.filled) {
+            auto cmd = cast(MeshSessionEdit) gestureFactory();
+            if (cmd !is null) { cmd.setSnapshots(before, MeshSnapshot.capture(*mesh), "Clone"); accepted = context.prepare(cmd, PreparedHistoryKind.Plain).accepted; }
+        }
+        return PreparedDeactivateEffect(preparedToolStateOwner, PreparedDeactivateKind.Clone, accepted);
+    }
+
     void commitEdit() {
         if (history is null || gestureFactory is null) return;
         if (!before.filled) return;

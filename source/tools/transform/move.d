@@ -26,6 +26,8 @@ import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 // its ModelSpace is the same resolver every other picking/snap call site
 // uses.
 import document : primaryModelSpace;
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 
 // ---------------------------------------------------------------------------
 // MoveTool : TransformTool — shows MoveHandler at selection/mesh center
@@ -343,6 +345,11 @@ public:
     // deactivate just resets sub-tool state via `super.deactivate()`;
     // the wrapper's `deactivate()` already committed any open edit
     // before forwarding.
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.Move, prepareEditRecord(context, "Move"));
+    }
+
     override void deactivate() {
         super.deactivate();
     }

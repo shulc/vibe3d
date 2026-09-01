@@ -1,4 +1,7 @@
 module tools.create.box;
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedBoxParamEffect;
+import command_history : PreparedHistoryKind;
 
 import bindbc.opengl;
 import operator : VectorStack;
@@ -855,6 +858,31 @@ public:
                  IntEnumEntry(2, "z", "Z")],
                 1).hidden(),
         ];
+    }
+
+    final PreparedBoxParamEffect prepareParamChanged(PreparedRecordContext context,
+                                                       string name) {
+        bool accepted;
+        bool nextRunActive = liveRunActive;
+        int nextUndoDepth = liveUndoDepth;
+        if (paramBeforeValid && context !is null && history !is null &&
+            !sameLiveEdit(paramBeforeParams, paramBeforeState, params_, state)) {
+            ulong runId = history.currentRunId;
+            if (!nextRunActive) {
+                runId = context.nextRun();
+                nextRunActive = runId != 0;
+                nextUndoDepth = 0;
+            }
+            if (nextRunActive) {
+                auto cmd = new BoxLiveEditCommand(this, paramBeforeParams,
+                    paramBeforeState, params_, state);
+                accepted = context.prepare(cmd, PreparedHistoryKind.InSession,
+                                           runId).accepted;
+                if (accepted) ++nextUndoDepth;
+            }
+        }
+        return PreparedBoxParamEffect(preparedToolStateOwner, accepted,
+            nextRunActive, nextUndoDepth, false);
     }
 
     override void onParamChanged(string name) {

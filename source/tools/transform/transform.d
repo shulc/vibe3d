@@ -1,5 +1,7 @@
 module tools.transform.transform;
 import tool;
+import prepared_record_context : PreparedRecordContext;
+import command_history : PreparedHistoryKind;
 import operator : VectorStack;
 import mesh;
 import editmode;
@@ -591,6 +593,22 @@ protected:
         auto cmd = buildEditCmd(label);
         if (cmd is null) return;
         recordCommit(cmd);
+    }
+
+    /// Dormant P1.0b.3d half of commitEdit: build the exact command carrier
+    /// and evolve the injected owner image without touching live tool state or
+    /// publishing the settled-change notification (the unified installer owns
+    /// that later ordering).
+    protected bool prepareEditRecord(PreparedRecordContext context, string label) {
+        if (context is null || suppressCommit || !editIsOpen() || history is null)
+            return false;
+        Command cmd = buildMorphEditCmd(label);
+        if (cmd is null) cmd = buildEditCmd(label);
+        if (cmd is null) return false;
+        auto kind = recordViaInSession ? PreparedHistoryKind.InSession
+                                       : PreparedHistoryKind.Plain;
+        return context.prepare(cmd, kind,
+            recordViaInSession ? history.currentRunId : 0).accepted;
     }
 
     // Drop the action-center stage's frozen in-session-cancel pin snapshot

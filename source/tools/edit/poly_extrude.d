@@ -22,6 +22,9 @@ import display_sync : refreshDisplay;
 import std.math : abs, sqrt;
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import command_history : PreparedHistoryKind;
 
 // ---------------------------------------------------------------------------
 // PolyExtrudeTool — interactive Face Extrude (factory id `poly.extrude`).
@@ -327,6 +330,10 @@ private:
         refreshCaches();
     }
 
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext c) {
+        bool ok; if (active && built && distance_ != 0.0f && c !is null && history !is null && gestureFactory !is null && before.filled) { auto cmd=cast(MeshSessionEdit)gestureFactory(); if(cmd !is null){cmd.setSnapshots(before,MeshSnapshot.capture(*mesh),"Face Extrude");ok=c.prepare(cmd,PreparedHistoryKind.Plain).accepted;}}
+        return PreparedDeactivateEffect(preparedToolStateOwner,PreparedDeactivateKind.PolyExtrude,ok);
+    }
     void commitEdit() {
         if (history is null || gestureFactory is null) return;
         if (!before.filled) return;
@@ -387,4 +394,24 @@ private:
 
         gizmoValid = true;
     }
+}
+
+unittest { // P1.0b.3d identity preview must not prepare history.
+    import view : View; import mesh_gpu : GpuMesh;
+    import record_observer_hub : RecordObserverHub;
+    Mesh m; GpuMesh gpu; EditMode mode = EditMode.Polygons;
+    auto view = new View(0, 0, 1, 1);
+    auto history = new CommandHistory(); auto hub = new RecordObserverHub();
+    hub.setMacroActive(true);
+    auto tool = new PolyExtrudeTool(() => &m, &gpu, &mode, LitShader.init);
+    tool.setGestureBindings(history, () => new MeshSessionEdit(&m, view, mode,
+        "test.polyExtrude", "poly extrude"));
+    tool.active = true; tool.built = true; tool.before = MeshSnapshot.capture(m);
+    tool.distance_ = 0;
+    auto context = new PreparedRecordContext(history, hub);
+    auto effect = tool.prepareDeactivate(context);
+    assert(!effect.historyAccepted);
+    assert(context.validate()); context.install();
+    size_t modelDepth, uiDepth; context.installedDepths(modelDepth, uiDepth);
+    assert(modelDepth == 0 && uiDepth == 0 && hub.macroLength == 0);
 }

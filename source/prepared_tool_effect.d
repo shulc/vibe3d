@@ -30,6 +30,28 @@ enum PreparedEffectKind : ubyte {
 /// offset or byte-decoding protocol.
 enum PreparedToolStateKind : ubyte { None, Bool, Int32, Vec3 }
 enum PreparedParamKind : ubyte { None, DirtyFlag, SphereAxis }
+enum PreparedDeactivateKind : ubyte {
+    None, Array, Clone, RadialArray, Magnet, SmoothShift, StrokeExtrude,
+    EdgeBevel, EdgeExtrude, PolyBevel, PolyExtrude, PolyInset, Reduction,
+    VertexMerge, VertexBevel, VertexExtrude, Xfrm, Move, Rotate, Scale,
+}
+
+/// Scalar-only dormant P1.0b.3d producer result. The concrete tool owns the
+/// interpretation of its reset constants; no reference-bearing history or
+/// observer state escapes PreparedRecordContext through this carrier.
+@PreparedAggregate struct PreparedDeactivateEffect {
+    OwnedId owner;
+    PreparedDeactivateKind kind;
+    bool historyAccepted;
+}
+
+@PreparedAggregate struct PreparedBoxParamEffect {
+    OwnedId owner;
+    bool historyAccepted;
+    bool liveRunActive;
+    int liveUndoDepth;
+    bool paramBeforeValid;
+}
 
 @PreparedAggregate struct PreparedToolStateDelta {
     OwnedId owner;

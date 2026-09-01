@@ -23,6 +23,9 @@ import tools.create.create_common : screenToConstructionPlane;
 import std.math : sin, cos, atan2, PI;
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import command_history : PreparedHistoryKind;
 
 // ---------------------------------------------------------------------------
 // RadialArrayTool — interactive port of the reference editor's "Radial
@@ -527,6 +530,15 @@ private:
 
     // Records through the base seam (task 1905 phase C, group G2). Trigger
     // unchanged — reached from `deactivate()`.
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
+        bool accepted;
+        if (active && built && context !is null && history !is null && gestureFactory !is null && before.filled) {
+            auto cmd = cast(MeshSessionEdit) gestureFactory();
+            if (cmd !is null) { cmd.setSnapshots(before, MeshSnapshot.capture(*mesh), "Radial Array"); accepted = context.prepare(cmd, PreparedHistoryKind.Plain).accepted; }
+        }
+        return PreparedDeactivateEffect(preparedToolStateOwner, PreparedDeactivateKind.RadialArray, accepted);
+    }
+
     void commitEdit() {
         if (history is null || gestureFactory is null) return;
         if (!before.filled) return;

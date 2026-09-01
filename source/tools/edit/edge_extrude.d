@@ -1,4 +1,8 @@
 module tools.edit.edge_extrude;
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import command_history : PreparedHistoryKind;
+import mesh : detachedPreparedMesh;
 
 import bindbc.opengl;
 import bindbc.sdl;
@@ -548,6 +552,30 @@ private:
         refreshCaches();
     }
 
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
+        bool accepted;
+        if (active && built && (extrude_ != 0.0f || width_ != 0.0f) &&
+            context !is null && history !is null &&
+            gestureFactory !is null && before.filled) {
+            auto cmd = cast(MeshSessionEdit) gestureFactory();
+            if (cmd !is null) {
+                auto shadow = detachedPreparedMesh(*mesh);
+                before.restore(shadow);
+                auto ed = MeshEditBatch(shadow,
+                    MeshEditScope.Geometry | MeshEditScope.Marks);
+                auto mask = shadow.operandEdgeMask();
+                cast(void)ed.extrudeEdgesByMask(mask, extrude_, width_);
+                auto delta = ed.close();
+                if (!delta.isEmpty) cmd.setDelta(delta, "Edge Extrude");
+                else cmd.setSnapshots(before, MeshSnapshot.capture(*mesh),
+                                      "Edge Extrude");
+                accepted = context.prepare(cmd, PreparedHistoryKind.Plain).accepted;
+            }
+        }
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.EdgeExtrude, accepted);
+    }
+
     void commitEdit() {
         if (history is null || gestureFactory is null) return;
         if (!before.filled) return;
@@ -750,4 +778,25 @@ private:
         float l = sqrt(sum.x*sum.x + sum.y*sum.y + sum.z*sum.z);
         return (l > 1e-6f) ? (sum / l) : Vec3(0, 1, 0);
     }
+}
+
+unittest { // P1.0b.3d identity preview must not prepare history.
+    import view : View;
+    import mesh_gpu : GpuMesh;
+    import record_observer_hub : RecordObserverHub;
+    Mesh m; GpuMesh gpu; EditMode mode = EditMode.Edges;
+    auto view = new View(0, 0, 1, 1);
+    auto history = new CommandHistory(); auto hub = new RecordObserverHub();
+    hub.setMacroActive(true);
+    auto tool = new EdgeExtrudeTool(() => &m, &gpu, &mode, LitShader.init);
+    tool.setGestureBindings(history, () => new MeshSessionEdit(&m, view, mode,
+        "test.edgeExtrude", "edge extrude"));
+    tool.active = true; tool.built = true; tool.before = MeshSnapshot.capture(m);
+    tool.extrude_ = 0; tool.width_ = 0;
+    auto context = new PreparedRecordContext(history, hub);
+    auto effect = tool.prepareDeactivate(context);
+    assert(!effect.historyAccepted);
+    assert(context.validate()); context.install();
+    size_t modelDepth, uiDepth; context.installedDepths(modelDepth, uiDepth);
+    assert(modelDepth == 0 && uiDepth == 0 && hub.macroLength == 0);
 }

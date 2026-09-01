@@ -24,6 +24,8 @@ import snap_render : drawSnapOverlay, clearLastSnap;
 import falloff : evaluateFalloff;
 import toolpipe.packets : FalloffPacket, SnapPacket, SymmetryPacket;
 import params : Param;
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 
 
 // ---------------------------------------------------------------------------
@@ -334,6 +336,11 @@ public:
 
     // Phase 7.5h: tool-session boundary — bake pending edit into one
     // undo entry on tool switch.
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.Scale, prepareEditRecord(context, "Scale"));
+    }
+
     override void deactivate() {
         restoreRelativeMouseMode();
         if (editIsOpen())

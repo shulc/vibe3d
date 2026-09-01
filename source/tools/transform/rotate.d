@@ -25,6 +25,8 @@ import snap_render : drawSnapOverlay, clearLastSnap;
 import falloff : evaluateFalloff;
 import toolpipe.packets : FalloffPacket, SnapPacket, SymmetryPacket;
 import params : Param;
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 
 // ---------------------------------------------------------------------------
 // RotateTool : Tool — shows RotateHandler at selection/mesh center;
@@ -225,6 +227,11 @@ public:
 
     // Phase 7.5h: tool-session boundary — commit any pending edit
     // before tool switch so the session lands as one undo entry.
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.Rotate, prepareEditRecord(context, "Rotate"));
+    }
+
     override void deactivate() {
         if (editIsOpen())
             commitEdit("Rotate");

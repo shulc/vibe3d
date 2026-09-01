@@ -107,11 +107,37 @@ TOOL_STATE_CONVERTED = {
     ("tools.common.command_wrapper", "CommandWrapperTool", "onParamChanged"),
     ("tools.create.sphere", "SphereTool", "onParamChanged"),
 }
+# P1.0b.3d's second axis: implementation is Prepared, while the production
+# route remains Legacy until the one P1.0c door cutover. These rows therefore
+# leave the deferred implementation set without changing their frozen hook
+# bodies or direct-body fingerprints.
+B3D_PREPARED_LEGACY = {
+    ("tools.alignment.array_tool", "ArrayTool", "deactivate"),
+    ("tools.alignment.clone_tool", "CloneTool", "deactivate"),
+    ("tools.alignment.radial_array_tool", "RadialArrayTool", "deactivate"),
+    ("tools.deform.magnet", "MagnetTool", "deactivate"),
+    ("tools.deform.smooth_shift_tool", "SmoothShiftTool", "deactivate"),
+    ("tools.deform.stroke_extrude_tool", "StrokeExtrudeTool", "deactivate"),
+    ("tools.edit.edge_bevel", "EdgeBevelTool", "deactivate"),
+    ("tools.edit.edge_extrude", "EdgeExtrudeTool", "deactivate"),
+    ("tools.edit.poly_bevel", "PolyBevelTool", "deactivate"),
+    ("tools.edit.poly_extrude", "PolyExtrudeTool", "deactivate"),
+    ("tools.edit.poly_inset_tool", "PolyInsetTool", "deactivate"),
+    ("tools.edit.reduce", "ReductionTool", "deactivate"),
+    ("tools.edit.vert_merge_tool", "VertexMergeTool", "deactivate"),
+    ("tools.edit.vertex_bevel_tool", "VertexBevelTool", "deactivate"),
+    ("tools.edit.vertex_extrude_tool", "VertexExtrudeTool", "deactivate"),
+    ("tools.transform.move", "MoveTool", "deactivate"),
+    ("tools.transform.rotate", "RotateTool", "deactivate"),
+    ("tools.transform.scale", "ScaleTool", "deactivate"),
+    ("tools.transform.xfrm_transform", "XfrmTransformTool", "deactivate"),
+    ("tools.create.box", "BoxTool", "onParamChanged"),
+}
 all_hook_keys = {(r["module"], r["aggregate"], r["symbol"])
                  for r in CURRENT_WRITERS["hooks"]}
-if not TOOL_STATE_CONVERTED <= all_hook_keys:
+if not TOOL_STATE_CONVERTED | B3D_PREPARED_LEGACY <= all_hook_keys:
     fail("P1.0b.1 converted tool-state row left the frozen census")
-TOOL_STATE_DEFERRED = all_hook_keys - TOOL_STATE_CONVERTED
+TOOL_STATE_DEFERRED = all_hook_keys - TOOL_STATE_CONVERTED - B3D_PREPARED_LEGACY
 
 converted_sources = {
     "source/tool.d": ("prepareBaseParam", "validateBaseParam", "installLegacyPreparedParam"),
@@ -140,12 +166,14 @@ TOOL_STATE_DEFERRED_ROWS = json.loads(
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
     "1500a754b4b9103d0ff8cc978ad874680a1a8f1e293e3bece17fadd7cbf91c64"
 def validate_deferred_rows(rows, require_canonical=True):
+    rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
+            r["key"]["symbol"]) not in B3D_PREPARED_LEGACY]
     keys = {(r["key"]["module"], r["key"]["aggregate"],
              r["key"]["symbol"], r["key"]["signature"]) for r in rows}
     expected = {(r["module"], r["aggregate"], r["symbol"], r["signature"])
                 for r in CURRENT_WRITERS["hooks"]
                 if (r["module"], r["aggregate"], r["symbol"])
-                   not in TOOL_STATE_CONVERTED}
+                   not in TOOL_STATE_CONVERTED | B3D_PREPARED_LEGACY}
     if len(keys) != len(rows) or keys != expected:
         fail("P1.0b.1 checked-in deferred row set mismatch")
     for row in rows:
@@ -153,7 +181,7 @@ def validate_deferred_rows(rows, require_canonical=True):
             fail("P1.0b.1 checked-in deferred batch/reason invalid")
     canonical = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
     if require_canonical and hashlib.sha256(canonical).hexdigest() != \
-            TOOL_STATE_DEFERRED_CANONICAL_SHA256:
+            "9847729de21e69c80b65d2a006d56f2bff8b6d1d97e311c3ec7e6f8fdd563c4e":
         fail("P1.0b.1 checked-in deferred exact values drifted")
 validate_deferred_rows(TOOL_STATE_DEFERRED_ROWS)
 for field in ("batch", "reason"):
@@ -192,6 +220,130 @@ reason_replace = json.loads(json.dumps(TOOL_STATE_DEFERRED_ROWS))
 reason_replace[0]["reason"] = "different nonempty reviewed-looking reason"
 expect_deferred_exact_drift(reason_replace, "nonempty-reason replacement")
 
+# P1.0b.3d dormant implementation/route axis. All twenty frozen roots stay on
+# their exact Legacy bodies; a sibling producer exists and only producer code
+# may invoke another producer. No production door constructs the injected
+# context or imports the observer owner directly.
+b3d_modules = {module for module, _, _ in B3D_PREPARED_LEGACY}
+b3d_sources = {module: (ROOT / "source" /
+    (module.replace(".", "/") + ".d")).read_text() for module in b3d_modules}
+B3D_PRODUCER_DIGESTS = {
+    "tools/alignment/array_tool":"abbc9240a3fcfbb03c06b768a75440e39d6baadf000455ab75dd8e5804556ff0",
+    "tools/alignment/clone_tool":"3e0d910456a613f77df81476010005d5fc7d229bec4197175a6fe5fe528688d0",
+    "tools/alignment/radial_array_tool":"65148a02ac2b032c5ee0fb890f009775feb9d3a96c9c2550bb3dbbba6dcb8a85",
+    "tools/deform/magnet":"1191f71bae9f8cb4dc7fed605de2172db7e268f3ba9e9c62c0db2668cdcbdddf",
+    "tools/deform/smooth_shift_tool":"5c1c9ace215d2a239f08501c9f7a8a02b8ea27ec1d8a1c3ede1cd5de46ac6c27",
+    "tools/deform/stroke_extrude_tool":"48fd9fad9f7c4566468ebf746ab9ba38548cb5d7c2f6d7004d162ffa1a3c7d5f",
+    "tools/edit/edge_bevel":"8c47f66199de95b827047be61df795f14fb018e720c32e4cb151bab20d1d547d",
+    "tools/edit/edge_extrude":"293c94c99cb663a063dc0dfd59c345dce2a68a141bdf41972b21b9ba58cbcf8a",
+    "tools/edit/poly_bevel":"6ee1932c80dcfca11ae55b5e30ca81260eb513ad79176286b4a6df1c6a39818b",
+    "tools/edit/poly_extrude":"1645a6f9603d75a3bd03662a7a47db845c018bf38b6b754471f658113ae8f192",
+    "tools/edit/poly_inset_tool":"7b39c23988c01f31c8956395c1834b00bfaefde748ed19646cfe40465d320dd4",
+    "tools/edit/reduce":"e7df0a7a19f56f8b8f1e29ad3e05974a10dcae535be2e155dd105e69ddb126d4",
+    "tools/edit/vert_merge_tool":"9bf5d97f4da62f907be50eb4b72c73b9a01ab816cbbb537714af24667da20eaf",
+    "tools/edit/vertex_bevel_tool":"935c400d06133076e34d5c6a5d62d1ba2a93eb7b4eac88a7a1c9bdd42639aabf",
+    "tools/edit/vertex_extrude_tool":"5bd4def636ee6e51247ad7c4b11055ffa57985038233cb97c82c86d13200dcca",
+    "tools/transform/move":"bbea8820c86c337a470a96ba2fa1791c0c981d6e90235502f34005f74a464260",
+    "tools/transform/rotate":"e04de99122832355fb43cb7546a1c99f303aeb6252e0334141ce6e522a31ae50",
+    "tools/transform/scale":"02f3b4fcce5380905aba0a2a7c86530a6d386be63b87332c1c12a66bee7a930a",
+    "tools/transform/xfrm_transform":"66269524a4698244927959e9bf1b07d13d8e39b0b56c165cf20f5739dcbae844",
+    "tools/create/box":"1d507a4771e54f922d240817b5f2d6f5d77b49cb4014605509194675fc1869e3",
+}
+def validate_b3d_producers(sources, only=None):
+    for module, aggregate, hook in B3D_PREPARED_LEGACY:
+        if only is not None and module not in only: continue
+        source = sources[module]
+        producer = "prepareParamChanged" if hook == "onParamChanged" else "prepareDeactivate"
+        if len(re.findall(r"\bfinal\s+Prepared(?:Deactivate|BoxParam)Effect\s+" +
+                          producer + r"\s*\(", source)) != 1:
+            fail(f"P1.0b.3d Prepared+Legacy row lacks exact producer: {module}.{aggregate}.{hook}")
+        producer_match = re.search(r"\bfinal\s+Prepared(?:Deactivate|BoxParam)Effect\s+" +
+            producer + r"\s*\([^;{}]*\)[^{]*\{", source)
+        producer_body = source[producer_match.end():balanced_source(source, producer_match.end())-1]
+        if semantic_digest(producer_body) != B3D_PRODUCER_DIGESTS[module.replace(".", "/")]:
+            fail(f"P1.0b.3d producer parity drifted: {module}.{producer}")
+        match = re.search(r"override\s+void\s+" + hook + r"\s*\([^;{}]*\)\s*\{", source)
+        if not match:
+            fail(f"P1.0b.3d legacy route body vanished: {module}.{aggregate}.{hook}")
+        body = source[match.end():balanced_source(source, match.end())-1]
+        if re.search(r"\b(?:prepareDeactivate|prepareParamChanged)\s*\(", body):
+            fail(f"P1.0b.3d producer called early from Legacy route: {module}.{aggregate}.{hook}")
+validate_b3d_producers(b3d_sources)
+
+def without_unittests(source):
+    result = source
+    for match in reversed(list(re.finditer(r"\bunittest\s*\{", result))):
+        result = result[:match.start()] + result[balanced_source(result, match.end()):]
+    return result
+
+prepared_source_texts = {path: path.read_text()
+                         for path in (ROOT / "source").rglob("*.d")}
+for path, text in prepared_source_texts.items():
+    module = str(path.relative_to(ROOT / "source")).removesuffix(".d").replace("/", ".")
+    if "import prepared_record_context" in text and module not in b3d_modules | {
+            "prepared_record_context", "tools.transform.transform"}:
+        fail(f"P1.0b.3d PreparedRecordContext gained an unreviewed import: {module}")
+    if "new PreparedRecordContext" in text:
+        production_text = without_unittests(text)
+        if "new PreparedRecordContext" in production_text and module != "prepared_record_context":
+            fail(f"P1.0b.3d PreparedRecordContext gained a production constructor: {module}")
+
+mutation_module = "tools.alignment.array_tool"
+mutation_sources = dict(b3d_sources)
+mutation_sources[mutation_module] = mutation_sources[mutation_module].replace(
+    "final PreparedDeactivateEffect prepareDeactivate(",
+    "final PreparedDeactivateEffect missingPrepareDeactivate(", 1)
+try: validate_b3d_producers(mutation_sources, {mutation_module})
+except SystemExit as error:
+    if "lacks exact producer" not in str(error):
+        fail("P1.0b.3d missing-producer mutation failed for wrong reason")
+else: fail("P1.0b.3d Prepared-without-producer mutation did not RED")
+
+mutation_sources = dict(b3d_sources)
+mutation_sources[mutation_module] = mutation_sources[mutation_module].replace(
+    "override void deactivate() {", "override void deactivate() { prepareDeactivate(null);", 1)
+try: validate_b3d_producers(mutation_sources, {mutation_module})
+except SystemExit as error:
+    if "called early from Legacy route" not in str(error):
+        fail("P1.0b.3d early-route mutation failed for wrong reason")
+else: fail("P1.0b.3d early-route mutation did not RED")
+
+mutation_sources = dict(b3d_sources)
+mutation_sources[mutation_module] = mutation_sources[mutation_module].replace(
+    "cmd.setSnapshots(before, MeshSnapshot.capture(*mesh), \"Array\")",
+    "cmd.setSnapshots(MeshSnapshot.capture(*mesh), before, \"Array\")", 1)
+try: validate_b3d_producers(mutation_sources, {mutation_module})
+except SystemExit as error:
+    if "producer parity drifted" not in str(error):
+        fail("P1.0b.3d wrong-original mutation failed for wrong reason")
+else: fail("P1.0b.3d wrong-original mutation did not RED")
+
+for module, guard, inverted in (
+    ("tools.edit.edge_extrude", "(extrude_ != 0.0f || width_ != 0.0f) &&",
+     "(extrude_ == 0.0f && width_ == 0.0f) &&"),
+    ("tools.edit.poly_bevel", "(inset_ != 0.0f || shift_ != 0.0f) &&",
+     "(inset_ == 0.0f && shift_ == 0.0f) &&"),
+    ("tools.edit.poly_extrude", "distance_ != 0.0f &&",
+     "distance_ == 0.0f &&"),
+):
+    mutation_sources = dict(b3d_sources)
+    if guard not in mutation_sources[module]:
+        fail(f"P1.0b.3d identity guard mutation anchor vanished: {module}")
+    mutation_sources[module] = "".join(mutation_sources[module].rsplit(guard, 1))
+    try: validate_b3d_producers(mutation_sources, {module})
+    except SystemExit as error:
+        if "producer parity drifted" not in str(error):
+            fail(f"P1.0b.3d {module} identity-guard mutation failed wrong")
+    else: fail(f"P1.0b.3d {module} identity-guard removal did not RED")
+    mutation_sources = dict(b3d_sources)
+    mutation_sources[module] = inverted.join(
+        mutation_sources[module].rsplit(guard, 1))
+    try: validate_b3d_producers(mutation_sources, {module})
+    except SystemExit as error:
+        if "producer parity drifted" not in str(error):
+            fail(f"P1.0b.3d {module} inverted-guard mutation failed wrong")
+    else: fail(f"P1.0b.3d {module} identity-guard inversion did not RED")
+
 # P1.0b.3a record-observer owner infrastructure. The exact legacy census stays
 # two app assignments until P1.0c; the prepared hub has no production caller.
 app_source = (ROOT / "source/app.d").read_text()
@@ -219,9 +371,11 @@ for label, mutant in (
     else: fail(f"P1.0b.3a {label} observer mutation did not RED")
 observer_source = (ROOT / "source/record_observer_hub.d").read_text()
 production_hub_refs = 0
-for path in (ROOT / "source").rglob("*.d"):
-    if path.name not in ("record_observer_hub.d", "command_history.d"):
-        production_hub_refs += path.read_text().count("RecordObserverHub")
+for path, hub_text in prepared_source_texts.items():
+    if path.name not in ("record_observer_hub.d", "command_history.d",
+                         "prepared_record_context.d"):
+        if "RecordObserverHub" in hub_text:
+            production_hub_refs += without_unittests(hub_text).count("RecordObserverHub")
 if production_hub_refs:
     fail("P1.0b.3a record observer hub gained a pre-cutover caller")
 install_match = re.search(r"void\s+installPrepared\s*\([^;{}]*\)\s*nothrow\s+@nogc\s*\{",

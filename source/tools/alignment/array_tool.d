@@ -16,6 +16,9 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import perf_probe : g_perf, Cat;
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import command_history : PreparedHistoryKind;
 
 
 // ---------------------------------------------------------------------------
@@ -364,6 +367,20 @@ private:
     // which label. The trigger is unchanged: this body is reached from
     // `onMouseButtonUp`, INSIDE the gesture, which is why the cell's
     // `liveEntryNames` is already filled at the drop.
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
+        bool accepted;
+        if (active && built && context !is null && history !is null &&
+            gestureFactory !is null && before.filled) {
+            auto cmd = cast(MeshSessionEdit) gestureFactory();
+            if (cmd !is null) {
+                cmd.setSnapshots(before, MeshSnapshot.capture(*mesh), "Array");
+                accepted = context.prepare(cmd, PreparedHistoryKind.Plain).accepted;
+            }
+        }
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.Array, accepted);
+    }
+
     void commitEdit() {
         if (history is null || gestureFactory is null) return;
         if (!before.filled) return;

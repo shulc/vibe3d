@@ -1,4 +1,7 @@
 module tools.deform.magnet;
+import prepared_record_context : PreparedRecordContext;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import command_history : PreparedHistoryKind;
 
 import bindbc.sdl;
 import operator : VectorStack;
@@ -292,6 +295,23 @@ private:
         if (displaced) sessionKey_.stamp(*mesh);
         if (displaced) mesh.commitChange(MeshEditScope.Position);
         refreshCaches();
+    }
+
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
+        bool accepted;
+        if (active && built && touchedIdx_.length && context !is null &&
+            history !is null && gestureFactory !is null && sessionKey_.matches(*mesh)) {
+            Vec3[] after = new Vec3[](touchedIdx_.length);
+            foreach (k; 0 .. touchedIdx_.length)
+                after[k] = mesh.vertices[touchedIdx_[k]];
+            auto cmd = cast(MeshVertexEdit) gestureFactory();
+            if (cmd !is null) {
+                cmd.setEdit(touchedIdx_.dup, touchedPrev_.dup, after, "Magnet");
+                accepted = context.prepare(cmd, PreparedHistoryKind.Plain).accepted;
+            }
+        }
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.Magnet, accepted);
     }
 
     void commitEdit() {
