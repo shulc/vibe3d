@@ -2,7 +2,8 @@ module prepared_mirror_activation;
 
 import core.atomic : atomicOp;
 import mesh : Mesh;
-import tools.alignment.mirror : MirrorTool, PreparedMirrorActivationImage;
+import tools.alignment.mirror : MirrorTool, PreparedMirrorActivationImage,
+    PreparedMirrorDeactivateImage;
 
 struct PreparedMirrorActivationToken {
     @disable this(this); private ulong owner, generation;
@@ -68,6 +69,68 @@ private:
         image_.clear(); target_ = null; source_ = null;
         pending_ = validated_ = false; consumed_ = true;
         prepared_.owner = prepared_.generation = 0;
+        validatedToken_.owner = validatedToken_.generation = 0;
+    }
+}
+
+struct PreparedMirrorDeactivateToken {
+    @disable this(this); private ulong owner, generation;
+}
+struct ValidatedMirrorDeactivateToken {
+    @disable this(this); private ulong owner, generation;
+}
+private shared ulong nextMirrorDeactivateOwner;
+
+final class PreparedMirrorDeactivateOwner {
+private:
+    MirrorTool target_;
+    PreparedMirrorDeactivateImage image_;
+    immutable ulong owner_; ulong generation_;
+    bool pending_, validated_, consumed_;
+    PreparedMirrorDeactivateToken prepared_;
+    ValidatedMirrorDeactivateToken validatedToken_;
+public:
+    @disable this();
+    static PreparedMirrorDeactivateOwner prepare(MirrorTool target) {
+        if (target is null || target.classinfo !is MirrorTool.classinfo) return null;
+        auto result = new PreparedMirrorDeactivateOwner(target);
+        result.image_ = target.buildPreparedDeactivateState();
+        return result.image_.valid ? result : null;
+    }
+    bool begin() nothrow @nogc {
+        if (pending_ || consumed_ || target_ is null || !image_.valid) return false;
+        ++generation_; pending_ = true;
+        prepared_.owner = owner_; prepared_.generation = generation_; return true;
+    }
+    bool validate() nothrow @nogc {
+        if (!pending_ || validated_ || consumed_ || target_ is null ||
+            target_.classinfo !is MirrorTool.classinfo ||
+            prepared_.owner != owner_ || prepared_.generation != generation_ ||
+            !target_.preparedDeactivateStateMatches(image_)) return false;
+        validated_ = true; validatedToken_.owner = owner_;
+        validatedToken_.generation = generation_;
+        prepared_.owner = prepared_.generation = 0; return true;
+    }
+    void install() nothrow @nogc {
+        if (!pending_ || !validated_ || consumed_ || target_ is null ||
+            validatedToken_.owner != owner_ ||
+            validatedToken_.generation != generation_) return;
+        target_.installPreparedDeactivateState(image_); consume();
+    }
+    void abort() nothrow @nogc { if (!consumed_) { image_.clear(); consume(); } }
+    version(unittest) void corruptPreparedForTest() nothrow @nogc {
+        ++prepared_.generation;
+    }
+    version(unittest) bool payloadEmpty() const nothrow @nogc {
+        return !image_.valid && target_ is null;
+    }
+private:
+    this(MirrorTool target) {
+        target_ = target; owner_ = atomicOp!"+="(nextMirrorDeactivateOwner, 1UL);
+    }
+    void consume() nothrow @nogc {
+        image_.clear(); target_ = null; pending_ = validated_ = false;
+        consumed_ = true; prepared_.owner = prepared_.generation = 0;
         validatedToken_.owner = validatedToken_.generation = 0;
     }
 }
@@ -158,4 +221,24 @@ version(unittest) unittest {
     assert(once.payloadEmpty() && !once.begin());
     assert(!tool.prepareActivate(null, upload).accepted &&
         PreparedMirrorActivationOwner.prepare(null) is null);
+
+    tool.seedPreparedDeactivateStateForTest();
+    auto deactivateContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    auto deactivateOwner = PreparedMirrorDeactivateOwner.prepare(tool);
+    assert(deactivateContext.prepareMirrorDeactivate(deactivateOwner) &&
+        deactivateContext.markNoHistoryInstall() && deactivateContext.validate());
+    deactivateContext.install(); deactivateContext.install();
+    assert(tool.preparedDeactivateStateInstalledForTest() &&
+        deactivateContext.installTraceForTest() == [40,8]);
+    tool.seedPreparedDeactivateStateForTest();
+    auto changedDeactivate = PreparedMirrorDeactivateOwner.prepare(tool);
+    assert(changedDeactivate.begin()); tool.installPreparedDeactivateStateForTest();
+    assert(!changedDeactivate.validate()); changedDeactivate.abort();
+    tool.seedPreparedDeactivateStateForTest();
+    auto corruptDeactivate = PreparedMirrorDeactivateOwner.prepare(tool);
+    assert(corruptDeactivate.begin()); corruptDeactivate.corruptPreparedForTest();
+    assert(!corruptDeactivate.validate()); corruptDeactivate.abort();
+    assert(corruptDeactivate.payloadEmpty() &&
+        PreparedMirrorDeactivateOwner.prepare(null) is null);
 }

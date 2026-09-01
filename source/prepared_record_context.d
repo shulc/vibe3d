@@ -37,7 +37,8 @@ import prepared_slice_activation : PreparedSliceActivationOwner;
 import prepared_tack_activation : PreparedTackActivationOwner;
 import prepared_command_wrapper_activation : PreparedCommandWrapperActivationOwner;
 import prepared_bridge_activation : PreparedBridgeActivationOwner;
-import prepared_mirror_activation : PreparedMirrorActivationOwner;
+import prepared_mirror_activation : PreparedMirrorActivationOwner,
+    PreparedMirrorDeactivateOwner;
 import prepared_edge_extend_tool_activation : PreparedEdgeExtendToolActivationOwner;
 import prepared_topology_pen_activation : PreparedTopologyPenActivationOwner;
 import document : Layer;
@@ -59,7 +60,8 @@ private enum PreparedResourceKind : ubyte {
     EdgeSliceActivationState, LoopSliceActivationState, SliceActivationState,
     TackActivationState, CommandWrapperActivationState, BridgeActivationState,
     MirrorActivationState, EdgeExtendToolActivationPreState,
-    EdgeExtendToolActivationPostState, TopologyPenActivationState
+    EdgeExtendToolActivationPostState, TopologyPenActivationState,
+    MirrorDeactivateState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -92,6 +94,7 @@ private struct PreparedResourceEntry {
     PreparedMirrorActivationOwner mirrorActivation;
     PreparedEdgeExtendToolActivationOwner edgeExtendToolActivation;
     PreparedTopologyPenActivationOwner topologyPenActivation;
+    PreparedMirrorDeactivateOwner mirrorDeactivate;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -537,6 +540,16 @@ public:
         PreparedResourceEntry e; e.kind = PreparedResourceKind.MirrorActivationState;
         e.mirrorActivation = owner; resources_ ~= e; return true;
     }
+    bool prepareMirrorDeactivate(PreparedMirrorDeactivateOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected Mirror deactivation enlist failure");
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.MirrorDeactivateState;
+        e.mirrorDeactivate = owner; resources_ ~= e; return true;
+    }
     bool prepareEdgeExtendToolActivationPre(
             PreparedEdgeExtendToolActivationOwner owner) {
         if (!begun_ || validated_Once || owner is null || historyMarker_ ||
@@ -806,6 +819,9 @@ public:
             case PreparedResourceKind.TopologyPenActivationState:
                 ok = e.topologyPenActivation !is null &&
                     e.topologyPenActivation.validate(); break;
+            case PreparedResourceKind.MirrorDeactivateState:
+                ok = e.mirrorDeactivate !is null &&
+                    e.mirrorDeactivate.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -994,6 +1010,10 @@ public:
             e.topologyPenActivation.install();
             version(unittest) installTrace_[installTraceLength_++] = 39;
             break;
+        case PreparedResourceKind.MirrorDeactivateState:
+            e.mirrorDeactivate.install();
+            version(unittest) installTrace_[installTraceLength_++] = 40;
+            break;
         }
         if (!installedHistory && history_ !is null)
             history_.installPreparedToken(validated_);
@@ -1051,6 +1071,8 @@ private:
             e.edgeExtendToolActivation.abort(); break;
         case PreparedResourceKind.TopologyPenActivationState:
             e.topologyPenActivation.abort(); break;
+        case PreparedResourceKind.MirrorDeactivateState:
+            e.mirrorDeactivate.abort(); break;
         case PreparedResourceKind.RadialArrayTransitionState:
             e.radialArrayTransition.abort(); break;
         case PreparedResourceKind.TransformActivationState:

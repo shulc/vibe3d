@@ -3822,9 +3822,10 @@ mirror_activation_owner = (ROOT / "source/prepared_mirror_activation.d").read_te
 mirror_activation_tool = (ROOT / "source/tools/alignment/mirror.d").read_text()
 def mirror_activation_gate(owner, context, tool, gpu):
     gpu_block = gpu[gpu.find("final class GpuCreateUploadOwner") :]
-    return (owner.count("@disable this(this)") == 2 and
+    activation_block = owner[:owner.find("struct PreparedMirrorDeactivateToken")]
+    return (activation_block.count("@disable this(this)") == 2 and
         "final class PreparedMirrorActivationOwner" in owner and
-        "target.classinfo !is MirrorTool.classinfo" in owner and
+        "target.classinfo !is MirrorTool.classinfo" in activation_block and
         "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
         "target_.preparedActivationMesh() !is source_" in owner and
         "!target_.preparedActivationParamsMatch(image_.params)" in owner and
@@ -3899,6 +3900,56 @@ for fixture in (
     if run.returncode == 0 or ("not copyable" not in run.stdout and
             not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
         fail("Mirror activation token copy was not rejected:\n" + run.stdout)
+
+def mirror_deactivate_state_gate(owner, context, tool):
+    block = owner[owner.find("struct PreparedMirrorDeactivateToken"):]
+    return (block.count("@disable this(this)") == 2 and
+        "final class PreparedMirrorDeactivateOwner" in block and
+        "target.classinfo !is MirrorTool.classinfo" in block and
+        "result.image_ = target.buildPreparedDeactivateState();" in block and
+        "!target_.preparedDeactivateStateMatches(image_)" in block and
+        "target_.installPreparedDeactivateState(image_); consume();" in block and
+        "image_.clear(); target_ = null;" in block and
+        "return PreparedMirrorDeactivateImage(true, engaged, havePreviewCache);" in tool and
+        "engaged == image.expectedEngaged" in tool and
+        "havePreviewCache == image.expectedPreviewCache" in tool and
+        "engaged = false; havePreviewCache = false; image.clear();" in tool and
+        "MirrorDeactivateState" in context and
+        "e.mirrorDeactivate.validate();" in context and
+        "e.mirrorDeactivate.install();" in context and
+        "e.mirrorDeactivate.abort();" in context)
+if not mirror_deactivate_state_gate(mirror_activation_owner, record_context,
+                                    mirror_activation_tool):
+    fail("Mirror deactivation state owner contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is MirrorTool.classinfo", "false", "broaden product"),
+    ("owner", "result.image_ = target.buildPreparedDeactivateState();", "", "drop capture"),
+    ("owner", "!target_.preparedDeactivateStateMatches(image_)", "false", "drop state validation"),
+    ("owner", "target_.installPreparedDeactivateState(image_); consume();", "consume();", "drop install"),
+    ("owner", "image_.clear(); target_ = null;", "target_ = null;", "drop scrub"),
+    ("tool", "return PreparedMirrorDeactivateImage(true, engaged, havePreviewCache);", "return PreparedMirrorDeactivateImage.init;", "drop projection"),
+    ("tool", "engaged = false; havePreviewCache = false; image.clear();", "engaged = false; image.clear();", "drop cache reset"),
+    ("context", "e.mirrorDeactivate.validate();", "true;", "drop context validation"),
+    ("context", "e.mirrorDeactivate.install();", "", "drop context install"),
+    ("context", "e.mirrorDeactivate.abort();", "", "drop context abort"),
+):
+    o, c, t = mirror_activation_owner, record_context, mirror_activation_tool
+    if target == "owner":
+        pos = o.find(old, o.find("struct PreparedMirrorDeactivateToken"))
+        if pos >= 0: o = o[:pos] + new + o[pos + len(old):]
+    elif target == "context": c = c.replace(old, new, 1)
+    else: t = t.replace(old, new, 1)
+    if mirror_deactivate_state_gate(o, c, t):
+        fail(f"Mirror deactivation state mutation did not RED: {label}")
+for fixture in (
+    ROOT / "tests/compile_fail/prepared_mirror_deactivate_token_copy.d",
+    ROOT / "tests/compile_fail/prepared_mirror_deactivate_validated_token_copy.d",
+):
+    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if run.returncode == 0 or ("not copyable" not in run.stdout and
+            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+        fail("Mirror deactivation token copy was not rejected:\n" + run.stdout)
 
 edge_extend_tool_activation_owner = (
     ROOT / "source/prepared_edge_extend_tool_activation.d").read_text()

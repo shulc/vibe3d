@@ -44,6 +44,12 @@ struct PreparedMirrorActivationImage {
     }
 }
 
+struct PreparedMirrorDeactivateImage {
+    bool valid;
+    bool expectedEngaged, expectedPreviewCache;
+    void clear() nothrow @nogc { this = PreparedMirrorDeactivateImage.init; }
+}
+
 // ---------------------------------------------------------------------------
 // rebuildMirrorPreview — the non-cumulative preview recompute (impl plan
 // §2.2). Free function (not a method) so a module unittest can exercise it
@@ -356,6 +362,32 @@ public:
         size_t result;
         foreach (selected; baseMask) if (selected) ++result;
         return result;
+    }
+
+    final PreparedMirrorDeactivateImage buildPreparedDeactivateState()
+            const nothrow @nogc {
+        return PreparedMirrorDeactivateImage(true, engaged, havePreviewCache);
+    }
+    final bool preparedDeactivateStateMatches(
+            in PreparedMirrorDeactivateImage image) const nothrow @nogc {
+        return image.valid && engaged == image.expectedEngaged &&
+            havePreviewCache == image.expectedPreviewCache;
+    }
+    final void installPreparedDeactivateState(
+            ref PreparedMirrorDeactivateImage image) nothrow @nogc {
+        engaged = false; havePreviewCache = false; image.clear();
+    }
+    version(unittest) final void seedPreparedDeactivateStateForTest()
+            nothrow @nogc {
+        engaged = true; havePreviewCache = true;
+    }
+    version(unittest) final bool preparedDeactivateStateInstalledForTest()
+            const nothrow @nogc {
+        return !engaged && !havePreviewCache;
+    }
+    version(unittest) final void installPreparedDeactivateStateForTest()
+            nothrow @nogc {
+        engaged = false;
     }
 
     override void deactivate() {
