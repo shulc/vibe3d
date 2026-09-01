@@ -35,7 +35,9 @@ import falloff : evaluateFalloff;
 import toolpipe.packets : FalloffPacket, SnapPacket, SymmetryPacket;
 import params : Param;
 import prepared_record_context : PreparedRecordContext;
-import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
+    PreparedTransformProductEffect, PreparedTransformProductKind;
+import prepared_transform_product_activation : PreparedTransformProductActivationOwner;
 
 
 // ---------------------------------------------------------------------------
@@ -359,6 +361,27 @@ public:
             activationVertices[0] == first && activationVertices.ptr !is livePtr &&
             activationCenter == center && !pendingScaleValid &&
             pendingScale == Vec3(1,1,1);
+    }
+    version(unittest) bool preparedProductActivationSeedForTest() const nothrow @nogc {
+        return preparedActivationSeedForTest() && scaleAccum == Vec3(4,5,6) &&
+            propScale == Vec3(4,5,6) && headlessScale == Vec3(4,5,6) &&
+            activationVertices.length == 1 &&
+            activationVertices[0] == Vec3(9,9,9) &&
+            activationCenter == Vec3(8,8,8) && handler.center == Vec3(2,3,4) &&
+            pendingScaleValid && pendingScale == Vec3(7,7,7);
+    }
+    final PreparedTransformProductEffect prepareActivate(
+            PreparedRecordContext context) {
+        if (context is null) return PreparedTransformProductEffect(
+            preparedToolStateOwner, PreparedTransformProductKind.Scale, false);
+        scope(failure) context.discard();
+        auto owner = PreparedTransformProductActivationOwner.prepare(this);
+        bool ok = owner !is null &&
+            context.prepareTransformProductActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedTransformProductEffect(preparedToolStateOwner,
+            PreparedTransformProductKind.Scale, ok);
     }
 
     // `xfrm.transform` SX/SY/SZ surfaced for `tool.attr <id> SX 1.5`

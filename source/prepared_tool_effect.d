@@ -40,6 +40,7 @@ enum PreparedActivateKind : ubyte { None, Vertex, Array, Clone, Magnet, Reductio
 enum PreparedRadialSweepKind : ubyte { Activate, Param, Deactivate }
 enum PreparedRadialArrayKind : ubyte { Activate, Deactivate }
 enum PreparedTransformActivationKind : ubyte { LinearAlign, RadialAlign }
+enum PreparedTransformProductKind : ubyte { Move, Rotate, Scale }
 
 @PreparedAggregate struct PreparedActivateEffect {
     OwnedId owner;
@@ -65,6 +66,11 @@ enum PreparedTransformActivationKind : ubyte { LinearAlign, RadialAlign }
 @PreparedAggregate struct PreparedTransformActivationEffect {
     OwnedId owner;
     PreparedTransformActivationKind kind;
+    bool accepted;
+}
+@PreparedAggregate struct PreparedTransformProductEffect {
+    OwnedId owner;
+    PreparedTransformProductKind kind;
     bool accepted;
 }
 

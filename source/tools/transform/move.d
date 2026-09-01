@@ -34,7 +34,9 @@ import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
 // uses.
 import document : primaryModelSpace;
 import prepared_record_context : PreparedRecordContext;
-import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
+    PreparedTransformProductEffect, PreparedTransformProductKind;
+import prepared_transform_product_activation : PreparedTransformProductActivationOwner;
 
 // ---------------------------------------------------------------------------
 // MoveTool : TransformTool — shows MoveHandler at selection/mesh center
@@ -349,6 +351,22 @@ public:
     }
     version(unittest) bool preparedProductActivationForTest() const nothrow @nogc {
         return preparedActivationForTest() && propInput == Vec3(0,0,0);
+    }
+    version(unittest) bool preparedProductActivationSeedForTest() const nothrow @nogc {
+        return preparedActivationSeedForTest() && propInput == Vec3(4,5,6);
+    }
+    final PreparedTransformProductEffect prepareActivate(
+            PreparedRecordContext context) {
+        if (context is null) return PreparedTransformProductEffect(
+            preparedToolStateOwner, PreparedTransformProductKind.Move, false);
+        scope(failure) context.discard();
+        auto owner = PreparedTransformProductActivationOwner.prepare(this);
+        bool ok = owner !is null &&
+            context.prepareTransformProductActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedTransformProductEffect(preparedToolStateOwner,
+            PreparedTransformProductKind.Move, ok);
     }
 
     // No `params()` override: TX/TY/TZ live on the wrapper now

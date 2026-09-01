@@ -498,10 +498,13 @@ public:
     }
 
     void discard() nothrow @nogc {
-        if (!begun_ || validated_Once) return;
+        if (!begun_) return;
+        // NoHistory validation never validates/consumes the history token;
+        // allow a caller to abandon the fully validated resource journal.
+        if (validated_Once && !noHistoryMarker_) return;
         history_.discardPreparedToken(token_);
         abortResources();
-        begun_ = false;
+        begun_ = false; validated_Once = false;
     }
 
 private:
@@ -591,6 +594,20 @@ unittest {
     context.install();
     history.undoDepthCounts(models, ui);
     assert(models == 1 && hub.macroLength == 1);
+
+    // A validated History journal owns a validated history/observer image:
+    // discard is deliberately inert and the one later install remains exact.
+    auto retainedHistory = new CommandHistory();
+    auto retainedHub = new RecordObserverHub(); retainedHub.setMacroActive(true);
+    auto retained = new PreparedRecordContext(retainedHistory, retainedHub);
+    assert(retained.prepare(new C(), PreparedHistoryKind.Plain).accepted &&
+        retained.validate());
+    retained.discard();
+    retainedHistory.undoDepthCounts(models, ui);
+    assert(models == 0 && ui == 0 && retainedHub.macroLength == 0);
+    retained.install(); retained.install();
+    retainedHistory.undoDepthCounts(models, ui);
+    assert(models == 1 && ui == 0 && retainedHub.macroLength == 1);
 }
 
 version (unittest) unittest {
@@ -599,6 +616,23 @@ version (unittest) unittest {
     import change_bus : changeBus;
     auto history = new CommandHistory();
     auto hub = new RecordObserverHub();
+
+    // A validated NoHistory journal has no validated history image. Discard
+    // must abort its resource, release the retained history token, and make
+    // all subsequent operations inert; the same history immediately begins
+    // and validates a fresh NoHistory transaction.
+    auto boundaryHandle = new ClickPointHandler();
+    auto boundaryOwner = new ClickPointResourceOwner(boundaryHandle, 7, 11);
+    auto boundary = new PreparedRecordContext(history, hub);
+    boundary.setResourceIdentity(7, 11);
+    assert(boundary.prepareDestroy(boundaryOwner) &&
+        boundary.markNoHistoryInstall() && boundary.validate());
+    boundary.discard();
+    assert(boundary.resourceCountForTest() == 0 && !boundary.validate());
+    boundary.install(); assert(boundary.installTraceForTest().length == 0);
+    auto boundaryFresh = new PreparedRecordContext(history, hub);
+    assert(boundaryFresh.markNoHistoryInstall() && boundaryFresh.validate());
+    boundaryFresh.discard(); assert(!boundaryFresh.validate());
 
     // Resource then history (Box/Primitive ordering).
     auto firstHandle = new ClickPointHandler();

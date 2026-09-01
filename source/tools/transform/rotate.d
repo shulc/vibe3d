@@ -36,7 +36,9 @@ import falloff : evaluateFalloff;
 import toolpipe.packets : FalloffPacket, SnapPacket, SymmetryPacket;
 import params : Param;
 import prepared_record_context : PreparedRecordContext;
-import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
+    PreparedTransformProductEffect, PreparedTransformProductKind;
+import prepared_transform_product_activation : PreparedTransformProductActivationOwner;
 
 // ---------------------------------------------------------------------------
 // RotateTool : Tool — shows RotateHandler at selection/mesh center;
@@ -246,6 +248,26 @@ public:
             origVertices[0] == first && origVertices.ptr !is livePtr &&
             pendingRotateAxis == -1 &&
             pendingRotateAngle == 0 && pendingRotateViewAxis == Vec3(0,0,0);
+    }
+    version(unittest) bool preparedProductActivationSeedForTest() const nothrow @nogc {
+        return preparedActivationSeedForTest() && angleAccum == Vec3(4,5,6) &&
+            propDeg == Vec3(4,5,6) && headlessRotate == Vec3(4,5,6) &&
+            origVertices.length == 1 && origVertices[0] == Vec3(9,9,9) &&
+            pendingRotateAxis == 2 &&
+            pendingRotateAngle == 7 && pendingRotateViewAxis == Vec3(8,8,8);
+    }
+    final PreparedTransformProductEffect prepareActivate(
+            PreparedRecordContext context) {
+        if (context is null) return PreparedTransformProductEffect(
+            preparedToolStateOwner, PreparedTransformProductKind.Rotate, false);
+        scope(failure) context.discard();
+        auto owner = PreparedTransformProductActivationOwner.prepare(this);
+        bool ok = owner !is null &&
+            context.prepareTransformProductActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedTransformProductEffect(preparedToolStateOwner,
+            PreparedTransformProductKind.Rotate, ok);
     }
 
     // `xfrm.transform` RX/RY/RZ surfaced for `tool.attr <id> RY 30`

@@ -15,6 +15,7 @@ private shared ulong nextTransformProductActivationOwner;
 /// only scalar identity/generation tokens cross the context boundary.
 final class PreparedTransformProductActivationOwner {
 private:
+    version(unittest) static size_t abortCount_;
     TransformTool target_;
     PreparedTransformProductActivationKind kind_;
     PreparedMoveActivationImage move_;
@@ -71,11 +72,19 @@ public:
         }
         consume();
     }
-    void abort() nothrow @nogc { if (!consumed_) { scrub(); consume(); } }
+    void abort() nothrow @nogc {
+        if (!consumed_) {
+            version(unittest) ++abortCount_;
+            scrub(); consume();
+        }
+    }
     version(unittest) bool payloadEmpty() const nothrow @nogc {
         return !move_.valid && !rotate_.valid && !scale_.valid &&
             rotate_.origVertices.length == 0 &&
             scale_.activationVertices.length == 0;
+    }
+    version(unittest) static size_t abortCountForTest() nothrow @nogc {
+        return abortCount_;
     }
 private:
     this(TransformTool target) {
@@ -97,6 +106,7 @@ version(unittest) unittest {
     import command_history : CommandHistory;
     import record_observer_hub : RecordObserverHub;
     import tools.transform.xfrm_transform : XfrmTransformTool;
+    import prepared_tool_effect : PreparedTransformProductKind;
     Mesh mesh = makeCube(); GpuMesh gpu; EditMode mode = EditMode.Polygons;
     auto move = new MoveTool(() => &mesh, &gpu, &mode);
     auto rotate = new RotateTool(() => &mesh, &gpu, &mode);
@@ -175,4 +185,76 @@ version(unittest) unittest {
         new DerivedScale(() => &mesh, &gpu, &mode)) is null);
     assert(PreparedTransformProductActivationOwner.prepare(
         new XfrmTransformTool(() => &mesh, &gpu, &mode)) is null);
+
+    move.seedPreparedProductActivationForTest();
+    auto moveProducerContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    auto moveEffect = move.prepareActivate(moveProducerContext);
+    assert(moveEffect.accepted && moveEffect.kind == PreparedTransformProductKind.Move &&
+        moveEffect.owner == move.preparedOwnerForTest &&
+        move.preparedProductActivationSeedForTest());
+    assert(moveProducerContext.validate());
+    moveProducerContext.install(); moveProducerContext.install();
+    assert(move.preparedProductActivationForTest() &&
+        moveProducerContext.installTraceForTest() == [15,8]);
+
+    rotate.seedPreparedProductActivationForTest();
+    auto producerRotateFirst = mesh.vertices[0];
+    auto producerRotatePtr = mesh.vertices.ptr;
+    auto rotateProducerContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    auto rotateEffect = rotate.prepareActivate(rotateProducerContext);
+    assert(rotateEffect.accepted &&
+        rotateEffect.kind == PreparedTransformProductKind.Rotate &&
+        rotateEffect.owner == rotate.preparedOwnerForTest &&
+        rotate.preparedProductActivationSeedForTest());
+    assert(rotateProducerContext.validate());
+    rotateProducerContext.install();
+    assert(rotate.preparedProductActivationForTest(mesh.vertices.length,
+        producerRotateFirst, producerRotatePtr) &&
+        rotateProducerContext.installTraceForTest() == [15,8]);
+
+    scale.seedPreparedProductActivationForTest();
+    auto producerScaleFirst = mesh.vertices[0];
+    auto producerScalePtr = mesh.vertices.ptr;
+    auto scaleProducerContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    auto scaleEffect = scale.prepareActivate(scaleProducerContext);
+    assert(scaleEffect.accepted &&
+        scaleEffect.kind == PreparedTransformProductKind.Scale &&
+        scaleEffect.owner == scale.preparedOwnerForTest &&
+        scale.preparedProductActivationSeedForTest());
+    assert(scaleProducerContext.validate());
+    scaleProducerContext.install(); scaleProducerContext.install();
+    assert(scale.preparedProductActivationForTest(mesh.vertices.length,
+        producerScaleFirst, producerScalePtr, Vec3(2,3,4)) &&
+        scaleProducerContext.installTraceForTest() == [15,8]);
+
+    auto derived = new DerivedRotate(() => &mesh, &gpu, &mode);
+    auto refusedContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    auto refused = derived.prepareActivate(refusedContext);
+    assert(!refused.accepted && refused.kind == PreparedTransformProductKind.Rotate &&
+        refused.owner == derived.preparedOwnerForTest && !refusedContext.validate());
+    auto nullMove = move.prepareActivate(null);
+    assert(!nullMove.accepted && nullMove.kind == PreparedTransformProductKind.Move &&
+        nullMove.owner == move.preparedOwnerForTest);
+
+    rotate.seedPreparedProductActivationForTest();
+    auto abortsBefore = PreparedTransformProductActivationOwner.abortCountForTest();
+    auto producerFault = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    PreparedRecordContext.failAfterResourceBeginForTest(true); threw = false;
+    try rotate.prepareActivate(producerFault); catch (Exception) threw = true;
+    PreparedRecordContext.failAfterResourceBeginForTest(false);
+    assert(threw && !producerFault.validate() &&
+        rotate.preparedProductActivationSeedForTest() &&
+        PreparedTransformProductActivationOwner.abortCountForTest() == abortsBefore + 1);
+    auto producerRetry = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    assert(rotate.prepareActivate(producerRetry).accepted &&
+        rotate.preparedProductActivationSeedForTest() && producerRetry.validate());
+    producerRetry.discard();
+    assert(rotate.preparedProductActivationSeedForTest() &&
+        PreparedTransformProductActivationOwner.abortCountForTest() == abortsBefore + 2);
 }

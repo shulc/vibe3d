@@ -162,9 +162,15 @@ B5K_PREPARED_LEGACY = {
     ("tools.alignment.linear_align_tool", "LinearAlignTool", "activate"),
     ("tools.alignment.radial_align_tool", "RadialAlignTool", "activate"),
 }
+B5L_PREPARED_LEGACY = {
+    ("tools.transform.move", "MoveTool", "activate"),
+    ("tools.transform.rotate", "RotateTool", "activate"),
+    ("tools.transform.scale", "ScaleTool", "activate"),
+}
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
-    B5I_PREPARED_LEGACY | B5J_PREPARED_LEGACY | B5K_PREPARED_LEGACY)
+    B5I_PREPARED_LEGACY | B5J_PREPARED_LEGACY | B5K_PREPARED_LEGACY |
+    B5L_PREPARED_LEGACY)
 all_hook_keys = {(r["module"], r["aggregate"], r["symbol"])
                  for r in CURRENT_WRITERS["hooks"]}
 if not TOOL_STATE_CONVERTED | PREPARED_LEGACY <= all_hook_keys:
@@ -196,7 +202,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "18b7ce7b49675fb07821e7af0d5fc6aa4b5d5983c67f15e1f44753cb29d7eebb"
+    "61c1f266c4a80924a729949871c62af8068a1e8af3b9b19d21767983a91a0e2b"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -213,7 +219,7 @@ def validate_deferred_rows(rows, require_canonical=True):
             fail("P1.0b.1 checked-in deferred batch/reason invalid")
     canonical = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
     if require_canonical and hashlib.sha256(canonical).hexdigest() != \
-            "18b7ce7b49675fb07821e7af0d5fc6aa4b5d5983c67f15e1f44753cb29d7eebb":
+            "61c1f266c4a80924a729949871c62af8068a1e8af3b9b19d21767983a91a0e2b":
         fail("P1.0b.1 checked-in deferred exact values drifted")
 validate_deferred_rows(TOOL_STATE_DEFERRED_ROWS)
 for field in ("batch", "reason"):
@@ -2282,10 +2288,34 @@ def transform_product_gate(owner, context, move, rotate, scale):
         "bool prepareTransformProductActivation(PreparedTransformProductActivationOwner owner)" in context and
         "e.transformProductActivation.validate();" in context and
         "e.transformProductActivation.install();" in context and
-        "e.transformProductActivation.abort();" in context)
+        "e.transformProductActivation.abort();" in context and
+        "if (validated_Once && !noHistoryMarker_) return;" in context)
 if not transform_product_gate(transform_product_owner, record_context,
         move_tool, rotate_tool, scale_tool):
     fail("Transform product activation owner contract drift")
+def transform_product_producer_gate(move, rotate, scale):
+    def body(source):
+        start = source.find("final PreparedTransformProductEffect prepareActivate(")
+        if start < 0: return ""
+        begin = source.find("{", start) + 1
+        return source[begin:balanced_source(source, begin)-1]
+    bodies = {"Move": body(move), "Rotate": body(rotate), "Scale": body(scale)}
+    for kind, producer in bodies.items():
+        if not all(x in producer for x in (
+                "scope(failure) context.discard();",
+                "PreparedTransformProductActivationOwner.prepare(this)",
+                "context.prepareTransformProductActivation(owner) &&",
+                "context.markNoHistoryInstall();",
+                "if (!ok) context.discard();",
+                "return PreparedTransformProductEffect(preparedToolStateOwner,\n"
+                f"            PreparedTransformProductKind.{kind}, ok);")):
+            return False
+        if any(x in producer for x in ("owner.install(", "context.install(",
+                "context.validate(", "installPreparedProductActivation(")):
+            return False
+    return True
+if not transform_product_producer_gate(move_tool, rotate_tool, scale_tool):
+    fail("Transform product activation producer contract drift")
 for target, old, new, label in (
     ("owner", "target.classinfo is MoveTool.classinfo", "false", "drop Move admission"),
     ("owner", "target.classinfo is RotateTool.classinfo", "false", "drop Rotate admission"),
@@ -2315,6 +2345,8 @@ for target, old, new, label in (
     ("scale", "bool pendingScaleValid, valid;", "bool pendingScaleValid = true, valid;", "change Scale pending-valid default"),
     ("scale", "pendingScaleValid = image.pendingScaleValid;\n        pendingScale = image.pendingScale; image.clear();", "pendingScale = image.pendingScale;\n        pendingScaleValid = image.pendingScaleValid; image.clear();", "reorder Scale fixed install tail"),
     ("context", "e.transformProductActivation.abort();", "", "drop context abort"),
+    ("context", "if (validated_Once && !noHistoryMarker_) return;", "if (validated_Once) return;", "drop validated NoHistory discard"),
+    ("context", "if (validated_Once && !noHistoryMarker_) return;", "if (validated_Once && false) return;", "widen discard to validated History"),
 ):
     owner, context = transform_product_owner, record_context
     move, rotate, scale = move_tool, rotate_tool, scale_tool
@@ -2325,6 +2357,27 @@ for target, old, new, label in (
     else: context = context.replace(old, new, 1)
     if transform_product_gate(owner, context, move, rotate, scale):
         fail(f"Transform product activation mutation did not RED: {label}")
+for target, old, new, label in (
+    ("move", "PreparedTransformProductActivationOwner.prepare(this)", "null", "drop Move producer owner"),
+    ("rotate", "context.prepareTransformProductActivation(owner) &&", "true &&", "drop Rotate producer enlist"),
+    ("scale", "context.markNoHistoryInstall();", "true;", "drop Scale NoHistory order"),
+    ("move", "PreparedTransformProductKind.Move, ok", "PreparedTransformProductKind.Rotate, ok", "swap Move result kind"),
+    ("rotate", "PreparedTransformProductKind.Rotate, ok", "PreparedTransformProductKind.Scale, ok", "swap Rotate result kind"),
+    ("scale", "PreparedTransformProductKind.Scale, ok", "PreparedTransformProductKind.Move, ok", "swap Scale result kind"),
+    ("move", "return PreparedTransformProductEffect(preparedToolStateOwner,\n            PreparedTransformProductKind.Move, ok);", "return PreparedTransformProductEffect(OwnedId.init,\n            PreparedTransformProductKind.Move, ok);", "wrong Move accepted owner"),
+    ("rotate", "return PreparedTransformProductEffect(preparedToolStateOwner,\n            PreparedTransformProductKind.Rotate, ok);", "return PreparedTransformProductEffect(OwnedId.init,\n            PreparedTransformProductKind.Rotate, ok);", "wrong Rotate accepted owner"),
+    ("scale", "return PreparedTransformProductEffect(preparedToolStateOwner,\n            PreparedTransformProductKind.Scale, ok);", "return PreparedTransformProductEffect(OwnedId.init,\n            PreparedTransformProductKind.Scale, ok);", "wrong Scale accepted owner"),
+    ("move", "auto owner = PreparedTransformProductActivationOwner.prepare(this);", "auto owner = PreparedTransformProductActivationOwner.prepare(this); owner.install();", "early Move owner install"),
+    ("scale", "auto owner = PreparedTransformProductActivationOwner.prepare(this);", "auto owner = PreparedTransformProductActivationOwner.prepare(this); installPreparedProductActivation(PreparedScaleActivationImage.init);", "early Scale direct installer"),
+    ("rotate", "scope(failure) context.discard();", "", "drop Rotate failure cleanup"),
+    ("scale", "if (!ok) context.discard();", "", "drop Scale refusal discard"),
+):
+    move, rotate, scale = move_tool, rotate_tool, scale_tool
+    if target == "move": move = move.replace(old, new, 1)
+    elif target == "rotate": rotate = rotate.replace(old, new, 1)
+    else: scale = scale.replace(old, new, 1)
+    if transform_product_producer_gate(move, rotate, scale):
+        fail(f"Transform product producer mutation did not RED: {label}")
 for source, name in ((move_tool, "Move"), (rotate_tool, "Rotate"), (scale_tool, "Scale")):
     start = source.find("override void activate()")
     body_start = source.find("{", start) + 1
