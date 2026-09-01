@@ -406,6 +406,65 @@ for label, contract, wrong in history_mutations:
     else:
         fail(f"P1.0b.3b {label} mutation did not RED")
 
+# P1.0b.3c Layer-owned whole-Mesh image, still unreachable from production.
+mesh_source = (ROOT / "source/mesh.d").read_text()
+document_source = (ROOT / "source/document.d").read_text()
+for path in (ROOT / "source").rglob("*.d"):
+    if path.name != "document.d" and ".beginPreparedMesh(" in path.read_text():
+        fail("P1.0b.3c prepared Mesh owner gained a pre-cutover caller")
+
+def validate_prepared_mesh(mesh, document):
+    expected = (
+        (mesh, "private auto", "preparedDeepCopy", "ad4913145eaf692463c5b37e7a9cd0be0d1b4d50568fc44a777694f8670b8959"),
+        (mesh, "Mesh", "detachedPreparedMesh", "40e6ec540487ba78db0302de7be272887c1634a9acfaa41dc282993928309882"),
+        (mesh, "bool", "canBeginPreparedMesh", "57a472d638111edbdc17a211158c5e98ccac6377b5dc3e90455300238b8e55f6"),
+        (mesh, "void", "installPreparedMeshImage", "490193583f400bf961d9a9531603fb041aaea228d8852276c65b8eda9e79dfb0"),
+        (document, "PreparedLayerMeshToken", "beginPreparedMesh", "2669edc10d0c0e543478df6f28665a01b5b46f8754c4c1c0df7570b6abc64e1f"),
+        (document, r"private\s+bool", "ownsPrepared", "26eb3a1ef85b9316985a50931d76b8cd72cb0aa4a16c8804691557359fe7c2e0"),
+        (document, "bool", "prepareMeshImage", "5478417340fe98e67ae90ad361871b61e91ad7a8b39e7ff9d6285bf9d3c1a7f4"),
+        (document, "ValidatedLayerMeshToken", "validatesPreparedMesh", "6dcf05179a8380e6348dd532d428ff3da0b8c5aa8d1e34b1cf15394550166e60"),
+        (document, "void", "installPreparedMesh", "371f10ddc89c9203894ef9423476a25c6c3c9cafeb084b0af7161ba7a03f3cce"),
+        (document, "void", "discardPreparedMesh", "098e58852a90bf148199700eae4f83d1b7d2799ddfee08a762e44fcbd1db640e"),
+    )
+    for source, returns, name, digest in expected:
+        match = re.search(returns + r"\s+" + name + r"\s*\([^;{}]*\)[^{]*\{", source)
+        if not match:
+            fail(f"P1.0b.3c {name} seam vanished")
+        body = source[match.end():balanced_source(source, match.end())-1]
+        if semantic_digest(body) != digest:
+            fail(f"P1.0b.3c {name} exact ownership behavior drifted")
+validate_prepared_mesh(mesh_source, document_source)
+if not re.search(r"struct\s+PreparedLayerMeshToken\s*\{\s*private:\s*ulong\s+birthId,\s*generation;",
+                 document_source):
+    fail("P1.0b.3c prepared Mesh token stopped being scalar-only")
+if "static foreach (i; 0 .. R.tupleof.length)" not in mesh_source or \
+   "static assert(Mesh.tupleof.length == 54" not in (ROOT / "source/mesh_planes.d").read_text():
+    fail("P1.0b.3c complete Mesh field ownership census changed")
+if not re.search(r"void\s+installPreparedMeshImage\s*\([^)]*\)\s*nothrow\s+@nogc", mesh_source) or \
+   not re.search(r"void\s+installPreparedMesh\s*\([^)]*\)\s*nothrow\s+@nogc", document_source):
+    fail("P1.0b.3c Mesh install lost static nothrow proof")
+
+mesh_mutations = (
+    ("field omission", mesh_source.replace("0 .. R.tupleof.length", "0 .. R.tupleof.length - 1", 1), document_source),
+    ("shallow copy", mesh_source.replace("return preparedDeepCopy(mutable);", "return mutable;", 1), document_source),
+    ("address replacement", mesh_source.replace("target = image;", "target.vertices = image.vertices;", 1), document_source),
+    ("owner generation", mesh_source, document_source.replace(
+        "token.generation == preparedMeshPending_.generation",
+        "token.generation != preparedMeshPending_.generation", 1)),
+    ("declared pending corner admission", mesh_source.replace(
+        " ||\n        source.pendingCornerProvenance_.declared()", "", 1), document_source),
+    ("unsafe replacement candidate admission", mesh_source, document_source.replace(
+        " || !canBeginPreparedMesh(image)", "", 1)),
+)
+for label, mutated_mesh, mutated_document in mesh_mutations:
+    try:
+        validate_prepared_mesh(mutated_mesh, mutated_document)
+    except SystemExit as error:
+        if "exact ownership behavior drifted" not in str(error):
+            fail(f"P1.0b.3c {label} mutation failed for wrong reason")
+    else:
+        fail(f"P1.0b.3c {label} mutation did not RED")
+
 # Potency: changing the Arc producer to copy the original Drawing state must
 # RED the named producer contract, independently of the hook-body fingerprint.
 arc_source = (ROOT / "source/tools/create/arc.d").read_text()

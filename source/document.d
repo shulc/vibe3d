@@ -1,6 +1,7 @@
 module document;
 
-import mesh    : Mesh;
+import mesh    : Mesh, detachedPreparedMesh, canBeginPreparedMesh,
+                 installPreparedMeshImage;
 import seltype : SelMode;
 import document_selection : DocumentSelection;
 // Task 0721: down to ONE name. The other six were the matrix helpers
@@ -390,6 +391,27 @@ struct LinkSlot {
 /// every other document-model global; starts at 1 so 0 can mean "never seated".
 private __gshared ulong g_nextLayerBirthId = 0;
 
+private final class PendingPreparedMeshImage {
+    Mesh image;
+    ulong generation;
+    bool validated;
+}
+
+struct PreparedLayerMeshToken {
+private:
+    ulong birthId, generation;
+public:
+    @disable this(this);
+}
+
+struct ValidatedLayerMeshToken {
+private:
+    ulong birthId, generation;
+public:
+    @disable this(this);
+    bool valid() const nothrow @nogc { return birthId != 0; }
+}
+
 final class Layer {
     /// THE LAYER'S IDENTITY, and the close on the address-reuse (ABA) hazard
     /// the epoch tables carry (task 1906 stage 3; `source/mesh_dirty.d`'s
@@ -428,6 +450,59 @@ final class Layer {
     // list IS the audit (§Consumer inventory, tier 1). Reach it only through
     // `hasMesh()` / `meshOrNull()` / `meshRef()` / `Document.meshLayers()`.
     private Mesh mesh_;         ///< the layer's geometry (stable heap address)
+    private ulong preparedMeshGeneration_;
+    private PendingPreparedMeshImage preparedMeshPending_;
+
+    PreparedLayerMeshToken beginPreparedMesh() {
+        PreparedLayerMeshToken token;
+        if (preparedMeshPending_ !is null || !canBeginPreparedMesh(mesh_))
+            return token;
+        auto pending = new PendingPreparedMeshImage();
+        pending.generation = ++preparedMeshGeneration_;
+        pending.image = detachedPreparedMesh(mesh_);
+        preparedMeshPending_ = pending;
+        token.birthId = birthId; token.generation = pending.generation;
+        return token;
+    }
+
+    private bool ownsPrepared(ref PreparedLayerMeshToken token) const nothrow @nogc {
+        return preparedMeshPending_ !is null && token.birthId == birthId &&
+               token.generation == preparedMeshPending_.generation;
+    }
+
+    /// Evolve from another detached whole image; the live mesh is untouched.
+    bool prepareMeshImage(ref PreparedLayerMeshToken token, ref const Mesh image) {
+        if (!ownsPrepared(token) || !canBeginPreparedMesh(image)) return false;
+        preparedMeshPending_.image = detachedPreparedMesh(image);
+        preparedMeshPending_.validated = false;
+        return true;
+    }
+
+    ValidatedLayerMeshToken validatesPreparedMesh(ref PreparedLayerMeshToken token)
+            nothrow @nogc {
+        ValidatedLayerMeshToken result;
+        if (!ownsPrepared(token)) return result;
+        preparedMeshPending_.validated = true;
+        result.birthId = token.birthId; result.generation = token.generation;
+        token.birthId = 0; token.generation = 0;
+        return result;
+    }
+
+    void installPreparedMesh(ref ValidatedLayerMeshToken token) nothrow @nogc {
+        if (preparedMeshPending_ is null || !preparedMeshPending_.validated ||
+            token.birthId != birthId ||
+            token.generation != preparedMeshPending_.generation) return;
+        auto pending = preparedMeshPending_;
+        preparedMeshPending_ = null;
+        token.birthId = 0; token.generation = 0;
+        installPreparedMeshImage(mesh_, pending.image);
+    }
+
+    void discardPreparedMesh(ref PreparedLayerMeshToken token) nothrow @nogc {
+        if (!ownsPrepared(token)) return;
+        preparedMeshPending_ = null;
+        token.birthId = 0; token.generation = 0;
+    }
     // Task 0615: a plain DEFAULTED field, so every pre-existing `new Layer`
     // site (~15 of them) keeps compiling and keeps meaning "mesh item"
     // without being touched.
@@ -2666,3 +2741,85 @@ ModelSpace primaryModelSpace() {
         ? primaryModelSpaceResolver()
         : ModelSpace.world();
 }
+
+unittest { // P1.0b.3c Layer-owned detached Mesh image and stable address.
+    import math : Vec3;
+    auto layer = new Layer();
+    layer.meshRef().vertices = [Vec3(1, 2, 3), Vec3(4, 5, 6)];
+    layer.meshRef().faces._store = [[0u, 1u, 0u]];
+    layer.meshRef().edgeIndexMap[17UL] = 4;
+    auto liveAddress = &layer.meshRef();
+    auto token = layer.beginPreparedMesh();
+    auto overlap = layer.beginPreparedMesh();
+    auto overlapValidated = layer.validatesPreparedMesh(overlap);
+    assert(!overlapValidated.valid);
+    assert(layer.preparedMeshPending_.image.vertices.ptr !is
+           layer.meshRef().vertices.ptr);
+    assert(layer.preparedMeshPending_.image.faces[0].ptr !is
+           layer.meshRef().faces[0].ptr);
+
+    // Every replacement candidate crosses the same full safety boundary as
+    // the live image at begin. Refusal preserves both the prior image and the
+    // still-consumable owner token.
+    const Vec3 prior = layer.preparedMeshPending_.image.vertices[0];
+    import mesh_edit_delta : MeshEditScope;
+    import mesh : MeshEditBatch;
+    Mesh unsafeEdit = detachedPreparedMesh(layer.meshRef());
+    auto editBatch = MeshEditBatch(unsafeEdit, cast(uint)MeshEditScope.Points);
+    assert(!layer.prepareMeshImage(token, unsafeEdit));
+    editBatch.close();
+    assert(layer.preparedMeshPending_.image.vertices[0] == prior);
+
+    Mesh unsafeChanges = detachedPreparedMesh(layer.meshRef());
+    unsafeChanges.noteChange(MeshEditScope.Position);
+    assert(!layer.prepareMeshImage(token, unsafeChanges));
+    assert(layer.preparedMeshPending_.image.vertices[0] == prior);
+
+    import mesh : MapDomain;
+    Mesh unsafeArmed;
+    assert(unsafeArmed.addMeshMap("armed-corner", 1,
+                                  MapDomain.PolyVertex) !is null);
+    auto armedRewrite = unsafeArmed.beginCornerRewrite();
+    assert(!layer.prepareMeshImage(token, unsafeArmed));
+    assert(layer.preparedMeshPending_.image.vertices[0] == prior);
+
+    Mesh unsafeDeclared;
+    assert(unsafeDeclared.addMeshMap("corner", 1, MapDomain.PolyVertex) !is null);
+    auto declaredRewrite = unsafeDeclared.beginCornerRewrite();
+    unsafeDeclared.declareCornerProvenance(declaredRewrite.unchanged());
+    assert(unsafeDeclared.cornerRewritePending());
+    assert(!layer.prepareMeshImage(token, unsafeDeclared));
+    assert(layer.preparedMeshPending_.image.vertices[0] == prior);
+
+    Mesh desired = detachedPreparedMesh(layer.meshRef());
+    desired.vertices[0] = Vec3(9, 8, 7);
+    desired.faces[0][0] = 1;
+    desired.edgeIndexMap[17UL] = 99;
+    assert(layer.prepareMeshImage(token, desired));
+    desired = Mesh.init; // caller temporary may die before install.
+    assert(layer.meshRef().vertices[0] == Vec3(1, 2, 3));
+
+    auto other = new Layer();
+    auto wrong = other.validatesPreparedMesh(token);
+    assert(!wrong.valid);
+    auto validated = layer.validatesPreparedMesh(token);
+    assert(validated.valid);
+    layer.installPreparedMesh(validated);
+    assert(&layer.meshRef() is liveAddress);
+    assert(layer.meshRef().vertices[0] == Vec3(9, 8, 7));
+    assert(layer.meshRef().faces[0][0] == 1);
+    assert(layer.meshRef().edgeIndexMap[17UL] == 99);
+    layer.installPreparedMesh(validated); // one-shot.
+    assert(&layer.meshRef() is liveAddress);
+
+    auto discarded = layer.beginPreparedMesh();
+    layer.discardPreparedMesh(discarded);
+    assert(layer.preparedMeshPending_ is null);
+}
+
+static assert(!__traits(compiles, {
+    PreparedLayerMeshToken a; PreparedLayerMeshToken b = a;
+}));
+static assert(!__traits(compiles, {
+    ValidatedLayerMeshToken a; ValidatedLayerMeshToken b = a;
+}));

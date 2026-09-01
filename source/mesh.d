@@ -4,6 +4,9 @@ import std.math : sqrt, isIdentical;
 import std.array : uninitializedArray;
 import std.parallelism : parallel;
 import std.range : iota;
+import std.traits : Unqual, isDynamicArray, isAssociativeArray, isStaticArray,
+                    KeyType, ValueType;
+import std.range.primitives : ElementType;
 import math;
 import editmode : EditMode;
 import mesh_edit_delta : MeshEditTracker, MeshEditScope, MeshEditDelta, MeshOpEntry;
@@ -1418,6 +1421,61 @@ bool marksBitDiffer(const(uint)[] snapshot, const(uint)[] live, uint bit)
     foreach (i, mk; live)
         if (((mk ^ snapshot[i]) & bit) != 0) return true;
     return false;
+}
+
+private auto preparedDeepCopy(T)(ref T source) {
+    alias R = Unqual!T;
+    static if (is(R == string) || is(R == immutable)) {
+        return source;
+    } else static if (isDynamicArray!R) {
+        alias U = Unqual!(ElementType!T);
+        U[] result = new U[](source.length);
+        foreach (i; 0 .. source.length) result[i] = preparedDeepCopy(source[i]);
+        return result;
+    } else static if (isAssociativeArray!R) {
+        alias K = Unqual!(KeyType!T);
+        alias V = Unqual!(ValueType!T);
+        V[K] result;
+        foreach (key, value; source)
+            result[preparedDeepCopy(key)] = preparedDeepCopy(value);
+        return result;
+    } else static if (isStaticArray!R) {
+        alias U = Unqual!(ElementType!T);
+        U[source.length] result;
+        foreach (i; 0 .. source.length) result[i] = preparedDeepCopy(source[i]);
+        return result;
+    } else static if (is(R == struct)) {
+        R result = cast(R)source;
+        static foreach (i; 0 .. R.tupleof.length)
+            static if (__traits(compiles,
+                result.tupleof[i] = preparedDeepCopy(source.tupleof[i])))
+                result.tupleof[i] = preparedDeepCopy(source.tupleof[i]);
+        return result;
+    } else {
+        return source;
+    }
+}
+
+/// Owner support for Layer's future prepared mesh transaction. These are
+/// whole-image operations only; no shadow address is published to a bus.
+Mesh detachedPreparedMesh(ref const Mesh source) {
+    Mesh mutable = cast(Mesh)source;
+    return preparedDeepCopy(mutable);
+}
+
+bool canBeginPreparedMesh(ref const Mesh source) {
+    if (source.isRecordingEdits || source.undeliveredChanges_ ||
+        source.undeliveredSelDomains_ || source.cornerRewriteArmed_ ||
+        source.pendingCornerProvenance_.declared())
+        return false;
+    foreach (p; g_deliveryPendingMeshes) if (p is &source) return false;
+    foreach (p; g_hideDerivePendingMeshes) if (p is &source) return false;
+    return true;
+}
+
+void installPreparedMeshImage(ref Mesh target, ref Mesh image) nothrow @nogc {
+    target = image;
+    image = Mesh.init;
 }
 
 struct Mesh {
@@ -17899,4 +17957,52 @@ unittest { // T-S1 (extrude) — mesh_ops/extrude.d's extrudeFacesByMask, a
     assert(affected == 1);
     assert(m.faces.length > 4, "T-S1 extrude: cap + wall quads appended");
     t_s1_assertOnlyThatSurvivorHidden(m, t_s1_f3Centroid, "T-S1 extrude");
+}
+
+unittest { // P1.0b.3c whole-field deep detachment and refusal seams.
+    Mesh live;
+    live.addVertex(Vec3(1, 2, 3));
+    live.addVertex(Vec3(4, 5, 6));
+    live.faces._store = [[0u, 1u, 0u]];
+    live.vertexMarks = [1u, 2u];
+    live.edgeIndexMap[7UL] = 3;
+    MeshMap map; map.name = "m"; map.data = [1.0f, 2.0f];
+    live.meshMaps = [map];
+    auto copy = detachedPreparedMesh(live);
+    static foreach (i; 0 .. Mesh.tupleof.length) {{
+        alias F = typeof(live.tupleof[i]);
+        static if (isDynamicArray!F) {
+            if (live.tupleof[i].length)
+                assert(live.tupleof[i].ptr !is copy.tupleof[i].ptr,
+                       "every direct Mesh slice must detach");
+        }
+    }}
+    assert(live.faces[0].ptr !is copy.faces[0].ptr);
+    assert(live.meshMaps[0].data.ptr !is copy.meshMaps[0].data.ptr);
+    copy.vertices.ptr[0] = Vec3(9, 9, 9);
+    copy.faces[0][0] = 1;
+    copy.meshMaps[0].data[0] = 9;
+    copy.edgeIndexMap[7UL] = 9;
+    assert(live.vertices.ptr[0] == Vec3(1, 2, 3));
+    assert(live.faces[0][0] == 0 && live.meshMaps[0].data[0] == 1);
+    assert(live.edgeIndexMap[7UL] == 3);
+
+    Mesh unsafe;
+    unsafe.noteChange(MeshEditScope.Position);
+    assert(!canBeginPreparedMesh(unsafe));
+    unsafe.undeliveredChanges_ = 0;
+    unsafe.undeliveredSelDomains_ = 0;
+    unsafe.cornerRewriteArmed_ = true;
+    assert(!canBeginPreparedMesh(unsafe));
+    unsafe.cornerRewriteArmed_ = false;
+    unsafe.pendingCornerProvenance_ = CornerProvenance.unchanged();
+    assert(!canBeginPreparedMesh(unsafe));
+
+    Mesh queued;
+    g_deliveryPendingMeshes ~= &queued;
+    assert(!canBeginPreparedMesh(queued));
+    g_deliveryPendingMeshes = null;
+    g_hideDerivePendingMeshes ~= &queued;
+    assert(!canBeginPreparedMesh(queued));
+    g_hideDerivePendingMeshes = null;
 }
