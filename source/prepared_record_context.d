@@ -36,6 +36,7 @@ import prepared_loop_slice_activation : PreparedLoopSliceActivationOwner;
 import prepared_slice_activation : PreparedSliceActivationOwner;
 import prepared_tack_activation : PreparedTackActivationOwner;
 import prepared_command_wrapper_activation : PreparedCommandWrapperActivationOwner;
+import prepared_bridge_activation : PreparedBridgeActivationOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -53,7 +54,7 @@ private enum PreparedResourceKind : ubyte {
     PolyBevelActivationState, VertexBevelActivationState,
     VertexExtrudeActivationState, EdgeExtrudeActivationState,
     EdgeSliceActivationState, LoopSliceActivationState, SliceActivationState,
-    TackActivationState, CommandWrapperActivationState
+    TackActivationState, CommandWrapperActivationState, BridgeActivationState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -82,6 +83,7 @@ private struct PreparedResourceEntry {
     PreparedSliceActivationOwner sliceActivation;
     PreparedTackActivationOwner tackActivation;
     PreparedCommandWrapperActivationOwner commandWrapperActivation;
+    PreparedBridgeActivationOwner bridgeActivation;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -507,6 +509,16 @@ public:
         e.kind = PreparedResourceKind.CommandWrapperActivationState;
         e.commandWrapperActivation = owner; resources_ ~= e; return true;
     }
+    bool prepareBridgeActivation(PreparedBridgeActivationOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected Bridge activation enlist failure");
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.BridgeActivationState;
+        e.bridgeActivation = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -724,6 +736,8 @@ public:
             case PreparedResourceKind.CommandWrapperActivationState:
                 ok = e.commandWrapperActivation !is null &&
                     e.commandWrapperActivation.validate(); break;
+            case PreparedResourceKind.BridgeActivationState:
+                ok = e.bridgeActivation !is null && e.bridgeActivation.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -892,6 +906,10 @@ public:
             e.commandWrapperActivation.install();
             version(unittest) installTrace_[installTraceLength_++] = 34;
             break;
+        case PreparedResourceKind.BridgeActivationState:
+            e.bridgeActivation.install();
+            version(unittest) installTrace_[installTraceLength_++] = 35;
+            break;
         }
         if (!installedHistory && history_ !is null)
             history_.installPreparedToken(validated_);
@@ -940,6 +958,8 @@ private:
         case PreparedResourceKind.GpuCreateUpload: e.gpuCreateUpload.abortEnlisted(); break;
         case PreparedResourceKind.CommandWrapperActivationState:
             e.commandWrapperActivation.abort(); break;
+        case PreparedResourceKind.BridgeActivationState:
+            e.bridgeActivation.abort(); break;
         case PreparedResourceKind.RadialArrayTransitionState:
             e.radialArrayTransition.abort(); break;
         case PreparedResourceKind.TransformActivationState:

@@ -2456,10 +2456,11 @@ private:
     GpuMesh* target;
     immutable ulong ownerId;
     ulong generation, requiredThread, requiredContext, baseUploadVersion;
-    GpuMeshNames created;
+    GpuMeshNames created, expectedTarget;
     GpuMesh prepared;
     long uploadedVertexCount;
     bool pending, validated, consumed;
+    immutable bool replaceLikeInit;
     PreparedGpuCreateUploadToken enlistedPrepared;
     ValidatedGpuCreateUploadToken enlistedValidated;
     Backend backend;
@@ -2473,13 +2474,19 @@ private:
         bool failAfterBuild;
     }
 public:
-    this(GpuMesh* target, ulong threadIdentity, ulong contextIdentity) {
+    this(GpuMesh* target, ulong threadIdentity, ulong contextIdentity,
+         bool replaceLikeInit = false) {
         this.target = target; requiredThread = threadIdentity;
         requiredContext = contextIdentity;
+        this.replaceLikeInit = replaceLikeInit;
         ownerId = atomicOp!"+="(nextGpuCreateUploadOwnerId, 1UL);
     }
     version(unittest) static GpuCreateUploadOwner fakeForTest(GpuMesh* target) {
         auto result = new GpuCreateUploadOwner(target, 7, 11);
+        result.backend = Backend.fake; return result;
+    }
+    version(unittest) static GpuCreateUploadOwner fakeForLegacyInitTest(GpuMesh* target) {
+        auto result = new GpuCreateUploadOwner(target, 7, 11, true);
         result.backend = Backend.fake; return result;
     }
     version(unittest) void failAfterBuildForTest() nothrow @nogc { failAfterBuild = true; }
@@ -2496,11 +2503,14 @@ public:
         return fakeUsedNames[0 .. fakeCallLength];
     }
     bool owns(GpuMesh* candidate) const nothrow @nogc { return target is candidate; }
+    bool replacesLikeLegacyInit() const nothrow @nogc { return replaceLikeInit; }
 
     bool beginEnlisted(ref const Mesh mesh) {
-        if (pending || consumed || target is null || !isDefaultEmptyGpuMesh(*target))
+        if (pending || consumed || target is null ||
+            (!replaceLikeInit && !isDefaultEmptyGpuMesh(*target)))
             return false;
         baseUploadVersion = target.uploadVersion;
+        expectedTarget = peekGpuMeshNames(*target);
         scope(failure) cleanupPrepared();
         version(unittest) {
             if (backend == Backend.fake) {
@@ -2533,7 +2543,8 @@ public:
             (threadIdentity ^ requiredThread) != 0 ||
             (contextIdentity ^ requiredContext) != 0 ||
             !sameGpuUploadVersion(target, baseUploadVersion) ||
-            !isDefaultEmptyGpuMesh(*target)) return false;
+            peekGpuMeshNames(*target) != expectedTarget ||
+            (!replaceLikeInit && !isDefaultEmptyGpuMesh(*target))) return false;
         validated = true; enlistedValidated.ownerId = ownerId;
         enlistedValidated.generation = generation;
         enlistedPrepared.ownerId = enlistedPrepared.generation = 0; return true;
@@ -2557,7 +2568,7 @@ public:
         } else prepared.submitUploadGl();
         setNames(*target, created);
         installUploadState(target[0], prepared);
-        created = GpuMeshNames.init;
+        created = GpuMeshNames.init; expectedTarget = GpuMeshNames.init;
         pending = validated = false; consumed = true;
         enlistedValidated.ownerId = enlistedValidated.generation = 0;
     }
@@ -2591,7 +2602,8 @@ private:
                     created.weightColorVbo]) fakeDeleted[fakeDeletedLength++] = name;
             else deleteGpuMeshNames(created);
         } else deleteGpuMeshNames(created);
-        created = GpuMeshNames.init; GpuMesh empty; prepared = empty;
+        created = GpuMeshNames.init; expectedTarget = GpuMeshNames.init;
+        GpuMesh empty; prepared = empty;
         pending = validated = false; consumed = true;
         enlistedPrepared.ownerId = enlistedPrepared.generation = 0;
         enlistedValidated.ownerId = enlistedValidated.generation = 0;

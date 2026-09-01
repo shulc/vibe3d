@@ -40,7 +40,7 @@ enum PreparedActivateKind : ubyte {
     None, Vertex, Array, Clone, Magnet, Reduction, Box, Pen, Primitive,
     StrokeExtrude, VertexMerge, PolyInset, PolyExtrude, SmoothShift, EdgeBevel,
     PolyBevel, VertexBevel, VertexExtrude, EdgeExtrude, EdgeSlice, LoopSlice,
-    Slice, Tack, CommandWrapper
+    Slice, Tack, CommandWrapper, Bridge
 }
 enum PreparedRadialSweepKind : ubyte { Activate, Param, Deactivate }
 enum PreparedRadialArrayKind : ubyte { Activate, Deactivate }

@@ -239,6 +239,7 @@ B5O_PREPARED_LEGACY = {
 }
 B5P_PREPARED_LEGACY = {
     ("tools.common.command_wrapper", "CommandWrapperTool", "activate"),
+    ("tools.edit.bridge_tool", "BridgeTool", "activate"),
     ("tools.create.box", "BoxTool", "activate"),
     ("tools.create.pen", "PenTool", "activate"),
     ("tools.create.primitive_create_tool", "PrimitiveCreateTool", "activate"),
@@ -293,7 +294,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "cbebb8436b53f28ef79ae62ad76f1a217bd9545fe96485fdc7d109cbd3154be9"
+    "c34f3bdf8a4e1d3c47d240e8a3d98258899384decc5c6973d17cec913b3eaba4"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -439,10 +440,12 @@ for path, text in prepared_source_texts.items():
             "prepared_slice_activation",
             "prepared_tack_activation",
             "prepared_command_wrapper_activation",
+            "prepared_bridge_activation",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
             "tools.edit.tack",
+            "tools.edit.bridge_tool",
             "tools.alignment.radial_sweep_tool",
             "tools.alignment.radial_array_tool",
             "tools.alignment.linear_align_tool",
@@ -1594,13 +1597,13 @@ b5c_contracts = {
 def b5c_gate(sources):
     return (all(all(c in sources[name] for c in contracts)
                 for name, contracts in b5c_contracts.items()) and
-            sources["gpu"].count("peekGpuMeshNames(*target)") == 5 and
+            sources["gpu"].count("peekGpuMeshNames(*target)") == 7 and
             "if (!replaceLikeInit && expectedTarget != GpuMeshNames.init)" in sources["gpu"] and
             "peekGpuMeshNames(*target) != expectedTarget" in sources["gpu"] and
             sources["gpu"].count("!(threadIdentity == requiredThread)") == 1 and
             sources["gpu"].count("!(contextIdentity == requiredContext)") == 1 and
             sources["gpu"].count("else deleteGpuMeshNames(created);") == 2 and
-            sources["gpu"].count("created = GpuMeshNames.init; expectedTarget = GpuMeshNames.init;") == 1 and
+            sources["gpu"].count("created = GpuMeshNames.init; expectedTarget = GpuMeshNames.init;") == 3 and
             sources["snap"].count("g_lastSnap = SnapResult.init; pending = validated = false;") == 1 and
             sources["gpu"].find("glGenVertexArrays(1, &created.faceVao)") <
                 sources["gpu"].find("glGenBuffers(1, &created.weightColorVbo)") and
@@ -1646,7 +1649,8 @@ for path in (ROOT / "source/tools").rglob("*.d"):
                 "source/tools/create/box.d",
                 "source/tools/create/pen.d",
                 "source/tools/create/primitive_create_tool.d",
-                "source/tools/edit/tack.d"}:
+                "source/tools/edit/tack.d",
+                "source/tools/edit/bridge_tool.d"}:
         fail(f"P1.0b.5c dormant owner has production caller: {path.relative_to(ROOT)}")
 
 # P1.0b.5p exact Box activation: private reset, prepared GL-name transfer,
@@ -3725,6 +3729,86 @@ for fixture in (
             not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
         fail("CommandWrapper activation token copy was not rejected:\n" + run.stdout)
 
+bridge_activation_owner = (ROOT / "source/prepared_bridge_activation.d").read_text()
+bridge_activation_tool = (ROOT / "source/tools/edit/bridge_tool.d").read_text()
+def bridge_activation_gate(owner, context, tool, gpu):
+    gpu_block = gpu[gpu.find("final class GpuCreateUploadOwner") :]
+    return (owner.count("@disable this(this)") == 2 and
+        "final class PreparedBridgeActivationOwner" in owner and
+        "target.classinfo !is BridgeTool.classinfo" in owner and
+        "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
+        "target_.preparedActivationMesh() !is source_" in owner and
+        "target_.preparedActivationMode() != image_.mode" in owner and
+        "!image_.baseline.matches(*source_)" in owner and
+        "target_.installPreparedActivation(image_);" in owner and
+        "auto resolved = resolveBridgeSelection(*source, image.mode);" in tool and
+        "image.baseline = MeshSnapshot.capture(*source);" in tool and
+        "image.sessionKey.stamp(*source);" in tool and
+        "rebuildBridgePreview(image.baseline, image.preview" in tool and
+        "image.baseline.moveInto(baseSnap_);" in tool and
+        "previewMesh_ = image.preview; image.preview = Mesh.init;" in tool and
+        "engaged = false; dragging_ = false;" in tool and
+        "havePreviewCache = valid_;" in tool and
+        "context.prepareBridgeActivation(stateOwner)" in tool and
+        "if (ok && stateOwner.selectionValid)" in tool and
+        "context.prepareCreateUpload(createUploadOwner, stateOwner.previewMesh)" in tool and
+        "context.prepareCreate(createOwner)" in tool and
+        tool.find("context.prepareBridgeActivation(stateOwner)") <
+            tool.find("context.prepareCreateUpload(createUploadOwner") <
+            tool.find("context.markNoHistoryInstall()", tool.find("context.prepareCreateUpload(createUploadOwner")) and
+        "createUploadOwner.replacesLikeLegacyInit()" in tool and
+        "createOwner.replacesLikeLegacyInit()" in tool and
+        "PreparedActivateKind.Bridge, ok);" in tool and
+        "BridgeActivationState" in context and
+        "e.bridgeActivation.validate();" in context and
+        "e.bridgeActivation.install();" in context and
+        "e.bridgeActivation.abort();" in context and
+        "GpuMeshNames created, expectedTarget;" in gpu_block and
+        "peekGpuMeshNames(*target) != expectedTarget" in gpu_block and
+        "bool replacesLikeLegacyInit() const nothrow @nogc" in gpu_block)
+if not bridge_activation_gate(bridge_activation_owner, record_context,
+                              bridge_activation_tool, mesh_gpu):
+    fail("Bridge activation prepared contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is BridgeTool.classinfo", "false", "broaden product"),
+    ("owner", "target_.preparedActivationMesh() !is source_", "false", "drop Mesh identity"),
+    ("owner", "target_.preparedActivationMode() != image_.mode", "false", "drop mode identity"),
+    ("owner", "!image_.baseline.matches(*source_)", "false", "drop content validation"),
+    ("owner", "target_.installPreparedActivation(image_);", "", "drop install"),
+    ("tool", "auto resolved = resolveBridgeSelection(*source, image.mode);", "", "drop selection capture"),
+    ("tool", "image.baseline = MeshSnapshot.capture(*source);", "", "drop baseline"),
+    ("tool", "image.sessionKey.stamp(*source);", "", "drop session key"),
+    ("tool", "rebuildBridgePreview(image.baseline, image.preview", "false /*", "drop detached preview"),
+    ("tool", "image.baseline.moveInto(baseSnap_);", "", "drop baseline transfer"),
+    ("tool", "previewMesh_ = image.preview; image.preview = Mesh.init;", "previewMesh_ = image.preview;", "retain preview payload"),
+    ("tool", "context.prepareBridgeActivation(stateOwner)", "true", "drop CPU arm"),
+    ("tool", "context.prepareCreateUpload(createUploadOwner, stateOwner.previewMesh)", "true", "drop valid GPU arm"),
+    ("tool", "context.prepareCreate(createOwner)", "true", "drop invalid GPU arm"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory seal"),
+    ("gpu", "peekGpuMeshNames(*target) != expectedTarget", "false", "drop replacement header identity"),
+    ("context", "e.bridgeActivation.validate();", "true;", "drop context validation"),
+    ("context", "e.bridgeActivation.install();", "", "drop context install"),
+    ("context", "e.bridgeActivation.abort();", "", "drop context abort"),
+):
+    o, c, t, g = bridge_activation_owner, record_context, bridge_activation_tool, mesh_gpu
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    elif target == "gpu":
+        pos = g.find(old, g.find("final class GpuCreateUploadOwner"))
+        if pos >= 0: g = g[:pos] + new + g[pos + len(old):]
+    else: t = t.replace(old, new, 1)
+    if bridge_activation_gate(o, c, t, g):
+        fail(f"Bridge activation mutation did not RED: {label}")
+for fixture in (
+    ROOT / "tests/compile_fail/prepared_bridge_activation_token_copy.d",
+    ROOT / "tests/compile_fail/prepared_bridge_activation_validated_token_copy.d",
+):
+    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if run.returncode == 0 or ("not copyable" not in run.stdout and
+            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+        fail("Bridge activation token copy was not rejected:\n" + run.stdout)
+
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
 # detached whole-Mesh adoption with exact caller-supplied change flags, and a
 # frozen Primitive product/reset projection set. Install never dispatches the
@@ -4180,7 +4264,8 @@ def combined_upload_gate(gpu, context):
             "struct PreparedGpuCreateUploadToken" in gpu and
             "struct ValidatedGpuCreateUploadToken" in gpu and
             gpu.count("@disable this(this);") >= 6 and
-            "GpuMeshNames created;" in block and "GpuMesh prepared;" in block and
+            "GpuMeshNames created, expectedTarget;" in block and
+            "GpuMesh prepared;" in block and
             "private bool isDefaultEmptyGpuMesh(ref GpuMesh gpu)" in gpu and
             block.count("isDefaultEmptyGpuMesh(*target)") == 2 and
             "setNames(next, created);" in block and
@@ -4191,6 +4276,9 @@ def combined_upload_gate(gpu, context):
             "enlistedPrepared.generation != generation" in block and
             "enlistedValidated.generation != generation" in block and
             "!sameGpuUploadVersion(target, baseUploadVersion)" in block and
+            "peekGpuMeshNames(*target) != expectedTarget" in block and
+            "immutable bool replaceLikeInit;" in block and
+            "bool replacesLikeLegacyInit() const nothrow @nogc" in block and
             block.count("prepared.submitUploadGl();") == 2 and
             "g_fc.upload(uploadedVertexCount);" in block and
             "fakeUsedNames[fakeCallLength++] = used[i];" in block and
@@ -4212,6 +4300,8 @@ for target, old, new, label in (
     ("gpu", "(threadIdentity ^ requiredThread) != 0", "false", "drop thread identity"),
     ("gpu", "enlistedValidated.generation != generation", "false", "drop validated generation"),
     ("gpu", "!sameGpuUploadVersion(target, baseUploadVersion)", "false", "drop target generation"),
+    ("gpu", "peekGpuMeshNames(*target) != expectedTarget", "false", "drop replacement target identity"),
+    ("gpu", "(!replaceLikeInit && !isDefaultEmptyGpuMesh(*target))", "false", "broaden ordinary create-upload"),
     ("gpu", "prepared.submitUploadGl();", "", "drop first upload submission"),
     ("gpu", "g_fc.upload(uploadedVertexCount);", "", "drop upload work counter"),
     ("gpu", "setNames(*target, created);", "", "drop atomic header transfer"),
@@ -4229,7 +4319,7 @@ for target, old, new, label in (
         fail(f"combined GPU create-upload mutation did not RED: {label}")
 for path in (ROOT / "source").rglob("*.d"):
     if path.name in ("mesh_gpu.d", "prepared_record_context.d",
-                     "radial_sweep_tool.d"): continue
+                     "radial_sweep_tool.d", "bridge_tool.d"): continue
     if ".prepareCreateUpload(" in without_unittests(path.read_text()):
         fail("combined GPU create-upload gained a pre-cutover caller")
 

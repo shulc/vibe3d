@@ -16,12 +16,32 @@ import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
 import shader : Shader, LitShader, drawLitPreview;
 import std.json : JSONValue;
-import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind;
+import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind,
+    PreparedSessionActivateEffect, PreparedActivateKind;
+import prepared_record_context : PreparedRecordContext;
+import prepared_bridge_activation : PreparedBridgeActivationOwner;
+import mesh_gpu : GpuCreateOwner, GpuCreateUploadOwner;
 
 version (unittest) import std.conv : to;
 private struct BridgePreparedState {
     bool engaged; bool consumable;
     @disable this(this);
+}
+
+struct PreparedBridgeActivationImage {
+    bool valid;
+    bool selectionValid, polygonMode, openRows;
+    EditMode mode;
+    uint[] loopA, loopB, capFaces;
+    MeshSnapshot baseline;
+    SessionMeshKey sessionKey;
+    Mesh preview;
+    void clear() nothrow @nogc {
+        valid = selectionValid = polygonMode = openRows = false;
+        loopA = loopB = capFaces = null;
+        baseline = MeshSnapshot.init; sessionKey = SessionMeshKey.init;
+        preview = Mesh.init;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -232,8 +252,8 @@ void rebuildBridgePreview(const ref MeshSnapshot baseSnap, ref Mesh previewMesh,
 // ---------------------------------------------------------------------------
 class BridgeTool : Tool {
 private:
-    Mesh* delegate() meshSrc_;
-    @property Mesh* mesh() const { return meshSrc_(); }
+    Mesh* delegate() nothrow @nogc meshSrc_;
+    @property Mesh* mesh() const nothrow @nogc { return meshSrc_(); }
     GpuMesh*         gpu;
     LitShader        litShader;
     EditMode*        editModePtr;
@@ -294,7 +314,8 @@ private:
     int  dragStartSegments_;
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader, EditMode* editModePtr) {
+    this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu, LitShader litShader,
+         EditMode* editModePtr) {
         this.meshSrc_     = meshSrc;
         this.gpu          = gpu;
         this.litShader    = litShader;
@@ -309,7 +330,7 @@ public:
         return [EditMode.Edges, EditMode.Polygons];
     }
 
-    private EditMode editModeVal() const {
+    private EditMode editModeVal() const nothrow @nogc {
         return (editModePtr is null) ? EditMode.Polygons : *editModePtr;
     }
 
@@ -338,6 +359,87 @@ public:
         havePreviewCache = false;
         previewGpu_.init();
         if (valid_) evaluate();
+    }
+
+    final PreparedBridgeActivationImage buildPreparedActivation(out Mesh* source) {
+        PreparedBridgeActivationImage image;
+        if (meshSrc_ is null) return image;
+        source = meshSrc_();
+        if (source is null) return image;
+        image.mode = editModeVal();
+        auto resolved = resolveBridgeSelection(*source, image.mode);
+        image.selectionValid = resolved.valid;
+        image.polygonMode = resolved.polygonMode;
+        image.openRows = resolved.openRows;
+        image.loopA = resolved.loopA; image.loopB = resolved.loopB;
+        image.capFaces = resolved.capFaces;
+        image.baseline = MeshSnapshot.capture(*source);
+        image.sessionKey.stamp(*source);
+        if (image.selectionValid)
+            rebuildBridgePreview(image.baseline, image.preview, image.loopA,
+                image.loopB, image.capFaces, params_, image.openRows);
+        image.valid = true;
+        return image;
+    }
+    final Mesh* preparedActivationMesh() nothrow @nogc {
+        return meshSrc_ is null ? null : meshSrc_();
+    }
+    final EditMode preparedActivationMode() const nothrow @nogc {
+        return editModeVal();
+    }
+    final GpuMesh* preparedPreviewGpu() nothrow @nogc { return &previewGpu_; }
+    final void installPreparedActivation(ref PreparedBridgeActivationImage image)
+            nothrow @nogc {
+        valid_ = image.selectionValid; polygonMode_ = image.polygonMode;
+        openRows_ = image.openRows;
+        loopA_ = image.loopA; image.loopA = null;
+        loopB_ = image.loopB; image.loopB = null;
+        capFaces_ = image.capFaces; image.capFaces = null;
+        image.baseline.moveInto(baseSnap_);
+        sessionKey_ = image.sessionKey; image.sessionKey = SessionMeshKey.init;
+        previewMesh_ = image.preview; image.preview = Mesh.init;
+        engaged = false; dragging_ = false;
+        havePreviewCache = valid_;
+        if (valid_) {
+            cachedSegments = params_.segments; cachedTwist = params_.twist;
+            cachedRemove = params_.remove; cachedFlip = params_.flip;
+        }
+        image.valid = false;
+    }
+    final PreparedSessionActivateEffect prepareActivate(
+            PreparedRecordContext context, GpuCreateOwner createOwner,
+            GpuCreateUploadOwner createUploadOwner) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.Bridge, false);
+        scope(failure) { context.discard(); }
+        auto stateOwner = PreparedBridgeActivationOwner.prepare(this);
+        bool ok = stateOwner !is null && context.prepareBridgeActivation(stateOwner);
+        if (ok && stateOwner.selectionValid) {
+            ok = createUploadOwner !is null && createUploadOwner.replacesLikeLegacyInit() &&
+                createUploadOwner.owns(&previewGpu_) &&
+                context.prepareCreateUpload(createUploadOwner, stateOwner.previewMesh);
+        } else if (ok) {
+            ok = createOwner !is null && createOwner.replacesLikeLegacyInit() &&
+                createOwner.owns(&previewGpu_) && context.prepareCreate(createOwner);
+        }
+        ok = ok && context.markNoHistoryInstall();
+        if (!ok) { context.discard(); }
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.Bridge, ok);
+    }
+
+    version(unittest) final void seedPreparedActivationForTest() {
+        valid_ = polygonMode_ = openRows_ = engaged = dragging_ =
+            havePreviewCache = true;
+        loopA_ = [91u]; loopB_ = [92u]; capFaces_ = [93u];
+        baseSnap_ = MeshSnapshot.init; previewMesh_ = Mesh.init;
+    }
+    version(unittest) final bool preparedActivationInstalledForTest(bool expectedValid)
+            const {
+        return valid_ == expectedValid && !engaged && !dragging_ &&
+            havePreviewCache == expectedValid && baseSnap_.filled &&
+            (expectedValid ? loopA_.length > 0 && loopB_.length > 0 :
+                loopA_.length == 0 && loopB_.length == 0);
     }
 
     override void deactivate() {
