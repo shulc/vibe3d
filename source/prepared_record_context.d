@@ -18,7 +18,8 @@ import change_bus : MeshEditScope;
 
 private enum PreparedResourceKind : ubyte {
     HistoryInstall, NoHistoryInstall, MeshInstall, DeliveryInstall, GpuMeshDestroy, GpuUpload, ClickPointDestroy
-    , GpuCreate, SnapOverlayClear, BoxState, PenState, PrimitiveState, VertexState
+    , GpuCreate, SnapOverlayClear, BoxState, PenState, PrimitiveState, VertexState,
+    ArraySessionState, CloneSessionState, MagnetSessionState, ReductionSessionState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -161,6 +162,10 @@ public:
         case PreparedPrivateStateKind.Pen: e.kind = PreparedResourceKind.PenState; break;
         case PreparedPrivateStateKind.Primitive: e.kind = PreparedResourceKind.PrimitiveState; break;
         case PreparedPrivateStateKind.Vertex: e.kind = PreparedResourceKind.VertexState; break;
+        case PreparedPrivateStateKind.ArraySession: e.kind = PreparedResourceKind.ArraySessionState; break;
+        case PreparedPrivateStateKind.CloneSession: e.kind = PreparedResourceKind.CloneSessionState; break;
+        case PreparedPrivateStateKind.MagnetSession: e.kind = PreparedResourceKind.MagnetSessionState; break;
+        case PreparedPrivateStateKind.ReductionSession: e.kind = PreparedResourceKind.ReductionSessionState; break;
         }
         resources_ ~= e; return true;
     }
@@ -262,6 +267,10 @@ public:
             case PreparedResourceKind.PenState:
             case PreparedResourceKind.PrimitiveState:
             case PreparedResourceKind.VertexState:
+            case PreparedResourceKind.ArraySessionState:
+            case PreparedResourceKind.CloneSessionState:
+            case PreparedResourceKind.MagnetSessionState:
+            case PreparedResourceKind.ReductionSessionState:
                 ok = e.privateState.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
@@ -319,6 +328,10 @@ public:
         case PreparedResourceKind.PenState:
         case PreparedResourceKind.PrimitiveState:
         case PreparedResourceKind.VertexState:
+        case PreparedResourceKind.ArraySessionState:
+        case PreparedResourceKind.CloneSessionState:
+        case PreparedResourceKind.MagnetSessionState:
+        case PreparedResourceKind.ReductionSessionState:
             e.privateState.install();
             version (unittest) installTrace_[installTraceLength_++] = 7;
             break;
@@ -354,6 +367,10 @@ private:
         case PreparedResourceKind.PenState:
         case PreparedResourceKind.PrimitiveState:
         case PreparedResourceKind.VertexState: e.privateState.abort(); break;
+        case PreparedResourceKind.ArraySessionState:
+        case PreparedResourceKind.CloneSessionState:
+        case PreparedResourceKind.MagnetSessionState:
+        case PreparedResourceKind.ReductionSessionState: e.privateState.abort(); break;
         }
         resources_.length = 0;
         historyMarker_ = false;

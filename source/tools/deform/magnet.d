@@ -119,6 +119,11 @@ public:
         pickedVi  = -1;
         before    = MeshSnapshot.capture(*mesh);
     }
+    final MeshSnapshot prepareActivationBaseline() { return MeshSnapshot.capture(*mesh); }
+    final void installPreparedActivation(ref MeshSnapshot image) nothrow @nogc {
+        active = true; built = false; dragging = false; pickedVi = -1;
+        image.moveInto(before);
+    }
 
     override void deactivate() {
         if (active) {

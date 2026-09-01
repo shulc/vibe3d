@@ -83,6 +83,21 @@ public:
         built  = false;
         before = MeshSnapshot.capture(*mesh);
     }
+    final MeshSnapshot prepareActivationBaseline() { return MeshSnapshot.capture(*mesh); }
+    final void installPreparedActivation(ref MeshSnapshot image) nothrow @nogc {
+        active = true; built = false; image.moveInto(before);
+    }
+    version(unittest) void seedPreparedActivationForTest(bool a, bool b) nothrow @nogc {
+        active = a; built = b;
+    }
+    version(unittest) bool preparedActiveForTest() const nothrow @nogc { return active; }
+    version(unittest) bool preparedBuiltForTest() const nothrow @nogc { return built; }
+    version(unittest) float preparedBaselineXForTest() const nothrow @nogc {
+        return before.filled && before.vertices.length ? before.vertices[0].x : float.nan;
+    }
+    version(unittest) bool preparedBaselineFilledForTest() const nothrow @nogc {
+        return before.filled;
+    }
 
     override void deactivate() {
         if (active && built)

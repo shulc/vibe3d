@@ -62,6 +62,14 @@ struct MeshSnapshot {
     ulong[]      faceSetMask;
     bool     filled = false;
 
+    /// Destructive descriptor transfer used by prepared owners. The source is
+    /// cleared in the same nonallocating operation, so ownership cannot remain
+    /// aliased across owner and installed tool state.
+    void moveInto(ref MeshSnapshot destination) nothrow @nogc {
+        destination = this;
+        this = MeshSnapshot.init;
+    }
+
     static MeshSnapshot capture(in Mesh mesh) {
         MeshSnapshot s;
         s.vertices             = mesh.vertices.dup;

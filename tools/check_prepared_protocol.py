@@ -1491,7 +1491,10 @@ expected_primitive_products = [
     "source/tools/create/torus.d", "source/tools/create/tube.d",
 ]
 def b5d1_gate(s):
-    return ("enum PreparedPrivateStateKind : ubyte { Box, Pen, Primitive, Vertex }" in s["owner"] and
+    return ("enum PreparedPrivateStateKind : ubyte" in s["owner"] and
+            all(kind in s["owner"] for kind in
+                ("Box, Pen, Primitive, Vertex", "ArraySession", "CloneSession",
+                 "MagnetSession", "ReductionSession")) and
             s["owner"].count("@disable this(this)") == 2 and
             "delegate" not in s["owner"] and "void*" not in s["owner"] and
             "cast(void*)" not in s["owner"] and
@@ -1583,5 +1586,79 @@ for target, old, new, label in (
     else: v = v.replace(old, new, 1)
     if (c == record_context and v == b5d2_vertex) or b5d2_gate(c, v):
         fail(f"P1.0b.5d.2 named mutation did not RED: {label}")
+
+# P1.0b.5e isolated activation-session image infrastructure. Exactly four
+# concrete products share the closed flags + detached MeshSnapshot effect;
+# no lifecycle hook calls these owners before producer review.
+b5e_owner = (ROOT / "source/prepared_private_state.d").read_text()
+b5e_context = record_context
+b5e_tools = {
+    name: (ROOT / path).read_text() for name, path in {
+        "array": "source/tools/alignment/array_tool.d",
+        "clone": "source/tools/alignment/clone_tool.d",
+        "magnet": "source/tools/deform/magnet.d",
+        "reduction": "source/tools/edit/reduce.d",
+    }.items()
+}
+b5e_snapshot = (ROOT / "source/snapshot.d").read_text()
+def b5e_gate(owner, context, sources, snapshot=b5e_snapshot):
+    return (all(kind in owner for kind in
+                ("ArraySession", "CloneSession", "MagnetSession", "ReductionSession")) and
+            "MeshSnapshot activationBaseline;" in owner and
+            owner.count("target.classinfo !is") == 3 and
+            "o.activationBaseline = image;" in owner and
+            "failSessionPrepareForTest_" in owner and
+            all(f"{prefix}Target.installPreparedActivation(activationBaseline);" in owner
+                for prefix in ("array", "clone", "magnet", "reduction")) and
+            all("final MeshSnapshot prepareActivationBaseline()" in source and
+                "final void installPreparedActivation(ref MeshSnapshot image) nothrow @nogc" in source and
+                "image.moveInto(before);" in source
+                for source in sources.values()) and
+            "activationBaseline = MeshSnapshot.init;" in owner and
+            owner.count("&& activationBaseline.filled") == 4 and
+            "void moveInto(ref MeshSnapshot destination) nothrow @nogc" in snapshot and
+            "this = MeshSnapshot.init;" in snapshot and
+            "active = true; built = false; image.moveInto(before);" in sources["reduction"] and
+            "active = true; built = false; dragging = false; pickedVi = -1;" in sources["magnet"] and
+            all(kind in context for kind in
+                ("ArraySessionState", "CloneSessionState", "MagnetSessionState",
+                 "ReductionSessionState")))
+if not b5e_gate(b5e_owner, b5e_context, b5e_tools):
+    fail("P1.0b.5e activation-session image owner drift")
+for target, old, new, label in (
+    ("owner", "MeshSnapshot activationBaseline;", "MeshSnapshot* activationBaseline;",
+     "alias activation baseline"),
+    ("owner", "target.classinfo !is CloneTool.classinfo", "false",
+     "admit derived Clone product"),
+    ("owner", "o.activationBaseline = image;", "",
+     "drop detached image retention"),
+    ("owner", "reductionTarget.installPreparedActivation(activationBaseline);", "",
+     "drop fixed Reduction install"),
+    ("owner", "activationBaseline = MeshSnapshot.init;", "",
+     "omit abort payload clear"),
+    ("owner", "&& activationBaseline.filled", "",
+     "re-arm consumed session owner"),
+    ("snapshot", "this = MeshSnapshot.init;", "",
+     "omit move-source payload clear"),
+    ("reduction", "image.moveInto(before);", "before = image;",
+     "shallow-copy snapshot descriptor"),
+    ("reduction", "active = true; built = false; image.moveInto(before);",
+     "active = true; image.moveInto(before);", "drop private built reset"),
+):
+    owner, context, sources, snapshot = b5e_owner, b5e_context, dict(b5e_tools), b5e_snapshot
+    if target == "owner": owner = owner.replace(old, new, 1)
+    elif target == "snapshot": snapshot = snapshot.replace(old, new, 1)
+    else: sources[target] = sources[target].replace(old, new, 1)
+    if ((owner == b5e_owner and sources == b5e_tools and snapshot == b5e_snapshot) or
+            b5e_gate(owner, context, sources, snapshot)):
+        fail(f"P1.0b.5e named mutation did not RED: {label}")
+for source in b5e_tools.values():
+    for hook in ("override void activate()",):
+        start = source.find(hook)
+        if start >= 0:
+            body_start = source.find("{", start) + 1
+            body = source[body_start:balanced_source(source, body_start)-1]
+            if "PreparedPrivateStateOwner" in body or "preparePrivateState" in body:
+                fail("P1.0b.5e owner reached from production activation hook")
 
 print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures)} compile-fail fixtures)")

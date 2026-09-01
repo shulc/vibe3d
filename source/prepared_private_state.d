@@ -6,8 +6,16 @@ import tools.create.pen : PenTool;
 import tools.create.primitive_create_tool : PrimitiveCreateTool, HandledCreateTool;
 import tools.create.sphere : SphereTool;
 import tools.create.vertex_place : VertexTool;
+import tools.alignment.array_tool : ArrayTool;
+import tools.alignment.clone_tool : CloneTool;
+import tools.deform.magnet : MagnetTool;
+import tools.edit.reduce : ReductionTool;
+import snapshot : MeshSnapshot;
 
-enum PreparedPrivateStateKind : ubyte { Box, Pen, Primitive, Vertex }
+enum PreparedPrivateStateKind : ubyte {
+    Box, Pen, Primitive, Vertex, ArraySession, CloneSession,
+    MagnetSession, ReductionSession
+}
 private enum PrimitiveProjection : ubyte { Base, Handled, Sphere }
 struct PreparedPrivateStateToken { @disable this(this); private ulong ownerId, generation; }
 struct ValidatedPrivateStateToken { @disable this(this); private ulong ownerId, generation; }
@@ -16,6 +24,7 @@ private shared ulong nextPrivateStateOwnerId;
 /// Closed owner: concrete typed targets and fixed final install arms only.
 final class PreparedPrivateStateOwner {
 private:
+    version(unittest) static bool failSessionPrepareForTest_;
     immutable ulong ownerId;
     ulong generation;
     PreparedPrivateStateKind kind_;
@@ -26,6 +35,11 @@ private:
     HandledCreateTool handledTarget;
     SphereTool sphereTarget;
     VertexTool vertexTarget;
+    ArrayTool arrayTarget;
+    CloneTool cloneTarget;
+    MagnetTool magnetTarget;
+    ReductionTool reductionTarget;
+    MeshSnapshot activationBaseline;
     immutable bool sphereClearMethod;
     immutable int sphereAxis;
     bool pending, validated;
@@ -66,6 +80,31 @@ public:
         auto o = new PreparedPrivateStateOwner(PreparedPrivateStateKind.Vertex);
         o.vertexTarget = target; return o;
     }
+    static PreparedPrivateStateOwner arraySession(ArrayTool target) {
+        if (target is null) return null;
+        auto o = new PreparedPrivateStateOwner(PreparedPrivateStateKind.ArraySession);
+        o.arrayTarget = target; o.activationBaseline = target.prepareActivationBaseline(); return o;
+    }
+    static PreparedPrivateStateOwner cloneSession(CloneTool target) {
+        if (target is null || target.classinfo !is CloneTool.classinfo) return null;
+        auto o = new PreparedPrivateStateOwner(PreparedPrivateStateKind.CloneSession);
+        o.cloneTarget = target; o.activationBaseline = target.prepareActivationBaseline(); return o;
+    }
+    static PreparedPrivateStateOwner magnetSession(MagnetTool target) {
+        if (target is null || target.classinfo !is MagnetTool.classinfo) return null;
+        auto o = new PreparedPrivateStateOwner(PreparedPrivateStateKind.MagnetSession);
+        o.magnetTarget = target; o.activationBaseline = target.prepareActivationBaseline(); return o;
+    }
+    static PreparedPrivateStateOwner reductionSession(ReductionTool target) {
+        if (target is null || target.classinfo !is ReductionTool.classinfo) return null;
+        auto image = target.prepareActivationBaseline();
+        version(unittest) if (failSessionPrepareForTest_) {
+            failSessionPrepareForTest_ = false;
+            throw new Exception("injected session image prepare failure");
+        }
+        auto o = new PreparedPrivateStateOwner(PreparedPrivateStateKind.ReductionSession);
+        o.reductionTarget = target; o.activationBaseline = image; return o;
+    }
     @property PreparedPrivateStateKind kind() const nothrow @nogc { return kind_; }
     bool owns(VertexTool target) const nothrow @nogc {
         return kind_ == PreparedPrivateStateKind.Vertex && vertexTarget is target;
@@ -82,6 +121,14 @@ private:
             case PrimitiveProjection.Sphere: return sphereTarget !is null;
             }
         case PreparedPrivateStateKind.Vertex: return vertexTarget !is null;
+        case PreparedPrivateStateKind.ArraySession:
+            return arrayTarget !is null && activationBaseline.filled;
+        case PreparedPrivateStateKind.CloneSession:
+            return cloneTarget !is null && activationBaseline.filled;
+        case PreparedPrivateStateKind.MagnetSession:
+            return magnetTarget !is null && activationBaseline.filled;
+        case PreparedPrivateStateKind.ReductionSession:
+            return reductionTarget !is null && activationBaseline.filled;
         }
     }
 public:
@@ -110,16 +157,30 @@ public:
                 sphereTarget.installPreparedSphereReset(sphereClearMethod, sphereAxis); break;
             } break;
         case PreparedPrivateStateKind.Vertex: vertexTarget.installPreparedPrivateDeactivate(); break;
+        case PreparedPrivateStateKind.ArraySession:
+            arrayTarget.installPreparedActivation(activationBaseline); break;
+        case PreparedPrivateStateKind.CloneSession:
+            cloneTarget.installPreparedActivation(activationBaseline); break;
+        case PreparedPrivateStateKind.MagnetSession:
+            magnetTarget.installPreparedActivation(activationBaseline); break;
+        case PreparedPrivateStateKind.ReductionSession:
+            reductionTarget.installPreparedActivation(activationBaseline); break;
         }
         pending = validated = false;
         validatedToken.ownerId = validatedToken.generation = 0;
     }
-    void abort() nothrow @nogc { pending = validated = false; }
+    void abort() nothrow @nogc {
+        activationBaseline = MeshSnapshot.init;
+        pending = validated = false;
+    }
+    version(unittest) bool activationPayloadFilledForTest() const nothrow @nogc {
+        return activationBaseline.filled;
+    }
 }
 
 version(unittest) unittest {
-    import mesh : Mesh, GpuMesh;
-    Mesh mesh; GpuMesh gpu;
+    import mesh : Mesh, GpuMesh, makeCube;
+    Mesh mesh = makeCube(); GpuMesh gpu;
     auto sphere = new SphereTool(() => &mesh, &gpu, null, true);
     sphere.seedPreparedSphereForTest(2, 7);
     auto owner = PreparedPrivateStateOwner.primitive(sphere);
@@ -131,4 +192,36 @@ version(unittest) unittest {
            "source mutation changed detached prepared projection");
     sphere.seedPreparedSphereForTest(1, 9); owner.install();
     assert(sphere.preparedSphereMethodForTest() == 9);
+
+    import editmode : EditMode;
+    EditMode reductionMode = EditMode.Polygons;
+    auto reduction = new ReductionTool(() => &mesh, &gpu, &reductionMode, null);
+    reduction.seedPreparedActivationForTest(false, true);
+    immutable originalX = mesh.vertices.length ? mesh.vertices[0].x : 0.0f;
+    PreparedPrivateStateOwner.failSessionPrepareForTest_ = true;
+    bool threw;
+    try PreparedPrivateStateOwner.reductionSession(reduction);
+    catch (Exception) threw = true;
+    assert(threw && !reduction.preparedActiveForTest() && reduction.preparedBuiltForTest());
+    auto session = PreparedPrivateStateOwner.reductionSession(reduction);
+    assert(session.begin());
+    if (mesh.vertices.length) mesh.vertices[0].x = originalX + 7;
+    assert(session.validate()); session.install();
+    assert(reduction.preparedActiveForTest() && !reduction.preparedBuiltForTest());
+    assert(reduction.preparedBaselineXForTest() == originalX,
+           "live source mutation aliased owner-retained snapshot");
+    assert(reduction.preparedBaselineFilledForTest());
+    assert(!session.activationPayloadFilledForTest(),
+           "successful install retained a shallow owner descriptor");
+    assert(!session.begin(), "consumed session owner re-armed without an image");
+    reduction.seedPreparedActivationForTest(false, true);
+    session.install();
+    assert(!reduction.preparedActiveForTest() && reduction.preparedBuiltForTest());
+    auto discarded = PreparedPrivateStateOwner.reductionSession(reduction);
+    assert(discarded.activationPayloadFilledForTest() && discarded.begin());
+    discarded.abort();
+    assert(!discarded.activationPayloadFilledForTest());
+    assert(!discarded.begin(), "aborted session owner re-armed without an image");
+    assert(reduction.preparedBaselineFilledForTest(),
+           "owner abort cleared or aliased installed tool baseline");
 }
