@@ -25,6 +25,16 @@ import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import command_history : PreparedHistoryKind;
+import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import prepared_poly_extrude_activation : PreparedPolyExtrudeActivationOwner;
+
+struct PreparedPolyExtrudeActivationImage {
+    MeshSnapshot before;
+    bool valid, gizmoValid;
+    Vec3 anchor, baseAnchor, extrudeAxis;
+    ulong gizmoSelHash;
+    void clear() nothrow @nogc { this = PreparedPolyExtrudeActivationImage.init; }
+}
 
 // ---------------------------------------------------------------------------
 // PolyExtrudeTool — interactive Face Extrude (factory id `poly.extrude`).
@@ -49,7 +59,7 @@ import command_history : PreparedHistoryKind;
 // ---------------------------------------------------------------------------
 class PolyExtrudeTool : Tool {
 private:
-    Mesh* delegate() meshSrc_;
+    Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
     GpuMesh*         gpu;
     EditMode*        editMode;
@@ -87,7 +97,8 @@ private:
     enum Vec3 EXTRUDE_COLOR = schemeColor(SchemeColor.toolOffset);
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader) {
+    this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu,
+            EditMode* editMode, LitShader litShader) {
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
@@ -111,6 +122,39 @@ public:
     override void activate() {
         active = true;
         reinitSession();
+    }
+
+    final PreparedPolyExtrudeActivationImage buildPreparedActivation(
+            out Mesh* source) {
+        PreparedPolyExtrudeActivationImage image;
+        source = mesh; if (source is null) return image;
+        image.before = MeshSnapshot.capture(*source); image.valid = true;
+        image.anchor = anchor; image.baseAnchor = baseAnchor;
+        image.extrudeAxis = extrudeAxis;
+        computePreparedGizmoFrame(*source, image);
+        return image;
+    }
+    final Mesh* preparedActivationMesh() nothrow @nogc { return meshSrc_(); }
+    final void installPreparedActivation(
+            ref PreparedPolyExtrudeActivationImage image) nothrow @nogc {
+        if (!image.valid) return;
+        active = true; built = false; dragPart = -1; distance_ = 0.0f;
+        image.before.moveInto(before);
+        gizmoValid = image.gizmoValid; anchor = image.anchor;
+        baseAnchor = image.baseAnchor; extrudeAxis = image.extrudeAxis;
+        gizmoSelHash = image.gizmoSelHash; image.clear();
+    }
+    final PreparedSessionActivateEffect prepareActivate(
+            PreparedRecordContext context) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.PolyExtrude, false);
+        scope(failure) context.discard();
+        auto owner = PreparedPolyExtrudeActivationOwner.prepare(this);
+        bool ok = owner !is null && context.preparePolyExtrudeActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.PolyExtrude, ok);
     }
 
     private void reinitSession() {
@@ -361,38 +405,86 @@ private:
     // anchor      = centroid of selected face centroids.
     // extrudeAxis = normalized average of selected face normals.
     void computeGizmoFrame() {
-        gizmoValid   = false;
-        gizmoSelHash = mesh.selectionSignature(EditMode.Polygons);
-        if (mesh.faces.length == 0) return;
+        PreparedPolyExtrudeActivationImage image;
+        image.anchor = anchor; image.baseAnchor = baseAnchor;
+        image.extrudeAxis = extrudeAxis;
+        computePreparedGizmoFrame(*mesh, image);
+        gizmoValid = image.gizmoValid; anchor = image.anchor;
+        baseAnchor = image.baseAnchor; extrudeAxis = image.extrudeAxis;
+        gizmoSelHash = image.gizmoSelHash;
+    }
+
+    private static void computePreparedGizmoFrame(ref Mesh source,
+            ref PreparedPolyExtrudeActivationImage image) {
+        image.gizmoValid = false;
+        image.gizmoSelHash = source.selectionSignature(EditMode.Polygons);
+        if (source.faces.length == 0) return;
 
         // L1 funnel (task 0613, S5). This is the SAME operand set currentMask()
         // builds — the gizmo anchor/axis must be framed on exactly the faces
         // the apply will extrude, or the handle sits somewhere the edit does
         // not happen. Routing it through operandFaceMask() keeps the two in
         // lockstep, including the hidden subtraction.
-        auto opFaces = mesh.operandFaceMask();
+        auto opFaces = source.operandFaceMask();
 
         Vec3   centSum = Vec3(0, 0, 0);
         size_t centN   = 0;
         Vec3   normSum = Vec3(0, 0, 0);
 
-        foreach (fi; 0 .. mesh.faces.length) {
+        foreach (fi; 0 .. source.faces.length) {
             bool selected = fi < opFaces.length && opFaces[fi];
             if (!selected) continue;
-            Vec3 c = mesh.faceCentroid(cast(uint)fi);
+            Vec3 c = source.faceCentroid(cast(uint)fi);
             centSum = centSum + c;
             ++centN;
-            normSum = normSum + mesh.faceNormal(cast(uint)fi);
+            normSum = normSum + source.faceNormal(cast(uint)fi);
         }
 
         if (centN == 0) return;
-        anchor     = Vec3(centSum.x / centN, centSum.y / centN, centSum.z / centN);
-        baseAnchor = anchor;
+        image.anchor = Vec3(centSum.x / centN, centSum.y / centN, centSum.z / centN);
+        image.baseAnchor = image.anchor;
 
         float nl = sqrt(normSum.x*normSum.x + normSum.y*normSum.y + normSum.z*normSum.z);
-        extrudeAxis = (nl > 1e-6f) ? normSum * (1.0f / nl) : Vec3(0, 1, 0);
+        image.extrudeAxis = (nl > 1e-6f) ? normSum * (1.0f / nl) : Vec3(0, 1, 0);
 
-        gizmoValid = true;
+        image.gizmoValid = true;
+    }
+
+public:
+    version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
+        return preparedToolStateOwner;
+    }
+    version(unittest) final void seedPreparedActivationForTest(ref Mesh oldMesh) {
+        active = false; built = true; dragPart = 9; distance_ = 7;
+        gizmoValid = false; anchor = Vec3(1,2,3); baseAnchor = Vec3(4,5,6);
+        extrudeAxis = Vec3(7,8,9); gizmoSelHash = 10;
+        dragLastMX = 11; dragLastMY = 12; dragStartMX = 13; dragStartMY = 14;
+        dragBaseDistance = 15; cachedVp.view[0] = 16;
+        before = MeshSnapshot.capture(oldMesh);
+    }
+    version(unittest) final bool preparedActivationDirtyForTest() const nothrow @nogc {
+        return !active && built && dragPart == 9 && distance_ == 7 &&
+            !gizmoValid && anchor == Vec3(1,2,3) &&
+            baseAnchor == Vec3(4,5,6) && extrudeAxis == Vec3(7,8,9) &&
+            gizmoSelHash == 10;
+    }
+    version(unittest) final bool preparedActivationForTest(size_t count,
+            Vec3 first, const Vec3* livePtr, Vec3 expectedAnchor,
+            Vec3 expectedAxis, ulong expectedHash) const nothrow @nogc {
+        return active && !built && dragPart == -1 && distance_ == 0 &&
+            before.filled && before.vertices.length == count && count &&
+            before.vertices[0] == first && before.vertices.ptr !is livePtr &&
+            gizmoValid && anchor == expectedAnchor && baseAnchor == anchor &&
+            extrudeAxis == expectedAxis && gizmoSelHash == expectedHash &&
+            dragLastMX == 11 && dragLastMY == 12 && dragStartMX == 13 &&
+            dragStartMY == 14 && dragBaseDistance == 15 && cachedVp.view[0] == 16;
+    }
+    version(unittest) final bool preparedInvalidActivationForTest(
+            ulong expectedHash) const nothrow @nogc {
+        return active && !built && dragPart == -1 && distance_ == 0 &&
+            !gizmoValid && anchor == Vec3(1,2,3) &&
+            baseAnchor == Vec3(4,5,6) && extrudeAxis == Vec3(7,8,9) &&
+            gizmoSelHash == expectedHash;
     }
 }
 

@@ -24,6 +24,7 @@ import prepared_xfrm_activation_session : PreparedXfrmActivationSessionOwner;
 import prepared_stroke_extrude_activation : PreparedStrokeExtrudeActivationOwner;
 import prepared_vertex_merge_activation : PreparedVertexMergeActivationOwner;
 import prepared_poly_inset_activation : PreparedPolyInsetActivationOwner;
+import prepared_poly_extrude_activation : PreparedPolyExtrudeActivationOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -36,7 +37,7 @@ private enum PreparedResourceKind : ubyte {
     GpuCreateUpload, RadialArrayTransitionState, TransformActivationState,
     TransformProductActivationState, MoveUpdateState, InheritedNoopState,
     XfrmActivationPreState, XfrmActivationPostState, StrokeExtrudeActivationState,
-    VertexMergeActivationState, PolyInsetActivationState
+    VertexMergeActivationState, PolyInsetActivationState, PolyExtrudeActivationState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -53,6 +54,7 @@ private struct PreparedResourceEntry {
     PreparedStrokeExtrudeActivationOwner strokeExtrudeActivation;
     PreparedVertexMergeActivationOwner vertexWeldActivation;
     PreparedPolyInsetActivationOwner polyInsetActivation;
+    PreparedPolyExtrudeActivationOwner polyExtrudeActivation;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -347,6 +349,16 @@ public:
         PreparedResourceEntry e; e.kind = PreparedResourceKind.PolyInsetActivationState;
         e.polyInsetActivation = owner; resources_ ~= e; return true;
     }
+    bool preparePolyExtrudeActivation(PreparedPolyExtrudeActivationOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected PolyExtrude activation enlist failure");
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.PolyExtrudeActivationState;
+        e.polyExtrudeActivation = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -528,6 +540,9 @@ public:
             case PreparedResourceKind.PolyInsetActivationState:
                 ok = e.polyInsetActivation !is null &&
                     e.polyInsetActivation.validate(); break;
+            case PreparedResourceKind.PolyExtrudeActivationState:
+                ok = e.polyExtrudeActivation !is null &&
+                    e.polyExtrudeActivation.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -648,6 +663,10 @@ public:
             e.polyInsetActivation.install();
             version(unittest) installTrace_[installTraceLength_++] = 22;
             break;
+        case PreparedResourceKind.PolyExtrudeActivationState:
+            e.polyExtrudeActivation.install();
+            version(unittest) installTrace_[installTraceLength_++] = 23;
+            break;
         }
         if (!installedHistory && history_ !is null)
             history_.installPreparedToken(validated_);
@@ -711,6 +730,8 @@ private:
             e.vertexWeldActivation.abort(); break;
         case PreparedResourceKind.PolyInsetActivationState:
             e.polyInsetActivation.abort(); break;
+        case PreparedResourceKind.PolyExtrudeActivationState:
+            e.polyExtrudeActivation.abort(); break;
         }
         resources_.length = 0;
         historyMarker_ = false;
