@@ -1,10 +1,13 @@
 module tools.create.box;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedBoxParamEffect, PreparedSessionActivateEffect,
-    PreparedActivateKind;
+    PreparedActivateKind, PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_private_state : PreparedPrivateStateOwner;
-import mesh_gpu : GpuCreateOwner;
+import mesh_gpu : GpuCreateOwner, GpuUploadOwner, GpuResourceOwner;
 import command_history : PreparedHistoryKind;
+import document : Layer;
+import snap_render : SnapOverlayOwner;
+import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 
 import bindbc.opengl;
 import operator : VectorStack;
@@ -58,6 +61,21 @@ public import mesh_ops.box_geom;
 // ---------------------------------------------------------------------------
 
 private enum BoxState { Idle, DrawingBase, BaseSet, DrawingHeight, HeightSet }
+
+struct PreparedBoxDeactivateImage {
+    bool valid, willCommit, clearTracking;
+    ubyte expectedState;
+    BoxParams params;
+    WorkplaneFrame frame;
+    Vec3 planeNormal;
+    bool expectedLiveRunActive, expectedDragBeforeValid,
+         expectedParamBeforeValid;
+    int expectedLiveUndoDepth;
+    SnapResult expectedLastSnap;
+    void clear() nothrow @nogc {
+        this = PreparedBoxDeactivateImage.init;
+    }
+}
 
 private __gshared View gBoxLiveEditView;
 
@@ -266,6 +284,114 @@ public:
         state = BoxState.Idle; moverDragAxis = edgeDragIdx = heightHDragIdx = -1;
         liveRunActive = false; liveUndoDepth = 0;
         dragBeforeValid = paramBeforeValid = false; toolHandles.clearHaul();
+    }
+
+    final PreparedBoxDeactivateImage buildPreparedDeactivateState(
+            bool clearTracking) const nothrow @nogc {
+        PreparedBoxDeactivateImage image;
+        image.valid = true; image.expectedState = cast(ubyte)state;
+        const float height = abs(planeNormal.x) > 0.5f ? params_.sizeX :
+            (abs(planeNormal.y) > 0.5f ? params_.sizeY : params_.sizeZ);
+        image.willCommit = state == BoxState.BaseSet ||
+            (state >= BoxState.DrawingHeight && abs(height) > 1e-5f);
+        image.clearTracking = clearTracking; image.params = params_;
+        image.frame = frame; image.planeNormal = planeNormal;
+        image.expectedLiveRunActive = liveRunActive;
+        image.expectedLiveUndoDepth = liveUndoDepth;
+        image.expectedDragBeforeValid = dragBeforeValid;
+        image.expectedParamBeforeValid = paramBeforeValid;
+        image.expectedLastSnap = lastSnap; return image;
+    }
+    final bool preparedDeactivateStateMatches(
+            in PreparedBoxDeactivateImage image) const nothrow @nogc {
+        return image.valid && cast(ubyte)state == image.expectedState &&
+            (!image.willCommit || (params_ == image.params &&
+             frame.toWorld == image.frame.toWorld &&
+             planeNormal == image.planeNormal)) &&
+            liveRunActive == image.expectedLiveRunActive &&
+            liveUndoDepth == image.expectedLiveUndoDepth &&
+            dragBeforeValid == image.expectedDragBeforeValid &&
+            paramBeforeValid == image.expectedParamBeforeValid &&
+            lastSnap == image.expectedLastSnap;
+    }
+    final void installPreparedDeactivateState(
+            ref PreparedBoxDeactivateImage image) nothrow @nogc {
+        state = BoxState.Idle;
+        if (image.clearTracking) {
+            liveRunActive = false; liveUndoDepth = 0;
+            dragBeforeValid = paramBeforeValid = false;
+        }
+        lastSnap = SnapResult.init; image.clear();
+    }
+    final bool ownsPreparedMainUpload(GpuUploadOwner owner) nothrow @nogc {
+        return owner !is null && owner.owns(gpu);
+    }
+    final bool ownsPreparedPreviewDestroy(GpuResourceOwner owner) nothrow @nogc {
+        return owner !is null && owner.owns(&previewGpu);
+    }
+    private bool buildPreparedDeactivateCandidate(
+            in PreparedBoxDeactivateImage image, out Mesh candidate,
+            out MeshSnapshot pre, out uint deliveryFlags,
+            out uint deliveryDomains) {
+        if (!image.willCommit) return true;
+        pre = MeshSnapshot.capture(*mesh); pre.restore(candidate);
+        auto shadow = beginPreparedShadow(candidate);
+        const size_t firstNewVert = candidate.vertices.length;
+        const size_t firstNewFace = candidate.faces.length;
+        buildCuboidParametric(&candidate, image.params);
+        if (image.expectedState == cast(ubyte)BoxState.BaseSet &&
+            (image.planeNormal.x < -0.5f || image.planeNormal.y < -0.5f ||
+             image.planeNormal.z < -0.5f))
+            reverseFaceWinding(&candidate, firstNewFace);
+        foreach (i; firstNewVert .. candidate.vertices.length)
+            candidate.vertices[i] = transformPoint(
+                image.frame.toWorld, candidate.vertices[i]);
+        if (frameIsLeftHanded(image.frame))
+            reverseFaceWinding(&candidate, firstNewFace);
+        candidate.buildLoops();
+        drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);
+        shadow.close(); return true;
+    }
+
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,
+            Layer layer, GpuUploadOwner mainUpload,
+            GpuResourceOwner previewDestroy, SnapOverlayOwner snapOwner) {
+        if (context is null) return PreparedDeactivateEffect(
+            preparedToolStateOwner, PreparedDeactivateKind.Box, false, false);
+        scope(failure) context.discard();
+        auto probe = buildPreparedDeactivateState(false);
+        bool ok = layer !is null && &layer.meshRef() is mesh &&
+            ownsPreparedPreviewDestroy(previewDestroy) && snapOwner !is null;
+        Mesh candidate; MeshSnapshot pre; uint deliveryFlags, deliveryDomains;
+        if (ok) ok = buildPreparedDeactivateCandidate(probe, candidate, pre,
+            deliveryFlags, deliveryDomains);
+        if (ok && probe.willCommit)
+            ok = ownsPreparedMainUpload(mainUpload) &&
+                context.prepareStampedMeshImage(layer, candidate,
+                    deliveryFlags, deliveryDomains) &&
+                context.prepareUpload(mainUpload, candidate);
+        if (ok) ok = context.prepareDestroy(previewDestroy);
+        bool historyPrepared, clearTracking = !probe.willCommit;
+        if (ok && probe.willCommit && history !is null && gestureFactory !is null) {
+            auto cmd = cast(MeshSessionEdit)gestureFactory();
+            if (cmd !is null) {
+                cmd.setSnapshots(pre, MeshSnapshot.capture(candidate), "Create Box");
+                auto kind = probe.expectedLiveRunActive
+                    ? PreparedHistoryKind.ReplaceRunTail : PreparedHistoryKind.Plain;
+                historyPrepared = context.prepare(cmd, kind,
+                    probe.expectedLiveRunActive ? history.currentRunId : 0).accepted;
+                ok = historyPrepared; clearTracking = historyPrepared;
+            } else ok = context.prepareGestureCarrierMismatch();
+        }
+        auto stateOwner = ok ? PreparedPrivateStateOwner.boxDeactivate(
+            this, clearTracking) : null;
+        if (ok) ok = historyPrepared ? context.markHistoryInstall()
+                                     : context.markNoHistoryInstall();
+        if (ok) ok = context.preparePrivateState(stateOwner);
+        if (ok) ok = context.prepareSnapClear(snapOwner);
+        if (!ok) context.discard();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.Box, historyPrepared, ok);
     }
 
     override void deactivate() {
@@ -1590,6 +1716,7 @@ private:
 
 version(unittest) unittest {
     import record_observer_hub : RecordObserverHub;
+    import snap_render : g_lastSnap;
 
     Mesh mesh; GpuMesh sceneGpu;
     auto box = new BoxTool(() => &mesh, &sceneGpu, LitShader.init);
@@ -1675,6 +1802,89 @@ version(unittest) unittest {
     assert(!foreignEffect.accepted && foreignEffect.kind == PreparedActivateKind.Box &&
         foreignEffect.owner == box.preparedOwnerForTest() &&
         !foreignContext.validate());
+
+    auto commitLayer = new Layer;
+    GpuMesh commitGpu;
+    auto commitBox = new BoxTool(() => &commitLayer.meshRef(), &commitGpu,
+        LitShader.init);
+    commitBox.state = BoxState.HeightSet;
+    commitBox.params_.sizeX = 2; commitBox.params_.sizeY = 3;
+    commitBox.params_.sizeZ = 4; commitBox.planeNormal = Vec3(0,1,0);
+    commitBox.frame.toWorld = [1,0,0,0, 0,1,0,0,
+                               0,0,1,0, 0,0,0,1];
+    commitBox.frame.toLocal = commitBox.frame.toWorld;
+    commitBox.liveRunActive = false; commitBox.liveUndoDepth = 4;
+    commitBox.dragBeforeValid = commitBox.paramBeforeValid = true;
+    commitBox.previewGpu.faceVao = 81;
+    SnapResult seededSnap; seededSnap.snapped = true; seededSnap.targetIndex = 5;
+    commitBox.lastSnap = seededSnap; publishLastSnap(seededSnap);
+    auto stateImageProbe = commitBox.buildPreparedDeactivateState(true);
+    assert(stateImageProbe.valid && cast(ubyte)commitBox.state ==
+        stateImageProbe.expectedState);
+    assert(commitBox.params_ == stateImageProbe.params);
+    assert(commitBox.frame.toWorld == stateImageProbe.frame.toWorld);
+    assert(commitBox.planeNormal == stateImageProbe.planeNormal);
+    assert(commitBox.liveRunActive == stateImageProbe.expectedLiveRunActive &&
+        commitBox.liveUndoDepth == stateImageProbe.expectedLiveUndoDepth);
+    assert(commitBox.dragBeforeValid == stateImageProbe.expectedDragBeforeValid &&
+        commitBox.paramBeforeValid == stateImageProbe.expectedParamBeforeValid);
+    assert(commitBox.lastSnap == stateImageProbe.expectedLastSnap);
+    auto stateProbe = PreparedPrivateStateOwner.boxDeactivate(commitBox, true);
+    assert(stateProbe !is null); assert(stateProbe.begin());
+    assert(stateProbe.validate());
+    stateProbe.abort();
+    auto commitHistory = new CommandHistory();
+    auto commitView = new View(0,0,1,1);
+    commitBox.setGestureBindings(commitHistory, () => new MeshSessionEdit(
+        &commitLayer.meshRef(), commitView, EditMode.Vertices,
+        "test.box", "Create Box"));
+    auto commitContext = new PreparedRecordContext(commitHistory,
+        new RecordObserverHub()); commitContext.setResourceIdentity(7,11);
+    auto commitEffect = commitBox.prepareDeactivate(commitContext, commitLayer,
+        GpuUploadOwner.fakeForTest(&commitGpu),
+        GpuResourceOwner.fakeForTest(commitBox.preparedPreviewGpu()),
+        new SnapOverlayOwner());
+    assert(commitEffect.resourceAccepted);
+    assert(commitEffect.historyAccepted);
+    assert(commitEffect.kind == PreparedDeactivateKind.Box);
+    assert(commitLayer.meshRef().faces.length == 0 && g_lastSnap == seededSnap);
+    assert(commitContext.validate());
+    commitContext.install(); size_t modelDepth, uiDepth;
+    commitHistory.undoDepthCounts(modelDepth, uiDepth);
+    assert(commitLayer.meshRef().faces.length > 0 && modelDepth == 1 &&
+        uiDepth == 0 && commitBox.state == BoxState.Idle &&
+        !commitBox.liveRunActive && commitBox.liveUndoDepth == 0 &&
+        !commitBox.dragBeforeValid && !commitBox.paramBeforeValid &&
+        g_lastSnap == SnapResult.init &&
+        commitContext.installTraceForTest() == [3,4,2,2,1,7,6]);
+
+    auto idleLayer = new Layer; GpuMesh idleGpu;
+    auto idleBox = new BoxTool(() => &idleLayer.meshRef(), &idleGpu,
+        LitShader.init); idleBox.liveRunActive = true; idleBox.liveUndoDepth = 2;
+    idleBox.previewGpu.faceVao = 91; publishLastSnap(seededSnap);
+    auto idleContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub()); idleContext.setResourceIdentity(7,11);
+    auto idleEffect = idleBox.prepareDeactivate(idleContext, idleLayer,
+        GpuUploadOwner.fakeForTest(&idleGpu),
+        GpuResourceOwner.fakeForTest(idleBox.preparedPreviewGpu()),
+        new SnapOverlayOwner());
+    assert(idleEffect.resourceAccepted && !idleEffect.historyAccepted &&
+        idleContext.validate()); idleContext.install();
+    assert(idleLayer.meshRef().faces.length == 0 && !idleBox.liveRunActive &&
+        idleBox.liveUndoDepth == 0 &&
+        idleContext.installTraceForTest() == [2,8,7,6]);
+
+    auto mutationLayer = new Layer; GpuMesh mutationGpu;
+    auto mutationBox = new BoxTool(() => &mutationLayer.meshRef(), &mutationGpu,
+        LitShader.init); mutationBox.previewGpu.faceVao = 101;
+    auto mutationContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub()); mutationContext.setResourceIdentity(7,11);
+    auto mutationEffect = mutationBox.prepareDeactivate(mutationContext,
+        mutationLayer, GpuUploadOwner.fakeForTest(&mutationGpu),
+        GpuResourceOwner.fakeForTest(mutationBox.preparedPreviewGpu()),
+        new SnapOverlayOwner());
+    assert(mutationEffect.resourceAccepted); mutationBox.state = BoxState.BaseSet;
+    assert(!mutationContext.validate()); mutationContext.discard();
 }
 
 private final class BoxLiveEditCommand : Command, GesturePayload {

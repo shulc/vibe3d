@@ -1,7 +1,7 @@
 module prepared_private_state;
 
 import core.atomic : atomicOp;
-import tools.create.box : BoxTool;
+import tools.create.box : BoxTool, PreparedBoxDeactivateImage;
 import tools.create.pen : PenTool;
 import tools.create.primitive_create_tool : PrimitiveCreateTool, HandledCreateTool;
 import tools.create.sphere : SphereTool;
@@ -18,7 +18,7 @@ import tools.edit.reduce : ReductionTool;
 import snapshot : MeshSnapshot;
 
 enum PreparedPrivateStateKind : ubyte {
-    Box, Pen, Primitive, Vertex, ArraySession, CloneSession,
+    Box, BoxDeactivate, Pen, Primitive, Vertex, ArraySession, CloneSession,
     MagnetSession, ReductionSession
 }
 private enum PrimitiveProjection : ubyte {
@@ -37,6 +37,7 @@ private:
     PreparedPrivateStateKind kind_;
     PrimitiveProjection primitiveProjection;
     BoxTool boxTarget;
+    PreparedBoxDeactivateImage boxDeactivateImage;
     PenTool penTarget;
     PrimitiveCreateTool primitiveTarget;
     HandledCreateTool handledTarget;
@@ -66,6 +67,15 @@ public:
         if (target is null || target.classinfo !is BoxTool.classinfo) return null;
         auto o = new PreparedPrivateStateOwner(PreparedPrivateStateKind.Box);
         o.boxTarget = target; return o;
+    }
+    static PreparedPrivateStateOwner boxDeactivate(BoxTool target,
+            bool clearTracking) {
+        if (target is null || target.classinfo !is BoxTool.classinfo) return null;
+        auto o = new PreparedPrivateStateOwner(
+            PreparedPrivateStateKind.BoxDeactivate);
+        o.boxTarget = target;
+        o.boxDeactivateImage = target.buildPreparedDeactivateState(clearTracking);
+        return o.boxDeactivateImage.valid ? o : null;
     }
     static PreparedPrivateStateOwner pen(PenTool target) {
         if (target is null || target.classinfo !is PenTool.classinfo) return null;
@@ -160,6 +170,8 @@ private:
     bool hasTarget() const nothrow @nogc {
         final switch (kind_) {
         case PreparedPrivateStateKind.Box: return boxTarget !is null;
+        case PreparedPrivateStateKind.BoxDeactivate:
+            return boxTarget !is null && boxDeactivateImage.valid;
         case PreparedPrivateStateKind.Pen: return penTarget !is null;
         case PreparedPrivateStateKind.Primitive:
             final switch (primitiveProjection) {
@@ -191,7 +203,10 @@ public:
     }
     bool validate() nothrow @nogc {
         if (!pending || validated || prepared.ownerId != ownerId ||
-            prepared.generation != generation || !hasTarget()) return false;
+            prepared.generation != generation || !hasTarget() ||
+            (kind_ == PreparedPrivateStateKind.BoxDeactivate &&
+             !boxTarget.preparedDeactivateStateMatches(boxDeactivateImage)))
+            return false;
         validated = true; validatedToken.ownerId = ownerId;
         validatedToken.generation = generation; return true;
     }
@@ -200,6 +215,8 @@ public:
             validatedToken.generation != generation) return;
         final switch (kind_) {
         case PreparedPrivateStateKind.Box: boxTarget.installPreparedPrivateActivation(); break;
+        case PreparedPrivateStateKind.BoxDeactivate:
+            boxTarget.installPreparedDeactivateState(boxDeactivateImage); break;
         case PreparedPrivateStateKind.Pen: penTarget.installPreparedPrivateActivation(); break;
         case PreparedPrivateStateKind.Primitive:
             final switch (primitiveProjection) {
@@ -233,6 +250,7 @@ public:
     }
     void abort() nothrow @nogc {
         activationBaseline = MeshSnapshot.init;
+        boxDeactivateImage.clear();
         pending = validated = false;
     }
     version(unittest) bool activationPayloadFilledForTest() const nothrow @nogc {

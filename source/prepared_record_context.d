@@ -255,6 +255,8 @@ public:
         PreparedResourceEntry e; e.privateState = owner;
         final switch (owner.kind) {
         case PreparedPrivateStateKind.Box: e.kind = PreparedResourceKind.BoxState; break;
+        case PreparedPrivateStateKind.BoxDeactivate:
+            e.kind = PreparedResourceKind.BoxState; break;
         case PreparedPrivateStateKind.Pen: e.kind = PreparedResourceKind.PenState; break;
         case PreparedPrivateStateKind.Primitive: e.kind = PreparedResourceKind.PrimitiveState; break;
         case PreparedPrivateStateKind.Vertex: e.kind = PreparedResourceKind.VertexState; break;

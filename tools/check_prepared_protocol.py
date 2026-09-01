@@ -239,6 +239,7 @@ B5O_PREPARED_LEGACY = {
 }
 B5P_PREPARED_LEGACY = {
     ("tools.alignment.mirror", "MirrorTool", "deactivate"),
+    ("tools.create.box", "BoxTool", "deactivate"),
     ("tools.edit.bridge_tool", "BridgeTool", "deactivate"),
     ("tools.edit.topology_pen.tool", "TopologyPenTool", "activate"),
     ("tools.edit.edge_extend", "EdgeExtendTool", "activate"),
@@ -299,7 +300,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "a5917a9da809c2937e8d55d7cb5b6944f4fe19e1c8835e2b4132bbfc80f5ffdd"
+    "e7ec348342faada79924fe918de2efad85efbbca45ba1d3bbd0bd53bf6f2cd09"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -1671,6 +1672,11 @@ def box_activation_gate(box, private, context):
     start = box.find("final PreparedSessionActivateEffect prepareActivate(")
     end = box.find("final GpuMesh* preparedPreviewGpu", start)
     producer = box[start:end] if start >= 0 and end > start else ""
+    private_activation = private[:private.find(
+        "static PreparedPrivateStateOwner boxDeactivate")]
+    box_activation_install = box[box.find(
+        "final void installPreparedPrivateActivation"):box.find(
+        "final PreparedBoxDeactivateImage buildPreparedDeactivateState")]
     return (
         "final PreparedSessionActivateEffect prepareActivate(" in producer and
         "PreparedPrivateStateOwner.box(this)" in producer and
@@ -1687,11 +1693,11 @@ def box_activation_gate(box, private, context):
         "if (!ok) context.discard();" in producer and
         "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
         "            PreparedActivateKind.Box, ok);" in producer and
-        "target.classinfo !is BoxTool.classinfo" in private and
+        "target.classinfo !is BoxTool.classinfo" in private_activation and
         "case PreparedPrivateStateKind.Box: boxTarget.installPreparedPrivateActivation();" in private and
-        "state = BoxState.Idle; moverDragAxis = edgeDragIdx = heightHDragIdx = -1;" in box and
-        "liveRunActive = false; liveUndoDepth = 0;" in box and
-        "dragBeforeValid = paramBeforeValid = false; toolHandles.clearHaul();" in box and
+        "state = BoxState.Idle; moverDragAxis = edgeDragIdx = heightHDragIdx = -1;" in box_activation_install and
+        "liveRunActive = false; liveUndoDepth = 0;" in box_activation_install and
+        "dragBeforeValid = paramBeforeValid = false; toolHandles.clearHaul();" in box_activation_install and
         "e.gpuCreate.installEnlisted();" in context and
         "e.privateState.install();" in context and
         not any(x in producer
@@ -4074,6 +4080,90 @@ for target, old, new, label in (
     if bridge_deactivate_producer_gate(t, e):
         fail(f"Bridge deactivation producer mutation did not RED: {label}")
 
+box_deactivate_tool = (ROOT / "source/tools/create/box.d").read_text()
+box_deactivate_owner = (ROOT / "source/prepared_private_state.d").read_text()
+box_deactivate_effect = (ROOT / "source/prepared_tool_effect.d").read_text()
+def box_deactivate_gate(tool, owner, effect):
+    start = tool.find("final PreparedDeactivateEffect prepareDeactivate(")
+    end = tool.find("override void deactivate()", start)
+    body = tool[start:end]
+    candidate = tool[tool.find("private bool buildPreparedDeactivateCandidate("):start]
+    state = tool[tool.find("final PreparedBoxDeactivateImage buildPreparedDeactivateState"):start]
+    owner_block = owner[owner.find("static PreparedPrivateStateOwner boxDeactivate"):]
+    effect_block = effect[effect.find("enum PreparedDeactivateKind"):
+        effect.find("enum PreparedActivateKind")]
+    return (start >= 0 and end > start and "Box," in effect_block and
+        "target.classinfo !is BoxTool.classinfo" in owner_block and
+        "target.buildPreparedDeactivateState(clearTracking)" in owner_block and
+        "!boxTarget.preparedDeactivateStateMatches(boxDeactivateImage)" in owner_block and
+        "boxTarget.installPreparedDeactivateState(boxDeactivateImage);" in owner_block and
+        "image.expectedState = cast(ubyte)state;" in state and
+        "image.expectedLastSnap = lastSnap" in state and
+        "frame.toWorld == image.frame.toWorld" in state and
+        "if (image.clearTracking)" in state and
+        "lastSnap = SnapResult.init; image.clear();" in state and
+        "beginPreparedShadow(candidate)" in candidate and
+        "buildCuboidParametric(&candidate, image.params);" in candidate and
+        "drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);" in candidate and
+        "scope(failure) context.discard();" in body and
+        "&layer.meshRef() is mesh" in body and
+        "ownsPreparedPreviewDestroy(previewDestroy)" in body and
+        "ownsPreparedMainUpload(mainUpload)" in body and
+        "context.prepareStampedMeshImage(layer, candidate," in body and
+        "context.prepareUpload(mainUpload, candidate)" in body and
+        "context.prepareDestroy(previewDestroy)" in body and
+        "PreparedHistoryKind.ReplaceRunTail" in body and
+        "cmd.setSnapshots(pre, MeshSnapshot.capture(candidate), \"Create Box\");" in body and
+        "context.prepareGestureCarrierMismatch()" in body and
+        "PreparedPrivateStateOwner.boxDeactivate(" in body and
+        "context.prepareSnapClear(snapOwner)" in body and
+        "context.markHistoryInstall()" in body and
+        "context.markNoHistoryInstall()" in body and
+        "context.preparePrivateState(stateOwner)" in body and
+        body.find("context.prepareStampedMeshImage(layer, candidate,") <
+            body.find("context.prepareUpload(mainUpload, candidate)") <
+            body.find("context.prepareDestroy(previewDestroy)") <
+            body.find("context.markHistoryInstall()") <
+            body.find("context.preparePrivateState(stateOwner)") <
+            body.find("context.prepareSnapClear(snapOwner)") and
+        "PreparedDeactivateKind.Box, historyPrepared, ok);" in body)
+if not box_deactivate_gate(box_deactivate_tool, box_deactivate_owner,
+                           box_deactivate_effect):
+    fail("Box deactivation prepared contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is BoxTool.classinfo", "false", "broaden product"),
+    ("owner", "!boxTarget.preparedDeactivateStateMatches(boxDeactivateImage)", "false", "drop state validation"),
+    ("owner", "boxTarget.installPreparedDeactivateState(boxDeactivateImage);", "", "drop state install"),
+    ("tool", "beginPreparedShadow(candidate)", "beginPreparedShadow(*mesh)", "drop detached shadow"),
+    ("tool", "buildCuboidParametric(&candidate, image.params);", "", "drop captured kernel"),
+    ("tool", "drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);", "", "drop delivery"),
+    ("tool", "&layer.meshRef() is mesh", "true", "drop layer identity"),
+    ("tool", "ownsPreparedPreviewDestroy(previewDestroy)", "true", "drop preview identity"),
+    ("tool", "ownsPreparedMainUpload(mainUpload)", "true", "drop main GPU identity"),
+    ("tool", "context.prepareStampedMeshImage(layer, candidate,", "false /* dropped mesh */ (", "drop mesh enlist"),
+    ("tool", "context.prepareUpload(mainUpload, candidate)", "true", "drop upload"),
+    ("tool", "context.prepareDestroy(previewDestroy)", "true", "drop destroy"),
+    ("tool", "PreparedHistoryKind.ReplaceRunTail", "PreparedHistoryKind.Plain", "drop run-tail mode"),
+    ("tool", "context.prepareGestureCarrierMismatch()", "true", "drop carrier diagnostic"),
+    ("tool", "context.prepareSnapClear(snapOwner)", "true", "drop snap clear"),
+    ("tool", "context.markHistoryInstall()", "true", "drop history marker"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop no-history marker"),
+    ("tool", "context.preparePrivateState(stateOwner)", "true", "drop final state"),
+    ("effect", "Box,", "None,", "drop effect kind"),
+):
+    t, o, e = box_deactivate_tool, box_deactivate_owner, box_deactivate_effect
+    if target == "effect":
+        pos = e.find(old, e.find("enum PreparedDeactivateKind"))
+        if pos >= 0: e = e[:pos] + new + e[pos + len(old):]
+    elif target == "owner":
+        pos = o.find(old, o.find("static PreparedPrivateStateOwner boxDeactivate"))
+        if pos >= 0: o = o[:pos] + new + o[pos + len(old):]
+    else:
+        pos = t.find(old, t.find("private bool buildPreparedDeactivateCandidate("))
+        if pos >= 0: t = t[:pos] + new + t[pos + len(old):]
+    if box_deactivate_gate(t, o, e):
+        fail(f"Box deactivation mutation did not RED: {label}")
+
 mirror_deactivate_effect = (ROOT / "source/prepared_tool_effect.d").read_text()
 def mirror_deactivate_producer_gate(tool, effect):
     start = tool.find("final PreparedDeactivateEffect prepareDeactivate(")
@@ -4351,7 +4441,7 @@ expected_primitive_products = [
 def b5d1_gate(s):
     return ("enum PreparedPrivateStateKind : ubyte" in s["owner"] and
             all(kind in s["owner"] for kind in
-                ("Box, Pen, Primitive, Vertex", "ArraySession", "CloneSession",
+                ("Box, BoxDeactivate, Pen, Primitive, Vertex", "ArraySession", "CloneSession",
                  "MagnetSession", "ReductionSession")) and
             s["owner"].count("@disable this(this)") == 2 and
             "delegate" not in s["owner"] and "void*" not in s["owner"] and
@@ -4474,7 +4564,7 @@ def b5e_gate(owner, context, sources, snapshot=b5e_snapshot):
     return (all(kind in owner for kind in
                 ("ArraySession", "CloneSession", "MagnetSession", "ReductionSession")) and
             "MeshSnapshot activationBaseline;" in owner and
-            owner.count("target.classinfo !is") == 5 and
+            owner.count("target.classinfo !is") == 6 and
             "o.activationBaseline = image;" in owner and
             "failSessionPrepareForTest_" in owner and
             all(f"{prefix}Target.installPreparedActivation(activationBaseline);" in owner
