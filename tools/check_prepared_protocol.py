@@ -619,6 +619,75 @@ for label, mutated_mesh, mutated_document in mesh_mutations:
     else:
         fail(f"P1.0b.3c {label} mutation did not RED")
 
+# P1.0b.4a dormant GL-resource owner. Raw GLuint sets stay owner-private;
+# production doors may carry only scalar identity/generation tokens.
+gpu_source = (ROOT / "source/mesh_gpu.d").read_text()
+for path in (ROOT / "source").rglob("*.d"):
+    if path.name != "mesh_gpu.d" and ".beginPreparedDestroy(" in path.read_text():
+        fail("P1.0b.4a prepared GPU owner gained a pre-cutover caller")
+
+gpu_contracts = (
+    "private struct GpuMeshNames",
+    "struct PreparedGpuResourceToken {\n    private ulong ownerId;\n    private ulong generation;",
+    "struct ValidatedGpuResourceToken {\n    @disable this(this);",
+    "final class GpuResourceOwner",
+    "peekGpuMeshNames(*target) != pendingDestroy",
+    "threadIdentity != requiredThread",
+    "contextIdentity != requiredContext",
+    "void installPrepared(ref ValidatedGpuResourceToken token) nothrow @nogc",
+    "void discardPrepared(PreparedGpuResourceToken token) nothrow @nogc",
+    "glDeleteVertexArrays(1, &n.faceVao); glDeleteBuffers(1, &n.faceVbo);",
+    "glDeleteBuffers(1, &n.weightColorVbo);",
+    "gpu.suppressCageUpload = false;",
+    "static assert(!__traits(compiles, {\n    void copyValidatedToken",
+)
+def validate_prepared_gpu(source):
+    for contract in gpu_contracts:
+        if source.count(contract) != 1:
+            fail("P1.0b.4a GPU owner exact contract drifted")
+    body_match = re.search(
+        r"void\s+installPrepared\s*\([^)]*\)\s*nothrow\s+@nogc\s*\{", source)
+    body = source[body_match.end():balanced_source(source, body_match.end())-1]
+    if re.search(r"\b(?:throw|assert|enforce)\s*\(", body):
+        fail("P1.0b.4a GPU installer gained a throwable path")
+    exact_bodies = (
+        (r"bool\s+validatePrepared", "e431625354aa80b1012f59836227d249f0d4b6fb624829e1a5e6121dfab0f043"),
+        (r"void\s+installPrepared", "7d060cedf3efd7bc2daa26352d0b139ff755d2e8d21f9ddb2cdb85a1ccc570f0"),
+        (r"void\s+discardPrepared", "b31cf1d319a934c57aca2deb80e889b62b34a1e46b4093330434c08ad74f5794"),
+        (r"private\s+GpuMeshNames\s+takeGpuMeshNames", "35ef20e0db595abe95abf1caf6b80ea0db16892fda525eb59b082a63ee8c530b"),
+        (r"private\s+void\s+deleteGpuMeshNames", "725d85a33d229c84da0c0ce8819d3f9390a19a64d03b418a496e34ccac4bc488"),
+    )
+    for signature, digest in exact_bodies:
+        match = re.search(signature + r"\s*\([^;{}]*\)[^{]*\{", source)
+        if not match or semantic_digest(
+                source[match.end():balanced_source(source, match.end())-1]) != digest:
+            fail("P1.0b.4a GPU owner exact behavior drifted")
+validate_prepared_gpu(gpu_source)
+
+gpu_mutations = (
+    ("wrong owner", "token.ownerId != ownerId", "token.ownerId == ownerId"),
+    ("wrong thread", "threadIdentity != requiredThread", "threadIdentity == requiredThread"),
+    ("wrong context", "contextIdentity != requiredContext", "contextIdentity == requiredContext"),
+    ("resource reorder",
+        "glDeleteVertexArrays(1, &n.faceVao); glDeleteBuffers(1, &n.faceVbo);",
+        "glDeleteBuffers(1, &n.faceVbo); glDeleteVertexArrays(1, &n.faceVao);"),
+    ("drop resource", "glDeleteBuffers(1, &n.weightColorVbo);", ""),
+    ("retain upload suppression", "gpu.suppressCageUpload = false;", ""),
+    ("double consume", "pending = false;", "pending = true;"),
+    ("throw path", "if (!pending || !validated", "assert(pending);\n        if (!pending || !validated"),
+)
+for label, old, new in gpu_mutations:
+    mutant = gpu_source.replace(old, new, 1)
+    if mutant == gpu_source:
+        fail(f"P1.0b.4a {label} mutation anchor vanished")
+    try:
+        validate_prepared_gpu(mutant)
+    except SystemExit as error:
+        if "P1.0b.4a GPU" not in str(error):
+            fail(f"P1.0b.4a {label} mutation failed for wrong reason")
+    else:
+        fail(f"P1.0b.4a {label} mutation did not RED")
+
 # Potency: changing the Arc producer to copy the original Drawing state must
 # RED the named producer contract, independently of the hook-body fingerprint.
 arc_source = (ROOT / "source/tools/create/arc.d").read_text()

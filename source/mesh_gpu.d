@@ -12,6 +12,7 @@ module mesh_gpu;
 
 import bindbc.opengl;
 import std.math : sqrt;
+import core.atomic : atomicOp;
 import math;    // Vec3
 import shader;  // LitShader
 import mesh;    // Mesh, FaceList
@@ -1793,3 +1794,263 @@ struct GpuMesh {
         glBindVertexArray(0);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Prepared GL resource lifetime owner (P1.0b.4a, dormant infrastructure)
+// ---------------------------------------------------------------------------
+
+/// Closed description of the GL names owned by a GpuMesh.  This value never
+/// leaves GpuResourceOwner: prepared effects carry only scalar identity.
+private struct GpuMeshNames {
+    GLuint faceVao, faceVbo;
+    GLuint edgeVao, edgeVbo;
+    GLuint vertVao, vertVbo;
+    GLuint faceIdVbo, matIdVbo, weightColorVbo;
+}
+
+private GpuMeshNames takeGpuMeshNames(ref GpuMesh gpu) nothrow @nogc {
+    GpuMeshNames names = GpuMeshNames(
+        gpu.faceVao, gpu.faceVbo, gpu.edgeVao, gpu.edgeVbo,
+        gpu.vertVao, gpu.vertVbo, gpu.faceIdVbo, gpu.matIdVbo,
+        gpu.weightColorVbo);
+    gpu.faceVao = gpu.faceVbo = 0;
+    gpu.edgeVao = gpu.edgeVbo = 0;
+    gpu.vertVao = gpu.vertVbo = 0;
+    gpu.faceIdVbo = gpu.matIdVbo = gpu.weightColorVbo = 0;
+    gpu.faceVertCount = gpu.edgeVertCount = gpu.vertCount = 0;
+    gpu.faceTriStart = null;
+    gpu.faceTriCount = null;
+    gpu.edgeOriginGpu = null;
+    gpu.faceOriginGpu = null;
+    gpu.vertOriginGpu = null;
+    gpu.faceCornerVert = null;
+    gpu.weightStampMesh = null;
+    gpu.weightStampName = null;
+    gpu.weightStampValid = false;
+    gpu.suppressCageUpload = false;
+    gpu.uploadVersion = 0;
+    gpu.scratchFaceData = null;
+    gpu.scratchFaceIdData = null;
+    gpu.scratchMatIdData = null;
+    gpu.scratchWeightColor = null;
+    gpu.scratchEdgeData = null;
+    gpu.scratchVertData = null;
+    return names;
+}
+
+private GpuMeshNames peekGpuMeshNames(ref GpuMesh gpu) nothrow @nogc {
+    return GpuMeshNames(gpu.faceVao, gpu.faceVbo, gpu.edgeVao, gpu.edgeVbo,
+        gpu.vertVao, gpu.vertVbo, gpu.faceIdVbo, gpu.matIdVbo,
+        gpu.weightColorVbo);
+}
+
+private void deleteGpuMeshNames(ref GpuMeshNames n) nothrow @nogc {
+    // Keep the legacy GpuMesh.destroy order exactly.
+    glDeleteVertexArrays(1, &n.faceVao); glDeleteBuffers(1, &n.faceVbo);
+    glDeleteVertexArrays(1, &n.edgeVao); glDeleteBuffers(1, &n.edgeVbo);
+    glDeleteVertexArrays(1, &n.vertVao); glDeleteBuffers(1, &n.vertVbo);
+    glDeleteBuffers(1, &n.faceIdVbo);
+    glDeleteBuffers(1, &n.matIdVbo);
+    glDeleteBuffers(1, &n.weightColorVbo);
+    n = GpuMeshNames.init;
+}
+
+private shared ulong nextGpuResourceOwnerId;
+
+struct PreparedGpuResourceToken {
+    private ulong ownerId;
+    private ulong generation;
+}
+
+struct ValidatedGpuResourceToken {
+    @disable this(this);
+    private ulong ownerId;
+    private ulong generation;
+}
+
+/// Stable owner for prepared GpuMesh lifetime changes.  It deliberately is a
+/// class rather than state embedded in GpuMesh: GpuMesh remains a copied value
+/// in background-layer maps, whereas this owner identity must never follow a
+/// copied header.  No production caller exists before the unified-door phase.
+final class GpuResourceOwner {
+    private enum Backend : ubyte { openGl, fake }
+    private GpuMesh* target;
+    private immutable ulong ownerId;
+    private ulong generation;
+    private ulong requiredThread;
+    private ulong requiredContext;
+    private bool pending;
+    private bool validated;
+    private GpuMeshNames pendingDestroy;
+    private Backend backend;
+    version (unittest) {
+        private GLuint[18] fakeDeleted;
+        private size_t fakeDeleteCount;
+    }
+
+    this(GpuMesh* target, ulong threadIdentity, ulong contextIdentity) {
+        this.target = target;
+        requiredThread = threadIdentity;
+        requiredContext = contextIdentity;
+        ownerId = atomicOp!"+="(nextGpuResourceOwnerId, 1UL);
+    }
+
+    version (unittest) private this(GpuMesh* target) {
+        this(target, 7, 11);
+        backend = Backend.fake;
+    }
+
+    bool beginPreparedDestroy(out PreparedGpuResourceToken token) nothrow @nogc {
+        if (pending || target is null) return false;
+        ++generation;
+        pendingDestroy = GpuMeshNames(
+            target.faceVao, target.faceVbo, target.edgeVao, target.edgeVbo,
+            target.vertVao, target.vertVbo, target.faceIdVbo,
+            target.matIdVbo, target.weightColorVbo);
+        pending = true;
+        validated = false;
+        token.ownerId = ownerId;
+        token.generation = generation;
+        return true;
+    }
+
+    bool validatePrepared(PreparedGpuResourceToken token,
+                          ulong threadIdentity, ulong contextIdentity,
+                          out ValidatedGpuResourceToken validatedToken)
+                          nothrow @nogc {
+        if (!pending || validated || token.ownerId != ownerId ||
+            token.generation != generation ||
+            threadIdentity != requiredThread ||
+            contextIdentity != requiredContext ||
+            peekGpuMeshNames(*target) != pendingDestroy)
+            return false;
+        validated = true;
+        validatedToken.ownerId = ownerId;
+        validatedToken.generation = generation;
+        return true;
+    }
+
+    /// Consumes a prevalidated scalar handle.  All refusal is earlier; a
+    /// repeated/stale consume mechanically does nothing and cannot re-delete.
+    void installPrepared(ref ValidatedGpuResourceToken token) nothrow @nogc {
+        if (!pending || !validated || token.ownerId != ownerId ||
+            token.generation != generation) return;
+        auto names = takeGpuMeshNames(*target);
+        // The live header must still own exactly the names captured at prepare.
+        // Door-level joint validation pins this invariant before P1.0c; this
+        // dormant seam has no production caller meanwhile.
+        pendingDestroy = names;
+        version (unittest) {
+            if (backend == Backend.fake) {
+                immutable size_t at = fakeDeleteCount;
+                if (at + 9 <= fakeDeleted.length) {
+                    fakeDeleted[at + 0] = names.faceVao;
+                    fakeDeleted[at + 1] = names.faceVbo;
+                    fakeDeleted[at + 2] = names.edgeVao;
+                    fakeDeleted[at + 3] = names.edgeVbo;
+                    fakeDeleted[at + 4] = names.vertVao;
+                    fakeDeleted[at + 5] = names.vertVbo;
+                    fakeDeleted[at + 6] = names.faceIdVbo;
+                    fakeDeleted[at + 7] = names.matIdVbo;
+                    fakeDeleted[at + 8] = names.weightColorVbo;
+                    fakeDeleteCount = at + 9;
+                }
+                pendingDestroy = GpuMeshNames.init;
+            } else deleteGpuMeshNames(pendingDestroy);
+        } else deleteGpuMeshNames(pendingDestroy);
+        pending = false;
+        validated = false;
+        token.ownerId = token.generation = 0;
+    }
+
+    void discardPrepared(PreparedGpuResourceToken token) nothrow @nogc {
+        if (!pending || token.ownerId != ownerId || token.generation != generation)
+            return;
+        pendingDestroy = GpuMeshNames.init;
+        pending = false;
+        validated = false;
+    }
+}
+
+version (unittest) unittest {
+    GpuMesh gpu;
+    gpu.faceVao = 1; gpu.faceVbo = 2; gpu.edgeVao = 3; gpu.edgeVbo = 4;
+    gpu.vertVao = 5; gpu.vertVbo = 6; gpu.faceIdVbo = 7;
+    gpu.matIdVbo = 8; gpu.weightColorVbo = 9;
+    auto owner = new GpuResourceOwner(&gpu);
+    PreparedGpuResourceToken token;
+    assert(owner.beginPreparedDestroy(token));
+    PreparedGpuResourceToken overlap;
+    assert(!owner.beginPreparedDestroy(overlap));
+    ValidatedGpuResourceToken wrong;
+    assert(!owner.validatePrepared(token, 8, 11, wrong));
+    assert(gpu.faceVao == 1 && gpu.weightColorVbo == 9);
+    ValidatedGpuResourceToken ready;
+    assert(owner.validatePrepared(token, 7, 11, ready));
+    owner.installPrepared(ready);
+    assert(gpu.faceVao == 0 && gpu.weightColorVbo == 0);
+    assert(owner.fakeDeleted[0 .. 9] == [1,2,3,4,5,6,7,8,9]);
+    owner.installPrepared(ready);
+    assert(owner.fakeDeleteCount == 9);
+
+    // Every fallible validation refusal is zero-live and recoverable.
+    GpuMesh otherGpu;
+    auto otherOwner = new GpuResourceOwner(&otherGpu);
+    PreparedGpuResourceToken otherToken;
+    assert(otherOwner.beginPreparedDestroy(otherToken));
+    gpu.faceVao = 21; gpu.faceVbo = 22;
+    gpu.edgeVao = 23; gpu.edgeVbo = 24;
+    gpu.vertVao = 25; gpu.vertVbo = 26;
+    gpu.faceIdVbo = 27; gpu.matIdVbo = 28; gpu.weightColorVbo = 29;
+    gpu.faceVertCount = 31; gpu.edgeVertCount = 32; gpu.vertCount = 33;
+    gpu.faceTriStart = [34]; gpu.faceTriCount = [35];
+    gpu.suppressCageUpload = true;
+    gpu.edgeOriginGpu = [36]; gpu.faceOriginGpu = [37];
+    gpu.vertOriginGpu = [38]; gpu.faceCornerVert = [39];
+    gpu.weightStampMesh = cast(const(Mesh)*)0x1234;
+    gpu.weightStampName = "prepared-gpu-sentinel";
+    gpu.weightStampValid = true; gpu.uploadVersion = 40;
+    gpu.scratchFaceData = [41.0f]; gpu.scratchFaceIdData = [42];
+    gpu.scratchMatIdData = [43]; gpu.scratchWeightColor = [44.0f];
+    gpu.scratchEdgeData = [45.0f]; gpu.scratchVertData = [46.0f];
+    GpuMesh fullProjection = gpu;
+    PreparedGpuResourceToken fresh;
+    assert(owner.beginPreparedDestroy(fresh));
+    otherToken.generation = fresh.generation; // isolate owner-id rejection
+    ValidatedGpuResourceToken refused;
+    assert(!owner.validatePrepared(otherToken, 7, 11, refused));
+    assert(gpu == fullProjection && owner.fakeDeleteCount == 9);
+    otherOwner.discardPrepared(otherToken);
+
+    auto stale = fresh;
+    ++stale.generation;
+    assert(!owner.validatePrepared(stale, 7, 11, refused));
+    assert(gpu == fullProjection && owner.fakeDeleteCount == 9);
+    assert(!owner.validatePrepared(fresh, 7, 12, refused));
+    assert(gpu == fullProjection && owner.fakeDeleteCount == 9);
+    gpu.faceVao = 23; // resource identity changed after capture
+    assert(!owner.validatePrepared(fresh, 7, 11, refused));
+    auto changedProjection = fullProjection;
+    changedProjection.faceVao = 23;
+    assert(gpu == changedProjection && owner.fakeDeleteCount == 9);
+    gpu.faceVao = 21;
+    owner.discardPrepared(fresh);
+    assert(gpu == fullProjection && owner.fakeDeleteCount == 9);
+    assert(!owner.validatePrepared(fresh, 7, 11, refused));
+    assert(gpu == fullProjection && owner.fakeDeleteCount == 9);
+
+    PreparedGpuResourceToken recovered;
+    assert(owner.beginPreparedDestroy(recovered));
+    ValidatedGpuResourceToken recoveredReady;
+    assert(owner.validatePrepared(recovered, 7, 11, recoveredReady));
+    owner.installPrepared(recoveredReady);
+    assert(gpu.faceVao == 0 && gpu.faceVbo == 0);
+    assert(owner.fakeDeleteCount == 18);
+    assert(owner.fakeDeleted[9 .. 18] == [21,22,23,24,25,26,27,28,29]);
+}
+
+version (unittest) static assert(!__traits(compiles, {
+    void copyValidatedToken(ValidatedGpuResourceToken source) {
+        auto copy = source;
+    }
+}));
