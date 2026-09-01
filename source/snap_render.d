@@ -9,6 +9,7 @@ import toolpipe.packets : SnapType;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
+import core.atomic : atomicOp;
 
 // ---------------------------------------------------------------------------
 // Snap visual feedback — Phase 7.3d of doc/snap_plan.md.
@@ -36,6 +37,64 @@ import d_imgui.imgui_h;
 // ---------------------------------------------------------------------------
 
 __gshared SnapResult g_lastSnap;
+
+private shared ulong nextSnapOverlayOwnerId;
+struct PreparedSnapOverlayToken { @disable this(this); private ulong ownerId, generation; }
+struct ValidatedSnapOverlayToken { @disable this(this); private ulong ownerId, generation; }
+
+/// Closed owner for the complete HTTP-visible snap projection. Preparation
+/// captures the current projection; validation rejects intervening publishes;
+/// install is a scalar-free, nothrow reset.
+final class SnapOverlayOwner {
+private:
+    immutable ulong ownerId;
+    ulong generation;
+    bool pending, validated;
+    SnapResult expected;
+    PreparedSnapOverlayToken prepared;
+    ValidatedSnapOverlayToken validatedToken;
+public:
+    this() { ownerId = atomicOp!"+="(nextSnapOverlayOwnerId, 1UL); }
+    bool beginClear() nothrow @nogc {
+        if (pending) return false;
+        expected = g_lastSnap; ++generation; pending = true; validated = false;
+        prepared.ownerId = ownerId; prepared.generation = generation;
+        return true;
+    }
+    bool validateClear() nothrow @nogc {
+        if (!pending || validated || prepared.ownerId != ownerId ||
+            prepared.generation != generation || g_lastSnap != expected) return false;
+        validated = true; validatedToken.ownerId = ownerId;
+        validatedToken.generation = generation; return true;
+    }
+    void installClear() nothrow @nogc {
+        if (!pending || !validated || validatedToken.ownerId != ownerId ||
+            validatedToken.generation != generation) return;
+        g_lastSnap = SnapResult.init; pending = validated = false;
+        validatedToken.ownerId = validatedToken.generation = 0;
+    }
+    void abortClear() nothrow @nogc { pending = validated = false; }
+}
+
+version (unittest) unittest {
+    auto owner = new SnapOverlayOwner();
+    SnapResult seeded; seeded.snapped = true; seeded.targetIndex = 17;
+    publishLastSnap(seeded);
+    assert(owner.beginClear());
+    assert(g_lastSnap == seeded);
+    SnapResult changed = seeded; changed.targetIndex = 18;
+    publishLastSnap(changed);
+    assert(!owner.validateClear());
+    owner.abortClear();
+    assert(g_lastSnap == changed);
+    assert(owner.beginClear() && owner.validateClear());
+    owner.installClear();
+    assert(g_lastSnap == SnapResult.init);
+    publishLastSnap(seeded);
+    owner.installClear();
+    assert(g_lastSnap == seeded, "snap reset installed twice");
+    clearLastSnap();
+}
 
 /// Update the global last-snap state. Tools call this after every
 /// motion event that ran snapCursor, snap-fired or not (so the

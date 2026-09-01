@@ -8,20 +8,24 @@ import command_history : CommandHistory, PreparedHistoryKind,
                          ValidatedPreparedHistoryToken;
 import record_observer_hub : RecordObserverHub;
 import mesh : Mesh;
-import mesh_gpu : GpuResourceOwner, GpuUploadOwner;
+import mesh_gpu : GpuResourceOwner, GpuUploadOwner, GpuCreateOwner;
 import handler : ClickPointResourceOwner;
+import snap_render : SnapOverlayOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
 
 private enum PreparedResourceKind : ubyte {
     HistoryInstall, MeshInstall, DeliveryInstall, GpuMeshDestroy, GpuUpload, ClickPointDestroy
+    , GpuCreate, SnapOverlayClear
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
     GpuResourceOwner gpuDestroy;
     GpuUploadOwner gpuUpload;
+    GpuCreateOwner gpuCreate;
     ClickPointResourceOwner clickDestroy;
+    SnapOverlayOwner snapOverlay;
     Layer layerMesh;
     PreparedDeliveryJournal delivery;
 }
@@ -116,6 +120,26 @@ public:
         return true;
     }
 
+    bool prepareCreate(GpuCreateOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.beginEnlistedCreate()) return false;
+        scope(failure) { owner.abortEnlisted(); }
+        version (unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected GPU create enlist failure");
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.GpuCreate;
+        e.gpuCreate = owner; resources_ ~= e; return true;
+    }
+
+    bool prepareSnapClear(SnapOverlayOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.beginClear()) return false;
+        scope(failure) owner.abortClear();
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.SnapOverlayClear;
+        e.snapOverlay = owner; resources_ ~= e; return true;
+    }
+
     bool preparePositionCommit(Layer layer) {
         if (!begun_ || validated_Once || layer is null) return false;
         resources_.reserve(resources_.length + 2);
@@ -180,6 +204,10 @@ public:
                 ok = e.gpuUpload.validateEnlisted(resourceThread_, resourceContext_); break;
             case PreparedResourceKind.ClickPointDestroy:
                 ok = e.clickDestroy.validateEnlisted(resourceThread_, resourceContext_); break;
+            case PreparedResourceKind.GpuCreate:
+                ok = e.gpuCreate.validateEnlisted(resourceThread_, resourceContext_); break;
+            case PreparedResourceKind.SnapOverlayClear:
+                ok = e.snapOverlay.validateClear(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -217,6 +245,14 @@ public:
             e.clickDestroy.installEnlisted();
             version (unittest) installTrace_[installTraceLength_++] = 2;
             break;
+        case PreparedResourceKind.GpuCreate:
+            e.gpuCreate.installEnlisted();
+            version (unittest) installTrace_[installTraceLength_++] = 5;
+            break;
+        case PreparedResourceKind.SnapOverlayClear:
+            e.snapOverlay.installClear();
+            version (unittest) installTrace_[installTraceLength_++] = 6;
+            break;
         }
         if (!installedHistory) history_.installPreparedToken(validated_);
         resources_.length = 0;
@@ -241,6 +277,8 @@ private:
         case PreparedResourceKind.GpuMeshDestroy: e.gpuDestroy.abortEnlisted(); break;
         case PreparedResourceKind.GpuUpload: e.gpuUpload.abortEnlisted(); break;
         case PreparedResourceKind.ClickPointDestroy: e.clickDestroy.abortEnlisted(); break;
+        case PreparedResourceKind.GpuCreate: e.gpuCreate.abortEnlisted(); break;
+        case PreparedResourceKind.SnapOverlayClear: e.snapOverlay.abortClear(); break;
         }
         resources_.length = 0;
         historyMarker_ = false;
@@ -389,4 +427,29 @@ version (unittest) unittest {
     meshRetry.install();
     assert(faultLayer.meshRef().mutationVersion == faultVersion + 1);
     assert(changeBus.deliveryCount == faultDeliveries + 1);
+
+    GpuMesh createdGpu;
+    auto createOwner = GpuCreateOwner.fakeForTest(&createdGpu);
+    auto snapOwner = new SnapOverlayOwner();
+    auto failedCreate = new PreparedRecordContext(new CommandHistory(),
+                                                  new RecordObserverHub());
+    failedCreate.setResourceIdentity(7, 11);
+    PreparedRecordContext.failAfterResourceBegin_ = true;
+    threw = false;
+    try failedCreate.prepareCreate(createOwner);
+    catch (Exception) threw = true;
+    PreparedRecordContext.failAfterResourceBegin_ = false;
+    assert(threw && failedCreate.resourceCountForTest() == 0);
+    assert(createdGpu.faceVao == 0 && createOwner.fakeCleanupCountForTest() == 1);
+    auto mixed = new PreparedRecordContext(new CommandHistory(),
+                                           new RecordObserverHub());
+    mixed.setResourceIdentity(7, 11);
+    assert(mixed.markHistoryInstall());
+    assert(mixed.prepareCreate(createOwner));
+    assert(mixed.prepareSnapClear(snapOwner));
+    assert(createdGpu.faceVao == 0);
+    assert(mixed.validate());
+    mixed.install();
+    assert(createdGpu.faceVao != 0);
+    assert(mixed.installTraceForTest() == [1,5,6]);
 }

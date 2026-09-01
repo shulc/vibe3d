@@ -1392,4 +1392,77 @@ for old, new, label in (
     if mutant == vertex_source or b5b_gate(mutant):
         fail(f"P1.0b.5b named mutation did not RED: {label}")
 
+# P1.0b.5c dormant GL-create and snap-overlay owners. Created GL names remain
+# owner-private until a scalar-token validation and allocation-free header
+# transfer. The complete HTTP-visible snap projection is likewise captured,
+# validated, and reset as one closed value. No production tool calls either
+# context enlistment seam in this infrastructure-only phase.
+b5c_sources = {
+    "gpu": (ROOT / "source/mesh_gpu.d").read_text(),
+    "snap": (ROOT / "source/snap_render.d").read_text(),
+    "context": record_context,
+}
+b5c_contracts = {
+    "gpu": ("struct PreparedGpuCreateToken { @disable this(this);",
+            "final class GpuCreateOwner", "GpuMeshNames created;",
+            "bool validateEnlisted(ulong threadIdentity, ulong contextIdentity) nothrow @nogc",
+            "void installEnlisted() nothrow @nogc",
+            "else deleteGpuMeshNames(created);",
+            "recordFakeCreated();", "deleteFakeCreated();"),
+    "snap": ("struct PreparedSnapOverlayToken { @disable this(this);",
+             "final class SnapOverlayOwner", "expected = g_lastSnap;",
+             "g_lastSnap != expected", "g_lastSnap = SnapResult.init;",
+             "void installClear() nothrow @nogc"),
+    "context": ("GpuCreate, SnapOverlayClear", "bool prepareCreate(GpuCreateOwner owner)",
+                "bool prepareSnapClear(SnapOverlayOwner owner)",
+                "scope(failure) { owner.abortEnlisted(); }",
+                "e.gpuCreate.installEnlisted();", "e.snapOverlay.installClear();"),
+}
+def b5c_gate(sources):
+    return (all(all(c in sources[name] for c in contracts)
+                for name, contracts in b5c_contracts.items()) and
+            sources["gpu"].count("peekGpuMeshNames(*target) != GpuMeshNames.init") == 2 and
+            sources["gpu"].count("!(threadIdentity == requiredThread)") == 1 and
+            sources["gpu"].count("!(contextIdentity == requiredContext)") == 1 and
+            sources["gpu"].count("else deleteGpuMeshNames(created);") == 2 and
+            sources["gpu"].count("created = GpuMeshNames.init; pending = validated = false;") == 1 and
+            sources["snap"].count("g_lastSnap = SnapResult.init; pending = validated = false;") == 1 and
+            sources["gpu"].find("glGenVertexArrays(1, &created.faceVao)") <
+                sources["gpu"].find("glGenBuffers(1, &created.weightColorVbo)") and
+            sources["context"].find("resources_.reserve(1 + resources_.length);") <
+                sources["context"].find("if (!owner.beginEnlistedCreate()) return false;"))
+if not b5c_gate(b5c_sources):
+    fail("P1.0b.5c GL-create/snap owner contract drift")
+for name, old, new, label in (
+    ("gpu", "peekGpuMeshNames(*target) != GpuMeshNames.init", "false",
+     "drop empty-target identity/projection check"),
+    ("gpu", "!(threadIdentity == requiredThread)", "false",
+     "drop GL thread identity"),
+    ("gpu", "!(contextIdentity == requiredContext)", "false",
+     "drop GL context identity"),
+    ("gpu", "else deleteGpuMeshNames(created);", "else created = GpuMeshNames.init;",
+     "drop prepared-name cleanup"),
+    ("gpu", "created = GpuMeshNames.init; pending = validated = false;",
+     "pending = validated = false;", "leave installed names aliased in owner"),
+    ("snap", "expected = g_lastSnap;", "expected = SnapResult.init;",
+     "read original snap projection after prepare"),
+    ("snap", "g_lastSnap != expected", "false", "drop snap projection validation"),
+    ("snap", "g_lastSnap = SnapResult.init; pending = validated = false;",
+     "pending = validated = false;", "drop snap reset"),
+    ("context", "scope(failure) { owner.abortEnlisted(); }", "",
+     "drop allocation-failure GL cleanup"),
+    ("context", "e.gpuCreate.installEnlisted();", "",
+     "drop GL header install"),
+    ("context", "e.snapOverlay.installClear();", "",
+     "drop snap install"),
+):
+    mutant = dict(b5c_sources)
+    mutant[name] = mutant[name].replace(old, new, 1)
+    if mutant[name] == b5c_sources[name] or b5c_gate(mutant):
+        fail(f"P1.0b.5c named mutation did not RED: {label}")
+for path in (ROOT / "source/tools").rglob("*.d"):
+    body = path.read_text()
+    if ".prepareCreate(" in body or ".prepareSnapClear(" in body:
+        fail(f"P1.0b.5c dormant owner has production caller: {path.relative_to(ROOT)}")
+
 print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures)} compile-fail fixtures)")

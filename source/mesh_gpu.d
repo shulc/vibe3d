@@ -1802,6 +1802,156 @@ struct GpuMesh {
 // Prepared GL resource lifetime owner (P1.0b.4a, dormant infrastructure)
 // ---------------------------------------------------------------------------
 
+private shared ulong nextGpuCreateOwnerId;
+struct PreparedGpuCreateToken { @disable this(this); private ulong ownerId, generation; }
+struct ValidatedGpuCreateToken { @disable this(this); private ulong ownerId, generation; }
+
+/// Owns names created during fallible preparation until a validated header
+/// transfer. No GL call occurs in install; abort deletes every prepared name.
+final class GpuCreateOwner {
+private:
+    enum Backend : ubyte { openGl, fake }
+    GpuMesh* target;
+    immutable ulong ownerId;
+    ulong generation, requiredThread, requiredContext;
+    bool pending, validated;
+    GpuMeshNames created;
+    PreparedGpuCreateToken enlistedPrepared;
+    ValidatedGpuCreateToken enlistedValidated;
+    Backend backend;
+    version (unittest) {
+        GLuint nextFake = 101;
+        bool failCreateForTest_;
+        size_t fakeCleanupCount_;
+        GLuint[32] fakeCreated_, fakeDeleted_;
+        size_t fakeCreatedLength_, fakeDeletedLength_;
+    }
+public:
+    this(GpuMesh* target, ulong threadIdentity, ulong contextIdentity) {
+        this.target = target; requiredThread = threadIdentity;
+        requiredContext = contextIdentity;
+        ownerId = atomicOp!"+="(nextGpuCreateOwnerId, 1UL);
+    }
+    version (unittest) static GpuCreateOwner fakeForTest(GpuMesh* target) {
+        auto owner = new GpuCreateOwner(target, 7, 11);
+        owner.backend = Backend.fake; return owner;
+    }
+    version (unittest) void failNextCreateForTest() nothrow @nogc {
+        failCreateForTest_ = true;
+    }
+    version (unittest) size_t fakeCleanupCountForTest() const nothrow @nogc {
+        return fakeCleanupCount_;
+    }
+    version (unittest) const(GLuint)[] fakeCreatedForTest() const nothrow @nogc {
+        return fakeCreated_[0 .. fakeCreatedLength_];
+    }
+    version (unittest) const(GLuint)[] fakeDeletedForTest() const nothrow @nogc {
+        return fakeDeleted_[0 .. fakeDeletedLength_];
+    }
+    bool owns(GpuMesh* candidate) const nothrow @nogc { return target is candidate; }
+    bool beginEnlistedCreate() nothrow @nogc {
+        if (pending || target is null || peekGpuMeshNames(*target) != GpuMeshNames.init)
+            return false;
+        ++generation;
+        version (unittest) {
+            if (backend == Backend.fake) {
+                GLuint next() nothrow @nogc { return nextFake++; }
+                created = GpuMeshNames(next(), next(), next(), next(), next(), next(),
+                                       next(), next(), next());
+                recordFakeCreated();
+                if (failCreateForTest_) {
+                    failCreateForTest_ = false; deleteFakeCreated();
+                    ++fakeCleanupCount_; return false;
+                }
+            } else {
+                createOpenGlNames();
+            }
+        } else {
+            createOpenGlNames();
+        }
+        pending = true; validated = false;
+        enlistedPrepared.ownerId = ownerId;
+        enlistedPrepared.generation = generation;
+        return true;
+    }
+private:
+    version (unittest) void recordFakeCreated() nothrow @nogc {
+        foreach (name; [created.faceVao, created.faceVbo, created.edgeVao,
+                        created.edgeVbo, created.vertVao, created.vertVbo,
+                        created.faceIdVbo, created.matIdVbo,
+                        created.weightColorVbo])
+            fakeCreated_[fakeCreatedLength_++] = name;
+    }
+    version (unittest) void deleteFakeCreated() nothrow @nogc {
+        foreach (name; [created.faceVao, created.faceVbo, created.edgeVao,
+                        created.edgeVbo, created.vertVao, created.vertVbo,
+                        created.faceIdVbo, created.matIdVbo,
+                        created.weightColorVbo])
+            fakeDeleted_[fakeDeletedLength_++] = name;
+        created = GpuMeshNames.init;
+    }
+    void createOpenGlNames() nothrow @nogc {
+            glGenVertexArrays(1, &created.faceVao); glGenBuffers(1, &created.faceVbo);
+            glGenVertexArrays(1, &created.edgeVao); glGenBuffers(1, &created.edgeVbo);
+            glGenVertexArrays(1, &created.vertVao); glGenBuffers(1, &created.vertVbo);
+            glGenBuffers(1, &created.faceIdVbo); glGenBuffers(1, &created.matIdVbo);
+            glGenBuffers(1, &created.weightColorVbo);
+    }
+public:
+    bool validateEnlisted(ulong threadIdentity, ulong contextIdentity) nothrow @nogc {
+        if (!pending || validated || !(threadIdentity == requiredThread) ||
+            !(contextIdentity == requiredContext) || target is null ||
+            peekGpuMeshNames(*target) != GpuMeshNames.init) return false;
+        validated = true; enlistedValidated.ownerId = ownerId;
+        enlistedValidated.generation = generation; return true;
+    }
+    void installEnlisted() nothrow @nogc {
+        if (pending == false || validated == false || enlistedValidated.ownerId != ownerId ||
+            enlistedValidated.generation != generation) return;
+        target.faceVao = created.faceVao; target.faceVbo = created.faceVbo;
+        target.edgeVao = created.edgeVao; target.edgeVbo = created.edgeVbo;
+        target.vertVao = created.vertVao; target.vertVbo = created.vertVbo;
+        target.faceIdVbo = created.faceIdVbo; target.matIdVbo = created.matIdVbo;
+        target.weightColorVbo = created.weightColorVbo;
+        created = GpuMeshNames.init; pending = validated = false;
+        enlistedValidated.ownerId = enlistedValidated.generation = 0;
+    }
+    void abortEnlisted() nothrow @nogc {
+        if (!pending) return;
+        version (unittest) {
+            if (backend == Backend.fake) {
+                deleteFakeCreated(); ++fakeCleanupCount_;
+            }
+            else deleteGpuMeshNames(created);
+        } else deleteGpuMeshNames(created);
+        pending = validated = false;
+    }
+}
+
+version (unittest) unittest {
+    GpuMesh target;
+    auto owner = GpuCreateOwner.fakeForTest(&target);
+    owner.failNextCreateForTest();
+    assert(!owner.beginEnlistedCreate());
+    assert(owner.fakeCleanupCountForTest() == 1 && target.faceVao == 0);
+    assert(owner.fakeCreatedForTest() == [101,102,103,104,105,106,107,108,109]);
+    assert(owner.fakeDeletedForTest() == owner.fakeCreatedForTest());
+    assert(owner.beginEnlistedCreate());
+    assert(target.faceVao == 0, "prepared names leaked into live header");
+    assert(!owner.validateEnlisted(8, 11));
+    owner.abortEnlisted();
+    assert(owner.fakeCleanupCountForTest() == 2 && target.faceVao == 0);
+    assert(owner.beginEnlistedCreate());
+    assert(owner.validateEnlisted(7, 11));
+    owner.installEnlisted();
+    assert(target.faceVao != 0 && target.weightColorVbo != 0);
+    auto installed = target.faceVao;
+    owner.installEnlisted();
+    assert(target.faceVao == installed);
+    GpuMesh other;
+    assert(!owner.owns(&other));
+}
+
 /// Closed description of the GL names owned by a GpuMesh.  This value never
 /// leaves GpuResourceOwner: prepared effects carry only scalar identity.
 private struct GpuMeshNames {
