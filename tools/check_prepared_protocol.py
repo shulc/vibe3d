@@ -238,6 +238,7 @@ B5O_PREPARED_LEGACY = {
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "activate"),
 }
 B5P_PREPARED_LEGACY = {
+    ("tools.edit.edge_bevel", "EdgeBevelTool", "onParamChanged"),
     ("tools.deform.smooth_shift_tool", "SmoothShiftTool", "onParamChanged"),
     ("tools.deform.magnet", "MagnetTool", "onParamChanged"),
     ("tools.alignment.radial_array_tool", "RadialArrayTool", "onParamChanged"),
@@ -308,7 +309,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "022b211de4697eddb3bffe7b18851be22c769d9627b6f0e37d8bac8b7539382c"
+    "4a1b7710121d9c1785821462fcde143ea2a0d1a588283122549b956c8477fd73"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -462,6 +463,7 @@ for path, text in prepared_source_texts.items():
             "prepared_array_param_update",
             "prepared_magnet_param_update",
             "prepared_smooth_shift_param_update",
+            "prepared_edge_bevel_param_update",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
@@ -2124,6 +2126,78 @@ for target, old, new, label in (
         mutant[target] = mutant[target].replace(old, new, 1)
     if mutant[target] == smooth_shift_param_sources[target] or smooth_shift_param_gate(mutant):
         fail(f"Smooth Shift parameter mutation did not RED: {label}")
+
+edge_bevel_param_sources = {
+    "tool": (ROOT / "source/tools/edit/edge_bevel.d").read_text(),
+    "owner": (ROOT / "source/prepared_edge_bevel_param_update.d").read_text(),
+    "context": record_context,
+    "preview": (ROOT / "source/tools/edit/preview_rebuild.d").read_text(),
+}
+def edge_bevel_param_gate(s):
+    tool, owner, context, preview = (s[k] for k in
+        ("tool", "owner", "context", "preview"))
+    start = tool.find("final PreparedEdgeBevelParamEffect prepareParamChanged(")
+    end = tool.find("override void evaluate()", start)
+    producer = tool[start:end]
+    return (all(x in tool for x in (
+                "image.expectedLive = MeshSnapshot.capture(live);",
+                "image.expectedBefore = MeshSnapshot.capture(baseline);",
+                "preview_.prepareImage(image.preview);",
+                "preparedPreview.run(image.candidate, before,",
+                "ed.bevelEdgesByMask(target.operandEdgeMask(),",
+                "preparedPreview.savePreparedNext(image.preview);",
+                "preview_.matchesImage(image.preview)",
+                "memcmp(&width, &other.width, float.sizeof) == 0")) and
+            all(x in preview for x in (
+                "struct PreparedPreviewRebuildImage",
+                "image.expectedCage = MeshSnapshot.capture(cage_);",
+                "image.expectedCage.matches(cage_)",
+                "void loadPreparedNext(", "void savePreparedNext(",
+                "void installImage(")) and
+            all(x in owner for x in (
+                "target.classinfo !is EdgeBevelTool.classinfo",
+                "!target.ownsPreparedLayer(layer)",
+                "&layer_.meshRef() !is source_",
+                "!target_.preparedParamUpdateMatches(image_, *source_)",
+                "target_.installPreparedParamUpdate(image_)")) and
+            all(x in producer for x in (
+                "uploadOwner.owns(gpu)",
+                "context.prepareStampedMeshImage(layer, owner.candidate,",
+                "context.prepareEdgeBevelParamUpdate(owner)",
+                "context.prepareUpload(uploadOwner, owner.candidate)",
+                "context.markNoHistoryInstall()")) and
+            producer.find("context.prepareStampedMeshImage") <
+                producer.find("context.prepareEdgeBevelParamUpdate(owner)") <
+                producer.find("context.prepareUpload(uploadOwner") <
+                producer.find("context.markNoHistoryInstall()") and
+            context.count("case PreparedResourceKind.EdgeBevelParamUpdateState:") == 3 and
+            "e.edgeBevelParamUpdate.install();" in context)
+if not edge_bevel_param_gate(edge_bevel_param_sources):
+    fail("Edge Bevel onParamChanged prepared contract drift")
+for target, old, new, label in (
+    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
+    ("tool", "preview_.prepareImage(image.preview);", "", "drop preview image"),
+    ("preview", "image.expectedCage.matches(cage_)", "true", "drop cage witness"),
+    ("tool", "memcmp(&width, &other.width, float.sizeof) == 0", "true", "drop float identity"),
+    ("owner", "target.classinfo !is EdgeBevelTool.classinfo", "false", "broaden product"),
+    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
+    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
+    ("tool", "context.prepareEdgeBevelParamUpdate(owner)", "true", "drop state"),
+    ("tool", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop upload"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
+    ("context", "e.edgeBevelParamUpdate.install();", "", "drop install"),
+):
+    mutant = dict(edge_bevel_param_sources)
+    if target == "tool":
+        text = mutant[target]
+        producer_start = text.find("final PreparedEdgeBevelParamEffect prepareParamChanged(")
+        start = producer_start if old in text[producer_start:] else 0
+        pos = text.find(old, start)
+        mutant[target] = text[:pos] + new + text[pos + len(old):]
+    else:
+        mutant[target] = mutant[target].replace(old, new, 1)
+    if mutant[target] == edge_bevel_param_sources[target] or edge_bevel_param_gate(mutant):
+        fail(f"Edge Bevel parameter mutation did not RED: {label}")
 
 # PrimitiveCreateTool.activate is one inherited declaration with six exact
 # products. Its closed projection preserves each leaf's resetSession law and

@@ -46,6 +46,7 @@ import prepared_topology_pen_update : PreparedTopologyPenUpdateOwner;
 import prepared_array_param_update : PreparedArrayParamUpdateOwner;
 import prepared_magnet_param_update : PreparedMagnetParamUpdateOwner;
 import prepared_smooth_shift_param_update : PreparedSmoothShiftParamUpdateOwner;
+import prepared_edge_bevel_param_update : PreparedEdgeBevelParamUpdateOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -69,7 +70,8 @@ private enum PreparedResourceKind : ubyte {
     EdgeExtendToolActivationPostState, TopologyPenActivationState,
     TopologyPenUpdateState,
     MirrorDeactivateState, BridgeDeactivateState, ArrayParamUpdateState,
-    MagnetParamUpdateState, SmoothShiftParamUpdateState
+    MagnetParamUpdateState, SmoothShiftParamUpdateState,
+    EdgeBevelParamUpdateState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -106,6 +108,7 @@ private struct PreparedResourceEntry {
     PreparedArrayParamUpdateOwner arrayParamUpdate;
     PreparedMagnetParamUpdateOwner magnetParamUpdate;
     PreparedSmoothShiftParamUpdateOwner smoothShiftParamUpdate;
+    PreparedEdgeBevelParamUpdateOwner edgeBevelParamUpdate;
     PreparedMirrorDeactivateOwner mirrorDeactivate;
     PreparedBridgeDeactivateOwner bridgeDeactivate;
     ClickPointResourceOwner clickDestroy;
@@ -675,6 +678,17 @@ public:
         e.kind = PreparedResourceKind.SmoothShiftParamUpdateState;
         e.smoothShiftParamUpdate = owner; resources_ ~= e; return true;
     }
+    bool prepareEdgeBevelParamUpdate(PreparedEdgeBevelParamUpdateOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected Edge Bevel parameter enlist failure");
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.EdgeBevelParamUpdateState;
+        e.edgeBevelParamUpdate = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -920,6 +934,9 @@ public:
             case PreparedResourceKind.SmoothShiftParamUpdateState:
                 ok = e.smoothShiftParamUpdate !is null &&
                     e.smoothShiftParamUpdate.validate(); break;
+            case PreparedResourceKind.EdgeBevelParamUpdateState:
+                ok = e.edgeBevelParamUpdate !is null &&
+                    e.edgeBevelParamUpdate.validate(); break;
             case PreparedResourceKind.MirrorDeactivateState:
                 ok = e.mirrorDeactivate !is null &&
                     e.mirrorDeactivate.validate(); break;
@@ -1134,6 +1151,10 @@ public:
             e.smoothShiftParamUpdate.install();
             version(unittest) installTrace_[installTraceLength_++] = 45;
             break;
+        case PreparedResourceKind.EdgeBevelParamUpdateState:
+            e.edgeBevelParamUpdate.install();
+            version(unittest) installTrace_[installTraceLength_++] = 46;
+            break;
         case PreparedResourceKind.MirrorDeactivateState:
             e.mirrorDeactivate.install();
             version(unittest) installTrace_[installTraceLength_++] = 40;
@@ -1209,6 +1230,8 @@ private:
             e.magnetParamUpdate.abort(); break;
         case PreparedResourceKind.SmoothShiftParamUpdateState:
             e.smoothShiftParamUpdate.abort(); break;
+        case PreparedResourceKind.EdgeBevelParamUpdateState:
+            e.edgeBevelParamUpdate.abort(); break;
         case PreparedResourceKind.MirrorDeactivateState:
             e.mirrorDeactivate.abort(); break;
         case PreparedResourceKind.BridgeDeactivateState:

@@ -4307,8 +4307,12 @@ private static immutable PreviewSeamRow[] kPreviewSeam = [
         "Stage F2. Two UNRECORDED opens — `applyHeadless` (the tool.doApply "
       ~ "path) and the per-frame preview kernel lambda. NO recording open: "
       ~ "`commitEdit` captures a whole-mesh MeshSnapshot and re-runs nothing"),
-    PreviewSeamRow("source/tools/edit/edge_bevel.d", 2, 0,
-        "Stage G. Same two doors, same shape as Poly Bevel's, and the same "
+    PreviewSeamRow("source/tools/edit/edge_bevel.d", 3, 0,
+        "Stage G plus ARM/RECORD's detached prepared-parameter door. The "
+      ~ "legacy headless and live PreviewRebuild doors remain unchanged; the "
+      ~ "third UNRECORDED open runs only against the prepared candidate and "
+      ~ "installs atomically after validation. All three record zero op-log "
+      ~ "entries. Same original two doors, same shape as Poly Bevel's, and the same "
       ~ "reason for the zero: the manifold edge bevel family is a Stage-A "
       ~ "decline, so its commit still undoes through MeshSnapshot"),
     PreviewSeamRow("source/tools/edit/edge_extend.d", 2, 1,

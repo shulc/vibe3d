@@ -55,6 +55,7 @@ enum PreparedPenParamKind : ubyte { None, Noop, CurrentPoint, Position }
 enum PreparedArrayParamKind : ubyte { None, Noop, Preview }
 enum PreparedMagnetParamKind : ubyte { None, Noop, Preview }
 enum PreparedSmoothShiftParamKind : ubyte { None, Noop, Preview }
+enum PreparedEdgeBevelParamKind : ubyte { None, Noop, Preview }
 enum PreparedInheritedNoopKind : ubyte { Activate, Deactivate, Update }
 
 @PreparedAggregate struct PreparedActivateEffect {
@@ -116,6 +117,11 @@ enum PreparedInheritedNoopKind : ubyte { Activate, Deactivate, Update }
 @PreparedAggregate struct PreparedSmoothShiftParamEffect {
     OwnedId owner;
     PreparedSmoothShiftParamKind kind;
+    bool accepted;
+}
+@PreparedAggregate struct PreparedEdgeBevelParamEffect {
+    OwnedId owner;
+    PreparedEdgeBevelParamKind kind;
     bool accepted;
 }
 @PreparedAggregate struct PreparedInheritedNoopEffect {

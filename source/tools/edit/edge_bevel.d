@@ -19,7 +19,7 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
-    PreviewRebuildCounts;
+    PreviewRebuildCounts, PreparedPreviewRebuildImage;
 
 import std.math : abs, sqrt;
 import std.json : JSONValue;
@@ -28,6 +28,13 @@ import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_edge_bevel_activation : PreparedEdgeBevelActivationOwner;
+import prepared_edge_bevel_param_update : PreparedEdgeBevelParamUpdateOwner;
+import prepared_tool_effect : PreparedEdgeBevelParamEffect,
+    PreparedEdgeBevelParamKind;
+import document : Layer;
+import mesh_gpu : GpuUploadOwner;
+import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
+import core.stdc.string : memcmp;
 import command_history : PreparedHistoryKind;
 
 struct PreparedEdgeBevelActivationImage {
@@ -37,6 +44,31 @@ struct PreparedEdgeBevelActivationImage {
     ulong gizmoSelHash;
     void clear() nothrow @nogc {
         this = PreparedEdgeBevelActivationImage.init;
+    }
+}
+
+struct EdgeBevelParamProjection {
+    bool interactive, active, built, widthMode;
+    float width;
+    int roundLevel;
+    bool opEquals(const EdgeBevelParamProjection other) const nothrow @nogc {
+        return interactive == other.interactive && active == other.active &&
+            built == other.built && widthMode == other.widthMode &&
+            roundLevel == other.roundLevel &&
+            memcmp(&width, &other.width, float.sizeof) == 0;
+    }
+}
+
+struct PreparedEdgeBevelParamImage {
+    bool valid, applies, nextBuilt;
+    EdgeBevelParamProjection expected;
+    MeshSnapshot expectedLive, expectedBefore;
+    PreparedPreviewRebuildImage preview;
+    Mesh candidate;
+    uint deliveryFlags, deliveryDomains;
+    void clear() nothrow @nogc {
+        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
+        preview.clear(); candidate = Mesh.init; valid = applies = false;
     }
 }
 
@@ -96,6 +128,18 @@ private:
     enum Vec3 WIDTH_COLOR = schemeColor(SchemeColor.toolOffset);
 
 public:
+    version(unittest) final void seedPreparedParamForTest(ref Mesh live,
+            bool interactive = true) {
+        interactiveParamEdit = interactive; active = true; built = false;
+        width_ = 0.2f; roundLevel_ = 1; widthMode_ = false;
+        before = MeshSnapshot.capture(live); preview_.reset();
+    }
+    version(unittest) final void mutatePreparedParamForTest(float value)
+            nothrow @nogc { width_ = value; }
+    version(unittest) final bool preparedParamInstalledForTest() const
+            nothrow @nogc {
+        return built && preview_.counts().fullRebuilds == 1;
+    }
     this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu,
             EditMode* editMode, LitShader litShader) {
         this.meshSrc_  = meshSrc;
@@ -208,6 +252,77 @@ public:
 
     override void onParamChanged(string pname) {
         if (interactiveParamEdit) rebuildPreview();
+    }
+    final bool ownsPreparedLayer(Layer layer) const {
+        return layer !is null && &layer.meshRef() is mesh;
+    }
+    private EdgeBevelParamProjection paramProjection() const nothrow @nogc {
+        return EdgeBevelParamProjection(interactiveParamEdit, active, built,
+            widthMode_, width_, roundLevel_);
+    }
+    final PreparedEdgeBevelParamImage buildPreparedParamUpdate(ref Mesh live) {
+        PreparedEdgeBevelParamImage image;
+        image.valid = true; image.expected = paramProjection();
+        image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
+        if (!before.filled) return image;
+        Mesh baseline;
+        auto baselineShadow = beginPreparedShadow(baseline);
+        before.restore(baseline);
+        image.expectedBefore = MeshSnapshot.capture(baseline);
+        image.expectedLive.restore(image.candidate);
+        preview_.prepareImage(image.preview);
+        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+            image.deliveryDomains);
+        baselineShadow.close(); image.deliveryFlags = image.deliveryDomains = 0;
+        if (!interactiveParamEdit || !active) return image;
+        image.applies = true;
+        auto shadow = beginPreparedShadow(image.candidate);
+        PreviewRebuild preparedPreview; preparedPreview.loadPreparedNext(image.preview);
+        const n = preparedPreview.run(image.candidate, before,
+            (ref Mesh cage) => PreviewTopologyKey.make(cage.operandEdgeMask(),
+                width_ == 0.0f, roundLevel_, widthMode_ ? 1 : 0),
+            (ref Mesh target) {
+                if (width_ == 0.0f) return cast(size_t)0;
+                auto ed = MeshEditBatch.unrecorded(target, kEdgeBevelEditScope);
+                const result = ed.bevelEdgesByMask(target.operandEdgeMask(),
+                    width_, roundLevel_, widthMode_);
+                ed.close(); return result;
+            });
+        image.nextBuilt = (n != 0); preparedPreview.savePreparedNext(image.preview);
+        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+            image.deliveryDomains);
+        shadow.close(); return image;
+    }
+    final bool preparedParamUpdateMatches(in PreparedEdgeBevelParamImage image,
+            ref const Mesh live) const nothrow @nogc {
+        return image.valid && image.expected == paramProjection() &&
+            image.expectedLive.matches(live) && image.expectedBefore.matches(before) &&
+            preview_.matchesImage(image.preview);
+    }
+    final void installPreparedParamUpdate(ref PreparedEdgeBevelParamImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        built = image.nextBuilt; preview_.installImage(image.preview); image.clear();
+    }
+    final PreparedEdgeBevelParamEffect prepareParamChanged(
+            PreparedRecordContext context, Layer layer,
+            GpuUploadOwner uploadOwner) {
+        if (context is null) return PreparedEdgeBevelParamEffect(
+            preparedToolStateOwner, PreparedEdgeBevelParamKind.None, false);
+        scope(failure) context.discard();
+        auto owner = PreparedEdgeBevelParamUpdateOwner.prepare(this, layer);
+        auto kind = owner is null ? PreparedEdgeBevelParamKind.None : owner.effectKind;
+        bool ok = owner !is null;
+        if (ok && owner.applies)
+            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
+                context.prepareStampedMeshImage(layer, owner.candidate,
+                    owner.deliveryFlags, owner.deliveryDomains);
+        if (ok) ok = context.prepareEdgeBevelParamUpdate(owner);
+        if (ok && owner.applies)
+            ok = context.prepareUpload(uploadOwner, owner.candidate);
+        if (ok) ok = context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedEdgeBevelParamEffect(preparedToolStateOwner, kind, ok);
     }
     override void evaluate() {}
 

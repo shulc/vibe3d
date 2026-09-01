@@ -2,16 +2,6 @@
   {
     "batch": "P1.0b.3+",
     "key": {
-      "aggregate": "EdgeBevelTool",
-      "module": "tools.edit.edge_bevel",
-      "signature": "void(string pname)",
-      "symbol": "onParamChanged"
-    },
-    "reason": "Mesh/GpuGl preview or mixed branch requires P1.0b.3+ typed later-owner effects"
-  },
-  {
-    "batch": "P1.0b.3+",
-    "key": {
       "aggregate": "EdgeExtendTool",
       "module": "tools.edit.edge_extend",
       "signature": "void()",
