@@ -238,6 +238,7 @@ B5O_PREPARED_LEGACY = {
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "activate"),
 }
 B5P_PREPARED_LEGACY = {
+    ("tools.deform.smooth_shift_tool", "SmoothShiftTool", "onParamChanged"),
     ("tools.deform.magnet", "MagnetTool", "onParamChanged"),
     ("tools.alignment.radial_array_tool", "RadialArrayTool", "onParamChanged"),
     ("tools.alignment.array_tool", "ArrayTool", "onParamChanged"),
@@ -307,7 +308,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "d64b9c14bf33ee9ea669829f02ebc6ba42bb3950ed41ddbfe2ebe67d7ea83cf5"
+    "022b211de4697eddb3bffe7b18851be22c769d9627b6f0e37d8bac8b7539382c"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -460,6 +461,7 @@ for path, text in prepared_source_texts.items():
             "prepared_topology_pen_update",
             "prepared_array_param_update",
             "prepared_magnet_param_update",
+            "prepared_smooth_shift_param_update",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
@@ -2056,6 +2058,72 @@ for target, old, new, label in (
         mutant[target] = mutant[target].replace(old, new, 1)
     if mutant[target] == magnet_param_sources[target] or magnet_param_gate(mutant):
         fail(f"Magnet parameter mutation did not RED: {label}")
+
+smooth_shift_param_sources = {
+    "tool": (ROOT / "source/tools/deform/smooth_shift_tool.d").read_text(),
+    "owner": (ROOT / "source/prepared_smooth_shift_param_update.d").read_text(),
+    "context": record_context,
+}
+def smooth_shift_param_gate(s):
+    tool, owner, context = (s[k] for k in ("tool", "owner", "context"))
+    start = tool.find("final PreparedSmoothShiftParamEffect prepareParamChanged(")
+    end = tool.find("override void evaluate()", start)
+    producer = tool[start:end]
+    return (all(x in tool for x in (
+                "image.expectedLive = MeshSnapshot.capture(live);",
+                "image.expectedBefore = MeshSnapshot.capture(baseline);",
+                "auto shadow = beginPreparedShadow(image.candidate);",
+                "ed.smoothShiftFacesByMask(mask, shift_, scale_, thicken_)",
+                "drainPreparedShadowDelivery(image.candidate",
+                "sameFloat(shift, other.shift)",
+                "image.expectedLive.matches(live)",
+                "image.expectedBefore.matches(before)")) and
+            all(x in owner for x in (
+                "target.classinfo !is SmoothShiftTool.classinfo",
+                "!target.ownsPreparedLayer(layer)",
+                "&layer_.meshRef() !is source_",
+                "!target_.preparedParamUpdateMatches(image_, *source_)",
+                "target_.installPreparedParamUpdate(image_)",
+                "validatedToken_.generation != generation_")) and
+            all(x in producer for x in (
+                "uploadOwner.owns(gpu)",
+                "context.prepareStampedMeshImage(layer, owner.candidate,",
+                "context.prepareSmoothShiftParamUpdate(owner)",
+                "context.prepareUpload(uploadOwner, owner.candidate)",
+                "context.markNoHistoryInstall()", "scope(failure) context.discard();",
+                "if (!ok) context.discard();")) and
+            producer.find("context.prepareStampedMeshImage") <
+                producer.find("context.prepareSmoothShiftParamUpdate(owner)") <
+                producer.find("context.prepareUpload(uploadOwner") <
+                producer.find("context.markNoHistoryInstall()") and
+            "bool prepareSmoothShiftParamUpdate(PreparedSmoothShiftParamUpdateOwner owner)" in context and
+            context.count("case PreparedResourceKind.SmoothShiftParamUpdateState:") == 3 and
+            "e.smoothShiftParamUpdate.install();" in context)
+if not smooth_shift_param_gate(smooth_shift_param_sources):
+    fail("Smooth Shift onParamChanged prepared contract drift")
+for target, old, new, label in (
+    ("tool", "image.expectedLive = MeshSnapshot.capture(live);", "", "drop live witness"),
+    ("tool", "auto shadow = beginPreparedShadow(image.candidate);", "", "drop shadow"),
+    ("tool", "sameFloat(shift, other.shift)", "true", "drop exact float"),
+    ("owner", "target.classinfo !is SmoothShiftTool.classinfo", "false", "broaden product"),
+    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
+    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
+    ("tool", "context.prepareSmoothShiftParamUpdate(owner)", "true", "drop state"),
+    ("tool", "context.prepareUpload(uploadOwner, owner.candidate)", "true", "drop upload"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop NoHistory"),
+    ("context", "e.smoothShiftParamUpdate.install();", "", "drop install"),
+):
+    mutant = dict(smooth_shift_param_sources)
+    if target == "tool":
+        text = mutant[target]
+        producer_start = text.find("final PreparedSmoothShiftParamEffect prepareParamChanged(")
+        start = producer_start if old in text[producer_start:] else 0
+        pos = text.find(old, start)
+        mutant[target] = text[:pos] + new + text[pos + len(old):]
+    else:
+        mutant[target] = mutant[target].replace(old, new, 1)
+    if mutant[target] == smooth_shift_param_sources[target] or smooth_shift_param_gate(mutant):
+        fail(f"Smooth Shift parameter mutation did not RED: {label}")
 
 # PrimitiveCreateTool.activate is one inherited declaration with six exact
 # products. Its closed projection preserves each leaf's resetSession law and

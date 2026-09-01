@@ -26,6 +26,13 @@ import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_smooth_shift_activation : PreparedSmoothShiftActivationOwner;
+import prepared_smooth_shift_param_update : PreparedSmoothShiftParamUpdateOwner;
+import prepared_tool_effect : PreparedSmoothShiftParamEffect,
+    PreparedSmoothShiftParamKind;
+import document : Layer;
+import mesh_gpu : GpuUploadOwner;
+import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
+import core.stdc.string : memcmp;
 import command_history : PreparedHistoryKind;
 
 struct PreparedSmoothShiftActivationImage {
@@ -35,6 +42,32 @@ struct PreparedSmoothShiftActivationImage {
     ulong gizmoSelHash;
     void clear() nothrow @nogc {
         this = PreparedSmoothShiftActivationImage.init;
+    }
+}
+
+struct SmoothShiftParamProjection {
+    bool interactive, active, built, thicken, sharp;
+    float shift, scale, maxAngle;
+    bool opEquals(const SmoothShiftParamProjection other) const nothrow @nogc {
+        bool sameFloat(ref const float a, ref const float b) nothrow @nogc {
+            return memcmp(&a, &b, float.sizeof) == 0;
+        }
+        return interactive == other.interactive && active == other.active &&
+            built == other.built && thicken == other.thicken &&
+            sharp == other.sharp && sameFloat(shift, other.shift) &&
+            sameFloat(scale, other.scale) && sameFloat(maxAngle, other.maxAngle);
+    }
+}
+
+struct PreparedSmoothShiftParamImage {
+    bool valid, applies, nextBuilt;
+    SmoothShiftParamProjection expected;
+    MeshSnapshot expectedLive, expectedBefore;
+    Mesh candidate;
+    uint deliveryFlags, deliveryDomains;
+    void clear() nothrow @nogc {
+        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
+        candidate = Mesh.init; valid = applies = false;
     }
 }
 
@@ -277,6 +310,69 @@ public:
     override void onParamChanged(string pname) {
         if (interactiveParamEdit) rebuildPreview();
     }
+    final bool ownsPreparedLayer(Layer layer) const {
+        return layer !is null && &layer.meshRef() is mesh;
+    }
+    private SmoothShiftParamProjection paramProjection() const nothrow @nogc {
+        return SmoothShiftParamProjection(interactiveParamEdit, active, built,
+            thicken_, sharp_, shift_, scale_, maxAngle_);
+    }
+    final PreparedSmoothShiftParamImage buildPreparedParamUpdate(ref Mesh live) {
+        PreparedSmoothShiftParamImage image;
+        image.valid = true; image.expected = paramProjection();
+        image.nextBuilt = built; image.expectedLive = MeshSnapshot.capture(live);
+        if (!before.filled) return image;
+        Mesh baseline;
+        auto baselineShadow = beginPreparedShadow(baseline);
+        before.restore(baseline);
+        drainPreparedShadowDelivery(baseline, image.deliveryFlags,
+            image.deliveryDomains);
+        baselineShadow.close();
+        image.expectedBefore = MeshSnapshot.capture(baseline);
+        image.deliveryFlags = image.deliveryDomains = 0;
+        if (!interactiveParamEdit || !active) return image;
+        image.applies = true; image.candidate = baseline; baseline = Mesh.init;
+        auto shadow = beginPreparedShadow(image.candidate);
+        auto mask = image.candidate.operandFaceMask();
+        auto ed = MeshEditBatch.unrecorded(image.candidate, kExtrudeEditScope);
+        const n = ed.smoothShiftFacesByMask(mask, shift_, scale_, thicken_);
+        ed.close(); image.nextBuilt = (n != 0);
+        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+            image.deliveryDomains);
+        shadow.close(); return image;
+    }
+    final bool preparedParamUpdateMatches(in PreparedSmoothShiftParamImage image,
+            ref const Mesh live) const nothrow @nogc {
+        return image.valid && image.expected == paramProjection() &&
+            image.expectedLive.matches(live) &&
+            image.expectedBefore.matches(before);
+    }
+    final void installPreparedParamUpdate(ref PreparedSmoothShiftParamImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        built = image.nextBuilt; image.clear();
+    }
+    final PreparedSmoothShiftParamEffect prepareParamChanged(
+            PreparedRecordContext context, Layer layer,
+            GpuUploadOwner uploadOwner) {
+        if (context is null) return PreparedSmoothShiftParamEffect(
+            preparedToolStateOwner, PreparedSmoothShiftParamKind.None, false);
+        scope(failure) context.discard();
+        auto owner = PreparedSmoothShiftParamUpdateOwner.prepare(this, layer);
+        auto kind = owner is null ? PreparedSmoothShiftParamKind.None :
+            owner.effectKind;
+        bool ok = owner !is null;
+        if (ok && owner.applies)
+            ok = uploadOwner !is null && uploadOwner.owns(gpu) &&
+                context.prepareStampedMeshImage(layer, owner.candidate,
+                    owner.deliveryFlags, owner.deliveryDomains);
+        if (ok) ok = context.prepareSmoothShiftParamUpdate(owner);
+        if (ok && owner.applies)
+            ok = context.prepareUpload(uploadOwner, owner.candidate);
+        if (ok) ok = context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSmoothShiftParamEffect(preparedToolStateOwner, kind, ok);
+    }
     override void evaluate() {}
 
     override bool applyHeadless() {
@@ -513,6 +609,17 @@ private:
     }
 
 public:
+    version(unittest) final void seedPreparedParamForTest(ref Mesh live,
+            bool interactive = true) {
+        interactiveParamEdit = interactive; active = true; built = interactive;
+        shift_ = 0.5f; scale_ = 1.0f; thicken_ = false;
+        before = MeshSnapshot.capture(live);
+    }
+    version(unittest) final void mutatePreparedParamForTest(float value)
+            nothrow @nogc { shift_ = value; }
+    version(unittest) final bool preparedParamBuiltForTest() const nothrow @nogc {
+        return built;
+    }
     version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
         return preparedToolStateOwner;
     }
