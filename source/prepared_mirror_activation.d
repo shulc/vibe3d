@@ -137,13 +137,16 @@ private:
 
 version(unittest) unittest {
     import command_history : CommandHistory;
+    import document : Layer;
     import math : Vec3;
     import mesh : GpuMesh, makeCube;
-    import mesh_gpu : GpuCreateOwner, GpuCreateUploadOwner;
+    import mesh_gpu : GpuCreateOwner, GpuCreateUploadOwner, GpuUploadOwner,
+        GpuResourceOwner;
     import prepared_record_context : PreparedRecordContext;
-    import prepared_tool_effect : PreparedActivateKind;
+    import prepared_tool_effect : PreparedActivateKind, PreparedDeactivateKind;
     import record_observer_hub : RecordObserverHub;
     import shader : LitShader;
+    import snapshot : MeshSnapshot;
 
     auto mesh = makeCube();
     mesh.syncSelection(); mesh.selectFace(0);
@@ -241,4 +244,67 @@ version(unittest) unittest {
     assert(!corruptDeactivate.validate()); corruptDeactivate.abort();
     assert(corruptDeactivate.payloadEmpty() &&
         PreparedMirrorDeactivateOwner.prepare(null) is null);
+
+    auto commitLayer = new Layer;
+    auto commitSource = makeCube();
+    MeshSnapshot.capture(commitSource).restore(commitLayer.meshRef());
+    GpuMesh commitGpu;
+    auto commitTool = new MirrorTool(() => &commitLayer.meshRef(), &commitGpu,
+        LitShader.init);
+    commitTool.seedPreparedDeactivateStateForTest();
+    auto commitUpload = GpuUploadOwner.fakeForTest(&commitGpu);
+    auto previewDestroy = GpuResourceOwner.fakeForTest(
+        commitTool.preparedPreviewGpu());
+    auto commitContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub()); commitContext.setResourceIdentity(7,11);
+    auto commitEffect = commitTool.prepareDeactivate(commitContext, commitLayer,
+        commitUpload, previewDestroy);
+    assert(commitEffect.resourceAccepted && !commitEffect.historyAccepted &&
+        commitEffect.kind == PreparedDeactivateKind.Mirror &&
+        commitLayer.meshRef().faces.length == 6,
+        "prepare must not mutate the live layer");
+    assert(commitContext.validate()); commitContext.install();
+    assert(commitLayer.meshRef().faces.length == 12 &&
+        commitTool.preparedDeactivateStateInstalledForTest() &&
+        commitContext.installTraceForTest() == [3,4,2,2,8,40]);
+
+    auto idleLayer = new Layer;
+    MeshSnapshot.capture(commitSource).restore(idleLayer.meshRef());
+    GpuMesh idleGpu;
+    auto idleTool = new MirrorTool(() => &idleLayer.meshRef(), &idleGpu,
+        LitShader.init);
+    auto idleUpload = GpuUploadOwner.fakeForTest(&idleGpu);
+    auto idleDestroy = GpuResourceOwner.fakeForTest(idleTool.preparedPreviewGpu());
+    auto idleContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub()); idleContext.setResourceIdentity(7,11);
+    auto idleEffect = idleTool.prepareDeactivate(idleContext, idleLayer,
+        idleUpload, idleDestroy);
+    assert(idleEffect.resourceAccepted && !idleEffect.historyAccepted &&
+        idleContext.validate()); idleContext.install();
+    assert(idleLayer.meshRef().faces.length == 6 &&
+        idleContext.installTraceForTest() == [2,8,40]);
+
+    import commands.mesh.session_edit : MeshSessionEdit;
+    import editmode : EditMode;
+    import view : View;
+    auto historyLayer = new Layer;
+    MeshSnapshot.capture(commitSource).restore(historyLayer.meshRef());
+    GpuMesh historyGpu;
+    auto historyTool = new MirrorTool(() => &historyLayer.meshRef(), &historyGpu,
+        LitShader.init); historyTool.seedPreparedDeactivateStateForTest();
+    auto history = new CommandHistory(); auto historyView = new View(0,0,1,1);
+    historyTool.setGestureBindings(history, () => new MeshSessionEdit(
+        &historyLayer.meshRef(), historyView, EditMode.Polygons,
+        "test.mirror", "Mirror"));
+    auto historyContext = new PreparedRecordContext(history,
+        new RecordObserverHub()); historyContext.setResourceIdentity(7,11);
+    auto historyEffect = historyTool.prepareDeactivate(historyContext,
+        historyLayer, GpuUploadOwner.fakeForTest(&historyGpu),
+        GpuResourceOwner.fakeForTest(historyTool.preparedPreviewGpu()));
+    assert(historyEffect.resourceAccepted && historyEffect.historyAccepted &&
+        historyLayer.meshRef().faces.length == 6 && historyContext.validate());
+    historyContext.install(); size_t modelDepth, uiDepth;
+    history.undoDepthCounts(modelDepth, uiDepth);
+    assert(historyLayer.meshRef().faces.length == 12 && modelDepth == 1 &&
+        uiDepth == 0 && historyContext.installTraceForTest() == [3,4,2,2,1,40]);
 }

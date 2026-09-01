@@ -19,10 +19,16 @@ import handler : MoveHandler, ToolHandles, Arrow, BoxHandler, gizmoSize, drawThi
 import drag : planeDragDelta, screenAxisDelta, gesturePrevPixel;
 import eventlog : queryMouse;
 import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind,
-    PreparedSessionActivateEffect, PreparedActivateKind;
+    PreparedSessionActivateEffect, PreparedActivateKind,
+    PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_record_context : PreparedRecordContext;
-import prepared_mirror_activation : PreparedMirrorActivationOwner;
-import mesh_gpu : GpuCreateUploadOwner;
+import prepared_mirror_activation : PreparedMirrorActivationOwner,
+    PreparedMirrorDeactivateOwner;
+import mesh_gpu : GpuCreateUploadOwner, GpuUploadOwner, GpuResourceOwner;
+import document : Layer;
+import change_bus : MeshEditScope;
+import command_history : PreparedHistoryKind;
+import mesh : beginPreparedShadow, drainPreparedShadowDelivery;
 
 version (unittest) import std.conv : to;
 private struct MirrorPreparedState {
@@ -388,6 +394,61 @@ public:
     version(unittest) final void installPreparedDeactivateStateForTest()
             nothrow @nogc {
         engaged = false;
+    }
+    final bool ownsPreparedMainUpload(GpuUploadOwner owner) nothrow @nogc {
+        return owner !is null && owner.owns(gpu);
+    }
+    final bool ownsPreparedPreviewDestroy(GpuResourceOwner owner) nothrow @nogc {
+        return owner !is null && owner.owns(&previewGpu);
+    }
+    private size_t buildPreparedDeactivateCandidate(out Mesh candidate,
+            out MeshSnapshot pre, out uint deliveryFlags,
+            out uint deliveryDomains) {
+        if (!engaged || mesh is null) return 0;
+        pre = MeshSnapshot.capture(*mesh); pre.restore(candidate);
+        auto shadow = beginPreparedShadow(candidate);
+        float weld = params_.mergeVerts ? params_.distance : 0.0f;
+        size_t inserted = candidate.mirrorFacesPlane(candidate.operandFaceMask(),
+            params_.center, toolNormal(params_), weld, params_.invertPolys);
+        if (inserted > 0) candidate.buildLoops();
+        drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);
+        shadow.close(); return inserted;
+    }
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,
+            Layer layer, GpuUploadOwner mainUpload,
+            GpuResourceOwner previewDestroy) {
+        if (context is null) return PreparedDeactivateEffect(
+            preparedToolStateOwner, PreparedDeactivateKind.Mirror, false, false);
+        scope(failure) context.discard();
+        auto stateOwner = PreparedMirrorDeactivateOwner.prepare(this);
+        bool ok = stateOwner !is null && layer !is null &&
+            &layer.meshRef() is mesh && ownsPreparedPreviewDestroy(previewDestroy);
+        Mesh candidate; MeshSnapshot pre;
+        size_t inserted; uint deliveryFlags, deliveryDomains;
+        if (ok) inserted = buildPreparedDeactivateCandidate(candidate, pre,
+            deliveryFlags, deliveryDomains);
+        if (ok && inserted > 0)
+            ok = ownsPreparedMainUpload(mainUpload) &&
+                context.prepareStampedMeshImage(layer, candidate,
+                    deliveryFlags, deliveryDomains) &&
+                context.prepareUpload(mainUpload, candidate);
+        if (ok) ok = context.prepareDestroy(previewDestroy);
+        bool historyPrepared;
+        if (ok && inserted > 0 && history !is null && gestureFactory !is null) {
+            auto cmd = cast(MeshSessionEdit)gestureFactory();
+            if (cmd !is null) {
+                cmd.setSnapshots(pre, MeshSnapshot.capture(candidate), "Mirror");
+                historyPrepared = context.prepare(cmd,
+                    PreparedHistoryKind.Plain).accepted;
+                ok = historyPrepared;
+            } else ok = context.prepareGestureCarrierMismatch();
+        }
+        if (ok) ok = historyPrepared ? context.markHistoryInstall()
+                                     : context.markNoHistoryInstall();
+        if (ok) ok = context.prepareMirrorDeactivate(stateOwner);
+        if (!ok) context.discard();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.Mirror, historyPrepared, ok);
     }
 
     override void deactivate() {

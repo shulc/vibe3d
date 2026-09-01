@@ -238,6 +238,7 @@ B5O_PREPARED_LEGACY = {
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "activate"),
 }
 B5P_PREPARED_LEGACY = {
+    ("tools.alignment.mirror", "MirrorTool", "deactivate"),
     ("tools.edit.topology_pen.tool", "TopologyPenTool", "activate"),
     ("tools.edit.edge_extend", "EdgeExtendTool", "activate"),
     ("tools.alignment.mirror", "MirrorTool", "activate"),
@@ -297,7 +298,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "4c2879346b3909adf509ac1b3955d5b9837463f40fbb34b52801ea08c34cf63d"
+    "71d618804cfb27a7b5c59834273878a7f7eb217480ace2da186025554d33bb0f"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -3823,6 +3824,8 @@ mirror_activation_tool = (ROOT / "source/tools/alignment/mirror.d").read_text()
 def mirror_activation_gate(owner, context, tool, gpu):
     gpu_block = gpu[gpu.find("final class GpuCreateUploadOwner") :]
     activation_block = owner[:owner.find("struct PreparedMirrorDeactivateToken")]
+    tool_activation_block = tool[:tool.find(
+        "final PreparedMirrorDeactivateImage buildPreparedDeactivateState")]
     return (activation_block.count("@disable this(this)") == 2 and
         "final class PreparedMirrorActivationOwner" in owner and
         "target.classinfo !is MirrorTool.classinfo" in activation_block and
@@ -3847,9 +3850,10 @@ def mirror_activation_gate(owner, context, tool, gpu):
         "havePreviewCache = true; image.valid = false;" in tool and
         "context.prepareMirrorActivation(stateOwner)" in tool and
         "context.prepareCreateUpload(uploadOwner, stateOwner.previewMesh)" in tool and
-        tool.find("context.prepareMirrorActivation(stateOwner)") <
-            tool.find("context.prepareCreateUpload(uploadOwner") <
-            tool.find("context.markNoHistoryInstall()", tool.find("context.prepareCreateUpload(uploadOwner")) and
+        tool_activation_block.find("context.prepareMirrorActivation(stateOwner)") <
+            tool_activation_block.find("context.prepareCreateUpload(uploadOwner") <
+            tool_activation_block.find("context.markNoHistoryInstall()",
+                tool_activation_block.find("context.prepareCreateUpload(uploadOwner")) and
         "uploadOwner.replacesLikeLegacyInit()" in tool and
         "PreparedActivateKind.Mirror, ok);" in tool and
         "MirrorActivationState" in context and
@@ -3950,6 +3954,66 @@ for fixture in (
     if run.returncode == 0 or ("not copyable" not in run.stdout and
             not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
         fail("Mirror deactivation token copy was not rejected:\n" + run.stdout)
+
+mirror_deactivate_effect = (ROOT / "source/prepared_tool_effect.d").read_text()
+def mirror_deactivate_producer_gate(tool, effect):
+    start = tool.find("final PreparedDeactivateEffect prepareDeactivate(")
+    end = tool.find("override void deactivate()", start)
+    body = tool[start:end]
+    effect_block = effect[effect.find("enum PreparedDeactivateKind"):
+        effect.find("enum PreparedActivateKind")]
+    return (start >= 0 and end > start and
+        "Mirror," in effect_block and
+        "scope(failure) context.discard();" in body and
+        "PreparedMirrorDeactivateOwner.prepare(this)" in body and
+        "&layer.meshRef() is mesh" in body and
+        "ownsPreparedPreviewDestroy(previewDestroy)" in body and
+        "buildPreparedDeactivateCandidate(candidate, pre," in body and
+        "beginPreparedShadow(candidate)" in tool and
+        "candidate.mirrorFacesPlane(candidate.operandFaceMask()," in tool and
+        "drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);" in tool and
+        "ownsPreparedMainUpload(mainUpload)" in body and
+        "context.prepareStampedMeshImage(layer, candidate," in body and
+        "context.prepareUpload(mainUpload, candidate)" in body and
+        "context.prepareDestroy(previewDestroy)" in body and
+        "cmd.setSnapshots(pre, MeshSnapshot.capture(candidate), \"Mirror\");" in body and
+        "context.prepareGestureCarrierMismatch()" in body and
+        "context.markHistoryInstall()" in body and
+        "context.markNoHistoryInstall()" in body and
+        "context.prepareMirrorDeactivate(stateOwner)" in body and
+        body.find("context.prepareStampedMeshImage(layer, candidate,") <
+            body.find("context.prepareUpload(mainUpload, candidate)") <
+            body.find("context.prepareDestroy(previewDestroy)") <
+            body.find("context.markHistoryInstall()") <
+            body.find("context.prepareMirrorDeactivate(stateOwner)") and
+        "PreparedDeactivateKind.Mirror, historyPrepared, ok);" in body)
+if not mirror_deactivate_producer_gate(mirror_activation_tool,
+                                       mirror_deactivate_effect):
+    fail("Mirror deactivation producer contract drift")
+for target, old, new, label in (
+    ("tool", "scope(failure) context.discard();", "", "drop failure cleanup"),
+    ("tool", "&layer.meshRef() is mesh", "true", "drop layer identity"),
+    ("tool", "ownsPreparedPreviewDestroy(previewDestroy)", "true", "drop preview identity"),
+    ("tool", "beginPreparedShadow(candidate)", "beginPreparedShadow(*mesh)", "drop detached shadow"),
+    ("tool", "drainPreparedShadowDelivery(candidate, deliveryFlags, deliveryDomains);", "", "drop delivery capture"),
+    ("tool", "ownsPreparedMainUpload(mainUpload)", "true", "drop main GPU identity"),
+    ("tool", "context.prepareStampedMeshImage(layer, candidate,", "false /* dropped mesh enlist */ (", "drop mesh enlist"),
+    ("tool", "context.prepareUpload(mainUpload, candidate)", "true", "drop GPU upload"),
+    ("tool", "context.prepareDestroy(previewDestroy)", "true", "drop preview destroy"),
+    ("tool", "context.prepareGestureCarrierMismatch()", "true", "drop carrier diagnostic"),
+    ("tool", "context.markHistoryInstall()", "true", "drop history marker"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop no-history marker"),
+    ("tool", "context.prepareMirrorDeactivate(stateOwner)", "true", "drop final state"),
+    ("effect", "Mirror,", "None,", "drop closed effect kind"),
+):
+    t, e = mirror_activation_tool, mirror_deactivate_effect
+    if target == "effect": e = e.replace(old, new, 1)
+    else:
+        pos = t.find(old, t.find("final PreparedDeactivateEffect prepareDeactivate("))
+        if pos < 0: pos = t.find(old)
+        if pos >= 0: t = t[:pos] + new + t[pos + len(old):]
+    if mirror_deactivate_producer_gate(t, e):
+        fail(f"Mirror deactivation producer mutation did not RED: {label}")
 
 edge_extend_tool_activation_owner = (
     ROOT / "source/prepared_edge_extend_tool_activation.d").read_text()
