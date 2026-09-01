@@ -1884,6 +1884,8 @@ final class GpuResourceOwner {
     private ulong requiredContext;
     private bool pending;
     private bool validated;
+    private ValidatedGpuResourceToken enlistedValidated;
+    private PreparedGpuResourceToken enlistedPrepared;
     private GpuMeshNames pendingDestroy;
     private Backend backend;
     version (unittest) {
@@ -1972,6 +1974,29 @@ final class GpuResourceOwner {
         pendingDestroy = GpuMeshNames.init;
         pending = false;
         validated = false;
+    }
+
+    bool validateEnlisted(PreparedGpuResourceToken token, ulong threadIdentity,
+                          ulong contextIdentity) nothrow @nogc {
+        return validatePrepared(token, threadIdentity, contextIdentity,
+                                enlistedValidated);
+    }
+
+    bool beginEnlistedDestroy() nothrow @nogc {
+        return beginPreparedDestroy(enlistedPrepared);
+    }
+    bool validateEnlisted(ulong threadIdentity, ulong contextIdentity)
+                          nothrow @nogc {
+        return validateEnlisted(enlistedPrepared, threadIdentity,
+                                contextIdentity);
+    }
+
+    void installEnlisted() nothrow @nogc {
+        installPrepared(enlistedValidated);
+    }
+    void abortEnlisted() nothrow @nogc {
+        pendingDestroy = GpuMeshNames.init;
+        pending = false; validated = false;
     }
 }
 
@@ -2073,6 +2098,8 @@ private:
     GpuMesh prepared;
     long uploadedVertexCount;
     bool pending, validated;
+    ValidatedGpuUploadToken enlistedValidated;
+    PreparedGpuUploadToken enlistedPrepared;
     Backend backend;
     version (unittest) {
         uint[16] fakeCalls;
@@ -2172,6 +2199,32 @@ public:
         pending = false;
         validated = false;
         token.ownerId = token.generation = 0;
+    }
+
+    bool validateEnlisted(ref PreparedGpuUploadToken token,
+                          ulong threadIdentity, ulong contextIdentity)
+                          nothrow @nogc {
+        return validatePreparedUpload(token, threadIdentity, contextIdentity,
+                                      enlistedValidated);
+    }
+
+    bool beginEnlistedUpload(ref const Mesh mesh, const uint[] edgeOrigin,
+                             const uint[] vertOrigin, const uint[] faceOrigin) {
+        return beginPreparedUpload(mesh, edgeOrigin, vertOrigin, faceOrigin,
+                                   enlistedPrepared);
+    }
+    bool validateEnlisted(ulong threadIdentity, ulong contextIdentity)
+                          nothrow @nogc {
+        return validateEnlisted(enlistedPrepared, threadIdentity,
+                                contextIdentity);
+    }
+
+    void installEnlisted() nothrow @nogc {
+        installPreparedUpload(enlistedValidated);
+    }
+    void abortEnlisted() nothrow @nogc {
+        GpuMesh empty; prepared = empty;
+        pending = false; validated = false;
     }
 }
 

@@ -1151,4 +1151,59 @@ for old, new, label in (
     if mutant == mesh_gpu or upload_owner_gate(mutant):
         fail(f"P1.0b.4b {label} mutation did not fail")
 
+# P1.0b.4c.1 dormant heterogeneous resource journal. Owner references remain
+# private to PreparedRecordContext; the journal vocabulary is closed and the
+# eventual consumer performs one validation pass before deterministic install.
+record_context = (ROOT / "source/prepared_record_context.d").read_text()
+handler_shapes = (ROOT / "source/handles/shapes.d").read_text()
+resource_contracts = (
+    "private enum PreparedResourceKind : ubyte {",
+    "HistoryInstall, GpuMeshDestroy, GpuUpload, ClickPointDestroy",
+    "bool prepareDestroy(GpuResourceOwner owner)",
+    "bool prepareUpload(GpuUploadOwner owner, ref const Mesh mesh,",
+    "bool prepareDestroy(ClickPointResourceOwner owner)",
+    "if (!ok) { invalidateTransaction(); return false; }",
+    "if (resources_.length > 0 && !historyMarker_)",
+    "void invalidateTransaction() nothrow @nogc",
+    "history_.installPreparedToken(validated_); installedHistory = true;",
+    "scope(failure) owner.abortEnlisted();",
+    "resources_.reserve(resources_.length + 1);",
+    "foreach (ref e; resources_) final switch (e.kind)",
+)
+for contract in resource_contracts:
+    expected = (2 if contract == "foreach (ref e; resources_) final switch (e.kind)"
+                else 3 if contract == "scope(failure) owner.abortEnlisted();"
+                else 4 if contract == "resources_.reserve(resources_.length + 1);"
+                else 1)
+    if record_context.count(contract) != expected:
+        fail(f"P1.0b.4c.1 resource-journal contract drift: {contract}")
+for contract in (
+    "final class ClickPointResourceOwner",
+    "target.vao != vao || target.vbo != vbo || target.built != built",
+    "void installEnlisted() nothrow @nogc",
+):
+    if handler_shapes.count(contract) != 1:
+        fail(f"P1.0b.4c.1 click-resource contract drift: {contract}")
+for old, new, label in (
+    ("if (!ok) { invalidateTransaction(); return false; }", "", "joint refusal"),
+    ("history_.installPreparedToken(validated_); installedHistory = true;",
+     "installedHistory = true;", "history order"),
+    ("resources_.reserve(resources_.length + 1);", "", "reserve-before-begin"),
+    ("scope(failure) owner.abortEnlisted();", "", "enlist unwind"),
+    ("if (!ok) { invalidateTransaction(); return false; }",
+     "if (!ok) return false;", "terminal refusal"),
+    ("target.vao != vao || target.vbo != vbo || target.built != built",
+     "false", "handler identity"),
+):
+    context_mutant = record_context.replace(old, new, 1)
+    handler_mutant = handler_shapes.replace(old, new, 1)
+    if context_mutant == record_context and handler_mutant == handler_shapes:
+        fail(f"P1.0b.4c.1 {label} mutation anchor vanished")
+    journal_gate = (all(c in context_mutant for c in resource_contracts) and
+        context_mutant.count("resources_.reserve(resources_.length + 1);") == 4 and
+        context_mutant.count("scope(failure) owner.abortEnlisted();") == 3 and
+        "target.vao != vao || target.vbo != vbo || target.built != built" in handler_mutant)
+    if journal_gate:
+        fail(f"P1.0b.4c.1 {label} mutation did not fail")
+
 print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures)} compile-fail fixtures)")

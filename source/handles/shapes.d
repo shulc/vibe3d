@@ -7,6 +7,7 @@ import shader;
 import viewport_scheme;
 import bindbc.sdl;
 import bindbc.opengl;
+import core.atomic : atomicOp;
 import std.math : sin, cos, sqrt, PI, abs;
 
 import ImGui = d_imgui;
@@ -1923,6 +1924,74 @@ private:
         vertCount = cast(int)(data.length / 3);
         vao = buildVao3f(data, vbo);
         built = true;
+    }
+}
+
+private shared ulong nextClickPointResourceOwnerId;
+
+struct PreparedClickPointResourceToken { ulong ownerId, generation; }
+
+/// Dormant owner for the ClickPointHandler-private VAO/VBO lifetime.
+final class ClickPointResourceOwner {
+private:
+    ClickPointHandler target;
+    immutable ulong ownerId;
+    ulong generation, requiredThread, requiredContext;
+    GLuint vao, vbo;
+    bool built, pending, validated;
+    PreparedClickPointResourceToken enlistedPrepared;
+public:
+    this(ClickPointHandler target, ulong threadIdentity, ulong contextIdentity)
+         nothrow @nogc {
+        this.target = target;
+        requiredThread = threadIdentity;
+        requiredContext = contextIdentity;
+        ownerId = atomicOp!"+="(nextClickPointResourceOwnerId, 1UL);
+    }
+
+    bool beginPreparedDestroy(out PreparedClickPointResourceToken token)
+                              nothrow @nogc {
+        if (pending || target is null) return false;
+        ++generation;
+        vao = target.vao; vbo = target.vbo; built = target.built;
+        pending = true; validated = false;
+        token = PreparedClickPointResourceToken(ownerId, generation);
+        return true;
+    }
+
+    bool validateEnlisted(PreparedClickPointResourceToken token,
+                          ulong threadIdentity, ulong contextIdentity)
+                          nothrow @nogc {
+        if (!pending || validated || token.ownerId != ownerId ||
+            token.generation != generation ||
+            threadIdentity != requiredThread ||
+            contextIdentity != requiredContext || target is null ||
+            target.vao != vao || target.vbo != vbo || target.built != built)
+            return false;
+        validated = true;
+        return true;
+    }
+
+    bool beginEnlistedDestroy() nothrow @nogc {
+        return beginPreparedDestroy(enlistedPrepared);
+    }
+    bool validateEnlisted(ulong threadIdentity, ulong contextIdentity)
+                          nothrow @nogc {
+        return validateEnlisted(enlistedPrepared, threadIdentity,
+                                contextIdentity);
+    }
+
+    void installEnlisted() nothrow @nogc {
+        if (!pending || !validated) return;
+        if (built) {
+            glDeleteVertexArrays(1, &vao);
+            glDeleteBuffers(1, &vbo);
+        }
+        target.vao = 0; target.vbo = 0; target.built = false;
+        pending = false; validated = false;
+    }
+    void abortEnlisted() nothrow @nogc {
+        pending = false; validated = false;
     }
 }
 
