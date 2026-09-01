@@ -247,6 +247,7 @@ B5P_PREPARED_LEGACY = {
     ("tools.edit.poly_extrude", "PolyExtrudeTool", "activate"),
     ("tools.deform.smooth_shift_tool", "SmoothShiftTool", "activate"),
     ("tools.edit.edge_bevel", "EdgeBevelTool", "activate"),
+    ("tools.edit.poly_bevel", "PolyBevelTool", "activate"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
@@ -284,7 +285,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "6fbd54d05249795cca765aa665712e6710802cbe65609fa952e253fe7acb3fa3"
+    "f472e605e89b02b2234a844fce9b34e6c13037f288217a9c5511ea76e983a432"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -421,6 +422,7 @@ for path, text in prepared_source_texts.items():
             "prepared_poly_extrude_activation",
             "prepared_smooth_shift_activation",
             "prepared_edge_bevel_activation",
+            "prepared_poly_bevel_activation",
             "tools.alignment.radial_sweep_tool",
             "tools.alignment.radial_array_tool",
             "tools.alignment.linear_align_tool",
@@ -2643,6 +2645,154 @@ for fixture in (
     if run.returncode == 0 or ("not copyable" not in run.stdout and
             not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
         fail("EdgeBevel activation token copy was not rejected:\n" + run.stdout)
+
+# Exact PolyBevel activation detaches the undo baseline and polygon gizmo
+# frame while preserving the user's group/segments/square presets.
+poly_bevel_activation_owner = (ROOT /
+    "source/prepared_poly_bevel_activation.d").read_text()
+poly_bevel_activation_tool = (ROOT /
+    "source/tools/edit/poly_bevel.d").read_text()
+def poly_bevel_activation_gate(owner, context, tool):
+    po = without_unittests(owner); pt = without_unittests(tool)
+    start = pt.find("final PreparedSessionActivateEffect prepareActivate(")
+    end = pt.find("private void reinitSession()", start)
+    producer = pt[start:end] if start >= 0 and end > start else ""
+    bstart = pt.find("final PreparedPolyBevelActivationImage buildPreparedActivation(")
+    bend = pt.find("final Mesh* preparedActivationMesh()", bstart)
+    builder = pt[bstart:bend] if bstart >= 0 and bend > bstart else ""
+    istart = pt.find("final void installPreparedActivation(")
+    iend = pt.find("final PreparedSessionActivateEffect prepareActivate(", istart)
+    installer = pt[istart:iend] if istart >= 0 and iend > istart else ""
+    fstart = pt.find("private static void computePreparedGizmoFrame")
+    fend = pt.find("void rebuildPreview()", fstart)
+    formula = pt[fstart:fend] if fstart >= 0 and fend > fstart else ""
+    legacy = re.search(r"override void activate\(\)\s*\{", pt)
+    legacy_body = pt[legacy.end():balanced_source(pt, legacy.end())-1] if legacy else ""
+    return (
+        "final class PreparedPolyBevelActivationOwner" in owner and
+        owner.count("@disable this(this);") == 2 and
+        not any(x in po for x in (" delegate", " function(", "void*", "ubyte[]")) and
+        "target.classinfo !is PolyBevelTool.classinfo" in owner and
+        "result.image_ = target.buildPreparedActivation(result.source_);" in owner and
+        "target_.preparedActivationMesh() !is source_" in owner and
+        "!image_.before.matches(*source_)" in owner and
+        "target_.installPreparedActivation(image_); consume();" in owner and
+        "image_.clear(); target_ = null; source_ = null;" in owner and
+        "Mesh* delegate() nothrow @nogc meshSrc_;" in tool and
+        "image.before = MeshSnapshot.capture(*source); image.valid = true;" in tool and
+        "preview_.reset()" not in builder and
+        tool.count("image.gizmoValid = gizmoValid; image.anchor = anchor;") == 3 and
+        tool.count("image.baseAnchor = baseAnchor; image.shiftAxis = shiftAxis;") == 3 and
+        tool.count("image.insetAxis = insetAxis; image.gizmoSelHash = gizmoSelHash;") == 3 and
+        "active = true; built = false; dragPart = -1;" in installer and
+        "inset_ = 0.0f; shift_ = 0.0f;" in installer and
+        "preview_.reset(); image.before.moveInto(before);" in installer and
+        "gizmoValid = image.gizmoValid; anchor = image.anchor;" in installer and
+        "baseAnchor = image.baseAnchor; shiftAxis = image.shiftAxis;" in installer and
+        "insetAxis = image.insetAxis; gizmoSelHash = image.gizmoSelHash;" in installer and
+        "image.clear();" in installer and
+        not re.search(r"\b(group_|segments_|square_)\s*=", installer) and
+        "image.gizmoValid = false;" in formula and
+        "if (source.faces.length == 0) return;" in formula and
+        "bool any = source.hasAnySelectedFaces();" in formula and
+        "image.anchor = Vec3(0,0,0);" in formula and
+        "if (any && !source.isFaceSelected(fi)) continue;" in formula and
+        "sum = sum + source.faceNormal(cast(uint)fi);" in formula and
+        "image.anchor = image.anchor + source.faceCentroid(cast(uint)fi);" in formula and
+        "if (cnt == 0) return;" in formula and
+        "image.anchor = image.anchor * (1.0f / cast(float)cnt);" in formula and
+        "image.shiftAxis = (len > 1e-6f) ? sum * (1.0f/len) : Vec3(0,1,0);" in formula and
+        "Vec3 up = (abs(image.shiftAxis.y) < 0.9f) ? Vec3(0,1,0) : Vec3(1,0,0);" in formula and
+        "image.insetAxis = (slen > 1e-6f) ? side * (1.0f/slen) : Vec3(1,0,0);" in formula and
+        "image.baseAnchor = image.anchor;" in formula and
+        "source.selectionSignature(EditMode.Polygons)" in formula and
+        "image.gizmoValid = true;" in formula and
+        "PreparedPolyBevelActivationOwner.prepare(this)" in producer and
+        "context.preparePolyBevelActivation(owner)" in producer and
+        "context.markNoHistoryInstall()" in producer and
+        producer.find("context.preparePolyBevelActivation(owner)") <
+            producer.find("context.markNoHistoryInstall()") and
+        "scope(failure) context.discard();" in producer and
+        "if (!ok) context.discard();" in producer and
+        "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+        "            PreparedActivateKind.PolyBevel, ok);" in producer and
+        not any(x in producer for x in
+                ("context.validate(", "context.install(", "owner.install(")) and
+        not any(x in legacy_body for x in
+                ("prepareActivate(", "PreparedRecordContext")) and
+        "e.polyBevelActivation.validate();" in context and
+        "e.polyBevelActivation.install();" in context and
+        "e.polyBevelActivation.abort();" in context)
+if not poly_bevel_activation_gate(poly_bevel_activation_owner, record_context,
+                                  poly_bevel_activation_tool):
+    fail("PolyBevel activation prepared contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is PolyBevelTool.classinfo", "false", "broaden product"),
+    ("owner", "result.image_ = target.buildPreparedActivation(result.source_);", "", "drop builder"),
+    ("owner", "target_.preparedActivationMesh() !is source_", "false", "drop identity"),
+    ("owner", "!image_.before.matches(*source_)", "false", "drop content guard"),
+    ("owner", "target_.installPreparedActivation(image_);", "", "drop install"),
+    ("owner", "image_.clear(); target_ = null; source_ = null;", "target_ = null;", "retain payload"),
+    ("tool", "image.before = MeshSnapshot.capture(*source);", "", "drop snapshot"),
+    ("tool", "image.before = MeshSnapshot.capture(*source); image.valid = true;",
+     "preview_.reset(); image.before = MeshSnapshot.capture(*source); image.valid = true;",
+     "clear preview during prepare"),
+    ("tool", "image.gizmoValid = gizmoValid; image.anchor = anchor;", "", "drop frame seed"),
+    ("tool", "active = true; built = false; dragPart = -1;", "built = false; dragPart = -1;", "drop active reset"),
+    ("tool", "active = true; built = false; dragPart = -1;", "active = true; dragPart = -1;", "drop built reset"),
+    ("tool", "active = true; built = false; dragPart = -1;", "active = true; built = false;", "drop drag reset"),
+    ("tool", "inset_ = 0.0f; shift_ = 0.0f;", "shift_ = 0.0f;", "drop inset reset"),
+    ("tool", "inset_ = 0.0f; shift_ = 0.0f;", "inset_ = 0.0f;", "drop shift reset"),
+    ("tool", "inset_ = 0.0f; shift_ = 0.0f;", "inset_ = 0.0f; shift_ = 0.0f; group_ = true;", "reset group preset"),
+    ("tool", "inset_ = 0.0f; shift_ = 0.0f;", "inset_ = 0.0f; shift_ = 0.0f; segments_ = 0;", "reset segments preset"),
+    ("tool", "inset_ = 0.0f; shift_ = 0.0f;", "inset_ = 0.0f; shift_ = 0.0f; square_ = false;", "reset square preset"),
+    ("tool", "preview_.reset(); image.before.moveInto(before);", "image.before.moveInto(before);", "retain preview scratch"),
+    ("tool", "image.before.moveInto(before);", "before = image.before;", "shallow snapshot"),
+    ("tool", "gizmoValid = image.gizmoValid; anchor = image.anchor;", "anchor = image.anchor;", "drop validity"),
+    ("tool", "baseAnchor = image.baseAnchor; shiftAxis = image.shiftAxis;", "shiftAxis = image.shiftAxis;", "drop base anchor"),
+    ("tool", "insetAxis = image.insetAxis; gizmoSelHash = image.gizmoSelHash;", "gizmoSelHash = image.gizmoSelHash;", "drop inset axis"),
+    ("tool", "insetAxis = image.insetAxis; gizmoSelHash = image.gizmoSelHash;", "insetAxis = image.insetAxis;", "drop selection hash"),
+    ("tool", "bool any = source.hasAnySelectedFaces();", "bool any = false;", "drop selected-face branch"),
+    ("tool", "if (any && !source.isFaceSelected(fi)) continue;", "", "drop selected-face guard"),
+    ("tool", "if (cnt == 0) return;", "", "drop empty-selection guard"),
+    ("tool", "image.shiftAxis = (len > 1e-6f) ? sum * (1.0f/len) : Vec3(0,1,0);",
+     "image.shiftAxis = (len >= 0) ? sum * (1.0f/len) : Vec3(0,1,0);",
+     "drop normal fallback threshold"),
+    ("tool", "Vec3 up = (abs(image.shiftAxis.y) < 0.9f) ? Vec3(0,1,0) : Vec3(1,0,0);",
+     "Vec3 up = false ? Vec3(0,1,0) : Vec3(1,0,0);", "drop up-axis threshold"),
+    ("tool", "image.insetAxis = (slen > 1e-6f) ? side * (1.0f/slen) : Vec3(1,0,0);",
+     "image.insetAxis = (slen >= 0) ? side * (1.0f/slen) : Vec3(1,0,0);",
+     "drop side fallback threshold"),
+    ("tool", "image.gizmoValid = true;", "", "drop valid seal"),
+    ("tool", "scope(failure) context.discard();", "", "drop failure cleanup"),
+    ("tool", "context.preparePolyBevelActivation(owner)", "true", "drop enlist"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop history seal"),
+    ("tool", "return PreparedSessionActivateEffect(preparedToolStateOwner,\n"
+     "            PreparedActivateKind.PolyBevel, ok);",
+     "return PreparedSessionActivateEffect(OwnedId.init,\n"
+     "            PreparedActivateKind.PolyBevel, ok);", "forge effect owner"),
+    ("tool", "PreparedActivateKind.PolyBevel, ok);",
+     "PreparedActivateKind.PolyBevel, true);", "forge effect acceptance"),
+    ("context", "e.polyBevelActivation.validate();", "true;", "drop validation"),
+    ("context", "e.polyBevelActivation.install();", "", "drop context install"),
+    ("context", "e.polyBevelActivation.abort();", "", "drop context abort"),
+):
+    o, c, t = poly_bevel_activation_owner, record_context, poly_bevel_activation_tool
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    else: t = t.replace(old, new, 1)
+    if ((o == poly_bevel_activation_owner and c == record_context and
+         t == poly_bevel_activation_tool) or poly_bevel_activation_gate(o,c,t)):
+        fail(f"PolyBevel activation mutation did not RED: {label}")
+for fixture in (
+    ROOT / "tests/compile_fail/prepared_poly_bevel_activation_token_copy.d",
+    ROOT / "tests/compile_fail/prepared_poly_bevel_activation_validated_token_copy.d",
+):
+    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if run.returncode == 0 or ("not copyable" not in run.stdout and
+            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+        fail("PolyBevel activation token copy was not rejected:\n" + run.stdout)
 
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
 # detached whole-Mesh adoption with exact caller-supplied change flags, and a

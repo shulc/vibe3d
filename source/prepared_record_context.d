@@ -27,6 +27,7 @@ import prepared_poly_inset_activation : PreparedPolyInsetActivationOwner;
 import prepared_poly_extrude_activation : PreparedPolyExtrudeActivationOwner;
 import prepared_smooth_shift_activation : PreparedSmoothShiftActivationOwner;
 import prepared_edge_bevel_activation : PreparedEdgeBevelActivationOwner;
+import prepared_poly_bevel_activation : PreparedPolyBevelActivationOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -40,7 +41,8 @@ private enum PreparedResourceKind : ubyte {
     TransformProductActivationState, MoveUpdateState, InheritedNoopState,
     XfrmActivationPreState, XfrmActivationPostState, StrokeExtrudeActivationState,
     VertexMergeActivationState, PolyInsetActivationState, PolyExtrudeActivationState,
-    SmoothShiftActivationState, EdgeBevelActivationState
+    SmoothShiftActivationState, EdgeBevelActivationState,
+    PolyBevelActivationState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -60,6 +62,7 @@ private struct PreparedResourceEntry {
     PreparedPolyExtrudeActivationOwner polyExtrudeActivation;
     PreparedSmoothShiftActivationOwner smoothShiftActivation;
     PreparedEdgeBevelActivationOwner edgeBevelActivation;
+    PreparedPolyBevelActivationOwner polyBevelActivation;
     ClickPointResourceOwner clickDestroy;
     SnapOverlayOwner snapOverlay;
     PreparedPrivateStateOwner privateState;
@@ -386,6 +389,17 @@ public:
         e.kind = PreparedResourceKind.EdgeBevelActivationState;
         e.edgeBevelActivation = owner; resources_ ~= e; return true;
     }
+    bool preparePolyBevelActivation(PreparedPolyBevelActivationOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected PolyBevel activation enlist failure");
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.PolyBevelActivationState;
+        e.polyBevelActivation = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -576,6 +590,9 @@ public:
             case PreparedResourceKind.EdgeBevelActivationState:
                 ok = e.edgeBevelActivation !is null &&
                     e.edgeBevelActivation.validate(); break;
+            case PreparedResourceKind.PolyBevelActivationState:
+                ok = e.polyBevelActivation !is null &&
+                    e.polyBevelActivation.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -708,6 +725,10 @@ public:
             e.edgeBevelActivation.install();
             version(unittest) installTrace_[installTraceLength_++] = 25;
             break;
+        case PreparedResourceKind.PolyBevelActivationState:
+            e.polyBevelActivation.install();
+            version(unittest) installTrace_[installTraceLength_++] = 26;
+            break;
         }
         if (!installedHistory && history_ !is null)
             history_.installPreparedToken(validated_);
@@ -777,6 +798,8 @@ private:
             e.smoothShiftActivation.abort(); break;
         case PreparedResourceKind.EdgeBevelActivationState:
             e.edgeBevelActivation.abort(); break;
+        case PreparedResourceKind.PolyBevelActivationState:
+            e.polyBevelActivation.abort(); break;
         }
         resources_.length = 0;
         historyMarker_ = false;

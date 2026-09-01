@@ -26,7 +26,17 @@ import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
+import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import prepared_poly_bevel_activation : PreparedPolyBevelActivationOwner;
 import command_history : PreparedHistoryKind;
+
+struct PreparedPolyBevelActivationImage {
+    MeshSnapshot before;
+    bool valid, gizmoValid;
+    Vec3 anchor, baseAnchor, shiftAxis, insetAxis;
+    ulong gizmoSelHash;
+    void clear() nothrow @nogc { this = PreparedPolyBevelActivationImage.init; }
+}
 
 // ---------------------------------------------------------------------------
 // PolyBevelTool — interactive Polygon Bevel (factory id `poly.bevel`).
@@ -43,7 +53,7 @@ import command_history : PreparedHistoryKind;
 // ---------------------------------------------------------------------------
 class PolyBevelTool : Tool {
 private:
-    Mesh* delegate() meshSrc_;
+    Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
     GpuMesh*         gpu;
     EditMode*        editMode;
@@ -97,7 +107,8 @@ private:
     enum Vec3 INSET_COLOR = schemeColor(SchemeColor.toolWidth);
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader) {
+    this(Mesh* delegate() nothrow @nogc meshSrc, GpuMesh* gpu,
+            EditMode* editMode, LitShader litShader) {
         this.meshSrc_  = meshSrc;
         this.gpu       = gpu;
         this.editMode  = editMode;
@@ -136,6 +147,41 @@ public:
     override void activate() {
         active = true;
         reinitSession();
+    }
+
+    final PreparedPolyBevelActivationImage buildPreparedActivation(
+            out Mesh* source) {
+        PreparedPolyBevelActivationImage image;
+        source = mesh; if (source is null) return image;
+        image.before = MeshSnapshot.capture(*source); image.valid = true;
+        image.gizmoValid = gizmoValid; image.anchor = anchor;
+        image.baseAnchor = baseAnchor; image.shiftAxis = shiftAxis;
+        image.insetAxis = insetAxis; image.gizmoSelHash = gizmoSelHash;
+        computePreparedGizmoFrame(*source, image); return image;
+    }
+    final Mesh* preparedActivationMesh() nothrow @nogc { return meshSrc_(); }
+    final void installPreparedActivation(
+            ref PreparedPolyBevelActivationImage image) nothrow @nogc {
+        if (!image.valid) return;
+        active = true; built = false; dragPart = -1;
+        inset_ = 0.0f; shift_ = 0.0f;
+        preview_.reset(); image.before.moveInto(before);
+        gizmoValid = image.gizmoValid; anchor = image.anchor;
+        baseAnchor = image.baseAnchor; shiftAxis = image.shiftAxis;
+        insetAxis = image.insetAxis; gizmoSelHash = image.gizmoSelHash;
+        image.clear();
+    }
+    final PreparedSessionActivateEffect prepareActivate(
+            PreparedRecordContext context) {
+        if (context is null) return PreparedSessionActivateEffect(
+            preparedToolStateOwner, PreparedActivateKind.PolyBevel, false);
+        scope(failure) context.discard();
+        auto owner = PreparedPolyBevelActivationOwner.prepare(this);
+        bool ok = owner !is null && context.preparePolyBevelActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSessionActivateEffect(preparedToolStateOwner,
+            PreparedActivateKind.PolyBevel, ok);
     }
 
     private void reinitSession() {
@@ -407,29 +453,41 @@ private:
     }
 
     void computeGizmoFrame() {
-        gizmoValid = false;
-        if (mesh.faces.length == 0) return;
+        PreparedPolyBevelActivationImage image;
+        image.gizmoValid = gizmoValid; image.anchor = anchor;
+        image.baseAnchor = baseAnchor; image.shiftAxis = shiftAxis;
+        image.insetAxis = insetAxis; image.gizmoSelHash = gizmoSelHash;
+        computePreparedGizmoFrame(*mesh, image);
+        gizmoValid = image.gizmoValid; anchor = image.anchor;
+        baseAnchor = image.baseAnchor; shiftAxis = image.shiftAxis;
+        insetAxis = image.insetAxis; gizmoSelHash = image.gizmoSelHash;
+    }
+
+    private static void computePreparedGizmoFrame(ref Mesh source,
+            ref PreparedPolyBevelActivationImage image) {
+        image.gizmoValid = false;
+        if (source.faces.length == 0) return;
         Vec3 sum = Vec3(0,0,0);
-        bool any = mesh.hasAnySelectedFaces();
-        anchor = Vec3(0,0,0);
+        bool any = source.hasAnySelectedFaces();
+        image.anchor = Vec3(0,0,0);
         int cnt = 0;
-        foreach (fi; 0 .. mesh.faces.length) {
-            if (any && !mesh.isFaceSelected(fi)) continue;
-            sum   = sum + mesh.faceNormal(cast(uint)fi);
-            anchor = anchor + mesh.faceCentroid(cast(uint)fi);
+        foreach (fi; 0 .. source.faces.length) {
+            if (any && !source.isFaceSelected(fi)) continue;
+            sum = sum + source.faceNormal(cast(uint)fi);
+            image.anchor = image.anchor + source.faceCentroid(cast(uint)fi);
             ++cnt;
         }
         if (cnt == 0) return;
-        anchor = anchor * (1.0f / cast(float)cnt);
+        image.anchor = image.anchor * (1.0f / cast(float)cnt);
         float len = sqrt(sum.x*sum.x + sum.y*sum.y + sum.z*sum.z);
-        shiftAxis = (len > 1e-6f) ? sum * (1.0f/len) : Vec3(0,1,0);
-        Vec3 up   = (abs(shiftAxis.y) < 0.9f) ? Vec3(0,1,0) : Vec3(1,0,0);
-        Vec3 side = cross(shiftAxis, up);
+        image.shiftAxis = (len > 1e-6f) ? sum * (1.0f/len) : Vec3(0,1,0);
+        Vec3 up = (abs(image.shiftAxis.y) < 0.9f) ? Vec3(0,1,0) : Vec3(1,0,0);
+        Vec3 side = cross(image.shiftAxis, up);
         float slen = sqrt(side.x*side.x + side.y*side.y + side.z*side.z);
-        insetAxis    = (slen > 1e-6f) ? side * (1.0f/slen) : Vec3(1,0,0);
-        baseAnchor   = anchor;
-        gizmoSelHash = mesh.selectionSignature(EditMode.Polygons);
-        gizmoValid   = true;
+        image.insetAxis = (slen > 1e-6f) ? side * (1.0f/slen) : Vec3(1,0,0);
+        image.baseAnchor = image.anchor;
+        image.gizmoSelHash = source.selectionSignature(EditMode.Polygons);
+        image.gizmoValid = true;
     }
 
     void rebuildPreview() {
@@ -512,6 +570,55 @@ private:
 
     void refreshCaches() {
         refreshDisplay(mesh, gpu);
+    }
+
+public:
+    version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
+        return preparedToolStateOwner;
+    }
+    version(unittest) final void seedPreparedActivationForTest(ref Mesh oldMesh) {
+        active = false; built = true; dragPart = 9; inset_ = 7; shift_ = 8;
+        group_ = false; segments_ = 3; square_ = true;
+        gizmoValid = false; anchor = Vec3(1,2,3); baseAnchor = Vec3(4,5,6);
+        shiftAxis = Vec3(7,8,9); insetAxis = Vec3(10,11,12);
+        gizmoSelHash = 13; dragStartMX = 14; dragStartMY = 15;
+        dragBaseShift = 16; dragBaseInset = 17; freeCtrl = true;
+        freeLockAxis = PART_INSET; freeShiftPerPixel = 18;
+        freeInsetPerPixel = 19; cachedVp.view[0] = 20;
+        before = MeshSnapshot.capture(oldMesh); preview_.seedForTest(oldMesh);
+    }
+    version(unittest) final bool preparedActivationDirtyForTest() const
+            nothrow @nogc {
+        return !active && built && dragPart == 9 && inset_ == 7 && shift_ == 8 &&
+            !group_ && segments_ == 3 && square_ && !gizmoValid &&
+            anchor == Vec3(1,2,3) && baseAnchor == Vec3(4,5,6) &&
+            shiftAxis == Vec3(7,8,9) && insetAxis == Vec3(10,11,12) &&
+            gizmoSelHash == 13 && preview_.dirtyForTest();
+    }
+    version(unittest) final bool preparedActivationForTest(size_t count,
+            Vec3 first, const Vec3* livePtr, bool expectedValid,
+            Vec3 expectedAnchor, Vec3 expectedBase, Vec3 expectedShift,
+            Vec3 expectedInset, ulong expectedHash) const nothrow @nogc {
+        return active && !built && dragPart == -1 && inset_ == 0 && shift_ == 0 &&
+            !group_ && segments_ == 3 && square_ && before.filled &&
+            before.vertices.length == count &&
+            (count == 0 || (before.vertices[0] == first &&
+                            before.vertices.ptr !is livePtr)) &&
+            preview_.resetForTest() && gizmoValid == expectedValid &&
+            anchor == expectedAnchor && baseAnchor == expectedBase &&
+            shiftAxis == expectedShift && insetAxis == expectedInset &&
+            gizmoSelHash == expectedHash && dragStartMX == 14 &&
+            dragStartMY == 15 && dragBaseShift == 16 && dragBaseInset == 17 &&
+            freeCtrl && freeLockAxis == PART_INSET && freeShiftPerPixel == 18 &&
+            freeInsetPerPixel == 19 && cachedVp.view[0] == 20;
+    }
+    version(unittest) final PreparedPolyBevelActivationImage
+            preparedFrameForTest(ref Mesh source) const {
+        PreparedPolyBevelActivationImage image;
+        image.gizmoValid = gizmoValid; image.anchor = anchor;
+        image.baseAnchor = baseAnchor; image.shiftAxis = shiftAxis;
+        image.insetAxis = insetAxis; image.gizmoSelHash = gizmoSelHash;
+        computePreparedGizmoFrame(source, image); return image;
     }
 }
 
