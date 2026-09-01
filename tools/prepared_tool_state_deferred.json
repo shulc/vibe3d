@@ -150,16 +150,6 @@
     "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
   },
   {
-    "batch": "P1.0b.2+",
-    "key": {
-      "aggregate": "TopologyPenTool",
-      "module": "tools.edit.topology_pen.tool",
-      "signature": "void(ref VectorStack vts)",
-      "symbol": "update"
-    },
-    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
-  },
-  {
     "batch": "P1.0b.3+",
     "key": {
       "aggregate": "VertexMergeTool",

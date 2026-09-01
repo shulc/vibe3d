@@ -81,9 +81,12 @@ import tool_input            : ToolAction, PassThrough, InputPhase, InputButton,
 import drag                  : planeDragDelta;
 import eventlog               : queryMouse;
 import prepared_tool_effect   : PreparedSessionActivateEffect,
-                                 PreparedActivateKind;
+                                 PreparedActivateKind,
+                                 PreparedTopologyPenUpdateEffect,
+                                 PreparedTopologyPenUpdateKind;
 import prepared_record_context : PreparedRecordContext;
 import prepared_topology_pen_activation : PreparedTopologyPenActivationOwner;
+import prepared_topology_pen_update : PreparedTopologyPenUpdateOwner;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -101,6 +104,13 @@ struct PreparedTopologyPenActivationImage {
         expectedTarget = HoverTarget.init;
         expectedDecline = SlideDecline.None; expectedDeclineSeed = -1;
     }
+}
+
+struct PreparedTopologyPenUpdateImage {
+    bool valid, hasPacket;
+    ConstrainHitPacket expectedHit, nextHit;
+    HoverTarget expectedTarget, nextTarget;
+    void clear() nothrow @nogc { this = PreparedTopologyPenUpdateImage.init; }
 }
 
 // Corner-provenance (task 0901): verified NOT APPLICABLE across this package.
@@ -1765,6 +1775,50 @@ public:
 
     override void update(ref VectorStack vts) {
         readHit(vts);
+    }
+
+    final PreparedTopologyPenUpdateImage buildPreparedUpdate(ref VectorStack vts) {
+        PreparedTopologyPenUpdateImage image;
+        image.valid = true; image.expectedHit = lastHit_;
+        image.expectedTarget = lastTarget_; image.nextHit = lastHit_;
+        image.nextTarget = lastTarget_;
+        if (auto packet = vts.get!ConstrainHitPacket()) {
+            image.hasPacket = true; image.nextHit = *packet;
+            Viewport vp = viewportOf(vts);
+            image.nextTarget = resolveHoverTarget(image.nextHit, vp,
+                topoPenPressPickPx(vp));
+        }
+        return image;
+    }
+    final bool preparedUpdateMatches(in PreparedTopologyPenUpdateImage image)
+            const nothrow @nogc {
+        return image.valid && lastHit_ == image.expectedHit &&
+            lastTarget_ == image.expectedTarget;
+    }
+    final void installPreparedUpdate(ref PreparedTopologyPenUpdateImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        lastHit_ = image.nextHit; lastTarget_ = image.nextTarget; image.clear();
+    }
+    final PreparedTopologyPenUpdateEffect prepareUpdate(ref VectorStack vts,
+            PreparedRecordContext context) {
+        if (context is null) return PreparedTopologyPenUpdateEffect(
+            preparedToolStateOwner, PreparedTopologyPenUpdateKind.None, false);
+        scope(failure) context.discard();
+        auto owner = PreparedTopologyPenUpdateOwner.prepare(this, vts);
+        auto kind = owner is null ? PreparedTopologyPenUpdateKind.None :
+            owner.effectKind();
+        bool ok = owner !is null && context.prepareTopologyPenUpdate(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedTopologyPenUpdateEffect(preparedToolStateOwner, kind, ok);
+    }
+    version(unittest) final void mutatePreparedUpdateForTest() nothrow @nogc {
+        ++lastHit_.layer;
+    }
+    version(unittest) final bool preparedUpdateForTest(
+            in ConstrainHitPacket hit, in HoverTarget target) const nothrow @nogc {
+        return lastHit_ == hit && lastTarget_ == target;
     }
 
     // ---------------------------------------------------------------------

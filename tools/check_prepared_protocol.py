@@ -242,6 +242,7 @@ B5P_PREPARED_LEGACY = {
     ("tools.create.box", "BoxTool", "deactivate"),
     ("tools.create.pen", "PenTool", "deactivate"),
     ("tools.create.primitive_create_tool", "PrimitiveCreateTool", "deactivate"),
+    ("tools.edit.topology_pen.tool", "TopologyPenTool", "update"),
     ("tools.edit.bridge_tool", "BridgeTool", "deactivate"),
     ("tools.edit.topology_pen.tool", "TopologyPenTool", "activate"),
     ("tools.edit.edge_extend", "EdgeExtendTool", "activate"),
@@ -302,7 +303,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "48c03f245e1859020f9ef67c10e75437bfd85058850cd185b55c9c4f03ab9b55"
+    "77ebc44f1589b45d2565c559185d02c69efff625f06583c751e1527b37cfd310"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -452,6 +453,7 @@ for path, text in prepared_source_texts.items():
             "prepared_mirror_activation",
             "prepared_edge_extend_tool_activation",
             "prepared_topology_pen_activation",
+            "prepared_topology_pen_update",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
@@ -4369,6 +4371,57 @@ for target, old, new, label in (
     if primitive_deactivate_gate(t, o, e):
         fail(f"Primitive deactivation mutation did not RED: {label}")
 
+topology_update_tool = (ROOT / "source/tools/edit/topology_pen/tool.d").read_text()
+topology_update_owner = (ROOT / "source/prepared_topology_pen_update.d").read_text()
+topology_update_effect = (ROOT / "source/prepared_tool_effect.d").read_text()
+def topology_update_gate(tool, owner, context, effect):
+    start = tool.find("final PreparedTopologyPenUpdateImage buildPreparedUpdate(")
+    end = tool.find("// ---------------------------------------------------------------------", start)
+    body = tool[start:end]
+    effect_block = effect[effect.find("enum PreparedTopologyPenUpdateKind"):]
+    return (start >= 0 and "PacketAbsent, Packet" in effect_block and
+        "if (auto packet = vts.get!ConstrainHitPacket())" in body and
+        "image.nextHit = *packet;" in body and
+        "resolveHoverTarget(image.nextHit, vp," in body and
+        "lastHit_ == image.expectedHit" in body and
+        "lastTarget_ == image.expectedTarget" in body and
+        "lastHit_ = image.nextHit; lastTarget_ = image.nextTarget;" in body and
+        "PreparedTopologyPenUpdateOwner.prepare(this, vts)" in body and
+        "context.prepareTopologyPenUpdate(owner)" in body and
+        "context.markNoHistoryInstall()" in body and
+        "target.classinfo !is TopologyPenTool.classinfo" in owner and
+        "target_.preparedUpdateMatches(image_)" in owner and
+        "target_.installPreparedUpdate(image_); consume();" in owner and
+        owner.count("@disable this(this)") == 2 and
+        "bool prepareTopologyPenUpdate(PreparedTopologyPenUpdateOwner owner)" in context and
+        "case PreparedResourceKind.TopologyPenUpdateState:" in context and
+        "e.topologyPenUpdate.validate();" in context and
+        "e.topologyPenUpdate.install();" in context and
+        "e.topologyPenUpdate.abort();" in context)
+if not topology_update_gate(topology_update_tool, topology_update_owner,
+        record_context, topology_update_effect):
+    fail("TopologyPen update prepared contract drift")
+for target, old, new, label in (
+    ("tool", "image.nextHit = *packet;", "image.nextHit = lastHit_;", "drop packet capture"),
+    ("tool", "resolveHoverTarget(image.nextHit, vp,", "lastTarget /* stale */ (", "drop target resolve"),
+    ("tool", "lastHit_ == image.expectedHit", "true", "drop hit validation"),
+    ("tool", "lastTarget_ == image.expectedTarget", "true", "drop target validation"),
+    ("tool", "lastHit_ = image.nextHit; lastTarget_ = image.nextTarget;", "", "drop atomic install"),
+    ("tool", "context.prepareTopologyPenUpdate(owner)", "true", "drop owner enlist"),
+    ("tool", "context.markNoHistoryInstall()", "true", "drop no-history seal"),
+    ("owner", "target.classinfo !is TopologyPenTool.classinfo", "false", "broaden product"),
+    ("owner", "target_.preparedUpdateMatches(image_)", "true", "drop owner validation"),
+    ("context", "e.topologyPenUpdate.install();", "", "drop context install"),
+):
+    t, o, c = topology_update_tool, topology_update_owner, record_context
+    if target == "tool":
+        pos = t.find(old, t.find("final PreparedTopologyPenUpdateImage buildPreparedUpdate("))
+        if pos >= 0: t = t[:pos] + new + t[pos + len(old):]
+    elif target == "owner": o = o.replace(old, new, 1)
+    else: c = c.replace(old, new, 1)
+    if topology_update_gate(t, o, c, topology_update_effect):
+        fail(f"TopologyPen update mutation did not RED: {label}")
+
 mirror_deactivate_effect = (ROOT / "source/prepared_tool_effect.d").read_text()
 def mirror_deactivate_producer_gate(tool, effect):
     start = tool.find("final PreparedDeactivateEffect prepareDeactivate(")
@@ -4558,7 +4611,7 @@ def topology_pen_activation_gate(owner, context, tool, snap, constrain,
         "lastHit_ = ConstrainHitPacket.init; lastTarget_ = HoverTarget.init;" in tool and
         "slideDecline_ = SlideDecline.None; slideDeclineSeed_ = -1;" in tool and
         "context.prepareTopologyPenActivation(owner)" in tool and
-        "context.markNoHistoryInstall()" in tool and
+        tool.count("context.markNoHistoryInstall()") == 2 and
         tool.find("context.prepareTopologyPenActivation(owner)") <
             tool.find("context.markNoHistoryInstall()", tool.find("context.prepareTopologyPenActivation(owner)")) and
         "PreparedActivateKind.TopologyPen, ok);" in tool and
