@@ -158,9 +158,13 @@ B5J_PREPARED_LEGACY = {
     ("tools.alignment.radial_array_tool", "RadialArrayTool", "activate"),
     ("tools.alignment.radial_array_tool", "RadialArrayTool", "deactivate"),
 }
+B5K_PREPARED_LEGACY = {
+    ("tools.alignment.linear_align_tool", "LinearAlignTool", "activate"),
+    ("tools.alignment.radial_align_tool", "RadialAlignTool", "activate"),
+}
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
-    B5I_PREPARED_LEGACY | B5J_PREPARED_LEGACY)
+    B5I_PREPARED_LEGACY | B5J_PREPARED_LEGACY | B5K_PREPARED_LEGACY)
 all_hook_keys = {(r["module"], r["aggregate"], r["symbol"])
                  for r in CURRENT_WRITERS["hooks"]}
 if not TOOL_STATE_CONVERTED | PREPARED_LEGACY <= all_hook_keys:
@@ -192,7 +196,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "d5be323ffdd61f8a784ebec234735f934707b7452c067da443efd3f54142cbfa"
+    "18b7ce7b49675fb07821e7af0d5fc6aa4b5d5983c67f15e1f44753cb29d7eebb"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -209,7 +213,7 @@ def validate_deferred_rows(rows, require_canonical=True):
             fail("P1.0b.1 checked-in deferred batch/reason invalid")
     canonical = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
     if require_canonical and hashlib.sha256(canonical).hexdigest() != \
-            "d5be323ffdd61f8a784ebec234735f934707b7452c067da443efd3f54142cbfa":
+            "18b7ce7b49675fb07821e7af0d5fc6aa4b5d5983c67f15e1f44753cb29d7eebb":
         fail("P1.0b.1 checked-in deferred exact values drifted")
 validate_deferred_rows(TOOL_STATE_DEFERRED_ROWS)
 for field in ("batch", "reason"):
@@ -318,7 +322,9 @@ for path, text in prepared_source_texts.items():
             "prepared_radial_array_transition",
             "prepared_transform_activation",
             "tools.alignment.radial_sweep_tool",
-            "tools.alignment.radial_array_tool"}:
+            "tools.alignment.radial_array_tool",
+            "tools.alignment.linear_align_tool",
+            "tools.alignment.radial_align_tool"}:
         fail(f"P1.0b.3d PreparedRecordContext gained an unreviewed import: {module}")
     if "new PreparedRecordContext" in text:
         production_text = without_unittests(text)
@@ -2095,6 +2101,8 @@ for hook in ("override void activate()", "override void deactivate()",
 # and RadialAlign products. No producer/hook calls it yet.
 transform_activation_owner = (ROOT / "source/prepared_transform_activation.d").read_text()
 transform_tool = (ROOT / "source/tools/transform/transform.d").read_text()
+linear_align_tool = (ROOT / "source/tools/alignment/linear_align_tool.d").read_text()
+radial_align_tool = (ROOT / "source/tools/alignment/radial_align_tool.d").read_text()
 def transform_activation_gate(owner, context, tool):
     production = without_unittests(owner)
     builder_projection = (
@@ -2137,6 +2145,28 @@ def transform_activation_gate(owner, context, tool):
         "e.transformActivation.abort();" in context)
 if not transform_activation_gate(transform_activation_owner, record_context, transform_tool):
     fail("Transform activation owner contract drift")
+def transform_producer_gate(linear, radial):
+    def producer_body(source):
+        start = source.find("final PreparedTransformActivationEffect prepareActivate(")
+        if start < 0: return ""
+        body_start = source.find("{", start) + 1
+        return source[body_start:balanced_source(source, body_start)-1]
+    linear_body, radial_body = producer_body(linear), producer_body(radial)
+    common = ("scope(failure) context.discard();",
+        "context.prepareTransformActivation(owner) &&",
+        "context.markNoHistoryInstall();", "if (!ok) context.discard();")
+    return ("PreparedTransformActivationOwner.prepare(this)" in linear_body and
+        all(x in linear_body for x in common) and
+        "return PreparedTransformActivationEffect(preparedToolStateOwner,\n"
+        "            PreparedTransformActivationKind.LinearAlign, ok);" in linear_body and
+        "PreparedTransformActivationOwner.prepare(this)" in radial_body and
+        all(x in radial_body for x in common) and
+        "return PreparedTransformActivationEffect(preparedToolStateOwner,\n"
+        "            PreparedTransformActivationKind.RadialAlign, ok);" in radial_body and
+        not any(x in linear_body + radial_body for x in
+            ("owner.install(", "context.install(", "context.validate(")))
+if not transform_producer_gate(linear_align_tool, radial_align_tool):
+    fail("Transform alignment activation producer contract drift")
 for target, old, new, label in (
     ("owner", "target.classinfo is LinearAlignTool.classinfo", "false", "drop LinearAlign admission"),
     ("owner", "target.classinfo is RadialAlignTool.classinfo", "false", "drop RadialAlign admission"),
@@ -2161,6 +2191,22 @@ for target, old, new, label in (
     else: context = context.replace(old, new, 1)
     if transform_activation_gate(owner, context, tool):
         fail(f"Transform activation mutation did not RED: {label}")
+for target, old, new, label in (
+    ("linear", "PreparedTransformActivationOwner.prepare(this)", "null", "drop LinearAlign owner"),
+    ("radial", "PreparedTransformActivationOwner.prepare(this)", "null", "drop RadialAlign owner"),
+    ("linear", "context.prepareTransformActivation(owner) &&", "true &&", "drop LinearAlign enlist"),
+    ("radial", "context.markNoHistoryInstall();", "true;", "drop RadialAlign NoHistory order"),
+    ("linear", "scope(failure) context.discard();", "", "drop LinearAlign failure cleanup"),
+    ("linear", "PreparedTransformActivationKind.LinearAlign, ok", "PreparedTransformActivationKind.RadialAlign, ok", "swap LinearAlign accepted kind"),
+    ("radial", "PreparedTransformActivationKind.RadialAlign, ok", "PreparedTransformActivationKind.LinearAlign, ok", "swap RadialAlign accepted kind"),
+    ("linear", "return PreparedTransformActivationEffect(preparedToolStateOwner,", "return PreparedTransformActivationEffect(OwnedId.init,", "replace accepted owner"),
+    ("radial", "auto owner = PreparedTransformActivationOwner.prepare(this);", "auto owner = PreparedTransformActivationOwner.prepare(this); owner.install();", "mutate live state during prepare"),
+):
+    linear, radial = linear_align_tool, radial_align_tool
+    if target == "linear": linear = linear.replace(old, new, 1)
+    else: radial = radial.replace(old, new, 1)
+    if transform_producer_gate(linear, radial):
+        fail(f"Transform alignment producer mutation did not RED: {label}")
 for path, aggregate in (("tools/transform/transform.d", "TransformTool"),
                         ("tools/alignment/linear_align_tool.d", "LinearAlignTool"),
                         ("tools/alignment/radial_align_tool.d", "RadialAlignTool")):

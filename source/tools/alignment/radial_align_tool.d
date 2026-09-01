@@ -11,6 +11,10 @@ import math : Vec3, Viewport;
 import shader;
 import params : Param;
 import change_bus : MeshEditScope;
+import prepared_record_context : PreparedRecordContext;
+import prepared_transform_activation : PreparedTransformActivationOwner;
+import prepared_tool_effect : PreparedTransformActivationEffect,
+    PreparedTransformActivationKind;
 
 /// Radial Align tool (`xfrm.radialAlignTool`) — falloff-aware deform
 /// tool, same structural family as Bend/Push (tools/bend.d, tools/push.d):
@@ -60,6 +64,19 @@ public:
     // still gets "circle"/4/0/0/1.0 from the field initializers above.
     override void activate() {
         super.activate();
+    }
+
+    final PreparedTransformActivationEffect prepareActivate(
+            PreparedRecordContext context) {
+        if (context is null) return PreparedTransformActivationEffect(
+            preparedToolStateOwner, PreparedTransformActivationKind.RadialAlign, false);
+        scope(failure) context.discard();
+        auto owner = PreparedTransformActivationOwner.prepare(this);
+        bool ok = owner !is null && context.prepareTransformActivation(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedTransformActivationEffect(preparedToolStateOwner,
+            PreparedTransformActivationKind.RadialAlign, ok);
     }
 
     // `radius` / `centerX/Y/Z` are deliberately NOT exposed here: the

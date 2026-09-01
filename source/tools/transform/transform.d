@@ -282,6 +282,16 @@ public:
             vertexCacheDirty && !needsGpuUpdate && !centerManual &&
             !wholeMeshDrag && !propsDragging;
     }
+    version(unittest) bool preparedActivationSeedForTest() const nothrow @nogc {
+        float[16] seeded; seeded[] = 7;
+        return gpuMatrix == seeded && lastSelectionHash == 3 &&
+            lastMutationVersion == 4 && dragAxis == 2 && !active &&
+            !vertexCacheDirty && needsGpuUpdate && centerManual &&
+            wholeMeshDrag && propsDragging;
+    }
+    version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
+        return preparedToolStateOwner;
+    }
 
 protected:
     bool          active;

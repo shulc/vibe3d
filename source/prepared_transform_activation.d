@@ -70,6 +70,7 @@ version(unittest) unittest {
     import prepared_record_context : PreparedRecordContext;
     import command_history : CommandHistory;
     import record_observer_hub : RecordObserverHub;
+    import prepared_tool_effect : PreparedTransformActivationKind;
     Mesh mesh = makeCube(); GpuMesh gpu; EditMode mode = EditMode.Polygons;
     auto linear = new LinearAlignTool(() => &mesh, &gpu, &mode);
     auto radial = new RadialAlignTool(() => &mesh, &gpu, &mode);
@@ -127,4 +128,68 @@ version(unittest) unittest {
         new RecordObserverHub());
     assert(retry.prepareTransformActivation(fresh)); retry.discard();
     assert(fresh.payloadEmpty() && !linear.preparedActivationForTest());
+
+    linear.seedPreparedActivationForTest();
+    auto linearContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    auto linearEffect = linear.prepareActivate(linearContext);
+    assert(linearEffect.accepted &&
+        linearEffect.kind == PreparedTransformActivationKind.LinearAlign &&
+        linearEffect.owner == linear.preparedOwnerForTest &&
+        linear.preparedActivationSeedForTest() && linearContext.validate());
+    linearContext.install(); linearContext.install();
+    assert(linear.preparedActivationForTest() &&
+        linearContext.installTraceForTest() == [14, 8]);
+
+    radial.seedPreparedActivationForTest();
+    auto radialContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    auto radialEffect = radial.prepareActivate(radialContext);
+    assert(radialEffect.accepted &&
+        radialEffect.kind == PreparedTransformActivationKind.RadialAlign &&
+        radialEffect.owner == radial.preparedOwnerForTest &&
+        radial.preparedActivationSeedForTest() && radialContext.validate());
+    radialContext.install();
+    radialContext.install();
+    assert(radial.preparedActivationForTest() &&
+        radialContext.installTraceForTest() == [14, 8]);
+
+    auto subclassContext = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    auto refused = behaviorful.prepareActivate(subclassContext);
+    assert(!refused.accepted &&
+        refused.kind == PreparedTransformActivationKind.LinearAlign &&
+        refused.owner == behaviorful.preparedOwnerForTest &&
+        !subclassContext.validate());
+    auto nullLinear = linear.prepareActivate(null);
+    auto nullRadial = radial.prepareActivate(null);
+    assert(!nullLinear.accepted &&
+        nullLinear.kind == PreparedTransformActivationKind.LinearAlign &&
+        nullLinear.owner == linear.preparedOwnerForTest &&
+        !nullRadial.accepted &&
+        nullRadial.kind == PreparedTransformActivationKind.RadialAlign &&
+        nullRadial.owner == radial.preparedOwnerForTest);
+    linear.seedPreparedActivationForTest();
+    auto producerFault = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    PreparedRecordContext.failAfterResourceBeginForTest(true); threw = false;
+    try linear.prepareActivate(producerFault); catch (Exception) threw = true;
+    PreparedRecordContext.failAfterResourceBeginForTest(false);
+    assert(threw && !producerFault.validate() &&
+        linear.preparedActivationSeedForTest());
+
+    radial.seedPreparedActivationForTest();
+    auto radialFault = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    PreparedRecordContext.failAfterResourceBeginForTest(true); threw = false;
+    try radial.prepareActivate(radialFault); catch (Exception) threw = true;
+    PreparedRecordContext.failAfterResourceBeginForTest(false);
+    assert(threw && !radialFault.validate() &&
+        radial.preparedActivationSeedForTest());
+    auto radialRetry = new PreparedRecordContext(new CommandHistory(),
+        new RecordObserverHub());
+    assert(radial.prepareActivate(radialRetry).accepted &&
+        radial.preparedActivationSeedForTest() && radialRetry.validate());
+    radialRetry.install();
+    assert(radial.preparedActivationForTest()); radialRetry.install();
 }

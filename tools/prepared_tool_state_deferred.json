@@ -42,16 +42,6 @@
   {
     "batch": "P1.0b.2+",
     "key": {
-      "aggregate": "LinearAlignTool",
-      "module": "tools.alignment.linear_align_tool",
-      "signature": "void()",
-      "symbol": "activate"
-    },
-    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
-  },
-  {
-    "batch": "P1.0b.2+",
-    "key": {
       "aggregate": "MirrorTool",
       "module": "tools.alignment.mirror",
       "signature": "void()",
@@ -68,16 +58,6 @@
       "symbol": "deactivate"
     },
     "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
-  },
-  {
-    "batch": "P1.0b.2+",
-    "key": {
-      "aggregate": "RadialAlignTool",
-      "module": "tools.alignment.radial_align_tool",
-      "signature": "void()",
-      "symbol": "activate"
-    },
-    "reason": "reachable Mesh/GpuGl/session work or helper requires typed later-owner effects"
   },
   {
     "batch": "P1.0b.3+",
