@@ -12,7 +12,7 @@ import toolpipe.stage    : Stage, TaskCode, ordAxis, ToolSwitchTransient;
 // pipeline imports moved to packet-only — Phase 6 cleanup
 import toolpipe.packets  : AxisPacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
-import popup_state       : setStatePath;
+import popup_state       : setStatePath, installPreparedStatePath;
 import document          : Layer;
 import params            : IntEnumEntry, wireTagForValue, valueForWireTag,
                            tableCoversEnumOf;
@@ -1102,6 +1102,15 @@ private:
         return true;
     }
 
+    /// Commit half of the prepared preset write. Parsing and ownership of the
+    /// wire tag happened in prepare; this path only installs scalar state and
+    /// overwrites the constructor-seeded popup key.
+    void installPreparedMode(Mode prepared, string ownedWire) nothrow {
+        mode = prepared;
+        ++slotEpoch;
+        installPreparedStatePath("axis/mode", ownedWire);
+    }
+
     bool applySetAttr(string name, string value) {
         switch (name) {
             case "mode": {
@@ -1137,6 +1146,11 @@ unittest {
     assert(!AxisStage.parsePreparedMode("not-a-mode", parsed));
     assert(live.mode == AxisStage.Mode.World,
            "invalid prepared axis value mutated live stage state");
+    const beforeEpoch = live.slotEpoch;
+    live.installPreparedMode(parsed = AxisStage.Mode.Element, "element");
+    assert(live.mode == AxisStage.Mode.Element &&
+           live.slotEpoch == beforeEpoch + 1,
+           "prepared axis installer omitted state or slot activation");
 }
 
 // ---------------------------------------------------------------------------

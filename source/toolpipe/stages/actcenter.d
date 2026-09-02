@@ -13,7 +13,7 @@ import params           : Param, IntEnumEntry, wireTagForValue, valueForWireTag;
 // pipeline imports moved to packet-only — Phase 6 cleanup
 import toolpipe.packets  : SymmetryPacket, ActionCenterPacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
-import popup_state       : setStatePath;
+import popup_state       : setStatePath, installPreparedStatePath;
 import document          : Layer;
 
 /// How many times `computeLocalClustersFull` has rebuilt the Local-mode
@@ -2106,6 +2106,17 @@ private:
         return true;
     }
 
+    /// Nonthrowing commit counterpart of the `mode` arm in applySetAttr.
+    /// `elementPin` intentionally survives, matching the measured mode-switch
+    /// law; only the Auto user placement and soft placement are cleared.
+    void installPreparedMode(Mode prepared, string ownedWire) nothrow {
+        mode = prepared;
+        userPin.placed = false;
+        softPin = Pin.init;
+        ++slotEpoch;
+        installPreparedStatePath("actionCenter/mode", ownedWire);
+    }
+
     bool applySetAttr(string name, string value) {
         switch (name) {
             case "mode": {
@@ -2214,6 +2225,11 @@ unittest {
     assert(!ActionCenterStage.parsePreparedMode("not-a-mode", parsed));
     assert(live.mode == ActionCenterStage.Mode.Origin,
            "invalid prepared action-center value mutated live stage state");
+    const beforeEpoch = live.slotEpoch;
+    live.installPreparedMode(parsed = ActionCenterStage.Mode.Border, "border");
+    assert(live.mode == ActionCenterStage.Mode.Border &&
+           live.slotEpoch == beforeEpoch + 1,
+           "prepared action-center installer omitted state or slot activation");
 }
 
 
