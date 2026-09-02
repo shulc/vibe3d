@@ -71,6 +71,8 @@ private static immutable IntEnumEntry[] constrainGeomEntries = [
 struct PreparedConstrainCompositionProjection {
     bool enabled, userLocked;
     ConstrainGeom geom;
+    float offset;
+    bool handle, dblSided;
 }
 
 unittest {
@@ -446,12 +448,14 @@ public:
 
     PreparedConstrainCompositionProjection capturePreparedCompositionProjection()
             const nothrow @nogc {
-        return PreparedConstrainCompositionProjection(enabled, userLocked, geom);
+        return PreparedConstrainCompositionProjection(enabled, userLocked, geom,
+                                                       offset, handle, dblSided);
     }
     bool matchesPreparedCompositionProjection(
             in PreparedConstrainCompositionProjection expected) const nothrow @nogc {
         return enabled == expected.enabled && userLocked == expected.userLocked &&
-            geom == expected.geom;
+            geom == expected.geom && offset == expected.offset &&
+            handle == expected.handle && dblSided == expected.dblSided;
     }
     void installPreparedPointComposition() nothrow {
         enabled = true; geom = ConstrainGeom.Point;

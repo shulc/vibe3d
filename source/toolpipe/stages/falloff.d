@@ -1258,20 +1258,20 @@ private:
     /// start plane re-weighs, it does not end the run).
     public override bool attrArmsSlot(string name) const { return name == "type"; }
 
-    static bool parsePreparedType(string value, out FalloffType result) {
+    public static bool parsePreparedType(string value, out FalloffType result) {
         import toolpipe.packets : falloffTypeFromName;
         if (value == "none") { result = FalloffType.None; return true; }
         return falloffTypeFromName(value, result);
     }
 
-    static bool parsePreparedShape(string value, out FalloffShape result) pure {
+    public static bool parsePreparedShape(string value, out FalloffShape result) pure {
         int v;
         if (!valueForWireTag(shapeEntries, value, v)) return false;
         result = cast(FalloffShape)v;
         return true;
     }
 
-    static bool parsePreparedElementMode(string value, out ElementMode result) pure {
+    public static bool parsePreparedElementMode(string value, out ElementMode result) pure {
         string tok = value;
         if      (tok == "autoCent") tok = "auto";
         else if (tok == "edgeCent") tok = "edge";
@@ -1282,7 +1282,7 @@ private:
         return true;
     }
 
-    static bool parsePreparedTransparent(string value, out bool result)
+    public static bool parsePreparedTransparent(string value, out bool result)
             pure nothrow @nogc {
         if (value == "true" || value == "1") { result = true; return true; }
         if (value == "false" || value == "0") { result = false; return true; }
@@ -1292,7 +1292,7 @@ private:
     /// Installs one fully parsed preset image in a fixed semantic order.
     /// Every shipped Falloff preset owns a `type` write, so the slot epoch
     /// advances exactly once; the remaining attrs re-grade that same slot.
-    void installPreparedPreset(FalloffType nextType,
+    public void installPreparedPreset(FalloffType nextType,
             FalloffShape nextShape, ElementMode nextMode,
             bool nextTransparent, string ownedTypeWire,
             string ownedShapeWire) nothrow {
@@ -1510,6 +1510,12 @@ private:
 
     string shapeLabel() const {
         return wireTagForValue(shapeEntries, cast(int)shape);
+    }
+
+    /// Authoritative prepared-image stringifier; shares the exact table used
+    /// by both the live setter and popup publisher.
+    public static string preparedShapeWire(FalloffShape value) {
+        return wireTagForValue(shapeEntries, cast(int)value);
     }
 
     string mixLabel() const {

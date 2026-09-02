@@ -1106,7 +1106,7 @@ private:
     /// Allocation-free parser used by prepared tool activation.  It reads the
     /// same authoritative table as the legacy setter without touching live
     /// stage state or publishing popup state during preparation.
-    static bool parsePreparedMode(string value, out Mode result) pure {
+    public static bool parsePreparedMode(string value, out Mode result) pure {
         int v;
         if (!valueForWireTag(modeEntries, value, v)) return false;
         result = cast(Mode)v;
@@ -1116,7 +1116,7 @@ private:
     /// Commit half of the prepared preset write. Parsing and ownership of the
     /// wire tag happened in prepare; this path only installs scalar state and
     /// overwrites the constructor-seeded popup key.
-    void installPreparedMode(Mode prepared, string ownedWire) nothrow {
+    public void installPreparedMode(Mode prepared, string ownedWire) nothrow {
         mode = prepared;
         ++slotEpoch;
         installPreparedStatePath("axis/mode", ownedWire);

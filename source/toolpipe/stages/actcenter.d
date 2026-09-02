@@ -2116,7 +2116,7 @@ private:
     /// Zero-live-write parse seam for the prepared preset owner.  The full
     /// wire table (including the non-panel `manual` token) remains the single
     /// source used by both activation paths.
-    static bool parsePreparedMode(string value, out Mode result) pure {
+    public static bool parsePreparedMode(string value, out Mode result) pure {
         int v;
         if (!valueForWireTag(modeEntriesFull, value, v)) return false;
         result = cast(Mode)v;
@@ -2126,7 +2126,7 @@ private:
     /// Nonthrowing commit counterpart of the `mode` arm in applySetAttr.
     /// `elementPin` intentionally survives, matching the measured mode-switch
     /// law; only the Auto user placement and soft placement are cleared.
-    void installPreparedMode(Mode prepared, string ownedWire) nothrow {
+    public void installPreparedMode(Mode prepared, string ownedWire) nothrow {
         mode = prepared;
         userPin.placed = false;
         softPin = Pin.init;
