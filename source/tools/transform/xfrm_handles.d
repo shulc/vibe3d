@@ -32,6 +32,15 @@ mixin template XfrmHandlesImpl() {
         syncScaleBankStandoff();
     }
 
+    private void installPreparedSharedGizmoPose(Vec3 center, Vec3 bX,
+                                                Vec3 bY, Vec3 bZ)
+            nothrow @nogc {
+        if (flagT) moveSub.setWrapperGizmoPose(center, bX, bY, bZ);
+        if (flagR) rotateSub.setWrapperGizmoPose(center, bX, bY, bZ);
+        if (flagS) scaleSub.setWrapperGizmoPose(center, bX, bY, bZ);
+        syncScaleBankStandoff();
+    }
+
     // The scale bank's axis boxes stand a further tenth of an arm out when
     // ANOTHER bank shares the gizmo (handles/gl_util.GIZMO_SCALE_ARM_CROSS_-
     // BANK_SHIFT). The gate is a disjunction — either companion pushes the
@@ -50,7 +59,7 @@ mixin template XfrmHandlesImpl() {
     // immediately before `refreshBankGeometry` on the mouse-down hit pass
     // (which registers and refreshes without ever posing). Both write the same
     // pure function of the flags, so the order they run in cannot matter.
-    private void syncScaleBankStandoff() {
+    private void syncScaleBankStandoff() nothrow @nogc {
         if (flagS) scaleSub.handler.setCrossBankShift(flagT || flagR);
     }
 

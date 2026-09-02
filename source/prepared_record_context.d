@@ -21,6 +21,7 @@ import prepared_transform_product_activation : PreparedTransformProductActivatio
 import prepared_move_update : PreparedMoveUpdateOwner;
 import prepared_rotate_update : PreparedRotateUpdateOwner;
 import prepared_scale_update : PreparedScaleUpdateOwner;
+import prepared_xfrm_update_tail : PreparedXfrmUpdateTailOwner;
 import prepared_inherited_noop : PreparedInheritedNoopOwner;
 import prepared_xfrm_activation_session : PreparedXfrmActivationSessionOwner;
 import prepared_stroke_extrude_activation : PreparedStrokeExtrudeActivationOwner;
@@ -71,7 +72,7 @@ private enum PreparedResourceKind : ubyte {
     RadialSweepProfileState, RadialSweepTransitionState, GestureCarrierMismatch,
     GpuCreateUpload, RadialArrayTransitionState, TransformActivationState,
     TransformProductActivationState, MoveUpdateState, RotateUpdateState,
-    ScaleUpdateState,
+    ScaleUpdateState, XfrmUpdateTailState,
     InheritedNoopState,
     XfrmActivationPreState, XfrmActivationPostState, StrokeExtrudeActivationState,
     VertexMergeActivationState, PolyInsetActivationState, PolyExtrudeActivationState,
@@ -103,6 +104,7 @@ private struct PreparedResourceEntry {
     PreparedMoveUpdateOwner moveUpdate;
     PreparedRotateUpdateOwner rotateUpdate;
     PreparedScaleUpdateOwner scaleUpdate;
+    PreparedXfrmUpdateTailOwner xfrmUpdateTail;
     PreparedInheritedNoopOwner inheritedNoop;
     PreparedXfrmActivationSessionOwner xfrmActivation;
     PreparedStrokeExtrudeActivationOwner strokeExtrudeActivation;
@@ -441,6 +443,16 @@ public:
             throw new Exception("injected scale update enlist failure");
         PreparedResourceEntry e; e.kind = PreparedResourceKind.ScaleUpdateState;
         e.scaleUpdate = owner; resources_ ~= e; return true;
+    }
+    bool prepareXfrmUpdateTail(PreparedXfrmUpdateTailOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected Xfrm update tail enlist failure");
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.XfrmUpdateTailState;
+        e.xfrmUpdateTail = owner; resources_ ~= e; return true;
     }
     bool prepareStrokeExtrudeActivation(PreparedStrokeExtrudeActivationOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
@@ -1018,6 +1030,8 @@ public:
                 ok = e.rotateUpdate !is null && e.rotateUpdate.validate(); break;
             case PreparedResourceKind.ScaleUpdateState:
                 ok = e.scaleUpdate !is null && e.scaleUpdate.validate(); break;
+            case PreparedResourceKind.XfrmUpdateTailState:
+                ok = e.xfrmUpdateTail !is null && e.xfrmUpdateTail.validate(); break;
             case PreparedResourceKind.InheritedNoopState:
                 ok = e.inheritedNoop !is null && e.inheritedNoop.validate(); break;
             case PreparedResourceKind.XfrmActivationPreState:
@@ -1242,6 +1256,10 @@ public:
         case PreparedResourceKind.ScaleUpdateState:
             e.scaleUpdate.install();
             version(unittest) installTrace_[installTraceLength_++] = 57;
+            break;
+        case PreparedResourceKind.XfrmUpdateTailState:
+            e.xfrmUpdateTail.install();
+            version(unittest) installTrace_[installTraceLength_++] = 59;
             break;
         case PreparedResourceKind.InheritedNoopState:
             e.inheritedNoop.install();
@@ -1505,6 +1523,7 @@ private:
         case PreparedResourceKind.MoveUpdateState: e.moveUpdate.abort(); break;
         case PreparedResourceKind.RotateUpdateState: e.rotateUpdate.abort(); break;
         case PreparedResourceKind.ScaleUpdateState: e.scaleUpdate.abort(); break;
+        case PreparedResourceKind.XfrmUpdateTailState: e.xfrmUpdateTail.abort(); break;
         case PreparedResourceKind.InheritedNoopState: e.inheritedNoop.abort(); break;
         case PreparedResourceKind.XfrmActivationPreState:
         case PreparedResourceKind.XfrmActivationPostState:

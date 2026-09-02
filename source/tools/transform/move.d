@@ -497,7 +497,8 @@ public:
         th.add(handler.arrowZ,    base + 2);
     }
 
-    void setWrapperGizmoPose(Vec3 center, Vec3 bX, Vec3 bY, Vec3 bZ) {
+    void setWrapperGizmoPose(Vec3 center, Vec3 bX, Vec3 bY, Vec3 bZ)
+            nothrow @nogc {
         cachedCenter = center;
         handler.setPosition(center);
         // flex_border_handles_plan.md Phase 2 — the wrapper passes the Model-C

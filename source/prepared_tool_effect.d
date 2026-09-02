@@ -58,6 +58,7 @@ enum PreparedScaleUpdateKind : ubyte {
     None, InactiveNoop, DraggingNoop, IdleRefresh, SelectionRefresh,
     MutationRefresh, PanelRegrade, WrapperRegrade
 }
+enum PreparedXfrmUpdateKind : ubyte { None, InactiveNoop, Active }
 enum PreparedTopologyPenUpdateKind : ubyte { None, PacketAbsent, Packet }
 enum PreparedPenParamKind : ubyte { None, Noop, CurrentPoint, Position }
 enum PreparedArrayParamKind : ubyte { None, Noop, Preview }
@@ -118,6 +119,11 @@ enum PreparedInheritedNoopKind : ubyte { Activate, Deactivate, Update }
 @PreparedAggregate struct PreparedScaleUpdateEffect {
     OwnedId owner;
     PreparedScaleUpdateKind kind;
+    bool accepted;
+}
+@PreparedAggregate struct PreparedXfrmUpdateEffect {
+    OwnedId owner;
+    PreparedXfrmUpdateKind kind;
     bool accepted;
 }
 @PreparedAggregate struct PreparedTopologyPenUpdateEffect {

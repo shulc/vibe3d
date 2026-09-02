@@ -6948,8 +6948,8 @@ move_update_production_calls = sum(
     without_unittests(text).count("PreparedMoveUpdateOwner.prepare(") +
     without_unittests(text).count(".prepareMoveUpdate(")
     for text in prepared_source_texts.values())
-if move_update_production_calls != 2:
-    fail("Move update owner escaped its one dormant producer")
+if move_update_production_calls != 4:
+    fail("Move update owner escaped its two dormant producers")
 
 def move_update_producer_gate(move):
     start = move.find("final PreparedMoveUpdateEffect prepareUpdate(")
@@ -7173,7 +7173,82 @@ run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(topopen_copy)], cwd=ROOT,
     text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 if run.returncode == 0 or ("not copyable" not in run.stdout and
         not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-    fail("TopologyPen deactivate token copy was not rejected:\n" + run.stdout)
+        fail("TopologyPen deactivate token copy was not rejected:\n" + run.stdout)
+
+# Xfrm update tail is the fixed final phase after the typed T/R/S owners:
+# subject cache -> shared pose -> wrapper GPU projection.
+xfrm_tail_owner = (ROOT / "source/prepared_xfrm_update_tail.d").read_text()
+xfrm_tail_handles = (ROOT / "source/tools/transform/xfrm_handles.d").read_text()
+def xfrm_update_tail_gate(owner, context, xfrm, handles):
+    production = without_unittests(owner)
+    prepared_handles_start = handles.find(
+        "private void installPreparedSharedGizmoPose")
+    prepared_handles_body = handles[
+        prepared_handles_start:balanced_source(
+            handles, handles.find("{", prepared_handles_start) + 1)]
+    return all(x in owner for x in (
+        "final class PreparedXfrmUpdateTailOwner",
+        "target.classinfo !is XfrmTransformTool.classinfo",
+        "prepared_.owner != owner_", "prepared_.generation != generation_",
+        "validatedToken_.owner != owner_",
+        "validatedToken_.generation != generation_",
+        "target_.preparedUpdateTailMatches(image_)",
+        "target_.installPreparedUpdateTail(image_);")) and \
+        not any(x in production for x in (" delegate", " function(", "void*", "ubyte[]")) and \
+        all(x in context for x in (
+            "bool prepareXfrmUpdateTail(PreparedXfrmUpdateTailOwner owner)",
+            "e.xfrmUpdateTail.validate();", "e.xfrmUpdateTail.install();",
+            "e.xfrmUpdateTail.abort();")) and \
+        all(x in xfrm for x in (
+            "PreparedXfrmUpdateTailImage buildPreparedUpdateTail(",
+            "preparedUpdateTailMatches(",
+            "installPreparedUpdateTail(ref PreparedXfrmUpdateTailImage image)",
+            "cachedSubjType_ = image.nextSubject;",
+            "installPreparedSharedGizmoPose(image.center, image.basisX,",
+            "if (image.writeGpuMatrix) gpuMatrix = image.nextGpuMatrix;",
+            "projectedGpuMatrix(out bool write) const nothrow @nogc")) and \
+        all(x in prepared_handles_body for x in (
+            "installPreparedSharedGizmoPose(Vec3 center, Vec3 bX,",
+            "nothrow @nogc",
+            "if (flagT) moveSub.setWrapperGizmoPose(center, bX, bY, bZ);",
+            "if (flagR) rotateSub.setWrapperGizmoPose(center, bX, bY, bZ);",
+            "if (flagS) scaleSub.setWrapperGizmoPose(center, bX, bY, bZ);",
+            "syncScaleBankStandoff();"))
+
+if not xfrm_update_tail_gate(xfrm_tail_owner, record_context,
+                             prepared_source_texts[ROOT / "source/tools/transform/xfrm_transform.d"],
+                             xfrm_tail_handles):
+    fail("Xfrm update tail owner contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is XfrmTransformTool.classinfo", "false", "broaden product"),
+    ("owner", "target_.preparedUpdateTailMatches(image_)", "true", "drop live validation"),
+    ("owner", "target_.installPreparedUpdateTail(image_);", "", "drop fixed install"),
+    ("context", "e.xfrmUpdateTail.validate();", "true;", "drop context validation"),
+    ("context", "e.xfrmUpdateTail.install();", "", "drop context install"),
+    ("context", "e.xfrmUpdateTail.abort();", "", "drop context abort"),
+    ("xfrm", "cachedSubjType_ = image.nextSubject;", "", "drop subject install"),
+    ("xfrm", "if (image.writeGpuMatrix) gpuMatrix = image.nextGpuMatrix;", "", "drop GPU projection"),
+    ("handles", "if (flagT) moveSub.setWrapperGizmoPose(center, bX, bY, bZ);", "", "drop Move pose"),
+    ("handles", "if (flagR) rotateSub.setWrapperGizmoPose(center, bX, bY, bZ);", "", "drop Rotate pose"),
+    ("handles", "if (flagS) scaleSub.setWrapperGizmoPose(center, bX, bY, bZ);", "", "drop Scale pose"),
+):
+    o, c = xfrm_tail_owner, record_context
+    x = prepared_source_texts[ROOT / "source/tools/transform/xfrm_transform.d"]
+    h = xfrm_tail_handles
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    elif target == "xfrm": x = x.replace(old, new, 1)
+    else:
+        before, found, after = h.rpartition(old)
+        h = before + new + after if found else h
+    if xfrm_update_tail_gate(o, c, x, h):
+        fail(f"Xfrm update tail mutation did not RED: {label}")
+xfrm_tail_copy = ROOT / "tests/compile_fail/prepared_xfrm_update_tail_token_copy.d"
+run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(xfrm_tail_copy)], cwd=ROOT,
+    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+if run.returncode == 0 or ("not copyable" not in run.stdout and
+        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+    fail("Xfrm update tail token copy was not rejected:\n" + run.stdout)
 
 # Closed inherited base-noop owner infrastructure.  The effective product
 # table above proves DragWeldTool is the sole activate/deactivate admission;

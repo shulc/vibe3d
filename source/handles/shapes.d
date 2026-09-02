@@ -801,7 +801,7 @@ class MoveHandler : Handler {
     Vec3 axisX = Vec3(1, 0, 0);
     Vec3 axisY = Vec3(0, 1, 0);
     Vec3 axisZ = Vec3(0, 0, 1);
-    void setOrientation(Vec3 ax, Vec3 ay, Vec3 az) {
+    void setOrientation(Vec3 ax, Vec3 ay, Vec3 az) nothrow @nogc {
         axisX = ax; axisY = ay; axisZ = az;
     }
 
@@ -1051,7 +1051,7 @@ class RotateHandler : Handler {
     Vec3 axisX = Vec3(1, 0, 0);
     Vec3 axisY = Vec3(0, 1, 0);
     Vec3 axisZ = Vec3(0, 0, 1);
-    void setOrientation(Vec3 ax, Vec3 ay, Vec3 az) {
+    void setOrientation(Vec3 ax, Vec3 ay, Vec3 az) nothrow @nogc {
         axisX = ax; axisY = ay; axisZ = az;
     }
 
@@ -1111,7 +1111,7 @@ class RotateHandler : Handler {
     }
 
     void destroy() { arcX.destroy(); arcY.destroy(); arcZ.destroy(); arcView.destroy(); bgCircle.destroy(); }
-    void setPosition(Vec3 pos) { center = pos; }
+    void setPosition(Vec3 pos) nothrow @nogc { center = pos; }
 
     // Task 0212: see MoveHandler.syncGeometry — same idempotent CPU-only
     // re-layout forwarder. Re-derives `startAngle` (arcX/Y/Z) from the
@@ -1666,7 +1666,7 @@ class ScaleHandler : Handler {
     Vec3 axisX = Vec3(1, 0, 0);
     Vec3 axisY = Vec3(0, 1, 0);
     Vec3 axisZ = Vec3(0, 0, 1);
-    void setOrientation(Vec3 ax, Vec3 ay, Vec3 az) {
+    void setOrientation(Vec3 ax, Vec3 ay, Vec3 az) nothrow @nogc {
         axisX = ax; axisY = ay; axisZ = az;
         scaleArrowX.fixedDir = ax;
         scaleArrowY.fixedDir = ay;
@@ -1739,7 +1739,7 @@ class ScaleHandler : Handler {
     /// As state, draw and hit reach the same number through the same
     /// no-argument call, and the parameter that made the two expressible
     /// separately is gone.
-    void setCrossBankShift(bool besideAnotherBank) {
+    void setCrossBankShift(bool besideAnotherBank) nothrow @nogc {
         crossBankShift_ = besideAnotherBank ? GIZMO_SCALE_ARM_CROSS_BANK_SHIFT : 0.0f;
     }
     /// The live stand-off, in arm fractions (0 or the cross-bank shift).
@@ -1762,7 +1762,7 @@ class ScaleHandler : Handler {
         circleXZ.destroy();
     }
 
-    void setPosition(Vec3 pos) {
+    void setPosition(Vec3 pos) nothrow @nogc {
         center = pos;
     }
 

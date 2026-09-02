@@ -474,7 +474,7 @@ protected:
     // Used by subclasses (RotateTool, ScaleTool) to decide whether to
     // snapshot tool-specific Tool-Properties state — only on the FIRST
     // active frame of a slider drag, not on subsequent frames.
-    protected bool editIsOpen() const { return editCapturing; }
+    protected bool editIsOpen() const nothrow @nogc { return editCapturing; }
 
     // Public read-only mirror of editIsOpen(), so the composing wrapper
     // (XfrmTransformTool) can ask a sub-tool whether ITS edit session is open

@@ -1,9 +1,15 @@
 module tools.transform.xfrm_transform;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
-import prepared_tool_effect : PreparedXfrmActivationEffect;
+import prepared_tool_effect : PreparedXfrmActivationEffect,
+    PreparedXfrmUpdateEffect, PreparedXfrmUpdateKind;
 import prepared_xfrm_activation_session : PreparedXfrmActivationSessionOwner;
 import prepared_xfrm_refire_state : PreparedXfrmRefireStateImage;
+import prepared_xfrm_update_tail : PreparedXfrmUpdateTailOwner;
+import prepared_move_update : PreparedMoveUpdateOwner;
+import prepared_rotate_update : PreparedRotateUpdateOwner;
+import prepared_scale_update : PreparedScaleUpdateOwner;
+import document : Layer;
 
 // XfrmTransformTool — `xfrm.transform`: ONE tool that can translate,
 // rotate, and scale based on three boolean flags
@@ -393,6 +399,31 @@ struct PreparedXfrmRefireCandidate {
         mesh = Mesh.init;
         deliveryFlags = deliveryDomains = 0;
         applied = false;
+    }
+}
+
+/// Detached final phase of `update`: subject publication, shared gizmo pose
+/// and wrapper GPU-matrix forwarding. Sub-tool updates are separate owners;
+/// this image records only the wrapper writes that must follow them.
+struct PreparedXfrmUpdateTailImage {
+    SelType expectedSubject;
+    SelType nextSubject;
+    Vec3 center;
+    Vec3 basisX;
+    Vec3 basisY;
+    Vec3 basisZ;
+    float[16] expectedGpuMatrix;
+    float[16] nextGpuMatrix;
+    TransformTool expectedActiveDrag;
+    MoveTool expectedMove;
+    RotateTool expectedRotate;
+    ScaleTool expectedScale;
+    ubyte flags;
+    bool writeGpuMatrix;
+    bool valid;
+
+    void clear() nothrow @nogc {
+        this = PreparedXfrmUpdateTailImage.init;
     }
 }
 
@@ -1314,6 +1345,102 @@ public:
         else
             setSharedGizmoPose(queryActionCenter(vts), vts);
         syncGpuMatrix();
+    }
+
+    final PreparedXfrmUpdateTailImage buildPreparedUpdateTail(
+            ref VectorStack vts) {
+        PreparedXfrmUpdateTailImage image;
+        if (!active) return image;
+        image.expectedSubject = cachedSubjType_;
+        image.nextSubject = cachedSubjType_;
+        import toolpipe.packets : SubjectPacket;
+        if (auto sp = vts.get!SubjectPacket()) image.nextSubject = sp.selType;
+        image.expectedActiveDrag = activeDrag;
+        image.expectedMove = moveSub;
+        image.expectedRotate = rotateSub;
+        image.expectedScale = scaleSub;
+        image.flags = cast(ubyte)((flagT ? 1 : 0) | (flagR ? 2 : 0) |
+                                 (flagS ? 4 : 0));
+        if (activeDrag is moveSub) image.center = moveSub.handler.center;
+        else if (activeDrag is rotateSub) image.center = rotateSub.handler.center;
+        else if (activeDrag is scaleSub) image.center = scaleSub.handler.center;
+        else image.center = queryActionCenter(vts);
+        renderBasis(image.basisX, image.basisY, image.basisZ, vts);
+        image.expectedGpuMatrix = gpuMatrix;
+        image.nextGpuMatrix = projectedGpuMatrix(image.writeGpuMatrix);
+        image.valid = true;
+        return image;
+    }
+
+    final bool preparedUpdateTailMatches(
+            ref const PreparedXfrmUpdateTailImage image) const nothrow @nogc {
+        return image.valid && active && cachedSubjType_ == image.expectedSubject &&
+            activeDrag is image.expectedActiveDrag && moveSub is image.expectedMove &&
+            rotateSub is image.expectedRotate && scaleSub is image.expectedScale &&
+            cast(ubyte)((flagT ? 1 : 0) | (flagR ? 2 : 0) | (flagS ? 4 : 0)) ==
+                image.flags && gpuMatrix == image.expectedGpuMatrix;
+    }
+
+    final void installPreparedUpdateTail(ref PreparedXfrmUpdateTailImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        cachedSubjType_ = image.nextSubject;
+        installPreparedSharedGizmoPose(image.center, image.basisX,
+                                       image.basisY, image.basisZ);
+        if (image.writeGpuMatrix) gpuMatrix = image.nextGpuMatrix;
+        image.clear();
+    }
+
+    /// Prepared composition of the already-closed T/R/S update products and
+    /// the wrapper tail. The wrapper pre-phase (selection/run boundary and
+    /// Move re-grade) is deliberately a separate owner so its history must be
+    /// decided before this method is used by the complete root producer.
+    final PreparedXfrmUpdateEffect prepareUpdateBanksAndTail(
+            ref VectorStack vts, PreparedRecordContext context, Layer layer) {
+        if (context is null) return PreparedXfrmUpdateEffect(
+            preparedToolStateOwner, PreparedXfrmUpdateKind.None, false);
+        scope(failure) context.discard();
+        if (!active) {
+            bool idleOk = context.markNoHistoryInstall();
+            if (!idleOk) context.discard();
+            return PreparedXfrmUpdateEffect(preparedToolStateOwner,
+                PreparedXfrmUpdateKind.InactiveNoop, idleOk);
+        }
+
+        PreparedMoveUpdateOwner moveOwner;
+        PreparedRotateUpdateOwner rotateOwner;
+        PreparedScaleUpdateOwner scaleOwner;
+        if (flagT) moveOwner = PreparedMoveUpdateOwner.prepare(moveSub, vts);
+        if (flagR) rotateOwner = PreparedRotateUpdateOwner.prepare(
+            rotateSub, layer, vts, context);
+        if (flagS) scaleOwner = PreparedScaleUpdateOwner.prepare(
+            scaleSub, layer, vts, context);
+        auto tailOwner = PreparedXfrmUpdateTailOwner.prepare(this, vts);
+
+        bool ok = (!flagT || moveOwner !is null) &&
+                  (!flagR || rotateOwner !is null) &&
+                  (!flagS || scaleOwner !is null) && tailOwner !is null;
+        bool hasHistory = (rotateOwner !is null && rotateOwner.historyPrepared()) ||
+                          (scaleOwner !is null && scaleOwner.historyPrepared());
+        if (ok) ok = hasHistory ? context.markHistoryInstall()
+                                : context.markNoHistoryInstall();
+        if (ok && flagT) ok = context.prepareMoveUpdate(moveOwner);
+        if (ok && flagR && rotateOwner.meshPrepared()) {
+            ok = rotateOwner.deliveryFlags() != 0 &&
+                context.prepareStampedMeshImage(layer, rotateOwner.candidate(),
+                    rotateOwner.deliveryFlags(), rotateOwner.deliveryDomains());
+        }
+        if (ok && flagR) ok = context.prepareRotateUpdate(rotateOwner);
+        if (ok && flagS && scaleOwner.meshPrepared()) {
+            ok = scaleOwner.deliveryFlags() != 0 &&
+                context.prepareStampedMeshImage(layer, scaleOwner.candidate(),
+                    scaleOwner.deliveryFlags(), scaleOwner.deliveryDomains());
+        }
+        if (ok && flagS) ok = context.prepareScaleUpdate(scaleOwner);
+        if (ok) ok = context.prepareXfrmUpdateTail(tailOwner);
+        if (!ok) context.discard();
+        return PreparedXfrmUpdateEffect(preparedToolStateOwner,
+            PreparedXfrmUpdateKind.Active, ok);
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
@@ -6480,6 +6607,20 @@ private:
         if      (flagT) gpuMatrix = moveSub.gpuMatrix;
         else if (flagR) gpuMatrix = rotateSub.gpuMatrix;
         else if (flagS) gpuMatrix = scaleSub.gpuMatrix;
+    }
+
+    float[16] projectedGpuMatrix(out bool write) const nothrow @nogc {
+        write = false;
+        if (activeDrag is moveSub) return gpuMatrix;
+        if (activeDrag is rotateSub && rotDragAxisIdx >= 0 && rotDragAxisIdx <= 3)
+            return gpuMatrix;
+        if (activeDrag is scaleSub && scaleDragActive) return gpuMatrix;
+        write = true;
+        if (activeDrag !is null) return activeDrag.gpuMatrix;
+        if (flagT) return moveSub.gpuMatrix;
+        if (flagR) return rotateSub.gpuMatrix;
+        if (flagS) return scaleSub.gpuMatrix;
+        return gpuMatrix;
     }
 }
 
