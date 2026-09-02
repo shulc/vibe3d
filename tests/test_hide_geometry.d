@@ -191,11 +191,8 @@ enum string INVERT_RIG_JSON = `{"vertices":[
 void loadInvertRig() {
     resetCube();
     loadMesh(INVERT_RIG_JSON);
-    // scene.loadMesh is a MODEL-class entry, and the undo cursor is
-    // class-aware: it carries UI entries inert and steps to the nearest Model
-    // one. Left on the stack it would swallow the `apiUndo()` rows below and
-    // revert the RIG instead of the invert (measured: they read [] — the
-    // cube's empty hidden set — rather than the pre-invert {0,9}).
+    // scene.loadMesh is a Model-class entry. Clear it so the bounded undo rows
+    // below cannot walk past the operation under test and revert the rig.
     clearHistory();
     auto fcs = faces();
     assert(fcs.length == 10, "rig must have 10 faces, got " ~ fcs.length.to!string);

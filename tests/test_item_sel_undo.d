@@ -499,55 +499,70 @@ unittest { // Exact selected-set round-trip: delta-mode selects + layer.delete u
     //   [4] sel-add-A(UI)      → A+C selected
     //   [5] sel-remove-C(UI)   → A only  ← HEAD
     //
-    // The T-SEP undo model groups entries by Model boundary: one undo step
-    // reverts the nearest Model entry plus all UI entries above it. Empirically
-    // verified ground truth (this assertion set MUST match what the engine does):
-    //
-    //   undo 1: reverts add-C(Model) + sel-add-A + sel-remove-C(UI above it)
-    //           → C deleted, only A in doc; sel = {A}
-    //   undo 2: reverts delete-B(Model), B restored; sel restored = {A, B}
-    //   undo 3: reverts sel-add-B(UI); sel = {A} (B still in doc, deselected)
-    //   undo 4: noop (stack empty)
+    // Strict LIFO reverts exactly one of these records per press.
 
     // Drain any pending flush before starting the undo walk.
     settle();
 
-    // Undo 1 — reverts add-C + UI suffix: C leaves doc, A is only selected.
+    // Undo 1 — reverts sel-remove-C: A+C selected.
     {
         auto u = postUndo();
         assertNoLockout("undo-1");
         assertPrimaryInvariant("undo-1");
         if (u["status"].str == "ok") {
-            assert(setsEqual(selectedNames(), ["Layer 1"]),
-                "undo-1: A only selected (add-C + its UI suffix reverted; C deleted)");
-            // C must be gone from the document entirely.
+            assert(setsEqual(selectedNames(), ["Layer 1", "C"]),
+                "undo-1: A+C selected (sel-remove-C reverted)");
             bool hasC = false;
             foreach (n; allNames()) if (n == "C") { hasC = true; break; }
-            assert(!hasC, "undo-1: C no longer exists in the document");
+            assert(hasC, "undo-1: C remains in the document");
         }
     }
 
-    // Undo 2 — reverts delete-B: B is restored, selection snaps to A+B.
+    // Undo 2 — reverts sel-add-A: C is the sole selection.
     {
         auto u = postUndo();
         assertNoLockout("undo-2");
         assertPrimaryInvariant("undo-2");
         if (u["status"].str == "ok")
-            assert(setsEqual(selectedNames(), ["Layer 1", "B"]),
-                "undo-2: A+B selected (delete-B reverted, B restored with its selection)");
+            assert(setsEqual(selectedNames(), ["C"]),
+                "undo-2: C only selected (sel-add-A reverted)");
     }
 
-    // Undo 3 — reverts sel-add-B: A is still primary, B stays in doc but deselected.
+    // Undo 3 — reverts add-C: C leaves the document and A remains.
     {
         auto u = postUndo();
         assertNoLockout("undo-3");
         assertPrimaryInvariant("undo-3");
         if (u["status"].str == "ok") {
             assert(setsEqual(selectedNames(), ["Layer 1"]),
-                "undo-3: A only selected (sel-add-B reverted; B in doc but deselected)");
+                "undo-3: A only selected after add-C reverted");
+            bool hasC = false;
+            foreach (n; allNames()) if (n == "C") { hasC = true; break; }
+            assert(!hasC, "undo-3: C no longer exists in the document");
+        }
+    }
+
+    // Undo 4 — reverts delete-B: B is restored with A+B selected.
+    {
+        auto u = postUndo();
+        assertNoLockout("undo-4");
+        assertPrimaryInvariant("undo-4");
+        if (u["status"].str == "ok")
+            assert(setsEqual(selectedNames(), ["Layer 1", "B"]),
+                "undo-4: A+B selected after delete-B reverted");
+    }
+
+    // Undo 5 — reverts sel-add-B: B remains but A is the sole selection.
+    {
+        auto u = postUndo();
+        assertNoLockout("undo-5");
+        assertPrimaryInvariant("undo-5");
+        if (u["status"].str == "ok") {
+            assert(setsEqual(selectedNames(), ["Layer 1"]),
+                "undo-5: A only selected after sel-add-B reverted");
             bool hasB = false;
             foreach (n; allNames()) if (n == "B") { hasB = true; break; }
-            assert(hasB, "undo-3: B still present in document (only deselected)");
+            assert(hasB, "undo-5: B remains present but deselected");
         }
     }
 
@@ -558,12 +573,12 @@ unittest { // Exact selected-set round-trip: delta-mode selects + layer.delete u
 
     // ---- Step redo one entry at a time, asserting the exact set at each step. ----
     //
-    // Redo re-applies entries in chronological order. Empirically verified states:
+    // Redo re-applies one entry per press in chronological order:
     //   redo 1: re-apply sel-add-B → A+B selected (B exists from undo-2 restoration)
     //   redo 2: re-apply delete-B  → B deleted; A only
-    //   redo 3: re-apply add-C     → C added; A only selected (C not yet in selection)
-    //   redo 4+: noop (top reached — the two UI entries above add-C may or may not
-    //            be replayed depending on T-SEP redo grouping)
+    //   redo 3: re-apply add-C     → C added and selected
+    //   redo 4: re-apply sel-add-A → A+C selected
+    //   redo 5: re-apply sel-remove-C → A only selected
 
     // Redo 1 — re-apply sel-add-B: A+B should be selected.
     {
@@ -589,26 +604,38 @@ unittest { // Exact selected-set round-trip: delta-mode selects + layer.delete u
         }
     }
 
-    // Redo 3 — re-apply add-C: C added; selection = A only (C starts deselected).
+    // Redo 3 — re-apply add-C: C is added and selected.
     {
         auto r = postRedo();
         assertNoLockout("redo-3");
         assertPrimaryInvariant("redo-3");
         if (r["status"].str == "ok") {
-            assert(setsEqual(selectedNames(), ["Layer 1"]),
-                "redo-3: A only selected (add-C re-applied; C present but deselected)");
+            assert(setsEqual(selectedNames(), ["C"]),
+                "redo-3: C selected after add-C re-applied");
             bool hasC = false;
             foreach (n; allNames()) if (n == "C") { hasC = true; break; }
             assert(hasC, "redo-3: C now present in document");
         }
     }
 
-    // Drain any remaining redo steps (UI entries above add-C, if replayed separately).
-    for (int i = 4; i <= 10; ++i) {
+    // Redo 4 — re-apply sel-add-A: A+C selected.
+    {
         auto r = postRedo();
-        if (r["status"].str != "ok") break;
-        assertNoLockout("redo-" ~ i.to!string);
-        assertPrimaryInvariant("redo-" ~ i.to!string);
+        assert(r["status"].str == "ok", "redo-4 failed: " ~ r.toString);
+        assertNoLockout("redo-4");
+        assertPrimaryInvariant("redo-4");
+        assert(setsEqual(selectedNames(), ["Layer 1", "C"]),
+            "redo-4: A+C selected after sel-add-A re-applied");
+    }
+
+    // Redo 5 — re-apply sel-remove-C: A only selected.
+    {
+        auto r = postRedo();
+        assert(r["status"].str == "ok", "redo-5 failed: " ~ r.toString);
+        assertNoLockout("redo-5");
+        assertPrimaryInvariant("redo-5");
+        assert(setsEqual(selectedNames(), ["Layer 1"]),
+            "redo-5: A only selected after sel-remove-C re-applied");
     }
 
     // At top: primary invariant holds, A is in the selected set, no lockout.

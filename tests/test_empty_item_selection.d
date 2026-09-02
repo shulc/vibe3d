@@ -202,13 +202,9 @@ private void noEditTarget() {
 
 /// One step of undo, through `/api/undo`.
 ///
-/// `layer.select` is UI-undo class, and the T-SEP cursor treats a trailing run
-/// of UI entries as CARRIED (Case A): with a Model entry anywhere below, one
-/// undo reverts that Model entry and the selection holds. To make a selection
-/// change the thing that steps, the stack must be an all-UI tail (Case B) —
-/// which is why every row below clears the history AFTER its Model setup and
-/// before the selection change it means to undo. Skipping that would test the
-/// cursor, not this task.
+/// `layer.select` is UI-undo class and strict LIFO steps it when it is the tail.
+/// Every row below clears history after its Model setup so the selection change
+/// it means to undo is isolated from unrelated setup history.
 private void undoOk(string why) {
     auto u = parseJSON(cast(string) post(BASE ~ "/api/undo", ""));
     assert(u["status"].str == "ok", "undo (" ~ why ~ ") failed: " ~ u.toString);

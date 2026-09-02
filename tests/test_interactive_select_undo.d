@@ -220,17 +220,14 @@ unittest { // select → geometry edit → select ⇒ THREE entries (edit breaks
     assert(seq == ["mesh.selection_edit", "mesh.transform", "mesh.selection_edit"],
         "unexpected entry sequence: " ~ seq.to!string);
 
-    // Under T-SEP class-aware undo, the nearest Model entry from the tail is
-    // mesh.transform (index 1). Its suffix = [mesh.transform, mesh.selection_edit(2nd)].
-    // A single undo reverts the transform AND carries the 2nd selection inert —
-    // both the geometry revert and the suffix move happen in ONE undo step.
-    //
-    // After undo 1: undoStack = [sel1(UI)] — the first selection run is still
-    // present. The 2nd selection entry was carried inert (never revert()'d) but
-    // lives on the redo stack with the transform.
+    // Strict LIFO reverts the second selection entry only. The transform stays
+    // on undoStack and the first selection run becomes current again.
+    // This file is not a distinguishing witness: its assertion counts only
+    // selection entries, and both the retired grouped step and strict LIFO
+    // leave exactly one such entry on undoStack after this press.
     auto vBefore = parseJSON(get("http://localhost:8080/api/model"));
-    // One undo: reverts transform + carries sel2 inert as suffix.
-    assert(postUndo()["status"].str == "ok", "undo (transform+sel2 suffix) failed");
+    // One undo: reverts sel2.
+    assert(postUndo()["status"].str == "ok", "undo (second selection) failed");
     // The remaining stack still has the first selection run (still undoable).
     assert(countUndo("mesh.selection_edit") == 1,
         "first selection run should survive after undoing edit + 2nd run");

@@ -3288,9 +3288,9 @@ private void wireHistoryProviders(HttpServer httpServer, ref EditorApp app,
         // Read-only undo-service status for automation: {state, lockout,
         // canUndo, canRedo, modelDepth, uiDepth, canUndoModel, canUndoUi}.
         // modelDepth/uiDepth — count of Model vs UI-class entries on the undo
-        // stack; canUndoModel — whether a plain undo would step a Model entry
-        // (false → B1 fallback to UI head). All are pure reads, safe on the
-        // HTTP server thread.
+        // stack; canUndoModel/canUndoUi — whether the current-session stack
+        // contains an entry of that class. A mixed stack reports both true.
+        // All are pure reads, safe on the HTTP server thread.
         httpServer.setUndoStatusProvider(() {
             import std.json : JSONValue;
             import command_history : UndoState;
@@ -3310,7 +3310,7 @@ private void wireHistoryProviders(HttpServer httpServer, ref EditorApp app,
             payload["modelDepth"]   = JSONValue(cast(long)modelDepth);
             payload["uiDepth"]      = JSONValue(cast(long)uiDepth);
             payload["canUndoModel"]       = JSONValue(history.canUndoModel());
-            payload["canUndoUi"]          = JSONValue(history.canUndo() && !history.canUndoModel());
+            payload["canUndoUi"]          = JSONValue(history.canUndoUi());
             payload["toolLifecycleCount"] = JSONValue(cast(long)history.toolLifecycleCount());
             payload["canUndoLifecycle"]   = JSONValue(history.canUndoLifecycle());
             return payload.toString();

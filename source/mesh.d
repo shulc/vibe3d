@@ -17346,7 +17346,7 @@ unittest {
     // ---- CELL 3b: the SECOND restore entry point. ---------------------
     // `snapshot.d` bumps `structVersion` in TWO places, and cell 3 above
     // witnesses only the first. `restoreGeometryKeepSelection` is the
-    // T-SEP undo path (a geometry-only revert that keeps the live
+    // geometry-only undo path (a revert that keeps the live
     // selection); it writes `edges`/`faces` directly exactly as `restore`
     // does, so it needs — and has — its own bump. Delete THAT one and
     // cell 3 stays green, which is what makes this arm a separate cell
@@ -17386,7 +17386,7 @@ unittest {
     assert(nbG.length == m.edges.length * 2,
         "task 1906 stage 2d: `restoreGeometryKeepSelection` writes `edges` "
         ~ "directly too, so it carries its own `++structVersion`. Delete "
-        ~ "that second bump and a T-SEP geometry undo serves the pre-undo "
+        ~ "that second bump and a geometry-only undo serves the pre-undo "
         ~ "adjacency — cell 3 above does not cover it, it drives the other "
         ~ "entry point");
 

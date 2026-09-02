@@ -1,12 +1,12 @@
-// Trajectory tests for task 0038 — class-aware carried-suffix undo (T-SEP).
+// Trajectory tests for task 3693 — strict-LIFO selection and geometry undo.
 //
 // These tests drive the HTTP API to produce the exact stack configurations
 // from the corpus (B1/B2/B3/B4-delete analogues) and an undo→redo round-trip
 // (chronology gate) and assert the resulting selection + geometry at each step.
 //
-// B1: pure-selection stack — plain undo still reverts the UI head (fallback).
-// B2: select + move + select + move → undo×2 reverts both moves; selection
-//     HOLDS at B throughout (carried inert).  undo×3,×4 are no-ops on selection.
+// B1: pure-selection stack — plain undo reverts the UI head.
+// B2: select + move + select + move → four undos revert MoveB, SelB, MoveA,
+//     SelA in exact reverse record order.
 // B3: select + move + move (same set) → undo×2; selection stays A throughout.
 // B4-delete: select + delete → undo restores the geometry with A selected.
 // ROUND-TRIP: select A + moveA + select B + moveB → undo×4 → redo×4 → the
@@ -146,13 +146,12 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// B2 analogue: select A / moveA / select B / moveB → undo×2 reverts both
-// moves, selection HOLDS at B; undo×3,×4 are no-ops on selection.
+// B2 analogue: select A / moveA / select B / moveB → strict LIFO.
 // Stack: [Sel(A:UI), Move(A:Model), Sel(B:UI), Move(B:Model)]
-// undo₁: suffix=[Move(B)] → reverts Move(B); Sel(B) stays live → still B.
-// undo₂: suffix=[Move(A),Sel(B)] → reverts Move(A); Sel(B) carried inert → still B.
-// undo₃: suffix=[Sel(A)] → B1 fallback reverts Sel(A) → but no geometry left.
-// undo₄: no entries → fails (or no-op).
+// undo₁: reverts Move(B); Sel(B) stays live → still B.
+// undo₂: reverts Sel(B) → selection A; Move(A) stays applied.
+// undo₃: reverts Move(A) → original geometry; selection remains A.
+// undo₄: reverts Sel(A) → empty selection.
 // ---------------------------------------------------------------------------
 
 unittest {
@@ -190,33 +189,39 @@ unittest {
             "B2 undo₁: bot vertex should be reverted, got x=" ~ x.to!string);
     }
 
-    // undo₂: Move(A) reverted; Sel(B) carried inert → selection HOLDS at bot4.
+    // undo₂: Sel(B) reverted; selection returns to top4 while Move(A) remains.
     auto u2 = doUndo();
     assert(u2["status"].str == "ok", "B2: undo₂ should succeed");
     {
-        int[] got = selVerts(); int[] exp = bot4.dup; sort(exp);
+        int[] got = selVerts(); int[] exp = top4.dup; sort(exp);
         assert(got == exp,
-            "B2 undo₂: selection must HOLD at bot4 (Sel(B) carried inert), got "
+            "B2 undo₂: selection should return to top4, got "
             ~ got.to!string);
     }
     // Geometry: top4 also reverted.
     {
         auto m = getModel();
         double x = m["vertices"].array[top4[0]].array[0].floating;
-        assert(approxEq(x, origX_top),
-            "B2 undo₂: top vertex should be reverted, got x=" ~ x.to!string);
+        assert(approxEq(x, origX_top + 0.3),
+            "B2 undo₂: Move(A) should remain applied, got x=" ~ x.to!string);
     }
 
-    // undo₃: stack has [Sel(A)]; B1 fallback reverts Sel(A) → empty selection.
+    // undo₃: Move(A) reverts; selection remains top4.
     auto u3 = doUndo();
-    assert(u3["status"].str == "ok", "B2: undo₃ should succeed (B1 fallback on Sel(A))");
-    assert(selVerts().length == 0, "B2 undo₃: expected empty selection after Sel(A) reverted");
+    assert(u3["status"].str == "ok", "B2: undo₃ should succeed");
+    {
+        int[] got = selVerts(); int[] exp = top4.dup; sort(exp);
+        assert(got == exp, "B2 undo₃: selection should remain top4");
+        auto m = getModel();
+        double x = m["vertices"].array[top4[0]].array[0].floating;
+        assert(approxEq(x, origX_top),
+            "B2 undo₃: top vertex should be reverted, got x=" ~ x.to!string);
+    }
 
-    // undo₄: stack empty → no-op / fails gracefully.
+    // undo₄: Sel(A) reverts → empty selection.
     auto u4 = doUndo();
-    // Either "ok" (idempotent) or failure — important thing is no crash.
-    // Geometry and selection unchanged.
-    assert(selVerts().length == 0, "B2 undo₄: selection still empty");
+    assert(u4["status"].str == "ok", "B2: undo₄ should succeed");
+    assert(selVerts().length == 0, "B2 undo₄: expected empty selection");
 }
 
 // ---------------------------------------------------------------------------
@@ -252,12 +257,12 @@ unittest {
             "B3 undo₁: top vertex at +0.2 after reverting +0.1");
     }
 
-    // undo₂: Move(A) reverted; suffix=[Move(A), Sel(A)] → Sel(A) carried inert.
+    // undo₂: Move(A) reverted; Sel(A) is the next, still-unstepped entry.
     auto u2 = doUndo();
     assert(u2["status"].str == "ok", "B3: undo₂ should succeed");
     {
         int[] got = selVerts(); int[] exp = top4.dup; sort(exp);
-        assert(got == exp, "B3 undo₂: selection stays A (top4), Sel(A) carried inert");
+        assert(got == exp, "B3 undo₂: selection stays A (top4)");
         auto m = getModel();
         double x = m["vertices"].array[top4[0]].array[0].floating;
         assert(approxEq(x, origX_top),
@@ -333,17 +338,18 @@ unittest {
         uiFlagsBefore ~= e["ui"].boolean;
     }
 
-    // undo×N — walk all the way back (class-aware undo may move >1 entry
-    // per step so we loop more than 4 times to be safe).
-    foreach (i; 0 .. 8) {
+    // Strict LIFO consumes exactly one of the four records per step.
+    foreach (i; 0 .. 4) {
         auto u = doUndo();
-        if (u["status"].str != "ok") break;
+        assert(u["status"].str == "ok",
+            "ROUND-TRIP: undo step " ~ i.to!string ~ " failed");
     }
 
-    // redo×N — walk all the way forward.
-    foreach (i; 0 .. 8) {
+    // Redo likewise restores exactly one record per step.
+    foreach (i; 0 .. 4) {
         auto r = doRedo();
-        if (r["status"].str != "ok") break;
+        assert(r["status"].str == "ok",
+            "ROUND-TRIP: redo step " ~ i.to!string ~ " failed");
     }
 
     // After redo×N the undo stack must be restored to the same shape.
@@ -414,7 +420,7 @@ unittest {
             "SCOPE-GUARD: geometry should be reverted, got x=" ~ x.to!string);
     }
 
-    // Selection unchanged (still top4) — Sel() was carried inert.
+    // Selection unchanged (still top4) because Sel() is below the Model head.
     {
         int[] got = selVerts(); int[] exp = top4.dup; sort(exp);
         assert(got == exp,
@@ -476,8 +482,8 @@ unittest {
             "IN-SESSION: after undoing A, top vertex should be at original x, got "
             ~ x.to!string);
     }
-    // Selection should still be top4 (Sel(top4) was the only UI entry and was
-    // carried inert through the model undos).
+    // Selection should still be top4: all stepped entries were Model records,
+    // while Sel(top4) remains below them on the stack.
     {
         int[] got = selVerts(); int[] exp = top4.dup; sort(exp);
         assert(got == exp,

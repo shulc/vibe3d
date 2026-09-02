@@ -365,10 +365,10 @@ struct MeshSnapshot {
     }
 
     // -------------------------------------------------------------------------
-    // restoreGeometryKeepSelection — geometry-only revert for the T-SEP undo
-    // path (class-aware stepping).
+    // restoreGeometryKeepSelection — geometry-only revert while selection is
+    // represented by its own history records.
     //
-    // Under T-SEP, selection is a SEPARATE timeline: a geometry-move undo must
+    // A geometry-move undo must
     // NOT overwrite the live selection with the pre-move snapshot's selection.
     // This method restores positions, edges, faces, surfaces, faceMaterial, and
     // meshMaps — but KEEPS the current selection marks (vertexMarks, edgeMarks,
@@ -383,7 +383,7 @@ struct MeshSnapshot {
     //
     // Consequence: topology-changing tools that go through ToolDoApplyCommand
     // (edge.extrude, edge.extend) still restore the pre-apply selection when
-    // class-aware stepping is on, because their vertex/face counts change.
+    // because their vertex/face counts change.
     // That is intentional and correct: there is no "current" selection that is
     // valid against the reverted (smaller) mesh.
     // -------------------------------------------------------------------------

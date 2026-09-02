@@ -1,5 +1,4 @@
-// Regression anchor for task 0038 — gap B: ToolDoApplyCommand.revert()
-// must NOT restore the pre-move selection under T-SEP class-aware stepping.
+// Regression anchor for task 3693: selection records are strict-LIFO steps.
 //
 // This test covers the `tool.set` / `tool.attr` / `tool.doApply` path — a
 // DIFFERENT code route than `/api/transform` (which goes through
@@ -17,24 +16,18 @@
 //   5. Activate TransformMove, set TX=0.1, tool.doApply → gesture B commit.
 //      Stack after: [MeshSelect(A:UiState), ToolDoApply(A:Model),
 //                    MeshSelect(B:UiState), ToolDoApply(B:Model)]
-//   6. undo₁ → T-SEP: nearest Model from tail = ToolDoApply(B).
+//   6. undo₁ → ToolDoApply(B).
 //      Geometry of B reverted; selection stays bottom-4.
-//   7. undo₂ → T-SEP: nearest Model from tail = ToolDoApply(A).
-//      Suffix [ToolDoApply(A), MeshSelect(B)] moved to redo as a unit.
-//      MeshSelect(B) carried inert — selection HOLDS at bottom-4.
-//      ToolDoApply(A).revert() must call restoreGeometryKeepSelection(),
-//      NOT restore(), so the live bottom-4 selection survives.
+//   7. undo₂ → MeshSelect(B).
+//      Selection returns to top-4; ToolDoApply(A) remains applied.
 //
-// --- What this test asserts ---
-//
-//   After undo₂, the selected vertices are the BOTTOM-4 (y ≈ −0.5).
-//
-// --- What broke before the fix ---
-//
-//   ToolDoApplyCommand.revert() called MeshSnapshot.restore() which
-//   overwrites ALL marks including selection, reinstating the pre-A
-//   snapshot's selection = top-4. The bottom-4 assertion fires, catching
-//   the regression.
+// Candidate 0056 previously carried MeshSelect(B) inert and was encoded here
+// as though measured. The separating capture was inert after undo₁ and did not
+// establish that candidate. The live capture that now establishes strict LIFO
+// used scripted `mesh.move_vertex`; this test uses the gesture door
+// `tool.set`/`tool.attr`/`tool.doApply`. Whether gesture records coalesce
+// differently remains unmeasured, so this is an implementation anchor, not a
+// claim that the remaining gesture door has been captured.
 //
 // --- What topology-changing tools see ---
 //
@@ -169,7 +162,7 @@ unittest {
     cmd("tool.attr move TZ 0.0");
     cmd("tool.doApply");
 
-    // --- undo₁: T-SEP → ToolDoApply(B) reverted; selection stays bottom-4 ---
+    // --- undo₁: ToolDoApply(B) reverted; selection stays bottom-4 ---
     auto u1 = postUndo();
     assert(u1["status"].str == "ok",
         "undo₁ should succeed, got: " ~ u1.toString);
@@ -190,11 +183,7 @@ unittest {
             ~ exp.to!string ~ ", got " ~ got.to!string);
     }
 
-    // --- undo₂: T-SEP → ToolDoApply(A) reverted; selection MUST stay bottom-4 ---
-    //
-    // Before the fix: ToolDoApplyCommand.revert() called MeshSnapshot.restore()
-    // which reinstated the pre-A snapshot's selection = top-4.
-    // After the fix:  restoreGeometryKeepSelection() keeps the live bottom-4.
+    // --- undo₂: MeshSelect(B) reverted; selection returns to top-4 ---
     auto u2 = postUndo();
     assert(u2["status"].str == "ok",
         "undo₂ should succeed, got: " ~ u2.toString);
@@ -211,37 +200,34 @@ unittest {
     int[] selectedIdx = rawSel.map!(v => cast(int)v.integer).array;
     sort(selectedIdx);
 
-    // The selection must be the BOTTOM-4 (y ≈ −0.5).
-    // Under T-SEP, ToolDoApply(A).revert() must preserve the live selection
-    // (bottom-4 set by MeshSelect(B)) — NOT restore the pre-A snapshot marks.
+    // The selection must be the TOP-4 (y ≈ +0.5).
     auto modelFinal = getModel();
     auto vertsFinal = modelFinal["vertices"].array;
 
     foreach (idx; selectedIdx) {
         double y = vertsFinal[idx].array[1].floating;
-        assert(approxEqual(y, -0.5),
-            "ALIGNED: after undo₂, selected vertex v" ~ idx.to!string
+        assert(approxEqual(y, 0.5),
+            "STRICT LIFO: after undo₂, selected vertex v" ~ idx.to!string
             ~ " has y=" ~ y.to!string
-            ~ " but expected y≈-0.5 (bottom face). "
-            ~ "ToolDoApplyCommand.revert() restored the pre-move selection "
-            ~ "(task 0038 gap B). Fix: use restoreGeometryKeepSelection().");
+            ~ " but expected y≈+0.5 (top face). "
+            ~ "MeshSelect(B) must be its own second undo step.");
     }
 
     {
-        int[] expectedSorted = bot4.dup;
+        int[] expectedSorted = top4.dup;
         sort(expectedSorted);
         assert(selectedIdx == expectedSorted,
-            "ALIGNED: selected indices " ~ selectedIdx.to!string
-            ~ " do not match bottom-4 " ~ expectedSorted.to!string
-            ~ ". undo₂ via tool.doApply path incorrectly restored pre-A selection.");
+            "STRICT LIFO: selected indices " ~ selectedIdx.to!string
+            ~ " do not match top-4 " ~ expectedSorted.to!string
+            ~ ". undo₂ via tool.doApply skipped MeshSelect(B).");
     }
 
-    // Cross-check: no selected vertex is on the top face.
+    // Cross-check: no selected vertex is on the bottom face.
     foreach (idx; selectedIdx) {
         double y = vertsFinal[idx].array[1].floating;
-        assert(!approxEqual(y, 0.5),
+        assert(!approxEqual(y, -0.5),
             "REGRESSION: selected vertex v" ~ idx.to!string
-            ~ " is on the top face (y≈+0.5) after undo₂ via tool.doApply. "
-            ~ "ToolDoApplyCommand.revert() is wrongly restoring snapshot marks.");
+            ~ " is on the bottom face (y≈-0.5) after undo₂ via tool.doApply. "
+            ~ "Selection was carried inert instead of stepped.");
     }
 }

@@ -105,9 +105,9 @@ void runHttpTests() {
         //
         //   * `undoDepthCounts` (source/command_history.d:1049) stops at the
         //     first UndoBoundary (`:1054`), so modelDepth/uiDepth are 0 by
-        //     construction — the boundary is not reachable by the T-SEP cursor.
+        //     construction — traversal stops at the boundary.
         //   * `canUndoModel` (`:1070`) deliberately looks PAST that: with no
-        //     reachable Model entry it asks whether the TAIL is itself
+        //     current-session Model entry it asks whether the TAIL is itself
         //     Model-class-and-Undoable, which a boundary is. Its comment at
         //     `:1063-1069` states the intent — report "Model undo available"
         //     rather than the misleading "UI undo available".

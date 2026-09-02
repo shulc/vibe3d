@@ -226,11 +226,8 @@ unittest { // no-op quantize undo must not truncate the undo stack (task 2110).
     //     history entry (measured — see the twin comment in
     //     test_mesh_jitter.d), so the stack between the real edit and the
     //     no-op edit is [... real quantize, mesh.select, no-op quantize].
-    //     A Model undo carries any UiUndo suffix directly above it to redo
-    //     as ONE unit (command_history.d's Case A), so undoing "real
-    //     quantize" below also sweeps up that "mesh.select" — the per-call
-    //     pop count is reliably >= 1 but not reliably == 1, hence "<" rather
-    //     than "==" in the second check below.
+    //     Strict LIFO therefore needs three presses below: no-op quantize,
+    //     mesh.select, then real quantize. Each press removes one record.
     auto clearSel = postJson("/api/select", `{"mode":"vertices","indices":[]}`);
     assert(clearSel["status"].str == "ok", clearSel.toString);
     cmd("mesh.quantize X:0.3 Y:0.3 Z:0.3");
@@ -251,20 +248,24 @@ unittest { // no-op quantize undo must not truncate the undo stack (task 2110).
         ~ "stack — a bulk suffix loss would drop more than one even when "
         ~ "the call above reports ok");
 
-    // (4) Undo the real quantize (and, per the Case-A carry-along noted
-    //     above, the mesh.select entry directly above it) — a strict
-    //     decrease, not an exact one, so this doesn't hard-code the
-    //     carry-along count.
+    // (4) Undo the intervening mesh.select entry.
     auto j2 = postJson("/api/command", `{"id":"history.undo"}`);
     assert(j2["status"].str == "ok",
-        "undo of real quantize must return ok after the no-op undo: "
+        "undo of mesh.select must return ok after the no-op undo: "
         ~ j2.toString);
-    assert(undoDepth() < depthAfterUndo1,
-        "undoing the real quantize must remove at least one MORE entry — a "
-        ~ "silent no-op undo that reports ok without popping anything would "
-        ~ "leave this unchanged at depthAfterUndo1");
+    auto depthAfterUndo2 = undoDepth();
+    assert(depthAfterUndo2 == depthAfterUndo1 - 1,
+        "undoing mesh.select must remove exactly one record");
 
-    // (5) Positions must be fully restored (mesh.hide never moves a vertex,
+    // (5) Undo the real quantize.
+    auto j3 = postJson("/api/command", `{"id":"history.undo"}`);
+    assert(j3["status"].str == "ok",
+        "undo of real quantize must return ok after the selection undo: "
+        ~ j3.toString);
+    assert(undoDepth() == depthAfterUndo2 - 1,
+        "undoing the real quantize must remove exactly one record");
+
+    // (6) Positions must be fully restored (mesh.hide never moves a vertex,
     //     so `before` — captured right after the hide — is exactly the
     //     state two undos must reach).
     auto after = dumpVerts();

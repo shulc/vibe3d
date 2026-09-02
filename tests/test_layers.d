@@ -233,12 +233,10 @@ unittest { // select swaps the ACTIVE /api/model to the selected layer's mesh
 // Cross-layer model undo
 // ---------------------------------------------------------------------------
 
-unittest { // edit A, select B, edit B; undo unwinds geometry in T-SEP order.
+unittest { // edit A, select B, edit B; undo unwinds strict LIFO order.
     // Stack (oldest→newest): editA(Model) | selB(UI) | editB(Model)
     //
-    // T-SEP class-aware undo: a plain undo steps to the nearest Model entry
-    // from the tail, moving that entry + any trailing UI entries as a suffix.
-    // UI entries are reverted only when no Model entry is reachable (B1 fallback).
+    // Each plain undo steps exactly one entry from the tail.
     twoCubeDoc();                      // A active
     clearHistory();
     // Edit A: move the +X-bottom corner.
@@ -251,19 +249,21 @@ unittest { // edit A, select B, edit B; undo unwinds geometry in T-SEP order.
     assert(vertexAt(1, vIndexNear(1, -3.0))[0].approx(-3.0),
         "B edit landed on layer 1");
 
-    // Undo 1: nearest Model = editB (tail). Suffix=[editB]. Reverts editB.
-    //   selB not touched; B still active.
+    // Undo 1: editB is the tail. Revert it; B remains active.
     undoOk("revert B edit");
     assert(!anyVertNear(1, -3.0), "B's edit should be reverted");
     assert(anyVertNear(0, 3.0), "A's edit must still be present");
     assert(activeLayer() == 1, "B still active after undo 1 (selB not touched)");
 
-    // Undo 2: nearest Model = editA (index 0). Suffix=[editA, selB].
-    //   Reverts editA; selB carried inert → B stays active.
-    //   After this undo the stack is empty (selB moved to redo with editA).
+    // Undo 2: selB reverts, returning the active layer to A; both geometry
+    // states are otherwise unchanged.
+    undoOk("revert B selection");
+    assert(activeLayer() == 0, "undo 2 returns to A");
+    assert(anyVertNear(0, 3.0), "A's edit remains after undoing selB");
+
+    // Undo 3: editA now reverts.
     undoOk("revert A edit");
     assert(!anyVertNear(0, 3.0), "A's edit should be reverted");
-    assert(activeLayer() == 1, "B still active after undo 2 (selB carried inert in suffix)");
 }
 
 // vertex index in `layer` whose x is approximately `x`.
@@ -347,8 +347,8 @@ unittest { // rename reflected in /api/layers + undoable (Model class)
     assert(getLayers()["layers"].array[1]["name"].str == "Reference",
         "rename reflected in /api/layers");
     // Stack: [layer.add(Model), layer.rename(Model)].
-    // T-SEP: nearest Model from tail = layer.rename. Undo reverts the rename
-    // directly without touching layer.add.
+    // layer.rename is the strict-LIFO tail, so undo reverts it without
+    // touching layer.add.
     undoOk("rename undo");
     assert(getLayers()["layers"].array[1]["name"].str == "Layer 2",
         "rename undo restores the prior name");
@@ -402,8 +402,7 @@ unittest { // setVisible / foreground→background in /api/layers
     // is false — assert on the underlying `selected` bit (cleared = backgrounded).
     assert(l1["selected"].type == JSONType.false_, "layer 1 deselected (backgrounded)");
     assert(l1["visible"].type == JSONType.false_, "visible flag cleared");
-    // Stack tail is [.., setVisible(Model)]. T-SEP undo: nearest Model from
-    // tail = setVisible. Reverts it directly.
+    // setVisible is the strict-LIFO tail and reverts directly.
     undoOk("undo setVisible");
     assert(getLayers()["layers"].array[1]["visible"].type == JSONType.true_,
         "setVisible undo restores visible");
@@ -526,24 +525,24 @@ unittest {
     moveVertexActive([bv0[0], bv0[1], bv0[2]], [9.0, 9.0, 9.0]);
     assert(anyVertNear(1, 9.0), "B edit present");
 
-    // T-SEP class-aware undo order for [editA(M), selB(UI), editB(M)]:
-    //
-    // Undo 1: nearest Model = editB (tail). Suffix=[editB]. Reverts editB.
-    //   selB not touched; B still active.
+    // Strict-LIFO undo order for [editA(M), selB(UI), editB(M)].
+    // Undo 1: editB reverts; B remains active.
     undoOk("revert B edit");
     assert(!anyVertNear(1, 9.0), "B's edit reverted");
     assert(vertCount(1) == bVerts, "B vertex count unchanged");
     assert(activeLayer() == 1, "B still active after undo 1 (selB not touched)");
 
-    // Undo 2: nearest Model = editA (index 0). Suffix=[editA, selB].
-    //   Reverts editA; selB carried inert → B stays active.
-    //   The gated refreshDisplay fires only for the active layer (B); A's
-    //   revert happens on the background mesh without resizing the global caches.
+    // Undo 2: selB reverts and A becomes active.
+    undoOk("revert B selection");
+    assert(activeLayer() == 0, "A active after undo 2");
+    assert(anyVertNear(0, 4.0), "A edit remains after undoing selB");
+
+    // Undo 3: editA reverts while A is active.
     undoOk("revert A edit");
     assert(!anyVertNear(0, 4.0), "A's edit reverted (via ?layer=0)");
     assert(vertCount(0) == 8, "A still a cube (8v)");
     assert(vertCount(1) == bVerts, "B's geometry unchanged by A's undo");
-    assert(activeLayer() == 1, "B still active (selB carried inert in suffix)");
+    assert(activeLayer() == 0, "A remains active after its edit reverts");
 
     // The active layer must still PICK correctly after all the cross-layer
     // cache churn: select B (sphere) then A (cube) and run an interactive

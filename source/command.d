@@ -107,17 +107,15 @@ enum CmdFlags : uint {
                            // that sets this records NO undo entry — the author
                            // takes responsibility for the state change being
                            // unrecoverable / handled elsewhere. Highest priority.
-    UndoBoundary = 1 << 7, // Hard stop for the class-aware T-SEP undo cursor.
+    UndoBoundary = 1 << 7, // Hard stop for undo traversal within a session.
                            // The entry IS on the stack and IS undoable (carries
                            // Model), but the cursor scan stops here — it will not
-                           // step to this entry during a model undo. When the
+                           // step to this entry during a normal undo. When the
                            // boundary entry is the ONLY entry left (tail-at-
-                           // boundary), Case B applies: the boundary entry itself
-                           // IS reverted as the B1 fallback (it is a Model entry
-                           // that the cursor stopped in front of, so it becomes
-                           // the lone "UI head" in the fallback sense). Applied
+                           // boundary), the boundary entry itself IS reverted by
+                           // the boundary-tail fallback. Applied
                            // to scene.reset and file.new: a reset delimits "current
-                           // editing session" from "prior session"; a plain geometry
+                           // editing session" from "prior session"; a plain
                            // undo should not reach across it, but if it is the only
                            // thing on the stack the user CAN undo the reset.
     ToolLifecycle = 1 << 8, // Alters tool-lifecycle state (tool exit/entry). Undoable
@@ -809,7 +807,7 @@ class Command {
     // production UndoForce user; UndoSuppress has only test users today but is
     // kept as the legitimate opt-out. Do NOT remove these by "fixing" the rule —
     // reclassifying box to Model would be factually wrong (and wouldn't even
-    // change its T-SEP cursor class, which is already Model via Undoable&&!UiUndo).
+    // change its history class, which is already Model via Undoable&&!UiUndo).
     final bool isUndoable() const {
         CmdFlags cf = cmdFlags();
         if (cf & CmdFlags.UndoSuppress) return false;

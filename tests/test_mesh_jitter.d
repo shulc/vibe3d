@@ -299,12 +299,9 @@ unittest { // no-op jitter undo must not truncate the undo stack (task 2110).
     //     history entry (measured — it is NOT the bare selection-only bridge
     //     it appears to be from the route code alone), so the stack between
     //     the real edit and the no-op edit is [... real jitter, mesh.select,
-    //     no-op jitter] rather than the two edits being adjacent. A Model
-    //     undo carries any UiUndo suffix directly above it to redo as ONE
-    //     unit (command_history.d's Case A), so undoing "real jitter" below
-    //     also sweeps up that "mesh.select" — the per-call pop count is
-    //     reliably >= 1 but not reliably == 1, hence "<" rather than "=="
-    //     in the second check below.
+    //     no-op jitter] rather than the two edits being adjacent. Strict LIFO
+    //     therefore needs three presses below: no-op jitter, mesh.select, then
+    //     real jitter. Each press removes one record.
     auto clearSel = postJson("/api/select", `{"mode":"vertices","indices":[]}`);
     assert(clearSel["status"].str == "ok", clearSel.toString);
     cmd("mesh.jitter rangeX:0.1 rangeY:0.1 rangeZ:0.1 seed:2");
@@ -325,19 +322,24 @@ unittest { // no-op jitter undo must not truncate the undo stack (task 2110).
         ~ "stack — a bulk suffix loss would drop more than one even when "
         ~ "the call above reports ok");
 
-    // (4) Undo the real jitter (and, per the Case-A carry-along noted above,
-    //     the mesh.select entry directly above it) — a strict decrease,
-    //     not an exact one, so this doesn't hard-code the carry-along count.
+    // (4) Undo the intervening mesh.select entry.
     auto j2 = postJson("/api/command", `{"id":"history.undo"}`);
     assert(j2["status"].str == "ok",
-        "undo of real jitter must return ok after the no-op undo: "
+        "undo of mesh.select must return ok after the no-op undo: "
         ~ j2.toString);
-    assert(undoDepth() < depthAfterUndo1,
-        "undoing the real jitter must remove at least one MORE entry — a "
-        ~ "silent no-op undo that reports ok without popping anything would "
-        ~ "leave this unchanged at depthAfterUndo1");
+    auto depthAfterUndo2 = undoDepth();
+    assert(depthAfterUndo2 == depthAfterUndo1 - 1,
+        "undoing mesh.select must remove exactly one record");
 
-    // (5) Positions must be fully restored to the pre-jitter cube (mesh.hide
+    // (5) Undo the real jitter.
+    auto j3 = postJson("/api/command", `{"id":"history.undo"}`);
+    assert(j3["status"].str == "ok",
+        "undo of real jitter must return ok after the selection undo: "
+        ~ j3.toString);
+    assert(undoDepth() == depthAfterUndo2 - 1,
+        "undoing the real jitter must remove exactly one record");
+
+    // (6) Positions must be fully restored to the pre-jitter cube (mesh.hide
     //     never moves a vertex, so `before` — captured right after the hide —
     //     is exactly the state two undos must reach).
     auto after = dumpVerts();

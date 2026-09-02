@@ -157,10 +157,9 @@ unittest { // weight blend law, BIT-EXACT verified against the
     }
 }
 
-// history.undo may drop the live selection along with the geometry
-// (T-SEP: selection is a separate undo timeline) — re-select the same 4
-// indices so the second mesh.radial_align call operates on the same
-// chain rather than falling back to whole-mesh.
+// Selection is a separate history record; re-select the same four indices so
+// the second mesh.radial_align call explicitly operates on the same chain
+// rather than inheriting whatever selection the preceding undo left live.
 void buildAndSelectLoopReselect(int[4] idx) {
     cmd("select.typeFrom vertex");
     postJson("/api/select",

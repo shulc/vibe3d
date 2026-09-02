@@ -196,10 +196,9 @@ private bool[] keepVisibleTargets(Mesh* mesh, SelType type) {
 // The three counters ride along too. Nothing on the hide path advances or
 // resets one, so within a single apply/revert pair they are invariant — but
 // this revert() is not guaranteed to run against the state it captured. A
-// hide is UI-undo class (cmdFlags below), and command_history's class-aware
-// stepping carries a UI entry INERT past a Model undo, so an intervening
-// Model command can run clearFaceSelection() — which resets the counter to
-// 0 — before this entry is ever reverted. Restoring the stamps but not the
+// hide is UI-undo class (cmdFlags below), and a later Model command may run
+// clearFaceSelection() — which resets the counter to 0 — before this older
+// entry is reverted. Restoring the stamps but not the
 // counter would then leave counter=0 underneath live stamps of 1..N, and the
 // next selectFace() would hand out a stamp that COLLIDES with an existing
 // one: two elements claiming the same pick position, which is precisely the
