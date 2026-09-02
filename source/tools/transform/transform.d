@@ -28,6 +28,21 @@ struct PreparedTransformActivationImage {
     bool wholeMeshDrag, propsDragging, valid;
     void clear() nothrow @nogc { this = PreparedTransformActivationImage.init; }
 }
+
+/// Detached witness for closing a transform edit session after its prepared
+/// history command has installed. Variable payloads are owned so preparation
+/// never relies on `buildEditCmd`'s destructive `scope(exit) cancelEdit()`.
+struct PreparedTransformEditCloseImage {
+    uint[] editIdx;
+    Vec3[] editBefore;
+    string morphMap;
+    Vec3[] morphBefore;
+    bool[] morphBeforeHas;
+    bool editOpen;
+    bool morphOpen;
+    bool valid;
+    void clear() nothrow @nogc { this = PreparedTransformEditCloseImage.init; }
+}
 import mesh_gpu : GpuUploadOwner;
 import command_history : PreparedHistoryKind;
 import operator : VectorStack;
@@ -600,9 +615,95 @@ protected:
         return cmd;
     }
 
+    /// Non-destructive twin of `buildMorphEditCmd` for RECORD preparation.
+    private Command buildPreparedMorphEditCmd(string label) {
+        import commands.mesh.morph_edit : MorphEntryEdit;
+        import tools.transform.morph_route : defaultStored;
+        import morph_target : resolveMorphTarget;
+        import mesh : MapKind;
+        if (!editCapturing || !morphEditOpen_ || history is null) return null;
+        auto map = mesh.morphMapForWrite(morphEditMap_);
+        if (map is null) return null;
+        string nm; MapKind kind;
+        if (!resolveMorphTarget(mesh, nm, kind)) return null;
+        MorphEntryEdit[] entries;
+        const size_t n = morphEditBefore_.length;
+        foreach (i; 0 .. n) {
+            if (i >= mesh.vertices.length) break;
+            const bool hasNow = map.isPresent(i);
+            const Vec3 valNow = map.entryOr(i, defaultStored(mesh.vertices[i], kind));
+            if (hasNow == morphEditBeforeHas_[i] &&
+                preparedVec3Equal(valNow, morphEditBefore_[i])) continue;
+            entries ~= MorphEntryEdit(cast(uint)i, morphEditBefore_[i],
+                                      morphEditBeforeHas_[i], valNow, hasNow);
+        }
+        if (entries.length == 0 || morphEditFactory is null) return null;
+        auto cmd = morphEditFactory();
+        cmd.setEdit(morphEditMap_, entries, label);
+        return cmd;
+    }
+
+    /// Builds the exact positional or routed command without closing or
+    /// rewriting the live session arrays.
+    protected Command buildPreparedEditCmd(string label) {
+        if (!editCapturing || suppressCommit) return null;
+        if (morphEditOpen_) return buildPreparedMorphEditCmd(label);
+        if (history is null || vertexEditFactory is null) return null;
+        uint[] idx;
+        Vec3[] before;
+        Vec3[] after;
+        idx.reserve(editIdx.length);
+        before.reserve(editIdx.length);
+        after.reserve(editIdx.length);
+        bool changed;
+        foreach (i, vid; editIdx) {
+            if (vid >= mesh.vertices.length) continue;
+            const Vec3 a = mesh.vertices[vid];
+            idx ~= vid; before ~= editBefore[i]; after ~= a;
+            if (!preparedVec3Equal(a, editBefore[i])) changed = true;
+        }
+        if (!changed) return null;
+        auto cmd = vertexEditFactory();
+        cmd.setEdit(idx, before, after, label);
+        return cmd;
+    }
+
+    protected PreparedTransformEditCloseImage capturePreparedEditClose()
+            const {
+        PreparedTransformEditCloseImage image;
+        image.editIdx = editIdx.dup;
+        image.editBefore = editBefore.dup;
+        image.morphMap = morphEditMap_;
+        image.morphBefore = morphEditBefore_.dup;
+        image.morphBeforeHas = morphEditBeforeHas_.dup;
+        image.editOpen = editCapturing;
+        image.morphOpen = morphEditOpen_;
+        image.valid = true;
+        return image;
+    }
+
+    protected bool preparedEditCloseMatches(
+            ref const PreparedTransformEditCloseImage image) const
+            nothrow @nogc {
+        return image.valid && editCapturing == image.editOpen &&
+            morphEditOpen_ == image.morphOpen && editIdx == image.editIdx &&
+            preparedVec3SliceEqual(editBefore, image.editBefore) &&
+            morphEditMap_ == image.morphMap &&
+            preparedVec3SliceEqual(morphEditBefore_, image.morphBefore) &&
+            morphEditBeforeHas_ == image.morphBeforeHas;
+    }
+
+    protected void installPreparedEditClose(
+            ref PreparedTransformEditCloseImage image) nothrow @nogc {
+        editIdx = null; editBefore = null; editCapturing = false;
+        morphEditOpen_ = false; morphEditMap_ = null;
+        morphEditBefore_ = null; morphEditBeforeHas_ = null;
+        image.clear();
+    }
+
     // Cancel a captured edit without recording — used when the drag is
     // aborted (no movement happened, modifier-key escape, etc.).
-    protected void cancelEdit() {
+    protected void cancelEdit() nothrow @nogc {
         editIdx.length    = 0;
         editBefore.length = 0;
         // Task 1069: the routed session's baseline is dropped with the

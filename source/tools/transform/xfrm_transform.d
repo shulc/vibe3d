@@ -104,7 +104,8 @@ import eventlog : queryMouse;
 import shader : Shader;
 import params : Param;
 import tools.transform.transform : TransformTool, VertexEditFactory,
-    MorphEditFactory, PreparedTransformActivationImage;
+    MorphEditFactory, PreparedTransformActivationImage,
+    PreparedTransformEditCloseImage;
 import tool            : ToolFlag;
 import edit_session    : LiveEvalClient, SlotActivationClient,
                          LifecycleUndoEmitter;
@@ -125,6 +126,7 @@ import tools.transform.xform_kernels :
     applyXformMatrix,
     BlendMode;
 import command_history : CommandHistory, PreparedHistoryKind;
+import command : Command;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import change_bus : MeshEditScope;
 // Task 0614 Phase 3/4 — the item-mode apply path + its undo command.
@@ -425,6 +427,61 @@ struct PreparedXfrmUpdateTailImage {
     void clear() nothrow @nogc {
         this = PreparedXfrmUpdateTailImage.init;
     }
+}
+
+struct PreparedXfrmItemEditCloseImage {
+    Layer[] targets;
+    ItemXform[] before;
+    bool capturing;
+    bool valid;
+    void clear() nothrow @nogc { this = PreparedXfrmItemEditCloseImage.init; }
+}
+
+struct PreparedXfrmEditCloseImage {
+    PreparedTransformEditCloseImage vertex;
+    PreparedXfrmItemEditCloseImage item;
+    bool itemSubject;
+    bool historyPrepared;
+    bool valid;
+    void clear() nothrow @nogc {
+        vertex.clear(); item.clear();
+        itemSubject = historyPrepared = valid = false;
+    }
+}
+
+struct PreparedXfrmUpdatePreProjection {
+    ulong selectionHash;
+    ulong mutationVersion;
+    ulong slotSignature;
+    uint acenEpoch;
+    FalloffPacket liveFalloff;
+    SnapPacket liveSnap;
+    SymmetryPacket liveSymmetry;
+    bool selectionChanged;
+    bool mutationChanged;
+    bool selectionBoundary;
+    bool slotBoundary;
+    bool pivotMoved;
+    bool editOpen;
+    bool moveHeld;
+    bool packetChanged;
+    bool panelRegrade;
+    bool wrapperRegrade;
+    bool valid;
+    void clear() nothrow @nogc { this = PreparedXfrmUpdatePreProjection.init; }
+}
+
+struct PreparedXfrmSlotPollImage {
+    ulong expectedSignature;
+    ulong nextSignature;
+    uint expectedAcenEpoch;
+    uint nextAcenEpoch;
+    bool expectedValid;
+    bool nextValid;
+    bool boundary;
+    bool pivotMoved;
+    bool valid;
+    void clear() nothrow @nogc { this = PreparedXfrmSlotPollImage.init; }
 }
 
 // LiveEvalClient (task 0428): the sole implementor of the live re-evaluation
@@ -1370,6 +1427,119 @@ public:
         image.nextGpuMatrix = projectedGpuMatrix(image.writeGpuMatrix);
         image.valid = true;
         return image;
+    }
+
+    final PreparedXfrmUpdatePreProjection projectPreparedUpdatePre(
+            ref VectorStack vts) {
+        PreparedXfrmUpdatePreProjection p;
+        if (!active) return p;
+        p.valid = true;
+        p.selectionHash = computeSelectionHash();
+        // recorded remainder (1906 §3.6): preparation-time twin of this
+        // root's legacy foreign-edit boundary. Position bus epochs include
+        // this tool's own version-silent fold and would split its run; the
+        // structure-owned mutationVersion is deliberately blind to that fold.
+        p.mutationVersion = mesh.mutationVersion;
+        p.selectionChanged = p.selectionHash != lastSelectionHash;
+        p.mutationChanged = p.mutationVersion != lastMutationVersion;
+        p.selectionBoundary = activeDrag is null &&
+            (p.selectionChanged || p.mutationChanged);
+        p.slotSignature = slotStateSignature();
+        if (auto ac = activeAcenStage()) p.acenEpoch = ac.slotEpoch;
+        p.slotBoundary = activeDrag is null && !p.selectionBoundary &&
+            lastSlotSigValid && p.slotSignature != lastSlotSig;
+        p.pivotMoved = p.slotBoundary && p.acenEpoch != lastAcenEpoch;
+        p.editOpen = editIsOpen();
+        p.moveHeld = dragBaseline.length == mesh.vertices.length &&
+            (run.t.x != 0 || run.t.y != 0 || run.t.z != 0);
+        p.liveFalloff = currentFalloff(vts).ownedDup();
+        p.liveSnap = currentSnap(vts);
+        p.liveSymmetry = currentSymmetry(vts).ownedDup();
+        p.packetChanged = !falloffPacketsEqual(p.liveFalloff, dragFalloff) ||
+            !snapPacketsEqual(p.liveSnap, dragSnap) ||
+            !symmetryPacketsEqual(p.liveSymmetry, dragSymmetry);
+        if (!p.selectionBoundary && !p.slotBoundary && activeDrag is null &&
+            p.moveHeld && p.packetChanged) {
+            p.panelRegrade = p.editOpen;
+            p.wrapperRegrade = !p.editOpen && history !is null &&
+                history.runOpen() && currentRunBank == DragBank.Move &&
+                regradeStampCurrent();
+        }
+        return p;
+    }
+
+    final PreparedXfrmSlotPollImage buildPreparedSlotPoll(
+            ref const PreparedXfrmUpdatePreProjection p) const nothrow @nogc {
+        PreparedXfrmSlotPollImage image;
+        if (!p.valid) return image;
+        image.expectedSignature = lastSlotSig;
+        image.expectedAcenEpoch = lastAcenEpoch;
+        image.expectedValid = lastSlotSigValid;
+        image.nextSignature = lastSlotSig;
+        image.nextAcenEpoch = lastAcenEpoch;
+        image.nextValid = lastSlotSigValid;
+        if (activeDrag is null) {
+            if (!lastSlotSigValid || p.slotBoundary) {
+                image.nextValid = true;
+                image.nextSignature = p.slotSignature;
+                image.nextAcenEpoch = p.acenEpoch;
+            }
+            image.boundary = p.slotBoundary;
+            image.pivotMoved = p.pivotMoved;
+        }
+        image.valid = true;
+        return image;
+    }
+
+    final bool preparedSlotPollMatches(
+            ref const PreparedXfrmSlotPollImage image) const nothrow @nogc {
+        return image.valid && lastSlotSig == image.expectedSignature &&
+            lastAcenEpoch == image.expectedAcenEpoch &&
+            lastSlotSigValid == image.expectedValid;
+    }
+
+    final void installPreparedSlotPoll(ref PreparedXfrmSlotPollImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        lastSlotSig = image.nextSignature;
+        lastAcenEpoch = image.nextAcenEpoch;
+        lastSlotSigValid = image.nextValid;
+        image.clear();
+    }
+
+    final PreparedXfrmEditCloseImage buildPreparedUpdateEditClose(
+            PreparedRecordContext context, string label) {
+        PreparedXfrmEditCloseImage image;
+        image.itemSubject = itemSubjectActive();
+        image.vertex = capturePreparedEditClose();
+        image.item = capturePreparedItemEditClose();
+        Command cmd = image.itemSubject ? buildPreparedItemEditCmd()
+                                        : buildPreparedEditCmd(label);
+        if (cmd !is null) {
+            if (context is null || history is null) return image;
+            const kind = recordViaInSession ? PreparedHistoryKind.InSession
+                                            : PreparedHistoryKind.Plain;
+            image.historyPrepared = context.prepare(cmd, kind,
+                recordViaInSession ? history.currentRunId : 0).accepted;
+            if (!image.historyPrepared) return image;
+        }
+        image.valid = true;
+        return image;
+    }
+
+    final bool preparedUpdateEditCloseMatches(
+            ref const PreparedXfrmEditCloseImage image) const nothrow @nogc {
+        return image.valid && itemSubjectActive() == image.itemSubject &&
+            preparedEditCloseMatches(image.vertex) &&
+            preparedItemEditCloseMatches(image.item);
+    }
+
+    final void installPreparedUpdateEditClose(
+            ref PreparedXfrmEditCloseImage image) nothrow @nogc {
+        if (!image.valid) return;
+        installPreparedEditClose(image.vertex);
+        installPreparedItemEditClose(image.item);
+        image.clear();
     }
 
     final bool preparedUpdateTailMatches(

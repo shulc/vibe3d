@@ -66,7 +66,9 @@ mixin template XfrmItemImpl() {
     // the tool itself, refreshed at the top of every mouse handler this
     // instance receives, never read across a different tool's evaluate().
     private SelType cachedSubjType_ = SelType.Vertex;
-    private bool itemSubjectActive() const { return cachedSubjType_ == SelType.Item; }
+    private bool itemSubjectActive() const nothrow @nogc {
+        return cachedSubjType_ == SelType.Item;
+    }
 
     // Task 0614 Phase 4 — the factory for the item-transform undo command,
     // mirroring `vertexEditFactory` (TransformTool). Injected by app.d
@@ -100,7 +102,7 @@ mixin template XfrmItemImpl() {
     // already is. An open item session with no open vertex session (the
     // common single-bank-preset case) would otherwise be silently dropped at
     // tool-drop — never committed, never undoable.
-    protected override bool editIsOpen() const {
+    protected override bool editIsOpen() const nothrow @nogc {
         return itemEditCapturing_ || super.editIsOpen();
     }
 
@@ -276,6 +278,49 @@ mixin template XfrmItemImpl() {
         auto cmd = layerXformEditFactory_();
         cmd.setEdit(payload);
         recordCommit(cmd);
+    }
+
+    private LayerXformEdit buildPreparedItemEditCmd() {
+        if (!itemEditCapturing_ || history is null ||
+            layerXformEditFactory_ is null || itemEditTargets_.length == 0 ||
+            itemEditTargets_.length != itemEditBefore_.length) return null;
+        LayerXformTarget[] payload;
+        payload.reserve(itemEditTargets_.length);
+        bool changed;
+        foreach (i, t; itemEditTargets_) {
+            const before = itemEditBefore_[i];
+            const after = t.xform;
+            if (before != after) changed = true;
+            payload ~= LayerXformTarget(t, before, after);
+        }
+        if (!changed) return null;
+        auto cmd = layerXformEditFactory_();
+        cmd.setEdit(payload);
+        return cmd;
+    }
+
+    private PreparedXfrmItemEditCloseImage capturePreparedItemEditClose() {
+        PreparedXfrmItemEditCloseImage image;
+        image.targets = itemEditTargets_.dup;
+        image.before = itemEditBefore_.dup;
+        image.capturing = itemEditCapturing_;
+        image.valid = true;
+        return image;
+    }
+
+    private bool preparedItemEditCloseMatches(
+            ref const PreparedXfrmItemEditCloseImage image) const
+            nothrow @nogc {
+        return image.valid && itemEditCapturing_ == image.capturing &&
+            itemEditTargets_ == image.targets && itemEditBefore_ == image.before;
+    }
+
+    private void installPreparedItemEditClose(
+            ref PreparedXfrmItemEditCloseImage image) nothrow @nogc {
+        itemEditCapturing_ = false;
+        itemEditTargets_ = null;
+        itemEditBefore_ = null;
+        image.clear();
     }
 
     // Task 0614 Phase 3 — the item-mode analogue of `dragBaseline`/

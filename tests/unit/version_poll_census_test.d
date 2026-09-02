@@ -845,8 +845,9 @@ private static immutable RemainderFile[] kRemainder = [
       ~ "(same family; same counter and argument)"),
     RemainderFile("source/tools/transform/transform.d", 1,
         "computeSelectionHash's marksVersion memo"),
-    RemainderFile("source/tools/transform/xfrm_transform.d", 3,
-        "the gesture staleness gate (row 21) + the wrapper's gesture boundary"),
+    RemainderFile("source/tools/transform/xfrm_transform.d", 4,
+        "the gesture staleness gate (row 21) + the wrapper's gesture boundary "
+      ~ "+ its conversion-only prepared projection"),
 ];
 
 /// The two sites §3.6 keeps by HAND because no line scanner can reach them:

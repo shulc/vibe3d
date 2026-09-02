@@ -456,6 +456,7 @@ for path, text in prepared_source_texts.items():
             "prepared_scale_update",
             "prepared_inherited_noop",
             "prepared_xfrm_activation_session",
+            "prepared_xfrm_update_edit_close",
             "prepared_stroke_extrude_activation",
             "prepared_vertex_merge_activation",
             "prepared_poly_inset_activation",
@@ -7249,6 +7250,131 @@ run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(xfrm_tail_copy)], cwd=ROOT,
 if run.returncode == 0 or ("not copyable" not in run.stdout and
         not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
     fail("Xfrm update tail token copy was not rejected:\n" + run.stdout)
+
+xfrm_close_owner = (ROOT / "source/prepared_xfrm_update_edit_close.d").read_text()
+xfrm_transform_base = (ROOT / "source/tools/transform/transform.d").read_text()
+xfrm_item_source = (ROOT / "source/tools/transform/xfrm_item.d").read_text()
+def xfrm_update_edit_close_gate(owner, context, xfrm, base, item):
+    production = without_unittests(owner)
+    item_start = item.find("private LayerXformEdit buildPreparedItemEditCmd()")
+    item_end = item.find("// Task 0614 Phase 3", item_start)
+    prepared_item = item[item_start:item_end]
+    return all(x in owner for x in (
+        "final class PreparedXfrmUpdateEditCloseOwner",
+        "target.classinfo !is XfrmTransformTool.classinfo",
+        "prepared_.owner != owner_", "prepared_.generation != generation_",
+        "validatedToken_.owner != owner_",
+        "validatedToken_.generation != generation_",
+        "target_.preparedUpdateEditCloseMatches(image_)",
+        "target_.installPreparedUpdateEditClose(image_);")) and \
+        not any(x in production for x in (" delegate", " function(", "void*", "ubyte[]")) and \
+        all(x in context for x in (
+            "bool prepareXfrmUpdateEditClose(PreparedXfrmUpdateEditCloseOwner owner)",
+            "e.xfrmUpdateEditClose.validate();",
+            "e.xfrmUpdateEditClose.install();",
+            "e.xfrmUpdateEditClose.abort();")) and \
+        all(x in xfrm for x in (
+            "buildPreparedUpdateEditClose(", "buildPreparedItemEditCmd()",
+            "buildPreparedEditCmd(label)",
+            "preparedUpdateEditCloseMatches(",
+            "installPreparedUpdateEditClose(")) and \
+        all(x in base for x in (
+            "private Command buildPreparedMorphEditCmd(string label)",
+            "protected Command buildPreparedEditCmd(string label)",
+            "idx.reserve(editIdx.length);",
+            "morphEditBeforeHas_[i], valNow, hasNow",
+            "capturePreparedEditClose()", "preparedEditCloseMatches(",
+            "installPreparedEditClose(")) and \
+        all(x in prepared_item for x in (
+            "private LayerXformEdit buildPreparedItemEditCmd()",
+            "payload.reserve(itemEditTargets_.length);",
+            "capturePreparedItemEditClose()", "preparedItemEditCloseMatches(",
+            "installPreparedItemEditClose("))
+
+if not xfrm_update_edit_close_gate(xfrm_close_owner, record_context,
+        prepared_source_texts[ROOT / "source/tools/transform/xfrm_transform.d"],
+        xfrm_transform_base, xfrm_item_source):
+    fail("Xfrm update edit-close owner contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is XfrmTransformTool.classinfo", "false", "broaden product"),
+    ("owner", "target_.preparedUpdateEditCloseMatches(image_)", "true", "drop state validation"),
+    ("owner", "target_.installPreparedUpdateEditClose(image_);", "", "drop fixed install"),
+    ("context", "e.xfrmUpdateEditClose.validate();", "true;", "drop context validation"),
+    ("context", "e.xfrmUpdateEditClose.install();", "", "drop context install"),
+    ("context", "e.xfrmUpdateEditClose.abort();", "", "drop context abort"),
+    ("xfrm", "buildPreparedItemEditCmd()", "null", "drop item command"),
+    ("xfrm", "buildPreparedEditCmd(label)", "null", "drop component command"),
+    ("base", "idx.reserve(editIdx.length);", "", "drop detached position ownership"),
+    ("base", "morphEditBeforeHas_[i], valNow, hasNow", "false, valNow, hasNow", "drop morph presence"),
+    ("item", "payload.reserve(itemEditTargets_.length);", "", "drop detached item ownership"),
+):
+    o, c = xfrm_close_owner, record_context
+    x = prepared_source_texts[ROOT / "source/tools/transform/xfrm_transform.d"]
+    b, i = xfrm_transform_base, xfrm_item_source
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    elif target == "xfrm": x = x.replace(old, new, 1)
+    elif target == "base": b = b.replace(old, new, 1)
+    else:
+        before, found, after = i.rpartition(old)
+        i = before + new + after if found else i
+    if xfrm_update_edit_close_gate(o, c, x, b, i):
+        fail(f"Xfrm update edit-close mutation did not RED: {label}")
+xfrm_close_copy = ROOT / "tests/compile_fail/prepared_xfrm_update_edit_close_token_copy.d"
+run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(xfrm_close_copy)], cwd=ROOT,
+    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+if run.returncode == 0 or ("not copyable" not in run.stdout and
+        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+    fail("Xfrm update edit-close token copy was not rejected:\n" + run.stdout)
+
+xfrm_slot_owner = (ROOT / "source/prepared_xfrm_slot_poll.d").read_text()
+def xfrm_slot_poll_gate(owner, context, xfrm):
+    return all(s in owner for s in (
+        "final class PreparedXfrmSlotPollOwner",
+        "target.classinfo !is XfrmTransformTool.classinfo",
+        "prepared_.owner != owner_", "prepared_.generation != generation_",
+        "validatedToken_.owner != owner_",
+        "validatedToken_.generation != generation_",
+        "target_.preparedSlotPollMatches(image_)",
+        "target_.installPreparedSlotPoll(image_);")) and \
+        all(s in context for s in (
+            "bool prepareXfrmSlotPoll(PreparedXfrmSlotPollOwner owner)",
+            "e.xfrmSlotPoll.validate();", "e.xfrmSlotPoll.install();",
+            "e.xfrmSlotPoll.abort();")) and \
+        all(s in xfrm for s in (
+            "PreparedXfrmSlotPollImage buildPreparedSlotPoll(",
+            "if (!lastSlotSigValid || p.slotBoundary)",
+            "preparedSlotPollMatches(", "installPreparedSlotPoll(",
+            "lastSlotSig = image.nextSignature;",
+            "lastAcenEpoch = image.nextAcenEpoch;",
+            "lastSlotSigValid = image.nextValid;"))
+if not xfrm_slot_poll_gate(xfrm_slot_owner, record_context,
+        prepared_source_texts[ROOT / "source/tools/transform/xfrm_transform.d"]):
+    fail("Xfrm slot-poll owner contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is XfrmTransformTool.classinfo", "false", "broaden product"),
+    ("owner", "target_.preparedSlotPollMatches(image_)", "true", "drop validation"),
+    ("owner", "target_.installPreparedSlotPoll(image_);", "", "drop install"),
+    ("context", "e.xfrmSlotPoll.validate();", "true;", "drop context validation"),
+    ("context", "e.xfrmSlotPoll.install();", "", "drop context install"),
+    ("context", "e.xfrmSlotPoll.abort();", "", "drop context abort"),
+    ("xfrm", "lastSlotSig = image.nextSignature;", "", "drop signature latch"),
+    ("xfrm", "lastAcenEpoch = image.nextAcenEpoch;", "", "drop ACEN epoch latch"),
+    ("xfrm", "lastSlotSigValid = image.nextValid;", "", "drop validity latch"),
+):
+    o, c = xfrm_slot_owner, record_context
+    x = prepared_source_texts[ROOT / "source/tools/transform/xfrm_transform.d"]
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    else: x = x.replace(old, new, 1)
+    if xfrm_slot_poll_gate(o, c, x):
+        fail(f"Xfrm slot-poll mutation did not RED: {label}")
+xfrm_slot_copy = ROOT / "tests/compile_fail/prepared_xfrm_slot_poll_token_copy.d"
+run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(xfrm_slot_copy)], cwd=ROOT,
+    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+if run.returncode == 0 or ("not copyable" not in run.stdout and
+        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+    fail("Xfrm slot-poll token copy was not rejected:\n" + run.stdout)
 
 # Closed inherited base-noop owner infrastructure.  The effective product
 # table above proves DragWeldTool is the sole activate/deactivate admission;
