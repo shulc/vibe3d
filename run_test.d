@@ -10,6 +10,7 @@
  *   ./run_test.d -j N                # override the worker count (each worker
  *                                      gets its own vibe3d on a private port)
  *   ./run_test.d --print-scratch     # name this checkout's scratch tree, exit
+ *   ./run_test.d --check-protocol    # prepared-protocol census alone, exit 0/2
  *   ./run_test.d --timeout N         # per-test wall-clock cap in seconds
  *                                      (default 600; 0 = no cap)
  *
@@ -527,6 +528,7 @@ enum HarnessStage : string {
     spaceRefused = "space_refused",
     noTests      = "no_tests",
     gateRefused  = "gate_refused",
+    protocolRefused = "protocol_refused",
     buildFailed  = "build_failed",
     staleRefused = "stale_refused",
     lockTimeout  = "lock_timeout",
@@ -1385,6 +1387,64 @@ string[] compileTests(string[] paths, string outDir, ushort port) {
 }
 
 // ---------------------------------------------------------------------------
+// Prepared-tool protocol census
+// ---------------------------------------------------------------------------
+
+enum string kProtocolScanner = "tools/check_prepared_protocol.py";
+
+/// The prepared tool-transition protocol's census. Most of it is a source
+/// scan, but the expensive and irreplaceable half is `tests/compile_fail/`:
+/// ~70 fixtures that must FAIL to compile, checked by handing each to the
+/// compiler and requiring a rejection. There is no assert-shaped substitute --
+/// a fixture that quietly starts compiling is a hole no red test can open,
+/// because a passing test is exactly what it produces.
+///
+/// WHY IT LIVES HERE AND NOT IN dub.json. It hung off `preBuildCommands` of
+/// the `tests` configuration, where P1.0a's review had put it for a reason
+/// that is still true: with no caller at all, every one of those fixtures may
+/// degrade while both routine lanes stay green. The reason it could not stay
+/// there is cost, and the cost is not the one the 3691 card recorded -- the
+/// scanner has grown. Measured on the gate host, 2026-09-02, three
+/// consecutive runs: 38.4 / 38.4 / 38.5 s wall, 243 MiB peak RSS. dub runs
+/// preBuildCommands on every build that actually builds, so every
+/// `dub test --config=tests` following any source edit paid all of it, on top
+/// of a lane that is otherwise ~51 s. Here it is paid ONCE per suite run.
+///
+/// The output is the scanner's own, inherited: its PASS line on stdout, its
+/// `SystemExit` message on stderr. Nothing is summarised or swallowed, so a
+/// failure reads the same here as it did in the build log.
+bool protocolCensus() {
+    // A missing scanner is a REFUSAL, not a skip. "The file is not there" is
+    // indistinguishable, from a green lane, from "the fixtures are fine", and
+    // the whole point of moving this call was to keep exactly one caller
+    // honest about running it.
+    if (!exists(kProtocolScanner)) {
+        stderr.writeln(red("prepared-protocol census: " ~ kProtocolScanner
+                         ~ " is missing -- refusing to measure a tree whose "
+                         ~ "compile-fail fixtures nothing checks"));
+        return false;
+    }
+    auto sw = StopWatch(AutoStart.yes);
+    Pid pid;
+    try {
+        pid = spawnProcess(["python3", kProtocolScanner]);
+    } catch (ProcessException e) {
+        stderr.writeln(red("prepared-protocol census: could not start python3: " ~ e.msg));
+        return false;
+    }
+    const rc = wait(pid);
+    sw.stop();
+    const secs = sw.peek.total!"msecs" / 1000.0;
+    if (rc != 0) {
+        stderr.writefln(red("prepared-protocol census: FAILED (exit %d, %.1fs) "
+                          ~ "-- the scanner's own message is above"), rc, secs);
+        return false;
+    }
+    writefln(dim("prepared-protocol census: ok (%.1fs)"), secs);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // vibe3d lifecycle
 // ---------------------------------------------------------------------------
 
@@ -2076,6 +2136,7 @@ void printSummary(TestResult[] results) {
 
 int main(string[] args) {
     bool verbose, noBuild, keep, staleOk, writeStampOnly, printScratch, checkGate;
+    bool checkProtocol;
     // task 2080 — see the "Disk-space preflight" / "Scratch sweep" sections
     // above for what each of these drives.
     string checkSpacePath;
@@ -2108,6 +2169,9 @@ int main(string[] args) {
         "check-gate", "run the test-liveness barrier over a directory "
                     ~ "(default tests/) and exit 0/2, building nothing and "
                     ~ "starting no vibe3d",                                     &checkGate,
+        "check-protocol", "run the prepared-tool protocol census alone (the "
+                    ~ "tests/compile_fail/ fixtures included) and exit 0/2, "
+                    ~ "building nothing and starting no vibe3d",              &checkProtocol,
         "check-space","(task 2080) check free space at PATH against the "
                     ~ "preflight floor and exit 0/1, doing nothing else",       &checkSpacePath,
         "space-floor-mib", "override the space-preflight floor in MiB, for "
@@ -2194,6 +2258,16 @@ int main(string[] args) {
         writefln("--check-gate: %s is clean", dir);
         return 0;
     }
+
+    // --check-protocol: the protocol census ALONE -- the same protocolCensus()
+    // the full run below calls, with nothing around it. Two jobs. It is how the
+    // new call site is point-checked without standing up a suite (the scan is
+    // ~38 s; the suite is minutes), and it is the hand-hold for a narrow run
+    // that wants the census anyway. Like every meta invocation above it, it
+    // returns BEFORE the load log is armed: it ran no tests, so it is not an
+    // invocation the host-load report should see.
+    if (checkProtocol)
+        return protocolCensus() ? 0 : 2;
 
     // --check-space: the real freeBytes()/statvfs query against a real path,
     // with an overridable floor — the surface a constrained-mount witness
@@ -2351,6 +2425,33 @@ int main(string[] args) {
             g_harness.rc = 2;
             return 2;
         }
+    }
+
+    // The prepared-tool protocol census -- the second barrier, and for the same
+    // reason as the first: it answers a whole-tree question, and a run that
+    // cannot answer it is measuring a tree in which ~70 compile-fail fixtures
+    // may have quietly started compiling. It moved here out of dub.json's
+    // `tests` configuration preBuildCommands, where every `dub test` that
+    // rebuilt anything paid its 38 s; see protocolCensus() for the measurement
+    // and for why deleting the call is not an option.
+    //
+    // A NARROW run (a test named on the command line) skips it and SAYS SO.
+    // The census is a property of the tree, not of the named test, and a
+    // 38 s tax on `./run_test.d <name>` is a tax on the iteration loop that
+    // people would answer by not using the runner. Both routine gates are FULL
+    // runs -- `./run_test.d --no-build` with no names, and CI's
+    // `run_all.d --only unit`, which passes `--exclude` and never a name -- so
+    // both pay it exactly once. The skip is printed, never silent: a census
+    // that can go quiet is the inert-gate class this project pays for most.
+    if (args.length > 1) {
+        writeln(yellow("prepared-protocol census: SKIPPED -- this is a narrow "
+                     ~ "run. The full lane runs it; `./run_test.d "
+                     ~ "--check-protocol` runs it alone."));
+    } else if (!protocolCensus()) {
+        stderr.writeln(red("prepared-protocol census: refusing to build this set."));
+        g_harness.stage = HarnessStage.protocolRefused;
+        g_harness.rc = 2;
+        return 2;
     }
 
     if (!noBuild && !dubBuild()) {

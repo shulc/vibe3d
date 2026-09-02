@@ -263,9 +263,7 @@
 			"sourceFiles": [
 				"tools/perf/lib/vslast.d"
 			],
-			"preBuildCommands": [
-				"python3 tools/check_prepared_protocol.py"
-			],
+			"_comment-protocol-census": "THE PREPARED-PROTOCOL CENSUS IS NOT GONE -- IT MOVED, and re-adding it here re-creates the cost it was moved out of. It used to be `preBuildCommands: [\"python3 tools/check_prepared_protocol.py\"]` on THIS configuration, put there by P1.0a's review for a real reason: without a caller, `tests/compile_fail/`'s ~70 fixtures -- each of which must FAIL to compile, a property no red assert can express -- could all start compiling under a green lane. The reason it could not stay: dub runs preBuildCommands on every build that actually builds, so every `dub test --config=tests` after any source edit paid the whole scan. Measured on the gate host 2026-09-02: 38.4 s wall / 243 MiB peak RSS for the scanner alone (the 3691 card's ~10 s has grown with it), against a `dub test` that is otherwise ~51 s. Its caller is now `run_test.d` -- the OTHER routine gate -- as a barrier beside the test-liveness one, before anything is built: one payment per suite run instead of one per test build, and CI reaches it through `run_all.d --only unit`, which fans out to a FULL `./run_test.d`. `./run_test.d --check-protocol` runs it alone. If you are about to delete that call, read its comment there first.",
 			"importPaths": [
 				"source",
 				"tools/perf"
