@@ -15,17 +15,20 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
-    PreviewRebuildCounts;
+    PreviewRebuildCounts, PreparedPreviewRebuildImage;
 import mesh_edit_delta : MeshEditDelta, MeshEditScope;
 import tools.transform.xfrm_transform : XfrmTransformTool;
 import pipe_gizmo_host : PipeGizmoHost;
 import tools.transform.move : MoveTool;
 import tools.transform.rotate : RotateTool;
 import tools.transform.scale : ScaleTool;
-import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
+    PreparedEdgeExtendParamEffect, PreparedEdgeExtendParamKind;
 import prepared_tool_effect : PreparedXfrmUpdateEffect, PreparedXfrmUpdateKind;
 import prepared_record_context : PreparedRecordContext;
 import prepared_edge_extend_tool_activation : PreparedEdgeExtendToolActivationOwner;
+import prepared_edge_extend_param_update : PreparedEdgeExtendParamUpdateOwner;
+import prepared_transform_product_activation : PreparedTransformProductActivationOwner;
 import prepared_xfrm_activation_session : PreparedXfrmActivationSessionOwner;
 import document : Layer;
 import mesh_gpu : GpuUploadOwner;
@@ -41,6 +44,28 @@ struct PreparedEdgeExtendToolActivationImage {
     void clear() nothrow @nogc {
         valid = false; baseline = MeshSnapshot.init; pivot = Vec3.init;
         moveHandle = rotateHandle = scaleHandle = false;
+    }
+}
+
+struct PreparedEdgeExtendParamImage {
+    bool valid, appliesMesh, bankSwitch, pivotUpdate;
+    bool activateMove, activateRotate, activateScale;
+    string name;
+    bool expectedActive, expectedBuilt, expectedMove, expectedRotate, expectedScale;
+    bool expectedXfrmT, expectedXfrmR, expectedXfrmS;
+    bool expectedPivotActive; Vec3 expectedPivotValue;
+    float expectedInset, expectedShift;
+    Vec3 expectedOffset, expectedRotateVec, expectedScaleVec;
+    int expectedSegments;
+    bool nextBuilt, nextPivotActive;
+    MeshSnapshot expectedLive, expectedBefore;
+    PreparedPreviewRebuildImage preview;
+    Mesh candidate; uint deliveryFlags, deliveryDomains;
+    void clear() nothrow @nogc {
+        valid = appliesMesh = bankSwitch = pivotUpdate = false;
+        activateMove = activateRotate = activateScale = false; name = null;
+        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
+        preview.clear(); candidate = Mesh.init; deliveryFlags = deliveryDomains = 0;
     }
 }
 
@@ -382,6 +407,20 @@ public:
     version(unittest) final bool preparedEmbeddedLinksForTest() const nothrow @nogc {
         return xfrm.preparedWrapperLinksForTest();
     }
+    version(unittest) final void seedPreparedParamForTest(ref Mesh live,
+            bool interactive = true) {
+        active = true; built = false; before = MeshSnapshot.capture(live);
+        interactiveParamEdit = interactive; inset_ = 0.2f; preview_.reset();
+    }
+    version(unittest) final void setPreparedRotateBankForTest(bool value)
+            nothrow @nogc { rotateHandle_ = value; }
+    version(unittest) final bool preparedParamInstalledForTest(bool builtExpected,
+            bool rotateExpected) {
+        return built == builtExpected && xfrm.flagT == moveHandle_ &&
+            xfrm.flagR == rotateExpected && xfrm.flagS == scaleHandle_;
+    }
+    version(unittest) final void mutatePreparedParamForTest(float value)
+            nothrow @nogc { shift_ = value; }
 
     // Push the bank switches into the embedded wrapper. flagT/flagR/flagS gate
     // registration with the shared arbiter, the per-frame hit-geometry refresh
@@ -471,6 +510,118 @@ public:
         if (!hasUncommittedEdit()) return false;
         commitEdit();
         return true;
+    }
+
+    final PreparedEdgeExtendParamImage buildPreparedParamUpdate(
+            string name, ref Mesh live) {
+        PreparedEdgeExtendParamImage image; image.valid = true; image.name = name;
+        image.expectedActive = active; image.expectedBuilt = built;
+        image.expectedMove = moveHandle_; image.expectedRotate = rotateHandle_;
+        image.expectedScale = scaleHandle_; image.expectedXfrmT = xfrm.flagT;
+        image.expectedXfrmR = xfrm.flagR; image.expectedXfrmS = xfrm.flagS;
+        image.expectedPivotActive = dragPivotOverride_.active;
+        image.expectedPivotValue = dragPivotOverride_.value;
+        image.expectedInset = inset_; image.expectedShift = shift_;
+        image.expectedOffset = offsetVec(); image.expectedRotateVec = rotateVec();
+        image.expectedScaleVec = scaleVec(); image.expectedSegments = segments_;
+        image.expectedLive = MeshSnapshot.capture(live); image.expectedBefore = before;
+        image.nextBuilt = built; image.nextPivotActive = dragPivotOverride_.active;
+
+        if (name == "moveHandle" || name == "rotateHandle" ||
+                name == "scaleHandle") {
+            image.bankSwitch = true;
+            if (active) {
+                image.activateMove = true;
+                image.activateRotate = rotateHandle_;
+                image.activateScale = scaleHandle_;
+            }
+            return image;
+        }
+        if (name == "_dragPivot") {
+            image.pivotUpdate = true;
+            auto p = dragPivotOverride_.value;
+            image.nextPivotActive = p.x != 0 || p.y != 0 || p.z != 0;
+            return image;
+        }
+        if (!interactiveParamEdit || !active || !before.filled) return image;
+
+        image.candidate = detachedPreparedMesh(live);
+        auto shadow = beginPreparedShadow(image.candidate);
+        preview_.prepareImage(image.preview);
+        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+            image.deliveryDomains);
+        image.deliveryFlags = image.deliveryDomains = 0;
+        PreviewRebuild runner; runner.loadPreparedNext(image.preview);
+        size_t n = runner.run(image.candidate, before,
+            (ref Mesh cage) => PreviewTopologyKey.make(cage.operandEdgeMask(),
+                                                       false, segments_),
+            (ref Mesh target) => runPreviewKernel(target));
+        runner.savePreparedNext(image.preview);
+        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+            image.deliveryDomains); shadow.close();
+        image.appliesMesh = true; image.nextBuilt = n != 0;
+        return image;
+    }
+
+    final bool preparedParamUpdateMatches(in PreparedEdgeExtendParamImage image,
+            ref const Mesh live) const nothrow @nogc {
+        return image.valid && image.name !is null && active == image.expectedActive &&
+            built == image.expectedBuilt && moveHandle_ == image.expectedMove &&
+            rotateHandle_ == image.expectedRotate && scaleHandle_ == image.expectedScale &&
+            xfrm.flagT == image.expectedXfrmT && xfrm.flagR == image.expectedXfrmR &&
+            xfrm.flagS == image.expectedXfrmS &&
+            dragPivotOverride_.active == image.expectedPivotActive &&
+            dragPivotOverride_.value == image.expectedPivotValue &&
+            inset_ == image.expectedInset && shift_ == image.expectedShift &&
+            Vec3(offsetX_, offsetY_, offsetZ_) == image.expectedOffset &&
+            Vec3(rotateX_, rotateY_, rotateZ_) == image.expectedRotateVec &&
+            Vec3(scaleX_, scaleY_, scaleZ_) == image.expectedScaleVec &&
+            segments_ == image.expectedSegments &&
+            image.expectedLive.matches(live) && image.expectedBefore.matches(before) &&
+            (!image.appliesMesh || preview_.matchesImage(image.preview));
+    }
+
+    final void installPreparedParamUpdate(ref PreparedEdgeExtendParamImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        if (image.bankSwitch) {
+            xfrm.flagT = moveHandle_; xfrm.flagR = rotateHandle_;
+            xfrm.flagS = scaleHandle_;
+        }
+        if (image.pivotUpdate) dragPivotOverride_.active = image.nextPivotActive;
+        if (image.appliesMesh) {
+            built = image.nextBuilt; preview_.installImage(image.preview);
+        }
+        image.clear();
+    }
+
+    final PreparedEdgeExtendParamEffect prepareParamChanged(string name,
+            PreparedRecordContext context, Layer layer, GpuUploadOwner uploadOwner) {
+        if (context is null) return PreparedEdgeExtendParamEffect(
+            preparedToolStateOwner, PreparedEdgeExtendParamKind.None, false);
+        scope(failure) context.discard();
+        auto owner = PreparedEdgeExtendParamUpdateOwner.prepare(this, layer, name);
+        bool ok = owner !is null;
+        if (ok && owner.appliesMesh)
+            ok = owner.deliveryFlags != 0 && uploadOwner !is null &&
+                uploadOwner.owns(gpu) &&
+                context.prepareStampedMeshImage(layer, owner.candidate,
+                    owner.deliveryFlags, owner.deliveryDomains) &&
+                context.prepareUpload(uploadOwner, owner.candidate);
+        if (ok) ok = context.prepareEdgeExtendParamUpdate(owner);
+        if (ok) ok = context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedEdgeExtendParamEffect(preparedToolStateOwner,
+            owner is null ? PreparedEdgeExtendParamKind.None : owner.effectKind, ok);
+    }
+    final PreparedTransformProductActivationOwner preparedParamMoveOwner() {
+        return PreparedTransformProductActivationOwner.prepare(xfrm.moveBank());
+    }
+    final PreparedTransformProductActivationOwner preparedParamRotateOwner() {
+        return PreparedTransformProductActivationOwner.prepare(xfrm.rotateBank());
+    }
+    final PreparedTransformProductActivationOwner preparedParamScaleOwner() {
+        return PreparedTransformProductActivationOwner.prepare(xfrm.scaleBank());
     }
 
     override void onParamChanged(string name) {
@@ -876,6 +1027,14 @@ private:
         return mesh.operandEdgeMask();
     }
 
+    size_t runPreviewKernel(ref Mesh target) {
+        auto ed = MeshEditBatch.unrecorded(target, kExtrudeEditScope);
+        immutable r = ed.extendEdgesByMask(target.operandEdgeMask(),
+            inset_, shift_, offsetVec(), rotateVec(), scaleVec(),
+            segments_, livePivot());
+        ed.close(); return r;
+    }
+
     // Revert to the pre-extend cage + selection, then re-run the kernel from the
     // current params. This is the per-tick re-evaluate (§4.2): WRITE params +
     // RE-RUN, never vertex-transform the post-extend ridge.
@@ -909,15 +1068,7 @@ private:
         size_t n = preview_.run(*mesh, before,
             (ref Mesh cage) => PreviewTopologyKey.make(cage.operandEdgeMask(),
                                                        false, segments_),
-            (ref Mesh target) {
-                auto ed = MeshEditBatch.unrecorded(target, kExtrudeEditScope);
-                immutable r = ed.extendEdgesByMask(
-                                 target.operandEdgeMask(), inset_, shift_,
-                                 offsetVec(), rotateVec(), scaleVec(),
-                                 segments_, livePivot());
-                ed.close();
-                return r;
-            });
+            (ref Mesh target) => runPreviewKernel(target));
         built = (n != 0);
         refreshCaches();
     }
