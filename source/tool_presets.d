@@ -260,6 +260,34 @@ void applyStickyToolDefaults(ParamProvider t, string presetId) {
     }
 }
 
+/// Detached-candidate half of sticky restoration for the unified activation
+/// transaction. Values are parsed into the unpublished candidate, while hook
+/// names are returned as owned storage for later prepared-effect enlistment.
+/// No `onParamChanged` implementation is called here.
+struct PreparedStickyDefaults {
+    string[] changedNames;
+}
+
+PreparedStickyDefaults prepareStickyToolDefaults(ParamProvider candidate,
+                                                  string presetId) {
+    PreparedStickyDefaults result;
+    auto sticky = presetId in g_prefs.toolDefaults;
+    if (sticky is null) return result;
+    auto schema = candidate.params();
+    foreach (name, valueStr; *sticky) {
+        foreach (ref p; schema) {
+            if (p.name != name) continue;
+            // A String/Enum Param stores the supplied slice directly. Own the
+            // wire buffer before parsing so the candidate never borrows prefs.
+            const ownedValue = valueStr.idup;
+            if (parseInto(p, ownedValue))
+                result.changedNames ~= name.idup;
+            break;
+        }
+    }
+    return result;
+}
+
 version (unittest) {
     // Tiny ParamProvider fake — one float param — so the restore mechanism
     // is testable without a GL-heavy real Tool. Records the names
@@ -267,11 +295,36 @@ version (unittest) {
     // (not just the pointer write) actually ran.
     private final class FakeStickyProvider : ParamProvider {
         float width = 1.0f;
+        string label = "initial";
         string[] changedNames;
-        Param[] params() { return [Param.float_("width", "Width", &width, 1.0f)]; }
+        Param[] params() { return [
+            Param.float_("width", "Width", &width, 1.0f),
+            Param.string_("label", "Label", &label, "initial")
+        ]; }
         bool paramEnabled(string name) const { return true; }
         void onParamChanged(string name) { changedNames ~= name; }
     }
+}
+
+unittest {
+    auto saved = g_prefs;
+    scope(exit) g_prefs = saved;
+    g_prefs = Prefs.init;
+
+    char[] producerName = "label".dup;
+    char[] producerValue = "owned-value".dup;
+    g_prefs.toolDefaults["fake"][cast(string)producerName] =
+        cast(string)producerValue;
+    auto fake = new FakeStickyProvider();
+    auto prepared = prepareStickyToolDefaults(fake, "fake");
+    assert(fake.label == "owned-value" && prepared.changedNames == ["label"]);
+    assert(fake.changedNames.length == 0,
+           "prepared sticky values invoked a live hook during preparation");
+    producerName[] = 'x';
+    producerValue[] = 'y';
+    g_prefs = Prefs.init;
+    assert(fake.label == "owned-value" && prepared.changedNames == ["label"],
+           "prepared sticky values borrowed prefs storage");
 }
 
 unittest {
