@@ -17,7 +17,8 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import perf_probe : g_perf, Cat;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
+    PreparedSimpleToolDoorClient;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import command_history : PreparedHistoryKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
@@ -98,7 +99,8 @@ struct PreparedVertexMergeActivationImage {
 // generic viewport haul, topology-mutating via a shared MeshSessionEdit
 // before/after snapshot).
 // ---------------------------------------------------------------------------
-class VertexMergeTool : Tool {
+class VertexMergeTool : Tool, PreparedToolDoorClient {
+    mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }

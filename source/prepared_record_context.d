@@ -75,6 +75,34 @@ import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
 
+/// Capability implemented only by concrete products admitted to the P1.0c
+/// unified door. Keeping it beside the transaction owner avoids adding two
+/// universal virtual slots to Tool (task 0428 moratorium).
+interface PreparedToolDoorClient {
+    bool prepareDoorDeactivate(PreparedRecordContext context, Layer layer,
+            ulong threadIdentity, ulong contextIdentity);
+    bool prepareDoorActivate(PreparedRecordContext context, Layer layer,
+            ulong threadIdentity, ulong contextIdentity);
+}
+
+/// Shared adapter for the session tools whose complete prepared activation and
+/// deactivation products need no GL/Layer-specific owner arguments.
+mixin template PreparedSimpleToolDoorClient(LayerT) {
+    override bool prepareDoorDeactivate(PreparedRecordContext context, LayerT,
+            ulong, ulong) {
+        auto effect = prepareDeactivate(context);
+        if (context is null) return false;
+        const ok = effect.historyAccepted ? context.markHistoryInstall()
+                                          : context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return ok;
+    }
+    override bool prepareDoorActivate(PreparedRecordContext context, LayerT,
+            ulong, ulong) {
+        return prepareActivate(context).accepted;
+    }
+}
+
 private enum PreparedResourceKind : ubyte {
     HistoryInstall, NoHistoryInstall, MeshInstall, DeliveryInstall, GpuMeshDestroy,
     GpuUpload, ClickPointDestroy, BoxHandlerBatchDestroy
@@ -226,8 +254,9 @@ public:
     /// transactions require exactly one marker; history-only transactions keep
     /// their historical direct install path.
     bool markHistoryInstall() {
-        if (!begun_ || validated_Once || history_ is null || historyMarker_ || noHistoryMarker_ ||
+        if (!begun_ || validated_Once || history_ is null || noHistoryMarker_ ||
             (xfrmLayoutStage_ != 0 && xfrmLayoutStage_ != 1)) return false;
+        if (historyMarker_) return true;
         resources_.reserve(resources_.length + 1);
         PreparedResourceEntry e;
         e.kind = PreparedResourceKind.HistoryInstall;
@@ -238,8 +267,9 @@ public:
     }
 
     bool markNoHistoryInstall() {
-        if (!begun_ || validated_Once || historyMarker_ || noHistoryMarker_ ||
+        if (!begun_ || validated_Once || historyMarker_ ||
             (xfrmLayoutStage_ != 0 && xfrmLayoutStage_ != 1)) return false;
+        if (noHistoryMarker_) return true;
         resources_.reserve(1 + resources_.length);
         PreparedResourceEntry e; e.kind = PreparedResourceKind.NoHistoryInstall;
         resources_ ~= e; noHistoryMarker_ = true;

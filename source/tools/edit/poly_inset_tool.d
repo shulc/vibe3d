@@ -16,7 +16,8 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import perf_probe : g_perf, Cat;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
+    PreparedSimpleToolDoorClient;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import command_history : PreparedHistoryKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
@@ -100,7 +101,8 @@ struct PreparedPolyInsetParamImage {
 // codebase uses, and the toolcard does not treat it as a load-bearing
 // requirement. Deferred; see task 0359 Лог.
 // ---------------------------------------------------------------------------
-class PolyInsetTool : Tool {
+class PolyInsetTool : Tool, PreparedToolDoorClient {
+    mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }

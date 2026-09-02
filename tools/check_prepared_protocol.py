@@ -6262,7 +6262,9 @@ def b5d2_gate(context, vertex):
             "bool markNoHistoryInstall()" in context and
             "if (history_ !is null) history_.discardPreparedToken(token_);\n"
             "            installedHistory = true;" in context and
-            context.count("historyMarker_ || noHistoryMarker_") == 3 and
+            "if (historyMarker_) return true;" in context and
+            "if (noHistoryMarker_) return true;" in context and
+            "history_ is null || noHistoryMarker_" in context and
             "final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context," in vertex and
             vertex.count("context.prepareSnapClear(snapOwner)") == 1 and
             vertex.count("context.preparePrivateState(stateOwner)") == 1 and
@@ -6275,8 +6277,12 @@ def b5d2_gate(context, vertex):
 if not b5d2_gate(record_context, b5d2_vertex):
     fail("P1.0b.5d.2 Vertex deactivate contract drift")
 for target, old, new, label in (
-    ("context", "historyMarker_ || noHistoryMarker_", "historyMarker_",
+    ("context", "history_ is null || noHistoryMarker_", "history_ is null",
      "allow both history seals"),
+    ("context", "if (historyMarker_) return true;", "",
+     "drop idempotent history seal"),
+    ("context", "if (noHistoryMarker_) return true;", "",
+     "drop idempotent no-history seal"),
     ("context", "if (history_ !is null) history_.discardPreparedToken(token_);\n"
      "            installedHistory = true;",
      "installedHistory = true;", "drop empty history consumption"),
@@ -7100,7 +7106,8 @@ def xfrm_activation_session_gate(owner, context, xfrm, transform):
         "xfrmLayoutStage_ != 2 || xfrmLayoutOwner_ !is owner" in context and
         "xfrmLayoutStage_ != 0 && xfrmLayoutStage_ != 3" in context and
         "resources_[$ - 2].kind != PreparedResourceKind.XfrmActivationPreState" in context and
-        "history_ is null || historyMarker_ || noHistoryMarker_" in context and
+        "history_ is null || noHistoryMarker_" in context and
+        "if (historyMarker_) return true;" in context and
         context.count("|| history_ is null) return PreparedHistoryResult.init;") == 2 and
         "|| history_ is null) return 0;" in context and
         "e.xfrmActivation.validatePre();" in context and
@@ -8254,5 +8261,61 @@ run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(inherited_noop_copy_fixture)]
 if run.returncode == 0 or ("not copyable" not in run.stdout and
         not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
     fail("Inherited base-noop token copy was not rejected:\n" + run.stdout)
+
+# P1.0c door capability grows off Tool's universal virtual surface. This first
+# admitted tranche is exact so a class cannot silently inherit the legacy door
+# while still appearing in the prepared writer census.
+simple_door_clients = {
+    "source/tools/deform/stroke_extrude_tool.d": "StrokeExtrudeTool",
+    "source/tools/deform/smooth_shift_tool.d": "SmoothShiftTool",
+    "source/tools/edit/poly_inset_tool.d": "PolyInsetTool",
+    "source/tools/edit/poly_extrude.d": "PolyExtrudeTool",
+    "source/tools/edit/edge_bevel.d": "EdgeBevelTool",
+    "source/tools/edit/edge_extrude.d": "EdgeExtrudeTool",
+    "source/tools/edit/poly_bevel.d": "PolyBevelTool",
+    "source/tools/edit/vertex_bevel_tool.d": "VertexBevelTool",
+    "source/tools/edit/vertex_extrude_tool.d": "VertexExtrudeTool",
+    "source/tools/edit/vert_merge_tool.d": "VertexMergeTool",
+}
+def p10c_door_capability_gate(context, sources, xfrm):
+    if not all(x in context for x in (
+            "interface PreparedToolDoorClient",
+            "mixin template PreparedSimpleToolDoorClient(LayerT)",
+            "effect.historyAccepted ? context.markHistoryInstall()",
+            ": context.markNoHistoryInstall()",
+            "return prepareActivate(context).accepted;")):
+        return False
+    for path, aggregate in simple_door_clients.items():
+        body = sources[path]
+        if f"class {aggregate} : Tool, PreparedToolDoorClient" not in body or \
+                "mixin PreparedSimpleToolDoorClient!Layer;" not in body:
+            return False
+    return ("PreparedToolDoorClient," in xfrm and
+        "override bool prepareDoorDeactivate(" in xfrm and
+        "override bool prepareDoorActivate(" in xfrm and
+        "return prepareActivate(context).accepted;" in xfrm)
+
+door_sources = {p: (ROOT / p).read_text() for p in simple_door_clients}
+door_xfrm = (ROOT / "source/tools/transform/xfrm_transform.d").read_text()
+if not p10c_door_capability_gate(record_context, door_sources, door_xfrm):
+    fail("P1.0c prepared door capability tranche drift")
+for target, old, new, label in (
+    ("context", "effect.historyAccepted ? context.markHistoryInstall()",
+     "false ? context.markHistoryInstall()", "drop history routing"),
+    ("context", "return prepareActivate(context).accepted;",
+     "return true;", "drop activation producer"),
+    (next(iter(simple_door_clients)),
+     "class StrokeExtrudeTool : Tool, PreparedToolDoorClient",
+     "class StrokeExtrudeTool : Tool",
+     "drop concrete capability"),
+    ("xfrm", "return prepareActivate(context).accepted;", "return true;",
+     "drop Xfrm activation producer"),
+):
+    c, sources, xfrm = record_context, dict(door_sources), door_xfrm
+    if target == "context": c = c.replace(old, new, 1)
+    elif target == "xfrm": xfrm = xfrm.replace(old, new, 1)
+    else: sources[target] = sources[target].replace(old, new, 1)
+    if p10c_door_capability_gate(c, sources, xfrm):
+        fail(f"P1.0c door capability mutation did not RED: {label}")
 
 print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures) + 6} compile-fail fixtures)")

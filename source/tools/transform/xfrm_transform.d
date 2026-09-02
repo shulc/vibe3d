@@ -118,6 +118,7 @@ import tools.transform.move      : MoveTool;
 import tools.transform.rotate    : RotateTool;
 import tools.transform.scale     : ScaleTool;
 import tools.transform.scale     : PreparedScaleEmbeddedDeactivateImage;
+import prepared_record_context : PreparedToolDoorClient;
 
 struct PreparedXfrmEmbeddedDeactivateImage {
     TransformTool.PreparedScalarDeactivateImage wrapper, move, rotate;
@@ -617,6 +618,7 @@ struct PreparedXfrmUpdateBoundaryImage {
 // LifecycleUndoEmitter (task 0428): marker — this tool emits a
 // ToolDeactivationCommand on drop (undo-cursor lifecycle stepping).
 class XfrmTransformTool : TransformTool, LiveEvalClient, SlotActivationClient,
+                          PreparedToolDoorClient,
                           LifecycleUndoEmitter {
 public:
     final Mesh* preparedMeshForUpdate() const { return mesh; }
@@ -1228,6 +1230,21 @@ public:
             context.consolidate(history.currentRunId);
         return PreparedDeactivateEffect(preparedToolStateOwner,
             PreparedDeactivateKind.Xfrm, accepted);
+    }
+
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer,
+            ulong, ulong) {
+        auto effect = prepareDeactivate(context);
+        if (context is null) return false;
+        const ok = effect.historyAccepted ? context.markHistoryInstall()
+                                          : context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return ok;
+    }
+
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong, ulong) {
+        return prepareActivate(context).accepted;
     }
 
     final PreparedXfrmEmbeddedDeactivateImage

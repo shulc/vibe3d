@@ -22,7 +22,8 @@ import display_sync : refreshDisplay;
 import std.math : abs, sqrt;
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
+    PreparedSimpleToolDoorClient;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_vertex_bevel_activation : PreparedVertexBevelActivationOwner;
@@ -101,7 +102,8 @@ struct PreparedVertexBevelActivationImage {
 // attribute, ACTR-anchored single handle, topology-creating, generic
 // before/after-snapshot undo).
 // ---------------------------------------------------------------------------
-class VertexBevelTool : Tool {
+class VertexBevelTool : Tool, PreparedToolDoorClient {
+    mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }

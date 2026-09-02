@@ -24,7 +24,8 @@ import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
 import std.math : abs, sqrt;
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
+    PreparedSimpleToolDoorClient;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_poly_bevel_activation : PreparedPolyBevelActivationOwner;
@@ -84,7 +85,8 @@ struct PreparedPolyBevelParamImage {
 // Headless: tool.set poly.bevel on; tool.attr poly.bevel inset/shift <v>;
 //           tool.doApply → applyHeadless(); ToolDoApplyCommand wraps undo.
 // ---------------------------------------------------------------------------
-class PolyBevelTool : Tool {
+class PolyBevelTool : Tool, PreparedToolDoorClient {
+    mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }

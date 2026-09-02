@@ -1,5 +1,6 @@
 module tools.deform.stroke_extrude_tool;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
+    PreparedSimpleToolDoorClient;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
     PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_stroke_extrude_activation : PreparedStrokeExtrudeActivationOwner;
@@ -18,7 +19,7 @@ import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
-import document : primaryModelSpace;
+import document : Layer, primaryModelSpace;
 
 struct PreparedStrokeExtrudeActivationImage {
     MeshSnapshot before;
@@ -85,7 +86,8 @@ struct PreparedStrokeExtrudeActivationImage {
 // also drives (via the kernel, wrapped in the record-flavor
 // MeshSessionEdit rather than the one-shot command itself).
 // ---------------------------------------------------------------------------
-class StrokeExtrudeTool : Tool {
+class StrokeExtrudeTool : Tool, PreparedToolDoorClient {
+    mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }

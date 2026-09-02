@@ -22,7 +22,8 @@ import display_sync : refreshDisplay;
 import std.math : abs, sqrt;
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
+    PreparedSimpleToolDoorClient;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_vertex_extrude_activation : PreparedVertexExtrudeActivationOwner;
@@ -97,7 +98,8 @@ struct PreparedVertexExtrudeActivationImage {
 // Session lifecycle mirrors PolyBevelTool (topology-creating, own
 // before/after snapshot undo via the shared MeshSessionEdit/bevelEditFactory).
 // ---------------------------------------------------------------------------
-class VertexExtrudeTool : Tool {
+class VertexExtrudeTool : Tool, PreparedToolDoorClient {
+    mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
