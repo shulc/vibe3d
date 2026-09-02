@@ -1107,6 +1107,21 @@ void injectParamsInto(Param[] params, ref JSONValue pj)
     injectParamsImpl(params, pj, InjectPolicy.Refuse, null);
 }
 
+/// Strict candidate-parameter injection for the prepared tool-arm door.
+/// The writes target the unpublished candidate. Returned names are owned and
+/// retain schema order so the caller can prepare each reviewed parameter hook
+/// before any live transition begins.
+string[] injectPreparedParamsInto(Param[] params, ref JSONValue pj)
+{
+    injectParamsInto(params, pj);
+    string[] changed;
+    if (pj.type != JSONType.object) return changed;
+    foreach (ref p; params)
+        if ((p.name in pj.object) !is null)
+            changed ~= p.name.idup;
+    return changed;
+}
+
 /// The stored-document form of `injectParamsInto`: a numeric channel with no
 /// legal number to land on is DROPPED rather than refused, and its name is
 /// returned so the loader can warn about exactly what it could not read.

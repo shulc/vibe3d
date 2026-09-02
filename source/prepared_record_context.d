@@ -75,6 +75,7 @@ import prepared_pipe_activation : PreparedPipeActivationOwner;
 import prepared_box_param : PreparedBoxParamOwner;
 import registry : PreparedPipeAttrs;
 import toolpipe.pipeline : Pipeline;
+import pipe_gizmo_host : PipeGizmoHost;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -1259,9 +1260,10 @@ public:
     /// Enlist the universal transient-stage reset and preset image at its
     /// exact semantic position in the unified activation journal.
     bool preparePipeActivation(ref Pipeline pipeline,
-                               in PreparedPipeAttrs attrs) {
+                               in PreparedPipeAttrs attrs,
+                               PipeGizmoHost gizmoHost = null) {
         if (!begun_ || validated_Once) return false;
-        auto owner = PreparedPipeActivationOwner.prepare(pipeline, attrs);
+        auto owner = PreparedPipeActivationOwner.prepare(pipeline, attrs, gizmoHost);
         resources_.reserve(1 + resources_.length);
         PreparedResourceEntry e;
         e.kind = PreparedResourceKind.PipeActivationState;

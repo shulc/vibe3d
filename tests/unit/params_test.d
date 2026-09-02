@@ -638,3 +638,25 @@ unittest { // A Vec3 write is ATOMIC across its three components.
     assert(parseInto(p, "4,5,6"), "a finite triple must still be accepted");
     assert(v.x == 4 && v.y == 5 && v.z == 6);
 }
+
+unittest { // Prepared candidate injection owns names in schema order.
+    import std.json : parseJSON;
+
+    float width = 1;
+    int segments = 2;
+    auto schema = [
+        Param.float_("width", "Width", &width, 1),
+        Param.int_("segments", "Segments", &segments, 2),
+    ];
+    auto input = parseJSON(`{"segments": 7, "ignored": 9, "width": 3.5}`);
+    auto changed = injectPreparedParamsInto(schema, input);
+    assert(width == 3.5f && segments == 7);
+    assert(changed == ["width", "segments"],
+        "prepared parameter names lost schema order or admitted unknown input");
+
+    input = JSONValue.init;
+    bool refused;
+    try injectPreparedParamsInto(schema, input);
+    catch (Exception) refused = true;
+    assert(refused, "prepared injection weakened the strict JSON object contract");
+}

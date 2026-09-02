@@ -51,6 +51,7 @@ class PipeGizmoHost {
     // constructed before first draw). Exposed via ownPool() so the no-tool
     // caller can fetch it to pass back into draw()/tryClaimDown().
     private ToolHandles handles;
+    version (unittest) private size_t preparedCancelCount_;
 
     // Part-base for the falloff emitter's handles within an arbiter pool.
     // Replaces command_wrapper.d's local FALLOFF_BASE + app.d's
@@ -215,8 +216,13 @@ class PipeGizmoHost {
     /// invokes this on a tool-activate that interrupts a no-tool drag (as
     /// app.d does today for the standalone), and across /api/reset
     /// (cancel, NOT destroy — scene reset never destroys the gizmo).
-    void cancelDrag() {
+    void cancelDrag() nothrow {
         if (gizmo !is null) gizmo.cancelDrag();
+        version (unittest) ++preparedCancelCount_;
+    }
+
+    version (unittest) size_t preparedCancelCountForTest() const nothrow @nogc {
+        return preparedCancelCount_;
     }
 
     /// Release GL resources. Called once at app shutdown (fixes the

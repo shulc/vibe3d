@@ -418,7 +418,7 @@ public:
     /// standalone (tool-less) host calls this when a tool activates mid-drag —
     /// otherwise isDragging() would stay latched and a later tool-less motion
     /// would move an endpoint with no fresh grab.
-    void cancelDrag() { activeLinear = -1; activeRadial = -1; }
+    void cancelDrag() nothrow { activeLinear = -1; activeRadial = -1; }
 
     // Register the active falloff handles into the shared arbiter at `base`
     // so they join the single-winner pool. Part layout (mutually exclusive

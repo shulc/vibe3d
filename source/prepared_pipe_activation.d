@@ -1,5 +1,7 @@
 module prepared_pipe_activation;
 
+import pipe_gizmo_host : PipeGizmoHost;
+
 import registry : PreparedPipeAttrs;
 import toolpipe.pipeline : Pipeline;
 import toolpipe.stages.actcenter : ActionCenterStage;
@@ -14,6 +16,7 @@ import toolpipe.packets : FalloffType, FalloffShape, ElementMode;
 /// PreparedToolEffect value algebra.
 final class PreparedPipeActivationOwner {
 private:
+    PipeGizmoHost gizmoHost_;
     ActionCenterStage acen_;
     AxisStage axis_;
     ConstrainStage constrain_;
@@ -43,8 +46,10 @@ private:
 
 public:
     static PreparedPipeActivationOwner prepare(ref Pipeline pipeline,
-                                                in PreparedPipeAttrs attrs) {
+                                                in PreparedPipeAttrs attrs,
+                                                PipeGizmoHost gizmoHost = null) {
         auto result = new PreparedPipeActivationOwner();
+        result.gizmoHost_ = gizmoHost;
         result.acen_ = cast(ActionCenterStage)pipeline.findById("actionCenter");
         result.axis_ = cast(AxisStage)pipeline.findById("axis");
         result.constrain_ = cast(ConstrainStage)pipeline.findById("constrain");
@@ -146,6 +151,7 @@ public:
     }
 
     void install() nothrow {
+        if (gizmoHost_ !is null) gizmoHost_.cancelDrag();
         acen_.installPreparedTransientReset();
         axis_.installPreparedTransientReset();
         constrain_.installPreparedTransientReset();
@@ -159,6 +165,7 @@ public:
 
 unittest {
     import toolpipe.packets : ConstrainGeom;
+    import pipe_gizmo_host : PipeGizmoHost;
 
     Pipeline pipeline;
     auto acen = new ActionCenterStage(null, null);
@@ -187,7 +194,8 @@ unittest {
     attrs["actionCenter"] = ["mode": "border"];
     attrs["axis"] = ["mode": "element"];
 
-    auto prepared = PreparedPipeActivationOwner.prepare(pipeline, attrs);
+    auto gizmoHost = new PipeGizmoHost();
+    auto prepared = PreparedPipeActivationOwner.prepare(pipeline, attrs, gizmoHost);
     assert(acen.mode == ActionCenterStage.Mode.Origin &&
            axis.mode == AxisStage.Mode.World && constrain.enabled &&
            falloff.type == FalloffType.Linear,
@@ -199,6 +207,8 @@ unittest {
            "prepared pipe activation borrowed descriptor storage");
 
     prepared.install();
+    assert(gizmoHost.preparedCancelCountForTest == 1,
+        "prepared pipe activation omitted the one-shot gizmo cancel");
     assert(acen.mode == ActionCenterStage.Mode.Border &&
            axis.mode == AxisStage.Mode.Element,
            "prepared pipe activation omitted ACEN/Axis preset install");
