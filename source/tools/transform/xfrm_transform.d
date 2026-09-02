@@ -2003,8 +2003,14 @@ public:
         // vertex upload; tail still clears its deferred flag exactly once.
         if (ok && ((needsGpuUpdate && vertexProcessCount > 0) ||
                    (moveRegrade !is null && moveRegrade.wantsWrapperUpload()))) {
-            if (wrapperUpload is null || gpu is null ||
-                !wrapperUpload.owns(gpu) || gpu.suppressCageUpload)
+            if (gpu is null)
+                ok = false;
+            else if (gpu.suppressCageUpload) {
+                if (moveRegrade !is null && moveRegrade.meshPrepared())
+                    ok = context.preparePositionCommitOnEnlisted(layer);
+                else
+                    ok = context.preparePositionCommit(layer);
+            } else if (wrapperUpload is null || !wrapperUpload.owns(gpu))
                 ok = false;
             else if (moveRegrade !is null && moveRegrade.meshPrepared())
                 ok = context.prepareUpload(wrapperUpload,
@@ -2543,6 +2549,14 @@ public:
             nothrow @nogc {
         return moveSub.wrapperRef is this && rotateSub.wrapperRef is this &&
             scaleSub.wrapperRef is this;
+    }
+    version(unittest) final void seedPreparedWrapperUploadForTest() {
+        needsGpuUpdate = true;
+        vertexProcessCount = 1;
+    }
+    version(unittest) final bool preparedWrapperUploadPendingForTest() const
+            nothrow @nogc {
+        return needsGpuUpdate;
     }
     // ε-exploration silent-hover setter (task 0033, Phase 3). Forwards to the
     // shared ToolHandles instance.  Called from app.d after tool construction
@@ -7368,6 +7382,8 @@ private:
 }
 
 unittest {
+    import change_bus : changeBus;
+
     Mesh owned;
     EditMode mode = EditMode.Vertices;
     auto tool = new XfrmTransformTool(() => &owned, null, &mode);
@@ -7544,6 +7560,43 @@ unittest {
     rootContext.install();
     assert(rootContext.installTraceForTest() == [8, 60, 62, 61, 16, 59],
         "complete Xfrm update root installed twice");
+
+    // The preview arm never touches GL: it commits Position on the detached
+    // cage image and publishes exactly one delivery before the sub-tool poll.
+    auto suppressLayer = new Layer();
+    suppressLayer.meshRef() = makeCube();
+    const suppressVersion = suppressLayer.meshRef().mutationVersion;
+    const suppressDeliveries = changeBus.deliveryCount;
+    const suppressPositions = changeBus.totalPosition;
+    GpuMesh suppressGpu;
+    suppressGpu.suppressCageUpload = true;
+    EditMode suppressMode = EditMode.Vertices;
+    auto suppressTool = new XfrmTransformTool(
+        () => &suppressLayer.meshRef(), &suppressGpu, &suppressMode);
+    suppressTool.flagT = true;
+    suppressTool.flagR = false;
+    suppressTool.flagS = false;
+    suppressTool.activate();
+    suppressTool.seedPreparedWrapperUploadForTest();
+    VectorStack suppressVts;
+    auto suppressContext = new PreparedRecordContext(null, null);
+    auto suppressEffect = suppressTool.prepareUpdate(
+        suppressVts, suppressContext, suppressLayer, null);
+    assert(suppressEffect.accepted &&
+        suppressLayer.meshRef().mutationVersion == suppressVersion &&
+        changeBus.deliveryCount == suppressDeliveries,
+        "prepared suppress-cage update mutated live state");
+    assert(suppressContext.validate());
+    suppressContext.install();
+    assert(suppressContext.installTraceForTest() ==
+        [8, 60, 62, 61, 3, 4, 16, 59],
+        "suppress-cage update installed out of legacy order");
+    assert(suppressLayer.meshRef().mutationVersion == suppressVersion + 1 &&
+        changeBus.deliveryCount == suppressDeliveries + 1 &&
+        changeBus.totalPosition == suppressPositions + 1 &&
+        (changeBus.lastDeliveryFlags & MeshEditScope.Position) != 0 &&
+        !suppressTool.preparedWrapperUploadPendingForTest(),
+        "suppress-cage update lost its Position commit or tail clear");
 }
 
 static assert(!__traits(compiles, { XfrmPreparedState a; XfrmPreparedState b = a; }));

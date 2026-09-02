@@ -519,6 +519,9 @@ final class Layer {
         enlistedMeshToken_ = beginPreparedMesh();
         return preparedMeshPending_ !is null;
     }
+    bool hasEnlistedMesh() const nothrow @nogc {
+        return preparedMeshPending_ !is null;
+    }
     ref Mesh enlistedShadow() return {
         return preparedMeshPending_.image;
     }

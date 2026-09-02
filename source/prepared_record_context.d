@@ -1000,6 +1000,33 @@ public:
         return true;
     }
 
+    /// Append the suppress-cage Position delivery to a mesh image already
+    /// enlisted by an earlier detached kernel in this transaction. The mesh
+    /// row remains unique; only the second legacy delivery is appended here.
+    bool preparePositionCommitOnEnlisted(Layer layer) {
+        if (!begun_ || validated_Once || layer is null ||
+            !layer.hasEnlistedMesh()) return false;
+        // This is the second half of the same mesh/delivery product whose Mesh
+        // row was appended by prepareStampedMeshImage earlier.
+        resources_.reserve(resources_.length + 2);
+        scope(failure) {
+            invalidateTransaction();
+            layer.abortEnlistedMesh();
+        }
+        {
+            auto shadowScope = layer.beginEnlistedShadowMutation();
+            layer.enlistedShadow().commitChange(MeshEditScope.Position);
+            shadowScope.close();
+        }
+        auto delivery = PreparedDeliveryJournal.prepare(
+            [layer.drainEnlistedDelivery()]);
+        PreparedResourceEntry deliveryEntry;
+        deliveryEntry.kind = PreparedResourceKind.DeliveryInstall;
+        deliveryEntry.delivery = delivery;
+        resources_ ~= deliveryEntry;
+        return true;
+    }
+
     PreparedHistoryResult prepare(Command cmd, PreparedHistoryKind kind,
                                   ulong runId = 0,
                                   string preparedTraceJson = null) {
