@@ -292,6 +292,7 @@ B5Q_PREPARED_LEGACY = {
     ("tools.slice.edge_slice_tool", "EdgeSliceTool", "deactivate"),
     ("tools.slice.edge_slice_tool", "EdgeSliceTool", "onParamChanged"),
     ("tools.slice.loop_slice_tool", "LoopSliceTool", "deactivate"),
+    ("tools.slice.loop_slice_tool", "LoopSliceTool", "onParamChanged"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
@@ -329,7 +330,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "fd69243d96b8b13a7edf252c7812a42cca22f709d1dacd2581ebc76deb0cc667"
+    "48330dee3aaa28b4d0a9643f67887ffb0b6d904982e34c07f76208369d636e2e"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -507,6 +508,7 @@ for path, text in prepared_source_texts.items():
             "prepared_edge_slice_deactivate",
             "prepared_edge_slice_param_update",
             "prepared_loop_slice_deactivate",
+            "prepared_loop_slice_param_update",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
@@ -2793,6 +2795,74 @@ run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(copy_fixture)], cwd=ROOT,
 if run.returncode == 0 or ("not copyable" not in run.stdout and
         not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
     fail("Edge Slice parameter token copy was not rejected:\n" + run.stdout)
+
+loop_slice_param_sources = {
+    "tool": (ROOT / "source/tools/slice/loop_slice_tool.d").read_text(),
+    "owner": (ROOT / "source/prepared_loop_slice_param_update.d").read_text(),
+    "context": record_context,
+    "effect": edge_slice_deactivate_sources["effect"],
+}
+def loop_slice_param_gate(s):
+    tool, owner, context, effect = (s[k] for k in
+        ("tool", "owner", "context", "effect"))
+    start = tool.find("final PreparedLoopSliceParamImage buildPreparedParamUpdate")
+    end = tool.find("override void onParamChanged", start)
+    product = tool[start:end]
+    return all(x in product for x in (
+        "image.expectedLive = MeshSnapshot.capture(live)",
+        "image.candidate = detachedPreparedMesh(live)",
+        "shadowTool.onParamChanged(pname)", "beginPreparedShadow(image.candidate)",
+        "shadowTool.preparedRebuildAttempted_",
+        "image.expectedLive.matches(live)", "preparedParamStateMatches(image.expected)",
+        "context.prepareInvalidateRedo()", "result.mustInstall",
+        "uploadOwner.owns(gpu)",
+        "context.prepareStampedMeshImage(layer, owner.candidate",
+        "context.prepareUpload(uploadOwner, owner.candidate)",
+        "context.prepareLoopSliceParamUpdate(owner)")) and all(x in owner for x in (
+        "target.classinfo !is LoopSliceTool.classinfo",
+        "!target.ownsPreparedLayer(layer)", "&layer_.meshRef() !is source_",
+        "prepared_.owner != owner_", "prepared_.generation != generation_",
+        "validatedToken_.owner != owner_",
+        "validatedToken_.generation != generation_",
+        "target_.installPreparedParamUpdate(image_)")) and \
+        context.count("case PreparedResourceKind.LoopSliceParamUpdateState:") == 3 and \
+        "e.loopSliceParamUpdate.install();" in context and \
+        "PreparedLoopSliceParamKind kind;" in effect
+if not loop_slice_param_gate(loop_slice_param_sources):
+    fail("Loop Slice parameter prepared contract drift")
+for target, old, new, label in (
+    ("tool", "image.candidate = detachedPreparedMesh(live)",
+     "image.candidate = live", "drop detached target"),
+    ("tool", "shadowTool.onParamChanged(pname)", "onParamChanged(pname)",
+     "run legacy hook on live owner"),
+    ("tool", "image.expectedLive.matches(live)", "true", "drop live witness"),
+    ("tool", "context.prepareInvalidateRedo()", "PreparedHistoryResult.init",
+     "drop redo product"),
+    ("tool", "result.mustInstall", "true", "drop guarded history install"),
+    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
+    ("tool", "context.prepareLoopSliceParamUpdate(owner)", "true",
+     "drop state enlist"),
+    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
+    ("context", "e.loopSliceParamUpdate.install();", "", "drop context install"),
+):
+    mutant = dict(loop_slice_param_sources)
+    if target == "tool":
+        text = mutant[target]
+        start = text.find("final PreparedLoopSliceParamImage buildPreparedParamUpdate")
+        end = text.find("override void onParamChanged", start)
+        product = text[start:end].replace(old, new, 1)
+        mutant[target] = text[:start] + product + text[end:]
+    else:
+        mutant[target] = mutant[target].replace(old, new, 1)
+    if mutant[target] == loop_slice_param_sources[target] or \
+            loop_slice_param_gate(mutant):
+        fail(f"Loop Slice parameter mutation did not RED: {label}")
+copy_fixture = ROOT / "tests/compile_fail/prepared_loop_slice_param_token_copy.d"
+run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(copy_fixture)], cwd=ROOT,
+    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+if run.returncode == 0 or ("not copyable" not in run.stdout and
+        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+    fail("Loop Slice parameter token copy was not rejected:\n" + run.stdout)
 
 vertex_extrude_param_sources = {
     "tool": (ROOT / "source/tools/edit/vertex_extrude_tool.d").read_text(),

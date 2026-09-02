@@ -77,6 +77,7 @@ enum PreparedSliceParamKind : ubyte { None, Noop, AxisLatch, Preview }
 enum PreparedEdgeSliceParamKind : ubyte {
     None, Noop, ChainArm, ActivePoint, Preview
 }
+enum PreparedLoopSliceParamKind : ubyte { None, Noop, State, Preview }
 enum PreparedInheritedNoopKind : ubyte { Activate, Deactivate, Update }
 
 @PreparedAggregate struct PreparedActivateEffect {
@@ -143,6 +144,11 @@ enum PreparedInheritedNoopKind : ubyte { Activate, Deactivate, Update }
 @PreparedAggregate struct PreparedEdgeSliceParamEffect {
     OwnedId owner;
     PreparedEdgeSliceParamKind kind;
+    bool accepted;
+}
+@PreparedAggregate struct PreparedLoopSliceParamEffect {
+    OwnedId owner;
+    PreparedLoopSliceParamKind kind;
     bool accepted;
 }
 @PreparedAggregate struct PreparedPenParamEffect {

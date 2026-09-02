@@ -29,9 +29,11 @@ import document : Layer, primaryModelSpace;
 import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
-    PreparedDeactivateEffect, PreparedDeactivateKind;
+    PreparedDeactivateEffect, PreparedDeactivateKind, PreparedLoopSliceParamEffect,
+    PreparedLoopSliceParamKind;
 import prepared_loop_slice_activation : PreparedLoopSliceActivationOwner;
 import prepared_loop_slice_deactivate : PreparedLoopSliceDeactivateOwner;
+import prepared_loop_slice_param_update : PreparedLoopSliceParamUpdateOwner;
 import mesh_gpu : GpuUploadOwner;
 import mesh_edit_delta : MeshEditScope;
 
@@ -58,6 +60,36 @@ struct PreparedLoopSliceDeactivateImage {
         valid = appliesMesh = historyEligible = installBeforeFromLive = false;
         expectedSeeds = null; expectedSelectedFaces = null;
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
+        candidate = Mesh.init; deliveryFlags = deliveryDomains = 0;
+    }
+}
+
+struct LoopSlicePreparedParamState {
+    bool active, armed, scrubbing, built, removeTrigger;
+    bool selectNew, sliceSelected, keepQuads, sliceNgon, sliceSplit, sliceCaps;
+    bool curvature, reverseX, reverseY, aspect, interactive;
+    int count, current;
+    int mode, edit, profile;
+    float proxy, insertAt, gap, tension, depth;
+    float[] positions;
+    uint[] seeds, selectedFaces;
+    size_t armedAddr; ulong armedMutVer;
+    MeshSnapshot before;
+    void clear() nothrow @nogc {
+        positions = null; seeds = null; selectedFaces = null;
+        before = MeshSnapshot.init;
+    }
+}
+
+struct PreparedLoopSliceParamImage {
+    bool valid, appliesMesh, invalidateRedo, stampKey;
+    string pname;
+    LoopSlicePreparedParamState expected, next;
+    MeshSnapshot expectedLive;
+    Mesh candidate; uint deliveryFlags, deliveryDomains;
+    void clear() nothrow @nogc {
+        valid = appliesMesh = invalidateRedo = stampKey = false; pname = null;
+        expected.clear(); next.clear(); expectedLive = MeshSnapshot.init;
         candidate = Mesh.init; deliveryFlags = deliveryDomains = 0;
     }
 }
@@ -220,6 +252,8 @@ private:
     GpuMesh*         gpu;
     EditMode*        editMode;
     LitShader        litShader;
+    bool preparedShadow_;
+    bool preparedRebuildAttempted_;
 
 
     static immutable IntEnumEntry[3] editTable = [
@@ -1020,6 +1054,141 @@ public:
         return true;
     }
 
+    private LoopSlicePreparedParamState capturePreparedParamState() {
+        LoopSlicePreparedParamState s;
+        s.active = active; s.armed = armed_; s.scrubbing = scrubbing_;
+        s.built = built_; s.removeTrigger = removeTrigger_;
+        s.selectNew = selectNew_; s.sliceSelected = sliceSelected_;
+        s.keepQuads = keepQuads_; s.sliceNgon = sliceNgon_;
+        s.sliceSplit = sliceSplit_; s.sliceCaps = sliceCaps_;
+        s.curvature = curvature_; s.reverseX = reverseX_; s.reverseY = reverseY_;
+        s.aspect = aspect_; s.interactive = interactiveParamEdit;
+        s.count = count_; s.current = current_; s.mode = cast(int)mode_;
+        s.edit = cast(int)edit_; s.profile = cast(int)profile_;
+        s.proxy = positionProxy_; s.insertAt = insertAt_; s.gap = gap_;
+        s.tension = curveTension_; s.depth = depth_; s.positions = positions_.dup;
+        s.seeds = seeds_.dup; s.selectedFaces = armedSelFaces_.dup;
+        s.armedAddr = armedKey_.addr; s.armedMutVer = armedKey_.mutVer;
+        s.before = before_; return s;
+    }
+
+    private bool preparedParamStateMatches(in LoopSlicePreparedParamState s) const
+            nothrow @nogc {
+        return active == s.active && armed_ == s.armed && scrubbing_ == s.scrubbing &&
+            built_ == s.built && removeTrigger_ == s.removeTrigger &&
+            selectNew_ == s.selectNew && sliceSelected_ == s.sliceSelected &&
+            keepQuads_ == s.keepQuads && sliceNgon_ == s.sliceNgon &&
+            sliceSplit_ == s.sliceSplit && sliceCaps_ == s.sliceCaps &&
+            curvature_ == s.curvature && reverseX_ == s.reverseX &&
+            reverseY_ == s.reverseY && aspect_ == s.aspect &&
+            interactiveParamEdit == s.interactive && count_ == s.count &&
+            current_ == s.current && cast(int)mode_ == s.mode &&
+            cast(int)edit_ == s.edit && cast(int)profile_ == s.profile &&
+            positionProxy_ == s.proxy && insertAt_ == s.insertAt && gap_ == s.gap &&
+            curveTension_ == s.tension && depth_ == s.depth &&
+            positions_ == s.positions && seeds_ == s.seeds &&
+            armedSelFaces_ == s.selectedFaces && armedKey_.addr == s.armedAddr &&
+            armedKey_.mutVer == s.armedMutVer && s.before.matches(before_);
+    }
+
+    private void copyPreparedParamInputsTo(LoopSliceTool shadow,
+            ref Mesh candidate, ref GpuMesh shadowGpu, ref EditMode shadowMode) {
+        shadow.active = active; shadow.armed_ = armed_; shadow.scrubbing_ = scrubbing_;
+        shadow.built_ = built_; shadow.edit_ = edit_; shadow.mode_ = mode_;
+        shadow.count_ = count_; shadow.current_ = current_;
+        shadow.positions_ = positions_.dup; shadow.positionProxy_ = positionProxy_;
+        shadow.insertAt_ = insertAt_; shadow.removeTrigger_ = removeTrigger_;
+        shadow.selectNew_ = selectNew_; shadow.sliceSelected_ = sliceSelected_;
+        shadow.keepQuads_ = keepQuads_; shadow.sliceNgon_ = sliceNgon_;
+        shadow.sliceSplit_ = sliceSplit_; shadow.sliceCaps_ = sliceCaps_;
+        shadow.gap_ = gap_; shadow.curvature_ = curvature_;
+        shadow.curveTension_ = curveTension_; shadow.profile_ = profile_;
+        shadow.depth_ = depth_; shadow.reverseX_ = reverseX_;
+        shadow.reverseY_ = reverseY_; shadow.aspect_ = aspect_;
+        shadow.seeds_ = seeds_.dup; shadow.armedSelFaces_ = armedSelFaces_.dup;
+        shadow.before_ = before_; shadow.interactiveParamEdit = interactiveParamEdit;
+        if (armedKey_.matches(*mesh)) shadow.armedKey_.stamp(candidate);
+        else shadow.armedKey_ = armedKey_;
+        shadow.preparedShadow_ = true;
+    }
+
+    final PreparedLoopSliceParamImage buildPreparedParamUpdate(
+            string pname, ref Mesh live) {
+        PreparedLoopSliceParamImage image; image.valid = true; image.pname = pname;
+        image.expected = capturePreparedParamState();
+        image.expectedLive = MeshSnapshot.capture(live);
+        image.candidate = detachedPreparedMesh(live);
+        GpuMesh shadowGpu; EditMode shadowMode = *editMode;
+        auto shadowTool = new LoopSliceTool(() => &image.candidate, &shadowGpu,
+            &shadowMode, litShader);
+        copyPreparedParamInputsTo(shadowTool, image.candidate, shadowGpu, shadowMode);
+        auto delivery = beginPreparedShadow(image.candidate);
+        shadowTool.onParamChanged(pname);
+        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+            image.deliveryDomains); delivery.close();
+        image.next = shadowTool.capturePreparedParamState();
+        image.appliesMesh = shadowTool.preparedRebuildAttempted_;
+        image.invalidateRedo = image.appliesMesh && history !is null;
+        image.stampKey = image.appliesMesh && image.next.armed;
+        if (image.stampKey) {
+            image.next.armedAddr = image.expected.armedAddr;
+            image.next.armedMutVer = image.expected.armedMutVer;
+        }
+        return image;
+    }
+
+    final bool preparedParamUpdateMatches(in PreparedLoopSliceParamImage image,
+            ref const Mesh live) const nothrow @nogc {
+        return image.valid && image.pname !is null &&
+            image.expectedLive.matches(live) &&
+            preparedParamStateMatches(image.expected);
+    }
+
+    final void installPreparedParamUpdate(ref PreparedLoopSliceParamImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        active = image.next.active; armed_ = image.next.armed;
+        scrubbing_ = image.next.scrubbing; built_ = image.next.built;
+        removeTrigger_ = image.next.removeTrigger; count_ = image.next.count;
+        current_ = image.next.current; mode_ = cast(Mode)image.next.mode;
+        positions_ = image.next.positions; image.next.positions = null;
+        positionProxy_ = image.next.proxy; seeds_ = image.next.seeds;
+        image.next.seeds = null; armedSelFaces_ = image.next.selectedFaces;
+        image.next.selectedFaces = null; before_ = image.next.before;
+        if (image.stampKey) {
+            armedKey_.addr = cast(size_t)mesh;
+            armedKey_.mutVer = mesh.mutationVersion;
+        }
+        else { armedKey_.addr = image.next.armedAddr; armedKey_.mutVer = image.next.armedMutVer; }
+        image.clear();
+    }
+
+    final PreparedLoopSliceParamEffect prepareParamChanged(string pname,
+            PreparedRecordContext context, Layer layer, GpuUploadOwner uploadOwner) {
+        if (context is null) return PreparedLoopSliceParamEffect(
+            preparedToolStateOwner, PreparedLoopSliceParamKind.None, false);
+        scope(failure) context.discard();
+        auto owner = PreparedLoopSliceParamUpdateOwner.prepare(this, layer, pname);
+        bool ok = owner !is null;
+        if (ok && owner.appliesMesh)
+            ok = owner.deliveryFlags != 0 && uploadOwner !is null &&
+                uploadOwner.owns(gpu) &&
+                context.prepareStampedMeshImage(layer, owner.candidate,
+                    owner.deliveryFlags, owner.deliveryDomains) &&
+                context.prepareUpload(uploadOwner, owner.candidate);
+        bool installHistory;
+        if (ok && owner.invalidateRedo) {
+            auto result = context.prepareInvalidateRedo();
+            ok = result.accepted; installHistory = result.mustInstall;
+        }
+        if (ok) ok = installHistory ? context.markHistoryInstall()
+                                    : context.markNoHistoryInstall();
+        if (ok) ok = context.prepareLoopSliceParamUpdate(owner);
+        if (!ok) context.discard();
+        return PreparedLoopSliceParamEffect(preparedToolStateOwner,
+            owner is null ? PreparedLoopSliceParamKind.None : owner.effectKind, ok);
+    }
+
     override void onParamChanged(string pname) {
         // HUD geometry only — never touches the cut.
         if (pname == "length" || pname == "sliderX" || pname == "sliderY") return;
@@ -1693,6 +1862,7 @@ private:
         if (!before_.filled || seeds_.length == 0) return;
         // recorded remainder (1906 §3.6): `mutationVersion` — an IDENTITY guard, not a cache; see the `armedKey_` field note.
         if (!armedKey_.matches(*mesh)) { dropArmedPreview(); return; }
+        if (preparedShadow_) preparedRebuildAttempted_ = true;
         // Perf (task 1370) — AFTER the guard(s) above, never on the first
         // line: an early-out must record no sample, or `count` tallies
         // refusals as work. See Cat.toolPreview for the decomposition.
@@ -1714,7 +1884,7 @@ private:
         // step history under a preview-mutated mesh — pre-existing badness,
         // unchanged here; the historical resync-bake hazard specifically is
         // already unreachable (resyncSession()'s armed-guard below).
-        if (history !is null) history.invalidateRedo();
+        if (!preparedShadow_ && history !is null) history.invalidateRedo();
         before_.restore(*mesh);
         uint[] newFaceIndices;
         float[] pos, heights;
@@ -1789,6 +1959,7 @@ private:
     }
 
     void refreshCaches() {
+        if (preparedShadow_) return;
         refreshDisplay(mesh, gpu);
     }
 
@@ -1870,4 +2041,14 @@ public:
     }
     version(unittest) final void mutatePreparedDeactivateForTest()
             nothrow @nogc { scrubbing_ = !scrubbing_; }
+    version(unittest) final void setPreparedPositionForTest(float value)
+            nothrow @nogc { positionProxy_ = value; }
+    version(unittest) final void setPreparedCountForTest(int value)
+            nothrow @nogc { count_ = value; }
+    version(unittest) final bool preparedParamStateForTest(bool armedExpected,
+            int countExpected) const {
+        return armed_ == armedExpected && count_ == countExpected &&
+            positions_.length == cast(size_t)countExpected &&
+            (!armedExpected || (built_ && armedKey_.matches(*mesh)));
+    }
 }
