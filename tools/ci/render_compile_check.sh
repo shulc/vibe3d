@@ -64,10 +64,65 @@ echo "render_compile_check: type-checking --config=$CFG with $DC -o- (no codegen
 
 # --data-list flattens the whole resolved dependency tree, which is what the
 # -I / -J / -version sets need to be.
-mapfile -t VERSIONS  < <(dub describe --config="$CFG" --compiler="$DC" --data=versions            --data-list 2>/dev/null)
-mapfile -t IMPORTS   < <(dub describe --config="$CFG" --compiler="$DC" --data=import-paths        --data-list 2>/dev/null)
-mapfile -t STRIMPS   < <(dub describe --config="$CFG" --compiler="$DC" --data=string-import-paths --data-list 2>/dev/null)
-mapfile -t DFLAGS    < <(dub describe --config="$CFG" --compiler="$DC" --data=dflags              --data-list 2>/dev/null)
+# Each of these is a SEPARATE dub invocation that can fail on its own, and a
+# failure here is silent by construction: dub writes to stderr, exits non-zero,
+# and mapfile still succeeds with an EMPTY array. The result is not a missing
+# gate but an INVERTED one — with no `-version=` flags the bindbc-opengl
+# bindings hide every symbol behind GL_33, and dmd then reports
+# `undefined identifier glGenVertexArrays` in OUR file. That reads as a source
+# regression, and the closing diagnostic below used to assert exactly that.
+# Observed on the CI runner 2026-09-02, and reproduced here by running a second
+# dub concurrently: `dub describe --config=with-render` exits 1 with nothing on
+# stderr but blank `Warning` lines.
+#
+# So: keep the exit status, and floor the population. An empty import path set
+# or an empty version set is an ENVIRONMENT failure and says so.
+describe_list() {
+  local what="$1" errf out rc
+  errf=$(mktemp) || return 1
+  # stderr goes to a FILE, never merged into stdout: dub prints bare `Warning`
+  # lines even on success, and merging them puts them into the flag arrays —
+  # 16 import paths became 42 and the compile then failed on the garbage.
+  out=$(dub describe --config="$CFG" --compiler="$DC" --data="$what" --data-list 2>"$errf")
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    {
+      echo "render_compile_check: ENVIRONMENT — dub describe --data=$what exited $rc"
+      echo "render_compile_check: this is NOT a source error; dub said:"
+      grep -vE '^[[:space:]]*Warning[[:space:]]*$' "$errf" | tail -5
+    } >&2
+    rm -f "$errf"
+    return 1
+  fi
+  rm -f "$errf"
+  printf '%s\n' "$out"
+}
+
+# The status must reach the script, so capture first and split second: `exit`
+# inside a process substitution exits only that subshell, which is how the
+# first attempt at this fix ran on to compile with empty flags anyway.
+read_into() {
+  local __name="$1" __what="$2" __raw
+  __raw=$(describe_list "$__what") || exit 2
+  if [ -z "$__raw" ]; then eval "$__name=()"; else mapfile -t "$__name" <<< "$__raw"; fi
+}
+
+read_into VERSIONS versions
+read_into IMPORTS  import-paths
+read_into STRIMPS  string-import-paths
+read_into DFLAGS   dflags
+
+# Population floors. `dmd` accepts an empty flag set happily and then blames our
+# sources for what the flags would have declared: with no `-version=`, the
+# bindbc-opengl bindings hide every symbol behind GL_33 and dmd reports
+# `undefined identifier glGenVertexArrays` in OUR file. Observed on the CI
+# runner 2026-09-02; the closing diagnostic used to assert that very reading.
+[ "${#IMPORTS[@]}" -gt 0 ] || {
+  echo "render_compile_check: ENVIRONMENT — no import paths resolved for --config=$CFG" >&2; exit 2; }
+[ "${#VERSIONS[@]}" -gt 0 ] || {
+  echo "render_compile_check: ENVIRONMENT — no version identifiers resolved for --config=$CFG" >&2
+  echo "render_compile_check: without them the GL bindings hide their symbols and dmd blames our sources" >&2
+  exit 2; }
 
 # Source files come from dub's own file list for the ROOT package only, keyed
 # on role: dub also reports `unusedSource` entries (129 of them here — the
@@ -108,8 +163,10 @@ rc=$?
 
 if [ "$rc" -ne 0 ]; then
   echo "render_compile_check: FAIL — --config=$CFG does not compile (dmd exit $rc)." >&2
-  echo "render_compile_check: this is a source error, not a missing renderer library:" >&2
   echo "render_compile_check: nothing here links, so no build artifact can be at fault." >&2
+  echo "render_compile_check: the ${#IMPORTS[@]} import paths and ${#VERSIONS[@]} version" >&2
+  echo "render_compile_check: identifiers above were resolved and non-empty, so this is a" >&2
+  echo "render_compile_check: SOURCE error — an environment failure exits 2, not 1." >&2
   exit 1
 fi
 
