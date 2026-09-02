@@ -56,7 +56,8 @@
 // differs between engines — what else sits on the stack is engine bookkeeping —
 // and the DIFFERENCE against a control run identical except for the button
 // press is the engine-independent quantity the fixture's `rig.reading` defines.
-// Measured here: kB = 1 / 1 / 2 for control / zero-distance / real drag,
+// Measured after strict lifecycle LIFO: kB = 2 / 2 / 3 for control /
+// zero-distance / real drag,
 // against the reference's 4 / 6 / 7.
 //
 // TWO DEPARTURES FROM THE CAPTURE'S RIG. Both were forced by measurement, both
@@ -73,19 +74,11 @@
 //       not — a check satisfied by the broken code too.
 //
 //   (b) THE TOOL IS NOT DROPPED AFTER N. In the reference the drop is what
-//       commits an engaged tool; here the commit boundary is the MOUSE-UP, and
-//       the positive control proves it (its entry is on the stack with no drop
-//       anywhere). Dropping would have the same effect as (a) for a different
-//       reason: `ToolDeactivationCommand` records a `HistoryFlags.ToolLifecycle`
-//       entry, invisible in `/api/history` but real on the raw undo stack, and
-//       `CommandHistory.undo`'s (R1) rule makes a lifecycle tail a HARD STEP
-//       when the entry below it is also a lifecycle one. Measured on this tree:
-//       with the drop, the control's kB moves 1 → 2 and its first undo stops
-//       being the one that reverts E2. Every cell would then look like the
-//       reference for a reason that has nothing to do with the law.
-//
-//       That measurement is itself an ADJACENT FACT this file does NOT claim —
-//       see "WHAT IS NOT COVERED" below.
+//       commits an engaged tool; here the commit boundary is MOUSE-UP, and the
+//       positive control proves it with a real history entry before any drop.
+//       Our common lifecycle prefix belongs to the ARM and is now measured
+//       explicitly by the control; adding a drop would change consolidation
+//       choreography without buying a discriminator for the empty gesture.
 //
 // ANTI-VACUITY, and it is not decoration. Every undo-step reading below is
 // satisfied just as well by a gesture that NEVER HAPPENED — deleting the press
@@ -110,23 +103,18 @@
 //     because "the delta is empty" is the premise of the law, not a conclusion;
 //   * the two preceding real edits (E1, E2) must each move the mesh, or there
 //     is nothing on the stack for the undo walk to be about;
-//   * and the one departure (b) exists for: in the CONTROL cell the first undo
-//     MUST revert E2, and in the POSITIVE cell it must NOT. Without that pair,
-//     "the first undo did not revert the preceding edit" could be a green
-//     produced by some unnamed neighbour on the stack and would distinguish no
-//     candidate law at all.
+//   * the CONTROL's first undo MUST consume exactly one arm lifecycle record
+//     without touching geometry, and its second undo MUST revert E2. The
+//     POSITIVE cell still does not revert E2 on its first undo. Together those
+//     observations prove both that the common lifecycle prefix is real and
+//     that the stand can expose the preceding edit.
 //
 // WHAT IS NOT COVERED, and why — read this before adding to it.
 //   * `assertions_for_a_port[3]` is covered for a tool ARMED and left armed
 //     (parity: costs nothing, measured against a fourth cell that never arms
 //     the tool at all — a vibe3d-side baseline the capture has no counterpart
 //     for, and without which that row would compare 0 against 0 by
-//     construction). Its "and DROPPED" half is NOT: our drop records
-//     a `ToolLifecycle` entry where the reference logs no command at all, but
-//     whether that entry costs the user an undo STEP is stack-shape dependent
-//     (transparent over a model entry, a hard step over another lifecycle one),
-//     and THIS capture drove only one shape. Over-claiming a flat divergence
-//     there would freeze a number nobody measured.
+//     construction). Its "and DROPPED" half was not measured by this fixture.
 //     RESOLVED ELSEWHERE, 2026-08-30 (task 2660): the second-form capture drove
 //     BOTH shapes, both cost the reference nothing, so the stack-shape term is
 //     ours alone. That is now registry row 87, pinned by
@@ -246,6 +234,13 @@ bool meshEq(const double[][] a, const double[][] b) {
 /// coupling assertion in block 6 for exactly what that buys and costs.
 long visibleUndoDepth() { return getJson("/api/history")["undo"].array.length; }
 
+/// Raw lifecycle records on the undo stack. Unlike `/api/history`, this sees
+/// the common arm prefix and lets the control prove its first silent step is
+/// real rather than a dead stand.
+long lifecycleCount() {
+    return getJson("/api/undo/status")["toolLifecycleCount"].integer;
+}
+
 /// Change-bus deliveries so far. The gesture's own witness: it moves whether
 /// or not the gesture leaves anything on the undo stack, so it can tell "ran
 /// and recorded nothing" from "never ran".
@@ -292,6 +287,10 @@ struct CellResult {
     string firstUndoStatus;
     bool   firstUndoRevertsPrecedingEdit;
     bool   firstUndoChangedMesh;
+    long   firstUndoLifecycleDelta;
+    string secondUndoStatus;
+    bool   secondUndoRevertsPrecedingEdit;
+    bool   secondUndoChangedMesh;
 }
 
 /// Compute the +X move-arrow grab pixel for the CURRENT selection and camera.
@@ -379,7 +378,10 @@ CellResult runCell(CellDrive d, double stdMagPx, int stdSteps) {
     const postN = verts();
     r.gestureChangedMesh = !meshEq(postE2, postN);
 
-    // The undo walk
+    // The undo walk. Lifecycle strict-LIFO gives every armed cell one common
+    // silent first step; the second-step fields retain the old discriminating
+    // observation after that real prefix.
+    const long lifecycleBeforeUndo = lifecycleCount();
     foreach (k; 1 .. 7) {
         auto resp = postJson("/api/undo", "");
         settle();
@@ -388,6 +390,12 @@ CellResult runCell(CellDrive d, double stdMagPx, int stdSteps) {
             r.firstUndoStatus = ("status" in resp) ? resp["status"].str : "<none>";
             r.firstUndoRevertsPrecedingEdit = meshEq(v, preE2);
             r.firstUndoChangedMesh          = !meshEq(postN, v);
+            r.firstUndoLifecycleDelta       = lifecycleCount() - lifecycleBeforeUndo;
+        }
+        if (k == 2) {
+            r.secondUndoStatus = ("status" in resp) ? resp["status"].str : "<none>";
+            r.secondUndoRevertsPrecedingEdit = meshEq(v, preE2);
+            r.secondUndoChangedMesh          = !meshEq(postN, v);
         }
         if (r.kB < 0 && meshEq(v, preE2)) r.kB = cast(int) k;
     }
@@ -587,13 +595,19 @@ unittest {
         ~ "the same observable cannot say anything about the zero-delta cell "
         ~ "either");
 
-    assert(m.control.firstUndoRevertsPrecedingEdit,
-        "the CONTROL cell's first undo did NOT revert the preceding edit, even "
-        ~ "though no gesture was performed. Something unnamed is sitting on "
-        ~ "top of the gesture's window (a selection entry, a tool-lifecycle "
-        ~ "entry), and while it is there 'the first undo did not revert the "
-        ~ "preceding edit' is green for that reason and distinguishes no "
-        ~ "candidate law — see departures (a)/(b) in this file's header");
+    assert(m.control.firstUndoLifecycleDelta == -1,
+        format("the CONTROL cell's first undo changed lifecycle depth by %d, "
+               ~ "not -1; it must consume the common arm record rather than "
+               ~ "look silent for an unnamed reason",
+               m.control.firstUndoLifecycleDelta));
+    assert(!m.control.firstUndoChangedMesh
+        && !m.control.firstUndoRevertsPrecedingEdit,
+        "the CONTROL cell's first undo changed geometry; strict LIFO must "
+        ~ "consume only the arm record at this step");
+    assert(m.control.kB == 2 && m.control.secondUndoRevertsPrecedingEdit,
+        format("the CONTROL cell did not revert the preceding edit on its "
+               ~ "second undo (kB=%d); the stand can no longer demonstrate "
+               ~ "a working geometry rollback", m.control.kB));
 
     assert(stepsOf(m.positive, m.control) == kOursPositiveSteps,
         format("a real committed +X drag now costs %d undo steps, this file "
@@ -648,35 +662,36 @@ unittest {
 // ---------------------------------------------------------------------------
 // 3 — assertions_for_a_port[0]:
 //     "A committed gesture that produced no change MUST leave something on the
-//      undo stack: the first undo after it must NOT revert the edit that
-//      preceded it."
+//      undo stack: after the common arm step, the next undo must NOT revert the
+//      edit that preceded it."
 //
-//     THE DIVERGENCE. Ours reverts it immediately. Discriminating, because
-//     block 1 pinned the two ends of the same observable: the control's first
-//     undo DOES revert the preceding edit, the positive control's does NOT.
+//     THE DIVERGENCE. Ours reverts it on undo₂, exactly where the control does.
+//     Block 1 proves undo₁ consumed a real lifecycle record and undo₂ can
+//     expose the preceding edit, so a silent result cannot come from a dead
+//     stand.
 // ---------------------------------------------------------------------------
 unittest {
     auto m = measured();
     if (kStatus == "open") {
-        assert(m.zero.firstUndoRevertsPrecedingEdit,
-            "DIVERGENCE CLOSED: the first undo after a committed zero-delta "
+        assert(m.zero.secondUndoRevertsPrecedingEdit,
+            "DIVERGENCE CLOSED: the first undo after the common arm step of a committed zero-delta "
             ~ "transform gesture no longer reverts the preceding edit — which "
             ~ "is what the reference does (task 2640, verdict (b)). If the law "
             ~ "was ported deliberately, flip kStatus to \"closed\", re-freeze "
             ~ "kOursZeroSteps, and retire registry row 86 in "
             ~ "doc/behavior_gap_registry.md.");
     } else {
-        assert(!m.zero.firstUndoRevertsPrecedingEdit,
-            "kStatus says the law is ported, but the first undo after a "
-            ~ "committed zero-delta transform gesture still reverts the "
-            ~ "preceding edit");
+        assert(!m.zero.secondUndoRevertsPrecedingEdit,
+            "kStatus says the law is ported, but the first undo after the "
+            ~ "common arm step of a committed zero-delta transform gesture "
+            ~ "still reverts the preceding edit");
     }
 }
 
 // ---------------------------------------------------------------------------
 // 4 — assertions_for_a_port[1]:
-//     "That undo must succeed and must leave the mesh byte-identical — it is
-//      silent, not refused."
+//     "That post-arm undo must succeed and must leave the mesh byte-identical —
+//      it is silent, not refused."
 //
 //     THIS ONE SPLITS. The "succeeds" half is PARITY: our undo answers `ok`,
 //     as the reference's did (its own command history confirmed every undo
@@ -687,25 +702,25 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     auto m = measured();
-    assert(m.zero.firstUndoStatus == "ok",
-        format("the first undo after the zero-delta gesture answered '%s'. "
+    assert(m.zero.secondUndoStatus == "ok",
+        format("the first undo after the common arm step of the zero-delta gesture answered '%s'. "
                ~ "Both engines agree the undo EXECUTES — this is the parity "
                ~ "half of assertions_for_a_port[1], and a refusal here would "
                ~ "make the divergence half unreadable.",
-               m.zero.firstUndoStatus));
+               m.zero.secondUndoStatus));
 
     if (kStatus == "open") {
-        assert(m.zero.firstUndoChangedMesh,
-            "DIVERGENCE CLOSED: the first undo after a committed zero-delta "
+        assert(m.zero.secondUndoChangedMesh,
+            "DIVERGENCE CLOSED: the first undo after the common arm step of a committed zero-delta "
             ~ "transform gesture is now SILENT (it left the mesh "
             ~ "byte-identical), which is the reference's behaviour. Flip "
             ~ "kStatus to \"closed\", re-freeze kOursZeroSteps, and retire "
             ~ "registry row 86.");
     } else {
-        assert(!m.zero.firstUndoChangedMesh,
+        assert(!m.zero.secondUndoChangedMesh,
             "kStatus says the law is ported, but the first undo after the "
-            ~ "zero-delta gesture still changed the mesh instead of being "
-            ~ "silent");
+            ~ "common arm step of the zero-delta gesture still changed the "
+            ~ "mesh instead of being silent");
     }
 }
 

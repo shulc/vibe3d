@@ -1,4 +1,5 @@
-// Regression anchor for task 3693: selection records are strict-LIFO steps.
+// Regression anchor for tasks 3693/3694: selection and lifecycle records are
+// strict-LIFO steps.
 //
 // This test covers the `tool.set` / `tool.attr` / `tool.doApply` path — a
 // DIFFERENT code route than `/api/transform` (which goes through
@@ -11,14 +12,17 @@
 //   1. Reset to a unit cube (8 vertices at ±0.5 on each axis).
 //   2. Select the TOP-4 corners (y = +0.5) via /api/select.
 //   3. Activate TransformMove, set TX=0.3, tool.doApply → gesture A commit.
-//      Stack after: [MeshSelect(A:UiState), ToolDoApply(A:Model)]
+//      Stack after: [MeshSelect(A:UiState), Arm(A:ToolLifecycle),
+//                    ToolDoApply(A:Model)]
 //   4. Select the BOTTOM-4 corners (y = −0.5) via /api/select.
 //   5. Activate TransformMove, set TX=0.1, tool.doApply → gesture B commit.
-//      Stack after: [MeshSelect(A:UiState), ToolDoApply(A:Model),
-//                    MeshSelect(B:UiState), ToolDoApply(B:Model)]
+//      Stack after: [MeshSelect(A:UiState), Arm(A:ToolLifecycle),
+//                    ToolDoApply(A:Model), MeshSelect(B:UiState),
+//                    Arm(B:ToolLifecycle), ToolDoApply(B:Model)]
 //   6. undo₁ → ToolDoApply(B).
 //      Geometry of B reverted; selection stays bottom-4.
-//   7. undo₂ → MeshSelect(B).
+//   7. undo₂ → Arm(B). Selection remains bottom-4 and gesture A remains.
+//   8. undo₃ → MeshSelect(B).
 //      Selection returns to top-4; ToolDoApply(A) remains applied.
 //
 // Candidate 0056 previously carried MeshSelect(B) inert and was encoded here
@@ -183,18 +187,37 @@ unittest {
             ~ exp.to!string ~ ", got " ~ got.to!string);
     }
 
-    // --- undo₂: MeshSelect(B) reverted; selection returns to top-4 ---
+    // --- undo₂: Arm(B) reverted; selection must remain bottom-4 ---
     auto u2 = postUndo();
     assert(u2["status"].str == "ok",
         "undo₂ should succeed, got: " ~ u2.toString);
 
+    auto selAfterArm = getSelection();
+    auto rawAfterArm = selAfterArm["selectedVertices"].array;
+    int[] selectedAfterArm = rawAfterArm.map!(v => cast(int)v.integer).array;
+    sort(selectedAfterArm);
+    int[] bottomExpected = bot4.dup;
+    sort(bottomExpected);
+    int[] topExpected = top4.dup;
+    sort(topExpected);
+    assert(selectedAfterArm == bottomExpected,
+        "STRICT LIFO: undo₂ must consume Arm(B) and leave bottom-4 selected; got "
+        ~ selectedAfterArm.to!string);
+    assert(selectedAfterArm != topExpected,
+        "obsolete selection-only contract resurfaced: undo₂ already reverted MeshSelect(B)");
+
+    // --- undo₃: MeshSelect(B) reverted; selection returns to top-4 ---
+    auto u3 = postUndo();
+    assert(u3["status"].str == "ok",
+        "undo₃ should succeed, got: " ~ u3.toString);
+
     auto sel = getSelection();
     assert(sel["mode"].str == "vertices",
-        "expected vertex selection mode after undo₂, got: " ~ sel["mode"].str);
+        "expected vertex selection mode after undo₃, got: " ~ sel["mode"].str);
 
     auto rawSel = sel["selectedVertices"].array;
     assert(rawSel.length == 4,
-        "expected exactly 4 selected vertices after undo₂, got "
+        "expected exactly 4 selected vertices after undo₃, got "
         ~ rawSel.length.to!string);
 
     int[] selectedIdx = rawSel.map!(v => cast(int)v.integer).array;
@@ -207,10 +230,10 @@ unittest {
     foreach (idx; selectedIdx) {
         double y = vertsFinal[idx].array[1].floating;
         assert(approxEqual(y, 0.5),
-            "STRICT LIFO: after undo₂, selected vertex v" ~ idx.to!string
+            "STRICT LIFO: after undo₃, selected vertex v" ~ idx.to!string
             ~ " has y=" ~ y.to!string
             ~ " but expected y≈+0.5 (top face). "
-            ~ "MeshSelect(B) must be its own second undo step.");
+            ~ "MeshSelect(B) must follow the Arm(B) undo step.");
     }
 
     {
@@ -219,7 +242,7 @@ unittest {
         assert(selectedIdx == expectedSorted,
             "STRICT LIFO: selected indices " ~ selectedIdx.to!string
             ~ " do not match top-4 " ~ expectedSorted.to!string
-            ~ ". undo₂ via tool.doApply skipped MeshSelect(B).");
+            ~ ". undo₃ via tool.doApply skipped MeshSelect(B).");
     }
 
     // Cross-check: no selected vertex is on the bottom face.
@@ -227,7 +250,7 @@ unittest {
         double y = vertsFinal[idx].array[1].floating;
         assert(!approxEqual(y, -0.5),
             "REGRESSION: selected vertex v" ~ idx.to!string
-            ~ " is on the bottom face (y≈-0.5) after undo₂ via tool.doApply. "
+            ~ " is on the bottom face (y≈-0.5) after undo₃ via tool.doApply. "
             ~ "Selection was carried inert instead of stepped.");
     }
 }

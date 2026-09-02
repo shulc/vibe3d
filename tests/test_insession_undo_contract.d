@@ -38,8 +38,9 @@
 //      entries (each tagged inSession, sharing one runId); ONE Ctrl+Z steps
 //      back the LAST gesture (geometry to post-drag-1, count -> +1); a SECOND
 //      Ctrl+Z steps the first gesture (geometry to the run baseline ==
-//      post-run-A, count -> floor); a THIRD Ctrl+Z pops the committed run A.
-//      The tool stays LIVE throughout.
+//      post-run-A, count -> floor); a THIRD Ctrl+Z consumes run B's arm
+//      lifecycle record without changing geometry; a FOURTH pops committed
+//      run A.
 //
 //  (2) Mixed gizmo + panel/forms non-interference — a gizmo drag, then an
 //      off-gizmo relocate boundary (consolidates the gizmo run to one surviving
@@ -75,6 +76,10 @@ JSONValue getJson(string path) {
 
 long undoCount() {
     return getJson("/api/history")["undo"].array.length;
+}
+
+long lifecycleCount() {
+    return getJson("/api/undo/status")["toolLifecycleCount"].integer;
 }
 
 // Count of TAGGED in-session entries currently on the undo stack — the
@@ -237,13 +242,14 @@ void cmd(string line) {
 //                 tool LIVE);
 //       Ctrl+Z #2 pops the first gesture (v6 back to the run baseline ==
 //                 post-run-A, count +1 -> floor, tool LIVE);
-//       Ctrl+Z #3 pops the committed run A (v6 back to the pristine cube).
+//       Ctrl+Z #3 consumes run B's arm record without changing geometry;
+//       Ctrl+Z #4 pops committed run A (v6 back to the pristine cube).
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
     selectV6();   // verified select; entry stays below the floor (see helper)
 
-    // --- Run A: a committed gizmo drag on v6 (the entry the 3rd Ctrl+Z pops). ---
+    // --- Run A: a committed gizmo drag on v6 (the entry the 4th Ctrl+Z pops). ---
     postJson("/api/script", "tool.set move");   // default ACEN = None
     auto cam = fetchCamera();
     auto vp  = viewportFromCamera(cam);
@@ -381,19 +387,37 @@ unittest {
            fabs(v6Step2[2] - v6AfterRunA[2]) < 1e-3,
         "the committed run A must survive stepping run B's gestures back");
 
-    // Ctrl+Z #3 now pops the committed run A: v6 back to its pristine cube
-    // corner (0.5, 0.5, 0.5).
+    // Ctrl+Z #3 reaches run B's arm record before committed run A. Strict LIFO
+    // makes that lifecycle entry a real step: it must be consumed without
+    // changing geometry, and the old three-press contract must stay false.
+    auto lifecycleBeforeArmStep = lifecycleCount();
     playAndWait(ctrlZ(70.0));
+    settle();
+    auto v6AfterArmStep = vert(6);
+    assert(fabs(v6AfterArmStep[0] - v6AfterRunA[0]) < 1e-3 &&
+           fabs(v6AfterArmStep[1] - v6AfterRunA[1]) < 1e-3 &&
+           fabs(v6AfterArmStep[2] - v6AfterRunA[2]) < 1e-3,
+        "Ctrl+Z #3 must consume run B's arm record without popping committed run A");
+    assert(fabs(v6AfterArmStep[0] - 0.5) + fabs(v6AfterArmStep[1] - 0.5)
+         + fabs(v6AfterArmStep[2] - 0.5) > 1e-2,
+        "obsolete three-press contract resurfaced: Ctrl+Z #3 popped committed run A");
+    assert(lifecycleCount() == lifecycleBeforeArmStep - 1,
+        "Ctrl+Z #3 must consume exactly one lifecycle record");
+    assert(undoCount() == committedFloor,
+        "a lifecycle step must not consume a visible committed entry");
+
+    // Ctrl+Z #4 now reaches committed run A and restores the pristine corner.
+    playAndWait(ctrlZ(80.0));
     settle();
     auto v6Popped = vert(6);
     assert(fabs(v6Popped[0] - 0.5) < 1e-3 &&
            fabs(v6Popped[1] - 0.5) < 1e-3 &&
            fabs(v6Popped[2] - 0.5) < 1e-3,
-        "Ctrl+Z #3 must pop the committed run A (v6 back to (0.5,0.5,0.5)); got ("
+        "Ctrl+Z #4 must pop the committed run A (v6 back to (0.5,0.5,0.5)); got ("
         ~ v6Popped[0].to!string ~ "," ~ v6Popped[1].to!string ~ "," ~
         v6Popped[2].to!string ~ ")");
     assert(undoCount() == committedFloor - 1,
-        "Ctrl+Z #3 pops exactly one committed entry; expected " ~
+        "Ctrl+Z #4 pops exactly one committed entry; expected " ~
         (committedFloor - 1).to!string ~ " got " ~ undoCount().to!string);
 
     postJson("/api/script", "tool.set move off");

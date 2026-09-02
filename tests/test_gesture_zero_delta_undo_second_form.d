@@ -233,6 +233,14 @@ bool meshEq(const double[][] a, const double[][] b) {
 /// this instrument and the undo walk DISAGREE on the lifecycle cells.
 long visibleUndoDepth() { return getJson("/api/history")["undo"].array.length; }
 
+/// Raw lifecycle records on the undo stack. The cutting control keeps its arm
+/// because every compared cell must share the commit choreography; this count
+/// proves the first silent undo consumes that arm rather than observing a dead
+/// stand.
+long lifecycleCount() {
+    return getJson("/api/undo/status")["toolLifecycleCount"].integer;
+}
+
 /// Change-bus deliveries so far. One of the two gesture witnesses.
 long deliveries() { return getJson("/api/changes")["deliveryCount"].integer; }
 
@@ -302,10 +310,15 @@ struct WalkResult {
     string firstStatus;
     bool   firstRevertsStand;
     bool   firstChangedMesh;
+    long   firstLifecycleDelta;
+    string secondStatus;
+    bool   secondRevertsStand;
+    bool   secondChangedMesh;
 }
 
 WalkResult undoWalk(string id, const double[][] pre, const double[][] post) {
     WalkResult w;
+    const long lifecycleBeforeUndo = lifecycleCount();
     foreach (k; 1 .. 7) {
         auto resp = postJson("/api/undo", "");
         settle();
@@ -314,6 +327,12 @@ WalkResult undoWalk(string id, const double[][] pre, const double[][] post) {
             w.firstStatus       = ("status" in resp) ? resp["status"].str : "<none>";
             w.firstRevertsStand = meshEq(v, pre);
             w.firstChangedMesh  = !meshEq(post, v);
+            w.firstLifecycleDelta = lifecycleCount() - lifecycleBeforeUndo;
+        }
+        if (k == 2) {
+            w.secondStatus       = ("status" in resp) ? resp["status"].str : "<none>";
+            w.secondRevertsStand = meshEq(v, pre);
+            w.secondChangedMesh  = !meshEq(post, v);
         }
         if (w.kB < 0 && meshEq(v, pre)) w.kB = cast(int) k;
     }
@@ -362,6 +381,10 @@ struct CutCell {
     string firstUndoStatus;
     bool   firstUndoRevertsStand;
     bool   firstUndoChangedMesh;
+    long   firstUndoLifecycleDelta;
+    string secondUndoStatus;
+    bool   secondUndoRevertsStand;
+    bool   secondUndoChangedMesh;
 }
 
 /// One cutting cell: build the stand, arm `mesh.sliceTool`, drive the gesture,
@@ -423,6 +446,10 @@ CutCell runCutCell(string id, bool press, bool reach) {
     c.firstUndoStatus       = w.firstStatus;
     c.firstUndoRevertsStand = w.firstRevertsStand;
     c.firstUndoChangedMesh  = w.firstChangedMesh;
+    c.firstUndoLifecycleDelta = w.firstLifecycleDelta;
+    c.secondUndoStatus       = w.secondStatus;
+    c.secondUndoRevertsStand = w.secondRevertsStand;
+    c.secondUndoChangedMesh  = w.secondChangedMesh;
     return c;
 }
 
@@ -733,12 +760,19 @@ unittest {
         "the positive control's FIRST undo reverted the stand's edit — a real "
         ~ "committed cut left nothing of its own on top, so the same "
         ~ "observable cannot say anything about the zero cell either");
-    assert(m.cutControl.firstUndoRevertsStand,
-        "the CONTROL cell's first undo did NOT revert the stand's edit, even "
-        ~ "though no gesture was performed. Something unnamed is sitting on "
-        ~ "top of the gesture window, and while it is there 'the first undo "
-        ~ "did not revert the preceding edit' is green for that reason and "
-        ~ "distinguishes no candidate law");
+    assert(m.cutControl.firstUndoLifecycleDelta == -1,
+        format("the CONTROL cell's first undo changed lifecycle depth by %d, "
+               ~ "not -1; it must consume the common arm record rather than "
+               ~ "look silent for an unnamed reason",
+               m.cutControl.firstUndoLifecycleDelta));
+    assert(!m.cutControl.firstUndoChangedMesh
+        && !m.cutControl.firstUndoRevertsStand,
+        "the CONTROL cell's first undo changed geometry; strict LIFO must "
+        ~ "consume only the arm record at this step");
+    assert(m.cutControl.kB == 2 && m.cutControl.secondUndoRevertsStand,
+        format("the CONTROL cell did not revert the stand's edit on its "
+               ~ "second undo (kB=%d); the stand can no longer demonstrate "
+               ~ "a working geometry rollback", m.cutControl.kB));
 
     assert(m.cutPositive.kB - m.cutControl.kB == kOursCutPositiveSteps,
         format("a real committed cut now costs %d undo steps, this file froze "
@@ -869,10 +903,10 @@ unittest {
 //     while the undo walk reads one step in both shapes. The WALK is the law's
 //     instrument; the visible depth remains deliberately blind after closure.
 //
-//     The cutting cells are the control for this claim: there the two
-//     instruments must AGREE, because no lifecycle entry is born in them at
-//     all (only `XfrmTransformTool` implements `LifecycleUndoEmitter`). A
-//     disagreement there means one appeared where this rig assumes none.
+//     The cutting cells are the control for this claim: their common arm
+//     lifecycle prefix appears in both kB indices and therefore cancels from
+//     the differential, while `/api/history` omits it from both depths. The
+//     two instruments must still AGREE on the gesture's incremental cost.
 // ---------------------------------------------------------------------------
 unittest {
     auto m = measured();
@@ -893,24 +927,23 @@ unittest {
     assert(m.cutZero.visibleDelta == m.cutZero.kB - m.cutControl.kB,
         format("the two instruments disagree on the CUTTING cells: "
                ~ "/api/history's visible depth moved by %d across the gesture, "
-               ~ "the raw undo walk by %d. No lifecycle entry can be born "
-               ~ "there — the Slice tool does not implement "
-               ~ "LifecycleUndoEmitter — so a mismatch means one appeared "
-               ~ "where this rig assumes none",
+               ~ "the raw undo walk by %d. Their common arm lifecycle prefix "
+               ~ "must cancel from the differential; a mismatch means the "
+               ~ "two cells no longer share the same prefix",
                m.cutZero.visibleDelta, m.cutZero.kB - m.cutControl.kB));
 }
 
 // ---------------------------------------------------------------------------
 // 5 — assertions_for_a_port[0] and [1], ON THE CUTTING FAMILY:
 //     "A committed gesture that produced no change MUST leave something on the
-//      undo stack, in EVERY tool family: the first undo after it must NOT
-//      revert the edit that preceded it" — and "that undo must succeed and
-//      must leave the mesh byte-identical: it is silent, not refused."
+//      undo stack, in EVERY tool family: after the common arm step, the next
+//      undo must NOT revert the preceding edit" — and "that undo must succeed
+//      and must leave the mesh byte-identical: it is silent, not refused."
 //
-//     THE DIVERGENCE. Ours reverts the stand immediately. Discriminating,
-//     because block 1 pinned the two ends of the same observable: the
-//     control's first undo DOES revert the stand, the positive control's does
-//     NOT.
+//     THE DIVERGENCE. Ours reverts the stand on undo₂, exactly where the
+//     control does. Block 1 proves undo₁ consumed a real lifecycle record and
+//     undo₂ can expose the stand, so a silent result cannot come from a dead
+//     rig.
 //
 //     [1] SPLITS. The "succeeds" half is PARITY — our undo answers `ok`, as
 //     the reference's did. The "byte-identical" half is the divergence.
@@ -920,35 +953,35 @@ unittest {
 unittest {
     auto m = measured();
 
-    assert(m.cutZero.firstUndoStatus == "ok",
-        format("the first undo after the zero-delta cut gesture answered '%s'. "
+    assert(m.cutZero.secondUndoStatus == "ok",
+        format("the first undo after the common arm step of the zero-delta cut gesture answered '%s'. "
                ~ "Both engines agree the undo EXECUTES — this is the parity "
                ~ "half, and a refusal here would make the divergence half "
-               ~ "unreadable", m.cutZero.firstUndoStatus));
+               ~ "unreadable", m.cutZero.secondUndoStatus));
 
     if (kStatusCut == "open") {
-        assert(m.cutZero.firstUndoRevertsStand,
-            "DIVERGENCE CLOSED: the first undo after a committed zero-delta "
+        assert(m.cutZero.secondUndoRevertsStand,
+            "DIVERGENCE CLOSED: the first undo after the common arm step of a committed zero-delta "
             ~ "CUTTING gesture no longer reverts the edit that preceded it — "
             ~ "which is what the reference does (task 2660, verdict (b)). If "
             ~ "the law was ported deliberately, flip kStatusCut to \"closed\", "
             ~ "re-freeze kOursCutZeroSteps, and retire the cutting half of "
             ~ "registry row 86 in doc/behavior_gap_registry.md.");
-        assert(m.cutZero.firstUndoChangedMesh,
-            "DIVERGENCE CLOSED: the first undo after a committed zero-delta "
+        assert(m.cutZero.secondUndoChangedMesh,
+            "DIVERGENCE CLOSED: the first undo after the common arm step of a committed zero-delta "
             ~ "cutting gesture is now SILENT (it left the mesh "
             ~ "byte-identical), which is the reference's behaviour. Flip "
             ~ "kStatusCut to \"closed\", re-freeze kOursCutZeroSteps and "
             ~ "retire the cutting half of registry row 86.");
     } else {
-        assert(!m.cutZero.firstUndoRevertsStand,
-            "kStatusCut says the law is ported, but the first undo after a "
-            ~ "committed zero-delta cutting gesture still reverts the edit "
-            ~ "that preceded it");
-        assert(!m.cutZero.firstUndoChangedMesh,
+        assert(!m.cutZero.secondUndoRevertsStand,
             "kStatusCut says the law is ported, but the first undo after the "
-            ~ "zero-delta cut gesture still changed the mesh instead of being "
-            ~ "silent");
+            ~ "common arm step of a committed zero-delta cutting gesture "
+            ~ "still reverts the edit that preceded it");
+        assert(!m.cutZero.secondUndoChangedMesh,
+            "kStatusCut says the law is ported, but the first undo after the "
+            ~ "common arm step of the zero-delta cut gesture still changed "
+            ~ "the mesh instead of being silent");
     }
 }
 

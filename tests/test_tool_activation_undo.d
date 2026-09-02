@@ -3,20 +3,18 @@
 // Two interactive Move gizmo gestures, EACH bracketed by tool.set move /
 // tool.set move off, drive the production path:
 //   * the gesture's mouse-up records a snapshot-based in-session geometry entry;
-//   * the tool drop consolidates that run AND emits a ToolDeactivationCommand
-//     (the lifecycle entry) — invisible to /api/history, counted by
-//     /api/undo/status.toolLifecycleCount.
+//   * each tool arm emits a lifecycle record; drop consolidates the run but
+//     owns no additional lifecycle step. The arm record is invisible to
+//     /api/history and counted by /api/undo/status.toolLifecycleCount.
 //
 // Resulting visible stack after both gestures (undo count = 2 geometry entries):
-//   [geomA(Model), DeactA(lifecycle), geomB(Model), DeactB(lifecycle)]
+//   [ArmA(lifecycle), geomA(Model), ArmB(lifecycle), geomB(Model)]
 //
 // Undo sequence (the headline contract this task pins):
-//   undo₁ → geomB reverts (v6 back to post-gesture-A position) — transparent
-//           past DeactB to the Model below.
-//   undo₂ → lifecycle HARD STEP: re-activates the dropped tool, geometry no-op.
-//   undo₃ → geomA reverts (v6 back to the cube baseline) — transparent past
-//           DeactA.
-//   undo₄ → lifecycle HARD STEP (DeactA).
+//   undo₁ → geomB reverts (v6 back to post-gesture-A position).
+//   undo₂ → ArmB lifecycle step, geometry no-op.
+//   undo₃ → geomA reverts (v6 back to the cube baseline).
+//   undo₄ → ArmA lifecycle step, geometry no-op.
 // Redo round-trip walks the same steps in reverse and restores both gestures.
 //
 // Gizmo gestures drive the MAIN loop via drag_helpers.buildDragLog +
@@ -188,29 +186,42 @@ unittest {
     assert(lifecycleCount() == 2,
         "after gesture B + drop: 2 lifecycle entries; got " ~ lifecycleCount().to!string);
 
-    // --- undo₁: revert geomB (v6 -> afterA), transparent past DeactB ---
+    // --- undo₁: revert geomB (v6 -> afterA) ---
     postJson("/api/undo", "");
     settle();
     assert(vertNear(vert(6), afterA),
         "undo₁ should revert geomB to afterA; got " ~ vert(6).to!string
         ~ " want " ~ afterA.to!string);
 
-    // Arm-owned lifecycle stays transparent while an older model edit remains
-    // reachable, so undo₂ reverts gesture A rather than stepping the arm.
-    assert(!canUndoLifecycle(), "arm lifecycle should stay transparent before undo₂");
+    // Arm B is now the tail. Strict LIFO makes undo₂ consume that lifecycle
+    // record without touching geomA; the former two-press geometry contract
+    // must stay false.
+    assert(canUndoLifecycle(), "undo₂ must see the arm-B lifecycle tail");
+    auto beforeArmBStep = lifecycleCount();
+    postJson("/api/undo", "");
+    settle();
+    assert(vertNear(vert(6), afterA),
+        "undo₂ must consume arm B without reverting geomA; got "
+        ~ vert(6).to!string ~ " want " ~ afterA.to!string);
+    assert(!vertNear(vert(6), base),
+        "obsolete two-press contract resurfaced: undo₂ reverted geomA");
+    assert(lifecycleCount() == beforeArmBStep - 1,
+        "undo₂ must consume exactly one lifecycle entry");
+
+    // undo₃ now reaches geomA and restores the original geometry.
     postJson("/api/undo", "");
     settle();
     assert(vertNear(vert(6), base),
-        "undo₂ should revert geomA to baseline; got " ~ vert(6).to!string
+        "undo₃ should revert geomA to baseline; got " ~ vert(6).to!string
         ~ " want " ~ base.to!string);
-    assert(canUndoLifecycle(), "arm lifecycle should become a hard step after model undo");
+    assert(canUndoLifecycle(), "undo₄ must see the remaining arm-A lifecycle tail");
     auto beforeStep = lifecycleCount();
     postJson("/api/undo", "");
     settle();
     assert(vertNear(vert(6), base),
-        "lifecycle hard step must not change geometry");
+        "undo₄ lifecycle step must not change geometry");
     assert(lifecycleCount() == beforeStep - 1,
-        "Move arm undo must consume exactly one lifecycle entry");
+        "undo₄ must consume exactly one lifecycle entry");
 
     import std.stdio : writeln;
     writeln("test_tool_activation_undo: PASS");

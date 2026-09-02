@@ -35,8 +35,9 @@
 //   (d) Post-gizmo-R-drag (mouse RELEASED): Phase 2 per-gesture recording — the
 //       ring gesture SELF-COMMITS a tagged in-session entry on mouse-up, so an
 //       in-session Ctrl+Z is plain history stepping: #1 pops that gesture
-//       (geometry reverts, count -1), #2 pops the prior committed entry. (This
-//       flips the pre-Phase-2 cancel-the-open-run behavior; (a)-(c) stay.)
+//       (geometry reverts, count -1), #2 consumes the run-B arm lifecycle
+//       record without moving geometry, and #3 pops the prior committed entry.
+//       (This flips the pre-Phase-2 cancel-the-open-run behavior; (a)-(c) stay.)
 //
 // IMPORTANT — the Ctrl+Z MUST go through the keyboard/navHistory chokepoint, so
 // it is injected as an SDL keystroke via /api/play-events. The /api/undo HTTP
@@ -72,6 +73,10 @@ void cmd(string line) {
 
 long undoCount() {
     return getJson("/api/history")["undo"].array.length;
+}
+
+long lifecycleCount() {
+    return getJson("/api/undo/status")["toolLifecycleCount"].integer;
 }
 
 // Post-playback / post-command settle: /api/play-events/status reports
@@ -333,7 +338,8 @@ unittest {
 //     is null), the run is CLOSED + recorded, so an in-session Ctrl+Z is plain
 //     history stepping: Ctrl+Z #1 POPS that one ring gesture (geometry reverts
 //     to post-run-A, count drops by one in-session entry, tool stays live);
-//     Ctrl+Z #2 then pops the prior committed run A.
+//     Ctrl+Z #2 then consumes run B's arm lifecycle entry; Ctrl+Z #3 pops the
+//     prior committed run A.
 //
 //     This is the case-(d) flip the plan pins to Phase 2 (the same
 //     flip-in-one-phase lesson as Phase 1's Move contract): the behavior change
@@ -349,7 +355,7 @@ unittest {
 unittest {
     establishCubeBaseline();
 
-    // --- Run A: a committed rotate ring drag (the entry the 2nd Ctrl+Z pops).
+    // --- Run A: a committed rotate ring drag (the entry the 3rd Ctrl+Z pops).
     //     Drop the tool to commit it, leaving it as the history floor. ---
     cmd("tool.set TransformRotate");
     auto cam = fetchCamera();
@@ -407,13 +413,31 @@ unittest {
         "stepping gesture B pops exactly one in-session entry; floor="
         ~ committedFloor.to!string ~ " now=" ~ undoCount().to!string);
 
-    // Ctrl+Z #2 now pops the prior committed run A: v6 back to the cube corner.
+    // Ctrl+Z #2 reaches run B's arm record first. It is a strict-LIFO step,
+    // not a transparent prefix of the committed run below it.
+    auto lifecycleBeforeArmStep = lifecycleCount();
     playAndWait(ctrlZ(60.0));
     settle();
+    auto v6AfterArmStep = vert(6);
+    assert(fabs(v6AfterArmStep[0] - v6AfterRunA[0]) < 1e-3 &&
+           fabs(v6AfterArmStep[1] - v6AfterRunA[1]) < 1e-3 &&
+           fabs(v6AfterArmStep[2] - v6AfterRunA[2]) < 1e-3,
+        "the SECOND Ctrl+Z must consume run B's arm without popping run A");
+    assert(fabs(v6AfterArmStep[0] - 0.5) + fabs(v6AfterArmStep[1] - 0.5)
+         + fabs(v6AfterArmStep[2] - 0.5) > 1e-2,
+        "obsolete two-press contract resurfaced: the SECOND Ctrl+Z popped run A");
+    assert(lifecycleCount() == lifecycleBeforeArmStep - 1,
+        "the SECOND Ctrl+Z must consume exactly one lifecycle record");
+    assert(undoCount() == committedFloor,
+        "the lifecycle step must leave the visible committed floor intact");
+
+    // Ctrl+Z #3 now reaches run A and restores the cube corner.
+    playAndWait(ctrlZ(70.0));
+    settle();
     assertVertex(6, 0.5, 0.5, 0.5,
-        "the SECOND Ctrl+Z pops the prior committed rotate run A (back to cube)");
+        "the THIRD Ctrl+Z pops the prior committed rotate run A (back to cube)");
     assert(undoCount() == committedFloor - 1,
-        "the second Ctrl+Z pops exactly one committed entry; expected "
+        "the third Ctrl+Z pops exactly one committed entry; expected "
         ~ (committedFloor - 1).to!string ~ " got " ~ undoCount().to!string);
 
     cmd("tool.set TransformRotate off");
