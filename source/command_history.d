@@ -107,11 +107,9 @@ enum HistoryFlags : uint {
                            // CmdFlags.UndoBoundary. Applied to scene.reset /
                            // file.new so a plain geometry undo never reaches
                            // across a session-reset boundary.
-    ToolLifecycle = 1 << 10, // Entry is a tool-lifecycle step (ToolDeactivationCommand).
-                             // Transparent to the Model cursor scan (like UiUndo) when a
-                             // Model entry sits directly below it; otherwise a hard STEP
-                             // that re-activates the dropped tool. Never counted in
-                             // modelDepth / uiDepth; excluded from /api/history serialization.
+    ToolLifecycle = 1 << 10, // Entry is a strict-LIFO tool-lifecycle step.
+                             // Never counted in modelDepth / uiDepth; excluded from
+                             // /api/history serialization.
 }
 
 version (unittest) private HistoryEntry preparedTestEntry(Command cmd,
@@ -502,11 +500,9 @@ final class CommandHistory {
     // immune to consolidate/coalesce/replace side-effects on stack length.
     private ulong _undoEpoch = 0;
 
-    // Undo/redo step UI and Model records in strict LIFO order. ToolLifecycle
-    // remains the one temporary exception: until the lifecycle port lands, its
-    // tail can stay transparent to a reachable edit and is spliced back onto
-    // undoStack by undo(). A non-lifecycle step therefore always transfers one
-    // record between the stacks and calls revert()/apply() on that record.
+    // Undo/redo step UI, Model and ToolLifecycle records in strict LIFO order:
+    // one record transfers between the stacks and calls revert()/apply(). A
+    // ToolArmLifecyclePolicy may deliberately clear redo after its undo.
     //
     // History: this landed behind a `_classAwareStepping` flag with an env-var
     // kill-switch (VIBE3D_UNDO_CLASS_STEP=0) selecting a class-blind LIFO path,
@@ -1228,7 +1224,7 @@ final class CommandHistory {
     /// after a layer switch starts a new history entry on the new layer.
     void breakCoalescing() { _coalesceBarrier = true; }
 
-    /// Record a tool-lifecycle entry (ToolDeactivationCommand). Unlike record(),
+    /// Record a tool-lifecycle entry (ToolActivationCommand). Unlike record(),
     /// this does NOT call consolidateOpenRunIfForeign (the run is already closed
     /// at the emit point — consolidate() ran inside deactivate()). Appends to
     /// undoStack, clears redo. Respects _state != Active (so re-entry during a
@@ -1673,9 +1669,8 @@ final class CommandHistory {
     }
 
     // Scan undoStack from the tail toward the head for the nearest undoable
-    // non-lifecycle entry. UI and Model records are both steps; lifecycle
-    // records remain transparent until the lifecycle port lands. Returns the
-    // index into undoStack, or undoStack.length if no step is found.
+    // entry. UI, Model and lifecycle records are all steps. Returns the index
+    // into undoStack, or undoStack.length if no step is found.
     //
     // The scan stops (returns "not found") when it hits an entry carrying
     // HistoryFlags.UndoBoundary: a boundary entry (scene.reset / file.new)
@@ -1690,8 +1685,6 @@ final class CommandHistory {
             // Hard stop: boundary entries are not stepped to by a model undo.
             if (f & HistoryFlags.UndoBoundary)
                 return undoStack.length; // sentinel: treat as "no model entry"
-            // ToolLifecycle stays transparent on this intermediate port step.
-            if (f & HistoryFlags.ToolLifecycle) continue;
             if (f & HistoryFlags.Undoable)
                 return i;
         }
@@ -1756,99 +1749,25 @@ final class CommandHistory {
         if (_lockout) return false;
         if (undoStack.length == 0) return false;
 
-        // Strict LIFO for UI and Model records. ToolLifecycle remains
-        // transparent here until the next port step, so the selected suffix can
-        // contain lifecycle records; (R2) keeps those records on undoStack.
-        // Every other suffix contains exactly one record and moves it to redo.
-        // (R1) ToolLifecycle tail: transparent-vs-step classification.
-        // A ToolLifecycle tail entry is transparent (step past to the Model below)
-        // iff a Model entry exists below it before any other ToolLifecycle/UndoBoundary.
-        // Otherwise it is a hard STEP (revert it alone = re-activate tool).
-        if (undoStack.length > 0
-            && (undoStack[$ - 1].flags & HistoryFlags.ToolLifecycle) != 0) {
-            // Scan downward skipping UiUndo to find first non-UiUndo entry.
-            bool foundModel = false;
-            size_t si = undoStack.length - 1;
-            while (si > 0) {
-                --si;
-                uint sf = undoStack[si].flags;
-                if (sf & HistoryFlags.UndoBoundary) break;
-                if (sf & HistoryFlags.ToolLifecycle) break;
-                if ((sf & HistoryFlags.UiUndo) != 0) continue;
-                // First non-UiUndo, non-lifecycle, non-boundary entry.
-                if ((sf & HistoryFlags.Undoable) != 0) foundModel = true;
-                break;
-            }
-            if (!foundModel) {
-                // Hard STEP: revert the ToolLifecycle tail entry alone.
-                auto e = undoStack[$ - 1];
-                undoStack.length -= 1;
-                auto prev2 = _state;
-                _state = UndoState.Suspend;
-                scope(exit) _state = prev2;
-                if (!e.cmd.revert()) return false;
-                import commands.tool.lifecycle : ToolArmLifecyclePolicy;
-                auto armPolicy = cast(ToolArmLifecyclePolicy)e.cmd;
-                if (armPolicy !is null && !armPolicy.carriesRedoAfterUndo())
-                    redoStack.length = 0;
-                else
-                    redoStack = [e] ~ redoStack;
-                ++_undoEpoch;
-                return true;
-            }
-            // foundModel = true: fall through to the normal Case A path.
-            // (R2) will splice the lifecycle entry back after the Model revert.
-        }
+        auto entry = undoStack[$ - 1];
+        undoStack.length -= 1;
 
-        size_t mi = nearestModelIndexFromTail();
+        // Suspend to keep internal sub-commands off the stack.
+        auto prev = _state;
+        _state = UndoState.Suspend;
+        scope(exit) _state = prev;
 
-        if (mi < undoStack.length) {
-            // Case A: undoable non-lifecycle entry at index mi.
-            auto modelEntry = undoStack[mi];
+        // The failed entry has already been removed and no redo entry is
+        // created. This preserves the old stuck-stack avoidance for the new
+        // one-record step; revert()==false still makes undo() return false.
+        if (!entry.cmd.revert()) return false;
 
-            // Suspend to keep internal sub-commands off the stack.
-            auto prev = _state;
-            _state = UndoState.Suspend;
-            scope(exit) _state = prev;
-
-            if (!modelEntry.cmd.revert()) {
-                // Revert failed — degenerate stuck-stack avoidance. Drop the
-                // failed model entry AND the entire trailing suffix [mi..$]
-                // from the undo stack (entry count is NOT conserved: the suffix
-                // that would have been carried to redoStack is silently
-                // discarded). This prevents the cursor from looping on the same
-                // broken entry forever. The caller sees false → no redo entry
-                // is pushed, and the suffix is gone. A command author who
-                // returns false from revert() accepts that the history beyond
-                // this point is unrecoverable.
-                undoStack = undoStack[0 .. mi];
-                return false;
-            }
-
-            // (R2) Splice-not-carry: ToolLifecycle entries in the suffix [mi..$]
-            // stay on undoStack (they are NOT carried to redo). Only Model + UiUndo go.
-            HistoryEntry[] toRedo;
-            HistoryEntry[] toKeep;
-            foreach (ref se; undoStack[mi .. $]) {
-                if (se.flags & HistoryFlags.ToolLifecycle)
-                    toKeep ~= se;
-                else
-                    toRedo ~= se;
-            }
-            undoStack = undoStack[0 .. mi] ~ toKeep;
-            redoStack = toRedo ~ redoStack;
-        } else {
-            // Case B: no reachable non-lifecycle entry — revert the tail.
-            auto e = undoStack[$ - 1];
-            undoStack.length -= 1;
-
-            auto prev = _state;
-            _state = UndoState.Suspend;
-            scope(exit) _state = prev;
-
-            if (!e.cmd.revert()) return false;
-            redoStack = [e] ~ redoStack;
-        }
+        import commands.tool.lifecycle : ToolArmLifecyclePolicy;
+        auto armPolicy = cast(ToolArmLifecyclePolicy)entry.cmd;
+        if (armPolicy !is null && !armPolicy.carriesRedoAfterUndo())
+            redoStack.length = 0;
+        else
+            redoStack = [entry] ~ redoStack;
 
         ++_undoEpoch;  // bump exactly once per successful undo
         g_perf.count(Cat.undoApply, 1);  // task 0200 F-I7 (no-op in default build)
@@ -1870,23 +1789,8 @@ final class CommandHistory {
         if (_lockout) return false;
         if (redoStack.length == 0) return false;
 
-        // Mirror of (R1): a ToolLifecycle head on the redo stack is a lifecycle
-        // step — re-apply it alone (re-drop the tool, geometry no-op), move it
-        // alone back to undoStack tail. Do NOT let it fall into the Model branch.
-        if ((redoStack[0].flags & HistoryFlags.ToolLifecycle) != 0) {
-            auto e = redoStack[0];
-            redoStack = redoStack[1 .. $];
-            auto prev2 = _state;
-            _state = UndoState.Suspend;
-            scope(exit) _state = prev2;
-            if (!e.cmd.apply()) return false;
-            undoStack ~= e;
-            return true;
-        }
-
-        // Undo transfers exactly one non-lifecycle record to the redo head, so
-        // redo applies and transfers exactly that one record. Lifecycle has its
-        // temporary dedicated branch above.
+        // Undo transfers exactly one record to the redo head, so redo applies
+        // and transfers exactly that one record.
         auto entry = redoStack[0];
 
         auto prev = _state;
@@ -1978,21 +1882,8 @@ final class CommandHistory {
 
     /// Whether the next undo would step a ToolLifecycle entry (re-activate tool).
     bool canUndoLifecycle() const {
-        if (undoStack.length == 0) return false;
-        uint tf = undoStack[$ - 1].flags;
-        if (!(tf & HistoryFlags.ToolLifecycle)) return false;
-        // Same scan as (R1): is there a Model below before another lifecycle/boundary?
-        size_t si = undoStack.length - 1;
-        while (si > 0) {
-            --si;
-            uint sf = undoStack[si].flags;
-            if (sf & HistoryFlags.UndoBoundary) return true; // hard step
-            if (sf & HistoryFlags.ToolLifecycle) return true; // hard step
-            if ((sf & HistoryFlags.UiUndo) != 0) continue;
-            if ((sf & HistoryFlags.Undoable) != 0) return false; // transparent
-            break;
-        }
-        return true; // bottom of stack = hard step
+        return undoStack.length > 0
+            && (undoStack[$ - 1].flags & HistoryFlags.ToolLifecycle) != 0;
     }
 
     size_t toolLifecycleCount() const {
@@ -2690,8 +2581,7 @@ unittest {
     assert(h.undoEpoch == 3, "B2: epoch == 3 after three undos");
 }
 
-// Intermediate F4 form for task 3693: [Edit, Select, Arm]. Selection and
-// Model records are strict LIFO; lifecycle remains transparent to the edit.
+// F4 form: [Edit, Select, Arm]. All three classes step in strict LIFO order.
 unittest {
     auto h = new CommandHistory();
     auto edit = new _TrackedCmd(CmdFlags.Model);
@@ -2705,21 +2595,21 @@ unittest {
     assert(h.undoStack.length == 3 && h.redoStack.length == 0,
         "F4 setup: expected undo=3 redo=0");
 
-    assert(h.undo(), "F4 undo₁ should revert Select");
-    assert(select.revertCalls == 1 && edit.revertCalls == 0 && arm.revertCalls == 0,
-        "F4 undo₁ order must be Select");
+    assert(h.undo(), "F4 undo₁ should revert Arm");
+    assert(select.revertCalls == 0 && edit.revertCalls == 0 && arm.revertCalls == 1,
+        "F4 undo₁ order must be Arm");
     assert(h.undoStack.length == 2 && h.redoStack.length == 1,
         "F4 undo₁: expected undo=2 redo=1");
 
-    assert(h.undo(), "F4 undo₂ should revert Edit");
-    assert(select.revertCalls == 1 && edit.revertCalls == 1 && arm.revertCalls == 0,
-        "F4 undo₂ order must be Edit");
+    assert(h.undo(), "F4 undo₂ should revert Select");
+    assert(select.revertCalls == 1 && edit.revertCalls == 0 && arm.revertCalls == 1,
+        "F4 undo₂ order must be Select");
     assert(h.undoStack.length == 1 && h.redoStack.length == 2,
         "F4 undo₂: expected undo=1 redo=2");
 
-    assert(h.undo(), "F4 undo₃ should revert Arm");
+    assert(h.undo(), "F4 undo₃ should revert Edit");
     assert(select.revertCalls == 1 && edit.revertCalls == 1 && arm.revertCalls == 1,
-        "F4 undo₃ order must be Arm");
+        "F4 undo₃ order must be Edit");
     assert(h.undoStack.length == 0 && h.redoStack.length == 3,
         "F4 undo₃: expected undo=0 redo=3");
 }
@@ -2788,9 +2678,8 @@ version(unittest) {
     // Hand-built stack matching the §Derived trace (two gestures A then B):
     // [SelA(UiUndo), geomA(Model), DeactA(ToolLifecycle),
     //  SelB(UiUndo), geomB(Model), DeactB(ToolLifecycle)]
-    // Task 3693 intermediate walk: geomB, DeactB, SelB, geomA, DeactA, SelA.
-    // Lifecycle still keeps its old transparent/hard-step policy; UI records
-    // encountered between those lifecycle decisions are strict LIFO.
+    // The completed strict-LIFO walk reverses that recorded order exactly:
+    // DeactB, geomB, SelB, DeactA, geomA, SelA.
     unittest {
         import std.stdio : writeln;
 
@@ -2821,6 +2710,7 @@ version(unittest) {
             import mesh     : Mesh;
             import view     : View;
             import editmode : EditMode;
+            bool reverted = false;
             private Mesh  _mesh;
             private View  _view = new View(0, 0, 1, 1);
             this() {
@@ -2834,12 +2724,7 @@ version(unittest) {
             override string name() const { return "stub.ui"; }
             override CmdFlags cmdFlags() const { return CmdFlags.UiState; }
             protected override bool applyImpl()  { return true; }
-            // EMPTY, but PRESENT: the constructor declared an image, and the
-            // base `revertImpl` fails loudly on a command that declares one
-            // and then does not say how to put it back (task 2500). This stub
-            // is carried INERT through the cells below, so nothing calls it
-            // today — which is exactly why it would be a trap to leave out.
-            protected override void revertImpl() {}
+            protected override void revertImpl() { reverted = true; }
         }
         static class StubLifecycle : Command {
             import mesh     : Mesh;
@@ -2879,42 +2764,39 @@ version(unittest) {
 
         assert(h.undoStack.length == 6);
 
-        // undo₁: tail=DeactB (ToolLifecycle), geomB below → transparent → revert geomB.
+        // Strict LIFO: reverse the six recorded entries one at a time.
         bool u1 = h.undo();
         assert(u1, "undo₁ should succeed");
-        assert(geomB.reverted, "undo₁ should revert geomB");
-        assert(!deactB.reverted, "undo₁ should NOT revert DeactB (transparent)");
-        // DeactB stays on undoStack (R2 splice).
-        bool deactBOnUndo = false;
-        foreach (ref e; h.undoStack)
-            if (e.cmd is deactB) deactBOnUndo = true;
-        assert(deactBOnUndo, "DeactB must stay on undoStack after undo₁ (R2 splice)");
+        assert(deactB.reverted, "undo₁ should revert DeactB");
+        assert(!geomB.reverted && !selB.reverted,
+            "undo₁ should stop after DeactB");
 
-        // undo₂: tail=DeactB, below=DeactA (lifecycle) → hard STEP → revert DeactB alone.
         bool u2 = h.undo();
         assert(u2, "undo₂ should succeed");
-        assert(deactB.reverted, "undo₂ should revert DeactB (hard step)");
-        assert(!geomA.reverted, "undo₂ should NOT touch geomA");
+        assert(geomB.reverted, "undo₂ should revert geomB");
+        assert(!selB.reverted && !deactA.reverted,
+            "undo₂ should stop after geomB");
 
-        // undo₃: strict LIFO reverts SelB before geomA.
         bool u3 = h.undo();
         assert(u3, "undo₃ should succeed");
-        assert(!geomA.reverted, "undo₃ should not reach geomA before SelB");
+        assert(selB.reverted, "undo₃ should revert SelB");
+        assert(!deactA.reverted && !geomA.reverted,
+            "undo₃ should stop after SelB");
 
-        // undo₄: now revert geomA through the transparent DeactA tail.
         bool u4 = h.undo();
         assert(u4, "undo₄ should succeed");
-        assert(geomA.reverted, "undo₄ should revert geomA");
-        assert(!deactA.reverted, "undo₄ should keep DeactA transparent");
+        assert(deactA.reverted, "undo₄ should revert DeactA");
+        assert(!geomA.reverted && !selA.reverted,
+            "undo₄ should stop after DeactA");
 
-        // undo₅: DeactA is now a hard lifecycle step.
         bool u5 = h.undo();
         assert(u5, "undo₅ should succeed");
-        assert(deactA.reverted, "undo₅ should revert DeactA (hard step)");
+        assert(geomA.reverted, "undo₅ should revert geomA");
+        assert(!selA.reverted, "undo₅ should stop before SelA");
 
-        // undo₆: strict LIFO reaches SelA last.
         bool u6 = h.undo();
         assert(u6, "undo₆ should succeed");
+        assert(selA.reverted, "undo₆ should revert SelA");
         assert(h.undoStack.length == 0, "undo₆ should empty the stack");
 
         writeln("command_history lifecycle unittest: PASS");

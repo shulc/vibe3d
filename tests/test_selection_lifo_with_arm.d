@@ -1,10 +1,9 @@
-// Mixed-stack integration anchor for task 3693.
+// Mixed-stack integration anchor for tasks 3693 and 3694.
 //
 // The production stack is [Edit(Model), Select(UI), Arm(ToolLifecycle)]. On
-// this intermediate port step, selection and model records are strict LIFO,
-// while the lifecycle record remains transparent to an edit below it. The
-// resulting order is Select -> Edit -> Arm. Task 3694 deliberately rewrites
-// this same cell when lifecycle joins the common LIFO path.
+// the completed port all three records are strict LIFO. The resulting order is
+// Arm -> Select -> Edit; this same cell asserted Select -> Edit -> Arm after
+// task 3693, so its changed first step witnesses the lifecycle-head change.
 
 import std.conv : to;
 import std.json : JSONType, JSONValue, parseJSON;
@@ -86,19 +85,23 @@ unittest {
     assertDepths(1, 1, 1, "F4 setup");
 
     undo();
-    assert(getJson("/api/selection")["selectedVertices"].array.length == 0,
-        "F4 undo1 must revert Select");
+    assert(!moveArmed(), "F4 undo1 must revert Arm");
+    assert(getJson("/api/selection")["selectedVertices"].array.length == 1,
+        "F4 undo1 must leave Select applied");
     assert(near(vertexX(0), beforeX + 0.25),
         "F4 undo1 must leave Edit applied");
-    assert(moveArmed(), "F4 undo1 must leave Arm applied");
-    assertDepths(1, 0, 1, "F4 undo1");
+    assertDepths(1, 1, 0, "F4 undo1");
 
     undo();
-    assert(near(vertexX(0), beforeX), "F4 undo2 must revert Edit");
-    assert(moveArmed(), "F4 undo2 must leave Arm applied");
-    assertDepths(0, 0, 1, "F4 undo2");
+    assert(getJson("/api/selection")["selectedVertices"].array.length == 0,
+        "F4 undo2 must revert Select");
+    assert(near(vertexX(0), beforeX + 0.25),
+        "F4 undo2 must leave Edit applied");
+    assert(!moveArmed(), "F4 undo2 must leave Arm reverted");
+    assertDepths(1, 0, 0, "F4 undo2");
 
     undo();
-    assert(!moveArmed(), "F4 undo3 must revert Arm");
+    assert(near(vertexX(0), beforeX), "F4 undo3 must revert Edit");
+    assert(!moveArmed(), "F4 undo3 must leave Arm reverted");
     assertDepths(0, 0, 0, "F4 undo3");
 }

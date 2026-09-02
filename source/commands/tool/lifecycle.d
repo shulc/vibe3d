@@ -6,19 +6,16 @@ import view;
 import editmode;
 
 // ---------------------------------------------------------------------------
-// ToolDeactivationCommand — tool.deactivate
+// ToolActivationCommand — tool.activate
 //
-// Records that a tool was dropped. Emitted by setActiveTool() (app.d) on every
-// tool deactivation, for tools that opt in via the LifecycleUndoEmitter
-// marker interface (edit_session.d).
+// Records that a tool was armed, with the previously active tool as its undo
+// image. Emitted after a prepared tool transition installs successfully.
 //
-// revert() (undo) = re-activate the dropped tool by id — a stateless re-baseline
-//   against post-undo geometry. Geometry no-op.
-// apply()  (redo) = re-drop the tool. Geometry no-op.
+// revert() (undo) = restore the predecessor identity. Geometry no-op.
+// apply()  (redo) = re-activate the armed tool. Geometry no-op.
 //
-// The undo cursor (R1)+(R2) in command_history.d treats this entry as transparent
-// when its own-gesture Model entry sits below it (so undo₁ reverts geometry),
-// and as a hard STEP otherwise (so undo₂ re-enters the tool).
+// The history cursor treats this entry as an ordinary strict-LIFO step.
+// Undo restores the captured predecessor before any earlier UI or Model entry.
 // ---------------------------------------------------------------------------
 interface ToolArmLifecyclePolicy {
     string armedId() const;

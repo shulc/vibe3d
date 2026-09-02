@@ -33,7 +33,8 @@
 //   direct counter, +4 against +4 headless — which is the finding that
 //   survived the correction: there is no stack-shape term.
 //
-// WE DIFFER TWICE, in opposite directions, and this file is the record of both.
+// ONE DIFFERENCE REMAINS. The arm-and-drop half was closed by the strict-LIFO
+// lifecycle port; the empty-delta cutting half remains open independently.
 //
 //   (A) THE CUTTING FAMILY, and it is the SECOND family to show our rule is a
 //       RESULT test. `SliceTool.commitCurrentSlice` returns early on
@@ -45,30 +46,12 @@
 //       implementations of the same wrong predicate, which is why a port is a
 //       policy change and not a one-site fix.
 //
-//   (B) THE ARM-AND-DROP REGION, and here WE COST LESS — by exactly ONE
-//       step, once, from the first region onward. We record the same NUMBER
-//       of entries the reference does, one per region, but at the opposite
-//       end of the region and in a class the undo walk can hide:
-//         * our ARM records nothing at all (the reference charges the arm);
-//         * our DROP records a `HistoryFlags.ToolLifecycle` entry
-//           (`ToolDeactivationCommand`, emitted from `setActiveTool` only for
-//           tools implementing `LifecycleUndoEmitter` — `XfrmTransformTool`
-//           is the sole implementor, so a cutting tool's drop records
-//           nothing at all);
-//         * `CommandHistory.undo`'s (R1) rule makes a lifecycle TAIL
-//           transparent when a Model entry sits below it, and a HARD STEP
-//           otherwise.
-//       So the stand's own model entry absorbs exactly ONE region's entry
-//       and n regions cost us n-1 undo steps against the reference's n.
-//
-//       "OUR FIRST REGION IS FREE" IS NOT THE LAW and must not be written
-//       down as one — it is a property of what lies BELOW the region, not of
-//       the region. Measured on this tree 2026-08-30: with no model edit
-//       below it at all, the very FIRST region is a hard step and costs 1;
-//       and after a single region over the stand, the second undo
-//       RE-ACTIVATES the transform tool, which is the entry the first undo
-//       stepped past. The entry was always recorded; the walk hid it.
-//       Registry row 87.
+//   (B) THE ARM-AND-DROP REGION IS CLOSED. Our ARM records the same one
+//       `HistoryFlags.ToolLifecycle` entry per region and our DROP records
+//       nothing. That lifecycle entry now takes the common strict-LIFO path,
+//       so the model-shaped and lifecycle-shaped stands both cost the frozen
+//       positive 1. Registry row 87 records the pre-port constant offset and
+//       its retirement by task 3694.
 //
 // WHY A SIBLING FILE AND NOT MORE BLOCKS IN
 // `tests/test_gesture_zero_delta_undo_divergence.d`. Three reasons, all
@@ -90,9 +73,9 @@
 // must not silently pick a branch), and each "closed" branch demands PARITY.
 // Porting either law is then a real two-line edit: flip the token and re-freeze
 // the matching `kOurs*` constant. `kStatusArmDrop` now guards BLOCK 2 (shape 1),
-// which is where the divergence moved on 2026-08-30; block 3 (shape 2) carries
-// no branch because it is INVARIANT under the port — charging the arm one step
-// per region leaves shape 2 at 1, which is what it already reads.
+// which task 3694 retired; block 3 (shape 2) carries no branch because it is
+// INVARIANT under the port — charging the arm one step per region leaves shape
+// 2 at 1, which is what it already reads.
 //
 // THE INSTRUMENT IS THE CAPTURE'S OWN, AND THE ABSOLUTE INDEX IS NOT
 // COMPARABLE. The reading is `steps(N) = kB(N) - kB(control)`, where kB is the
@@ -101,19 +84,10 @@
 // control run identical except for the one varied step is the engine-
 // independent quantity the fixture's `rig.reading` defines.
 //
-// THE STAND IS BUILT BY A COMMAND, NOT BY A DRAG, AND THAT IS FORCED BY (B).
-// `mesh.move_vertex` leaves a plain Model entry at the tail of the undo stack —
-// which is also the reference stand's own shape, whose one entry above the
-// second real edit is a SELECTION change ((R1) skips UiUndo entries on its way
-// down, so a selection between the model edit and the region changes nothing
-// here). A drag-built stand would drop its own tool and leave a `ToolLifecycle`
-// entry there instead — and then the FIRST arm-and-drop would already be "over
-// another lifecycle region", the two stack shapes would collapse into one, and
-// block 2 would read 1 for a reason that has nothing to do with the law. This
-// is not a guess: a drag-built stand's tail is exactly the tail cell
-// `armdrop_over_model_edit` leaves behind (a Model entry with a lifecycle entry
-// on top of it), and the cost of one more arm-and-drop over THAT tail is
-// measured, at 1 — it is what block 3 reads.
+// THE STAND IS BUILT BY A COMMAND, NOT BY A DRAG, TO PRESERVE THE MEASURED
+// SHAPES. `mesh.move_vertex` leaves a plain Model entry at the tail for block
+// 2; block 3 separately supplies the lifecycle-shaped predecessor. Replacing
+// the first stand with a drag would collapse those two fixture shapes.
 //
 // ANTI-VACUITY, and it is the part that has already failed once on the sibling
 // file: every undo-step reading below is satisfied just as well by a gesture
@@ -136,15 +110,11 @@
 //   * the positive control must CUT and must cost at least one step — without
 //     it, "we record nothing" is a statement about an instrument that cannot
 //     see a recording at all.
-// The ARM-AND-DROP cells have the same hole and it is now the LOAD-BEARING one,
-// because block 2's divergence reading is ZERO and a region that never happened
-// reads zero too. Two things separate them:
+// The ARM-AND-DROP cells now both read a positive 1. Their population floor is:
 //   * `armsSeen` / `dropsSeen` — `/api/tool/state` reports `tool == "xfrm"`
 //     inside every region and answers `{}` after every drop. This is the tool
-//     saying it was armed, and it is the ONLY witness that reddens when the
-//     region body is deleted;
-//   * block 3, whose reading of 1 for the SECOND region is a positive count
-//     that the regions register something at all.
+//     saying it was armed; block 2 and block 3 then independently require one
+//     undo step in their two stack shapes.
 //
 // WHAT IS NOT COVERED, and why — read this before adding to it.
 //   * Deforming, creating and painting families. The fixture's own
@@ -199,16 +169,16 @@ enum long kOursCutPositiveSteps = 1;   // committed real cut
 
 /// Arm-and-drop of the TRANSFORM tool, relative to the cell with one fewer
 /// armed-and-dropped region. Shape 1 = over the stand's model entry.
-/// The VALUES are unchanged by the 2026-08-30 correction and the ROLES are
-/// swapped: the reference now costs 1 for BOTH shapes, so shape 1 is the
-/// divergence (block 2) and shape 2 is the parity row (block 3).
-enum long kOursArmDropOverModelSteps     = 0;   // the reference costs 1
+/// The strict-LIFO lifecycle port charges the recorded arm once in BOTH stack
+/// shapes, matching the reference. Block 2 retires shape 1; block 3 remains the
+/// independent positive anchor for shape 2.
+enum long kOursArmDropOverModelSteps     = 1;   // parity with the reference
 enum long kOursArmDropOverLifecycleSteps = 1;   // parity with the reference
 
 /// The retirement switches. "open" — we still differ, assert the gap.
 /// "closed" — the law is ported, assert PARITY instead.
 enum string kStatusCut     = "open";
-enum string kStatusArmDrop = "open";
+enum string kStatusArmDrop = "closed";
 
 /// Rig constants. The fixture's cutting cells are prose ("sixteen pointer
 /// moves that ALL land on the press pixel"; "a 700 px line drawn across the
@@ -783,40 +753,14 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// 2 — assertions_for_a_port[3], FIRST HALF, AND SINCE 2026-08-30 IT IS THE
-//     DIVERGENCE ROW:
+// 2 — assertions_for_a_port[3], FIRST HALF, RETIRED BY STRICT LIFO:
 //     "A tool that was armed and dropped WITHOUT ever being engaged must cost
 //      exactly ONE undo step, and that step must be charged to the ARM."
 //
-//     Over a preceding MODEL edit we cost ZERO where the reference costs one.
-//     This block was the PARITY row until the cross-check overturned the
-//     reference's 0 (window artefact — see block 0 and the file header).
-//     Registry row 87, shape 1.
-//
-//     THE MECHANISM IS OURS, AND IT IS NOT "the first region is free". Every
-//     region records exactly one entry on our side too. Ours is a
-//     `HistoryFlags.ToolLifecycle` entry from the DROP (our ARM records
-//     nothing; the reference charges the arm and its drop is free), and
-//     `CommandHistory.undo`'s (R1) rule makes a lifecycle TAIL transparent
-//     when a Model entry sits directly below it — so the stand's own model
-//     entry absorbs exactly ONE region's entry, whichever region is first.
-//     Two measurements on this tree, 2026-08-30, say the freeness belongs to
-//     what lies BELOW and not to the region: with no model edit below it the
-//     very first region is a hard step and costs 1; and after ONE region over
-//     the stand, the first undo reverts the stand and the SECOND undo
-//     re-activates the transform tool — i.e. the entry existed all along and
-//     the walk stepped past it.
-//
-//     THE INCREMENT AGREEMENT IS A COINCIDENCE, NOT A MATCH. Both engines
-//     record one entry per region, so both accumulate at 1 per further
-//     region. They do it at opposite ends of the region, and only one of the
-//     two classes can be hidden by an undo rule. That is why the whole
-//     divergence is a CONSTANT one step, and why it shows up here rather than
-//     as a drift block 3 could see.
-//
-//     VACUITY IS THE LIVE RISK IN THIS BLOCK: it reads 0, and a region that
-//     NEVER HAPPENED reads 0 too. The arms/drops witness below is what
-//     separates them, and block 3's positive 1 is the second channel.
+//     Over a preceding MODEL edit our recorded lifecycle tail is now the next
+//     strict-LIFO step, so the stand reads the same positive 1 as the frozen
+//     reference. Registry row 87, shape 1. The arms/drops witness remains a
+//     population floor: it proves the measured region actually happened.
 //
 //     ON THE REFERENCE SIDE, the charge to the ARM rests on ELIMINATION (the
 //     region logged exactly one command; the finer instrument priced every
@@ -875,13 +819,8 @@ unittest {
 //
 //     A SECOND arm-and-drop, stacked on the first, costs us ONE — which is
 //     what the reference costs for every region. We AGREE here, and the
-//     agreement is load-bearing twice over:
-//       * a file whose every assertion is "we differ" passes just as well when
-//         the channel is broken. This row shows the channel CAN agree on the
-//         same read;
-//       * it is a POSITIVE count. Block 2's divergence reading is zero and
-//         cannot tell a recorded-and-hidden entry from no entry at all; this
-//         one goes red the moment the regions stop registering anything.
+//     positive agreement remains an independent stack-shape anchor beside
+//     block 2's newly retired positive 1.
 //
 //     NO RETIREMENT BRANCH, deliberately. `kStatusArmDrop` guards block 2
 //     because that is where the gap is. This row is INVARIANT under the port:
@@ -907,8 +846,7 @@ unittest {
         format("a SECOND armed-and-dropped transform region cost %d undo "
                ~ "steps (kB %d against the single region's %d); the reference "
                ~ "records %d entries for the same region. This is the PARITY "
-               ~ "row — losing it means the read itself moved, not the law, "
-               ~ "and it takes block 2's only positive witness with it",
+               ~ "row — losing it means the second stack shape moved",
                ours, m.ad2.kB, m.ad1.kB, m.refArmDropLifecycle));
     assert(ours == kOursArmDropOverLifecycleSteps,
         format("shape 2 now costs %d undo steps; this file froze %d",
@@ -919,20 +857,16 @@ unittest {
     assert(m.ad3.kB - m.ad2.kB == ours,
         format("the THIRD armed-and-dropped region cost %d undo steps where "
                ~ "the second cost %d. Registry row 87 says every further "
-               ~ "region costs the same on our side, which is what makes the "
-               ~ "divergence a CONSTANT one step rather than a drift; one of "
-               ~ "the two is now wrong", m.ad3.kB - m.ad2.kB, ours));
+               ~ "region costs the same on our side; one of the two is now "
+               ~ "wrong", m.ad3.kB - m.ad2.kB, ours));
 }
 
 // ---------------------------------------------------------------------------
 // 4 — THE INSTRUMENT THAT CANNOT SEE ROW 87, asserted so nobody writes the
 //     next test on it. `/api/history` filters `HistoryFlags.ToolLifecycle`, so
 //     its visible depth moves by ZERO across every armed-and-dropped cell
-//     while the undo walk reads a hard step from the second region on. The
-//     WALK is the law's instrument. Note the shape this leaves: on shape 1
-//     the two instruments happen to AGREE at zero, which is exactly why the
-//     cheap one cannot be used — it agrees for the wrong reason (it cannot
-//     see the entry) with a reading that is itself a divergence.
+//     while the undo walk reads one step in both shapes. The WALK is the law's
+//     instrument; the visible depth remains deliberately blind after closure.
 //
 //     The cutting cells are the control for this claim: there the two
 //     instruments must AGREE, because no lifecycle entry is born in them at
@@ -947,7 +881,7 @@ unittest {
                ~ "the armed-and-dropped cells. It is supposed to be BLIND to "
                ~ "lifecycle entries; if it can see them, blocks 2 and 3 could "
                ~ "have been written on the cheap instrument and this file's "
-               ~ "whole undo walk is unnecessary — re-read (R1)",
+               ~ "whole undo walk is unnecessary — re-read lifecycle filtering",
                m.ad1.visibleDelta, m.ad2.visibleDelta));
     assert(m.ad2.kB - m.ad1.kB != m.ad2.visibleDelta - m.ad1.visibleDelta,
         "the two instruments AGREE on the second armed-and-dropped region. "
@@ -1074,7 +1008,9 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// MUTATIONS THAT REDDEN IT, all run on this tree 2026-08-30, in isolation
+// HISTORICAL PRE-3694 MUTATIONS THAT REDDENED IT, run on the 2026-08-30 tree
+// before lifecycle records joined strict LIFO. Their retired (R1) locations
+// below describe that baseline and are not instructions for a current mutation.
 // (druntime stops a module at its FIRST failed assert, so a mutation that
 // reddens several blocks shows only the first unless the earlier ones are
 // removed for the run). Product mutations were rebuilt and the app relaunched
