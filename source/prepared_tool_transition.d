@@ -15,7 +15,6 @@ import record_observer_hub : RecordObserverHub;
 import registry : PreparedPipeAttrs, ToolFactory;
 import std.json : JSONType, JSONValue;
 import tool : Tool;
-import tools.transform.xfrm_transform : XfrmTransformTool;
 import view : View;
 import editmode : EditMode;
 import edit_session : LifecycleUndoEmitter;
@@ -82,6 +81,15 @@ private void abandon(PreparedRecordContext context) nothrow @nogc {
     context.discard();
 }
 
+/// One classification for both sides of a prepared tool boundary. Tools whose
+/// visible arm participates in history opt in through the marker (see
+/// `toolcards/undo_surfaces/`); Slice retains its measured legacy lifecycle
+/// policy until that special case is migrated independently.
+bool toolArmEmitsLifecycle(Tool candidate, string id) nothrow @nogc {
+    return cast(LifecycleUndoEmitter)candidate !is null ||
+           id == "mesh.sliceTool";
+}
+
 /// Prepare a complete arm with zero live writes. The candidate's direct Param
 /// storage is detached; every effectful hook is routed through a typed door.
 PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
@@ -113,12 +121,10 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
         throw new Exception("tool factory returned null");
     result.id_ = id.idup;
 
-    const classifiedIncoming = cast(XfrmTransformTool)candidate !is null ||
-                               id == "mesh.sliceTool";
+    const classifiedIncoming = toolArmEmitsLifecycle(candidate, id);
     string previousId;
     if (retainedOld !is null &&
-        (cast(LifecycleUndoEmitter)retainedOld !is null ||
-         retainedOldId == "mesh.sliceTool"))
+        toolArmEmitsLifecycle(retainedOld, retainedOldId))
         previousId = retainedOldId;
 
     auto sticky = prepareStickyToolDefaults(candidate, id);

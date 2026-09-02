@@ -5,8 +5,10 @@ import prepared_tool_transition;
 import change_bus : ChangeBus, PreparedDeliveryJournal, PreparedDeliverySpec,
                     PreparedMeshSubjectOwner;
 import command_history : CommandHistory, HistoryEntry, HistoryFlags;
+import edit_session : LifecycleUndoEmitter;
 import tool : Tool;
 import registry : ToolFactory;
+import tools.edit.topology_pen.tool : TopologyPenTool;
 
 unittest {
     static assert(isPreparedField!PreparedToolEffect);
@@ -19,6 +21,19 @@ unittest {
 private class CountingPreparedTool : Tool {
     static int destroyed;
     ~this() { ++destroyed; }
+}
+
+private class LifecyclePreparedTool : Tool, LifecycleUndoEmitter { }
+
+unittest {
+    static assert(is(TopologyPenTool : LifecycleUndoEmitter),
+        "Topology Pen arm must opt into lifecycle history");
+    assert(toolArmEmitsLifecycle(new LifecyclePreparedTool, "mesh.marker"),
+        "a lifecycle marker must classify the prepared arm for recording");
+    assert(toolArmEmitsLifecycle(new CountingPreparedTool, "mesh.sliceTool"),
+        "the Slice compatibility arm lost its lifecycle classification");
+    assert(!toolArmEmitsLifecycle(new CountingPreparedTool, "mesh.plain"),
+        "an unmarked ordinary tool acquired a lifecycle record");
 }
 
 unittest {

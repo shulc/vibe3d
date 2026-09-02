@@ -63,5 +63,6 @@ unittest {
     assert(historyAfter.editRows == historyBefore.editRows,
         "a clamp no-op must add ZERO edit rows");
     assert(historyAfter.lifecycleRows == historyBefore.lifecycleRows + 1,
-        "arming Topology Pen must surface exactly ONE lifecycle row");
+        format("arming Topology Pen must surface exactly ONE lifecycle row; got %d",
+               historyAfter.lifecycleRows - historyBefore.lifecycleRows));
 }

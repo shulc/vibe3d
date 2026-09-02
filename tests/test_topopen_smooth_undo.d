@@ -93,15 +93,15 @@ unittest {
 
     // Classify rows instead of adding one blindly for the lifecycle surface
     // measured in `toolcards/undo_surfaces/`.  This Topology Pen gesture owns
-    // one coalesced edit row and no lifecycle row of its own; a total-depth
-    // expectation cannot distinguish those classes.
+    // one coalesced edit row, while arming the pen owns one lifecycle row; a
+    // total-depth expectation cannot distinguish those classes.
     auto historyAfter = historySurfaceCounts();
     assert(historyAfter.editRows == historyBefore.editRows + 1,
         format("one multi-pass Smooth gesture must add EXACTLY ONE edit row; edit rows went %d -> %d",
                historyBefore.editRows, historyAfter.editRows));
-    assert(historyAfter.lifecycleRows == historyBefore.lifecycleRows,
-        format("a Smooth gesture must add NO lifecycle row; lifecycle rows went %d -> %d",
-               historyBefore.lifecycleRows, historyAfter.lifecycleRows));
+    assert(historyAfter.lifecycleRows == historyBefore.lifecycleRows + 1,
+        format("arming Topology Pen must add EXACTLY ONE lifecycle row; got %d",
+               historyAfter.lifecycleRows - historyBefore.lifecycleRows));
 
     auto u = postJson("/api/undo", "");
     assert(u["status"].str == "ok", "undo must succeed: " ~ u.toString);

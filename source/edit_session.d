@@ -207,8 +207,9 @@ interface SessionStepUndo {
 
 // ---------------------------------------------------------------------------
 // LifecycleUndoEmitter — marker: the tool participates in undo-cursor
-// lifecycle stepping (only transform tools that interleave geometry commits
-// with tool sessions opt in — XfrmTransformTool is the sole implementor).
+// lifecycle stepping. Transform tools and the Topology Pen opt in because
+// their visible arm is itself a strict-LIFO history step; the surface basis is
+// `toolcards/undo_surfaces/`.
 // The app records a ToolActivationCommand after a successful arm; the session
 // only answers the gate used by the transition machinery below.
 // ---------------------------------------------------------------------------
