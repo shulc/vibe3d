@@ -17,7 +17,7 @@ import toolpipe.packets  : FalloffConfig, FalloffPacket, FalloffType, FalloffSha
                             FalloffMix, LassoStyle, ElementConnect, ElementMode;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import toolpipe.stages.workplane : WorkplaneStage;
-import popup_state       : setStatePath;
+import popup_state       : setStatePath, installPreparedStatePath;
 import params            : Param, ParamHints, IntEnumEntry, wireTagForValue, valueForWireTag;
 
 /// How many times `recomputeSelectionWeights` has REBUILT `selWeights_` — the
@@ -1232,18 +1232,44 @@ private:
     /// start plane re-weighs, it does not end the run).
     public override bool attrArmsSlot(string name) const { return name == "type"; }
 
+    static bool parsePreparedType(string value, out FalloffType result) {
+        import toolpipe.packets : falloffTypeFromName;
+        if (value == "none") { result = FalloffType.None; return true; }
+        return falloffTypeFromName(value, result);
+    }
+
+    static bool parsePreparedShape(string value, out FalloffShape result) pure {
+        int v;
+        if (!valueForWireTag(shapeEntries, value, v)) return false;
+        result = cast(FalloffShape)v;
+        return true;
+    }
+
+    static bool parsePreparedElementMode(string value, out ElementMode result) pure {
+        string tok = value;
+        if      (tok == "autoCent") tok = "auto";
+        else if (tok == "edgeCent") tok = "edge";
+        else if (tok == "polyCent") tok = "polygon";
+        int v;
+        if (!valueForWireTag(elementModeEntries, tok, v)) return false;
+        result = cast(ElementMode)v;
+        return true;
+    }
+
+    static bool parsePreparedTransparent(string value, out bool result)
+            pure nothrow @nogc {
+        if (value == "true" || value == "1") { result = true; return true; }
+        if (value == "false" || value == "0") { result = false; return true; }
+        return false;
+    }
+
     bool applySetAttr(string name, string value) {
         switch (name) {
             case "type": {
-                import toolpipe.packets : falloffTypeFromName;
                 FalloffType prev = type;
-                if (value == "none") {
-                    type = FalloffType.None;
-                } else {
-                    FalloffType t;
-                    if (!falloffTypeFromName(value, t)) return false;
-                    type = t;
-                }
+                FalloffType prepared;
+                if (!parsePreparedType(value, prepared)) return false;
+                type = prepared;
                 // anchorRing is Element-only state — wipe on leaving
                 // Element so a later switch back to Element starts
                 // clean (no stale ring from the previous session).
@@ -1252,9 +1278,9 @@ private:
                 return true;
             }
             case "shape": {
-                int v;
-                if (!valueForWireTag(shapeEntries, value, v)) return false;
-                shape = cast(FalloffShape)v;
+                FalloffShape prepared;
+                if (!parsePreparedShape(value, prepared)) return false;
+                shape = prepared;
                 return true;
             }
             // ACTION pseudo-attrs (fire-only `cmd` form rows, not readable state
@@ -1306,22 +1332,16 @@ private:
                 // BEFORE the table lookup) so old scripts keep working;
                 // listAttrs still echoes back the bare token (the table has
                 // no alias entries — normalisation happens here, once).
-                string tok = value;
-                if      (tok == "autoCent") tok = "auto";
-                else if (tok == "edgeCent") tok = "edge";
-                else if (tok == "polyCent") tok = "polygon";
-                int v;
-                if (!valueForWireTag(elementModeEntries, tok, v)) return false;
-                elementMode = cast(ElementMode)v;
+                ElementMode prepared;
+                if (!parsePreparedElementMode(value, prepared)) return false;
+                elementMode = prepared;
                 return true;
             }
             case "screenCx":   return parseFloat(value, screenCx);
             case "screenCy":   return parseFloat(value, screenCy);
             case "screenSize": return parseFloat(value, screenSize);
             case "transparent":
-                if      (value == "true"  || value == "1") { transparent = true;  return true; }
-                else if (value == "false" || value == "0") { transparent = false; return true; }
-                return false;
+                return parsePreparedTransparent(value, transparent);
             case "lassoStyle": {
                 int v;
                 if (!valueForWireTag(lassoEntries, value, v)) return false;
@@ -1819,6 +1839,31 @@ void restoreFalloffSetFromCombined(FalloffStage[] set,
 // READ-ONLY / side-effect-free: this block compiles into the live editor's
 // unittest pass, so it only constructs a throwaway Mesh + FalloffStage and
 // reads computed state — it never touches global/shared editor state.
+unittest {
+    // Prepared preset parsing is detached: a valid-first / invalid-second
+    // sequence may change only the output value, never the live stage.
+    auto live = new FalloffStage();
+    live.type = FalloffType.Linear;
+    FalloffType preparedType;
+    assert(FalloffStage.parsePreparedType("radial", preparedType));
+    assert(preparedType == FalloffType.Radial && live.type == FalloffType.Linear);
+    assert(!FalloffStage.parsePreparedType("not-a-type", preparedType));
+    assert(live.type == FalloffType.Linear,
+           "invalid prepared falloff type mutated live stage state");
+
+    FalloffShape preparedShape;
+    ElementMode preparedMode;
+    bool preparedTransparent;
+    assert(FalloffStage.parsePreparedShape("linear", preparedShape));
+    assert(FalloffStage.parsePreparedElementMode("edgeCent", preparedMode));
+    assert(preparedMode == ElementMode.Edge);
+    assert(FalloffStage.parsePreparedTransparent("false", preparedTransparent));
+    assert(!preparedTransparent);
+    assert(!FalloffStage.parsePreparedShape("not-a-shape", preparedShape));
+    assert(!FalloffStage.parsePreparedElementMode("not-a-mode", preparedMode));
+    assert(!FalloffStage.parsePreparedTransparent("maybe", preparedTransparent));
+}
+
 unittest {
     import mesh : makeGridPlane;
     import std.math : abs, isNaN;
