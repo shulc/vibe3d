@@ -1,47 +1,41 @@
-module prepared_xfrm_update_edit_close;
+module prepared_xfrm_update_boundary;
 
 import core.atomic : atomicOp;
-import prepared_record_context : PreparedRecordContext;
 import tools.transform.xfrm_transform : XfrmTransformTool,
-    PreparedXfrmEditCloseImage;
+    PreparedXfrmUpdateBoundaryImage, PreparedXfrmUpdatePreProjection;
 
-struct PreparedXfrmUpdateEditCloseToken {
+struct PreparedXfrmUpdateBoundaryToken {
     @disable this(this);
 private:
     ulong owner, generation;
 }
-struct ValidatedXfrmUpdateEditCloseToken {
+struct ValidatedXfrmUpdateBoundaryToken {
     @disable this(this);
 private:
     ulong owner, generation;
 }
-private shared ulong nextXfrmUpdateEditCloseOwner;
+private shared ulong nextXfrmUpdateBoundaryOwner;
 
-final class PreparedXfrmUpdateEditCloseOwner {
+final class PreparedXfrmUpdateBoundaryOwner {
 private:
     XfrmTransformTool target_;
-    PreparedXfrmEditCloseImage image_;
+    PreparedXfrmUpdateBoundaryImage image_;
     immutable ulong owner_;
     ulong generation_;
     bool pending_, validated_, consumed_;
-    PreparedXfrmUpdateEditCloseToken prepared_;
-    ValidatedXfrmUpdateEditCloseToken validatedToken_;
+    PreparedXfrmUpdateBoundaryToken prepared_;
+    ValidatedXfrmUpdateBoundaryToken validatedToken_;
 public:
     @disable this();
-    static PreparedXfrmUpdateEditCloseOwner prepare(
-            XfrmTransformTool target, PreparedRecordContext context,
-            string label, bool closeWrapper = true,
-            bool closeRotateScale = false) {
+    static PreparedXfrmUpdateBoundaryOwner prepare(XfrmTransformTool target,
+            ref const PreparedXfrmUpdatePreProjection projection) {
         if (target is null || target.classinfo !is XfrmTransformTool.classinfo)
             return null;
-        auto owner = new PreparedXfrmUpdateEditCloseOwner(target);
-        owner.image_ = target.buildPreparedUpdateEditClose(
-            context, label, closeWrapper, closeRotateScale);
+        auto owner = new PreparedXfrmUpdateBoundaryOwner(target);
+        owner.image_ = target.buildPreparedUpdateBoundary(projection);
         return owner.image_.valid ? owner : null;
     }
-    bool historyPrepared() const nothrow @nogc {
-        return image_.historyPrepared;
-    }
+    bool closesRun() const nothrow @nogc { return image_.invalidateRefire; }
     bool begin() nothrow @nogc {
         if (pending_ || consumed_ || target_ is null) return false;
         ++generation_; pending_ = true;
@@ -52,18 +46,18 @@ public:
         if (!pending_ || validated_ || consumed_ || target_ is null ||
             target_.classinfo !is XfrmTransformTool.classinfo ||
             prepared_.owner != owner_ || prepared_.generation != generation_ ||
-            !target_.preparedUpdateEditCloseMatches(image_)) return false;
+            !target_.preparedUpdateBoundaryMatches(image_)) return false;
         validated_ = true;
         validatedToken_.owner = owner_;
         validatedToken_.generation = generation_;
         prepared_.owner = prepared_.generation = 0;
         return true;
     }
-    void install() nothrow @nogc {
+    void install() nothrow {
         if (!pending_ || !validated_ || consumed_ || target_ is null ||
             validatedToken_.owner != owner_ ||
             validatedToken_.generation != generation_) return;
-        target_.installPreparedUpdateEditClose(image_);
+        target_.installPreparedUpdateBoundary(image_);
         consume();
     }
     void abort() nothrow @nogc {
@@ -72,7 +66,7 @@ public:
 private:
     this(XfrmTransformTool target) {
         target_ = target;
-        owner_ = atomicOp!"+="(nextXfrmUpdateEditCloseOwner, 1UL);
+        owner_ = atomicOp!"+="(nextXfrmUpdateBoundaryOwner, 1UL);
     }
     void consume() nothrow @nogc {
         image_.clear(); pending_ = validated_ = false; consumed_ = true;

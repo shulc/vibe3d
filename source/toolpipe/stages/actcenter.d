@@ -855,6 +855,18 @@ public:
         publishState();
     }
 
+    /// Commit-time half of a detached transform boundary. The owner validates
+    /// the whole pin before entering install; the fixed popup keys already
+    /// exist from construction, so their prepared writes cannot grow the map.
+    bool preparedSoftPinMatches(Pin expected) const nothrow @nogc {
+        return softPin == expected;
+    }
+
+    void installPreparedClearSoftPlaced() nothrow @nogc {
+        if (!softPin.placed) return;
+        softPin = Pin.init;
+    }
+
     /// True iff a display soft-pin is active. (Used by tests / introspection;
     /// computeCenter reads the field directly.)
     bool isSoftPlaced() const { return softPin.placed; }

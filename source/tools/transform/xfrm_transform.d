@@ -440,12 +440,18 @@ struct PreparedXfrmItemEditCloseImage {
 struct PreparedXfrmEditCloseImage {
     PreparedTransformEditCloseImage vertex;
     PreparedXfrmItemEditCloseImage item;
+    PreparedTransformEditCloseImage rotate;
+    PreparedTransformEditCloseImage scale;
     bool itemSubject;
+    bool closeWrapper;
+    bool closeRotate;
+    bool closeScale;
     bool historyPrepared;
     bool valid;
     void clear() nothrow @nogc {
-        vertex.clear(); item.clear();
-        itemSubject = historyPrepared = valid = false;
+        vertex.clear(); item.clear(); rotate.clear(); scale.clear();
+        itemSubject = closeWrapper = closeRotate = closeScale = false;
+        historyPrepared = valid = false;
     }
 }
 
@@ -482,6 +488,47 @@ struct PreparedXfrmSlotPollImage {
     bool pivotMoved;
     bool valid;
     void clear() nothrow @nogc { this = PreparedXfrmSlotPollImage.init; }
+}
+
+/// Exact wrapper-private state written by the two idle run boundaries in
+/// `update`. History/session-close and the slot latch are ordered as separate
+/// resources around this image; this owns only invalidate/reset/soft-frame
+/// state and the selection census latches.
+struct PreparedXfrmUpdateBoundaryImage {
+    ulong expectedSelectionHash;
+    ulong expectedMutationVersion;
+    ulong nextSelectionHash;
+    ulong nextMutationVersion;
+    ulong expectedGestureMutation;
+    ulong expectedUndoEpoch;
+    Vec3[] expectedRefireAnchor;
+    bool expectedRefirePreValid;
+    XformState expectedRun;
+    Vec3 expectedHeadlessRotate;
+    GestureFrame expectedFrame;
+    bool expectedRunBaselineValid;
+    bool expectedRunFrameValid;
+    bool expectedMorphRunValid;
+    bool expectedItemBaselineValid;
+    bool expectedRunGpuBufferDirty;
+    bool expectedMoveRunKnown;
+    bool expectedRotateRunKnown;
+    bool expectedScaleRunKnown;
+    bool expectedPriorRotateWasViewRing;
+    ubyte expectedRunBank;
+    Pin expectedSoftPin;
+    ActionCenterStage expectedAcen;
+    bool selectionBoundary;
+    bool slotBoundary;
+    bool invalidateRefire;
+    bool hadRun;
+    bool clearSoft;
+    bool valid;
+    void clear() nothrow @nogc {
+        expectedRefireAnchor = null;
+        expectedAcen = null;
+        valid = false;
+    }
 }
 
 // LiveEvalClient (task 0428): the sole implementor of the live re-evaluation
@@ -954,6 +1001,34 @@ public:
         lastAcenMode = 4; lastSlotSigValid = true;
         frame.right = Vec3(2, 0, 0); frame.up = Vec3(0, 3, 0);
         frame.axis = Vec3(0, 0, 4); frame.settled = frame.valid = true;
+    }
+
+    version(unittest) final void seedPreparedUpdateBoundaryForTest(
+            ulong selectionHash, ulong mutationVersion) {
+        lastSelectionHash = selectionHash;
+        lastMutationVersion = mutationVersion;
+        runBaselineValid = true;
+        runFrameValid = true;
+        morphRunValid_ = true;
+        itemBaselineValid = true;
+        runGpuBufferDirty = true;
+        run.t = Vec3(3, 4, 5);
+        headlessRotate = Vec3(6, 7, 8);
+        moveRec.runKnown = true;
+        rotateRec.runKnown = true;
+        scaleRec.runKnown = true;
+        runPriorRotateWasViewRing = true;
+    }
+
+    version(unittest) final bool preparedUpdateBoundaryInstalledForTest(
+            out ulong selectionLatch, out ulong mutationLatch) const {
+        selectionLatch = lastSelectionHash;
+        mutationLatch = lastMutationVersion;
+        return !runBaselineValid && !runFrameValid && !morphRunValid_ &&
+            !itemBaselineValid && !runGpuBufferDirty &&
+            run == XformState.init && headlessRotate == Vec3(0, 0, 0) &&
+            !moveRec.runKnown && !rotateRec.runKnown &&
+            !scaleRec.runKnown && !runPriorRotateWasViewRing;
     }
 
     version(unittest) final bool preparedActivationResetSeedForTest()
@@ -1446,8 +1521,8 @@ public:
             (p.selectionChanged || p.mutationChanged);
         p.slotSignature = slotStateSignature();
         if (auto ac = activeAcenStage()) p.acenEpoch = ac.slotEpoch;
-        p.slotBoundary = activeDrag is null && !p.selectionBoundary &&
-            lastSlotSigValid && p.slotSignature != lastSlotSig;
+        p.slotBoundary = activeDrag is null && lastSlotSigValid &&
+            p.slotSignature != lastSlotSig;
         p.pivotMoved = p.slotBoundary && p.acenEpoch != lastAcenEpoch;
         p.editOpen = editIsOpen();
         p.moveHeld = dragBaseline.length == mesh.vertices.length &&
@@ -1507,22 +1582,169 @@ public:
         image.clear();
     }
 
+    final PreparedXfrmUpdateBoundaryImage buildPreparedUpdateBoundary(
+            ref const PreparedXfrmUpdatePreProjection p) const {
+        PreparedXfrmUpdateBoundaryImage image;
+        if (!p.valid || (!p.selectionBoundary && !p.slotBoundary)) return image;
+        image.expectedSelectionHash = lastSelectionHash;
+        image.expectedMutationVersion = lastMutationVersion;
+        image.nextSelectionHash = p.selectionBoundary
+            ? p.selectionHash : lastSelectionHash;
+        image.nextMutationVersion = p.selectionBoundary
+            ? p.mutationVersion : lastMutationVersion;
+        image.expectedGestureMutation = lastAppliedGestureMutationVersion;
+        image.expectedUndoEpoch = armedUndoEpoch;
+        image.expectedRefireAnchor = refireAnchor.dup;
+        image.expectedRefirePreValid = refirePreValid;
+        image.expectedRun = run;
+        image.expectedHeadlessRotate = headlessRotate;
+        image.expectedFrame = frame;
+        image.expectedRunBaselineValid = runBaselineValid;
+        image.expectedRunFrameValid = runFrameValid;
+        image.expectedMorphRunValid = morphRunValid_;
+        image.expectedItemBaselineValid = itemBaselineValid;
+        image.expectedRunGpuBufferDirty = runGpuBufferDirty;
+        image.expectedMoveRunKnown = moveRec.runKnown;
+        image.expectedRotateRunKnown = rotateRec.runKnown;
+        image.expectedScaleRunKnown = scaleRec.runKnown;
+        image.expectedPriorRotateWasViewRing = runPriorRotateWasViewRing;
+        image.expectedRunBank = cast(ubyte)currentRunBank;
+        image.selectionBoundary = p.selectionBoundary;
+        image.slotBoundary = p.slotBoundary;
+        image.invalidateRefire = history !is null && history.runOpen();
+        image.hadRun = runBaselineValid;
+        image.expectedAcen = activeAcenStage();
+        if (image.expectedAcen !is null)
+            image.expectedSoftPin = image.expectedAcen.currentSoftPin();
+        image.clearSoft =
+            (p.selectionBoundary && lastSelectionHash != ulong.max &&
+                p.selectionChanged) ||
+            (p.slotBoundary && p.pivotMoved);
+        image.valid = true;
+        return image;
+    }
+
+    final bool preparedUpdateBoundaryMatches(
+            ref PreparedXfrmUpdateBoundaryImage image) const
+            nothrow @nogc {
+        return image.valid &&
+            lastSelectionHash == image.expectedSelectionHash &&
+            // recorded remainder (1906 §3.6): validation half of the
+            // conversion-only foreign-structure boundary image above. It
+            // retires with that dormant twin at unified cutover.
+            lastMutationVersion == image.expectedMutationVersion &&
+            lastAppliedGestureMutationVersion == image.expectedGestureMutation &&
+            armedUndoEpoch == image.expectedUndoEpoch &&
+            refireAnchor == image.expectedRefireAnchor &&
+            refirePreValid == image.expectedRefirePreValid &&
+            run == image.expectedRun && headlessRotate == image.expectedHeadlessRotate &&
+            frame == image.expectedFrame &&
+            runBaselineValid == image.expectedRunBaselineValid &&
+            runFrameValid == image.expectedRunFrameValid &&
+            morphRunValid_ == image.expectedMorphRunValid &&
+            itemBaselineValid == image.expectedItemBaselineValid &&
+            runGpuBufferDirty == image.expectedRunGpuBufferDirty &&
+            moveRec.runKnown == image.expectedMoveRunKnown &&
+            rotateRec.runKnown == image.expectedRotateRunKnown &&
+            scaleRec.runKnown == image.expectedScaleRunKnown &&
+            runPriorRotateWasViewRing == image.expectedPriorRotateWasViewRing &&
+            cast(ubyte)currentRunBank == image.expectedRunBank &&
+            ((g_pipeCtx is null && image.expectedAcen is null) ||
+             (g_pipeCtx !is null &&
+              (cast(Pipeline)g_pipeCtx.pipeline).ownsTaskStage(
+                  TaskCode.Acen, image.expectedAcen))) &&
+            (image.expectedAcen is null ||
+                image.expectedAcen.preparedSoftPinMatches(image.expectedSoftPin));
+    }
+
+    final void installPreparedUpdateBoundary(
+            ref PreparedXfrmUpdateBoundaryImage image) nothrow {
+        if (!image.valid) return;
+        lastSelectionHash = image.nextSelectionHash;
+        lastMutationVersion = image.nextMutationVersion;
+        if (image.invalidateRefire) {
+            currentRunBank = DragBank.None;
+            lastAppliedGestureMutationVersion = ulong.max;
+            armedUndoEpoch = ulong.max;
+            refireAnchor = null;
+            refirePreValid = false;
+        }
+        runBaselineValid = false;
+        runFrameValid = false;
+        morphRunValid_ = false;
+        itemBaselineValid = false;
+        runGpuBufferDirty = false;
+        if (image.hadRun) {
+            if (!resyncPreserveDisplayFields) {
+                run = XformState.init;
+                headlessRotate = Vec3(0, 0, 0);
+            }
+            moveRec.runKnown = false;
+            rotateRec.runKnown = false;
+            scaleRec.runKnown = false;
+            runPriorRotateWasViewRing = false;
+        }
+        if (image.clearSoft) {
+            if (image.expectedAcen !is null)
+                image.expectedAcen.installPreparedClearSoftPlaced();
+            frame.settled = false;
+            frame.valid = false;
+        }
+        image.clear();
+    }
+
     final PreparedXfrmEditCloseImage buildPreparedUpdateEditClose(
-            PreparedRecordContext context, string label) {
+            PreparedRecordContext context, string label,
+            bool closeWrapper = true, bool closeRotateScale = false) {
         PreparedXfrmEditCloseImage image;
         image.itemSubject = itemSubjectActive();
         image.vertex = capturePreparedEditClose();
         image.item = capturePreparedItemEditClose();
-        Command cmd = image.itemSubject ? buildPreparedItemEditCmd()
-                                        : buildPreparedEditCmd(label);
-        if (cmd !is null) {
-            if (context is null || history is null) return image;
-            const kind = recordViaInSession ? PreparedHistoryKind.InSession
-                                            : PreparedHistoryKind.Plain;
-            image.historyPrepared = context.prepare(cmd, kind,
-                recordViaInSession ? history.currentRunId : 0).accepted;
-            if (!image.historyPrepared) return image;
+        image.rotate = rotateSub.capturePreparedEditClose();
+        image.scale = scaleSub.capturePreparedEditClose();
+        image.closeWrapper = closeWrapper && editIsOpen();
+        image.closeRotate = closeRotateScale && rotateSub.publicEditIsOpen();
+        image.closeScale = closeRotateScale && scaleSub.publicEditIsOpen();
+
+        bool preparedAny;
+        if (image.closeWrapper) {
+            Command cmd = image.itemSubject ? buildPreparedItemEditCmd()
+                                            : buildPreparedEditCmd(label);
+            if (cmd !is null) {
+                if (context is null || history is null) return image;
+                const kind = recordViaInSession ? PreparedHistoryKind.InSession
+                                                : PreparedHistoryKind.Plain;
+                if (!context.prepare(cmd, kind,
+                    recordViaInSession ? history.currentRunId : 0).accepted)
+                    return image;
+                preparedAny = true;
+            }
         }
+        if (image.closeRotate) {
+            auto cmd = rotateSub.buildPreparedEditCmd("Rotate");
+            if (cmd !is null) {
+                if (context is null || history is null) return image;
+                const kind = rotateSub.recordViaInSession
+                    ? PreparedHistoryKind.InSession : PreparedHistoryKind.Plain;
+                if (!context.prepare(cmd, kind,
+                    rotateSub.recordViaInSession ? history.currentRunId : 0).accepted)
+                    return image;
+                preparedAny = true;
+            }
+        }
+        if (image.closeScale) {
+            auto cmd = scaleSub.buildPreparedEditCmd("Scale");
+            if (cmd !is null) {
+                if (context is null || history is null) return image;
+                const kind = scaleSub.recordViaInSession
+                    ? PreparedHistoryKind.InSession : PreparedHistoryKind.Plain;
+                if (!context.prepare(cmd, kind,
+                    scaleSub.recordViaInSession ? history.currentRunId : 0).accepted)
+                    return image;
+                preparedAny = true;
+            }
+        }
+        image.historyPrepared = preparedAny;
         image.valid = true;
         return image;
     }
@@ -1531,14 +1753,20 @@ public:
             ref const PreparedXfrmEditCloseImage image) const nothrow @nogc {
         return image.valid && itemSubjectActive() == image.itemSubject &&
             preparedEditCloseMatches(image.vertex) &&
-            preparedItemEditCloseMatches(image.item);
+            preparedItemEditCloseMatches(image.item) &&
+            rotateSub.preparedEditCloseMatches(image.rotate) &&
+            scaleSub.preparedEditCloseMatches(image.scale);
     }
 
     final void installPreparedUpdateEditClose(
             ref PreparedXfrmEditCloseImage image) nothrow @nogc {
         if (!image.valid) return;
-        installPreparedEditClose(image.vertex);
-        installPreparedItemEditClose(image.item);
+        if (image.closeWrapper) {
+            installPreparedEditClose(image.vertex);
+            installPreparedItemEditClose(image.item);
+        }
+        if (image.closeRotate) rotateSub.installPreparedEditClose(image.rotate);
+        if (image.closeScale) scaleSub.installPreparedEditClose(image.scale);
         image.clear();
     }
 
@@ -6874,6 +7102,38 @@ unittest {
     assert(refired.applied && beforeRefire.matches(refireMesh) &&
            refired.mesh.vertices != refireMesh.vertices,
            "prepared Xfrm refire must mutate only the detached candidate");
+
+    // Idle selection boundary: preparation owns the complete reset image and
+    // performs no live write. A post-prepare latch mutation must refuse; the
+    // untouched image then resets the active run exactly once.
+    auto boundaryTool = new XfrmTransformTool(
+        () => &refireMesh, &refireGpu, &refireMode);
+    boundaryTool.seedPreparedUpdateBoundaryForTest(11, 12);
+    PreparedXfrmUpdatePreProjection boundaryProjection;
+    boundaryProjection.valid = true;
+    boundaryProjection.selectionBoundary = true;
+    boundaryProjection.selectionChanged = true;
+    boundaryProjection.selectionHash = 21;
+    boundaryProjection.mutationVersion = 22;
+    auto boundary = boundaryTool.buildPreparedUpdateBoundary(boundaryProjection);
+    assert(boundary.valid && boundaryTool.run.t == Vec3(3, 4, 5),
+        "prepared Xfrm boundary mutated the live run");
+    boundaryTool.seedPreparedUpdateBoundaryForTest(99, 12);
+    assert(!boundaryTool.preparedUpdateBoundaryMatches(boundary),
+        "prepared Xfrm boundary accepted a stale selection latch");
+    boundaryTool.seedPreparedUpdateBoundaryForTest(11, 12);
+    assert(boundaryTool.preparedUpdateBoundaryMatches(boundary));
+    boundaryTool.installPreparedUpdateBoundary(boundary);
+    ulong installedSelection, installedMutation;
+    assert(!boundary.valid && boundaryTool.preparedUpdateBoundaryInstalledForTest(
+        installedSelection, installedMutation) && installedSelection == 21 &&
+        installedMutation == 22,
+        "prepared Xfrm boundary did not install the complete run reset");
+    boundaryTool.installPreparedUpdateBoundary(boundary);
+    assert(boundaryTool.preparedUpdateBoundaryInstalledForTest(
+        installedSelection, installedMutation) && installedSelection == 21 &&
+        installedMutation == 22,
+        "consumed Xfrm boundary image installed twice");
 }
 
 static assert(!__traits(compiles, { XfrmPreparedState a; XfrmPreparedState b = a; }));

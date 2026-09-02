@@ -24,6 +24,7 @@ import prepared_scale_update : PreparedScaleUpdateOwner;
 import prepared_xfrm_update_tail : PreparedXfrmUpdateTailOwner;
 import prepared_xfrm_update_edit_close : PreparedXfrmUpdateEditCloseOwner;
 import prepared_xfrm_slot_poll : PreparedXfrmSlotPollOwner;
+import prepared_xfrm_update_boundary : PreparedXfrmUpdateBoundaryOwner;
 import prepared_inherited_noop : PreparedInheritedNoopOwner;
 import prepared_xfrm_activation_session : PreparedXfrmActivationSessionOwner;
 import prepared_stroke_extrude_activation : PreparedStrokeExtrudeActivationOwner;
@@ -75,6 +76,7 @@ private enum PreparedResourceKind : ubyte {
     GpuCreateUpload, RadialArrayTransitionState, TransformActivationState,
     TransformProductActivationState, MoveUpdateState, RotateUpdateState,
     ScaleUpdateState, XfrmUpdateEditCloseState, XfrmSlotPollState,
+    XfrmUpdateBoundaryState,
     XfrmUpdateTailState,
     InheritedNoopState,
     XfrmActivationPreState, XfrmActivationPostState, StrokeExtrudeActivationState,
@@ -109,6 +111,7 @@ private struct PreparedResourceEntry {
     PreparedScaleUpdateOwner scaleUpdate;
     PreparedXfrmUpdateEditCloseOwner xfrmUpdateEditClose;
     PreparedXfrmSlotPollOwner xfrmSlotPoll;
+    PreparedXfrmUpdateBoundaryOwner xfrmUpdateBoundary;
     PreparedXfrmUpdateTailOwner xfrmUpdateTail;
     PreparedInheritedNoopOwner inheritedNoop;
     PreparedXfrmActivationSessionOwner xfrmActivation;
@@ -479,6 +482,17 @@ public:
             throw new Exception("injected Xfrm slot-poll enlist failure");
         PreparedResourceEntry e; e.kind = PreparedResourceKind.XfrmSlotPollState;
         e.xfrmSlotPoll = owner; resources_ ~= e; return true;
+    }
+    bool prepareXfrmUpdateBoundary(PreparedXfrmUpdateBoundaryOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version (unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected Xfrm update boundary enlist failure");
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.XfrmUpdateBoundaryState;
+        e.xfrmUpdateBoundary = owner; resources_ ~= e; return true;
     }
     bool prepareStrokeExtrudeActivation(PreparedStrokeExtrudeActivationOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
@@ -1063,6 +1077,9 @@ public:
                     e.xfrmUpdateEditClose.validate(); break;
             case PreparedResourceKind.XfrmSlotPollState:
                 ok = e.xfrmSlotPoll !is null && e.xfrmSlotPoll.validate(); break;
+            case PreparedResourceKind.XfrmUpdateBoundaryState:
+                ok = e.xfrmUpdateBoundary !is null &&
+                    e.xfrmUpdateBoundary.validate(); break;
             case PreparedResourceKind.InheritedNoopState:
                 ok = e.inheritedNoop !is null && e.inheritedNoop.validate(); break;
             case PreparedResourceKind.XfrmActivationPreState:
@@ -1299,6 +1316,10 @@ public:
         case PreparedResourceKind.XfrmSlotPollState:
             e.xfrmSlotPoll.install();
             version(unittest) installTrace_[installTraceLength_++] = 61;
+            break;
+        case PreparedResourceKind.XfrmUpdateBoundaryState:
+            e.xfrmUpdateBoundary.install();
+            version(unittest) installTrace_[installTraceLength_++] = 62;
             break;
         case PreparedResourceKind.InheritedNoopState:
             e.inheritedNoop.install();
@@ -1566,6 +1587,8 @@ private:
         case PreparedResourceKind.XfrmUpdateEditCloseState:
             e.xfrmUpdateEditClose.abort(); break;
         case PreparedResourceKind.XfrmSlotPollState: e.xfrmSlotPoll.abort(); break;
+        case PreparedResourceKind.XfrmUpdateBoundaryState:
+            e.xfrmUpdateBoundary.abort(); break;
         case PreparedResourceKind.InheritedNoopState: e.inheritedNoop.abort(); break;
         case PreparedResourceKind.XfrmActivationPreState:
         case PreparedResourceKind.XfrmActivationPostState:

@@ -7276,7 +7276,13 @@ def xfrm_update_edit_close_gate(owner, context, xfrm, base, item):
         all(x in xfrm for x in (
             "buildPreparedUpdateEditClose(", "buildPreparedItemEditCmd()",
             "buildPreparedEditCmd(label)",
+            "rotateSub.buildPreparedEditCmd(\"Rotate\")",
+            "scaleSub.buildPreparedEditCmd(\"Scale\")",
             "preparedUpdateEditCloseMatches(",
+            "rotateSub.preparedEditCloseMatches(image.rotate)",
+            "scaleSub.preparedEditCloseMatches(image.scale)",
+            "rotateSub.installPreparedEditClose(image.rotate)",
+            "scaleSub.installPreparedEditClose(image.scale)",
             "installPreparedUpdateEditClose(")) and \
         all(x in base for x in (
             "private Command buildPreparedMorphEditCmd(string label)",
@@ -7304,6 +7310,10 @@ for target, old, new, label in (
     ("context", "e.xfrmUpdateEditClose.abort();", "", "drop context abort"),
     ("xfrm", "buildPreparedItemEditCmd()", "null", "drop item command"),
     ("xfrm", "buildPreparedEditCmd(label)", "null", "drop component command"),
+    ("xfrm", "rotateSub.buildPreparedEditCmd(\"Rotate\")", "null", "drop rotate command"),
+    ("xfrm", "scaleSub.buildPreparedEditCmd(\"Scale\")", "null", "drop scale command"),
+    ("xfrm", "rotateSub.installPreparedEditClose(image.rotate)", "", "drop rotate close"),
+    ("xfrm", "scaleSub.installPreparedEditClose(image.scale)", "", "drop scale close"),
     ("base", "idx.reserve(editIdx.length);", "", "drop detached position ownership"),
     ("base", "morphEditBeforeHas_[i], valNow, hasNow", "false, valNow, hasNow", "drop morph presence"),
     ("item", "payload.reserve(itemEditTargets_.length);", "", "drop detached item ownership"),
@@ -7375,6 +7385,92 @@ run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(xfrm_slot_copy)], cwd=ROOT,
 if run.returncode == 0 or ("not copyable" not in run.stdout and
         not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
     fail("Xfrm slot-poll token copy was not rejected:\n" + run.stdout)
+
+xfrm_boundary_owner = (ROOT / "source/prepared_xfrm_update_boundary.d").read_text()
+def xfrm_update_boundary_gate(owner, context, xfrm, acen):
+    acen_start = acen.find("void installPreparedClearSoftPlaced()")
+    acen_end = acen.find("/// True iff", acen_start)
+    prepared_acen = acen[acen_start:acen_end]
+    return all(s in owner for s in (
+        "final class PreparedXfrmUpdateBoundaryOwner",
+        "target.classinfo !is XfrmTransformTool.classinfo",
+        "prepared_.owner != owner_", "prepared_.generation != generation_",
+        "validatedToken_.owner != owner_",
+        "validatedToken_.generation != generation_",
+        "target_.preparedUpdateBoundaryMatches(image_)",
+        "target_.installPreparedUpdateBoundary(image_);")) and \
+        all(s in context for s in (
+            "bool prepareXfrmUpdateBoundary(PreparedXfrmUpdateBoundaryOwner owner)",
+            "e.xfrmUpdateBoundary.validate();",
+            "e.xfrmUpdateBoundary.install();",
+            "e.xfrmUpdateBoundary.abort();")) and \
+        all(s in xfrm for s in (
+            "PreparedXfrmUpdateBoundaryImage buildPreparedUpdateBoundary(",
+            "lastSelectionHash = image.nextSelectionHash;",
+            "lastMutationVersion = image.nextMutationVersion;",
+            "lastAppliedGestureMutationVersion = ulong.max;\n"
+            "            armedUndoEpoch = ulong.max;\n"
+            "            refireAnchor = null;",
+            "runBaselineValid = false;\n"
+            "        runFrameValid = false;\n"
+            "        morphRunValid_ = false;\n"
+            "        itemBaselineValid = false;\n"
+            "        runGpuBufferDirty = false;\n"
+            "        if (image.hadRun)",
+            "armedUndoEpoch = ulong.max;", "refireAnchor = null;",
+            "runBaselineValid = false;", "runFrameValid = false;",
+            "morphRunValid_ = false;", "itemBaselineValid = false;",
+            "runGpuBufferDirty = false;", "moveRec.runKnown = false;",
+            "rotateRec.runKnown = false;", "scaleRec.runKnown = false;",
+            "runPriorRotateWasViewRing = false;",
+            "image.expectedAcen.installPreparedClearSoftPlaced();",
+            "frame.settled = false;", "frame.valid = false;")) and \
+        "bool preparedSoftPinMatches(Pin expected)" in acen and \
+        all(s in prepared_acen for s in (
+            "void installPreparedClearSoftPlaced() nothrow @nogc",
+            "softPin = Pin.init;"))
+if not xfrm_update_boundary_gate(xfrm_boundary_owner, record_context,
+        prepared_source_texts[ROOT / "source/tools/transform/xfrm_transform.d"],
+        prepared_source_texts[ROOT / "source/toolpipe/stages/actcenter.d"]):
+    fail("Xfrm update boundary owner contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is XfrmTransformTool.classinfo", "false", "broaden product"),
+    ("owner", "target_.preparedUpdateBoundaryMatches(image_)", "true", "drop validation"),
+    ("owner", "target_.installPreparedUpdateBoundary(image_);", "", "drop install"),
+    ("context", "e.xfrmUpdateBoundary.validate();", "true;", "drop context validation"),
+    ("context", "e.xfrmUpdateBoundary.install();", "", "drop context install"),
+    ("context", "e.xfrmUpdateBoundary.abort();", "", "drop context abort"),
+    ("xfrm", "lastSelectionHash = image.nextSelectionHash;", "", "drop selection latch"),
+    ("xfrm", "lastAppliedGestureMutationVersion = ulong.max;\n"
+             "            armedUndoEpoch = ulong.max;\n"
+             "            refireAnchor = null;", "", "drop refire stamp reset"),
+    ("xfrm", "runBaselineValid = false;\n"
+             "        runFrameValid = false;\n"
+             "        morphRunValid_ = false;\n"
+             "        itemBaselineValid = false;\n"
+             "        runGpuBufferDirty = false;\n"
+             "        if (image.hadRun)", "if (image.hadRun)", "drop run reset"),
+    ("xfrm", "image.expectedAcen.installPreparedClearSoftPlaced();", "", "drop soft clear"),
+    ("acen", "softPin = Pin.init;", "", "drop soft-pin write"),
+):
+    o, c = xfrm_boundary_owner, record_context
+    x = prepared_source_texts[ROOT / "source/tools/transform/xfrm_transform.d"]
+    a = prepared_source_texts[ROOT / "source/toolpipe/stages/actcenter.d"]
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    elif target == "xfrm": x = x.replace(old, new, 1)
+    else:
+        start = a.find("void installPreparedClearSoftPlaced()")
+        pos = a.find(old, start)
+        if pos >= 0: a = a[:pos] + new + a[pos + len(old):]
+    if xfrm_update_boundary_gate(o, c, x, a):
+        fail(f"Xfrm update boundary mutation did not RED: {label}")
+xfrm_boundary_copy = ROOT / "tests/compile_fail/prepared_xfrm_update_boundary_token_copy.d"
+run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(xfrm_boundary_copy)], cwd=ROOT,
+    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+if run.returncode == 0 or ("not copyable" not in run.stdout and
+        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+    fail("Xfrm update boundary token copy was not rejected:\n" + run.stdout)
 
 # Closed inherited base-noop owner infrastructure.  The effective product
 # table above proves DragWeldTool is the sole activate/deactivate admission;
