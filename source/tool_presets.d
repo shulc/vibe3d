@@ -387,5 +387,10 @@ void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
         }
         reg.toolFactories[p.id] = typedPresetFactory;
         reg.preActivate[p.id]   = makePreActivate(p);
+        // Copy both AA levels: the loader's ToolPreset storage is temporary,
+        // while the prepared activation descriptor must remain owner-stable
+        // for the process lifetime and must not borrow values from it.
+        import registry : ownPreparedPipeAttrs;
+        reg.preparedPipeAttrs[p.id] = ownPreparedPipeAttrs(p.pipeAttrs);
     }
 }

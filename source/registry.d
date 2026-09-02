@@ -47,6 +47,35 @@ unittest {
 }
 
 alias PreActivate = void delegate();
+alias PreparedPipeAttrs = string[string][string];
+
+PreparedPipeAttrs ownPreparedPipeAttrs(in PreparedPipeAttrs source) {
+    PreparedPipeAttrs result;
+    foreach (stageId, attrs; source) {
+        string[string] ownedAttrs;
+        foreach (name, value; attrs)
+            ownedAttrs[name.idup] = value.idup;
+        result[stageId.idup] = ownedAttrs;
+    }
+    return result;
+}
+
+unittest {
+    // The prepared descriptor owns every variable buffer.  A shallow AA dup
+    // passes value-only tests, so mutate all three producer buffers after the
+    // copy; this is the discriminating lifetime cell for stage/key/value.
+    char[] stage = "falloff".dup;
+    char[] name = "type".dup;
+    char[] value = "radial".dup;
+    PreparedPipeAttrs borrowed;
+    borrowed[cast(string)stage][cast(string)name] = cast(string)value;
+    auto owned = ownPreparedPipeAttrs(borrowed);
+    stage[] = 'x';
+    name[] = 'y';
+    value[] = 'z';
+    assert(owned["falloff"]["type"] == "radial",
+           "prepared pipe descriptor borrowed producer storage");
+}
 
 struct Registry {
     ToolFactory[string]    toolFactories;
@@ -60,6 +89,13 @@ struct Registry {
     // element` for `move.element`) when the preset is actually
     // selected.
     PreActivate[string] preActivate;
+
+    // Detached descriptor for the same preset pipe writes.  P1.0c prepares
+    // these values against owner-issued stage state before the live pipeline
+    // is touched; `preActivate` remains only until the unified-door cutover.
+    // Keep the descriptor beside the legacy hook so registry lookup, rather
+    // than a second preset-id classifier, is the authority for both doors.
+    PreparedPipeAttrs[string] preparedPipeAttrs;
 
     // Cached `supportedModes()` per command/tool id — populated once
     // at app startup via `cacheSupportedModes()` after all factory
