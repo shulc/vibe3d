@@ -332,7 +332,7 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
     /// Is this the compat anchor (`id() == "falloff"`)? The primary is never
     /// removable and never auto-cleared by `falloff.clear`; only the stacked
     /// `falloff#N` extras are. Set once at construction.
-    bool isPrimary() const { return instanceId_ == "falloff"; }
+    bool isPrimary() const pure nothrow @nogc { return instanceId_ == "falloff"; }
 
     /// Does this instance actually contribute (a real type is selected)?
     /// The primary anchor stays plugged in with type None when no
@@ -1263,6 +1263,37 @@ private:
         return false;
     }
 
+    /// Installs one fully parsed preset image in a fixed semantic order.
+    /// Every shipped Falloff preset owns a `type` write, so the slot epoch
+    /// advances exactly once; the remaining attrs re-grade that same slot.
+    void installPreparedPreset(FalloffType nextType,
+            FalloffShape nextShape, ElementMode nextMode,
+            bool nextTransparent, string ownedTypeWire,
+            string ownedShapeWire) nothrow {
+        const previousType = type;
+        type = nextType;
+        if (previousType == FalloffType.Element && type != FalloffType.Element)
+            anchorRing.length = 0;
+        shape = nextShape;
+        elementMode = nextMode;
+        transparent = nextTransparent;
+        ++slotEpoch;
+        if (!isPrimary()) return;
+        installPreparedStatePath("falloff/type", ownedTypeWire);
+        installPreparedStatePath("falloff/shape", ownedShapeWire);
+        installPreparedStatePath("falloff/enabled",
+            type != FalloffType.None ? "true" : "false");
+        installPreparedStatePath("falloff/types/none", type == FalloffType.None ? "true" : "false");
+        installPreparedStatePath("falloff/types/linear", type == FalloffType.Linear ? "true" : "false");
+        installPreparedStatePath("falloff/types/radial", type == FalloffType.Radial ? "true" : "false");
+        installPreparedStatePath("falloff/types/cylinder", type == FalloffType.Cylinder ? "true" : "false");
+        installPreparedStatePath("falloff/types/screen", type == FalloffType.Screen ? "true" : "false");
+        installPreparedStatePath("falloff/types/lasso", type == FalloffType.Lasso ? "true" : "false");
+        installPreparedStatePath("falloff/types/element", type == FalloffType.Element ? "true" : "false");
+        installPreparedStatePath("falloff/types/selection", type == FalloffType.Selection ? "true" : "false");
+        installPreparedStatePath("falloff/types/vertexMap", type == FalloffType.VertexMap ? "true" : "false");
+    }
+
     bool applySetAttr(string name, string value) {
         switch (name) {
             case "type": {
@@ -1862,6 +1893,20 @@ unittest {
     assert(!FalloffStage.parsePreparedShape("not-a-shape", preparedShape));
     assert(!FalloffStage.parsePreparedElementMode("not-a-mode", preparedMode));
     assert(!FalloffStage.parsePreparedTransparent("maybe", preparedTransparent));
+
+    live.type = FalloffType.Element;
+    live.anchorRing = [3u, 7u];
+    const beforeEpoch = live.slotEpoch;
+    live.installPreparedPreset(FalloffType.Radial, FalloffShape.Smooth,
+        ElementMode.Edge, true, "radial", "smooth");
+    assert(live.type == FalloffType.Radial &&
+           live.shape == FalloffShape.Smooth &&
+           live.elementMode == ElementMode.Edge && live.transparent,
+           "prepared falloff installer omitted a typed preset field");
+    assert(live.anchorRing.length == 0,
+           "prepared falloff type switch retained the Element anchor");
+    assert(live.slotEpoch == beforeEpoch + 1,
+           "prepared falloff preset did not arm the slot exactly once");
 }
 
 unittest {
