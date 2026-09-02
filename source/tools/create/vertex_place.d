@@ -22,9 +22,10 @@ import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap, g_lastSnap
 import operator : VectorStack;
 import prepared_tool_effect : PreparedActivateEffect, PreparedActivateKind;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_private_state : PreparedPrivateStateOwner;
 import snap_render : SnapOverlayOwner;
+import document : Layer;
 
 private struct ValidatedVertexActivate {
     @disable this(this);
@@ -55,7 +56,7 @@ static assert(!__traits(compiles, {
 // Interactive-only; no headless command path.  The headless geometry contract
 // for vertex creation is mesh.addVertex (task 0131).
 // ---------------------------------------------------------------------------
-class VertexTool : Tool {
+class VertexTool : Tool, PreparedToolDoorClient {
 private:
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
@@ -134,6 +135,27 @@ public:
         if (!accepted && context !is null) context.discard();
         return PreparedDeactivateEffect(preparedToolStateOwner,
             PreparedDeactivateKind.Vertex, accepted, accepted);
+    }
+
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer,
+            ulong, ulong) {
+        return prepareDeactivate(context, new SnapOverlayOwner(),
+            PreparedPrivateStateOwner.vertex(this)).resourceAccepted;
+    }
+
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong, ulong) {
+        if (context is null) return false;
+        auto prepared = prepareActivate();
+        ValidatedVertexActivate validated;
+        if (!validatePreparedActivate(prepared, validated)) {
+            context.discard(); return false;
+        }
+        auto owner = PreparedPrivateStateOwner.vertex(this);
+        const ok = context.preparePrivateState(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return ok;
     }
     version(unittest) void seedPreparedSnapForTest(int index) nothrow @nogc {
         lastSnap_.snapped = true; lastSnap_.targetIndex = index;

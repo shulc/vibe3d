@@ -6258,6 +6258,9 @@ for path in (ROOT / "source/tools").rglob("*.d"):
 # mutually exclusive with HistoryInstall.
 b5d2_vertex = (ROOT / "source/tools/create/vertex_place.d").read_text()
 def b5d2_gate(context, vertex):
+    start = vertex.find("final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,")
+    end = vertex.find("override bool prepareDoorDeactivate", start)
+    product = vertex[start:end]
     return ("HistoryInstall, NoHistoryInstall," in context and
             "bool markNoHistoryInstall()" in context and
             "if (history_ !is null) history_.discardPreparedToken(token_);\n"
@@ -6266,14 +6269,14 @@ def b5d2_gate(context, vertex):
             "if (noHistoryMarker_) return true;" in context and
             "history_ is null || noHistoryMarker_" in context and
             "final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context," in vertex and
-            vertex.count("context.prepareSnapClear(snapOwner)") == 1 and
-            vertex.count("context.preparePrivateState(stateOwner)") == 1 and
-            vertex.count("context.markNoHistoryInstall()") == 1 and
-            vertex.find("context.prepareSnapClear(snapOwner)") <
-                vertex.find("context.preparePrivateState(stateOwner)") <
-                vertex.find("context.markNoHistoryInstall()") and
-            "stateOwner.owns(this)" in vertex and
-            "if (!accepted && context !is null) context.discard();" in vertex)
+            product.count("context.prepareSnapClear(snapOwner)") == 1 and
+            product.count("context.preparePrivateState(stateOwner)") == 1 and
+            product.count("context.markNoHistoryInstall()") == 1 and
+            product.find("context.prepareSnapClear(snapOwner)") <
+                product.find("context.preparePrivateState(stateOwner)") <
+                product.find("context.markNoHistoryInstall()") and
+            "stateOwner.owns(this)" in product and
+            "if (!accepted && context !is null) context.discard();" in product)
 if not b5d2_gate(record_context, b5d2_vertex):
     fail("P1.0b.5d.2 Vertex deactivate contract drift")
 for target, old, new, label in (
@@ -8291,6 +8294,9 @@ cutting_door_clients = {
 gpu_layer_door_clients = {
     "source/tools/edit/edge_extend.d": "EdgeExtendTool",
 }
+vertex_door_clients = {
+    "source/tools/create/vertex_place.d": "VertexTool",
+}
 def p10c_door_capability_gate(context, sources, xfrm):
     if not all(x in context for x in (
             "interface PreparedToolDoorClient",
@@ -8338,6 +8344,18 @@ def p10c_door_capability_gate(context, sources, xfrm):
                 "prepareDeactivate(context, layer, upload).resourceAccepted" not in body or \
                 "return prepareActivate(context).accepted;" not in body:
             return False
+    for path, aggregate in vertex_door_clients.items():
+        body = sources[path]
+        if f"class {aggregate} : Tool, PreparedToolDoorClient" not in body or \
+                not all(x in body for x in (
+                    "prepareDeactivate(context, new SnapOverlayOwner(),",
+                    "PreparedPrivateStateOwner.vertex(this)).resourceAccepted",
+                    "auto prepared = prepareActivate();",
+                    "validatePreparedActivate(prepared, validated)",
+                    "auto owner = PreparedPrivateStateOwner.vertex(this);",
+                    "context.preparePrivateState(owner)",
+                    "context.markNoHistoryInstall()")):
+            return False
     return ("PreparedToolDoorClient," in xfrm and
         "override bool prepareDoorDeactivate(" in xfrm and
         "override bool prepareDoorActivate(" in xfrm and
@@ -8345,7 +8363,8 @@ def p10c_door_capability_gate(context, sources, xfrm):
 
 door_sources = {p: (ROOT / p).read_text() for p in
     set(simple_door_clients) | set(private_state_door_clients) |
-    set(cutting_door_clients) | set(gpu_layer_door_clients)}
+    set(cutting_door_clients) | set(gpu_layer_door_clients) |
+    set(vertex_door_clients)}
 door_xfrm = (ROOT / "source/tools/transform/xfrm_transform.d").read_text()
 if not p10c_door_capability_gate(record_context, door_sources, door_xfrm):
     fail("P1.0c prepared door capability tranche drift")
@@ -8370,6 +8389,10 @@ for target, old, new, label in (
      "new GpuUploadOwner(gpu, threadIdentity, contextIdentity)",
      "new GpuUploadOwner(null, threadIdentity, contextIdentity)",
      "drop GPU subject identity"),
+    (next(iter(vertex_door_clients)),
+     "auto owner = PreparedPrivateStateOwner.vertex(this);",
+     "auto owner = PreparedPrivateStateOwner.vertex(null);",
+     "drop Vertex private-state subject identity"),
     ("xfrm", "return prepareActivate(context).accepted;", "return true;",
      "drop Xfrm activation producer"),
 ):
