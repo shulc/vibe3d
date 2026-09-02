@@ -1092,12 +1092,22 @@ private:
     /// Task 0791 — `mode` IS the slot: which axis tool occupies it.
     public override bool attrArmsSlot(string name) const { return name == "mode"; }
 
+    /// Allocation-free parser used by prepared tool activation.  It reads the
+    /// same authoritative table as the legacy setter without touching live
+    /// stage state or publishing popup state during preparation.
+    static bool parsePreparedMode(string value, out Mode result) pure {
+        int v;
+        if (!valueForWireTag(modeEntries, value, v)) return false;
+        result = cast(Mode)v;
+        return true;
+    }
+
     bool applySetAttr(string name, string value) {
         switch (name) {
             case "mode": {
-                int v;
-                if (!valueForWireTag(modeEntries, value, v)) return false;
-                mode = cast(Mode)v;
+                Mode prepared;
+                if (!parsePreparedMode(value, prepared)) return false;
+                mode = prepared;
                 return true;
             }
             default: return false;
@@ -1111,6 +1121,22 @@ private:
     void publishState() {
         setStatePath("axis/mode", modeLabel());
     }
+}
+
+unittest {
+    // Prepared parsing must resolve the exact legacy wire table without
+    // touching the live stage.  The invalid second value is the atomicity
+    // discriminator: a parser that assigns before validating fails here.
+    auto live = new AxisStage();
+    live.mode = AxisStage.Mode.World;
+    AxisStage.Mode parsed;
+    assert(AxisStage.parsePreparedMode("element", parsed));
+    assert(parsed == AxisStage.Mode.Element);
+    assert(live.mode == AxisStage.Mode.World,
+           "prepared axis parse mutated live stage state");
+    assert(!AxisStage.parsePreparedMode("not-a-mode", parsed));
+    assert(live.mode == AxisStage.Mode.World,
+           "invalid prepared axis value mutated live stage state");
 }
 
 // ---------------------------------------------------------------------------

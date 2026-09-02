@@ -2096,17 +2096,27 @@ private:
         }
     }
 
+    /// Zero-live-write parse seam for the prepared preset owner.  The full
+    /// wire table (including the non-panel `manual` token) remains the single
+    /// source used by both activation paths.
+    static bool parsePreparedMode(string value, out Mode result) pure {
+        int v;
+        if (!valueForWireTag(modeEntriesFull, value, v)) return false;
+        result = cast(Mode)v;
+        return true;
+    }
+
     bool applySetAttr(string name, string value) {
         switch (name) {
             case "mode": {
                 // 12-token WIRE universe (incl `manual`, which has no panel
                 // entry — see modeEntriesFull's doc above).
-                int v;
-                if (!valueForWireTag(modeEntriesFull, value, v)) return false;
+                Mode prepared;
+                if (!parsePreparedMode(value, prepared)) return false;
                 // Switching mode (including Auto→Auto re-pick) clears the
                 // Auto-userPlaced sub-state, as a popup re-click does, and the
                 // display settle (a new mode recomputes the center afresh).
-                mode = cast(Mode)v;
+                mode = prepared;
                 userPin.placed = false;   // preserves the pre-R5 shape: stale
                                            // center left in place, see resetAuto()
                 // Task 1530 — `elementPin` deliberately SURVIVES a mode switch
@@ -2191,6 +2201,19 @@ private:
         setStatePath("actionCenter/userPlaced", userPin.placed ? "true" : "false");
         setStatePath("actionCenter/selectSubMode", selectSubModeLabel());
     }
+}
+
+unittest {
+    auto live = new ActionCenterStage(null, null);
+    live.mode = ActionCenterStage.Mode.Origin;
+    ActionCenterStage.Mode parsed;
+    assert(ActionCenterStage.parsePreparedMode("border", parsed));
+    assert(parsed == ActionCenterStage.Mode.Border);
+    assert(live.mode == ActionCenterStage.Mode.Origin,
+           "prepared action-center parse mutated live stage state");
+    assert(!ActionCenterStage.parsePreparedMode("not-a-mode", parsed));
+    assert(live.mode == ActionCenterStage.Mode.Origin,
+           "invalid prepared action-center value mutated live stage state");
 }
 
 
