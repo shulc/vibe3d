@@ -119,7 +119,7 @@ import tools.transform.rotate    : RotateTool;
 import tools.transform.scale     : ScaleTool;
 import tools.transform.scale     : PreparedScaleEmbeddedDeactivateImage;
 import prepared_record_context : PreparedToolDoorClient,
-    PreparedToolParamDoorClient;
+    PreparedToolParamDoorClient, PreparedToolPoseDoorClient;
 
 struct PreparedXfrmEmbeddedDeactivateImage {
     TransformTool.PreparedScalarDeactivateImage wrapper, move, rotate;
@@ -620,6 +620,7 @@ struct PreparedXfrmUpdateBoundaryImage {
 // ToolDeactivationCommand on drop (undo-cursor lifecycle stepping).
 class XfrmTransformTool : TransformTool, LiveEvalClient, SlotActivationClient,
                           PreparedToolDoorClient, PreparedToolParamDoorClient,
+                          PreparedToolPoseDoorClient,
                           LifecycleUndoEmitter {
 public:
     final Mesh* preparedMeshForUpdate() const { return mesh; }
@@ -1246,6 +1247,13 @@ public:
     override bool prepareDoorActivate(PreparedRecordContext context, Layer,
             ulong, ulong) {
         return prepareActivate(context).accepted;
+    }
+
+    override bool prepareDoorInitialPose(ref VectorStack vts,
+            PreparedRecordContext context, Layer layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto upload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);
+        return prepareUpdate(vts, context, layer, upload).accepted;
     }
 
     final PreparedXfrmEmbeddedDeactivateImage

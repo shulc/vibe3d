@@ -8365,6 +8365,10 @@ create_bridge_door_clients = {
 }
 def p10c_door_capability_gate(context, sources, xfrm):
     if not all(x in context for x in (
+            "interface PreparedToolPoseDoorClient",
+            "bool prepareDoorInitialPose(ref VectorStack vts,")):
+        return False
+    if not all(x in context for x in (
             "interface PreparedToolDoorClient",
             "mixin template PreparedSimpleToolDoorClient(LayerT)",
             ": context.markNoHistoryInstall()",
@@ -8480,7 +8484,26 @@ def p10c_door_capability_gate(context, sources, xfrm):
         return False
     if "case PreparedPrivateStateKind.ArcIdle: e.kind = PreparedResourceKind.ArcState; break;" not in context:
         return False
+    edge_extend = sources["source/tools/edit/edge_extend.d"]
+    topology_pen = sources["source/tools/edit/topology_pen/tool.d"]
+    if not all(x in edge_extend for x in (
+            "PreparedToolPoseDoorClient",
+            "override bool prepareDoorInitialPose(ref VectorStack vts,\n"
+            "            PreparedRecordContext context, Layer layer,\n"
+            "            ulong threadIdentity, ulong contextIdentity) {\n"
+            "        auto upload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);",
+            "return prepareUpdate(vts, context, layer, upload).accepted;")):
+        return False
+    if not all(x in topology_pen for x in (
+            "PreparedToolPoseDoorClient",
+            "override bool prepareDoorInitialPose(ref VectorStack vts,",
+            "return prepareUpdate(vts, context).accepted;")):
+        return False
     return ("PreparedToolDoorClient," in xfrm and
+        "PreparedToolPoseDoorClient," in xfrm and
+        "override bool prepareDoorInitialPose(ref VectorStack vts," in xfrm and
+        "auto upload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);" in xfrm and
+        "return prepareUpdate(vts, context, layer, upload).accepted;" in xfrm and
         "override bool prepareDoorDeactivate(" in xfrm and
         "override bool prepareDoorActivate(" in xfrm and
         "return prepareActivate(context).accepted;" in xfrm)
@@ -8512,9 +8535,9 @@ for target, old, new, label in (
      "new BoxHandlerBatchResourceOwner(null, threadIdentity,",
      "drop cutting handler identity"),
     ("source/tools/edit/edge_extend.d",
-     "new GpuUploadOwner(gpu, threadIdentity, contextIdentity)",
-     "new GpuUploadOwner(null, threadIdentity, contextIdentity)",
-     "drop GPU subject identity"),
+     "override bool prepareDoorInitialPose(ref VectorStack vts,\n            PreparedRecordContext context, Layer layer,\n            ulong threadIdentity, ulong contextIdentity) {\n        auto upload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);",
+     "override bool prepareDoorInitialPose(ref VectorStack vts,\n            PreparedRecordContext context, Layer layer,\n            ulong threadIdentity, ulong contextIdentity) {\n        auto upload = new GpuUploadOwner(null, threadIdentity, contextIdentity);",
+     "drop pose GPU subject identity"),
     (next(iter(vertex_door_clients)),
      "auto owner = PreparedPrivateStateOwner.vertex(this);",
      "auto owner = PreparedPrivateStateOwner.vertex(null);",

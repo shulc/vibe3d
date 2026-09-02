@@ -27,7 +27,8 @@ import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKin
     PreparedEdgeExtendParamEffect, PreparedEdgeExtendParamKind,
     PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedXfrmUpdateEffect, PreparedXfrmUpdateKind;
-import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
+    PreparedToolPoseDoorClient;
 import prepared_record_context : PreparedToolParamDoorClient,
     PreparedNamedGpuParamDoorClient;
 import prepared_edge_extend_tool_activation : PreparedEdgeExtendToolActivationOwner;
@@ -163,7 +164,8 @@ struct PreparedEdgeExtendDeactivateImage {
 // ToolDoApplyCommand wraps it with a snapshot pair for undo (so applyHeadless
 // MUST NOT snapshot itself).
 // ---------------------------------------------------------------------------
-class EdgeExtendTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+class EdgeExtendTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient,
+                       PreparedToolPoseDoorClient {
     mixin PreparedNamedGpuParamDoorClient;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
@@ -760,6 +762,13 @@ public:
         auto inner = xfrm.prepareUpdate(vts, context, layer, uploadOwner);
         return PreparedXfrmUpdateEffect(preparedToolStateOwner,
             inner.kind, inner.accepted);
+    }
+
+    override bool prepareDoorInitialPose(ref VectorStack vts,
+            PreparedRecordContext context, Layer layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto upload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);
+        return prepareUpdate(vts, context, layer, upload).accepted;
     }
 
     final bool ownsPreparedLayer(Layer layer) const nothrow @nogc {

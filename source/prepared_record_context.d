@@ -77,6 +77,7 @@ import registry : PreparedPipeAttrs;
 import toolpipe.pipeline : Pipeline;
 import pipe_gizmo_host : PipeGizmoHost;
 import document : Layer;
+import operator : VectorStack;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
 
@@ -96,6 +97,14 @@ interface PreparedToolDoorClient {
 interface PreparedToolParamDoorClient {
     bool prepareDoorParamChanged(string name, PreparedRecordContext context,
             Layer layer, ulong threadIdentity, ulong contextIdentity);
+}
+
+/// Capability for the three factory products whose first arm-time `update`
+/// has effects. All other products inherit Tool.update's exact no-op.
+interface PreparedToolPoseDoorClient {
+    bool prepareDoorInitialPose(ref VectorStack vts,
+            PreparedRecordContext context, Layer layer,
+            ulong threadIdentity, ulong contextIdentity);
 }
 
 /// Shared adapter for roots whose typed producer reads the changed candidate

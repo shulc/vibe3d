@@ -86,7 +86,8 @@ import prepared_tool_effect   : PreparedSessionActivateEffect,
                                  PreparedTopologyPenUpdateKind,
                                  PreparedDeactivateEffect,
                                  PreparedDeactivateKind;
-import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
+    PreparedToolPoseDoorClient;
 import prepared_topology_pen_activation : PreparedTopologyPenActivationOwner;
 import prepared_topology_pen_update : PreparedTopologyPenUpdateOwner;
 import prepared_topology_pen_deactivate : PreparedTopologyPenDeactivateOwner;
@@ -202,7 +203,8 @@ package enum string[] kGestureArmFields = () {
 /// The two mixins are members of this class in every way that matters: they
 /// read its state, including its `private` members, exactly as they did when
 /// their bodies were typed out here.
-class TopologyPenTool : Tool, InputBindable, PreparedToolDoorClient {
+class TopologyPenTool : Tool, InputBindable, PreparedToolDoorClient,
+                        PreparedToolPoseDoorClient {
 
     /// Click-vs-drag gate, in pixels, shared by EVERY gesture in this tool:
     /// a release within this distance of the press pixel is a click, not a
@@ -1942,6 +1944,12 @@ public:
             context.markNoHistoryInstall();
         if (!ok) context.discard();
         return PreparedTopologyPenUpdateEffect(preparedToolStateOwner, kind, ok);
+    }
+
+    override bool prepareDoorInitialPose(ref VectorStack vts,
+            PreparedRecordContext context, Layer,
+            ulong, ulong) {
+        return prepareUpdate(vts, context).accepted;
     }
     version(unittest) final void mutatePreparedUpdateForTest() nothrow @nogc {
         ++lastHit_.layer;
