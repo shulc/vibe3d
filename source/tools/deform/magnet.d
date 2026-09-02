@@ -1,5 +1,6 @@
 module tools.deform.magnet;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
+    PreparedPrivateStateToolDoorClient;
 import prepared_private_state : PreparedPrivateStateOwner;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
@@ -66,7 +67,9 @@ struct PreparedMagnetParamImage {
 ///      get their own independent entry.
 ///
 /// Headless surface: `mesh.magnet` command.
-class MagnetTool : Tool {
+class MagnetTool : Tool, PreparedToolDoorClient {
+    mixin PreparedPrivateStateToolDoorClient!(Layer,
+        PreparedPrivateStateOwner.magnetSession);
 private:
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }

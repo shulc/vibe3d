@@ -103,6 +103,23 @@ mixin template PreparedSimpleToolDoorClient(LayerT) {
     }
 }
 
+mixin template PreparedPrivateStateToolDoorClient(LayerT,
+        alias activationOwnerFactory) {
+    override bool prepareDoorDeactivate(PreparedRecordContext context, LayerT,
+            ulong, ulong) {
+        auto effect = prepareDeactivate(context);
+        if (context is null) return false;
+        const ok = effect.historyAccepted ? context.markHistoryInstall()
+                                          : context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return ok;
+    }
+    override bool prepareDoorActivate(PreparedRecordContext context, LayerT,
+            ulong, ulong) {
+        return prepareActivate(context, activationOwnerFactory(this)).accepted;
+    }
+}
+
 private enum PreparedResourceKind : ubyte {
     HistoryInstall, NoHistoryInstall, MeshInstall, DeliveryInstall, GpuMeshDestroy,
     GpuUpload, ClickPointDestroy, BoxHandlerBatchDestroy

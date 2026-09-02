@@ -1,5 +1,6 @@
 module tools.alignment.array_tool;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
+    PreparedPrivateStateToolDoorClient;
 import prepared_private_state : PreparedPrivateStateOwner;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_tool_effect : PreparedArrayParamEffect, PreparedArrayParamKind;
@@ -135,7 +136,9 @@ struct PreparedArrayParamImage {
     }
 }
 
-final class ArrayTool : Tool {
+final class ArrayTool : Tool, PreparedToolDoorClient {
+    mixin PreparedPrivateStateToolDoorClient!(Layer,
+        PreparedPrivateStateOwner.arraySession);
 private:
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }

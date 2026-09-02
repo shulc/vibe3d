@@ -1,7 +1,9 @@
 module tools.alignment.clone_tool;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
+    PreparedPrivateStateToolDoorClient;
 import prepared_private_state : PreparedPrivateStateOwner;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import document : Layer;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import command_history : PreparedHistoryKind;
 
@@ -47,7 +49,9 @@ import display_sync : refreshDisplay;
 // analytic success bar is: original + exactly one offset copy; original
 // verts byte-unchanged; single undo entry per gesture.
 // ---------------------------------------------------------------------------
-class CloneTool : Tool {
+class CloneTool : Tool, PreparedToolDoorClient {
+    mixin PreparedPrivateStateToolDoorClient!(Layer,
+        PreparedPrivateStateOwner.cloneSession);
 private:
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }

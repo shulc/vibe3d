@@ -8277,25 +8277,41 @@ simple_door_clients = {
     "source/tools/edit/vertex_extrude_tool.d": "VertexExtrudeTool",
     "source/tools/edit/vert_merge_tool.d": "VertexMergeTool",
 }
+private_state_door_clients = {
+    "source/tools/alignment/array_tool.d": ("ArrayTool", "arraySession"),
+    "source/tools/alignment/clone_tool.d": ("CloneTool", "cloneSession"),
+    "source/tools/deform/magnet.d": ("MagnetTool", "magnetSession"),
+    "source/tools/edit/reduce.d": ("ReductionTool", "reductionSession"),
+}
 def p10c_door_capability_gate(context, sources, xfrm):
     if not all(x in context for x in (
             "interface PreparedToolDoorClient",
             "mixin template PreparedSimpleToolDoorClient(LayerT)",
-            "effect.historyAccepted ? context.markHistoryInstall()",
             ": context.markNoHistoryInstall()",
             "return prepareActivate(context).accepted;")):
+        return False
+    if context.count("effect.historyAccepted ? context.markHistoryInstall()") != 2:
         return False
     for path, aggregate in simple_door_clients.items():
         body = sources[path]
         if f"class {aggregate} : Tool, PreparedToolDoorClient" not in body or \
                 "mixin PreparedSimpleToolDoorClient!Layer;" not in body:
             return False
+    for path, (aggregate, factory) in private_state_door_clients.items():
+        body = sources[path]
+        if f"class {aggregate} : Tool, PreparedToolDoorClient" not in body and \
+                f"final class {aggregate} : Tool, PreparedToolDoorClient" not in body:
+            return False
+        if "mixin PreparedPrivateStateToolDoorClient!(Layer," not in body or \
+                f"PreparedPrivateStateOwner.{factory});" not in body:
+            return False
     return ("PreparedToolDoorClient," in xfrm and
         "override bool prepareDoorDeactivate(" in xfrm and
         "override bool prepareDoorActivate(" in xfrm and
         "return prepareActivate(context).accepted;" in xfrm)
 
-door_sources = {p: (ROOT / p).read_text() for p in simple_door_clients}
+door_sources = {p: (ROOT / p).read_text() for p in
+    set(simple_door_clients) | set(private_state_door_clients)}
 door_xfrm = (ROOT / "source/tools/transform/xfrm_transform.d").read_text()
 if not p10c_door_capability_gate(record_context, door_sources, door_xfrm):
     fail("P1.0c prepared door capability tranche drift")
@@ -8308,6 +8324,10 @@ for target, old, new, label in (
      "class StrokeExtrudeTool : Tool, PreparedToolDoorClient",
      "class StrokeExtrudeTool : Tool",
      "drop concrete capability"),
+    (next(iter(private_state_door_clients)),
+     "PreparedPrivateStateOwner.arraySession);",
+     "PreparedPrivateStateOwner.cloneSession);",
+     "substitute private-state owner"),
     ("xfrm", "return prepareActivate(context).accepted;", "return true;",
      "drop Xfrm activation producer"),
 ):

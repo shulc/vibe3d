@@ -1,5 +1,6 @@
 module tools.edit.reduce;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
+    PreparedPrivateStateToolDoorClient;
 import prepared_private_state : PreparedPrivateStateOwner;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 
@@ -70,7 +71,9 @@ struct PreparedReductionParamImage {
 // preview is already baked in) so that tool.doApply's snapshot is always
 // captured from the ORIGINAL mesh — idempotent regardless of preview state.
 // ---------------------------------------------------------------------------
-class ReductionTool : Tool {
+class ReductionTool : Tool, PreparedToolDoorClient {
+    mixin PreparedPrivateStateToolDoorClient!(Layer,
+        PreparedPrivateStateOwner.reductionSession);
 private:
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
