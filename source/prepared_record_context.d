@@ -71,6 +71,9 @@ import prepared_loop_slice_deactivate : PreparedLoopSliceDeactivateOwner;
 import prepared_loop_slice_param_update : PreparedLoopSliceParamUpdateOwner;
 import prepared_edge_extend_param_update : PreparedEdgeExtendParamUpdateOwner;
 import prepared_edge_extend_deactivate : PreparedEdgeExtendDeactivateOwner;
+import prepared_pipe_activation : PreparedPipeActivationOwner;
+import registry : PreparedPipeAttrs;
+import toolpipe.pipeline : Pipeline;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -152,7 +155,8 @@ private enum PreparedResourceKind : ubyte {
     VertexMergeParamUpdateState, VertexBevelParamUpdateState,
     VertexExtrudeParamUpdateState, SliceDeactivateState, SliceParamUpdateState,
     EdgeSliceDeactivateState, EdgeSliceParamUpdateState, LoopSliceDeactivateState,
-    LoopSliceParamUpdateState, EdgeExtendParamUpdateState, EdgeExtendDeactivateState
+    LoopSliceParamUpdateState, EdgeExtendParamUpdateState, EdgeExtendDeactivateState,
+    PipeActivationState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -216,6 +220,7 @@ private struct PreparedResourceEntry {
     PreparedEdgeExtendDeactivateOwner edgeExtendDeactivate;
     PreparedMirrorDeactivateOwner mirrorDeactivate;
     PreparedBridgeDeactivateOwner bridgeDeactivate;
+    PreparedPipeActivationOwner pipeActivation;
     ClickPointResourceOwner clickDestroy;
     BoxHandlerBatchResourceOwner boxHandlersDestroy;
     SnapOverlayOwner snapOverlay;
@@ -1186,6 +1191,20 @@ public:
         return history_.prepareInvalidateRedo(token_);
     }
 
+    /// Enlist the universal transient-stage reset and preset image at its
+    /// exact semantic position in the unified activation journal.
+    bool preparePipeActivation(ref Pipeline pipeline,
+                               in PreparedPipeAttrs attrs) {
+        if (!begun_ || validated_Once) return false;
+        auto owner = PreparedPipeActivationOwner.prepare(pipeline, attrs);
+        resources_.reserve(1 + resources_.length);
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.PipeActivationState;
+        e.pipeActivation = owner;
+        resources_ ~= e;
+        return true;
+    }
+
     ulong nextRun() {
         if (!begun_ || validated_Once || history_ is null) return 0;
         return history_.prepareNextRun(token_);
@@ -1409,6 +1428,8 @@ public:
             case PreparedResourceKind.BridgeDeactivateState:
                 ok = e.bridgeDeactivate !is null &&
                     e.bridgeDeactivate.validate(); break;
+            case PreparedResourceKind.PipeActivationState:
+                ok = e.pipeActivation !is null && e.pipeActivation.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -1726,6 +1747,10 @@ public:
             e.bridgeDeactivate.install();
             version(unittest) installTrace_[installTraceLength_++] = 41;
             break;
+        case PreparedResourceKind.PipeActivationState:
+            e.pipeActivation.install();
+            version(unittest) installTrace_[installTraceLength_++] = 71;
+            break;
         }
         if (!installedHistory && history_ !is null)
             history_.installPreparedToken(validated_);
@@ -1848,6 +1873,7 @@ private:
             e.mirrorDeactivate.abort(); break;
         case PreparedResourceKind.BridgeDeactivateState:
             e.bridgeDeactivate.abort(); break;
+        case PreparedResourceKind.PipeActivationState: break;
         case PreparedResourceKind.RadialArrayTransitionState:
             e.radialArrayTransition.abort(); break;
         case PreparedResourceKind.TransformActivationState:
@@ -2202,4 +2228,41 @@ version (unittest) unittest {
     abortedContext.discard();
     assert(abortedGpu.faceVao == 0 &&
         abortedOwner.fakeCreatedForTest() == abortedOwner.fakeDeletedForTest());
+
+    import toolpipe.stages.actcenter : ActionCenterStage;
+    import toolpipe.stages.axis : AxisStage;
+    import toolpipe.stages.constrain : ConstrainStage;
+    import toolpipe.stages.falloff : FalloffStage;
+    import toolpipe.packets : FalloffType;
+    Pipeline pipe;
+    auto pipeAcen = new ActionCenterStage(null, null);
+    auto pipeAxis = new AxisStage();
+    auto pipeConstrain = new ConstrainStage();
+    auto pipeFalloff = new FalloffStage();
+    pipe.add(pipeAcen); pipe.add(pipeAxis);
+    pipe.add(pipeConstrain); pipe.add(pipeFalloff);
+    pipeAcen.mode = ActionCenterStage.Mode.Origin;
+    pipeConstrain.enabled = true;
+    PreparedPipeAttrs pipeAttrs = ["falloff": ["type": "radial"]];
+    auto pipeContext = new PreparedRecordContext(null, new RecordObserverHub());
+    assert(pipeContext.preparePipeActivation(pipe, pipeAttrs));
+    assert(pipeContext.markNoHistoryInstall());
+    assert(pipeAcen.mode == ActionCenterStage.Mode.Origin &&
+           pipeFalloff.type == FalloffType.None,
+           "record context installed pipe image during preparation");
+    assert(pipeContext.validate());
+    pipeContext.install();
+    assert(pipeAcen.mode == ActionCenterStage.Mode.None &&
+           !pipeConstrain.enabled && pipeFalloff.type == FalloffType.Radial,
+           "record context omitted prepared pipe journal row");
+    assert(pipeContext.installTraceForTest() == [71, 8],
+           "record context reordered prepared pipe journal row");
+
+    auto stalePipeContext = new PreparedRecordContext(null,
+                                                       new RecordObserverHub());
+    assert(stalePipeContext.preparePipeActivation(pipe, PreparedPipeAttrs.init));
+    assert(stalePipeContext.markNoHistoryInstall());
+    pipeConstrain.offset = 9.0f;
+    assert(!stalePipeContext.validate() && pipeConstrain.offset == 9.0f,
+           "record context accepted or installed a stale pipe image");
 }
