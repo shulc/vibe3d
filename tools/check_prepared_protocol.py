@@ -289,6 +289,7 @@ B5Q_PREPARED_LEGACY = {
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "update"),
     ("tools.edit.topology_pen.tool", "TopologyPenTool", "deactivate"),
     ("tools.slice.slice_tool", "SliceTool", "onParamChanged"),
+    ("tools.slice.edge_slice_tool", "EdgeSliceTool", "deactivate"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
@@ -326,7 +327,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "fdd99cde7ce551471f8386b4f1710c33bd06f8551a4bb0a2b6c6ece18908395e"
+    "8ea37b79dd65f627233a917a7b82e7a012fe94711fe52d983b38e5dfc05e1806"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -501,6 +502,7 @@ for path, text in prepared_source_texts.items():
             "prepared_vertex_extrude_param_update",
             "prepared_slice_deactivate",
             "prepared_slice_param_update",
+            "prepared_edge_slice_deactivate",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
@@ -2586,6 +2588,58 @@ for target, old, new, label in (
         mutant[target] = mutant[target].replace(old, new, 1)
     if mutant[target] == slice_deactivate_sources[target] or slice_deactivate_gate(mutant):
         fail(f"Slice deactivate mutation did not RED: {label}")
+
+edge_slice_deactivate_sources = {
+    "tool": (ROOT / "source/tools/slice/edge_slice_tool.d").read_text(),
+    "owner": (ROOT / "source/prepared_edge_slice_deactivate.d").read_text(),
+    "context": record_context,
+    "effect": (ROOT / "source/prepared_tool_effect.d").read_text(),
+}
+def edge_slice_deactivate_gate(s):
+    tool, owner, context, effect = (s[k] for k in
+        ("tool", "owner", "context", "effect"))
+    return all(x in tool for x in (
+        "bakeChainInto(ref Mesh work", "image.expectedLive = MeshSnapshot.capture(live);",
+        "image.expectedBefore = chainBefore_;", "detachedPreparedMesh(live)",
+        "bakeChainInto(image.candidate", "image.expectedLive.matches(live)",
+        "image.expectedBefore.matches(chainBefore_)", "uploadOwner.owns(gpu)",
+        "handlerDestroy.owns(handles_)",
+        "context.prepareStampedMeshImage(layer, owner.candidate",
+        "context.prepareUpload(uploadOwner, owner.candidate)",
+        "context.prepareEdgeSliceDeactivate(owner)")) and all(x in owner for x in (
+        "target.classinfo !is EdgeSliceTool.classinfo", "!target.ownsPreparedLayer(layer)",
+        "&layer_.meshRef() !is source_", "prepared_.owner != owner_",
+        "prepared_.generation != generation_", "validatedToken_.owner != owner_",
+        "validatedToken_.generation != generation_",
+        "target_.installPreparedDeactivateState(image_)")) and \
+        context.count("case PreparedResourceKind.EdgeSliceDeactivateState:") == 3 and \
+        "e.edgeSliceDeactivate.install();" in context and \
+        "Primitive, Slice, EdgeSlice, TopologyPen" in effect
+if not edge_slice_deactivate_gate(edge_slice_deactivate_sources):
+    fail("Edge Slice deactivate prepared contract drift")
+for target, old, new, label in (
+    ("tool", "bakeChainInto(image.candidate", "bakeChainFrom(", "drop detached kernel"),
+    ("tool", "image.expectedLive.matches(live)", "true", "drop live witness"),
+    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
+    ("tool", "handlerDestroy.owns(handles_)", "true", "drop handler identity"),
+    ("tool", "context.prepareEdgeSliceDeactivate(owner)", "true", "drop state enlist"),
+    ("owner", "target.classinfo !is EdgeSliceTool.classinfo", "false", "broaden product"),
+    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
+    ("context", "e.edgeSliceDeactivate.install();", "", "drop context install"),
+    ("effect", "Primitive, Slice, EdgeSlice, TopologyPen",
+     "Primitive, Slice, TopologyPen", "drop effect kind"),
+):
+    mutant = dict(edge_slice_deactivate_sources)
+    mutant[target] = mutant[target].replace(old, new, 1)
+    if mutant[target] == edge_slice_deactivate_sources[target] or \
+            edge_slice_deactivate_gate(mutant):
+        fail(f"Edge Slice deactivate mutation did not RED: {label}")
+copy_fixture = ROOT / "tests/compile_fail/prepared_edge_slice_deactivate_token_copy.d"
+run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(copy_fixture)], cwd=ROOT,
+    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+if run.returncode == 0 or ("not copyable" not in run.stdout and
+        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+    fail("Edge Slice deactivate token copy was not rejected:\n" + run.stdout)
 
 vertex_extrude_param_sources = {
     "tool": (ROOT / "source/tools/edit/vertex_extrude_tool.d").read_text(),

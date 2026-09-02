@@ -16,23 +16,44 @@ import editmode : EditMode;
 import params : Param, IntEnumEntry, wireTagForValue;
 import hover_state : g_hoveredEdge;
 import shader : Shader, LitShader;
-import command_history : CommandHistory;
+import command_history : CommandHistory, PreparedHistoryKind;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import eventlog : queryMouse;
 import handler : BoxHandler, ToolHandles, gizmoSize, getGizmoPixels, drawWorldSegment;
 import viewport_scheme : schemeColor, SchemeColor;
-import document : primaryModelSpace;
+import document : Layer, primaryModelSpace;
 import overlay_space : OverlaySpace;
 import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext;
-import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
+    PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_edge_slice_activation : PreparedEdgeSliceActivationOwner;
+import prepared_edge_slice_deactivate : PreparedEdgeSliceDeactivateOwner;
+import mesh_gpu : GpuUploadOwner;
+import handler : BoxHandlerBatchResourceOwner;
 
 struct PreparedEdgeSliceActivationImage {
     bool valid;
     void clear() nothrow @nogc { valid = false; }
+}
+
+struct PreparedEdgeSliceDeactivateImage {
+    bool valid, expectedActive, expectedArmed, expectedScrubbing, expectedBuilt;
+    int expectedPhase, expectedDragPart, expectedActivePoint;
+    size_t expectedArmedAddr; ulong expectedArmedMutVer;
+    uint[] expectedEdges, expectedPointVerts; float[] expectedPointT;
+    MeshSnapshot expectedLive, expectedBefore;
+    Mesh candidate; uint deliveryFlags, deliveryDomains;
+    bool appliesMesh, historyEligible, carrierMismatch;
+    void clear() nothrow @nogc {
+        valid = appliesMesh = historyEligible = carrierMismatch = false;
+        expectedEdges = null; expectedPointVerts = null; expectedPointT = null;
+        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
+        candidate = Mesh.init;
+        deliveryFlags = deliveryDomains = 0;
+    }
 }
 
 /// The `t = %` HUD readout string — mirrors `loopSliceHudLabel`
@@ -200,6 +221,7 @@ private:
     // latched point, plus one for the pending (hover-derived) point.
     BoxHandler[] handles_;
     ToolHandles  toolHandles_;
+    version(unittest) bool suppressRefreshForTest_;
 
     enum float HANDLE_HALF_PX = 5.0f;
     enum Vec3  HANDLE_COLOR = schemeColor(SchemeColor.toolPath);
@@ -375,6 +397,107 @@ public:
         // activate->draw->deactivate cycle leaks a VAO+VBO per handle.
         foreach (h; handles_) if (h !is null) h.destroy();
         handles_ = [];
+    }
+
+    final PreparedEdgeSliceDeactivateImage buildPreparedDeactivateState(
+            ref Mesh live) {
+        PreparedEdgeSliceDeactivateImage image; image.valid = true;
+        image.expectedActive = active; image.expectedArmed = armed_;
+        image.expectedScrubbing = scrubbing_; image.expectedBuilt = built_;
+        image.expectedPhase = cast(int)phase_; image.expectedDragPart = dragPart_;
+        image.expectedActivePoint = activePoint_; image.expectedArmedAddr = armedKey_.addr;
+        image.expectedArmedMutVer = armedKey_.mutVer; image.expectedEdges = edgesParam_.dup;
+        image.expectedPointVerts.length = latchedPoints_.length * 2;
+        image.expectedPointT.length = latchedPoints_.length;
+        foreach (i, p; latchedPoints_) {
+            image.expectedPointVerts[i * 2] = p.v0;
+            image.expectedPointVerts[i * 2 + 1] = p.v1;
+            image.expectedPointT[i] = p.t;
+        }
+        image.expectedLive = MeshSnapshot.capture(live);
+        image.expectedBefore = chainBefore_;
+        if (!active) return image;
+        const identityCurrent = armedKey_.matches(live) && chainBefore_.filled;
+        if (latchedPoints_.length >= 2 && identityCurrent && history !is null &&
+                gestureFactory !is null) {
+            image.candidate = detachedPreparedMesh(live);
+            auto shadow = beginPreparedShadow(image.candidate);
+            const n = bakeChainInto(image.candidate, image.expectedBefore,
+                latchedPoints_);
+            // Even a zero-segment result has restored the activation baseline;
+            // legacy commitChain then runs cancelLiveEdit and keeps that restore.
+            image.appliesMesh = true;
+            image.historyEligible = n > 0;
+            drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+                image.deliveryDomains); shadow.close();
+        } else if (latchedPoints_.length < 2 && identityCurrent) {
+            image.candidate = detachedPreparedMesh(live);
+            auto shadow = beginPreparedShadow(image.candidate);
+            image.expectedBefore.restore(image.candidate);
+            drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+                image.deliveryDomains); shadow.close(); image.appliesMesh = true;
+        }
+        return image;
+    }
+
+    final bool preparedDeactivateStateMatches(
+            in PreparedEdgeSliceDeactivateImage image, ref const Mesh live) const
+            nothrow @nogc {
+        if (!image.valid || active != image.expectedActive || armed_ != image.expectedArmed ||
+            scrubbing_ != image.expectedScrubbing || built_ != image.expectedBuilt ||
+            cast(int)phase_ != image.expectedPhase || dragPart_ != image.expectedDragPart ||
+            activePoint_ != image.expectedActivePoint || armedKey_.addr != image.expectedArmedAddr ||
+            armedKey_.mutVer != image.expectedArmedMutVer || edgesParam_ != image.expectedEdges ||
+            latchedPoints_.length != image.expectedPointT.length ||
+            !image.expectedLive.matches(live) || !image.expectedBefore.matches(chainBefore_)) return false;
+        foreach (i, p; latchedPoints_)
+            if (p.v0 != image.expectedPointVerts[i * 2] ||
+                p.v1 != image.expectedPointVerts[i * 2 + 1] || p.t != image.expectedPointT[i])
+                return false;
+        return true;
+    }
+
+    final void installPreparedDeactivateState(
+            ref PreparedEdgeSliceDeactivateImage image) nothrow @nogc {
+        if (!image.valid) return;
+        active = false; armed_ = false; scrubbing_ = false; built_ = false;
+        phase_ = Phase.Idle; latchedPoints_ = null; edgesParam_ = null;
+        dragPart_ = -1; activePoint_ = -1; armedKey_ = MeshCacheKey.init;
+        chainBefore_ = MeshSnapshot.init; handles_ = null; image.clear();
+    }
+
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,
+            Layer layer, GpuUploadOwner uploadOwner,
+            BoxHandlerBatchResourceOwner handlerDestroy) {
+        if (context is null) return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.EdgeSlice, false, false);
+        scope(failure) context.discard();
+        auto owner = PreparedEdgeSliceDeactivateOwner.prepare(this, layer);
+        bool ok = owner !is null;
+        if (ok && owner.appliesMesh)
+            ok = owner.deliveryFlags != 0 && uploadOwner !is null && uploadOwner.owns(gpu) &&
+                context.prepareStampedMeshImage(layer, owner.candidate,
+                    owner.deliveryFlags, owner.deliveryDomains) &&
+                context.prepareUpload(uploadOwner, owner.candidate);
+        bool historyPrepared;
+        if (ok && owner.historyEligible) {
+            auto cmd = cast(MeshSessionEdit)gestureFactory();
+            if (cmd !is null) {
+                cmd.setSnapshots(owner.beforeSnapshot, MeshSnapshot.capture(owner.candidate),
+                    "Edge Slice");
+                historyPrepared = context.prepare(cmd, PreparedHistoryKind.Plain).accepted;
+                ok = historyPrepared;
+            } else ok = context.prepareGestureCarrierMismatch();
+        }
+        if (ok && handles_.length > 0)
+            ok = handlerDestroy !is null && handlerDestroy.owns(handles_) &&
+                context.prepareDestroy(handlerDestroy);
+        if (ok) ok = historyPrepared ? context.markHistoryInstall()
+                                     : context.markNoHistoryInstall();
+        if (ok) ok = context.prepareEdgeSliceDeactivate(owner);
+        if (!ok) context.discard();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.EdgeSlice, historyPrepared, ok);
     }
 
     public override bool hasUncommittedEdit() const {
@@ -910,24 +1033,29 @@ private:
     // on pointsFromEdgesParam/pickSeedSubEdge — or fails to reach).
     // -------------------------------------------------------------------
     size_t bakeChainFrom(ref MeshSnapshot baseline, const ChainPoint[] pts) {
-        if (pts.length < 2) { baseline.restore(*mesh); return 0; }
-        baseline.restore(*mesh);
+        return bakeChainInto(*mesh, baseline, pts);
+    }
+
+    size_t bakeChainInto(ref Mesh work, ref MeshSnapshot baseline,
+            const ChainPoint[] pts) {
+        if (pts.length < 2) { baseline.restore(work); return 0; }
+        baseline.restore(work);
 
         uint seed = ~0u;   // no seed for segment 0 — origin resolves via pts[0]
         foreach (k; 0 .. pts.length - 1) {
-            uint eB = (*mesh).edgeIndexOf(pts[k + 1].v0, pts[k + 1].v1);
+            uint eB = work.edgeIndexOf(pts[k + 1].v0, pts[k + 1].v1);
             if (eB == ~0u) return k;   // destination not a live baseline edge
 
             EdgeSliceResult r;
             if (k == 0) {
-                uint eA = (*mesh).edgeIndexOf(pts[0].v0, pts[0].v1);
+                uint eA = work.edgeIndexOf(pts[0].v0, pts[0].v1);
                 if (eA == ~0u) return k;
-                r = (*mesh).edgeSliceEx(eA, eB, effectiveT(pts[0].t), effectiveT(pts[1].t), split_);
+                r = work.edgeSliceEx(eA, eB, effectiveT(pts[0].t), effectiveT(pts[1].t), split_);
             } else {
-                uint sub = pickSeedSubEdge(seed, eB);
+                uint sub = pickSeedSubEdgeIn(work, seed, eB);
                 if (sub == ~0u) return k;
-                float endT = (mesh.edges[sub][0] == seed) ? 0.0f : 1.0f;
-                r = (*mesh).edgeSliceEx(sub, eB, endT, effectiveT(pts[k + 1].t), split_);
+                float endT = (work.edges[sub][0] == seed) ? 0.0f : 1.0f;
+                r = work.edgeSliceEx(sub, eB, endT, effectiveT(pts[k + 1].t), split_);
             }
             // S4 (mesh-robustness batch: gate on `!r.meshChanged`, not
             // `facesSplit==0`): in split mode, facesSplit==0 can be a KEPT
@@ -973,13 +1101,17 @@ private:
     // candidates with no face-adjacency path that the points-only cut would
     // have happily taken).
     uint pickSeedSubEdge(uint seed, uint destEdge) {
-        uint[] candidates;
-        foreach (sub; mesh.edgesAroundVertex(seed)) candidates ~= sub;
-        if (candidates.length == 0) return ~0u;
-        if (destEdge >= mesh.edges.length) return candidates[0];
+        return pickSeedSubEdgeIn(*mesh, seed, destEdge);
+    }
 
-        Vec3 destMid = lerpVec3(mesh.vertices[mesh.edges[destEdge][0]],
-                                 mesh.vertices[mesh.edges[destEdge][1]], 0.5f);
+    uint pickSeedSubEdgeIn(ref Mesh work, uint seed, uint destEdge) {
+        uint[] candidates;
+        foreach (sub; work.edgesAroundVertex(seed)) candidates ~= sub;
+        if (candidates.length == 0) return ~0u;
+        if (destEdge >= work.edges.length) return candidates[0];
+
+        Vec3 destMid = lerpVec3(work.vertices[work.edges[destEdge][0]],
+                                 work.vertices[work.edges[destEdge][1]], 0.5f);
 
         uint  best        = ~0u;
         float bestDist     = float.infinity;
@@ -989,10 +1121,10 @@ private:
             bool reaches;
             if (sub == destEdge) reaches = false;            // same-edge no-op, any split_ setting
             else if (!split_)    reaches = true;              // points-only: unconditional success
-            else                 reaches = (*mesh).edgeSliceReachable(sub, destEdge);
+            else                 reaches = work.edgeSliceReachable(sub, destEdge);
 
-            uint  other = mesh.edgeOtherVertex(sub, seed);
-            float dist  = (mesh.vertices[other] - destMid).length();
+            uint  other = work.edgeOtherVertex(sub, seed);
+            float dist  = (work.vertices[other] - destMid).length();
 
             bool better = (best == ~0u)
                 || (reaches && !bestReaches)
@@ -1103,10 +1235,15 @@ private:
     }
 
     void refreshCaches() {
+        version(unittest) if (suppressRefreshForTest_) return;
         refreshDisplay(mesh, gpu);
     }
 
 public:
+    final bool ownsPreparedLayer(Layer layer) const {
+        return layer !is null && meshSrc_ !is null &&
+            &layer.meshRef() is meshSrc_();
+    }
     version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
         return preparedToolStateOwner;
     }
@@ -1139,4 +1276,19 @@ public:
             tB_ == 0.8f && pointProxy_ == 0.3f && vpWorld_.view[0] == 9 &&
             armedKey_ == MeshCacheKey.init && !chainBefore_.filled;
     }
+    version(unittest) final void seedPreparedDeactivateForTest(ref Mesh live) {
+        suppressRefreshForTest_ = true;
+        active = true; edgesParam_ = [0, 1]; tA_ = 0.25f; tB_ = 0.75f;
+        armChain();
+    }
+    version(unittest) final bool preparedDeactivateInstalledForTest() const
+            nothrow @nogc {
+        return !active && !armed_ && !scrubbing_ && !built_ &&
+            phase_ == Phase.Idle && latchedPoints_.length == 0 &&
+            edgesParam_.length == 0 && dragPart_ == -1 && activePoint_ == -1 &&
+            armedKey_ == MeshCacheKey.init && !chainBefore_.filled &&
+            handles_.length == 0;
+    }
+    version(unittest) final void mutatePreparedDeactivateForTest()
+            nothrow @nogc { scrubbing_ = !scrubbing_; }
 }
