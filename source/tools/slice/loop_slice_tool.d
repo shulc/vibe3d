@@ -28,6 +28,8 @@ import display_sync : refreshDisplay;
 import document : Layer, primaryModelSpace;
 import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
+import prepared_record_context : PreparedToolParamDoorClient,
+    PreparedNamedGpuParamDoorClient;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
     PreparedDeactivateEffect, PreparedDeactivateKind, PreparedLoopSliceParamEffect,
     PreparedLoopSliceParamKind;
@@ -224,7 +226,9 @@ ProfileSample[] profileSamples(LoopProfile p) {
 // KeepAliveOnCancel (task 0428; interface renamed in 0430): the
 // survivesEditCancel override below is the interface's implementation
 // (EditSession discovers it by cast).
-final class LoopSliceTool : Tool, KeepAliveOnCancel, PreparedToolDoorClient {
+final class LoopSliceTool : Tool, KeepAliveOnCancel, PreparedToolDoorClient,
+                            PreparedToolParamDoorClient {
+    mixin PreparedNamedGpuParamDoorClient;
 public:
     // Edit — what a click on the HUD track / a marker does (task 0239).
     // Move (default): reposition the Current slice (today's scrub,

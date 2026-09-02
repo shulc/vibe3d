@@ -28,6 +28,8 @@ import tools.create.create_common : currentWorkplaneFrame, pickWorkplaneFrame, W
 // uses, so Slice's Ctrl constraint is byte-consistent with Move's, not reinvented.
 import tools.transform.move : chooseConstraintAxis;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
+import prepared_record_context : PreparedToolParamDoorClient,
+    PreparedNamedGpuParamDoorClient;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_slice_activation : PreparedSliceActivationOwner;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
@@ -676,7 +678,8 @@ void sliceRingPlaneBasis(Vec3 axis, out Vec3 right, out Vec3 up) {
 // from under us (scene reset / layer switch) between the last preview and the
 // drop — a mismatch drops the preview instead of baking a bogus entry.
 // ---------------------------------------------------------------------------
-final class SliceTool : Tool, PreparedToolDoorClient {
+final class SliceTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+    mixin PreparedNamedGpuParamDoorClient;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const nothrow @nogc { return meshSrc_(); }

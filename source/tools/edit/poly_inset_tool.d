@@ -1,4 +1,6 @@
 module tools.edit.poly_inset_tool;
+import prepared_record_context : PreparedToolParamDoorClient,
+    PreparedGpuParamDoorClient;
 
 import bindbc.sdl;
 import operator : VectorStack;
@@ -101,7 +103,8 @@ struct PreparedPolyInsetParamImage {
 // codebase uses, and the toolcard does not treat it as a load-bearing
 // requirement. Deferred; see task 0359 Лог.
 // ---------------------------------------------------------------------------
-class PolyInsetTool : Tool, PreparedToolDoorClient {
+class PolyInsetTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+    mixin PreparedGpuParamDoorClient;
     mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;

@@ -16,6 +16,8 @@ import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
+import prepared_record_context : PreparedToolParamDoorClient,
+    PreparedPenParamDoorClient;
 import prepared_private_state : PreparedPrivateStateOwner;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
     PreparedDeactivateEffect, PreparedDeactivateKind, PreparedPenParamEffect,
@@ -358,7 +360,8 @@ struct PreparedPenParamImage {
     }
 }
 
-class PenTool : Tool, PreparedToolDoorClient {
+class PenTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+    mixin PreparedPenParamDoorClient;
 private:
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }

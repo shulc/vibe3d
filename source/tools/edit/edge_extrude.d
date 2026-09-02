@@ -1,4 +1,6 @@
 module tools.edit.edge_extrude;
+import prepared_record_context : PreparedToolParamDoorClient,
+    PreparedGpuParamDoorClient;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedSimpleToolDoorClient;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
@@ -122,7 +124,8 @@ struct PreparedEdgeExtrudeParamImage {
 // SAME kernel through applyHeadless(); ToolDoApplyCommand wraps it with a
 // snapshot pair for undo (so applyHeadless MUST NOT snapshot itself).
 // ---------------------------------------------------------------------------
-class EdgeExtrudeTool : Tool, PreparedToolDoorClient {
+class EdgeExtrudeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+    mixin PreparedGpuParamDoorClient;
     mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;

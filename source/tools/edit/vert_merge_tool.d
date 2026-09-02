@@ -1,4 +1,6 @@
 module tools.edit.vert_merge_tool;
+import prepared_record_context : PreparedToolParamDoorClient,
+    PreparedGpuParamDoorClient;
 
 import bindbc.sdl;
 import operator : VectorStack;
@@ -99,7 +101,8 @@ struct PreparedVertexMergeActivationImage {
 // generic viewport haul, topology-mutating via a shared MeshSessionEdit
 // before/after snapshot).
 // ---------------------------------------------------------------------------
-class VertexMergeTool : Tool, PreparedToolDoorClient {
+class VertexMergeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+    mixin PreparedGpuParamDoorClient;
     mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;

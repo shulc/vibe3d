@@ -1,4 +1,6 @@
 module tools.alignment.radial_array_tool;
+import prepared_record_context : PreparedToolParamDoorClient,
+    PreparedGpuParamDoorClient;
 
 import bindbc.sdl;
 import operator : VectorStack;
@@ -174,7 +176,8 @@ struct RadialArrayTransitionImage {
 // applyHeadless(); ToolDoApplyCommand wraps it with a snapshot pair for
 // undo (applyHeadless MUST NOT snapshot itself).
 // ---------------------------------------------------------------------------
-class RadialArrayTool : Tool, PreparedToolDoorClient {
+class RadialArrayTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+    mixin PreparedGpuParamDoorClient;
 private:
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }

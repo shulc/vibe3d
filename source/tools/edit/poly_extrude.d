@@ -1,4 +1,6 @@
 module tools.edit.poly_extrude;
+import prepared_record_context : PreparedToolParamDoorClient,
+    PreparedGpuParamDoorClient;
 
 import bindbc.sdl;
 import operator : VectorStack;
@@ -87,7 +89,8 @@ struct PreparedPolyExtrudeParamImage {
 // <v>; tool.doApply` drives through applyHeadless(); ToolDoApplyCommand wraps
 // it with a snapshot pair for undo (applyHeadless MUST NOT snapshot itself).
 // ---------------------------------------------------------------------------
-class PolyExtrudeTool : Tool, PreparedToolDoorClient {
+class PolyExtrudeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+    mixin PreparedGpuParamDoorClient;
     mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;

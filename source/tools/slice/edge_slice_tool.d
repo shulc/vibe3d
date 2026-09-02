@@ -27,6 +27,8 @@ import document : Layer, primaryModelSpace;
 import overlay_space : OverlaySpace;
 import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
+import prepared_record_context : PreparedToolParamDoorClient,
+    PreparedNamedGpuParamDoorClient;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
     PreparedDeactivateEffect, PreparedDeactivateKind, PreparedEdgeSliceParamEffect,
     PreparedEdgeSliceParamKind;
@@ -135,7 +137,8 @@ private Vec3 lerpVec3(Vec3 a, Vec3 b, float t) {
 // 0430): the survivesEditCancel / tryUndoStepInSession overrides below are
 // the interfaces' implementations (EditSession discovers them by cast).
 final class EdgeSliceTool : Tool, KeepAliveOnCancel, SessionStepUndo,
-                            PreparedToolDoorClient {
+                            PreparedToolDoorClient, PreparedToolParamDoorClient {
+    mixin PreparedNamedGpuParamDoorClient;
 public:
     enum Show { None, Position }
 

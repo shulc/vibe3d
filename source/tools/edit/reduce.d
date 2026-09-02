@@ -1,4 +1,6 @@
 module tools.edit.reduce;
+import prepared_record_context : PreparedToolParamDoorClient,
+    PreparedGpuParamDoorClient;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedPrivateStateToolDoorClient;
 import prepared_private_state : PreparedPrivateStateOwner;
@@ -71,7 +73,8 @@ struct PreparedReductionParamImage {
 // preview is already baked in) so that tool.doApply's snapshot is always
 // captured from the ORIGINAL mesh — idempotent regardless of preview state.
 // ---------------------------------------------------------------------------
-class ReductionTool : Tool, PreparedToolDoorClient {
+class ReductionTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+    mixin PreparedGpuParamDoorClient;
     mixin PreparedPrivateStateToolDoorClient!(Layer,
         PreparedPrivateStateOwner.reductionSession);
 private:

@@ -1,4 +1,6 @@
 module tools.edit.edge_bevel;
+import prepared_record_context : PreparedToolParamDoorClient,
+    PreparedGpuParamDoorClient;
 
 import bindbc.sdl;
 import operator : VectorStack;
@@ -85,7 +87,8 @@ struct PreparedEdgeBevelParamImage {
 // Headless: tool.set edge.bevel on; tool.attr edge.bevel width <v>;
 //           tool.doApply → applyHeadless(); ToolDoApplyCommand wraps undo.
 // ---------------------------------------------------------------------------
-class EdgeBevelTool : Tool, PreparedToolDoorClient {
+class EdgeBevelTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+    mixin PreparedGpuParamDoorClient;
     mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;

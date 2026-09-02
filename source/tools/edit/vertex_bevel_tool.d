@@ -1,4 +1,6 @@
 module tools.edit.vertex_bevel_tool;
+import prepared_record_context : PreparedToolParamDoorClient,
+    PreparedGpuParamDoorClient;
 
 import bindbc.sdl;
 import operator : VectorStack;
@@ -102,7 +104,8 @@ struct PreparedVertexBevelActivationImage {
 // attribute, ACTR-anchored single handle, topology-creating, generic
 // before/after-snapshot undo).
 // ---------------------------------------------------------------------------
-class VertexBevelTool : Tool, PreparedToolDoorClient {
+class VertexBevelTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+    mixin PreparedGpuParamDoorClient;
     mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;

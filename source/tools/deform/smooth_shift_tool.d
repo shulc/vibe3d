@@ -24,6 +24,8 @@ import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedSimpleToolDoorClient;
+import prepared_record_context : PreparedToolParamDoorClient,
+    PreparedGpuParamDoorClient;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_smooth_shift_activation : PreparedSmoothShiftActivationOwner;
@@ -119,7 +121,8 @@ struct PreparedSmoothShiftParamImage {
 // ToolDoApplyCommand wraps it with a snapshot pair for undo (applyHeadless
 // MUST NOT snapshot itself).
 // ---------------------------------------------------------------------------
-class SmoothShiftTool : Tool, PreparedToolDoorClient {
+class SmoothShiftTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+    mixin PreparedGpuParamDoorClient;
     mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;

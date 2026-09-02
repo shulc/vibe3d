@@ -1,4 +1,6 @@
 module tools.edit.poly_bevel;
+import prepared_record_context : PreparedToolParamDoorClient,
+    PreparedGpuParamDoorClient;
 
 import bindbc.sdl;
 import operator : VectorStack;
@@ -85,7 +87,8 @@ struct PreparedPolyBevelParamImage {
 // Headless: tool.set poly.bevel on; tool.attr poly.bevel inset/shift <v>;
 //           tool.doApply → applyHeadless(); ToolDoApplyCommand wraps undo.
 // ---------------------------------------------------------------------------
-class PolyBevelTool : Tool, PreparedToolDoorClient {
+class PolyBevelTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+    mixin PreparedGpuParamDoorClient;
     mixin PreparedSimpleToolDoorClient!Layer;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;

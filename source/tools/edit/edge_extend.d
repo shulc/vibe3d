@@ -28,6 +28,8 @@ import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKin
     PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedXfrmUpdateEffect, PreparedXfrmUpdateKind;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
+import prepared_record_context : PreparedToolParamDoorClient,
+    PreparedNamedGpuParamDoorClient;
 import prepared_edge_extend_tool_activation : PreparedEdgeExtendToolActivationOwner;
 import prepared_edge_extend_param_update : PreparedEdgeExtendParamUpdateOwner;
 import prepared_edge_extend_deactivate : PreparedEdgeExtendDeactivateOwner;
@@ -161,7 +163,8 @@ struct PreparedEdgeExtendDeactivateImage {
 // ToolDoApplyCommand wraps it with a snapshot pair for undo (so applyHeadless
 // MUST NOT snapshot itself).
 // ---------------------------------------------------------------------------
-class EdgeExtendTool : Tool, PreparedToolDoorClient {
+class EdgeExtendTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+    mixin PreparedNamedGpuParamDoorClient;
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const nothrow @nogc { return meshSrc_(); }

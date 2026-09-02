@@ -88,6 +88,56 @@ interface PreparedToolDoorClient {
             ulong threadIdentity, ulong contextIdentity);
 }
 
+/// Capability for the 25 reviewed `onParamChanged` roots. Candidate Param
+/// storage is already detached; this door only enlists the root's external
+/// Mesh/GPU/history/private-state effects into the activation transaction.
+interface PreparedToolParamDoorClient {
+    bool prepareDoorParamChanged(string name, PreparedRecordContext context,
+            Layer layer, ulong threadIdentity, ulong contextIdentity);
+}
+
+/// Shared adapter for roots whose typed producer reads the changed candidate
+/// fields and therefore needs no parameter name of its own.
+mixin template PreparedGpuParamDoorClient() {
+    override bool prepareDoorParamChanged(string, PreparedRecordContext context,
+            Layer layer, ulong threadIdentity, ulong contextIdentity) {
+        auto upload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);
+        return prepareParamChanged(context, layer, upload).accepted;
+    }
+}
+
+/// Same owner construction for roots whose typed producer also discriminates
+/// on the changed parameter name.
+mixin template PreparedNamedGpuParamDoorClient() {
+    override bool prepareDoorParamChanged(string name,
+            PreparedRecordContext context, Layer layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto upload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);
+        return prepareParamChanged(name, context, layer, upload).accepted;
+    }
+}
+
+/// Signature-order variant used by the Magnet prepared producer.
+mixin template PreparedContextNamedGpuParamDoorClient() {
+    override bool prepareDoorParamChanged(string name,
+            PreparedRecordContext context, Layer layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto upload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);
+        return prepareParamChanged(context, name, layer, upload).accepted;
+    }
+}
+
+/// Pen owns a private preview GPU rather than the app's main GpuMesh.
+mixin template PreparedPenParamDoorClient() {
+    override bool prepareDoorParamChanged(string name,
+            PreparedRecordContext context, Layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto upload = new GpuUploadOwner(preparedPreviewGpu(), threadIdentity,
+                                         contextIdentity);
+        return prepareParamChanged(context, name, upload).accepted;
+    }
+}
+
 /// Shared adapter for the session tools whose complete prepared activation and
 /// deactivation products need no GL/Layer-specific owner arguments.
 mixin template PreparedSimpleToolDoorClient(LayerT) {
@@ -1968,6 +2018,32 @@ unittest {
         override CmdFlags cmdFlags() const { return CmdFlags.Model; }
         protected override bool applyImpl() { return true; }
     }
+
+    struct FakeParamResult { bool accepted; }
+    final class FakeParamDoor : PreparedToolParamDoorClient {
+        import mesh_gpu : GpuMesh;
+        GpuMesh storage;
+        GpuMesh* gpu;
+        Layer expectedLayer;
+        string seenName;
+        bool sawOwner;
+        this() { gpu = &storage; }
+        FakeParamResult prepareParamChanged(string name,
+                PreparedRecordContext, Layer layer, GpuUploadOwner upload) {
+            seenName = name;
+            sawOwner = upload !is null && upload.owns(gpu) &&
+                layer is expectedLayer;
+            return FakeParamResult(sawOwner);
+        }
+        mixin PreparedNamedGpuParamDoorClient;
+    }
+    auto fakeParamDoor = new FakeParamDoor();
+    fakeParamDoor.expectedLayer = new Layer();
+    assert(fakeParamDoor.prepareDoorParamChanged("segments", null,
+            fakeParamDoor.expectedLayer, 7, 11));
+    assert(fakeParamDoor.seenName == "segments" && fakeParamDoor.sawOwner,
+           "prepared param door lost name, Layer, or GPU owner identity");
+
     auto history = new CommandHistory();
     auto hub = new RecordObserverHub();
     hub.setMacroActive(true);

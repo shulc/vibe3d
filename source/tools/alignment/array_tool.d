@@ -1,4 +1,6 @@
 module tools.alignment.array_tool;
+import prepared_record_context : PreparedToolParamDoorClient,
+    PreparedGpuParamDoorClient;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
     PreparedPrivateStateToolDoorClient;
 import prepared_private_state : PreparedPrivateStateOwner;
@@ -136,7 +138,8 @@ struct PreparedArrayParamImage {
     }
 }
 
-final class ArrayTool : Tool, PreparedToolDoorClient {
+final class ArrayTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+    mixin PreparedGpuParamDoorClient;
     mixin PreparedPrivateStateToolDoorClient!(Layer,
         PreparedPrivateStateOwner.arraySession);
 private:
