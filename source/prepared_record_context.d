@@ -1748,6 +1748,20 @@ public:
         begun_ = false; validated_Once = false;
     }
 
+    /// Abandon a fully validated but not installed transaction. This is the
+    /// cutover composition escape hatch: predecessor validation may complete
+    /// before incoming activation preparation, and an incoming refusal must
+    /// still leave history/resources/live state untouched.
+    void abortValidated() nothrow @nogc {
+        if (!begun_ || !validated_Once) return;
+        if (history_ !is null) {
+            if (validated_.valid) history_.discardValidatedPreparedToken(validated_);
+            else history_.discardPreparedToken(token_);
+        }
+        abortResources();
+        begun_ = false; validated_Once = false;
+    }
+
 private:
     void abortResources() nothrow @nogc {
         foreach (ref e; resources_) final switch (e.kind) {

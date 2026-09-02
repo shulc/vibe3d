@@ -2596,6 +2596,10 @@ void main(string[] args) {
     // non-null.
     import edit_session : EditSession;
     EditSession session;
+    import command_history : CommandHistory;
+    import record_observer_hub : RecordObserverHub;
+    CommandHistory history;
+    auto recordObserverHub = new RecordObserverHub();
 
     // -------------------------------------------------------------------------
     // Task 1670 — POSE THE FRESH TOOL AT ARM TIME.
@@ -2848,8 +2852,7 @@ void main(string[] args) {
     // Registry + YAML config
     // -------------------------------------------------------------------------
 
-    import command_history : CommandHistory;
-    auto history = new CommandHistory();
+    history = new CommandHistory();
 
     // Refire/apply-record dispatch helper (task 0183 C4). Folds the
     // `if (history.refireActive) fire else apply+record` dance that was
@@ -2968,6 +2971,7 @@ void main(string[] args) {
     // redo / clear-history — saving a macro after several edits
     // produces a replayable script regardless of intervening undos.
     auto macroRecorder = new MacroRecorder();
+    macroRecorder.bindObserverHub(recordObserverHub);
 
     // GET /api/trace — non-destructive per-step capture. Every discrete
     // recorded command appends one entry (command + args + the resulting

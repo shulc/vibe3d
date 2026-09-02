@@ -634,8 +634,15 @@ for path, hub_text in prepared_source_texts.items():
                          "prepared_record_context.d"):
         if "RecordObserverHub" in hub_text:
             production_hub_refs += without_unittests(hub_text).count("RecordObserverHub")
-if production_hub_refs:
-    fail("P1.0b.3a record observer hub gained a pre-cutover caller")
+macro_source = (ROOT / "source/macro_recorder.d").read_text()
+if production_hub_refs != 5 or not all(x in app_source for x in (
+        "auto recordObserverHub = new RecordObserverHub();",
+        "macroRecorder.bindObserverHub(recordObserverHub);")) or not all(
+            x in macro_source for x in (
+                "void bindObserverHub(RecordObserverHub hub)",
+                "observerHub_.observeLegacy(commandLine, _flags)",
+                "observerHub_.macroLines()")):
+    fail("P1.0c record observer ownership cutover drift")
 install_match = re.search(r"void\s+installPrepared\s*\([^;{}]*\)\s*nothrow\s+@nogc\s*\{",
                           observer_source)
 if not install_match:

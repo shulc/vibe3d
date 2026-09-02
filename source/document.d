@@ -415,6 +415,37 @@ public:
     bool valid() const nothrow @nogc { return birthId != 0; }
 }
 
+// Thread-local projected mesh view for composing a prepared predecessor with
+// the incoming tool. Background/HTTP readers continue to observe live state.
+private Layer preparedLifecycleReadLayer_;
+
+struct PreparedLayerReadScope {
+    @disable this(this);
+private:
+    Layer layer_;
+public:
+    void close() nothrow @nogc {
+        if (preparedLifecycleReadLayer_ is layer_)
+            preparedLifecycleReadLayer_ = null;
+        layer_ = null;
+    }
+    ~this() { close(); }
+}
+
+PreparedLayerReadScope beginPreparedLayerRead(Layer layer) {
+    PreparedLayerReadScope result;
+    if (layer is null || !layer.hasEnlistedMesh() ||
+        preparedLifecycleReadLayer_ !is null) return result;
+    preparedLifecycleReadLayer_ = layer;
+    result.layer_ = layer;
+    return result;
+}
+
+private bool usesPreparedLifecycleRead(Layer layer) nothrow @nogc {
+    return layer !is null && preparedLifecycleReadLayer_ is layer &&
+        layer.hasEnlistedMesh();
+}
+
 final class Layer {
     /// THE LAYER'S IDENTITY, and the close on the address-reuse (ABA) hazard
     /// the epoch tables carry (task 1906 stage 3; `source/mesh_dirty.d`'s
@@ -2872,3 +2903,22 @@ static assert(!__traits(compiles, {
 static assert(!__traits(compiles, {
     ValidatedLayerMeshToken a; ValidatedLayerMeshToken b = a;
 }));
+
+unittest {
+    import math : Vec3;
+    auto doc = Document.bootstrap(Mesh.init);
+    auto layer = doc.primary;
+    layer.meshRef().vertices = [Vec3(1, 2, 3)];
+    auto live = &layer.meshRef();
+    assert(layer.beginEnlistedMesh());
+    layer.enlistedShadow().vertices[0] = Vec3(9, 8, 7);
+    {
+        auto projected = beginPreparedLayerRead(layer);
+        assert(&doc.activeMeshRef() is &layer.enlistedShadow());
+        assert(doc.activeMeshRef().vertices[0] == Vec3(9, 8, 7));
+        projected.close();
+    }
+    assert(&doc.activeMeshRef() is live);
+    assert(doc.activeMeshRef().vertices[0] == Vec3(1, 2, 3));
+    layer.abortEnlistedMesh();
+}

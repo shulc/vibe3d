@@ -313,7 +313,11 @@ mixin template DocumentSelection() {
     /// caller can mistake for a layer. A caller that binds it unchecked and
     /// writes through it faults immediately instead of editing a layer the user
     /// did not select.
-    Mesh*     activeMesh()    { return primary is null ? null : &primary.meshRef(); }
+    Mesh*     activeMesh() {
+        auto p = primary;
+        if (p is null) return null;
+        return usesPreparedLifecycleRead(p) ? &p.enlistedShadow() : &p.meshRef();
+    }
 
     /// Reference to the primary layer's mesh. **Throws `NoEditTargetException`
     /// when the item selection is empty** (task 0654).
@@ -344,7 +348,7 @@ mixin template DocumentSelection() {
         // a literal here was a silent way for the throw to say something else.
         auto p = primary;
         if (p is null) throw new NoEditTargetException(kNoEditTargetReason);
-        return p.meshRef();
+        return usesPreparedLifecycleRead(p) ? p.enlistedShadow() : p.meshRef();
     }
 
     /// True iff `l` is the primary (the single edit target).

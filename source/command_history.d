@@ -140,6 +140,19 @@ unittest { // P1.0b.3b scalar token, ordered shadow, joint observer ownership.
     h.installPreparedToken(valid);
     assert(h.undoStack.length == 1); // consumed token is inert.
 
+    auto abandoned = new CommandHistory();
+    auto abandonedToken = abandoned.beginPrepared();
+    assert(abandoned.prepareRecord(abandonedToken, cmd,
+        PreparedHistoryKind.Plain, 0).accepted);
+    auto abandonedValid = abandoned.validatesPreparedToken(abandonedToken);
+    assert(abandonedValid.valid && abandoned.undoStack.length == 0);
+    abandoned.discardValidatedPreparedToken(abandonedValid);
+    auto retryToken = abandoned.beginPrepared();
+    assert(abandoned.prepareRecord(retryToken, cmd,
+        PreparedHistoryKind.Plain, 0).accepted,
+        "validated abort did not release the history owner");
+    abandoned.discardPreparedToken(retryToken);
+
     auto ordered = new CommandHistory(); ordered._currentRunId = 55;
     auto orderedToken = ordered.beginPrepared();
     ordered.prepareRecord(orderedToken, cmd, PreparedHistoryKind.InSession, 7);
@@ -868,6 +881,19 @@ final class CommandHistory {
 
     void discardPreparedToken(ref PreparedHistoryToken token) nothrow @nogc {
         if (!ownsPrepared(token)) return;
+        preparedPending_ = false;
+        token.owner = 0; token.generation = 0;
+        pendingPrepared_.history.undoStack = null;
+        pendingPrepared_.history.redoStack = null;
+        pendingPrepared_.history.blockChildren = null;
+        pendingPrepared_.observerOwner = null;
+        pendingPrepared_.hasObserver = false;
+        pendingPrepared_.validated = false;
+    }
+
+    void discardValidatedPreparedToken(ref ValidatedPreparedHistoryToken token)
+            nothrow @nogc {
+        if (!ownsValidated(token)) return;
         preparedPending_ = false;
         token.owner = 0; token.generation = 0;
         pendingPrepared_.history.undoStack = null;

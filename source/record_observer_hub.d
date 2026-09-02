@@ -36,6 +36,16 @@ public:
     size_t traceLength() const nothrow @nogc { return traceEntries_.length; }
     string macroAt(size_t i) const nothrow @nogc { return macroLines_[i]; }
     string traceAt(size_t i) const nothrow @nogc { return traceEntries_[i]; }
+    bool macroActive() const nothrow @nogc { return macroActive_; }
+    void startMacro() nothrow {
+        macroActive_ = true; macroLines_.length = 0;
+    }
+    void stopMacro() nothrow @nogc { macroActive_ = false; }
+    void clearMacro() nothrow { macroLines_.length = 0; }
+    void observeLegacy(string line, uint /+flags+/ _flags) {
+        if (macroActive_ && line.length) macroLines_ ~= line;
+    }
+    string[] macroLines() const { return macroLines_.dup; }
 
     PreparedRecordObserverImage prepareRecord(string line, uint flags,
                                                string preparedTraceJson = null) {
