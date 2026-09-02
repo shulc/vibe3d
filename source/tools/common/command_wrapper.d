@@ -2,7 +2,7 @@ module tools.common.command_wrapper;
 import prepared_tool_effect : PreparedParamDelta, PreparedParamKind,
     PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_command_wrapper_activation : PreparedCommandWrapperActivationOwner;
 import handler : ClickPointResourceOwner;
 import command_history : PreparedHistoryKind;
@@ -41,6 +41,7 @@ import commands.mesh.vertex_edit : MeshVertexEdit;
 import toolpipe.packets : FalloffPacket, SubjectPacket;
 import operator        : Operator, Task, VectorStack, PacketKind;
 import pipe_gizmo_host : PipeGizmoHost;
+import document : Layer;
 
 import commands.mesh.smooth   : MeshSmooth;
 import commands.mesh.jitter   : MeshJitter;
@@ -84,7 +85,7 @@ import ImGui = d_imgui;
 // the wantsRefire / buildRefireCommand / setRefireDriving / onRefireCommitted
 // overrides below are the interface's implementations (EditSession discovers
 // them by cast).
-abstract class CommandWrapperTool : Tool, RefireClient {
+abstract class CommandWrapperTool : Tool, RefireClient, PreparedToolDoorClient {
     protected Command inner;
     protected Mesh*   meshPtr;
     protected GpuMesh*        gpu;
@@ -269,6 +270,11 @@ abstract class CommandWrapperTool : Tool, RefireClient {
             PreparedActivateKind.CommandWrapper, ok);
     }
 
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong, ulong) {
+        return prepareActivate(context).accepted;
+    }
+
     version(unittest) final ClickPointHandler seedPreparedActivationForTest() {
         baseline = [Vec3(91, 92, 93)];
         lastAppliedFalloffs = [FalloffPacket.init];
@@ -386,6 +392,13 @@ abstract class CommandWrapperTool : Tool, RefireClient {
         }
         return PreparedDeactivateEffect(preparedToolStateOwner,
             PreparedDeactivateKind.CommandWrapper, accepted, resourceAccepted);
+    }
+
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto owner = new ClickPointResourceOwner(clickHandle, threadIdentity,
+            contextIdentity);
+        return prepareDeactivate(context, owner).resourceAccepted;
     }
 
     // ----- History-coordination hooks (undo/redo migration P0) -------------

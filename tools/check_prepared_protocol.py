@@ -8302,6 +8302,18 @@ typed_context_door_clients = {
         "TopologyPenTool", "prepareActivate(context).accepted",
         "prepareDeactivate(context).resourceAccepted"),
 }
+resource_lifecycle_door_clients = {
+    "source/tools/common/command_wrapper.d": (
+        "abstract class CommandWrapperTool : Tool, RefireClient, PreparedToolDoorClient",
+        "new ClickPointResourceOwner(clickHandle, threadIdentity,",
+        "prepareDeactivate(context, owner).resourceAccepted",
+        "prepareActivate(context).accepted"),
+    "source/tools/edit/tack.d": (
+        "class TackTool : Tool, PreparedToolDoorClient",
+        "new GpuResourceOwner(&previewGpu_, threadIdentity,",
+        "prepareDeactivate(context, owner).resourceAccepted",
+        "new GpuCreateOwner(&previewGpu_, threadIdentity,"),
+}
 def p10c_door_capability_gate(context, sources, xfrm):
     if not all(x in context for x in (
             "interface PreparedToolDoorClient",
@@ -8367,6 +8379,14 @@ def p10c_door_capability_gate(context, sources, xfrm):
                 f"return {activate};" not in body or \
                 f"return {deactivate};" not in body:
             return False
+    for path, needles in resource_lifecycle_door_clients.items():
+        body = sources[path]
+        if not all(needle in body for needle in needles):
+            return False
+    tack = sources["source/tools/edit/tack.d"]
+    if "contextIdentity, true);" not in tack or \
+            "return prepareActivate(context, owner).accepted;" not in tack:
+        return False
     return ("PreparedToolDoorClient," in xfrm and
         "override bool prepareDoorDeactivate(" in xfrm and
         "override bool prepareDoorActivate(" in xfrm and
@@ -8375,7 +8395,8 @@ def p10c_door_capability_gate(context, sources, xfrm):
 door_sources = {p: (ROOT / p).read_text() for p in
     set(simple_door_clients) | set(private_state_door_clients) |
     set(cutting_door_clients) | set(gpu_layer_door_clients) |
-    set(vertex_door_clients) | set(typed_context_door_clients)}
+    set(vertex_door_clients) | set(typed_context_door_clients) |
+    set(resource_lifecycle_door_clients)}
 door_xfrm = (ROOT / "source/tools/transform/xfrm_transform.d").read_text()
 if not p10c_door_capability_gate(record_context, door_sources, door_xfrm):
     fail("P1.0c prepared door capability tranche drift")
@@ -8408,6 +8429,14 @@ for target, old, new, label in (
      "return prepareDeactivate(context).resourceAccepted;",
      "return true;",
      "drop Topology Pen deactivation producer"),
+    ("source/tools/common/command_wrapper.d",
+     "new ClickPointResourceOwner(clickHandle, threadIdentity,",
+     "new ClickPointResourceOwner(null, threadIdentity,",
+     "drop Command Wrapper click-handle identity"),
+    ("source/tools/edit/tack.d",
+     "new GpuCreateOwner(&previewGpu_, threadIdentity,",
+     "new GpuCreateOwner(null, threadIdentity,",
+     "drop Tack activation GPU identity"),
     ("xfrm", "return prepareActivate(context).accepted;", "return true;",
      "drop Xfrm activation producer"),
 ):

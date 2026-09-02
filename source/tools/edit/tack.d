@@ -17,8 +17,8 @@ import snapshot : MeshSnapshot;
 import shader : Shader, LitShader, drawLitPreview;
 import hover_state : g_hoveredFace;
 import eventlog : queryMouse;
-import document : primaryModelSpace;
-import prepared_record_context : PreparedRecordContext;
+import document : Layer, primaryModelSpace;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind,
     PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_tack_activation : PreparedTackActivationOwner;
@@ -248,7 +248,7 @@ struct TackParams {
 //                 "Tack" undo entry), re-uploads GPU, re-bases the preview
 //                 baseline, and stays active for repeated tacks.
 // ---------------------------------------------------------------------------
-class TackTool : Tool {
+class TackTool : Tool, PreparedToolDoorClient {
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const nothrow @nogc { return meshSrc_(); }
@@ -348,6 +348,12 @@ public:
         return PreparedSessionActivateEffect(preparedToolStateOwner,
             PreparedActivateKind.Tack, ok);
     }
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto owner = new GpuCreateOwner(&previewGpu_, threadIdentity,
+            contextIdentity, true);
+        return prepareActivate(context, owner).accepted;
+    }
     final Mesh* preparedActivationMesh() const nothrow @nogc { return mesh; }
     final GpuMesh* preparedPreviewGpu() nothrow @nogc { return &previewGpu_; }
     version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
@@ -403,6 +409,12 @@ public:
         }
         return PreparedDeactivateEffect(preparedToolStateOwner,
             PreparedDeactivateKind.Tack, false, prepared);
+    }
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto owner = new GpuResourceOwner(&previewGpu_, threadIdentity,
+            contextIdentity);
+        return prepareDeactivate(context, owner).resourceAccepted;
     }
 
     // Every click commits immediately (per-click undo, VertexTool-style) —
