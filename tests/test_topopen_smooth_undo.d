@@ -69,7 +69,7 @@ unittest {
 
     Vec3[] pre;
     foreach (v; readVerticesLayer(0)) pre ~= toVec3(v);
-    int undoDepthBefore = cast(int) getJson("/api/history")["undo"].array.length;
+    auto historyBefore = historySurfaceCounts();
 
     cmd("tool.set mesh.topoPen on");
 
@@ -91,10 +91,17 @@ unittest {
         if (!vecApproxEq(pre[i], post[i], 1e-5f)) anyMoved = true;
     assert(anyMoved, "setup: the multi-step drag must have genuinely relaxed at least one vertex");
 
-    int undoDepthAfter = cast(int) getJson("/api/history")["undo"].array.length;
-    assert(undoDepthAfter == undoDepthBefore + 2,
-        format("one arm plus one multi-pass Smooth gesture must surface EXACTLY TWO rows; depth went %d -> %d",
-               undoDepthBefore, undoDepthAfter));
+    // Classify rows instead of adding one blindly for the lifecycle surface
+    // measured in `toolcards/undo_surfaces/`.  This Topology Pen gesture owns
+    // one coalesced edit row and no lifecycle row of its own; a total-depth
+    // expectation cannot distinguish those classes.
+    auto historyAfter = historySurfaceCounts();
+    assert(historyAfter.editRows == historyBefore.editRows + 1,
+        format("one multi-pass Smooth gesture must add EXACTLY ONE edit row; edit rows went %d -> %d",
+               historyBefore.editRows, historyAfter.editRows));
+    assert(historyAfter.lifecycleRows == historyBefore.lifecycleRows,
+        format("a Smooth gesture must add NO lifecycle row; lifecycle rows went %d -> %d",
+               historyBefore.lifecycleRows, historyAfter.lifecycleRows));
 
     auto u = postJson("/api/undo", "");
     assert(u["status"].str == "ok", "undo must succeed: " ~ u.toString);

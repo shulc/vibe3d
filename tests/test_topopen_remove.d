@@ -113,10 +113,11 @@ unittest {
 
     assert(faceCountLayer(0) == 6 && vertexCountLayer(0) == 8 && edgeCountLayer(0) == 12);
 
-    // Undo-stack depth BEFORE the miss click. `/api/reset` itself is a
-    // Model-undoable entry (SceneReset), so the stack is non-empty even
-    // here -- the miss assertion below is "no NEW entry", not "no entry".
-    size_t undoDepthBefore = getJson("/api/history")["undo"].array.length;
+    // `/api/reset` itself is a Model-undoable entry (SceneReset), so the stack
+    // is non-empty here.  Count row classes separately: the measured history
+    // surface (`toolcards/undo_surfaces/`) shows the arm, while the miss must
+    // still contribute no edit row of its own.
+    auto historyBefore = historySurfaceCounts();
 
     cmd("tool.set mesh.topoPen on");
 
@@ -127,7 +128,9 @@ unittest {
     assert(faceCountLayer(0) == 6 && vertexCountLayer(0) == 8 && edgeCountLayer(0) == 12,
         "a miss must be a byte-identical no-op");
 
-    size_t undoDepthAfter = getJson("/api/history")["undo"].array.length;
-    assert(undoDepthAfter == undoDepthBefore + 1,
-        "a miss must add no edit row; only the surfaced arm is new");
+    auto historyAfter = historySurfaceCounts();
+    assert(historyAfter.editRows == historyBefore.editRows,
+        "a miss must add ZERO edit rows");
+    assert(historyAfter.lifecycleRows == historyBefore.lifecycleRows + 1,
+        "arming Topology Pen must surface exactly ONE lifecycle row");
 }

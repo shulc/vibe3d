@@ -317,8 +317,11 @@ struct Cell {
     Drove[]  drove;           // task 3091: this cell's captured `parameters` drive
 }
 
-/// Drive one gesture and score it. `stand` builds the scene AND clears history;
-/// `gesture` is the play-events drive; `drop` deactivates the tool.
+/// Drive one gesture and score it. `stand` builds and arms the scene, then
+/// clears history; `gesture` is the play-events drive; `drop` deactivates the
+/// tool.  Clear-after-arm is load-bearing now that `toolcards/undo_surfaces/`
+/// establishes the arm as a visible row: `undoDelta` still begins at the
+/// deliberately empty stack this fixture promises.
 Cell runCell(string name, string tool, string recordSite, string mode,
              string payload,
              void delegate() stand, void delegate() gesture, void delegate() drop)
@@ -847,8 +850,9 @@ unittest {
     cells ~= runCell("edge.slice/two-click-chain", "mesh.edgeSliceTool",
         "source/tools/slice/edge_slice_tool.d EdgeSliceTool.commitChain",
         "Plain", "MeshSessionEdit",
-        { resetCube(); cmd("select.typeFrom edge"); cmd("history.clear");
-          setOrbitCamera(); cmd("tool.set mesh.edgeSliceTool on"); settle(250); },
+        { resetCube(); cmd("select.typeFrom edge");
+          setOrbitCamera(); cmd("tool.set mesh.edgeSliceTool on"); settle(250);
+          cmd("history.clear"); },
         {
             auto m  = model();
             auto vp = viewportFromCamera(fetchCamera(BASE));
@@ -897,8 +901,8 @@ unittest {
             auto m = model();
             selectMode("edges", [edgeBetween(m, vertexAt(m, -0.5, -0.5, -0.5),
                                                 vertexAt(m,  0.5, -0.5, -0.5))]);
-            cmd("history.clear");
             setOrbitCamera(); cmd("tool.set mesh.loopSliceTool on"); settle(250);
+            cmd("history.clear");
         },
         {
             auto cam = fetchCamera(BASE);
@@ -921,8 +925,9 @@ unittest {
     cells ~= runCell("slice/line-drag", "mesh.sliceTool",
         "source/tools/slice/slice_tool.d SliceTool.commitCurrentSlice",
         "Plain", "MeshSessionEdit",
-        { resetCube(); cmd("history.clear");
-          setOrbitCamera(); cmd("tool.set mesh.sliceTool on"); settle(250); },
+        { resetCube();
+          setOrbitCamera(); cmd("tool.set mesh.sliceTool on"); settle(250);
+          cmd("history.clear"); },
         {
             auto vp = viewportFromCamera(fetchCamera(BASE));
             Vec3 u, v;

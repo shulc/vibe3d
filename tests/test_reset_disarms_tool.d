@@ -47,8 +47,7 @@
 // sets `engaged = true` — which is why no drag is needed and this file is
 // deterministic without an event log.
 
-import std.algorithm : canFind, map;
-import std.array : array;
+import std.algorithm : canFind;
 import std.conv : to;
 import std.json;
 import std.math : fabs;
@@ -95,8 +94,17 @@ Counts counts() {
                   j["faces"].array.length);
 }
 
-string[] undoLabels() {
-    return getJson("/api/history")["undo"].array.map!(e => e["label"].str).array;
+string[] editUndoLabels() {
+    enum long toolLifecycleFlag = 1L << 10; // HistoryFlags.ToolLifecycle on the wire
+    string[] labels;
+    foreach (e; getJson("/api/history")["undo"].array)
+        if ((e["flags"].integer & toolLifecycleFlag) == 0)
+            labels ~= e["label"].str;
+    return labels;
+}
+
+size_t lifecycleUndoCount() {
+    return cast(size_t)getJson("/api/undo/status")["toolLifecycleCount"].integer;
 }
 
 /// `/api/reset` to a cube, asserting the route itself answered.
@@ -164,9 +172,9 @@ unittest {
         ~ counts().toString ~ ". Until this holds, the negative assertions in "
         ~ "blocks 2-5 are vacuous — they would pass over a gesture that never "
         ~ "engaged.");
-    assert(undoLabels() == ["Mirror"],
+    assert(editUndoLabels() == ["Mirror"],
         "POSITIVE CONTROL FAILED: the intact-mesh drop must record exactly one "
-        ~ "\"Mirror\" entry, got " ~ undoLabels().to!string);
+        ~ "\"Mirror\" entry, got " ~ editUndoLabels().to!string);
 }
 
 // ---------------------------------------------------------------------------
@@ -205,7 +213,7 @@ unittest {
     // the stray entry the mutation produces just as thoroughly as the fix
     // prevents it, so that assertion is green on broken code. Block 2 left the
     // stack empty, so what stands here is exactly what THIS reset recorded.
-    auto recorded = undoLabels();
+    auto recorded = editUndoLabels();
     cmd("history.clear");
 
     auto c = counts();
@@ -247,9 +255,9 @@ unittest {
         ~ "plain cube (" ~ kCube.toString ~ "), got " ~ c.toString
         ~ " — the abandoned gesture committed into the scene the reset had "
         ~ "just built.");
-    assert(undoLabels() == ["Reset to "],
+    assert(editUndoLabels() == ["Reset to "],
         "a reset under a live gesture must record ONLY itself; got "
-        ~ undoLabels().to!string ~ ". A \"Mirror\" entry here is an undo step "
+        ~ editUndoLabels().to!string ~ ". A \"Mirror\" entry here is an undo step "
         ~ "for an edit the user never confirmed, filed underneath the reset.");
 
     // …and the tool really is gone, not merely silent: `tool.attr` names the
@@ -284,9 +292,9 @@ unittest {
         ~ "the loaded mesh (8v/8e/2f — two coaxial squares), got "
         ~ c.toString ~ ". The abandoned gesture mirrored the freshly loaded "
         ~ "geometry.");
-    assert(!undoLabels().canFind("Mirror"),
+    assert(!editUndoLabels().canFind("Mirror"),
         "a raw load under a live gesture must record no \"Mirror\" entry; got "
-        ~ undoLabels().to!string);
+        ~ editUndoLabels().to!string);
 }
 
 // ---------------------------------------------------------------------------
@@ -353,9 +361,15 @@ unittest {
         "the slice drag must leave ONE live mid-plane cut standing on the "
         ~ "document mesh (12v/20e/10f), got " ~ counts().toString
         ~ " — without a live cut this block asserts nothing.");
-    assert(undoLabels().length == 0,
+    // `/api/history` now shows the arm by the measured surface law
+    // (`toolcards/undo_surfaces/`). It is not a slice COMMIT: classify the
+    // visible rows instead of treating a non-empty list as proof that the
+    // mouse-up baked geometry.
+    assert(editUndoLabels().length == 0,
         "the slice session must not have committed at mouse-up (it bakes on "
-        ~ "tool-drop); undo holds " ~ undoLabels().to!string);
+        ~ "tool-drop); edit undo holds " ~ editUndoLabels().to!string);
+    assert(lifecycleUndoCount() == 1,
+        "arming the slice tool must leave exactly one surfaced lifecycle row");
 
     resetToCube("block 6 — with a live slice standing");
 
@@ -365,10 +379,10 @@ unittest {
         ~ ". This tool does not implement the cancel pair, so the cancel loop "
         ~ "is a no-op for it — only the unconditional DROP-BEFORE-REPLACE "
         ~ "keeps its session away from the scene the reset just built.");
-    assert(undoLabels() == ["Slice", "Reset to "],
+    assert(editUndoLabels() == ["Slice", "Reset to "],
         "the slice session must bake its one entry against the mesh it was "
         ~ "armed on, BEFORE the reset's own entry; got "
-        ~ undoLabels().to!string ~ ". Order matters: \"Slice\" after \"Reset "
+        ~ editUndoLabels().to!string ~ ". Order matters: \"Slice\" after \"Reset "
         ~ "to \" would mean the cut was baked into the replacement.");
 }
 
@@ -398,9 +412,9 @@ unittest {
         ~ "gesture (" ~ kMirror.toString ~ "), got " ~ counts().toString
         ~ ". Commit-on-drop is the session law; task 3130 narrowed the repair "
         ~ "to document-REPLACING paths only, and this block is what says so.");
-    assert(undoLabels() == ["Mirror"],
+    assert(editUndoLabels() == ["Mirror"],
         "the switch must record the outgoing tool's commit; got "
-        ~ undoLabels().to!string);
+        ~ editUndoLabels().to!string);
 
     cmd("tool.set mesh.clone off");
 }
@@ -424,9 +438,9 @@ unittest {
     resetToCube("block 8 — second plain reset");
     assert(counts() == kCube,
         "a second plain reset must produce a cube, got " ~ counts().toString);
-    assert(undoLabels() == ["Reset to "],
+    assert(editUndoLabels() == ["Reset to "],
         "a reset with nothing armed must record exactly one entry — its own; "
-        ~ "got " ~ undoLabels().to!string ~ ". An extra entry would mean the "
+        ~ "got " ~ editUndoLabels().to!string ~ ". An extra entry would mean the "
         ~ "disarm seam records something on a path where there was nothing to "
         ~ "disarm.");
 }

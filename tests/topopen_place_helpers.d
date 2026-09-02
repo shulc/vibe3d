@@ -52,6 +52,33 @@ void cmd(string argstring) {
         "cmd `" ~ argstring ~ "` failed: " ~ j.toString);
 }
 
+/// Split the surfaced strict-LIFO list into ordinary edit/state rows and
+/// tool-lifecycle rows.  The latter are deliberately visible: the measured
+/// surface in `toolcards/undo_surfaces/` has no hidden-but-counted arm state.
+/// Tests for a no-op must therefore assert the two classes separately instead
+/// of shifting one total-depth expectation and accidentally accepting a noisy
+/// no-op.
+struct HistorySurfaceCounts {
+    size_t editRows;
+    size_t lifecycleRows;
+}
+
+HistorySurfaceCounts classifyHistorySurfaceRows(JSONValue[] rows) {
+    enum long toolLifecycleFlag = 1L << 10; // HistoryFlags.ToolLifecycle on the wire
+    HistorySurfaceCounts result;
+    foreach (entry; rows) {
+        if ((entry["flags"].integer & toolLifecycleFlag) != 0)
+            ++result.lifecycleRows;
+        else
+            ++result.editRows;
+    }
+    return result;
+}
+
+HistorySurfaceCounts historySurfaceCounts() {
+    return classifyHistorySurfaceRows(getJson("/api/history")["undo"].array);
+}
+
 /// Post-`/api/play-events` settle: `/status` reports `finished` once events
 /// are POSTED to the SDL queue, not yet PROCESSED (CLAUDE.md flake note #3)
 /// — a fixed settle after "finished" avoids reading 1-2-frame-stale state.

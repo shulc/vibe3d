@@ -43,7 +43,7 @@ unittest {
     assert(vertexCountLayer(0) == 8 && edgeCountLayer(0) == 12 && faceCountLayer(0) == 6,
         "setup: pre-state must be the untouched cube");
 
-    size_t undoDepthBefore = getJson("/api/history")["undo"].array.length;
+    auto historyBefore = historySurfaceCounts();
 
     cmd("tool.set mesh.topoPen on");
 
@@ -55,7 +55,13 @@ unittest {
     assert(vertexCountLayer(0) == 8 && edgeCountLayer(0) == 12 && faceCountLayer(0) == 6,
         "a release clamped to a vertex (r>=1) must be a byte-identical no-op");
 
-    size_t undoDepthAfter = getJson("/api/history")["undo"].array.length;
-    assert(undoDepthAfter == undoDepthBefore + 1,
-        "a clamp no-op must add no edit row; only the surfaced arm is new");
+    // The arm row is visible by measured surface law
+    // (`toolcards/undo_surfaces/`), but the clamped gesture must still add no
+    // edit row.  Keeping these assertions separate prevents one noisy no-op
+    // row from hiding behind the legitimate arm row.
+    auto historyAfter = historySurfaceCounts();
+    assert(historyAfter.editRows == historyBefore.editRows,
+        "a clamp no-op must add ZERO edit rows");
+    assert(historyAfter.lifecycleRows == historyBefore.lifecycleRows + 1,
+        "arming Topology Pen must surface exactly ONE lifecycle row");
 }

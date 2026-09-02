@@ -113,10 +113,12 @@ bool runIsHeld() {
     return ("inSession" in top.object) !is null && top["inSession"].boolean;
 }
 
-// Land ONE committed +X move-arrow gesture against the CURRENT gizmo pivot —
-// same verify-and-retry idiom as test_falloff_idle_refire.d (a missed grab
-// records nothing; a hit records exactly one committed entry).
-void moveGestureOnArrow(long wantCount, double dragPx = 60.0) {
+// Land ONE committed +X move-arrow gesture against the CURRENT gizmo pivot.
+// Readiness is the tail's `inSession` bit, not raw list length: the measured
+// surface in `toolcards/undo_surfaces/` adds the arm row, and at maxDepth=50 a
+// successful append evicts the head while length stays 50.  Waiting for 51
+// therefore made a landed gesture look like a miss.
+void moveGestureOnArrow(double dragPx = 60.0) {
     foreach (attempt; 0 .. 6) {
         settle();
         auto cam = fetchCamera();
@@ -129,10 +131,9 @@ void moveGestureOnArrow(long wantCount, double dragPx = 60.0) {
         playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                                   xa, ya, xb, yb, 10));
         settle();
-        if (undoCount() == wantCount) return;
+        if (runIsHeld()) return;
     }
-    assert(false, "move gesture did not land (undo count never reached "
-        ~ wantCount.to!string ~ ")");
+    assert(false, "move gesture did not land (history tail never became in-session)");
 }
 
 // Arm a Move tool on a pristine cube, run `setup`, land one gesture, and
@@ -144,8 +145,7 @@ double[3][] armAndLandGesture(string cellName, void delegate() setup) {
     cmd("tool.set move");
     setup();
     settle();
-    long floor = undoCount();
-    moveGestureOnArrow(floor + 1);
+    moveGestureOnArrow();
     settle();
     assert(runIsHeld(),
         "setup: the landed gesture must leave an OPEN in-session run for cell "

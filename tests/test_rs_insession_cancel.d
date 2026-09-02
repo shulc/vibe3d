@@ -79,6 +79,14 @@ long lifecycleCount() {
     return getJson("/api/undo/status")["toolLifecycleCount"].integer;
 }
 
+// Panel-session assertions below ask whether a MODEL edit was committed, not
+// how many visible strict-LIFO rows exist.  `toolcards/undo_surfaces/` measured
+// that arm rows are visible, so raw `/api/history` length is the wrong counter
+// for that question; modelDepth deliberately excludes lifecycle rows.
+long modelUndoCount() {
+    return getJson("/api/undo/status")["modelDepth"].integer;
+}
+
 // Post-playback / post-command settle: /api/play-events/status reports
 // `finished` once events are POSTED to the SDL queue, not processed.
 void settle() {
@@ -195,7 +203,7 @@ unittest {
     establishCubeBaseline();
     cmd("tool.set TransformRotate");
 
-    long undoBefore = undoCount();
+    long modelBefore = modelUndoCount();
 
     // Open a live rotate session (sub-tool session, no geometry change), then
     // drive an absolute RZ value through the reEvaluate seam.
@@ -208,9 +216,9 @@ unittest {
         "RZ=30 must move v6 away from (0.5,0.5,…); got (" ~ vMoved[0].to!string
         ~ "," ~ vMoved[1].to!string ~ ")");
     // The open sub-tool run is NOT yet on history.
-    assert(undoCount() == undoBefore,
-        "an OPEN rotate sub-tool session must add no history entry; before="
-        ~ undoBefore.to!string ~ " now=" ~ undoCount().to!string);
+    assert(modelUndoCount() == modelBefore,
+        "an OPEN rotate sub-tool session must add no model edit; before="
+        ~ modelBefore.to!string ~ " now=" ~ modelUndoCount().to!string);
 
     // THE FIX: in-session Ctrl+Z (tool still LIVE, mouse not held) must cancel
     // the open rotate run — geometry restored, NO history pop.
@@ -218,9 +226,9 @@ unittest {
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "in-session Ctrl+Z must restore v6 to the pre-edit cube corner");
-    assert(undoCount() == undoBefore,
-        "in-session cancel of an uncommitted rotate run pops NOTHING; before="
-        ~ undoBefore.to!string ~ " now=" ~ undoCount().to!string);
+    assert(modelUndoCount() == modelBefore,
+        "in-session cancel of an uncommitted rotate run pops NO model edit; before="
+        ~ modelBefore.to!string ~ " now=" ~ modelUndoCount().to!string);
 
     cmd("tool.set TransformRotate");
     // Reopenable: cancel deactivated the tool, so reactivate and re-open with
@@ -239,9 +247,9 @@ unittest {
     // Drop commits ONE entry (normal coalescing unaffected); undo restores.
     cmd("tool.set TransformRotate off");
     settle();
-    assert(undoCount() == undoBefore + 1,
-        "dropping after the second edit coalesces to ONE entry; before="
-        ~ undoBefore.to!string ~ " after=" ~ undoCount().to!string);
+    assert(modelUndoCount() == modelBefore + 1,
+        "dropping after the second edit coalesces to ONE model entry; before="
+        ~ modelBefore.to!string ~ " after=" ~ modelUndoCount().to!string);
     drainHistory();
 }
 
@@ -253,24 +261,24 @@ unittest {
     establishCubeBaseline();
     cmd("tool.set TransformScale");
 
-    long undoBefore = undoCount();
+    long modelBefore = modelUndoCount();
 
     cmd("tool.beginSession");
     assertVertex(6, 0.5, 0.5, 0.5, "scale beginSession opens session, moves nothing");
 
     cmd("tool.attr TransformScale SX 2");
     assertVertex(6, 1.0, 0.5, 0.5, "SX=2 ⇒ v6.x=1.0 (open scale sub-tool session)");
-    assert(undoCount() == undoBefore,
-        "an OPEN scale sub-tool session must add no history entry; before="
-        ~ undoBefore.to!string ~ " now=" ~ undoCount().to!string);
+    assert(modelUndoCount() == modelBefore,
+        "an OPEN scale sub-tool session must add no model edit; before="
+        ~ modelBefore.to!string ~ " now=" ~ modelUndoCount().to!string);
 
     playAndWait(ctrlZ(50.0));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "in-session Ctrl+Z must restore v6.x to the pre-edit 0.5");
-    assert(undoCount() == undoBefore,
-        "in-session cancel of an uncommitted scale run pops NOTHING; before="
-        ~ undoBefore.to!string ~ " now=" ~ undoCount().to!string);
+    assert(modelUndoCount() == modelBefore,
+        "in-session cancel of an uncommitted scale run pops NO model edit; before="
+        ~ modelBefore.to!string ~ " now=" ~ modelUndoCount().to!string);
 
     cmd("tool.set TransformScale");
     // Reopenable: cancel deactivated the tool, so reactivate and re-open. A
@@ -283,9 +291,9 @@ unittest {
 
     cmd("tool.set TransformScale off");
     settle();
-    assert(undoCount() == undoBefore + 1,
-        "dropping after the second edit coalesces to ONE entry; before="
-        ~ undoBefore.to!string ~ " after=" ~ undoCount().to!string);
+    assert(modelUndoCount() == modelBefore + 1,
+        "dropping after the second edit coalesces to ONE model entry; before="
+        ~ modelBefore.to!string ~ " after=" ~ modelUndoCount().to!string);
     drainHistory();
 }
 
@@ -302,7 +310,7 @@ unittest {
     establishCubeBaseline();
     cmd("tool.set Transform");
 
-    long undoBefore = undoCount();
+    long modelBefore = modelUndoCount();
 
     cmd("tool.beginSession");
     cmd("tool.attr Transform TX 1");      // wrapper (Move) session open
@@ -312,18 +320,18 @@ unittest {
                                          && fabs(vBoth[2] - 0.5) < 1e-3),
         "combined T+R moved v6 away from the cube corner; got ("
         ~ vBoth[0].to!string ~ "," ~ vBoth[1].to!string ~ ")");
-    assert(undoCount() == undoBefore,
-        "both open sessions are uncommitted — no history entry yet; before="
-        ~ undoBefore.to!string ~ " now=" ~ undoCount().to!string);
+    assert(modelUndoCount() == modelBefore,
+        "both open sessions are uncommitted — no model entry yet; before="
+        ~ modelBefore.to!string ~ " now=" ~ modelUndoCount().to!string);
 
     // ONE in-session Ctrl+Z reverts the WHOLE open run (wrapper T + sub-tool R).
     playAndWait(ctrlZ(50.0));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "one in-session Ctrl+Z must revert BOTH the open T and R sessions");
-    assert(undoCount() == undoBefore,
-        "whole-open-run cancel pops NOTHING from history; before="
-        ~ undoBefore.to!string ~ " now=" ~ undoCount().to!string);
+    assert(modelUndoCount() == modelBefore,
+        "whole-open-run cancel pops NO model entry; before="
+        ~ modelBefore.to!string ~ " now=" ~ modelUndoCount().to!string);
 
     cmd("tool.set Transform off");
     settle();
