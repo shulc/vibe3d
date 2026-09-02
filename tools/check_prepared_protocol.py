@@ -283,6 +283,7 @@ B5P_PREPARED_LEGACY = {
     ("tools.edit.tack", "TackTool", "activate"),
 }
 B5Q_PREPARED_LEGACY = {
+    ("tools.edit.edge_extend", "EdgeExtendTool", "update"),
     ("tools.transform.rotate", "RotateTool", "update"),
     ("tools.transform.scale", "ScaleTool", "update"),
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "update"),
@@ -324,7 +325,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "4c9f86b1944be2acd2ca911021ffc7664d8149ced99d714684bea2fef744c6c6"
+    "c8016c8e5db24ab90cfee4784bda3de5460b3e1c26b9b884501a847029a4913b"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -361,11 +362,16 @@ def expect_deferred_exact_drift(mutant, label):
     else: fail(f"P1.0b.1 deferred {label} mutation did not RED exact drift")
 
 batch_swap = json.loads(json.dumps(TOOL_STATE_DEFERRED_ROWS))
-batch_pair = next((i, j) for i in range(len(batch_swap))
-                  for j in range(i + 1, len(batch_swap))
-                  if batch_swap[i]["batch"] != batch_swap[j]["batch"])
-batch_swap[batch_pair[0]]["batch"], batch_swap[batch_pair[1]]["batch"] = \
-    batch_swap[batch_pair[1]]["batch"], batch_swap[batch_pair[0]]["batch"]
+batch_pair = next(((i, j) for i in range(len(batch_swap))
+                   for j in range(i + 1, len(batch_swap))
+                   if batch_swap[i]["batch"] != batch_swap[j]["batch"]), None)
+if batch_pair is None:
+    # The tail ledger can legitimately become batch-homogeneous. Keep the
+    # mutation effective by substituting a different allowed batch value.
+    batch_swap[0]["batch"] = "P1.0b.2+"
+else:
+    batch_swap[batch_pair[0]]["batch"], batch_swap[batch_pair[1]]["batch"] = \
+        batch_swap[batch_pair[1]]["batch"], batch_swap[batch_pair[0]]["batch"]
 expect_deferred_exact_drift(batch_swap, "allowed-batch swap")
 
 reason_swap = json.loads(json.dumps(TOOL_STATE_DEFERRED_ROWS))
@@ -7605,6 +7611,31 @@ for old, new, label in (
         mutated = (mutated[:pos] + new + mutated[pos + len(old):])
     if complete_xfrm_update_root_gate(mutated):
         fail(f"complete Xfrm update root mutation did not RED: {label}")
+
+edge_extend_update = prepared_source_texts[
+    ROOT / "source/tools/edit/edge_extend.d"]
+def edge_extend_update_gate(source):
+    signature = "final PreparedXfrmUpdateEffect prepareUpdate(ref VectorStack vts,"
+    start = source.find(signature)
+    if start < 0: return False
+    begin = source.find("{", start) + 1
+    body = source[begin:balanced_source(source, begin)-1]
+    return all(s in body for s in (
+        "!ownsPreparedLayer(layer)",
+        "xfrm.prepareUpdate(vts, context, layer, uploadOwner)",
+        "PreparedXfrmUpdateEffect(preparedToolStateOwner,",
+        "inner.kind, inner.accepted)"))
+if not edge_extend_update_gate(edge_extend_update):
+    fail("EdgeExtend update composition contract drift")
+for old, new, label in (
+    ("!ownsPreparedLayer(layer)", "false", "drop outer Layer identity"),
+    ("xfrm.prepareUpdate(vts, context, layer, uploadOwner)",
+     "PreparedXfrmUpdateEffect.init", "drop embedded Xfrm product"),
+    ("inner.kind, inner.accepted)", "inner.kind, true)", "forge acceptance"),
+):
+    mutant = edge_extend_update.replace(old, new, 1)
+    if mutant == edge_extend_update or edge_extend_update_gate(mutant):
+        fail(f"EdgeExtend update mutation did not RED: {label}")
 
 # Closed inherited base-noop owner infrastructure.  The effective product
 # table above proves DragWeldTool is the sole activate/deactivate admission;

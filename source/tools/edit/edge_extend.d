@@ -23,9 +23,12 @@ import tools.transform.move : MoveTool;
 import tools.transform.rotate : RotateTool;
 import tools.transform.scale : ScaleTool;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import prepared_tool_effect : PreparedXfrmUpdateEffect, PreparedXfrmUpdateKind;
 import prepared_record_context : PreparedRecordContext;
 import prepared_edge_extend_tool_activation : PreparedEdgeExtendToolActivationOwner;
 import prepared_xfrm_activation_session : PreparedXfrmActivationSessionOwner;
+import document : Layer;
+import mesh_gpu : GpuUploadOwner;
 
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
@@ -560,6 +563,27 @@ public:
         xfrm.update(vts);
     }
 
+    /// Dormant exact twin of the embedded wrapper tick. EdgeExtend owns no
+    /// additional per-frame state here; all effects are the already-closed
+    /// Xfrm update product, guarded by the outer Layer/mesh identity.
+    final PreparedXfrmUpdateEffect prepareUpdate(ref VectorStack vts,
+            PreparedRecordContext context, Layer layer,
+            GpuUploadOwner uploadOwner) {
+        if (context is null || layer is null || !ownsPreparedLayer(layer)) {
+            if (context !is null) context.discard();
+            return PreparedXfrmUpdateEffect(preparedToolStateOwner,
+                PreparedXfrmUpdateKind.None, false);
+        }
+        auto inner = xfrm.prepareUpdate(vts, context, layer, uploadOwner);
+        return PreparedXfrmUpdateEffect(preparedToolStateOwner,
+            inner.kind, inner.accepted);
+    }
+
+    final bool ownsPreparedLayer(Layer layer) const nothrow @nogc {
+        return layer !is null && meshSrc_ !is null &&
+            &layer.meshRef() is meshSrc_();
+    }
+
     // -----------------------------------------------------------------------
     // Headless apply (tool.doApply). Runs the kernel once on the current edge
     // selection. MUST NOT snapshot — ToolDoApplyCommand wraps with undo.
@@ -972,4 +996,28 @@ private:
         dragBank    = DragBank.None;
         accumLocal_ = Vec3(0, 0, 0);
     }
+}
+
+version(unittest) unittest {
+    import record_observer_hub : RecordObserverHub;
+
+    auto layer = new Layer(); layer.meshRef() = makeCube();
+    GpuMesh gpu; EditMode mode = EditMode.Edges;
+    auto tool = new EdgeExtendTool(
+        () nothrow @nogc => &layer.meshRef(), &gpu, &mode, LitShader.init);
+    tool.activate();
+    VectorStack vts;
+    auto context = new PreparedRecordContext(null, new RecordObserverHub());
+    auto effect = tool.prepareUpdate(vts, context, layer, null);
+    assert(effect.accepted && effect.kind == PreparedXfrmUpdateKind.Active &&
+        context.validate());
+    context.install();
+    assert(context.installTraceForTest() == [8,60,62,61,16,59],
+        "EdgeExtend embedded Xfrm tick installed out of legacy order");
+
+    auto foreign = new Layer(); foreign.meshRef() = makeCube();
+    auto refused = new PreparedRecordContext(null, new RecordObserverHub());
+    assert(!tool.prepareUpdate(vts, refused, foreign, null).accepted &&
+        !refused.validate(),
+        "EdgeExtend update accepted a foreign Layer");
 }
