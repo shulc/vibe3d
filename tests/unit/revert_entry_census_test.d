@@ -1,7 +1,7 @@
 // revert_entry_census_test — TWO gates over one scan of `source/**`.
 //
 //   GATE 1 (task 1932): every production NO-ARGUMENT `.revert()` call site is
-//     one of the NINE recorded ones, each of which runs inside a global
+//     one of the SEVEN recorded ones, each of which runs inside a global
 //     delivery batch. `Command.revert()` takes no argument, which is what
 //     makes the empty-paren predicate the right one here.
 //
@@ -21,10 +21,11 @@
 // `.fire()` (`:1507`) each hold `beginDeliveryBatchGlobal()` around every
 // `revert()` they drive, so ALL production paths deliver once per step. The
 // comment was rewritten to say that instead. This census is the executable
-// half of the correction: it fails the moment a TENTH production no-argument
-// `.revert()` call site is added anywhere in `source/**`, because a new site is exactly
-// how the false claim got written the first time — someone added a revert
-// path and never checked whether it landed inside one of the three batches.
+// half of the correction: it fails the moment the production no-argument
+// `.revert()` call-site set changes anywhere in `source/**`, because a new
+// site is exactly how the false claim got written the first time — someone
+// added a revert path and never checked whether it landed inside one of the
+// three batches.
 //
 // A new call site is not necessarily wrong. It is UNACCOUNTED — the census
 // forces a human decision: does it already live inside
@@ -53,21 +54,19 @@
 // line looks like a signature (`<modifiers> <type> name(...) {`) is found.
 // This is a heuristic, not a parser — see `looksLikeFunctionHeader`'s own
 // caveat — but it does not need to be perfect: it only needs to be
-// DETERMINISTIC and to resolve the nine known sites correctly, which the
+// DETERMINISTIC and to resolve the seven known sites correctly, which the
 // scanner cells below prove directly. A resolution that is wrong for some
 // site nobody has written yet still reddens the census the same way a
 // correct one would, because either way the (file, function) pair the
 // scanner reports will not be in the recorded table.
 //
-// Three of the nine sites share a (file, function) pair — `undo()` drives
-// `revert()` on three different branches (ToolLifecycle / Case A / Case B),
-// all inside the SAME `beginDeliveryBatchGlobal()` it opens once at the top
-// of the function. The table below therefore has one row per (file,
-// function, why) — nine rows, matching the card's nine-row table by hand —
-// and the gate aggregates by (file, function) to compare COUNTS, the same
-// move `command_tail_publisher_census_test.d` makes for the reason R2-4
-// already gave: a per-name count is immune to line drift, a per-line table
-// is not.
+// Before task 3694, three sites shared `source/command_history.d :: undo`:
+// ToolLifecycle, Case A and Case B. Strict lifecycle LIFO removed all three
+// branches and added one common-tail call in the same function. The table
+// below records that seven-site result and the gate still aggregates by
+// (file, function) to compare COUNTS, the same move
+// `command_tail_publisher_census_test.d` makes for the reason R2-4 already
+// gave: a per-name count is immune to line drift, a per-line table is not.
 module tests.unit.revert_entry_census_test;
 
 import std.algorithm : canFind, startsWith;
@@ -205,7 +204,7 @@ private string blankUnittestBodies(string code) {
 
 // ---------------------------------------------------------------------------
 // Function-name resolution. NOT a parser: a header-classifying heuristic over
-// the brace stack. It only has to be deterministic and correct for the nine
+// the brace stack. It only has to be deterministic and correct for the seven
 // known sites (proven by the scanner cells below) — a wrong resolution on
 // code nobody has written yet still reddens the gate, because either way the
 // reported (file, function) pair will not be in the recorded table.
@@ -216,7 +215,7 @@ private string blankUnittestBodies(string code) {
 /// blind spot: a `static` FUNCTION modifier (`static bool helper() { … }`)
 /// is misclassified as non-callable by this same rule, so a `.revert()`
 /// call whose nearest real enclosing function is `static` attributes to
-/// that function's own PARENT scope instead. None of the nine recorded
+/// that function's own PARENT scope instead. None of the seven recorded
 /// sites is `static`; a future one that is will still redden the gate (as
 /// an unaccounted pair), just possibly under the parent's name rather than
 /// its own — the census does not need the name to be right, only new.
@@ -279,7 +278,7 @@ private struct ScopeEntry { string name; bool isFunc; }
 /// TASK 2007 FINDING #2, and the correction the fix needed. The finding was
 /// real: the old needle was the literal `".revert("`, so the indirection
 /// `auto fn = &cmd.revert; fn();` — the same call, with the parenthesis
-/// belonging to `fn` — scanned as ZERO sites, and a tenth production revert
+/// belonging to `fn` — scanned as ZERO sites, and an added production revert
 /// path outside every delivery batch would have been invisible. The finding's
 /// prescribed fix was the bare identifier, as already used by
 /// `sel_channel_census_test.d`'s `kMethod` and
@@ -407,7 +406,7 @@ private RevertSite[] scanRevertSites(string label, string src) {
             // (`&cmd.revert`) and D's optional-paren call (`cmd.revert;`) both
             // reach here with no `(` at all; both are argument-LESS, so they
             // join gate 1's `Command.revert()` bucket, which is exactly where
-            // an unaccounted tenth path has to surface.
+            // an unaccounted no-argument path has to surface.
             size_t k = i + ".revert".length;
             while (k < code.length && (code[k] == ' ' || code[k] == '\t'
                                     || code[k] == '\n' || code[k] == '\r')) ++k;
@@ -467,8 +466,8 @@ private size_t codeLevelCallCount(string src, string needle) {
 }
 
 // ---------------------------------------------------------------------------
-// SCANNER CELLS, FIRST — proving the resolver on the actual shapes the nine
-// recorded sites take, before the tree gate runs on top of it.
+// SCANNER CELLS, FIRST — proving the resolver on current recorded shapes and
+// the retired pre-3694 multi-branch undo shape before the tree gate runs.
 // ---------------------------------------------------------------------------
 
 /// `CompositeCommand.revert`'s child loop: a `.revert()` call inside a
@@ -490,8 +489,9 @@ PROBE";
         ~ "the foreach_reverse must not be mistaken for the callable", s[0].func));
 }
 
-/// `undo()`'s three branches: three `.revert()` calls, each nested inside its
-/// own `if`/`else` shape, all inside ONE function named `undo`.
+/// The retired pre-3694 `undo()` shape: three `.revert()` calls, each nested
+/// inside its own `if`/`else`, all inside ONE function named `undo`. It remains
+/// a scanner probe because count aggregation must not lose same-key sites.
 unittest {
     enum string probe = q"PROBE
 bool undo() {
@@ -651,11 +651,19 @@ PROBE";
 }
 
 // ---------------------------------------------------------------------------
-// THE RECORDED TABLE — nine rows, one per production `.revert()` site,
-// matching the card's grep table by hand (task 1932, "Посылка 3 опровергнута").
-// Grouped by (file, function): `undo()` carries three of the nine because it
-// drives three different branches inside the SAME `beginDeliveryBatchGlobal`
-// it opens once.
+// THE RECORDED TABLE — seven rows, one per production `.revert()` site.
+//
+// Task 3694 changed exactly four logical rows in `undo()` while preserving its
+// one enclosing `beginDeliveryBatchGlobal()`:
+//   REMOVED — ToolLifecycle hard-step call: lifecycle is no longer classified
+//             or reverted on a dedicated branch.
+//   REMOVED — Case A call: the nearest-Model selector and suffix splice were
+//             deleted when UI/Model/lifecycle became one strict-LIFO tail.
+//   REMOVED — Case B call: there is no separate fallback after that selector.
+//   ADDED   — common-tail call: the popped tail entry is now reverted once,
+//             regardless of whether it is UI, Model or lifecycle.
+// Every other row below is the pre-3694 classification; no unrelated call
+// site changed.
 // ---------------------------------------------------------------------------
 
 private struct RevertRow { string file; string func; string why; }
@@ -668,13 +676,9 @@ private static immutable RevertRow[] kRecorded = [
       ~ "`revertImpl` is the override point, so the `func` column moved with "
       ~ "it. The call itself did not move and is still inside undo()'s batch."),
     RevertRow("source/command_history.d", "undo",
-        "undo(), ToolLifecycle branch — inside undo()'s own "
-      ~ "beginDeliveryBatchGlobal() at :1091"),
-    RevertRow("source/command_history.d", "undo",
-        "undo(), Case A (nearestModelIndexFromTail found a Model entry) — "
-      ~ "same batch"),
-    RevertRow("source/command_history.d", "undo",
-        "undo(), Case B (no Model entry, B1 fallback) — same batch"),
+        "undo(), task 3694 common strict-LIFO tail — replaces the retired "
+      ~ "ToolLifecycle / Case A / Case B calls and remains inside undo()'s "
+      ~ "single beginDeliveryBatchGlobal()"),
     RevertRow("source/command_history.d", "fire",
         "fire()'s live-command revert before the re-fire's apply — inside "
       ~ "fire()'s own beginDeliveryBatchGlobal() at :1507"),
@@ -688,9 +692,9 @@ private static immutable RevertRow[] kRecorded = [
         "delegates to inner_.revert()"),
 ];
 
-static assert(kRecorded.length == 9,
-    "the recorded table must have exactly nine rows — task 1932's grep found "
-  ~ "nine production `.revert()` call sites; if the tree has genuinely grown "
+static assert(kRecorded.length == 7,
+    "the recorded table must have exactly seven rows — task 3694 collapsed "
+  ~ "undo()'s three branches to one common-tail call; if the tree has grown "
   ~ "or shrunk this set, the count changes together with the rows");
 
 // ---------------------------------------------------------------------------
@@ -698,11 +702,11 @@ static assert(kRecorded.length == 9,
 // match with no type information, so it also finds `.revert()` calls on
 // types that are not `Command` at all. There is exactly one such site in the
 // tree today, and the card names it explicitly so it is not mistaken for a
-// tenth Command-revert site: `xfrm_transform.d:4426` calls `gh.revert()` on
+// eighth Command-revert site: `xfrm_transform.d:4426` calls `gh.revert()` on
 // a `GestureHook` (built by `buildGestureHooks`, `:4376`) from inside the
 // REVERT closure `commitEdit` composes for `setCmdHooks` — that closure runs
 // later, when the `Command` this commit builds is itself reverted, so this
-// line is a HOOK BODY, not a call this test's nine-row table is about.
+// line is a HOOK BODY, not a call this test's seven-row table is about.
 // Excluded by (file, function) like everything else, so a second, unrelated
 // `.revert()` added to the SAME function would still be counted and would
 // still redden the gate (proven by the probe cell below).
@@ -806,15 +810,15 @@ unittest {
 
     assert(bad.data.length == 0, format(
         "task 1932: the production `.revert()` call-site SET no longer "
-      ~ "matches the recorded nine-row table.%s\n\n"
-      ~ "  A `.revert()` call is not wrong by itself — all nine recorded "
+      ~ "matches the recorded seven-row table.%s\n\n"
+      ~ "  A `.revert()` call is not wrong by itself — all seven recorded "
       ~ "sites are safe because `Command.apply`, `CommandHistory.undo()`, "
       ~ "`.redo()` and `.fire()` each hold `beginDeliveryBatchGlobal()` "
       ~ "around every revert they drive. What is wrong is an UNACCOUNTED "
       ~ "site: either it already lives inside one of those four batches (in "
       ~ "which case add its row here), or it does not (in which case it "
       ~ "needs a batch of its own before it can be safe, same as the other "
-      ~ "nine got).\n\n"
+      ~ "seven got).\n\n"
       ~ "  Recorded: %d site(s) over %d (file, function) pair(s). Scanner: "
       ~ "%d over %d.",
         bad.data, kRecorded.length, expected.length,
