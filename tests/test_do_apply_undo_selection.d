@@ -27,11 +27,11 @@
 //
 // Candidate 0056 previously carried MeshSelect(B) inert and was encoded here
 // as though measured. The separating capture was inert after undo₁ and did not
-// establish that candidate. The live capture that now establishes strict LIFO
-// used scripted `mesh.move_vertex`; this test uses the gesture door
-// `tool.set`/`tool.attr`/`tool.doApply`. Whether gesture records coalesce
-// differently remains unmeasured, so this is an implementation anchor, not a
-// claim that the remaining gesture door has been captured.
+// establish that candidate. The `arm_record_p2_gesture_door` toolcard has now
+// measured this test's `tool.set`/`tool.attr`/`tool.doApply` door: a 13-press
+// walk is strict LIFO, with selection B reverting before gesture A. This is a
+// measured-door regression anchor; the sibling `/api/transform` door remains
+// outside that capture.
 //
 // --- What topology-changing tools see ---
 //

@@ -4,10 +4,10 @@
 // tool.set move off, drive the production path:
 //   * the gesture's mouse-up records a snapshot-based in-session geometry entry;
 //   * each tool arm emits a lifecycle record; drop consolidates the run but
-//     owns no additional lifecycle step. The arm record is invisible to
-//     /api/history and counted by /api/undo/status.toolLifecycleCount.
+//     owns no additional lifecycle step. The arm record is visible in
+//     /api/history and also counted by /api/undo/status.toolLifecycleCount.
 //
-// Resulting visible stack after both gestures (undo count = 2 geometry entries):
+// Resulting surfaced stack after both gestures (undo count = 4 new entries):
 //   [ArmA(lifecycle), geomA(Model), ArmB(lifecycle), geomB(Model)]
 //
 // Undo sequence (the headline contract this task pins):
@@ -166,8 +166,8 @@ unittest {
     postJson("/api/script", "tool.set move off");
     settle();
 
-    assert(undoCount() == floor + 1,
-        "after gesture A + drop: floor+1 visible entries; floor=" ~ floor.to!string
+    assert(undoCount() == floor + 2,
+        "after gesture A + drop: floor+2 surfaced entries; floor=" ~ floor.to!string
         ~ " got " ~ undoCount().to!string);
     assert(lifecycleCount() == 1,
         "after gesture A + drop: 1 lifecycle entry; got " ~ lifecycleCount().to!string);
@@ -180,8 +180,8 @@ unittest {
     postJson("/api/script", "tool.set move off");
     settle();
 
-    assert(undoCount() == floor + 2,
-        "after gesture B + drop: floor+2 visible entries; floor=" ~ floor.to!string
+    assert(undoCount() == floor + 4,
+        "after gesture B + drop: floor+4 surfaced entries; floor=" ~ floor.to!string
         ~ " got " ~ undoCount().to!string);
     assert(lifecycleCount() == 2,
         "after gesture B + drop: 2 lifecycle entries; got " ~ lifecycleCount().to!string);

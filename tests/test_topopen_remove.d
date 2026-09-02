@@ -128,5 +128,6 @@ unittest {
         "a miss must be a byte-identical no-op");
 
     size_t undoDepthAfter = getJson("/api/history")["undo"].array.length;
-    assert(undoDepthAfter == undoDepthBefore, "a miss must record NO new undo entry");
+    assert(undoDepthAfter == undoDepthBefore + 1,
+        "a miss must add no edit row; only the surfaced arm is new");
 }

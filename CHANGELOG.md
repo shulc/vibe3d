@@ -98,7 +98,8 @@ place.
 
 - Undo distinguishes UI state (such as selection) from model edits, tracks
   changes per mutation rather than by snapshot, and coalesces a continuous drag
-  into a single step.
+  into a single step. UI, model and tool-lifecycle records unwind in strict
+  last-in-first-out order, and the History panel/API show every such step.
 
 ### File formats
 

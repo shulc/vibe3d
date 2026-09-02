@@ -266,7 +266,7 @@ unittest {
     }
     postJson("/api/script", "tool.set move off");   // commit + consolidate run A
     settle();
-    auto v6AfterRunA = vert(6);   // run A's displacement; popped by 3rd Ctrl+Z
+    auto v6AfterRunA = vert(6);   // run A's displacement; popped by 4th Ctrl+Z
     long committedFloor = undoCount();
     assert(committedFloor >= 1,
         "run A should have committed+consolidated to one entry as the history " ~
@@ -304,12 +304,12 @@ unittest {
         playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                                   xa, ya, xb, yb, 10));
         settle();
-        if (undoCount() == committedFloor + 1) break;
+        if (undoCount() == committedFloor + 2) break;
     }
     auto v6AfterDrag1 = vert(6);
     // Gesture 1 recorded its own in-session entry on mouse-up.
-    assert(undoCount() == committedFloor + 1,
-        "gesture 1 should record ONE in-session entry; floor=" ~
+    assert(undoCount() == committedFloor + 2,
+        "run-B arm plus gesture 1 should surface TWO entries; floor=" ~
         committedFloor.to!string ~ " now=" ~ undoCount().to!string);
 
     // Drag 2: RE-DERIVE the handle from the moved pivot (ON-handle re-grab, so
@@ -330,7 +330,7 @@ unittest {
         playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
                                   xc, yc, xd, yd, 10));
         settle();
-        if (undoCount() == committedFloor + 2) break;
+        if (undoCount() == committedFloor + 3) break;
     }
 
     auto v6BothDrags = vert(6);
@@ -343,16 +343,16 @@ unittest {
         "run B's two drags should leave v6 displaced from its baseline");
 
     // Run B is OPEN: each gesture recorded its own TAGGED in-session entry, so
-    // the stack now sits at floor + 2 and both new entries are inSession.
-    assert(undoCount() == committedFloor + 2,
-        "two open gizmo gestures must record TWO in-session entries; floor=" ~
+    // the stack now sits at floor + 3: the arm plus two in-session entries.
+    assert(undoCount() == committedFloor + 3,
+        "run-B arm plus two open gizmo gestures must surface THREE entries; floor=" ~
         committedFloor.to!string ~ " now=" ~ undoCount().to!string);
     assert(inSessionCount() == 2,
         "both open-run entries must be tagged inSession; got " ~
         inSessionCount().to!string);
 
     // Ctrl+Z #1 (tool still LIVE) -> plain history pop of the LAST gesture:
-    // v6 back to the post-drag-1 value, NOT the run baseline. Count +2 -> +1.
+    // v6 back to the post-drag-1 value, NOT the run baseline. Count +3 -> +2.
     playAndWait(ctrlZ(50.0));
     settle();
     auto v6Step1 = vert(6);
@@ -362,12 +362,12 @@ unittest {
         "in-session Ctrl+Z #1 must step back ONLY the last gesture (v6 -> " ~
         "post-drag-1); got (" ~ v6Step1[0].to!string ~ "," ~
         v6Step1[1].to!string ~ "," ~ v6Step1[2].to!string ~ ")");
-    assert(undoCount() == committedFloor + 1,
+    assert(undoCount() == committedFloor + 2,
         "Ctrl+Z #1 pops exactly one in-session gesture entry; floor=" ~
         committedFloor.to!string ~ " now=" ~ undoCount().to!string);
 
     // Ctrl+Z #2 (tool still LIVE) -> pops the first gesture: v6 back to the run
-    // baseline (== post-run-A). Count +1 -> floor.
+    // baseline (== post-run-A). Count +2 -> floor+1 (the arm remains).
     playAndWait(ctrlZ(60.0));
     settle();
     auto v6Step2 = vert(6);
@@ -377,8 +377,8 @@ unittest {
         "in-session Ctrl+Z #2 must step back the first gesture (v6 -> the run " ~
         "baseline == post-run-A); got (" ~ v6Step2[0].to!string ~ "," ~
         v6Step2[1].to!string ~ "," ~ v6Step2[2].to!string ~ ")");
-    assert(undoCount() == committedFloor,
-        "Ctrl+Z #2 pops the run back to the committed floor; floor=" ~
+    assert(undoCount() == committedFloor + 1,
+        "Ctrl+Z #2 leaves only run B's surfaced arm above the committed floor; floor=" ~
         committedFloor.to!string ~ " now=" ~ undoCount().to!string);
 
     // Run A is still applied (the two steps only touched run B's entries).
@@ -404,7 +404,7 @@ unittest {
     assert(lifecycleCount() == lifecycleBeforeArmStep - 1,
         "Ctrl+Z #3 must consume exactly one lifecycle record");
     assert(undoCount() == committedFloor,
-        "a lifecycle step must not consume a visible committed entry");
+        "Ctrl+Z #3 must remove exactly the surfaced run-B arm row");
 
     // Ctrl+Z #4 now reaches committed run A and restores the pristine corner.
     playAndWait(ctrlZ(80.0));

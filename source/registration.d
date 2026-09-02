@@ -292,7 +292,7 @@ import viewport : LayoutPreset;
 
 // Locally-scoped in app.d's main() (not top-level there).
 import document       : Document;
-import command_history : CommandHistory;
+import command_history : CommandHistory, HistoryFlags;
 import viewport        : ViewportManager;
 
 // AI Modeling Copilot (task 0402): version(WithAI)-only, mirroring app.d's
@@ -2171,11 +2171,12 @@ private void registerHistoryCommands(EditorApp app) {
         new HistorySaveAsScript(&mesh(), cameraView, editMode,
             () {
                 string[] lines;
-                // ToolLifecycle entries (tool.deactivate) are not registered as
-                // command factories and cannot be replayed — exclude them so the
-                // script contains only replayable lines.
+                // Lifecycle entries are visible history rows but are not
+                // registered as command factories and cannot be replayed.
+                // Keep the script export's independent replayability filter.
                 foreach (ref e; history.undoEntriesVisible()) {
                     import argstring : serializeCommandLine;
+                    if (e.flags & HistoryFlags.ToolLifecycle) continue;
                     lines ~= serializeCommandLine(e.commandName, e.args);
                 }
                 return lines;

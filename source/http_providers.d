@@ -3203,8 +3203,9 @@ private void wireHistoryProviders(HttpServer httpServer, ref EditorApp app,
             //                   "inSession":bool,"refire":bool,"runId":N,
             //                   "opInverse":bool}, ...],
             //         "redo":[..] }
-            // "ui" is true when the entry is UI-undo class (selection / edit-mode
-            // state) rather than Model-undo (geometry) — see HistoryFlags.UiUndo.
+            // "ui" is true for UI-undo state (selection / edit mode). False
+            // rows may be Model or surfaced ToolLifecycle steps; `flags`
+            // carries the full classification.
             // "inSession" is true when the entry is one step of an open tool RUN
             // (a per-gesture in-session entry, tagged HistoryFlags.InSession);
             // "refire" is true when an in-session entry is a falloff RE-GRADE of
@@ -3288,8 +3289,8 @@ private void wireHistoryProviders(HttpServer httpServer, ref EditorApp app,
         // Read-only undo-service status for automation: {state, lockout,
         // canUndo, canRedo, modelDepth, uiDepth, canUndoModel, canUndoUi}.
         // modelDepth/uiDepth — count of Model vs UI-class entries on the undo
-        // stack; canUndoModel/canUndoUi — whether the current-session stack
-        // contains an entry of that class. A mixed stack reports both true.
+        // stack; canUndoModel/canUndoUi — the class of the next strict-LIFO
+        // undo step. A lifecycle tail makes both class predicates false.
         // All are pure reads, safe on the HTTP server thread.
         httpServer.setUndoStatusProvider(() {
             import std.json : JSONValue;

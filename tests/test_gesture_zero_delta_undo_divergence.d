@@ -238,9 +238,8 @@ bool meshEq(const double[][] a, const double[][] b) {
     return true;
 }
 
-/// Depth of the VISIBLE undo stack. `/api/history` filters
-/// `HistoryFlags.ToolLifecycle`, so this is not the raw stack — see the
-/// coupling assertion in block 6 for exactly what that buys and costs.
+/// Depth of the surfaced strict-LIFO undo stack. `/api/history` includes
+/// `HistoryFlags.ToolLifecycle`, so this is also a raw step count.
 long visibleUndoDepth() { return getJson("/api/history")["undo"].array.length; }
 
 /// Raw lifecycle records on the undo stack. Unlike `/api/history`, this sees
@@ -901,24 +900,21 @@ unittest {
 //     reference measurement must be exactly what is recorded here. Narrow it in
 //     EITHER direction and this reddens.
 //
-//     Plus the two instruments' coupling. The walk counts RAW undo steps; the
-//     `/api/history` depth counts VISIBLE entries, filtering
-//     `HistoryFlags.ToolLifecycle`. In THIS rig no tool is dropped inside the
-//     gesture window, so no lifecycle entry is born there and the two must
-//     agree. A disagreement means one appeared where the rig assumes none —
-//     which silently changes what the walk is counting.
+//     Plus the two instruments' coupling. Both the walk and `/api/history`
+//     count RAW undo steps. In THIS rig no tool is dropped inside the gesture
+//     window, so the two deltas must agree directly.
 // ---------------------------------------------------------------------------
 unittest {
     auto m = measured();
 
     assert(m.zero.visibleDelta == stepsOf(m.zero, m.control),
-        format("the two instruments disagree: /api/history's visible depth "
+        format("the two instruments disagree: /api/history's surfaced depth "
                ~ "moved by %d across the gesture, the raw undo walk by %d "
                ~ "(kB %d against the control's %d). The WALK is the law's "
                ~ "instrument — the reference had no stack read and the "
                ~ "fixture's reading is defined on undo steps — so a mismatch "
-               ~ "means a ToolLifecycle entry was born inside the gesture "
-               ~ "window, where this rig assumes none.",
+               ~ "means the surfaced row count and the undo walk no longer "
+               ~ "share one strict-LIFO coordinate space.",
                m.zero.visibleDelta, stepsOf(m.zero, m.control), m.zero.kB,
                m.control.kB));
 

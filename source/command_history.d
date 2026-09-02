@@ -102,14 +102,12 @@ enum HistoryFlags : uint {
                          // the n==1 tag-strip clears BOTH bits.
     UndoBoundary = 1 << 9, // Entry is a hard-stop for the current-session scan.
                            // The entry IS undoable and stays on the stack, but
-                           // nearestModelIndexFromTail() stops before it (not at
-                           // it), triggering the tail fallback. Mirrors
-                           // CmdFlags.UndoBoundary. Applied to scene.reset /
-                           // file.new so a plain geometry undo never reaches
-                           // across a session-reset boundary.
+                           // depth/count scans stop before it. Mirrors
+                           // CmdFlags.UndoBoundary and marks scene.reset /
+                           // file.new as the edge of the current session.
     ToolLifecycle = 1 << 10, // Entry is a strict-LIFO tool-lifecycle step.
-                             // Never counted in modelDepth / uiDepth; excluded from
-                             // /api/history serialization.
+                             // Never counted in modelDepth / uiDepth, but surfaced
+                             // by /api/history as the named step that it is.
 }
 
 version (unittest) private HistoryEntry preparedTestEntry(Command cmd,
@@ -1708,30 +1706,21 @@ final class CommandHistory {
         }
     }
 
-    // Whether the current-session stack contains a Model-class record. This is
-    // deliberately a class-presence query, not a prediction of the next LIFO
-    // step; mixed stacks may report both canUndoModel and canUndoUi.
+    /// Whether the next strict-LIFO undo step is a Model-class record.
     bool canUndoModel() const {
-        foreach_reverse (ref e; undoStack) {
-            if (e.flags & HistoryFlags.UndoBoundary) break;
-            if (!(e.flags & HistoryFlags.Undoable)) continue;
-            if (e.flags & HistoryFlags.ToolLifecycle) continue;
-            if (!(e.flags & HistoryFlags.UiUndo)) return true;
-        }
         if (undoStack.length == 0) return false;
-        uint tailFlags = undoStack[$ - 1].flags;
-        return (tailFlags & HistoryFlags.UndoBoundary) != 0
-            && (tailFlags & HistoryFlags.Undoable) != 0;
+        const uint tailFlags = undoStack[$ - 1].flags;
+        return (tailFlags & HistoryFlags.Undoable) != 0
+            && (tailFlags & HistoryFlags.UiUndo) == 0
+            && (tailFlags & HistoryFlags.ToolLifecycle) == 0;
     }
 
-    /// Whether the current-session stack contains a UI-class record.
+    /// Whether the next strict-LIFO undo step is a UI-class record.
     bool canUndoUi() const {
-        foreach_reverse (ref e; undoStack) {
-            if (e.flags & HistoryFlags.UndoBoundary) break;
-            if ((e.flags & HistoryFlags.Undoable)
-                && (e.flags & HistoryFlags.UiUndo)) return true;
-        }
-        return false;
+        if (undoStack.length == 0) return false;
+        const uint tailFlags = undoStack[$ - 1].flags;
+        return (tailFlags & HistoryFlags.Undoable) != 0
+            && (tailFlags & HistoryFlags.UiUndo) != 0;
     }
 
     bool undo() {
@@ -1837,7 +1826,7 @@ final class CommandHistory {
     string undoEntryCommandLine(size_t index) const {
         if (index >= undoStack.length) return "";
         auto e = undoStack[index];
-        // ToolLifecycle entries (tool.deactivate) are not registered as command
+        // ToolLifecycle entries (tool.activate) are not registered as command
         // factories and cannot be replayed via uiCommandDelegate. Return ""
         // so both history.saveAsScript and the panel replay button skip them.
         if (e.flags & HistoryFlags.ToolLifecycle) return "";
@@ -1895,43 +1884,19 @@ final class CommandHistory {
         return n;
     }
 
-    /// undo entries EXCLUDING ToolLifecycle — for /api/history serialization.
+    /// Entries surfaced by /api/history. Every strict-LIFO step is visible;
+    /// ToolLifecycle rows are named history rows, not hidden bookkeeping.
     const(HistoryEntry)[] undoEntriesVisible() const {
-        const(HistoryEntry)[] result;
-        foreach (ref e; undoStack)
-            if (!(e.flags & HistoryFlags.ToolLifecycle))
-                result ~= e;
-        return result;
+        return undoStack;
     }
     const(HistoryEntry)[] redoEntriesVisible() const {
-        const(HistoryEntry)[] result;
-        foreach (ref e; redoStack)
-            if (!(e.flags & HistoryFlags.ToolLifecycle))
-                result ~= e;
-        return result;
+        return redoStack;
     }
 
-    /// Like jumpTo but `target` is expressed in filtered (non-lifecycle)
-    /// coordinates — i.e. the desired number of VISIBLE entries that should
-    /// be in the "applied" (undo) stack. Maps to internal coordinates by
-    /// stepping undo/redo until visible count matches.
-    bool jumpToVisible(size_t filteredTarget) {
-        // Compute total visible entries (for clamping).
-        size_t totalVisible = 0;
-        foreach (ref e; undoStack)
-            if (!(e.flags & HistoryFlags.ToolLifecycle)) ++totalVisible;
-        foreach (ref e; redoStack)
-            if (!(e.flags & HistoryFlags.ToolLifecycle)) ++totalVisible;
-        if (filteredTarget > totalVisible) filteredTarget = totalVisible;
-        while (true) {
-            size_t vis = 0;
-            foreach (ref e; undoStack)
-                if (!(e.flags & HistoryFlags.ToolLifecycle)) ++vis;
-            if (vis == filteredTarget) break;
-            if (vis > filteredTarget) { if (!undo()) return false; }
-            else                      { if (!redo()) return false; }
-        }
-        return true;
+    /// The surfaced list and the raw strict-LIFO stack now share one index
+    /// space, so a panel/API cursor target maps directly to jumpTo().
+    bool jumpToVisible(size_t target) {
+        return jumpTo(target);
     }
 
     // ----- refire ----------------------------------------------------------
@@ -2594,18 +2559,29 @@ unittest {
     }
     assert(h.undoStack.length == 3 && h.redoStack.length == 0,
         "F4 setup: expected undo=3 redo=0");
+    assert(h.undoEntriesVisible().length == 3,
+        "F4 surface: lifecycle tail must be a visible named history row");
+    assert(!h.canUndoModel() && !h.canUndoUi() && h.canUndoLifecycle(),
+        "F4 surface: Arm tail must predict lifecycle, not Model or UI");
 
     assert(h.undo(), "F4 undo₁ should revert Arm");
     assert(select.revertCalls == 0 && edit.revertCalls == 0 && arm.revertCalls == 1,
         "F4 undo₁ order must be Arm");
     assert(h.undoStack.length == 2 && h.redoStack.length == 1,
         "F4 undo₁: expected undo=2 redo=1");
+    assert(h.undoEntriesVisible().length == 2
+        && h.redoEntriesVisible().length == 1,
+        "F4 surface: undo/redo lists must expose the transferred Arm row");
+    assert(!h.canUndoModel() && h.canUndoUi() && !h.canUndoLifecycle(),
+        "F4 surface: Select tail must predict UI only");
 
     assert(h.undo(), "F4 undo₂ should revert Select");
     assert(select.revertCalls == 1 && edit.revertCalls == 0 && arm.revertCalls == 1,
         "F4 undo₂ order must be Select");
     assert(h.undoStack.length == 1 && h.redoStack.length == 2,
         "F4 undo₂: expected undo=1 redo=2");
+    assert(h.canUndoModel() && !h.canUndoUi() && !h.canUndoLifecycle(),
+        "F4 surface: Edit tail must predict Model only");
 
     assert(h.undo(), "F4 undo₃ should revert Edit");
     assert(select.revertCalls == 1 && edit.revertCalls == 1 && arm.revertCalls == 1,
@@ -2742,7 +2718,7 @@ version(unittest) {
                 // construction.
                 noteUndoRecorded();
             }
-            override string name() const { return "tool.deactivate"; }
+            override string name() const { return "tool.activate"; }
             override CmdFlags cmdFlags() const { return CmdFlags.ToolLifecycle; }
             protected override bool applyImpl()  { applied = true;  return true; }
             protected override void revertImpl() { reverted = true; }

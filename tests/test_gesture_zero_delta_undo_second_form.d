@@ -228,9 +228,9 @@ bool meshEq(const double[][] a, const double[][] b) {
     return true;
 }
 
-/// Depth of the VISIBLE undo stack. `/api/history` filters
-/// `HistoryFlags.ToolLifecycle` — which is precisely why block 4 asserts that
-/// this instrument and the undo walk DISAGREE on the lifecycle cells.
+/// Depth of the surfaced strict-LIFO undo stack. `/api/history` includes
+/// `HistoryFlags.ToolLifecycle`, so block 4 cross-checks its row deltas against
+/// the independently measured undo walk.
 long visibleUndoDepth() { return getJson("/api/history")["undo"].array.length; }
 
 /// Raw lifecycle records on the undo stack. The cutting control keeps its arm
@@ -897,40 +897,39 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// 4 — THE INSTRUMENT THAT CANNOT SEE ROW 87, asserted so nobody writes the
-//     next test on it. `/api/history` filters `HistoryFlags.ToolLifecycle`, so
-//     its visible depth moves by ZERO across every armed-and-dropped cell
-//     while the undo walk reads one step in both shapes. The WALK is the law's
-//     instrument; the visible depth remains deliberately blind after closure.
+// 4 — THE SURFACED ROW COUNT FOR ROW 87. `/api/history` exposes every
+//     `HistoryFlags.ToolLifecycle` row, so one/two/three pressless arm+drop
+//     regions add exactly one/two/three named rows. The independent undo walk
+//     must agree on each incremental cost; there is no hidden-but-counted
+//     lifecycle state.
 //
-//     The cutting cells are the control for this claim: their common arm
-//     lifecycle prefix appears in both kB indices and therefore cancels from
-//     the differential, while `/api/history` omits it from both depths. The
-//     two instruments must still AGREE on the gesture's incremental cost.
+//     The cutting cells remain the control: their common arm prefix appears
+//     in both absolute depths and cancels from the gesture differential.
 // ---------------------------------------------------------------------------
 unittest {
     auto m = measured();
 
-    assert(m.ad2.visibleDelta == 0 && m.ad1.visibleDelta == 0,
-        format("/api/history's visible undo depth moved by %d and %d across "
-               ~ "the armed-and-dropped cells. It is supposed to be BLIND to "
-               ~ "lifecycle entries; if it can see them, blocks 2 and 3 could "
-               ~ "have been written on the cheap instrument and this file's "
-               ~ "whole undo walk is unnecessary — re-read lifecycle filtering",
-               m.ad1.visibleDelta, m.ad2.visibleDelta));
-    assert(m.ad2.kB - m.ad1.kB != m.ad2.visibleDelta - m.ad1.visibleDelta,
-        "the two instruments AGREE on the second armed-and-dropped region. "
-        ~ "They must not: the walk counts raw undo steps and /api/history "
-        ~ "filters ToolLifecycle, so an agreement means either the drop stopped "
-        ~ "recording a lifecycle entry or /api/history stopped filtering it");
+    assert(m.ad1.visibleDelta == 1 && m.ad2.visibleDelta == 2
+        && m.ad3.visibleDelta == 3,
+        format("/api/history surfaced %d/%d/%d rows for one/two/three "
+               ~ "armed-and-dropped regions; expected 1/2/3 named lifecycle "
+               ~ "rows, one per arm",
+               m.ad1.visibleDelta, m.ad2.visibleDelta, m.ad3.visibleDelta));
+    assert(m.ad2.kB - m.ad1.kB
+            == m.ad2.visibleDelta - m.ad1.visibleDelta,
+        "the raw undo walk and /api/history disagree on the second "
+        ~ "armed-and-dropped region; lifecycle state must be surfaced, not "
+        ~ "hidden while still counted");
 
-    assert(m.cutZero.visibleDelta == m.cutZero.kB - m.cutControl.kB,
+    assert(m.cutZero.visibleDelta - m.cutControl.visibleDelta
+            == m.cutZero.kB - m.cutControl.kB,
         format("the two instruments disagree on the CUTTING cells: "
-               ~ "/api/history's visible depth moved by %d across the gesture, "
+               ~ "/api/history's surfaced depth moved by %d across the gesture, "
                ~ "the raw undo walk by %d. Their common arm lifecycle prefix "
-               ~ "must cancel from the differential; a mismatch means the "
+               ~ "must cancel from the surfaced differential; a mismatch means the "
                ~ "two cells no longer share the same prefix",
-               m.cutZero.visibleDelta, m.cutZero.kB - m.cutControl.kB));
+               m.cutZero.visibleDelta - m.cutControl.visibleDelta,
+               m.cutZero.kB - m.cutControl.kB));
 }
 
 // ---------------------------------------------------------------------------

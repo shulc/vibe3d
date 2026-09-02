@@ -765,7 +765,7 @@ public:
     // rendering — preventing duplicate widgets.
     bool renderParamsAsPanel() const { return true; }
 
-    // Lifecycle-undo emit opt-in (ToolDeactivationCommand on drop) moved to
+    // Lifecycle-undo emit opt-in (ToolActivationCommand on arm) moved to
     // the LifecycleUndoEmitter marker interface in edit_session.d (task
     // 0428).
 

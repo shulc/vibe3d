@@ -616,8 +616,8 @@ struct PreparedXfrmUpdateBoundaryImage {
 // LiveEvalClient (task 0428): the sole implementor of the live re-evaluation
 // capability — hasLiveEval / hasLiveAttrEval / reEvaluate below are the
 // interface's implementations (EditSession discovers them by cast).
-// LifecycleUndoEmitter (task 0428): marker — this tool emits a
-// ToolDeactivationCommand on drop (undo-cursor lifecycle stepping).
+// LifecycleUndoEmitter (task 0428): marker — this tool records a
+// ToolActivationCommand on arm (undo-cursor lifecycle stepping).
 class XfrmTransformTool : TransformTool, LiveEvalClient, SlotActivationClient,
                           PreparedToolDoorClient, PreparedToolParamDoorClient,
                           PreparedToolPoseDoorClient,

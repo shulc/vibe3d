@@ -92,8 +92,8 @@ unittest {
     assert(anyMoved, "setup: the multi-step drag must have genuinely relaxed at least one vertex");
 
     int undoDepthAfter = cast(int) getJson("/api/history")["undo"].array.length;
-    assert(undoDepthAfter == undoDepthBefore + 1,
-        format("one multi-pass Smooth gesture must record EXACTLY ONE undo entry; depth went %d -> %d",
+    assert(undoDepthAfter == undoDepthBefore + 2,
+        format("one arm plus one multi-pass Smooth gesture must surface EXACTLY TWO rows; depth went %d -> %d",
                undoDepthBefore, undoDepthAfter));
 
     auto u = postJson("/api/undo", "");

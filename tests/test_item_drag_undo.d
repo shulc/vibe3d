@@ -125,8 +125,8 @@ unittest {
 
     auto h = history();
     long undoCountAfter = h["undo"].array.length;
-    assert(undoCountAfter == undoCountBefore + 1,
-        format("one drag must add exactly ONE undo entry, before=%d after=%d",
+    assert(undoCountAfter == undoCountBefore + 2,
+        format("one arm plus one drag must surface exactly TWO undo rows, before=%d after=%d",
                undoCountBefore, undoCountAfter));
     auto topEntry = h["undo"].array[$ - 1];
     assert(topEntry["inSession"].type == JSONType.FALSE,
@@ -171,9 +171,9 @@ unittest {
 
     auto h = history();
     long undoCountAfter = h["undo"].array.length;
-    assert(undoCountAfter == undoCountBefore + 1,
-        format("two consecutive drags in one activation must consolidate to ONE "
-             ~ "surviving entry, before=%d after=%d", undoCountBefore, undoCountAfter));
+    assert(undoCountAfter == undoCountBefore + 2,
+        format("two consecutive drags in one activation must surface the arm plus "
+             ~ "ONE consolidated edit, before=%d after=%d", undoCountBefore, undoCountAfter));
 
     doUndo();
     auto reverted = layerXform(0);
@@ -208,8 +208,8 @@ unittest {
 
     // Two tagged in-session entries exist now (no boundary yet).
     long undoCountMidRun = history()["undo"].array.length;
-    assert(undoCountMidRun == undoCountBefore + 2,
-        format("mid-run: expected 2 tagged in-session entries, got %d new",
+    assert(undoCountMidRun == undoCountBefore + 3,
+        format("mid-run: expected one arm plus 2 tagged in-session entries, got %d new",
                undoCountMidRun - undoCountBefore));
 
     playCtrlZ(vp);   // mid-run undo, tool STILL ACTIVE — steps exactly gesture 2
@@ -283,9 +283,9 @@ unittest {
 
     auto h = history();
     long undoCountAfter = h["undo"].array.length;
-    assert(undoCountAfter == undoCountBefore + 1,
-        format("a panel rotate edit must add exactly ONE undo entry (the "
-             ~ "blocker regression: it added none) — before=%d after=%d",
+    assert(undoCountAfter == undoCountBefore + 2,
+        format("a panel rotate edit must surface one arm plus exactly ONE edit "
+             ~ "(the blocker regression added no edit) — before=%d after=%d",
                undoCountBefore, undoCountAfter));
 
     doUndo();
@@ -341,13 +341,13 @@ unittest {
 
     // An in-session cancel must record NOTHING on the undo stack.
     long undoCountAfterCancel = history()["undo"].array.length;
-    assert(undoCountAfterCancel == undoCountBefore,
-        format("an in-session cancel must record NOTHING — before=%d after=%d",
+    assert(undoCountAfterCancel == undoCountBefore + 1,
+        format("an in-session cancel must record no edit and leave only the surfaced arm — before=%d after=%d",
                undoCountBefore, undoCountAfterCancel));
 
     cmd("tool.set rotate off");
     long undoCountAfterDrop = history()["undo"].array.length;
-    assert(undoCountAfterDrop == undoCountBefore,
-        "dropping the tool after a fully-cancelled session must still "
-        ~ "record nothing");
+    assert(undoCountAfterDrop == undoCountBefore + 1,
+        "dropping the tool after a fully-cancelled session must leave only "
+        ~ "the surfaced arm row");
 }

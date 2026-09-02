@@ -394,8 +394,8 @@ unittest {
                                             + fabs(v6RunB[2] - v6AfterRunA[2]) > 1e-2,
         "run B's ring drag should displace v6 from its post-run-A position");
     // FLIP: gesture B self-committed an in-session entry on mouse-up.
-    assert(undoCount() == committedFloor + 1,
-        "Phase 2: the ring gesture self-commits an in-session entry on mouse-up; "
+    assert(undoCount() == committedFloor + 2,
+        "Phase 2: run-B arm plus the ring gesture surface two entries; "
         ~ "floor=" ~ committedFloor.to!string ~ " now=" ~ undoCount().to!string);
 
     // Ctrl+Z #1 (mouse released ⇒ activeDrag null) is plain in-session stepping:
@@ -409,8 +409,8 @@ unittest {
         "post-gizmo-drag in-session Ctrl+Z must STEP gesture B back (to post-run-A); "
         ~ "got (" ~ v6AfterStep[0].to!string ~ ","
         ~ v6AfterStep[1].to!string ~ "," ~ v6AfterStep[2].to!string ~ ")");
-    assert(undoCount() == committedFloor,
-        "stepping gesture B pops exactly one in-session entry; floor="
+    assert(undoCount() == committedFloor + 1,
+        "stepping gesture B leaves the surfaced run-B arm; floor="
         ~ committedFloor.to!string ~ " now=" ~ undoCount().to!string);
 
     // Ctrl+Z #2 reaches run B's arm record first. It is a strict-LIFO step,
@@ -429,7 +429,7 @@ unittest {
     assert(lifecycleCount() == lifecycleBeforeArmStep - 1,
         "the SECOND Ctrl+Z must consume exactly one lifecycle record");
     assert(undoCount() == committedFloor,
-        "the lifecycle step must leave the visible committed floor intact");
+        "the lifecycle step must remove exactly the surfaced run-B arm row");
 
     // Ctrl+Z #3 now reaches run A and restores the cube corner.
     playAndWait(ctrlZ(70.0));

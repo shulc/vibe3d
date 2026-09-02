@@ -122,7 +122,8 @@ unittest {
            "at activation no line is drawn (clean viewport)");
     assert(vertCount() == 8 && faceCount() == 6,
            "activation alone must not cut the mesh");
-    assert(undoCount() == baseUndo, "activation must not commit anything");
+    assert(undoCount() == baseUndo + 1,
+        "activation must surface its lifecycle row without committing geometry");
 
     auto cam = fetchCamera(BASE);
     auto vp  = viewportFromCamera(cam);
@@ -172,7 +173,8 @@ unittest {
     // Clean teardown — one baked undo entry for the whole session.
     cmd("tool.set mesh.sliceTool off");
     settle();
-    assert(undoCount() == baseUndo + 1, "tool-drop must bake exactly one undo entry");
+    assert(undoCount() == baseUndo + 2,
+        "tool-drop must leave the surfaced arm plus exactly one baked edit");
 }
 
 // ---------------------------------------------------------------------------

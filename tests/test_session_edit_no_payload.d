@@ -15,17 +15,12 @@
 // a script-origin refusal throws and becomes `{"status":"error"}`, a
 // UI-origin one becomes a notice — so both are driven here (C-1, C-5).
 //
-// WHY C-3 CARRIES THREE ASSERTIONS AND NOT ONE. `/api/history` serializes
-// `undoEntriesVisible()`, which FILTERS `ToolLifecycle` entries;
-// `/api/history/replay` indexes the RAW `undoStack`. They are two index
-// spaces. Whenever they disagree, replay lands on an entry whose command line
-// is "" and the route answers `{"status":"error","message":"no entry at given
-// index"}` — status `error`, mesh intact, the check passes, and the mutation
-// it names ("delete the gate") cannot redden it. So the check pins the index
-// space (`toolLifecycleCount == 0`, which makes the two spaces equal
-// element-for-element), searches for the entry BY NAME rather than assuming a
-// position, and asserts the refusal's TEXT, which is what tells a real
-// refusal apart from a missed entry.
+// WHY C-3 CARRIES THREE ASSERTIONS AND NOT ONE. `/api/history` and
+// `/api/history/replay` now share the RAW strict-LIFO index space, including
+// lifecycle rows. The test still pins `toolLifecycleCount == 0` so its target
+// entry cannot be displaced by unrelated transition choreography, searches
+// for the entry BY NAME rather than assuming a position, and asserts the
+// refusal's TEXT, which is what tells a real refusal apart from a missed entry.
 
 import std.json;
 import std.net.curl : get, post;

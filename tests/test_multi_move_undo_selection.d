@@ -20,10 +20,10 @@
 //   7. undo₂ → MeshSelect(B).
 //      Selection returns to top-4; geometry of A remains applied.
 //
-// The capture that establishes this law used the scripted `mesh.move_vertex`
-// door. This test uses the `/api/transform` gesture door. Whether gesture
-// records coalesce differently is still unmeasured; this test pins our strict
-// LIFO implementation without pretending that the remaining door was captured.
+// The captures that establish this law use scripted `mesh.move_vertex` and the
+// armed `tool.set`/`tool.attr`/`tool.doApply` door. This test's specific
+// `/api/transform` input is still unmeasured; it pins our strict-LIFO
+// implementation without projecting either measured door onto this one.
 //
 // Restoring candidate 0056's carried-suffix skip leaves bottom-4 selected and
 // makes the top-4 assertion below fail.

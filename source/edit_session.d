@@ -206,13 +206,11 @@ interface SessionStepUndo {
 }
 
 // ---------------------------------------------------------------------------
-// LifecycleUndoEmitter — marker: the tool emits a ToolDeactivationCommand on
-// drop, enabling undo-cursor lifecycle stepping (only transform tools that
-// interleave geometry commits with tool sessions opt in — XfrmTransformTool
-// is the sole implementor). The emit itself lives in the app's setActiveTool
-// and fires AFTER deactivate(), once consolidate() has merged the run into
-// one geometry entry; the session only answers the gate
-// (activeToolEmitsLifecycle below).
+// LifecycleUndoEmitter — marker: the tool participates in undo-cursor
+// lifecycle stepping (only transform tools that interleave geometry commits
+// with tool sessions opt in — XfrmTransformTool is the sole implementor).
+// The app records a ToolActivationCommand after a successful arm; the session
+// only answers the gate used by the transition machinery below.
 // ---------------------------------------------------------------------------
 interface LifecycleUndoEmitter { }
 
@@ -475,7 +473,7 @@ final class EditSession {
     }
 
     // Whether the ACTIVE tool participates in undo-cursor lifecycle stepping
-    // (emits a ToolDeactivationCommand on drop) — the LifecycleUndoEmitter
+    // (records a ToolActivationCommand on arm) — the LifecycleUndoEmitter
     // marker discovered by cast; see the marker's doc for the emit ordering.
     bool activeToolEmitsLifecycle() {
         return (cast(LifecycleUndoEmitter) tool_()) !is null;

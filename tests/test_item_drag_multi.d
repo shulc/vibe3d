@@ -611,10 +611,11 @@ unittest {
 
     auto h = parseJSON(cast(string)get(BASE ~ "/api/history"));
     long undoAfter = h["undo"].array.length;
-    assert(undoAfter == undoBefore + 1,
-        format("ONE gesture over a TWO-item selection must record exactly ONE "
-             ~ "undo entry (one LayerXformEdit carrying both targets), not one "
-             ~ "per target — before=%d after=%d", undoBefore, undoAfter));
+    assert(undoAfter == undoBefore + 2,
+        format("one arm plus ONE gesture over a TWO-item selection must surface "
+             ~ "exactly TWO rows (one lifecycle row and one LayerXformEdit "
+             ~ "carrying both targets), not one edit per target — before=%d after=%d",
+               undoBefore, undoAfter));
     assert(h["undo"].array[$ - 1]["inSession"].type == JSONType.FALSE,
         "the surviving entry must not still be flagged inSession after the "
         ~ "tool-drop boundary — " ~ h["undo"].array[$ - 1].toString);

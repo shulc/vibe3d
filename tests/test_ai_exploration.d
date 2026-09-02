@@ -106,11 +106,10 @@ void runHttpTests() {
         //   * `undoDepthCounts` (source/command_history.d:1049) stops at the
         //     first UndoBoundary (`:1054`), so modelDepth/uiDepth are 0 by
         //     construction — traversal stops at the boundary.
-        //   * `canUndoModel` (`:1070`) deliberately looks PAST that: with no
-        //     current-session Model entry it asks whether the TAIL is itself
-        //     Model-class-and-Undoable, which a boundary is. Its comment at
-        //     `:1063-1069` states the intent — report "Model undo available"
-        //     rather than the misleading "UI undo available".
+        //   * `canUndoModel` classifies the TAIL that the next strict-LIFO
+        //     undo would step. That tail is the Model-class, undoable boundary,
+        //     so the predicate is true even though the current-session count
+        //     is zero.
         //   * `canUndo()` (`:989`) is just `undoStack.length > 0`.
         //
         // So the documented answer after a reset is the TRIPLE below. This
@@ -123,7 +122,7 @@ void runHttpTests() {
                "after reset the stack holds a boundary entry, so canUndo is true");
         assert(j["canUndoModel"].type == JSONType.true_,
                "the boundary entry is Model-class, so canUndoModel is true "
-               ~ "(command_history.d:1070)");
+               ~ "(command_history.d tail predicate)");
         assert(j["modelDepth"].integer == 0,
                "counts stop AT the boundary, so modelDepth is 0 "
                ~ "(command_history.d:1049)");

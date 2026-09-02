@@ -106,8 +106,8 @@ unittest {
     assert(vertCount() == 12 && faceCount() == 10,
            format("drag 1 must show one mid-plane cut (12v/10f), got %dv/%df",
                   vertCount(), faceCount()));
-    assert(undoCount() == baseUndo,
-           "mouse-up must NOT commit — undo count changed after drag 1");
+    assert(undoCount() == baseUndo + 1,
+           "mouse-up must NOT commit — only the surfaced arm may stand after drag 1");
 
     // ---- Drag 2: grab the LINE BODY and translate it (a second gesture) ----
     // The midpoint (origin) projects clear of the endpoints (0.6 world units
@@ -125,8 +125,8 @@ unittest {
     assert(vertCount() == 12 && faceCount() == 10,
            format("two drags must refine ONE slice, not stack — got %dv/%df",
                   vertCount(), faceCount()));
-    assert(undoCount() == baseUndo,
-           "mouse-up must NOT commit — undo count changed after drag 2");
+    assert(undoCount() == baseUndo + 1,
+           "mouse-up must NOT commit — only the surfaced arm may stand after drag 2");
 
     // Self-diagnostic: the line-body drag actually translated the WHOLE line
     // (both endpoints moved ~0.3 along V, so the midpoint sits at ~0.3·V). This
@@ -144,8 +144,8 @@ unittest {
     // ---- Bake on deactivate: exactly ONE undo entry per session -----------
     cmd("tool.set mesh.sliceTool off");
     settle();
-    assert(undoCount() == baseUndo + 1,
-           format("tool-drop must bake exactly ONE undo entry, got delta %d",
+    assert(undoCount() == baseUndo + 2,
+           format("tool-drop must leave one surfaced arm plus exactly ONE baked edit, got delta %d",
                   undoCount() - baseUndo));
     assert(vertCount() == 12 && faceCount() == 10,
            "the committed slice must remain after tool-drop");
@@ -156,7 +156,8 @@ unittest {
     settle();
     assert(vertCount() == 8 && faceCount() == 6,
            "one undo must restore the pristine 8v/6f cube");
-    assert(undoCount() == baseUndo, "undo must return to the pre-session count");
+    assert(undoCount() == baseUndo + 1,
+        "undoing the baked edit must leave the surfaced arm row");
 }
 
 // ---------------------------------------------------------------------------
@@ -218,8 +219,8 @@ unittest {
     assert(vertCount() == 12 && faceCount() == 10,
            format("slice must have cut the cube (12v/10f), got %dv/%df",
                   vertCount(), faceCount()));
-    assert(undoCount() == baseUndo + 1,
-           "tool-drop must bake exactly one undo entry for the cut");
+    assert(undoCount() == baseUndo + 2,
+           "tool-drop must surface the arm plus exactly one baked edit for the cut");
 
     // The hard S2 requirement: NOTHING is auto-selected. Slice preserves the
     // (empty) incoming selection — no new polygon / edge / vertex is selected.

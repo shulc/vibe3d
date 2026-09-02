@@ -56,6 +56,6 @@ unittest {
         "a release clamped to a vertex (r>=1) must be a byte-identical no-op");
 
     size_t undoDepthAfter = getJson("/api/history")["undo"].array.length;
-    assert(undoDepthAfter == undoDepthBefore,
-        "a clamp no-op must record NO new undo entry");
+    assert(undoDepthAfter == undoDepthBefore + 1,
+        "a clamp no-op must add no edit row; only the surfaced arm is new");
 }
