@@ -19,7 +19,7 @@ import std.json : JSONValue;
 import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind,
     PreparedSessionActivateEffect, PreparedActivateKind,
     PreparedDeactivateEffect, PreparedDeactivateKind;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_bridge_activation : PreparedBridgeActivationOwner,
     PreparedBridgeDeactivateOwner;
 import mesh_gpu : GpuCreateOwner, GpuCreateUploadOwner, GpuUploadOwner,
@@ -267,7 +267,7 @@ void rebuildBridgePreview(const ref MeshSnapshot baseSnap, ref Mesh previewMesh,
 // adjusts Segments, mapping horizontal pixel delta to an integer span
 // count; Twist / Remove Polygons / Flip Loop Pairing are panel-only.
 // ---------------------------------------------------------------------------
-class BridgeTool : Tool {
+class BridgeTool : Tool, PreparedToolDoorClient {
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const nothrow @nogc { return meshSrc_(); }
@@ -444,6 +444,14 @@ public:
         return PreparedSessionActivateEffect(preparedToolStateOwner,
             PreparedActivateKind.Bridge, ok);
     }
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto create = new GpuCreateOwner(&previewGpu_, threadIdentity,
+            contextIdentity, true);
+        auto upload = new GpuCreateUploadOwner(&previewGpu_, threadIdentity,
+            contextIdentity, true);
+        return prepareActivate(context, create, upload).accepted;
+    }
 
     version(unittest) final void seedPreparedActivationForTest() {
         valid_ = polygonMode_ = openRows_ = engaged = dragging_ =
@@ -534,6 +542,13 @@ public:
         if (!ok) context.discard();
         return PreparedDeactivateEffect(preparedToolStateOwner,
             PreparedDeactivateKind.Bridge, historyPrepared, ok);
+    }
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto upload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);
+        auto destroy = new GpuResourceOwner(&previewGpu_, threadIdentity,
+            contextIdentity);
+        return prepareDeactivate(context, layer, upload, destroy).resourceAccepted;
     }
 
     version(unittest) final void seedPreparedDeactivateStateForTest()

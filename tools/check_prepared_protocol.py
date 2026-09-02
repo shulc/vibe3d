@@ -466,7 +466,7 @@ for path, text in prepared_source_texts.items():
     if "import prepared_record_context" in text and module not in b3d_modules | {
             "prepared_record_context", "tools.transform.transform",
             "tools.common.command_wrapper", "tools.edit.tack",
-            "tools.create.vertex_place", "tools.create.pen",
+            "tools.create.vertex_place", "tools.create.pen", "tools.create.arc",
             "tools.create.primitive_create_tool",
             "tools.alignment.array_tool",
             "tools.alignment.clone_tool", "tools.deform.magnet",
@@ -6242,6 +6242,7 @@ for path in (ROOT / "source/tools").rglob("*.d"):
     if (".preparePrivateState(" in body or ".prepareMeshImageCommit(" in body) and \
             path.relative_to(ROOT).as_posix() not in {
                 "source/tools/create/vertex_place.d",
+                "source/tools/create/arc.d",
                 "source/tools/alignment/array_tool.d",
                 "source/tools/alignment/clone_tool.d",
                 "source/tools/deform/magnet.d",
@@ -6320,7 +6321,7 @@ def b5e_gate(owner, context, sources, snapshot=b5e_snapshot):
     return (all(kind in owner for kind in
                 ("ArraySession", "CloneSession", "MagnetSession", "ReductionSession")) and
             "MeshSnapshot activationBaseline;" in owner and
-            owner.count("target.classinfo !is") == 8 and
+            owner.count("target.classinfo !is") == 9 and
             "o.activationBaseline = image;" in owner and
             "failSessionPrepareForTest_" in owner and
             all(f"{prefix}Target.installPreparedActivation(activationBaseline);" in owner
@@ -8330,6 +8331,29 @@ alignment_door_clients = {
         "PreparedRadialSweepTransitionOwner.deactivate(this)",
         "new GpuCreateUploadOwner(&previewGpu, threadIdentity,"),
 }
+create_bridge_door_clients = {
+    "source/tools/create/arc.d": (
+        "class ArcTool : Tool, PreparedToolDoorClient",
+        "PreparedPrivateStateOwner.arcIdle(this)",
+        "context.preparePrivateState(owner)",
+        "return prepareDoorIdle(context);"),
+    "source/tools/create/box.d": (
+        "class BoxTool : Tool, KeepAliveOnCancel, PreparedToolDoorClient",
+        "new GpuCreateOwner(&previewGpu, threadIdentity,",
+        "prepareDeactivate(context, layer, upload, destroy,"),
+    "source/tools/create/primitive_create_tool.d": (
+        "abstract class PrimitiveCreateTool : Tool, KeepAliveOnCancel, PreparedToolDoorClient",
+        "new GpuCreateOwner(&previewGpu, threadIdentity,",
+        "prepareDeactivate(context, layer, upload, destroy,"),
+    "source/tools/create/pen.d": (
+        "class PenTool : Tool, PreparedToolDoorClient",
+        "new BoxHandlerBatchResourceOwner(vertHandlers,",
+        "emptyUpload, destroy, handlers, new SnapOverlayOwner()"),
+    "source/tools/edit/bridge_tool.d": (
+        "class BridgeTool : Tool, PreparedToolDoorClient",
+        "new GpuCreateOwner(&previewGpu_, threadIdentity,",
+        "new GpuCreateUploadOwner(&previewGpu_, threadIdentity,"),
+}
 def p10c_door_capability_gate(context, sources, xfrm):
     if not all(x in context for x in (
             "interface PreparedToolDoorClient",
@@ -8416,6 +8440,37 @@ def p10c_door_capability_gate(context, sources, xfrm):
             "new GpuResourceOwner(&previewGpu, threadIdentity,",
             "prepareDeactivate(context, transition, layer, upload, destroy).accepted")):
         return False
+    for path, needles in create_bridge_door_clients.items():
+        if not all(needle in sources[path] for needle in needles):
+            return False
+    for path in ("source/tools/create/box.d",
+                 "source/tools/create/primitive_create_tool.d"):
+        body = sources[path]
+        if "contextIdentity, true);" not in body or not all(x in body for x in (
+                "new GpuUploadOwner(gpu, threadIdentity, contextIdentity)",
+                "new GpuResourceOwner(&previewGpu, threadIdentity,",
+                "new SnapOverlayOwner()).resourceAccepted")):
+            return False
+    pen = sources["source/tools/create/pen.d"]
+    if not all(x in pen for x in (
+            "new GpuCreateOwner(&previewGpu, threadIdentity,",
+            "auto commitUpload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity)",
+            "auto refreshUpload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity)",
+            "new GpuResourceOwner(&previewGpu, threadIdentity,")):
+        return False
+    bridge = sources["source/tools/edit/bridge_tool.d"]
+    if "prepareActivate(context, create, upload).accepted" not in bridge or \
+            "prepareDeactivate(context, layer, upload, destroy).resourceAccepted" not in bridge:
+        return False
+    arc_owner = (ROOT / "source/prepared_private_state.d").read_text()
+    if not all(x in arc_owner for x in (
+            "ArcIdle", "static PreparedPrivateStateOwner arcIdle(ArcTool target)",
+            "arcStateWitness = target.preparedArcStateWitness()",
+            "arcTarget.preparedArcStateWitness() != arcStateWitness",
+            "arcTarget.installPreparedArcIdle()")):
+        return False
+    if "case PreparedPrivateStateKind.ArcIdle: e.kind = PreparedResourceKind.ArcState; break;" not in context:
+        return False
     return ("PreparedToolDoorClient," in xfrm and
         "override bool prepareDoorDeactivate(" in xfrm and
         "override bool prepareDoorActivate(" in xfrm and
@@ -8425,7 +8480,8 @@ door_sources = {p: (ROOT / p).read_text() for p in
     set(simple_door_clients) | set(private_state_door_clients) |
     set(cutting_door_clients) | set(gpu_layer_door_clients) |
     set(vertex_door_clients) | set(typed_context_door_clients) |
-    set(resource_lifecycle_door_clients) | set(alignment_door_clients)}
+    set(resource_lifecycle_door_clients) | set(alignment_door_clients) |
+    set(create_bridge_door_clients)}
 door_xfrm = (ROOT / "source/tools/transform/xfrm_transform.d").read_text()
 if not p10c_door_capability_gate(record_context, door_sources, door_xfrm):
     fail("P1.0c prepared door capability tranche drift")
@@ -8478,6 +8534,26 @@ for target, old, new, label in (
      "PreparedSelectionProfileOwner.radialSweep(this, *source,",
      "PreparedSelectionProfileOwner.radialSweep(null, *source,",
      "drop Radial Sweep profile subject identity"),
+    ("source/tools/create/box.d",
+     "new GpuCreateOwner(&previewGpu, threadIdentity,",
+     "new GpuCreateOwner(null, threadIdentity,",
+     "drop Box preview GPU identity"),
+    ("source/tools/create/pen.d",
+     "new BoxHandlerBatchResourceOwner(vertHandlers,",
+     "new BoxHandlerBatchResourceOwner(null,",
+     "drop Pen handler batch identity"),
+    ("source/tools/create/primitive_create_tool.d",
+     "new SnapOverlayOwner()).resourceAccepted",
+     "null).resourceAccepted",
+     "drop Primitive snap owner"),
+    ("source/tools/edit/bridge_tool.d",
+     "new GpuCreateUploadOwner(&previewGpu_, threadIdentity,",
+     "new GpuCreateUploadOwner(null, threadIdentity,",
+     "drop Bridge preview GPU identity"),
+    ("source/tools/create/arc.d",
+     "PreparedPrivateStateOwner.arcIdle(this)",
+     "PreparedPrivateStateOwner.arcIdle(null)",
+     "drop Arc private-state subject identity"),
     ("xfrm", "return prepareActivate(context).accepted;", "return true;",
      "drop Xfrm activation producer"),
 ):

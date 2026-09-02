@@ -15,7 +15,7 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_private_state : PreparedPrivateStateOwner;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
     PreparedDeactivateEffect, PreparedDeactivateKind, PreparedPenParamEffect,
@@ -358,7 +358,7 @@ struct PreparedPenParamImage {
     }
 }
 
-class PenTool : Tool {
+class PenTool : Tool, PreparedToolDoorClient {
 private:
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
@@ -597,6 +597,12 @@ public:
         return PreparedSessionActivateEffect(preparedToolStateOwner,
             PreparedActivateKind.Pen, ok);
     }
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto owner = new GpuCreateOwner(&previewGpu, threadIdentity,
+            contextIdentity, true);
+        return prepareActivate(context, owner).accepted;
+    }
 
     final GpuMesh* preparedPreviewGpu() nothrow @nogc { return &previewGpu; }
     final PreparedPenParamEffect prepareParamChanged(PreparedRecordContext context,
@@ -749,6 +755,19 @@ public:
         if (!ok) context.discard();
         return PreparedDeactivateEffect(preparedToolStateOwner,
             PreparedDeactivateKind.Pen, historyPrepared, ok);
+    }
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto commitUpload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);
+        auto refreshUpload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);
+        auto emptyUpload = new GpuUploadOwner(&previewGpu, threadIdentity,
+            contextIdentity);
+        auto destroy = new GpuResourceOwner(&previewGpu, threadIdentity,
+            contextIdentity);
+        auto handlers = new BoxHandlerBatchResourceOwner(vertHandlers,
+            threadIdentity, contextIdentity);
+        return prepareDeactivate(context, layer, commitUpload, refreshUpload,
+            emptyUpload, destroy, handlers, new SnapOverlayOwner()).resourceAccepted;
     }
 
     override void deactivate() {

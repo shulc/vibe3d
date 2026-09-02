@@ -1,5 +1,5 @@
 module tools.create.box;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_tool_effect : PreparedBoxParamEffect, PreparedSessionActivateEffect,
     PreparedActivateKind, PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_private_state : PreparedPrivateStateOwner;
@@ -119,7 +119,7 @@ private __gshared View gBoxLiveEditView;
 // (the local<->world transforms, worldAxisIdxOf, the Idle-state snap-
 // preview shape) — see task 0418 for the full field/method comparison.
 // ---------------------------------------------------------------------------
-class BoxTool : Tool, KeepAliveOnCancel {
+class BoxTool : Tool, KeepAliveOnCancel, PreparedToolDoorClient {
 private:
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
@@ -274,6 +274,12 @@ public:
         return PreparedSessionActivateEffect(preparedToolStateOwner,
             PreparedActivateKind.Box, ok);
     }
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto owner = new GpuCreateOwner(&previewGpu, threadIdentity,
+            contextIdentity, true);
+        return prepareActivate(context, owner).accepted;
+    }
 
     final GpuMesh* preparedPreviewGpu() nothrow @nogc { return &previewGpu; }
     version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
@@ -392,6 +398,14 @@ public:
         if (!ok) context.discard();
         return PreparedDeactivateEffect(preparedToolStateOwner,
             PreparedDeactivateKind.Box, historyPrepared, ok);
+    }
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto upload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);
+        auto destroy = new GpuResourceOwner(&previewGpu, threadIdentity,
+            contextIdentity);
+        return prepareDeactivate(context, layer, upload, destroy,
+            new SnapOverlayOwner()).resourceAccepted;
     }
 
     override void deactivate() {

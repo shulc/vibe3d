@@ -15,6 +15,9 @@ import snapshot : MeshSnapshot;
 import tools.create.create_common : currentWorkplaneFrame, WorkplaneFrame, transformPoint;
 import editmode : EditMode;
 import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
+import prepared_private_state : PreparedPrivateStateOwner;
+import document : Layer;
 
 import std.math : sin, cos, PI;
 
@@ -121,7 +124,7 @@ private struct ArcPreparedState {
     @disable this(this);
 }
 
-class ArcTool : Tool {
+class ArcTool : Tool, PreparedToolDoorClient {
 private:
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
@@ -176,6 +179,29 @@ public:
         ArcPreparedState handle;
         if (validatePreparedState(prepared, handle)) installLegacyPreparedState(handle);
     }
+
+    final int preparedArcStateWitness() const nothrow @nogc {
+        return cast(int) state;
+    }
+    final void installPreparedArcIdle() nothrow @nogc { state = ArcState.Idle; }
+
+    private bool prepareDoorIdle(PreparedRecordContext context) {
+        if (context is null) return false;
+        auto prepared = prepareIdleState();
+        ArcPreparedState handle;
+        if (!validatePreparedState(prepared, handle)) {
+            context.discard(); return false;
+        }
+        auto owner = PreparedPrivateStateOwner.arcIdle(this);
+        const ok = owner !is null && context.preparePrivateState(owner) &&
+            context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return ok;
+    }
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong, ulong) { return prepareDoorIdle(context); }
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer,
+            ulong, ulong) { return prepareDoorIdle(context); }
 
 private:
     PreparedToolStateDelta prepareIdleState() const nothrow @nogc {

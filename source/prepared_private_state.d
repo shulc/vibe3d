@@ -14,6 +14,7 @@ import tools.create.cylinder : CylinderTool;
 import tools.create.torus : TorusTool;
 import tools.create.tube : TubeTool;
 import tools.create.vertex_place : VertexTool;
+import tools.create.arc : ArcTool;
 import tools.alignment.array_tool : ArrayTool;
 import tools.alignment.clone_tool : CloneTool;
 import tools.deform.magnet : MagnetTool;
@@ -24,7 +25,7 @@ import mesh : Mesh;
 enum PreparedPrivateStateKind : ubyte {
     Box, BoxDeactivate, Pen, PenDeactivate, PenParam, Primitive, PrimitiveDeactivate,
     Vertex, ArraySession, CloneSession,
-    MagnetSession, ReductionSession
+    MagnetSession, ReductionSession, ArcIdle
 }
 private enum PrimitiveProjection : ubyte {
     Base, Handled, Sphere, Capsule, Cone, Cylinder, Torus, Tube
@@ -55,6 +56,8 @@ private:
     CloneTool cloneTarget;
     MagnetTool magnetTarget;
     ReductionTool reductionTarget;
+    ArcTool arcTarget;
+    int arcStateWitness;
     MeshSnapshot activationBaseline;
     immutable bool sphereClearMethod;
     immutable int sphereAxis;
@@ -205,6 +208,12 @@ public:
         auto o = new PreparedPrivateStateOwner(PreparedPrivateStateKind.ReductionSession);
         o.reductionTarget = target; o.activationBaseline = image; return o;
     }
+    static PreparedPrivateStateOwner arcIdle(ArcTool target) {
+        if (target is null || target.classinfo !is ArcTool.classinfo) return null;
+        auto o = new PreparedPrivateStateOwner(PreparedPrivateStateKind.ArcIdle);
+        o.arcTarget = target; o.arcStateWitness = target.preparedArcStateWitness();
+        return o;
+    }
     @property PreparedPrivateStateKind kind() const nothrow @nogc { return kind_; }
     bool owns(VertexTool target) const nothrow @nogc {
         return kind_ == PreparedPrivateStateKind.Vertex && vertexTarget is target;
@@ -254,6 +263,7 @@ private:
             return magnetTarget !is null && activationBaseline.filled;
         case PreparedPrivateStateKind.ReductionSession:
             return reductionTarget !is null && activationBaseline.filled;
+        case PreparedPrivateStateKind.ArcIdle: return arcTarget !is null;
         }
     }
 public:
@@ -273,7 +283,9 @@ public:
              !penTarget.preparedParamMatches(penParamImage)) ||
             (kind_ == PreparedPrivateStateKind.PrimitiveDeactivate &&
              !primitiveTarget.preparedDeactivateStateMatches(
-                 primitiveDeactivateImage)))
+                 primitiveDeactivateImage)) ||
+            (kind_ == PreparedPrivateStateKind.ArcIdle &&
+             arcTarget.preparedArcStateWitness() != arcStateWitness))
             return false;
         validated = true; validatedToken.ownerId = ownerId;
         validatedToken.generation = generation; return true;
@@ -319,6 +331,8 @@ public:
             magnetTarget.installPreparedActivation(activationBaseline); break;
         case PreparedPrivateStateKind.ReductionSession:
             reductionTarget.installPreparedActivation(activationBaseline); break;
+        case PreparedPrivateStateKind.ArcIdle:
+            arcTarget.installPreparedArcIdle(); break;
         }
         pending = validated = false;
         validatedToken.ownerId = validatedToken.generation = 0;

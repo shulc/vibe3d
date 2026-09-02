@@ -125,6 +125,7 @@ private enum PreparedResourceKind : ubyte {
     GpuUpload, ClickPointDestroy, BoxHandlerBatchDestroy
     , GpuCreate, SnapOverlayClear, BoxState, PenState, PrimitiveState, VertexState,
     ArraySessionState, CloneSessionState, MagnetSessionState, ReductionSessionState,
+    ArcState,
     RadialSweepProfileState, RadialSweepTransitionState, GestureCarrierMismatch,
     GpuCreateUpload, RadialArrayTransitionState, TransformActivationState,
     TransformProductActivationState, MoveUpdateState, RotateUpdateState,
@@ -401,6 +402,7 @@ public:
         case PreparedPrivateStateKind.CloneSession: e.kind = PreparedResourceKind.CloneSessionState; break;
         case PreparedPrivateStateKind.MagnetSession: e.kind = PreparedResourceKind.MagnetSessionState; break;
         case PreparedPrivateStateKind.ReductionSession: e.kind = PreparedResourceKind.ReductionSessionState; break;
+        case PreparedPrivateStateKind.ArcIdle: e.kind = PreparedResourceKind.ArcState; break;
         }
         resources_ ~= e; return true;
     }
@@ -1231,6 +1233,7 @@ public:
             case PreparedResourceKind.CloneSessionState:
             case PreparedResourceKind.MagnetSessionState:
             case PreparedResourceKind.ReductionSessionState:
+            case PreparedResourceKind.ArcState:
                 ok = e.privateState.validate(); break;
             case PreparedResourceKind.RadialSweepProfileState:
                 ok = e.selectionProfile !is null && e.selectionProfile.validate(); break;
@@ -1471,6 +1474,7 @@ public:
         case PreparedResourceKind.CloneSessionState:
         case PreparedResourceKind.MagnetSessionState:
         case PreparedResourceKind.ReductionSessionState:
+        case PreparedResourceKind.ArcState:
             e.privateState.install();
             version (unittest) installTrace_[installTraceLength_++] = 7;
             break;
@@ -1765,7 +1769,8 @@ private:
         case PreparedResourceKind.ArraySessionState:
         case PreparedResourceKind.CloneSessionState:
         case PreparedResourceKind.MagnetSessionState:
-        case PreparedResourceKind.ReductionSessionState: e.privateState.abort(); break;
+        case PreparedResourceKind.ReductionSessionState:
+        case PreparedResourceKind.ArcState: e.privateState.abort(); break;
         case PreparedResourceKind.RadialSweepProfileState: e.selectionProfile.abort(); break;
         case PreparedResourceKind.RadialSweepTransitionState: e.radialSweepTransition.abort(); break;
         case PreparedResourceKind.GestureCarrierMismatch: break;

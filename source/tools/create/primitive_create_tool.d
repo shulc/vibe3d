@@ -73,7 +73,7 @@ import shader : Shader, LitShader, drawLitPreview;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_private_state : PreparedPrivateStateOwner;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
     PreparedDeactivateEffect, PreparedDeactivateKind;
@@ -110,7 +110,7 @@ struct PreparedPrimitiveDeactivateImage {
 // adds those) — draw()'s default handle rig is mover-only, matching
 // TubeTool's id scheme (arrowX/Y/Z=0/1/2, centerBox=10).
 // ---------------------------------------------------------------------------
-abstract class PrimitiveCreateTool : Tool, KeepAliveOnCancel {
+abstract class PrimitiveCreateTool : Tool, KeepAliveOnCancel, PreparedToolDoorClient {
 protected:
     final ulong preparedBytesWitness(const(void)* data, size_t length) const
             nothrow @nogc {
@@ -307,6 +307,12 @@ public:
         return PreparedSessionActivateEffect(preparedToolStateOwner,
             PreparedActivateKind.Primitive, ok);
     }
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto owner = new GpuCreateOwner(&previewGpu, threadIdentity,
+            contextIdentity, true);
+        return prepareActivate(context, owner).accepted;
+    }
 
     final GpuMesh* preparedPreviewGpu() nothrow @nogc { return &previewGpu; }
     version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
@@ -438,6 +444,14 @@ public:
         if (!ok) context.discard();
         return PreparedDeactivateEffect(preparedToolStateOwner,
             PreparedDeactivateKind.Primitive, historyPrepared, ok);
+    }
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto upload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);
+        auto destroy = new GpuResourceOwner(&previewGpu, threadIdentity,
+            contextIdentity);
+        return prepareDeactivate(context, layer, upload, destroy,
+            new SnapOverlayOwner()).resourceAccepted;
     }
 
     override void evaluate() {
