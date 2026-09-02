@@ -103,3 +103,4 @@ drop 2 16 1903 the two tracker-on/off parity cells whose OFF arm was the undo ha
 # has no subject. The same commit added tests/unit/undo_hatch_removed_census_test.d,
 # whose two blocks more than cover the loss, which is why no `drop` line is
 # owed here — recorded so the removal is not invisible to a later reader.
+drop 2 9 3691 removed obsolete synthetic pre-cutover PreparedArm API tests after production unified transaction replacement

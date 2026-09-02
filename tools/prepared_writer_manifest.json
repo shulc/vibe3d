@@ -1,5 +1,16 @@
 {
-  "bypasses": [],
+  "bypasses": [
+    {
+      "line": 3914,
+      "path": "source/app.d",
+      "symbol": "prepareArm"
+    },
+    {
+      "line": 3929,
+      "path": "source/app.d",
+      "symbol": "commitPreparedArm"
+    }
+  ],
   "factories": [
     {
       "aggregate": "<module>",
@@ -1220,12 +1231,12 @@
   ],
   "internal_publishers": [
     {
-      "line": 76,
+      "line": 87,
       "path": "source/prepared_tool_transition.d",
       "symbol": "prepareArm"
     },
     {
-      "line": 102,
+      "line": 211,
       "path": "source/prepared_tool_transition.d",
       "symbol": "commitPreparedArm"
     }
@@ -1805,7 +1816,7 @@
       "classification": "LegacyDoor",
       "module": "app",
       "prepared_delegations": 0,
-      "semantic_sha256": "0b5934c9124817a9e8bb18cec0c037abcbe3195d45bc48c4fb3548de0f7f73f5",
+      "semantic_sha256": "c4de786cb127f6a6e04d0f672934c92db4d7df4568fca0b9978e221cffe1d4e2",
       "symbol": "activateToolById"
     },
     {
@@ -1813,7 +1824,7 @@
       "classification": "LegacyDoor",
       "module": "commands.tool.set",
       "prepared_delegations": 0,
-      "semantic_sha256": "2fb479d7e486a1381c49758ddce832e746938fbbffd77526ec3b65104c49a4f5",
+      "semantic_sha256": "6bc670026cf3563f46d9161e2ea3bf153878eab3f7933907489d19ccce807b29",
       "symbol": "applyImpl"
     }
   ]

@@ -2,6 +2,7 @@ module commands.tool.host;
 
 import tool         : Tool;
 import edit_session : EditSession;
+import std.json : JSONValue;
 
 // ---------------------------------------------------------------------------
 // ToolHost — delegate-based bridge between tool.* commands and the App's
@@ -22,6 +23,10 @@ struct ToolHost {
     /// Look up toolId in the registry, create via factory, and call
     /// setActiveTool(). Throws Exception if toolId is unknown.
     void   delegate(string) activate;
+
+    /// Same arm transaction with command-owned named arguments. The legacy
+    /// split (activate first, inject later) cannot provide failure atomicity.
+    void   delegate(string, ref JSONValue) activatePrepared;
 
     /// Deactivate the current tool (setActiveTool(null)).
     void   delegate()       deactivate;

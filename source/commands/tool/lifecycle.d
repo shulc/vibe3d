@@ -20,37 +20,53 @@ import editmode;
 // when its own-gesture Model entry sits below it (so undo₁ reverts geometry),
 // and as a hard STEP otherwise (so undo₂ re-enters the tool).
 // ---------------------------------------------------------------------------
-class ToolDeactivationCommand : Command {
-    private string droppedId_;
+interface ToolArmLifecyclePolicy {
+    string armedId() const;
+    string previousId() const;
+    bool carriesRedoAfterUndo() const;
+}
+
+class ToolActivationCommand : Command, ToolArmLifecyclePolicy {
+    private string armedId_;
+    private string previousId_;
 
     // Hooks wired by app.d after construction.
-    void delegate()         onApply;   // re-drop (redo)
-    void delegate(string)   onRevert;  // re-activate by id (undo)
+    void delegate(string) onActivate;
+    void delegate() onDeactivate;
 
-    this(Mesh* mesh, ref View view, EditMode editMode, string droppedId) {
+    this(Mesh* mesh, ref View view, EditMode editMode,
+         string armedId, string previousId) {
         super(mesh, view, editMode);
-        droppedId_ = droppedId;
-        // TASK 2500 — this command's whole undo image IS `droppedId_`: the
-        // revert re-activates the tool by that id. It exists from the
+        armedId_ = armedId.idup;
+        previousId_ = previousId.idup;
+        // The whole undo image is the predecessor identity. It exists from the
         // constructor, so the flag is raised there.
         noteUndoRecorded();
     }
 
-    override string name()  const { return "tool.deactivate"; }
-    override string label() const { return "Deactivate Tool"; }
+    override string name()  const { return "tool.activate"; }
+    override string label() const { return "Activate Tool"; }
 
     override CmdFlags cmdFlags() const { return CmdFlags.ToolLifecycle; }
 
-    // apply() = redo = re-drop the tool (geometry no-op).
+    // Redo exists only for the captured none->cutting law.
     protected override bool applyImpl() {
-        if (onApply !is null) onApply();
+        if (onActivate !is null) onActivate(armedId_);
         return true;
     }
 
-    // revert() = undo = re-activate the dropped tool by id.
+    // Undo restores the classified predecessor, or leaves no active family.
     protected override void revertImpl() {
-        if (onRevert !is null) onRevert(droppedId_);
+        if (previousId_.length == 0) {
+            if (onDeactivate !is null) onDeactivate();
+        } else if (onActivate !is null) {
+            onActivate(previousId_);
+        }
     }
 
-    string droppedId() const { return droppedId_; }
+    string armedId() const { return armedId_; }
+    string previousId() const { return previousId_; }
+    bool carriesRedoAfterUndo() const {
+        return previousId_.length == 0 && armedId_ == "mesh.sliceTool";
+    }
 }

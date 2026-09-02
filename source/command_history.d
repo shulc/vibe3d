@@ -1791,7 +1791,12 @@ final class CommandHistory {
                 _state = UndoState.Suspend;
                 scope(exit) _state = prev2;
                 if (!e.cmd.revert()) return false;
-                redoStack = [e] ~ redoStack;
+                import commands.tool.lifecycle : ToolArmLifecyclePolicy;
+                auto armPolicy = cast(ToolArmLifecyclePolicy)e.cmd;
+                if (armPolicy !is null && !armPolicy.carriesRedoAfterUndo())
+                    redoStack.length = 0;
+                else
+                    redoStack = [e] ~ redoStack;
                 ++_undoEpoch;
                 return true;
             }

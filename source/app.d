@@ -2583,11 +2583,6 @@ void main(string[] args) {
     auto pipeGizmoHost = new PipeGizmoHost();
     scope(exit) pipeGizmoHost.destroyGL();
 
-    // Delegate wired AFTER history + reg + activateToolById are defined below.
-    // Called by setActiveTool() to emit a ToolDeactivationCommand on tool drop.
-    // Null until wired; setActiveTool guards on non-null before calling.
-    void delegate(string droppedId) lifecycleRecordHook;
-
     // EditSession — the single driver of the Tool session protocol (task
     // 0428). DECLARED here so the nested setActiveTool below can reference it
     // lexically; CONSTRUCTED at the ToolHost block further down (`history`
@@ -2664,26 +2659,8 @@ void main(string[] args) {
         pipeGizmoHost.cancelDrag();
         if (t is null) captureStickyToolDefaults();
         if (activeTool) {
-            // Capture the dropped tool id BEFORE destroying (the session's
-            // LifecycleUndoEmitter gate ensures only transform tools emit).
-            // `session` null-guard: this nested function is declared before
-            // the session is constructed at the ToolHost block — pre-wiring
-            // drops see no emit, equivalent, since no transform tool can be
-            // active before wiring completes.
-            string droppedId = (session !is null && session.activeToolEmitsLifecycle()
-                                && activeToolId.length > 0)
-                ? activeToolId : "";
             activeTool.deactivate();
             activeTool.destroy();
-            // Emit one ToolDeactivationCommand per tool drop, AFTER deactivate()
-            // (so consolidate() has already merged the run into one geometry entry).
-            // Guarded by _state != Active inside recordToolLifecycle, so re-entry
-            // during a Suspend-wrapped revert/apply is a no-op.
-            // lifecycleRevertHook / lifecycleApplyHook are wired after history +
-            // reg + activateToolById are defined (forward-reference workaround).
-            if (droppedId.length > 0 && lifecycleRecordHook !is null) {
-                lifecycleRecordHook(droppedId);
-            }
         }
         // Drop tool-driven pipe config (ACEN / AXIS / WGHT) so the
         // next tool starts from defaults. For tool switches via
@@ -3914,22 +3891,50 @@ void main(string[] args) {
     ToolHost toolHost;
     toolHost.getActiveTool   = () => activeTool;
     toolHost.getActiveToolId = () => activeToolId;
-    toolHost.activate = (string id) {
+    void armPreparedTool(string id, ref JSONValue namedArgs,
+                         bool lifecycleReplay = false) {
         auto factory = id in reg.toolFactories;
         if (factory is null)
             throw new Exception("unknown tool '" ~ id ~ "'");
-        // Reset tool-driven pipe stages BEFORE preActivate runs —
-        // same contract as activateToolById. Without this, switching
-        // tools via tool.set leaks the previous preset's pipe config
-        // into the next session.
-        resetTransientPipeStages();
-        // Per-id pre-activate hook — see activateToolById.
-        if (auto hook = id in reg.preActivate) (*hook)();
-        import tool_presets : applyStickyToolDefaults;
-        auto t = (*factory)();
-        applyStickyToolDefaults(t, id);
-        setActiveTool(t);
-        activeToolId = id;
+
+        import core.thread : Thread;
+        import prepared_tool_transition : prepareArm, commitPreparedArm;
+        import registry : PreparedPipeAttrs;
+        PreparedPipeAttrs pipeAttrs;
+        if (auto attrs = id in reg.preparedPipeAttrs) pipeAttrs = *attrs;
+
+        // Build the same subject/pipe packet the first legacy update consumed,
+        // but feed it to the prepared pose door while the candidate is still
+        // unpublished.
+        SubjectPacket poseSubject;
+        VectorStack pose;
+        ifs.buildToolVts(poseSubject, pose);
+        const threadIdentity = cast(ulong)cast(void*)Thread.getThis();
+        const contextIdentity = cast(ulong)SDL_GL_GetCurrentContext();
+        auto prepared = prepareArm(*factory, id, activeTool, history,
+            recordObserverHub, document.primary, g_pipeCtx.pipeline, pipeAttrs,
+            pipeGizmoHost, namedArgs, pose, threadIdentity, contextIdentity,
+            &mesh(), cameraView, editMode, activeToolId,
+            (string restoreId) {
+                JSONValue restoredArgs = JSONValue(cast(JSONValue[string]) null);
+                try armPreparedTool(restoreId, restoredArgs, true);
+                catch (Throwable e) {
+                    logWarn("tool", "lifecycle restore failed for '" ~
+                        restoreId ~ "': " ~ e.msg);
+                    throw e;
+                }
+            },
+            () { setActiveTool(null); }, lifecycleReplay);
+        preToolTickStall.arm();
+        if (!commitPreparedArm(activeTool, activeToolId, prepared))
+            throw new Exception("prepared tool arm was already consumed");
+    }
+    toolHost.activatePrepared = (string id, ref JSONValue namedArgs) {
+        armPreparedTool(id, namedArgs);
+    };
+    toolHost.activate = (string id) {
+        JSONValue noNamed = JSONValue(cast(JSONValue[string]) null);
+        armPreparedTool(id, noNamed);
     };
     toolHost.deactivate = () {
         setActiveTool(null);
@@ -4227,47 +4232,12 @@ void main(string[] args) {
                     ~ reg.actionRefusal("tool", id, document.hasEditTarget(),
                                         activeToolId));
         } else {
-            // Switching tools: reset tool-driven pipe stages BEFORE
-            // the new preset's preActivate writes its own settings.
-            // Without this, residual config from the previous preset
-            // (e.g. xfrm.elementMove leaving ACEN.mode=element)
-            // bleeds into tools that don't re-pin it (e.g. plain
-            // move). setActiveTool's own null-path reset doesn't run
-            // here — `t` is non-null in the move-to-new branch.
-            resetTransientPipeStages();
-            // Run any per-id pre-activate hook (tool presets push their
-            // pipe-stage attrs here — kept out of the factory so
-            // `cacheSupportedModes` doesn't apply them at startup).
-            if (auto hook = id in reg.preActivate) (*hook)();
-            import tool_presets : applyStickyToolDefaults;
-            auto t = reg.toolFactories[id]();
-            applyStickyToolDefaults(t, id);
-            setActiveTool(t);
-            activeToolId = id;
+            // Interactive and command arms differ only in door policy. Both
+            // enter the same prepared transaction; this path supplies no
+            // command-owned named arguments.
+            toolHost.activate(id);
         }
     }
-
-    // Wire the lifecycle-record hook now that history, reg, and activateToolById
-    // are all defined. Called by setActiveTool() on tool drop to emit a
-    // ToolDeactivationCommand (lifecycle undo entry).
-    lifecycleRecordHook = (string droppedId) {
-        import commands.tool.lifecycle : ToolDeactivationCommand;
-        auto lifecycleCmd = new ToolDeactivationCommand(
-            &mesh(), cameraView, editMode, droppedId);
-        lifecycleCmd.onRevert = (string id) {
-            // Re-activate the dropped tool by id. Runs under Suspend in undo(),
-            // so recordToolLifecycle inside setActiveTool will be a no-op.
-            if ((id in reg.toolFactories) !is null) {
-                activateToolById(id);
-            }
-        };
-        lifecycleCmd.onApply = () {
-            // Re-drop (redo): deactivate without emitting another entry.
-            // setActiveTool(null) runs under Suspend, so no new entry is pushed.
-            setActiveTool(null);
-        };
-        history.recordToolLifecycle(lifecycleCmd);
-    };
 
     // Wire the real `tool.reset` (Ctrl+D) delegate now that history,
     // toolHost.activate, and reg are all in scope — same forward-reference

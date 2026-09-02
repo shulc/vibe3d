@@ -23,7 +23,7 @@ unittest {
     import mesh : Mesh, makeCube;
     import view : View;
     import editmode : EditMode;
-    import commands.tool.lifecycle : ToolDeactivationCommand;
+    import commands.tool.lifecycle : ToolActivationCommand;
 
     Mesh m = makeCube();
     View v = new View(0, 0, 800, 600);
@@ -31,7 +31,8 @@ unittest {
 
     string[] lines;
     hist.onRecord = (string line, uint flags) { lines ~= line; };
-    hist.recordToolLifecycle(new ToolDeactivationCommand(&m, v, EditMode.Vertices, "move"));
+    hist.recordToolLifecycle(new ToolActivationCommand(
+        &m, v, EditMode.Vertices, "move", ""));
 
     assert(lines.length == 0,
            "a tool drop must not reach the macro recorder on its own: the "

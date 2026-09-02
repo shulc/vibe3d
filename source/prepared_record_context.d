@@ -1,5 +1,7 @@
 module prepared_record_context;
 
+import std.algorithm.mutation : move;
+
 // P1.0b.3d dormant producer context. Production activation doors do not import
 // or construct this until the single P1.0c unified cutover.
 import command : Command;
@@ -340,6 +342,29 @@ public:
     bool hasHistory() const nothrow @nogc { return history_ !is null; }
     bool ownsHistory(CommandHistory expected) const nothrow @nogc {
         return history_ is expected;
+    }
+
+    /// Move the one detached history image to the next ordered arm phase.
+    /// Resource effects remain in this context; its former marker becomes a
+    /// local no-op while the receiver installs the shared token later.
+    bool transferHistoryTo(PreparedRecordContext receiver) {
+        if (!begun_ || validated_Once || receiver is null ||
+            !receiver.begun_ || receiver.validated_Once ||
+            history_ is null || receiver.history_ !is null)
+            return false;
+        foreach (ref e; resources_) {
+            if (e.kind == PreparedResourceKind.HistoryInstall) {
+                e.kind = PreparedResourceKind.NoHistoryInstall;
+                historyMarker_ = false;
+                noHistoryMarker_ = true;
+                break;
+            }
+        }
+        receiver.history_ = history_;
+        receiver.token_ = token_.move;
+        history_ = null;
+        token_ = PreparedHistoryToken.init;
+        return true;
     }
 
     void setResourceIdentity(ulong threadIdentity, ulong contextIdentity)
@@ -1253,6 +1278,23 @@ public:
         if (!begun_ || validated_Once || history_ is null) return PreparedHistoryResult.init;
         return history_.prepareRecord(token_, cmd, kind, runId,
                                       observers_, preparedTraceJson);
+    }
+
+    PreparedHistoryResult prepareLifecycle(Command cmd) {
+        if (!begun_ || validated_Once || history_ is null)
+            return PreparedHistoryResult.init;
+        auto result = history_.prepareLifecycle(token_, cmd);
+        if (result.accepted && noHistoryMarker_) {
+            foreach (ref e; resources_) {
+                if (e.kind == PreparedResourceKind.NoHistoryInstall) {
+                    e.kind = PreparedResourceKind.HistoryInstall;
+                    break;
+                }
+            }
+            noHistoryMarker_ = false;
+            historyMarker_ = true;
+        }
+        return result;
     }
 
     PreparedHistoryResult consolidate(ulong runId) {

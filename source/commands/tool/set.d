@@ -4,7 +4,6 @@ import command;
 import mesh;
 import view;
 import editmode;
-import params : Param, injectParamsInto;
 import commands.tool.host : ToolHost;
 
 import std.json : JSONValue, JSONType;
@@ -68,13 +67,7 @@ class ToolSetCommand : Command {
             return false;
         }
         baseRefusal_ = "";
-        toolHost.activate(toolId_);
-        // Inject any named params into the freshly-activated tool.
-        if (namedArgs_.type == JSONType.object && namedArgs_.object.length > 0) {
-            auto t = toolHost.getActiveTool();
-            if (t !is null && t.params().length > 0)
-                injectParamsInto(t.params(), namedArgs_);
-        }
+        toolHost.activatePrepared(toolId_, namedArgs_);
         return true;
     }
 }

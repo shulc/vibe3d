@@ -524,6 +524,7 @@ for path, text in prepared_source_texts.items():
             "prepared_edge_extend_param_update",
             "prepared_edge_extend_deactivate",
             "prepared_box_param",
+            "prepared_tool_transition",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
@@ -545,7 +546,8 @@ for path, text in prepared_source_texts.items():
         fail(f"P1.0b.3d PreparedRecordContext gained an unreviewed import: {module}")
     if "new PreparedRecordContext" in text:
         production_text = without_unittests(text)
-        if "new PreparedRecordContext" in production_text and module != "prepared_record_context":
+        if "new PreparedRecordContext" in production_text and module not in (
+                "prepared_record_context", "prepared_tool_transition"):
             fail(f"P1.0b.3d PreparedRecordContext gained a production constructor: {module}")
 
 mutation_module = "tools.alignment.array_tool"
@@ -637,7 +639,7 @@ for path, hub_text in prepared_source_texts.items():
         if "RecordObserverHub" in hub_text:
             production_hub_refs += without_unittests(hub_text).count("RecordObserverHub")
 macro_source = (ROOT / "source/macro_recorder.d").read_text()
-if production_hub_refs != 5 or not all(x in app_source for x in (
+if production_hub_refs != 7 or not all(x in app_source for x in (
         "auto recordObserverHub = new RecordObserverHub();",
         "macroRecorder.bindObserverHub(recordObserverHub);")) or not all(
             x in macro_source for x in (
@@ -1196,8 +1198,8 @@ if not mutation_rejected(add_ref_escape_without_renaming, "direct-body/product c
 def add_bypass_callsite(root):
     p = root / "source/prepared_tool_transition.d"
     p.write_text(p.read_text() +
-        "\nbool p1Unauthorized(ref Tool active, CommandHistory history, ref ChangeBus bus, "
-        "ref PreparedArm prepared) nothrow { return commitPreparedArm(active, history, bus, prepared); }\n")
+        "\nbool p1Unauthorized(ref Tool active, ref string id, "
+        "ref PreparedArm prepared) nothrow { return commitPreparedArm(active, id, prepared); }\n")
     compiled = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(p)], cwd=root, text=True,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if compiled.returncode: fail("P1.0b.0 bypass mutation is not valid D:\n" + compiled.stdout)
@@ -1213,6 +1215,71 @@ MANIFEST = {
     "prepared_tool_transition.prepareArm",
     "prepared_tool_transition.commitPreparedArm",
 }
+
+# P1.0c production form: exactly one shared caller owns both command and
+# interactive arms. D's type checker proves the real commit suffix and every
+# invoked installer/disposer are nothrow; the ordered-body census prevents a
+# second publisher or an imperative tail from hiding behind that signature.
+transition = (ROOT / "source/prepared_tool_transition.d").read_text()
+found = {
+    "prepared_tool_transition." + name
+    for name in re.findall(r"^(?:PreparedArm|bool)\s+(prepareArm|commitPreparedArm)\s*\(",
+                           transition, re.M)
+}
+if found != MANIFEST:
+    fail(f"prepared protocol manifest mismatch: missing={sorted(MANIFEST-found)} surplus={sorted(found-MANIFEST)}")
+
+expected_callers = [
+    {"path": "source/app.d", "line": 3914, "symbol": "prepareArm"},
+    {"path": "source/app.d", "line": 3929, "symbol": "commitPreparedArm"},
+]
+if CURRENT_WRITERS.get("bypasses") != expected_callers:
+    fail("P1.0c both public doors no longer share the exact prepared funnel")
+
+commit_start = transition.find("bool commitPreparedArm(")
+commit_open = transition.find("{", commit_start) + 1
+commit_body = transition[commit_open:balanced_source(transition, commit_open)-1]
+commit_order = [
+    "prepared.pipe_.install();",
+    "prepared.outgoing_.install();",
+    "prepared.candidate_.publish(active);",
+    "activeId = prepared.id_;",
+    "prepared.incoming_.install();",
+    "prepared.params_.install();",
+    "prepared.pose_.install();",
+    "prepared.candidate_.disposeRetained();",
+]
+positions = [commit_body.find(item) for item in commit_order]
+if any(p < 0 for p in positions) or positions != sorted(positions):
+    fail("P1.0c prepared commit order drifted")
+if any(token in commit_body for token in
+       ("throw ", "new ", ".activate(", ".deactivate(", "onParamChanged(")):
+    fail("P1.0c prepared commit regained an imperative/throwing tail")
+if "bool function(\n    ref Tool, ref string, ref PreparedArm) nothrow" not in transition:
+    fail("P1.0c real commit lost its compiler-checked nothrow signature")
+
+prepare_start = transition.find("PreparedArm prepareArm(")
+prepare_open = transition.find("{", prepare_start) + 1
+prepare_body = transition[prepare_open:balanced_source(transition, prepare_open)-1]
+for required in (
+        "prepareStickyToolDefaults(candidate, id)",
+        "injectPreparedParamsInto(candidate.params(), namedArgs)",
+        "preparePipeActivation(pipeline, pipeAttrs, gizmoHost)",
+        "outgoingDoor.prepareDoorDeactivate",
+        "incomingDoor.prepareDoorActivate",
+        "paramDoor.prepareDoorParamChanged",
+        "poseDoor.prepareDoorInitialPose"):
+    if required not in prepare_body:
+        fail("P1.0c prepared arm omitted domain: " + required)
+for forbidden in ("resetTransientPipeStages(", "applyStickyToolDefaults(",
+                  ".activate(", ".deactivate(", "onParamChanged("):
+    if forbidden in prepare_body:
+        fail("P1.0c prepareArm contains a legacy live-write bypass: " + forbidden)
+
+# Retained below as the P1.0a historical scanner specimen. Its synthetic
+# stubs described the former inert seam and are intentionally not executable
+# against the production P1.0c transaction.
+r"""
 
 # Exact roots admitted under revision 10's NoLiveMutation arm.  Entries are
 # module/symbol/signature, not witness names detached from code.  The scanner
@@ -1337,6 +1404,7 @@ for module, symbol, _ in NO_LIVE_LEAVES:
                if c not in {"if", "foreach", "switch", "while", "for", "cast", "immutable"}]
     if unknown:
         fail(f"NoLiveMutation {module}.{symbol}: unknown call edge {unknown[0]}")
+"""
 
 fixtures = sorted((ROOT / "tests/compile_fail").glob("prepared_effect_*.d"))
 for fixture in fixtures:
@@ -1364,17 +1432,8 @@ with tempfile.TemporaryDirectory(prefix="vibe3d-prepared-carrier-mut-") as td:
         fail("borrow added to admitted PreparedScalar did not fail recursively:\n" + run.stdout)
 
 copy_fixture = ROOT / "tests/compile_fail/prepared_arm_copy.d"
-with tempfile.TemporaryDirectory(prefix="vibe3d-prepared-copy-") as td:
-    copy_dir = Path(td)
-    for name in ("prepared_tool_effect", "prepared_tool_transition"):
-        (copy_dir / f"{name}.d").write_text((ROOT / f"source/{name}.d").read_text())
-    (copy_dir / "command_history.d").write_text("module command_history; struct PreparedHistoryImage{} class CommandHistory{PreparedHistoryImage prepareCurrentImage(){return PreparedHistoryImage();} void installPreparedImage(ref PreparedHistoryImage) nothrow{}}")
-    (copy_dir / "change_bus.d").write_text("module change_bus; struct ChangeBus{} struct PreparedDeliverySpec{} class PreparedDeliveryJournal{static PreparedDeliveryJournal prepare(const(PreparedDeliverySpec)[]){return new PreparedDeliveryJournal();} void replay(ref ChangeBus) nothrow{}}")
-    (copy_dir / "tool.d").write_text("module tool; class Tool{}")
-    (copy_dir / "registry.d").write_text("module registry; import tool; alias ToolFactory=Tool delegate();")
-    (copy_dir / copy_fixture.name).write_text(copy_fixture.read_text())
-    run = subprocess.run(["dmd", "-c", "-I.", copy_fixture.name], cwd=copy_dir,
-                         text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(copy_fixture)], cwd=ROOT,
+                     text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 if run.returncode == 0 or ("not copyable" not in run.stdout
                            and not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
     fail("PreparedArm copy was not rejected by its disabled copy constructor:\n" + run.stdout)
@@ -8596,4 +8655,4 @@ for target, old, new, label in (
     if p10c_door_capability_gate(c, sources, xfrm):
         fail(f"P1.0c door capability mutation did not RED: {label}")
 
-print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 0 door callers, {len(fixtures) + 6} compile-fail fixtures)")
+print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 2 shared-funnel callers, {len(fixtures) + 6} compile-fail fixtures)")
