@@ -27,6 +27,15 @@ concurrency:
 jobs:
   build:
 
+    # The runner service may export an HTTP proxy. Keep loopback traffic local
+    # at the job boundary so curl and library clients inherit the same rule.
+    # The first step checks this declaration in the checked-out workflow too:
+    # a host-level setting can make requests work, but cannot satisfy that
+    # repository-owned witness (task 3450).
+    env:
+      no_proxy: "localhost,127.0.0.1,::1"
+      NO_PROXY: "localhost,127.0.0.1,::1"
+
     # Self-hosted Ubuntu runner. DMD + dub are pre-installed on the host
     # (system dmd via dpkg), so we skip dlang-community/setup-dlang and call
     # `dmd` directly instead of the $DC it would otherwise export.
@@ -68,6 +77,9 @@ jobs:
         #   every lane revision, and on a blobless clone that is a network round
         #   trip each — 109 s for a 21-revision lane, against 0.23 s on this one.
         fetch-depth: 0
+
+    - name: 'Assert job-level localhost proxy bypass (task 3450)'
+      run: tools/ci/assert_job_proxy_bypass.sh
 
     # task 2040 — a nightly-perf run that never happened reads identically to
     # one that ran and failed: the run list's "latest" entry is just old, and
