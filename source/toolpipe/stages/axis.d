@@ -302,6 +302,17 @@ public:
         reset();
     }
 
+    void installPreparedTransientReset() nothrow {
+        if (userLocked) return;
+        mode        = Mode.None;
+        manualRight = Vec3(1, 0, 0);
+        manualUp    = Vec3(0, 1, 0);
+        manualFwd   = Vec3(0, 0, 1);
+        axIndex     = -1;
+        userLocked  = false;
+        installPreparedStatePath("axis/mode", "none");
+    }
+
     /// Set the axis mode explicitly (called by ActrPresetCommand).
     /// Sets userLocked=true so the mode survives the next tool activation.
     void setUserMode(string modeStr) {
@@ -1151,6 +1162,17 @@ unittest {
     assert(live.mode == AxisStage.Mode.Element &&
            live.slotEpoch == beforeEpoch + 1,
            "prepared axis installer omitted state or slot activation");
+    live.userLocked = false;
+    live.manualRight = Vec3(9, 8, 7);
+    live.installPreparedTransientReset();
+    assert(live.mode == AxisStage.Mode.None &&
+           live.manualRight == Vec3(1, 0, 0) && live.axIndex == -1,
+           "prepared axis transient reset omitted live value state");
+    live.userLocked = true;
+    live.mode = AxisStage.Mode.World;
+    live.installPreparedTransientReset();
+    assert(live.mode == AxisStage.Mode.World && live.userLocked,
+           "prepared axis transient reset ignored the user lock");
 }
 
 // ---------------------------------------------------------------------------

@@ -73,6 +73,25 @@ struct PreparedConstrainCompositionProjection {
     ConstrainGeom geom;
 }
 
+unittest {
+    auto live = new ConstrainStage();
+    live.enabled = true;
+    live.geom = ConstrainGeom.Screen;
+    live.offset = 4.0f;
+    live.handle = false;
+    live.dblSided = true;
+    live.installPreparedTransientReset();
+    assert(!live.enabled && live.geom == ConstrainGeom.Point &&
+           live.offset == 0.0f && live.handle && !live.dblSided,
+           "prepared constrain transient reset omitted live value state");
+    live.userLocked = true;
+    live.enabled = true;
+    live.geom = ConstrainGeom.Screen;
+    live.installPreparedTransientReset();
+    assert(live.enabled && live.geom == ConstrainGeom.Screen && live.userLocked,
+           "prepared constrain transient reset ignored the user lock");
+}
+
 class ConstrainStage : Stage, Operator, ToolSwitchTransient {
 private:
     ConstrainPacket _publishedPacket;
@@ -471,6 +490,20 @@ public:
     override void resetTransient() {
         if (userLocked) return;
         reset();
+    }
+
+    void installPreparedTransientReset() nothrow {
+        if (userLocked) return;
+        enabled    = false;
+        geom       = ConstrainGeom.Point;
+        offset     = 0.0f;
+        handle     = true;
+        dblSided   = false;
+        userLocked = false;
+        _bgBvh.clear();
+        _hitPkt = ConstrainHitPacket.init;
+        installPreparedStatePath("constrain/enabled", "false");
+        installPreparedStatePath("constrain/geometry", "point");
     }
 
     // --- Typed params schema: fullParams() is the attr UNIVERSE, params()
