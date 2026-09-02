@@ -8297,6 +8297,11 @@ gpu_layer_door_clients = {
 vertex_door_clients = {
     "source/tools/create/vertex_place.d": "VertexTool",
 }
+typed_context_door_clients = {
+    "source/tools/edit/topology_pen/tool.d": (
+        "TopologyPenTool", "prepareActivate(context).accepted",
+        "prepareDeactivate(context).resourceAccepted"),
+}
 def p10c_door_capability_gate(context, sources, xfrm):
     if not all(x in context for x in (
             "interface PreparedToolDoorClient",
@@ -8356,6 +8361,12 @@ def p10c_door_capability_gate(context, sources, xfrm):
                     "context.preparePrivateState(owner)",
                     "context.markNoHistoryInstall()")):
             return False
+    for path, (aggregate, activate, deactivate) in typed_context_door_clients.items():
+        body = sources[path]
+        if f"class {aggregate} : Tool, InputBindable, PreparedToolDoorClient" not in body or \
+                f"return {activate};" not in body or \
+                f"return {deactivate};" not in body:
+            return False
     return ("PreparedToolDoorClient," in xfrm and
         "override bool prepareDoorDeactivate(" in xfrm and
         "override bool prepareDoorActivate(" in xfrm and
@@ -8364,7 +8375,7 @@ def p10c_door_capability_gate(context, sources, xfrm):
 door_sources = {p: (ROOT / p).read_text() for p in
     set(simple_door_clients) | set(private_state_door_clients) |
     set(cutting_door_clients) | set(gpu_layer_door_clients) |
-    set(vertex_door_clients)}
+    set(vertex_door_clients) | set(typed_context_door_clients)}
 door_xfrm = (ROOT / "source/tools/transform/xfrm_transform.d").read_text()
 if not p10c_door_capability_gate(record_context, door_sources, door_xfrm):
     fail("P1.0c prepared door capability tranche drift")
@@ -8393,6 +8404,10 @@ for target, old, new, label in (
      "auto owner = PreparedPrivateStateOwner.vertex(this);",
      "auto owner = PreparedPrivateStateOwner.vertex(null);",
      "drop Vertex private-state subject identity"),
+    (next(iter(typed_context_door_clients)),
+     "return prepareDeactivate(context).resourceAccepted;",
+     "return true;",
+     "drop Topology Pen deactivation producer"),
     ("xfrm", "return prepareActivate(context).accepted;", "return true;",
      "drop Xfrm activation producer"),
 ):

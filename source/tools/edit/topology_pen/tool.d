@@ -49,7 +49,7 @@ import math               : Vec3, Viewport, projectToWindowFull, closestOnSegmen
                              pointInPolygon2D, rayPlaneIntersect,
                              AimViewport, aimSpace, ModelSpace,
                              screenPointToLocalRay;
-import document             : primaryModelSpace;
+import document             : Layer, primaryModelSpace;
 import shader              : Shader;
 import operator            : VectorStack, viewportOf;
 import toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
@@ -86,7 +86,7 @@ import prepared_tool_effect   : PreparedSessionActivateEffect,
                                  PreparedTopologyPenUpdateKind,
                                  PreparedDeactivateEffect,
                                  PreparedDeactivateKind;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_topology_pen_activation : PreparedTopologyPenActivationOwner;
 import prepared_topology_pen_update : PreparedTopologyPenUpdateOwner;
 import prepared_topology_pen_deactivate : PreparedTopologyPenDeactivateOwner;
@@ -202,7 +202,7 @@ package enum string[] kGestureArmFields = () {
 /// The two mixins are members of this class in every way that matters: they
 /// read its state, including its `private` members, exactly as they did when
 /// their bodies were typed out here.
-class TopologyPenTool : Tool, InputBindable {
+class TopologyPenTool : Tool, InputBindable, PreparedToolDoorClient {
 
     /// Click-vs-drag gate, in pixels, shared by EVERY gesture in this tool:
     /// a release within this distance of the press pixel is a click, not a
@@ -1519,6 +1519,11 @@ public:
             PreparedActivateKind.TopologyPen, ok);
     }
 
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong, ulong) {
+        return prepareActivate(context).accepted;
+    }
+
     version(unittest) final void seedPreparedActivationForTest() nothrow @nogc {
         lastHit_.hit = true; lastHit_.layer = 7; lastTarget_.kind = HoverTargetKind.Edge;
         lastTarget_.edge = 9; slideDecline_ = SlideDecline.NoContinuation;
@@ -1621,6 +1626,11 @@ public:
         if (!ok) context.discard();
         return PreparedDeactivateEffect(preparedToolStateOwner,
             PreparedDeactivateKind.TopologyPen, ok);
+    }
+
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer,
+            ulong, ulong) {
+        return prepareDeactivate(context).resourceAccepted;
     }
 
     override void deactivate() {
