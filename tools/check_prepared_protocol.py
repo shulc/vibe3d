@@ -285,6 +285,7 @@ B5P_PREPARED_LEGACY = {
 B5Q_PREPARED_LEGACY = {
     ("tools.transform.rotate", "RotateTool", "update"),
     ("tools.transform.scale", "ScaleTool", "update"),
+    ("tools.transform.xfrm_transform", "XfrmTransformTool", "update"),
     ("tools.edit.topology_pen.tool", "TopologyPenTool", "deactivate"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
@@ -323,7 +324,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "f2255328f336727a7bb33fd876b0bba66534853f2157577364e89e8d177153af"
+    "4c9f86b1944be2acd2ca911021ffc7664d8149ced99d714684bea2fef744c6c6"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]

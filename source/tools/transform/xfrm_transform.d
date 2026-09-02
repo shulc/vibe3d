@@ -7597,6 +7597,59 @@ unittest {
         (changeBus.lastDeliveryFlags & MeshEditScope.Position) != 0 &&
         !suppressTool.preparedWrapperUploadPendingForTest(),
         "suppress-cage update lost its Position commit or tail clear");
+
+    // Remaining root matrix: inactive is a marker-only no-op; a normal
+    // wrapper flush owns one GPU upload; all enabled banks install in T/R/S
+    // order. Layer and GPU identity mismatches refuse before validation.
+    auto inactiveLayer = new Layer();
+    inactiveLayer.meshRef() = makeCube();
+    GpuMesh inactiveGpu;
+    EditMode inactiveMode = EditMode.Vertices;
+    auto inactiveTool = new XfrmTransformTool(
+        () => &inactiveLayer.meshRef(), &inactiveGpu, &inactiveMode);
+    VectorStack inactiveVts;
+    auto inactiveContext = new PreparedRecordContext(null, null);
+    auto inactiveEffect = inactiveTool.prepareUpdate(
+        inactiveVts, inactiveContext, inactiveLayer, null);
+    assert(inactiveEffect.accepted && inactiveContext.validate());
+    inactiveContext.install();
+    assert(inactiveContext.installTraceForTest() == [8],
+        "inactive Xfrm root was not marker-only");
+
+    auto uploadLayer = new Layer();
+    uploadLayer.meshRef() = makeCube();
+    GpuMesh uploadGpu;
+    EditMode uploadMode = EditMode.Vertices;
+    auto uploadTool = new XfrmTransformTool(
+        () => &uploadLayer.meshRef(), &uploadGpu, &uploadMode);
+    uploadTool.flagT = uploadTool.flagR = uploadTool.flagS = true;
+    uploadTool.activate();
+    uploadTool.seedPreparedWrapperUploadForTest();
+    auto uploadOwner = GpuUploadOwner.fakeForTest(&uploadGpu);
+    VectorStack uploadVts;
+    auto uploadContext = new PreparedRecordContext(null, null);
+    uploadContext.setResourceIdentity(7, 11);
+    auto uploadEffect = uploadTool.prepareUpdate(
+        uploadVts, uploadContext, uploadLayer, uploadOwner);
+    assert(uploadEffect.accepted && uploadContext.validate());
+    uploadContext.install();
+    assert(uploadContext.installTraceForTest() ==
+        [8, 60, 62, 61, 2, 16, 56, 57, 59],
+        "complete Xfrm T/R/S root installed out of legacy order");
+
+    auto wrongLayer = new Layer();
+    wrongLayer.meshRef() = makeCube();
+    auto staleContext = new PreparedRecordContext(null, null);
+    assert(!uploadTool.prepareUpdate(
+        uploadVts, staleContext, wrongLayer, uploadOwner).accepted,
+        "complete Xfrm root accepted a foreign Layer");
+    GpuMesh wrongGpu;
+    auto wrongOwner = GpuUploadOwner.fakeForTest(&wrongGpu);
+    uploadTool.seedPreparedWrapperUploadForTest();
+    auto wrongGpuContext = new PreparedRecordContext(null, null);
+    assert(!uploadTool.prepareUpdate(
+        uploadVts, wrongGpuContext, uploadLayer, wrongOwner).accepted,
+        "complete Xfrm root accepted a foreign GPU owner");
 }
 
 static assert(!__traits(compiles, { XfrmPreparedState a; XfrmPreparedState b = a; }));
