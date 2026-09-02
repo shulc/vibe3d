@@ -70,6 +70,36 @@ struct MeshSnapshot {
         this = MeshSnapshot.init;
     }
 
+    /// Detached duplicate for prepared images that must retain a witness while
+    /// a command independently owns the snapshot it will later install.
+    MeshSnapshot ownedDup() const {
+        MeshSnapshot s;
+        s.vertices = vertices.dup;
+        s.edges = edges.dup;
+        s.faces = faces.map!(f => f.dup).array;
+        s.vertexMarks = vertexMarks.dup;
+        s.edgeMarks = edgeMarks.dup;
+        s.faceMarks = faceMarks.dup;
+        s.vertexSelectionOrder = vertexSelectionOrder.dup;
+        s.edgeSelectionOrder = edgeSelectionOrder.dup;
+        s.faceSelectionOrder = faceSelectionOrder.dup;
+        s.vertexSelectionOrderCounter = vertexSelectionOrderCounter;
+        s.edgeSelectionOrderCounter = edgeSelectionOrderCounter;
+        s.faceSelectionOrderCounter = faceSelectionOrderCounter;
+        s.surfaces = surfaces.dup;
+        s.faceMaterial = faceMaterial.dup;
+        s.facePart = facePart.dup;
+        s.meshMaps = meshMaps.map!(mm => mm.dup).array;
+        s.vertexSetNames = vertexSetNames.dup;
+        s.vertexSetMask = vertexSetMask.dup;
+        s.edgeSetNames = edgeSetNames.dup;
+        s.edgeSetMask = edgeSetMask.dup;
+        s.polygonSetNames = polygonSetNames.dup;
+        s.faceSetMask = faceSetMask.dup;
+        s.filled = filled;
+        return s;
+    }
+
     /// Exact, allocation-free witness that the live mesh still has the full
     /// projection captured by `capture`. Prepared owners use this at commit:
     /// a version counter is insufficient because several legitimate paths

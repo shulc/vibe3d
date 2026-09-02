@@ -45,6 +45,7 @@ import prepared_mirror_activation : PreparedMirrorActivationOwner,
 import prepared_edge_extend_tool_activation : PreparedEdgeExtendToolActivationOwner;
 import prepared_topology_pen_activation : PreparedTopologyPenActivationOwner;
 import prepared_topology_pen_update : PreparedTopologyPenUpdateOwner;
+import prepared_topology_pen_deactivate : PreparedTopologyPenDeactivateOwner;
 import prepared_array_param_update : PreparedArrayParamUpdateOwner;
 import prepared_magnet_param_update : PreparedMagnetParamUpdateOwner;
 import prepared_smooth_shift_param_update : PreparedSmoothShiftParamUpdateOwner;
@@ -81,7 +82,7 @@ private enum PreparedResourceKind : ubyte {
     TackActivationState, CommandWrapperActivationState, BridgeActivationState,
     MirrorActivationState, EdgeExtendToolActivationPreState,
     EdgeExtendToolActivationPostState, TopologyPenActivationState,
-    TopologyPenUpdateState,
+    TopologyPenUpdateState, TopologyPenDeactivateState,
     MirrorDeactivateState, BridgeDeactivateState, ArrayParamUpdateState,
     MagnetParamUpdateState, SmoothShiftParamUpdateState,
     EdgeBevelParamUpdateState, EdgeExtrudeParamUpdateState,
@@ -124,6 +125,7 @@ private struct PreparedResourceEntry {
     PreparedEdgeExtendToolActivationOwner edgeExtendToolActivation;
     PreparedTopologyPenActivationOwner topologyPenActivation;
     PreparedTopologyPenUpdateOwner topologyPenUpdate;
+    PreparedTopologyPenDeactivateOwner topologyPenDeactivate;
     PreparedArrayParamUpdateOwner arrayParamUpdate;
     PreparedMagnetParamUpdateOwner magnetParamUpdate;
     PreparedSmoothShiftParamUpdateOwner smoothShiftParamUpdate;
@@ -693,6 +695,17 @@ public:
         e.kind = PreparedResourceKind.TopologyPenUpdateState;
         e.topologyPenUpdate = owner; resources_ ~= e; return true;
     }
+    bool prepareTopologyPenDeactivate(PreparedTopologyPenDeactivateOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected TopologyPen deactivate enlist failure");
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.TopologyPenDeactivateState;
+        e.topologyPenDeactivate = owner; resources_ ~= e; return true;
+    }
     bool prepareArrayParamUpdate(PreparedArrayParamUpdateOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -1074,6 +1087,9 @@ public:
             case PreparedResourceKind.TopologyPenUpdateState:
                 ok = e.topologyPenUpdate !is null &&
                     e.topologyPenUpdate.validate(); break;
+            case PreparedResourceKind.TopologyPenDeactivateState:
+                ok = e.topologyPenDeactivate !is null &&
+                    e.topologyPenDeactivate.validate(); break;
             case PreparedResourceKind.ArrayParamUpdateState:
                 ok = e.arrayParamUpdate !is null &&
                     e.arrayParamUpdate.validate(); break;
@@ -1323,6 +1339,10 @@ public:
             e.topologyPenUpdate.install();
             version(unittest) installTrace_[installTraceLength_++] = 42;
             break;
+        case PreparedResourceKind.TopologyPenDeactivateState:
+            e.topologyPenDeactivate.install();
+            version(unittest) installTrace_[installTraceLength_++] = 58;
+            break;
         case PreparedResourceKind.ArrayParamUpdateState:
             e.arrayParamUpdate.install();
             version(unittest) installTrace_[installTraceLength_++] = 43;
@@ -1444,6 +1464,8 @@ private:
             e.topologyPenActivation.abort(); break;
         case PreparedResourceKind.TopologyPenUpdateState:
             e.topologyPenUpdate.abort(); break;
+        case PreparedResourceKind.TopologyPenDeactivateState:
+            e.topologyPenDeactivate.abort(); break;
         case PreparedResourceKind.ArrayParamUpdateState:
             e.arrayParamUpdate.abort(); break;
         case PreparedResourceKind.MagnetParamUpdateState:

@@ -32,16 +32,6 @@
   {
     "batch": "P1.0b.3+",
     "key": {
-      "aggregate": "TopologyPenTool",
-      "module": "tools.edit.topology_pen.tool",
-      "signature": "void()",
-      "symbol": "deactivate"
-    },
-    "reason": "reachable Mesh/history/GpuGl teardown or helper requires typed later-owner effects"
-  },
-  {
-    "batch": "P1.0b.3+",
-    "key": {
       "aggregate": "EdgeSliceTool",
       "module": "tools.slice.edge_slice_tool",
       "signature": "void()",

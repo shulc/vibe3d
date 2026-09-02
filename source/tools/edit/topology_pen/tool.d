@@ -68,7 +68,7 @@ import tools.edit.topology_pen.render : PenRenderOps;
 import tools.edit.topology_pen.snap_guide : PenSnapGuide;
 import tools.edit.topology_pen.json   : PenStateJsonOps;
 import bvh_pick              : BvhPick;
-import command_history      : CommandHistory;
+import command_history      : CommandHistory, PreparedHistoryKind;
 import commands.mesh.vertex_new : MeshVertexNew;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot              : MeshSnapshot;
@@ -83,10 +83,13 @@ import eventlog               : queryMouse;
 import prepared_tool_effect   : PreparedSessionActivateEffect,
                                  PreparedActivateKind,
                                  PreparedTopologyPenUpdateEffect,
-                                 PreparedTopologyPenUpdateKind;
+                                 PreparedTopologyPenUpdateKind,
+                                 PreparedDeactivateEffect,
+                                 PreparedDeactivateKind;
 import prepared_record_context : PreparedRecordContext;
 import prepared_topology_pen_activation : PreparedTopologyPenActivationOwner;
 import prepared_topology_pen_update : PreparedTopologyPenUpdateOwner;
+import prepared_topology_pen_deactivate : PreparedTopologyPenDeactivateOwner;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -111,6 +114,34 @@ struct PreparedTopologyPenUpdateImage {
     ConstrainHitPacket expectedHit, nextHit;
     HoverTarget expectedTarget, nextTarget;
     void clear() nothrow @nogc { this = PreparedTopologyPenUpdateImage.init; }
+}
+
+struct PreparedTopologyPenDeactivateImage {
+    bool valid, historyPrepared;
+    ConstrainHitPacket expectedHit;
+    HoverTarget expectedTarget;
+    SlideDecline expectedDecline;
+    int expectedDeclineSeed;
+    SnapPacket expectedDragSnap;
+    GestureArm expectedMoveArmed;
+    int expectedGrabbedVert;
+    MoveElem expectedMoveElem;
+    uint[] expectedMoveVerts;
+    Vec3[] expectedMoveBase;
+    bool expectedMoveDirty, expectedMoveWelded;
+    MeshSnapshot expectedMoveBefore;
+    void clear() nothrow @nogc {
+        valid = historyPrepared = false;
+        expectedHit = ConstrainHitPacket.init;
+        expectedTarget = HoverTarget.init;
+        expectedDecline = SlideDecline.None; expectedDeclineSeed = 0;
+        expectedDragSnap = SnapPacket.init;
+        expectedMoveArmed.armed = false; expectedGrabbedVert = 0;
+        expectedMoveElem = MoveElem.None;
+        expectedMoveVerts = null; expectedMoveBase = null;
+        expectedMoveDirty = expectedMoveWelded = false;
+        MeshSnapshot sink; expectedMoveBefore.moveInto(sink);
+    }
 }
 
 // Corner-provenance (task 0901): verified NOT APPLICABLE across this package.
@@ -1501,6 +1532,95 @@ public:
     }
     version(unittest) final void mutatePreparedActivationForTest() nothrow @nogc {
         ++slideDeclineSeed_;
+    }
+
+    final PreparedTopologyPenDeactivateImage buildPreparedDeactivate(
+            PreparedRecordContext context) {
+        PreparedTopologyPenDeactivateImage image;
+        image.expectedHit = lastHit_; image.expectedTarget = lastTarget_;
+        image.expectedDecline = slideDecline_;
+        image.expectedDeclineSeed = slideDeclineSeed_;
+        image.expectedDragSnap = dragSnap_;
+        image.expectedMoveArmed = moveArmed_;
+        image.expectedGrabbedVert = grabbedVert_;
+        image.expectedMoveElem = moveElem_;
+        image.expectedMoveVerts = moveVerts_.dup;
+        image.expectedMoveBase = moveBase_.dup;
+        image.expectedMoveDirty = moveDirty_;
+        image.expectedMoveWelded = moveWelded_;
+        image.expectedMoveBefore = moveBefore_.ownedDup();
+
+        if (moveArmed_ && moveDirty_) {
+            auto m = meshOrNull();
+            if (m !is null && commitReady(factories_.move)) {
+                enum float kNetEps = 1e-4f;
+                bool net = moveWelded_;
+                foreach (i, vi; moveVerts_) {
+                    if (net) break;
+                    if (vi >= m.vertices.length ||
+                        (m.vertices[vi] - moveBase_[i]).length > kNetEps)
+                        net = true;
+                }
+                if (net) {
+                    if (context is null) return image;
+                    auto cmd = factories_.move();
+                    cmd.setSnapshots(moveBefore_.ownedDup(), MeshSnapshot.capture(*m),
+                        "Topology Move");
+                    image.historyPrepared = context.prepare(cmd,
+                        PreparedHistoryKind.Plain).accepted;
+                    if (!image.historyPrepared) return image;
+                }
+            }
+        }
+        image.valid = true; return image;
+    }
+
+    final bool preparedDeactivateLocalMatches(
+            ref const PreparedTopologyPenDeactivateImage image) const
+            nothrow @nogc {
+        return image.valid && lastHit_ == image.expectedHit &&
+            lastTarget_ == image.expectedTarget &&
+            slideDecline_ == image.expectedDecline &&
+            slideDeclineSeed_ == image.expectedDeclineSeed &&
+            dragSnap_ == image.expectedDragSnap &&
+            moveArmed_.armed == image.expectedMoveArmed.armed &&
+            grabbedVert_ == image.expectedGrabbedVert &&
+            moveElem_ == image.expectedMoveElem &&
+            moveVerts_ == image.expectedMoveVerts &&
+            moveBase_ == image.expectedMoveBase &&
+            moveDirty_ == image.expectedMoveDirty &&
+            moveWelded_ == image.expectedMoveWelded &&
+            moveBefore_.matches(image.expectedMoveBefore);
+    }
+
+    final void installPreparedDeactivate(
+            ref PreparedTopologyPenDeactivateImage image) nothrow @nogc {
+        if (!image.valid) return;
+        lastHit_ = ConstrainHitPacket.init; lastTarget_ = HoverTarget.init;
+        slideDecline_ = SlideDecline.None; slideDeclineSeed_ = -1;
+        dragSnap_ = SnapPacket.init;
+        moveArmed_.armed = false; grabbedVert_ = -1;
+        moveElem_ = MoveElem.None; moveVerts_ = null; moveBase_ = null;
+        moveDirty_ = moveWelded_ = false;
+        MeshSnapshot sink; moveBefore_.moveInto(sink);
+        image.clear();
+    }
+
+    final SnapStage preparedSnapStageForDeactivate() { return snapStageForGesture(); }
+    final SnapGuide preparedSnapGuideForDeactivate() nothrow @nogc { return snapGuide_; }
+
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context) {
+        if (context is null) return PreparedDeactivateEffect(
+            preparedToolStateOwner, PreparedDeactivateKind.TopologyPen, false);
+        scope(failure) context.discard();
+        auto owner = PreparedTopologyPenDeactivateOwner.prepare(this, context);
+        bool ok = owner !is null;
+        if (ok) ok = owner.historyPrepared() ? context.markHistoryInstall()
+                                             : context.markNoHistoryInstall();
+        if (ok) ok = context.prepareTopologyPenDeactivate(owner);
+        if (!ok) context.discard();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.TopologyPen, ok);
     }
 
     override void deactivate() {

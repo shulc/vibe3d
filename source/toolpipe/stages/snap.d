@@ -178,6 +178,25 @@ class SnapStage : Stage, Operator {
     /// How many guides are registered. 0 in phase (a), always.
     size_t guideCount() const { return _guides.length; }
 
+    /// Detached registry image for tool-drop preparation. The caller owns the
+    /// returned arrays; install only transfers the already-built descriptor.
+    SnapGuide[] prepareGuideRemoval(SnapGuide guide) {
+        SnapGuide[] next;
+        next.reserve(_guides.length);
+        foreach (entry; _guides) if (entry !is guide) next ~= entry;
+        return next;
+    }
+
+    bool matchesPreparedGuides(const SnapGuide[] expected) const nothrow @nogc {
+        if (_guides.length != expected.length) return false;
+        foreach (i, entry; _guides) if (entry !is expected[i]) return false;
+        return true;
+    }
+
+    void installPreparedGuides(ref SnapGuide[] next) nothrow @nogc {
+        _guides = next; next = null;
+    }
+
     private void pushLimitsToGuides() {
         foreach (g; _guides) g.limits(innerRangePx, outerRangePx);
     }
@@ -445,6 +464,14 @@ class SnapStage : Stage, Operator {
     }
     void installPreparedPushEnabled(string owner, bool value) nothrow {
         _pushedEnabled = enabled; _pushedOwner = owner; enabled = value;
+        installPreparedStatePath("snap/enabled", enabled ? "true" : "false");
+    }
+
+    /// Nonallocating state half of `popEnabled`; the prepared owner validates
+    /// the captured push projection and the owner key before reaching here.
+    void installPreparedPopEnabled(string owner) nothrow {
+        if (owner.length == 0 || _pushedOwner != owner) return;
+        enabled = _pushedEnabled; _pushedOwner = null;
         installPreparedStatePath("snap/enabled", enabled ? "true" : "false");
     }
 

@@ -285,6 +285,7 @@ B5P_PREPARED_LEGACY = {
 B5Q_PREPARED_LEGACY = {
     ("tools.transform.rotate", "RotateTool", "update"),
     ("tools.transform.scale", "ScaleTool", "update"),
+    ("tools.edit.topology_pen.tool", "TopologyPenTool", "deactivate"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
@@ -322,7 +323,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "f02be43fd3ea6fcdc9f93088790433f5416cb79ea64d87c6764774c269b50133"
+    "f2255328f336727a7bb33fd876b0bba66534853f2157577364e89e8d177153af"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -475,6 +476,7 @@ for path, text in prepared_source_texts.items():
             "prepared_edge_extend_tool_activation",
             "prepared_topology_pen_activation",
             "prepared_topology_pen_update",
+            "prepared_topology_pen_deactivate",
             "prepared_array_param_update",
             "prepared_magnet_param_update",
             "prepared_smooth_shift_param_update",
@@ -5221,7 +5223,8 @@ def pen_deactivate_gate(tool, owner, effect, context, handlers):
     owner_block = owner[owner_start:]
     effect_block = effect[effect.find("enum PreparedDeactivateKind"):
         effect.find("enum PreparedActivateKind")]
-    return (start >= 0 and end > start and "Pen," in effect_block and
+    return (start >= 0 and end > start and
+        re.search(r"\bPen\s*,", effect_block) is not None and
         "final class BoxHandlerBatchResourceOwner" in handlers and
         "bool prepareDestroy(BoxHandlerBatchResourceOwner owner)" in context and
         "target.classinfo !is PenTool.classinfo" in owner_factory and
@@ -5599,6 +5602,15 @@ topology_pen_pipeline = (ROOT / "source/toolpipe/pipeline.d").read_text()
 topology_pen_popup = (ROOT / "source/popup_state.d").read_text()
 def topology_pen_activation_gate(owner, context, tool, snap, constrain,
                                  pipeline, popup):
+    activation_start = tool.find(
+        "final PreparedSessionActivateEffect prepareActivate")
+    activation_end = tool.find(
+        "version(unittest) final void seedPreparedActivationForTest",
+        activation_start)
+    activation = tool[activation_start:activation_end]
+    activation_state_start = tool.find(
+        "final PreparedTopologyPenActivationImage buildPreparedActivation")
+    activation_state = tool[activation_state_start:activation_end]
     return (owner.count("@disable this(this)") == 2 and
         "final class PreparedTopologyPenActivationOwner" in owner and
         "target.classinfo !is TopologyPenTool.classinfo" in owner and
@@ -5617,13 +5629,13 @@ def topology_pen_activation_gate(owner, context, tool, snap, constrain,
         owner.find("target_.installPreparedActivation(image_);") <
             owner.find("snap_.installPreparedPushEnabled(snapOwner_, true);") <
             owner.find("constrain_.installPreparedPointComposition();") and
-        "image.expectedHit = lastHit_; image.expectedTarget = lastTarget_;" in tool and
-        "image.expectedDecline = slideDecline_;" in tool and
-        "image.expectedDeclineSeed = slideDeclineSeed_;" in tool and
-        "lastHit_ = ConstrainHitPacket.init; lastTarget_ = HoverTarget.init;" in tool and
-        "slideDecline_ = SlideDecline.None; slideDeclineSeed_ = -1;" in tool and
+        "image.expectedHit = lastHit_; image.expectedTarget = lastTarget_;" in activation_state and
+        "image.expectedDecline = slideDecline_;" in activation_state and
+        "image.expectedDeclineSeed = slideDeclineSeed_;" in activation_state and
+        "lastHit_ = ConstrainHitPacket.init; lastTarget_ = HoverTarget.init;" in activation_state and
+        "slideDecline_ = SlideDecline.None; slideDeclineSeed_ = -1;" in activation_state and
         "context.prepareTopologyPenActivation(owner)" in tool and
-        tool.count("context.markNoHistoryInstall()") == 2 and
+        activation.count("context.markNoHistoryInstall()") == 1 and
         tool.find("context.prepareTopologyPenActivation(owner)") <
             tool.find("context.markNoHistoryInstall()", tool.find("context.prepareTopologyPenActivation(owner)")) and
         "PreparedActivateKind.TopologyPen, ok);" in tool and
@@ -7086,6 +7098,82 @@ for stem, cls, owner_path, tool_source in (
     if run.returncode == 0 or ("not copyable" not in run.stdout and
             not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
         fail(f"{stem} update token copy was not rejected:\n" + run.stdout)
+
+# TopologyPen drop jointly closes an optional live-move history carrier and
+# restores two SnapStage planes (guide registry + startup enable push).
+topopen_deact_owner = (ROOT / "source/prepared_topology_pen_deactivate.d").read_text()
+topopen_tool = prepared_source_texts[ROOT / "source/tools/edit/topology_pen/tool.d"]
+def topopen_deact_gate(owner, context, tool_source, snap_source):
+    production = without_unittests(owner)
+    hook = re.search(r"override\s+void\s+deactivate\s*\(\)\s*\{", tool_source)
+    if not hook: return False
+    hook_body = tool_source[hook.end():balanced_source(tool_source, hook.end())-1]
+    return all(x in owner for x in (
+        "final class PreparedTopologyPenDeactivateOwner",
+        "target.classinfo !is TopologyPenTool.classinfo",
+        "prepared_.owner != owner_", "prepared_.generation != generation_",
+        "validatedToken_.owner != owner_", "validatedToken_.generation != generation_",
+        "target_.preparedSnapGuideForDeactivate() !is guide_",
+        "target_.preparedSnapArmOwner() != snapOwner_", "g_pipeCtx !is pipe_",
+        "snap_.matchesPreparedPushProjection(snapProjection_)",
+        "snap_.matchesPreparedGuides(expectedGuides_)",
+        "target_.installPreparedDeactivate(image_);",
+        "snap_.installPreparedGuides(nextGuides_);",
+        "snap_.installPreparedPopEnabled(snapOwner_);")) and \
+        not any(x in production for x in (" delegate", " function(", "void*", "ubyte[]")) and \
+        all(x in context for x in (
+            "bool prepareTopologyPenDeactivate(PreparedTopologyPenDeactivateOwner owner)",
+            "e.topologyPenDeactivate.validate();",
+            "e.topologyPenDeactivate.install();",
+            "e.topologyPenDeactivate.abort();")) and \
+        all(x in tool_source for x in (
+            "final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context)",
+            "PreparedTopologyPenDeactivateOwner.prepare(this, context)",
+            "owner.historyPrepared() ? context.markHistoryInstall()",
+            ": context.markNoHistoryInstall();",
+            "context.prepareTopologyPenDeactivate(owner)",
+            "if (!ok) context.discard();")) and \
+        all(x in snap_source for x in (
+            "SnapGuide[] prepareGuideRemoval(SnapGuide guide)",
+            "bool matchesPreparedGuides(const SnapGuide[] expected) const nothrow @nogc",
+            "void installPreparedGuides(ref SnapGuide[] next) nothrow @nogc",
+            "_guides = next; next = null;",
+            "void installPreparedPopEnabled(string owner) nothrow")) and \
+        "PreparedTopologyPenDeactivateOwner" not in hook_body
+
+snap_stage_source = prepared_source_texts[ROOT / "source/toolpipe/stages/snap.d"]
+if not topopen_deact_gate(topopen_deact_owner, record_context,
+                          topopen_tool, snap_stage_source):
+    fail("TopologyPen deactivate owner contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is TopologyPenTool.classinfo", "false", "broaden exact class"),
+    ("owner", "target_.preparedSnapGuideForDeactivate() !is guide_", "false", "drop guide identity"),
+    ("owner", "target_.preparedSnapArmOwner() != snapOwner_", "false", "drop snap owner"),
+    ("owner", "g_pipeCtx !is pipe_", "false", "drop pipe identity"),
+    ("owner", "snap_.matchesPreparedPushProjection(snapProjection_)", "true", "drop push projection"),
+    ("owner", "snap_.matchesPreparedGuides(expectedGuides_)", "true", "drop guide projection"),
+    ("owner", "target_.installPreparedDeactivate(image_);", "", "drop tool install"),
+    ("owner", "snap_.installPreparedGuides(nextGuides_);", "", "drop guide install"),
+    ("owner", "snap_.installPreparedPopEnabled(snapOwner_);", "", "drop pop install"),
+    ("context", "e.topologyPenDeactivate.validate();", "true;", "drop context validate"),
+    ("context", "e.topologyPenDeactivate.install();", "", "drop context install"),
+    ("context", "e.topologyPenDeactivate.abort();", "", "drop context abort"),
+    ("tool", "context.prepareTopologyPenDeactivate(owner)", "true", "drop context enlist"),
+    ("snap", "_guides = next; next = null;", "next = null;", "drop guide transfer"),
+):
+    o, c, t, s = topopen_deact_owner, record_context, topopen_tool, snap_stage_source
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    elif target == "tool": t = t.replace(old, new, 1)
+    else: s = s.replace(old, new, 1)
+    if topopen_deact_gate(o, c, t, s):
+        fail(f"TopologyPen deactivate mutation did not RED: {label}")
+topopen_copy = ROOT / "tests/compile_fail/prepared_topology_pen_deactivate_token_copy.d"
+run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(topopen_copy)], cwd=ROOT,
+    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+if run.returncode == 0 or ("not copyable" not in run.stdout and
+        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+    fail("TopologyPen deactivate token copy was not rejected:\n" + run.stdout)
 
 # Closed inherited base-noop owner infrastructure.  The effective product
 # table above proves DragWeldTool is the sole activate/deactivate admission;
