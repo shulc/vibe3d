@@ -2,6 +2,7 @@
 """P1.0a source/compile-fail census. No production activation door may call it."""
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -19,7 +20,22 @@ DMD_FLAGS_RUN = subprocess.run(
     cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 if DMD_FLAGS_RUN.returncode:
     raise SystemExit("P1.0b.0 cannot obtain D compiler flags")
-DMD_FLAGS = DMD_FLAGS_RUN.stdout.split()
+# `dub describe --data=` emits a SHELL command line, and whether it quotes each
+# argument depends on the dub version: 1.41.0 here writes a bare `-I/path`,
+# while the CI runner's dub writes `'-I/path'`. A plain .split() keeps those
+# quotes, dmd then reads the whole token as a filename and reports
+# `cannot find input file '-I/…/source/'.d` — which looks like a census finding
+# and is not one. shlex.split is correct for BOTH forms (and for a path with a
+# space, which .split() has always broken). Measured 2026-09-02: green locally,
+# red on the runner, same commit.
+DMD_FLAGS = shlex.split(DMD_FLAGS_RUN.stdout)
+_stray = [f for f in DMD_FLAGS if not f.startswith("-")]
+if _stray:
+    raise SystemExit(
+        "P1.0b.0 compiler flags did not parse as flags: " + repr(_stray[:4])
+        + "\n  dub describe emitted: " + repr(DMD_FLAGS_RUN.stdout[:200])
+        + "\n  Every entry must begin with '-'. A quoted token here means the"
+          " shell-quoting form changed again; fix the PARSE, not the compiler call.")
 
 def fail(message):
     raise SystemExit(message)
