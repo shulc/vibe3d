@@ -551,7 +551,7 @@ public:
     /// whenever the cache key is known to be stale. (The key check in
     /// computeLocalClustersFull also catches selection / topology changes
     /// mid-session, so this is a belt-and-braces hook for explicit resets.)
-    private void invalidateClusterCache() {
+    private void invalidateClusterCache() nothrow {
         _cacheValid     = false;
         _clusterKey.clear();
         _cachedEditMode = -1;
@@ -585,6 +585,23 @@ public:
         auto keepElementPin = elementPin;
         reset();
         elementPin = keepElementPin;
+    }
+
+    void installPreparedTransientReset() nothrow {
+        if (userLocked) return;
+        mode              = Mode.None;
+        userPin           = Pin.init;
+        // elementPin deliberately survives tool switches (task 1530).
+        manualCenter      = Vec3(0, 0, 0);
+        selectSubMode     = SelectSubMode.Center;
+        clusterCount_     = 0;
+        userLocked        = false;
+        cancelFrozen      = false;
+        cancelSnap        = Pin.init;
+        cancelElementSnap = Pin.init;
+        softPin           = Pin.init;
+        invalidateClusterCache();
+        installPreparedStatePath("actionCenter/mode", "none");
     }
 
     /// Set the action-center mode explicitly (called by ActrPresetCommand).
@@ -2723,6 +2740,10 @@ unittest {
     // asymmetry is the whole reason it is its OWN field: a `userPin` carried
     // across the transient reset would hijack the next tool's gizmo in
     // Auto/None/Screen/Pivot/Parent, all of which read `userPin`.
+    acs.installPreparedTransientReset();
+    acs.mode = Mode.Element;
+    assert(vecEq(acs.currentCenter(), pickPt),
+        "Element: the frozen pick must survive prepared transient reset");
     acs.resetTransient();
     acs.mode = Mode.Element;
     assert(vecEq(acs.currentCenter(), pickPt),

@@ -383,6 +383,32 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
         reset();
     }
 
+    void installPreparedTransientReset() nothrow {
+        if (userLocked) return;
+        config = FalloffConfig.init;
+        loopRing_.length = 0;
+        connectMask_.length = 0;
+        connectMask.length = 0;
+        anchorPos_.length = 0;
+        userLocked = false;
+        vertexMapWeights_.length = 0;
+        selWeights_.length = 0;
+        _selCacheValid = false;
+        _selKey.clear();
+        installPreparedStatePath("falloff/type", "none");
+        installPreparedStatePath("falloff/shape", "linear");
+        installPreparedStatePath("falloff/enabled", "false");
+        installPreparedStatePath("falloff/types/none", "true");
+        installPreparedStatePath("falloff/types/linear", "false");
+        installPreparedStatePath("falloff/types/radial", "false");
+        installPreparedStatePath("falloff/types/cylinder", "false");
+        installPreparedStatePath("falloff/types/screen", "false");
+        installPreparedStatePath("falloff/types/lasso", "false");
+        installPreparedStatePath("falloff/types/element", "false");
+        installPreparedStatePath("falloff/types/selection", "false");
+        installPreparedStatePath("falloff/types/vertexMap", "false");
+    }
+
     // ------------------------------------------------------------------
     // Operator interface (Phase 6: kernel lives directly in evaluate(vts)).
     // ------------------------------------------------------------------
@@ -1907,6 +1933,19 @@ unittest {
            "prepared falloff type switch retained the Element anchor");
     assert(live.slotEpoch == beforeEpoch + 1,
            "prepared falloff preset did not arm the slot exactly once");
+    live.userLocked = false;
+    live.anchorRing = [2u, 5u];
+    live.installPreparedTransientReset();
+    assert(live.type == FalloffType.None &&
+           live.shape == FalloffShape.Linear && live.anchorRing.length == 0,
+           "prepared falloff transient reset omitted config or buffers");
+    live.userLocked = true;
+    live.type = FalloffType.Cylinder;
+    live.anchorRing = [9u];
+    live.installPreparedTransientReset();
+    assert(live.type == FalloffType.Cylinder && live.anchorRing == [9u] &&
+           live.userLocked,
+           "prepared falloff transient reset ignored the user lock");
 }
 
 unittest {
