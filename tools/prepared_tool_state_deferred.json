@@ -22,16 +22,6 @@
   {
     "batch": "P1.0b.3+",
     "key": {
-      "aggregate": "EdgeSliceTool",
-      "module": "tools.slice.edge_slice_tool",
-      "signature": "void(string pname)",
-      "symbol": "onParamChanged"
-    },
-    "reason": "Mesh/GpuGl preview or mixed branch requires P1.0b.3+ typed later-owner effects"
-  },
-  {
-    "batch": "P1.0b.3+",
-    "key": {
       "aggregate": "LoopSliceTool",
       "module": "tools.slice.loop_slice_tool",
       "signature": "void()",

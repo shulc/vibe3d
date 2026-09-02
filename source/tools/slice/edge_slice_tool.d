@@ -28,11 +28,15 @@ import overlay_space : OverlaySpace;
 import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
-    PreparedDeactivateEffect, PreparedDeactivateKind;
+    PreparedDeactivateEffect, PreparedDeactivateKind, PreparedEdgeSliceParamEffect,
+    PreparedEdgeSliceParamKind;
 import prepared_edge_slice_activation : PreparedEdgeSliceActivationOwner;
 import prepared_edge_slice_deactivate : PreparedEdgeSliceDeactivateOwner;
+import prepared_edge_slice_param_update : PreparedEdgeSliceParamUpdateOwner;
 import mesh_gpu : GpuUploadOwner;
 import handler : BoxHandlerBatchResourceOwner;
+
+private struct EdgeSliceChainPoint { uint v0, v1; float t; }
 
 struct PreparedEdgeSliceActivationImage {
     bool valid;
@@ -53,6 +57,33 @@ struct PreparedEdgeSliceDeactivateImage {
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
         candidate = Mesh.init;
         deliveryFlags = deliveryDomains = 0;
+    }
+}
+
+struct PreparedEdgeSliceParamImage {
+    bool valid, recognized, appliesState, appliesMesh, invalidateRedo;
+    string pname;
+    bool expectedActive, expectedArmed, expectedScrubbing, expectedBuilt;
+    int expectedPhase, expectedDragPart, expectedActivePoint;
+    size_t expectedArmedAddr; ulong expectedArmedMutVer;
+    bool expectedSplit, expectedMiddle; float expectedSnap, expectedProxy;
+    float expectedTA, expectedTB;
+    uint[] expectedEdges, expectedPointVerts; float[] expectedPointT;
+    MeshSnapshot expectedLive, expectedBefore;
+    bool nextArmed, nextScrubbing, nextBuilt;
+    int nextPhase, nextDragPart, nextActivePoint;
+    size_t nextArmedAddr; ulong nextArmedMutVer; float nextProxy;
+    uint[] nextEdges, nextPointVerts; float[] nextPointT;
+    private EdgeSliceChainPoint[] nextChainPoints;
+    Mesh candidate; uint deliveryFlags, deliveryDomains;
+    void clear() nothrow @nogc {
+        valid = recognized = appliesState = appliesMesh = invalidateRedo = false;
+        pname = null;
+        expectedEdges = null; expectedPointVerts = null; expectedPointT = null;
+        nextEdges = null; nextPointVerts = null; nextPointT = null;
+        nextChainPoints = null;
+        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
+        candidate = Mesh.init; deliveryFlags = deliveryDomains = 0;
     }
 }
 
@@ -129,7 +160,7 @@ public:
     // idempotent (re-clamping/re-snapping/re-forcing-to-middle an already
     // effective value reproduces it) — so the double application never
     // changes the interactive path's result.
-    private struct ChainPoint { uint v0, v1; float t; }
+    private alias ChainPoint = EdgeSliceChainPoint;
 
 private:
     Mesh* delegate() meshSrc_;
@@ -563,6 +594,171 @@ public:
 
     override void evaluate() {}
 
+    private static bool preparedParamRecognized(string pname) pure nothrow @nogc {
+        return pname == "chainArm" || pname == "activePoint" || pname == "pointT" ||
+            pname == "split" || pname == "middle" || pname == "snap" ||
+            pname == "tA" || pname == "tB" || pname == "show";
+    }
+
+    private void storePreparedPoints(ref uint[] verts, ref float[] ts,
+            const ChainPoint[] pts) const {
+        verts.length = pts.length * 2; ts.length = pts.length;
+        foreach (i, p; pts) {
+            verts[i * 2] = p.v0; verts[i * 2 + 1] = p.v1; ts[i] = p.t;
+        }
+    }
+
+    private ChainPoint[] loadPreparedPoints(const uint[] verts,
+            const float[] ts) const {
+        ChainPoint[] pts; pts.length = ts.length;
+        foreach (i; 0 .. ts.length) {
+            pts[i] = ChainPoint(verts[i * 2], verts[i * 2 + 1], ts[i]);
+        }
+        return pts;
+    }
+
+    final PreparedEdgeSliceParamImage buildPreparedParamUpdate(
+            string pname, ref Mesh live) {
+        PreparedEdgeSliceParamImage image; image.valid = true; image.pname = pname;
+        image.recognized = preparedParamRecognized(pname);
+        image.expectedActive = active; image.expectedArmed = armed_;
+        image.expectedScrubbing = scrubbing_; image.expectedBuilt = built_;
+        image.expectedPhase = cast(int)phase_; image.expectedDragPart = dragPart_;
+        image.expectedActivePoint = activePoint_; image.expectedArmedAddr = armedKey_.addr;
+        image.expectedArmedMutVer = armedKey_.mutVer; image.expectedSplit = split_;
+        image.expectedMiddle = middle_; image.expectedSnap = snap_;
+        image.expectedProxy = pointProxy_; image.expectedTA = tA_; image.expectedTB = tB_;
+        image.expectedEdges = edgesParam_.dup;
+        storePreparedPoints(image.expectedPointVerts, image.expectedPointT, latchedPoints_);
+        image.expectedLive = MeshSnapshot.capture(live); image.expectedBefore = chainBefore_;
+        image.nextArmed = armed_; image.nextScrubbing = scrubbing_; image.nextBuilt = built_;
+        image.nextPhase = cast(int)phase_; image.nextDragPart = dragPart_;
+        image.nextActivePoint = activePoint_; image.nextArmedAddr = armedKey_.addr;
+        image.nextArmedMutVer = armedKey_.mutVer; image.nextProxy = pointProxy_;
+        image.nextEdges = edgesParam_.dup;
+        image.nextPointVerts = image.expectedPointVerts.dup;
+        image.nextPointT = image.expectedPointT.dup;
+        image.nextChainPoints = latchedPoints_.dup;
+        if (!image.recognized || pname == "show") return image;
+
+        if (pname == "activePoint") {
+            image.appliesState = true;
+            int maxIdx = cast(int)latchedPoints_.length - 1;
+            image.nextActivePoint = maxIdx < 0 ? -1 :
+                activePoint_ < 0 ? 0 : activePoint_ > maxIdx ? maxIdx : activePoint_;
+            if (image.nextActivePoint >= 0)
+                image.nextProxy = latchedPoints_[image.nextActivePoint].t;
+            return image;
+        }
+
+        ChainPoint[] nextPoints;
+        MeshSnapshot baseline;
+        if (pname == "chainArm") {
+            nextPoints = pointsFromEdgesParamIn(live);
+            if (nextPoints.length < 2) return image;
+            baseline = MeshSnapshot.capture(live);
+            image.nextActivePoint = cast(int)nextPoints.length - 1;
+            image.nextProxy = nextPoints[$ - 1].t;
+            image.nextArmed = true; image.nextPhase = cast(int)Phase.EdgeB;
+        } else {
+            nextPoints = latchedPoints_.dup;
+            if (pname == "pointT") {
+                if (activePoint_ < 0 || activePoint_ >= cast(int)nextPoints.length)
+                    return image;
+                nextPoints[activePoint_].t = pointProxy_;
+                image.appliesState = true;
+            } else if (!armed_) return image;
+            if (!chainBefore_.filled || nextPoints.length == 0) return image;
+            if (!armedKey_.matches(live)) {
+                image.nextArmed = false; image.nextScrubbing = false;
+                image.nextBuilt = false; image.nextPhase = cast(int)Phase.Idle;
+                image.nextPointVerts = null; image.nextPointT = null;
+                image.nextChainPoints = null;
+                image.nextEdges = null; image.nextDragPart = -1;
+                image.nextActivePoint = -1; image.nextArmedAddr = size_t.max;
+                image.nextArmedMutVer = ulong.max;
+                image.appliesState = true;
+                return image;
+            }
+            baseline = chainBefore_;
+        }
+
+        image.candidate = detachedPreparedMesh(live);
+        auto shadow = beginPreparedShadow(image.candidate);
+        const n = bakeChainInto(image.candidate, baseline, nextPoints);
+        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+            image.deliveryDomains); shadow.close();
+        image.appliesState = true; image.appliesMesh = true;
+        image.invalidateRedo = history !is null;
+        image.nextBuilt = n > 0; image.nextArmedAddr = cast(size_t)mesh;
+        image.nextArmedMutVer = image.candidate.mutationVersion;
+        storePreparedPoints(image.nextPointVerts, image.nextPointT, nextPoints);
+        image.nextChainPoints = nextPoints;
+        return image;
+    }
+
+    final bool preparedParamUpdateMatches(in PreparedEdgeSliceParamImage image,
+            ref const Mesh live) const nothrow @nogc {
+        if (!image.valid || image.pname is null ||
+            image.recognized != preparedParamRecognized(image.pname) ||
+            active != image.expectedActive || armed_ != image.expectedArmed ||
+            scrubbing_ != image.expectedScrubbing || built_ != image.expectedBuilt ||
+            cast(int)phase_ != image.expectedPhase || dragPart_ != image.expectedDragPart ||
+            activePoint_ != image.expectedActivePoint || armedKey_.addr != image.expectedArmedAddr ||
+            armedKey_.mutVer != image.expectedArmedMutVer || split_ != image.expectedSplit ||
+            middle_ != image.expectedMiddle || snap_ != image.expectedSnap ||
+            pointProxy_ != image.expectedProxy || tA_ != image.expectedTA ||
+            tB_ != image.expectedTB || edgesParam_ != image.expectedEdges ||
+            latchedPoints_.length != image.expectedPointT.length ||
+            !image.expectedLive.matches(live) || !image.expectedBefore.matches(chainBefore_))
+            return false;
+        foreach (i, p; latchedPoints_)
+            if (p.v0 != image.expectedPointVerts[i * 2] ||
+                p.v1 != image.expectedPointVerts[i * 2 + 1] || p.t != image.expectedPointT[i])
+                return false;
+        return true;
+    }
+
+    final void installPreparedParamUpdate(ref PreparedEdgeSliceParamImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        if (!image.appliesState) { image.clear(); return; }
+        armed_ = image.nextArmed; scrubbing_ = image.nextScrubbing;
+        built_ = image.nextBuilt; phase_ = cast(Phase)image.nextPhase;
+        dragPart_ = image.nextDragPart; activePoint_ = image.nextActivePoint;
+        armedKey_.addr = image.nextArmedAddr; armedKey_.mutVer = image.nextArmedMutVer;
+        pointProxy_ = image.nextProxy; edgesParam_ = image.nextEdges;
+        latchedPoints_ = image.nextChainPoints;
+        if (image.pname == "chainArm" && image.appliesMesh)
+            chainBefore_ = image.expectedLive;
+        image.clear();
+    }
+
+    final PreparedEdgeSliceParamEffect prepareParamChanged(string pname,
+            PreparedRecordContext context, Layer layer, GpuUploadOwner uploadOwner) {
+        if (context is null) return PreparedEdgeSliceParamEffect(
+            preparedToolStateOwner, PreparedEdgeSliceParamKind.None, false);
+        scope(failure) context.discard();
+        auto owner = PreparedEdgeSliceParamUpdateOwner.prepare(this, layer, pname);
+        bool ok = owner !is null;
+        bool installHistory;
+        if (ok && owner.invalidateRedo) {
+            auto redo = context.prepareInvalidateRedo();
+            ok = redo.accepted; installHistory = redo.mustInstall;
+        }
+        if (ok && owner.appliesMesh)
+            ok = owner.deliveryFlags != 0 && uploadOwner !is null && uploadOwner.owns(gpu) &&
+                context.prepareStampedMeshImage(layer, owner.candidate,
+                    owner.deliveryFlags, owner.deliveryDomains) &&
+                context.prepareUpload(uploadOwner, owner.candidate);
+        if (ok) ok = installHistory ? context.markHistoryInstall()
+                                    : context.markNoHistoryInstall();
+        if (ok) ok = context.prepareEdgeSliceParamUpdate(owner);
+        if (!ok) context.discard();
+        return PreparedEdgeSliceParamEffect(preparedToolStateOwner,
+            owner is null ? PreparedEdgeSliceParamKind.None : owner.effectKind, ok);
+    }
+
     // A panel edit of a geometry-affecting option while a preview is armed
     // must refresh it immediately (mirrors LoopSliceTool's onParamChanged
     // convention) — otherwise toggling Split Polygons / Split at Middle /
@@ -934,13 +1130,17 @@ private:
     // chains have no per-interior-t param (a deliberate v1 surface
     // limitation; interactive interior points cut at their clicked t).
     ChainPoint[] pointsFromEdgesParam() const {
+        return pointsFromEdgesParamIn(*mesh);
+    }
+
+    ChainPoint[] pointsFromEdgesParamIn(ref const Mesh work) const {
         ChainPoint[] pts;
         if (edgesParam_.length < 2) return pts;
         pts.length = edgesParam_.length;
         foreach (i, ei; edgesParam_) {
-            if (ei >= mesh.edges.length) return null;
-            pts[i].v0 = mesh.edges[ei][0];
-            pts[i].v1 = mesh.edges[ei][1];
+            if (ei >= work.edges.length) return null;
+            pts[i].v0 = work.edges[ei][0];
+            pts[i].v1 = work.edges[ei][1];
             if (i == 0)                           pts[i].t = tA_;
             else if (i == edgesParam_.length - 1)  pts[i].t = tB_;
             else                                   pts[i].t = 0.5f;
@@ -1291,4 +1491,23 @@ public:
     }
     version(unittest) final void mutatePreparedDeactivateForTest()
             nothrow @nogc { scrubbing_ = !scrubbing_; }
+    version(unittest) final void seedPreparedParamForTest(ref Mesh live,
+            bool armedPreview = false) {
+        suppressRefreshForTest_ = true; active = true; edgesParam_ = [0, 1];
+        tA_ = 0.25f; tB_ = 0.75f;
+        if (armedPreview) armChain();
+    }
+    version(unittest) final void setPreparedActivePointForTest(int value)
+            nothrow @nogc { activePoint_ = value; }
+    version(unittest) final void setPreparedPointProxyForTest(float value)
+            nothrow @nogc { pointProxy_ = value; }
+    version(unittest) final bool preparedParamStateForTest(bool armedExpected,
+            int activePointExpected) const {
+        return active && armed_ == armedExpected &&
+            activePoint_ == activePointExpected &&
+            (!armedExpected || (latchedPoints_.length == 2 &&
+                armedKey_.matches(*mesh)));
+    }
+    version(unittest) final void mutatePreparedParamForTest()
+            nothrow @nogc { middle_ = !middle_; }
 }

@@ -74,6 +74,9 @@ enum PreparedVertexMergeParamKind : ubyte { None, Noop, Preview }
 enum PreparedVertexBevelParamKind : ubyte { None, Noop, Preview }
 enum PreparedVertexExtrudeParamKind : ubyte { None, Noop, Preview }
 enum PreparedSliceParamKind : ubyte { None, Noop, AxisLatch, Preview }
+enum PreparedEdgeSliceParamKind : ubyte {
+    None, Noop, ChainArm, ActivePoint, Preview
+}
 enum PreparedInheritedNoopKind : ubyte { Activate, Deactivate, Update }
 
 @PreparedAggregate struct PreparedActivateEffect {
@@ -135,6 +138,11 @@ enum PreparedInheritedNoopKind : ubyte { Activate, Deactivate, Update }
 @PreparedAggregate struct PreparedSliceParamEffect {
     OwnedId owner;
     PreparedSliceParamKind kind;
+    bool accepted;
+}
+@PreparedAggregate struct PreparedEdgeSliceParamEffect {
+    OwnedId owner;
+    PreparedEdgeSliceParamKind kind;
     bool accepted;
 }
 @PreparedAggregate struct PreparedPenParamEffect {

@@ -290,6 +290,7 @@ B5Q_PREPARED_LEGACY = {
     ("tools.edit.topology_pen.tool", "TopologyPenTool", "deactivate"),
     ("tools.slice.slice_tool", "SliceTool", "onParamChanged"),
     ("tools.slice.edge_slice_tool", "EdgeSliceTool", "deactivate"),
+    ("tools.slice.edge_slice_tool", "EdgeSliceTool", "onParamChanged"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
@@ -327,7 +328,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "8ea37b79dd65f627233a917a7b82e7a012fe94711fe52d983b38e5dfc05e1806"
+    "04b6e04a9a3a862ba2732a1051f5165e140269fb215310e06eb4afc1b6eed480"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -503,6 +504,7 @@ for path, text in prepared_source_texts.items():
             "prepared_slice_deactivate",
             "prepared_slice_param_update",
             "prepared_edge_slice_deactivate",
+            "prepared_edge_slice_param_update",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
@@ -2598,8 +2600,11 @@ edge_slice_deactivate_sources = {
 def edge_slice_deactivate_gate(s):
     tool, owner, context, effect = (s[k] for k in
         ("tool", "owner", "context", "effect"))
-    return all(x in tool for x in (
-        "bakeChainInto(ref Mesh work", "image.expectedLive = MeshSnapshot.capture(live);",
+    start = tool.find("final PreparedEdgeSliceDeactivateImage buildPreparedDeactivateState")
+    end = tool.find("private static bool preparedParamRecognized", start)
+    product = tool[start:end]
+    return "bakeChainInto(ref Mesh work" in tool and all(x in product for x in (
+        "image.expectedLive = MeshSnapshot.capture(live);",
         "image.expectedBefore = chainBefore_;", "detachedPreparedMesh(live)",
         "bakeChainInto(image.candidate", "image.expectedLive.matches(live)",
         "image.expectedBefore.matches(chainBefore_)", "uploadOwner.owns(gpu)",
@@ -2630,7 +2635,14 @@ for target, old, new, label in (
      "Primitive, Slice, TopologyPen", "drop effect kind"),
 ):
     mutant = dict(edge_slice_deactivate_sources)
-    mutant[target] = mutant[target].replace(old, new, 1)
+    if target == "tool":
+        text = mutant[target]
+        start = text.find("final PreparedEdgeSliceDeactivateImage buildPreparedDeactivateState")
+        end = text.find("private static bool preparedParamRecognized", start)
+        product = text[start:end].replace(old, new, 1)
+        mutant[target] = text[:start] + product + text[end:]
+    else:
+        mutant[target] = mutant[target].replace(old, new, 1)
     if mutant[target] == edge_slice_deactivate_sources[target] or \
             edge_slice_deactivate_gate(mutant):
         fail(f"Edge Slice deactivate mutation did not RED: {label}")
@@ -2640,6 +2652,78 @@ run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(copy_fixture)], cwd=ROOT,
 if run.returncode == 0 or ("not copyable" not in run.stdout and
         not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
     fail("Edge Slice deactivate token copy was not rejected:\n" + run.stdout)
+
+edge_slice_param_sources = {
+    "tool": edge_slice_deactivate_sources["tool"],
+    "owner": (ROOT / "source/prepared_edge_slice_param_update.d").read_text(),
+    "context": record_context,
+    "history": (ROOT / "source/command_history.d").read_text(),
+    "effect": edge_slice_deactivate_sources["effect"],
+}
+def edge_slice_param_gate(s):
+    tool, owner, context, history, effect = (s[k] for k in
+        ("tool", "owner", "context", "history", "effect"))
+    start = tool.find("final PreparedEdgeSliceParamImage buildPreparedParamUpdate")
+    end = tool.find("override void onParamChanged", start)
+    product = tool[start:end]
+    history_start = history.find("PreparedHistoryResult prepareInvalidateRedo")
+    history_end = history.find("ulong prepareNextRun", history_start)
+    history_product = history[history_start:history_end]
+    return all(x in product for x in (
+        "image.expectedLive = MeshSnapshot.capture(live)",
+        "image.expectedBefore = chainBefore_", "pointsFromEdgesParamIn(live)",
+        "detachedPreparedMesh(live)", "bakeChainInto(image.candidate",
+        "image.expectedLive.matches(live)", "image.expectedBefore.matches(chainBefore_)",
+        "context.prepareInvalidateRedo()", "redo.mustInstall",
+        "uploadOwner.owns(gpu)", "context.prepareStampedMeshImage(layer, owner.candidate",
+        "context.prepareUpload(uploadOwner, owner.candidate)",
+        "context.prepareEdgeSliceParamUpdate(owner)")) and all(x in owner for x in (
+        "target.classinfo !is EdgeSliceTool.classinfo", "!target.ownsPreparedLayer(layer)",
+        "&layer_.meshRef() !is source_", "prepared_.owner != owner_",
+        "prepared_.generation != generation_", "validatedToken_.owner != owner_",
+        "validatedToken_.generation != generation_",
+        "target_.installPreparedParamUpdate(image_)")) and all(x in history_product for x in (
+        "PreparedHistoryResult prepareInvalidateRedo", "batch.history.lockout",
+        "batch.history.state == UndoState.Active", "batch.history.redoStack = null")) and \
+        context.count("case PreparedResourceKind.EdgeSliceParamUpdateState:") == 3 and \
+        "e.edgeSliceParamUpdate.install();" in context and \
+        "PreparedEdgeSliceParamKind kind;" in effect
+if not edge_slice_param_gate(edge_slice_param_sources):
+    fail("Edge Slice parameter prepared contract drift")
+for target, old, new, label in (
+    ("tool", "pointsFromEdgesParamIn(live)", "pointsFromEdgesParam()", "drop explicit target"),
+    ("tool", "bakeChainInto(image.candidate", "bakeChainFrom(", "drop detached kernel"),
+    ("tool", "image.expectedLive.matches(live)", "true", "drop live witness"),
+    ("tool", "context.prepareInvalidateRedo()", "PreparedHistoryResult.init", "drop redo product"),
+    ("tool", "redo.mustInstall", "true", "drop guarded history install"),
+    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
+    ("tool", "context.prepareEdgeSliceParamUpdate(owner)", "true", "drop state enlist"),
+    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
+    ("history", "batch.history.redoStack = null", "", "drop redo invalidation"),
+    ("context", "e.edgeSliceParamUpdate.install();", "", "drop context install"),
+):
+    mutant = dict(edge_slice_param_sources)
+    if target == "tool":
+        text = mutant[target]; start = text.find(
+            "final PreparedEdgeSliceParamImage buildPreparedParamUpdate")
+        end = text.find("override void onParamChanged", start)
+        product = text[start:end].replace(old, new, 1)
+        mutant[target] = text[:start] + product + text[end:]
+    elif target == "history":
+        text = mutant[target]
+        start = text.find("PreparedHistoryResult prepareInvalidateRedo")
+        end = text.find("ulong prepareNextRun", start)
+        product = text[start:end].replace(old, new, 1)
+        mutant[target] = text[:start] + product + text[end:]
+    else: mutant[target] = mutant[target].replace(old, new, 1)
+    if mutant[target] == edge_slice_param_sources[target] or edge_slice_param_gate(mutant):
+        fail(f"Edge Slice parameter mutation did not RED: {label}")
+copy_fixture = ROOT / "tests/compile_fail/prepared_edge_slice_param_token_copy.d"
+run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(copy_fixture)], cwd=ROOT,
+    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+if run.returncode == 0 or ("not copyable" not in run.stdout and
+        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+    fail("Edge Slice parameter token copy was not rejected:\n" + run.stdout)
 
 vertex_extrude_param_sources = {
     "tool": (ROOT / "source/tools/edit/vertex_extrude_tool.d").read_text(),

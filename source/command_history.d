@@ -158,6 +158,27 @@ unittest { // P1.0b.3b scalar token, ordered shadow, joint observer ownership.
     blocked.installPreparedToken(blockedValid);
     assert(blocked.blockChildren.length == 1 && blocked.redoStack.length == 1);
 
+    auto invalidated = new CommandHistory();
+    invalidated.redoStack = [preparedTestEntry(cmd, "redo")];
+    auto invalidateToken = invalidated.beginPrepared();
+    auto invalidateResult = invalidated.prepareInvalidateRedo(invalidateToken);
+    assert(invalidateResult.accepted && invalidateResult.mustInstall &&
+        invalidateResult.redoDepth == 0 && invalidated.redoStack.length == 1);
+    auto invalidateValid = invalidated.validatesPreparedToken(invalidateToken);
+    assert(invalidateValid.valid); invalidated.installPreparedToken(invalidateValid);
+    assert(invalidated.redoStack.length == 0);
+
+    auto lockedInvalidation = new CommandHistory();
+    lockedInvalidation.redoStack = [preparedTestEntry(cmd, "redo")];
+    lockedInvalidation.setLockout(true);
+    auto lockedInvalidateToken = lockedInvalidation.beginPrepared();
+    auto lockedInvalidate = lockedInvalidation.prepareInvalidateRedo(
+        lockedInvalidateToken);
+    assert(lockedInvalidate.accepted && !lockedInvalidate.mustInstall &&
+        lockedInvalidate.redoDepth == 1);
+    lockedInvalidation.discardPreparedToken(lockedInvalidateToken);
+    assert(lockedInvalidation.redoStack.length == 1);
+
     auto discarded = new CommandHistory(); auto discardedToken = discarded.beginPrepared();
     discarded.prepareRecord(discardedToken, cmd, PreparedHistoryKind.Plain, 0);
     discarded.discardPreparedToken(discardedToken);
@@ -770,6 +791,20 @@ final class CommandHistory {
         return PreparedHistoryResult(true, batch.history.undoStack.length,
             batch.history.redoStack.length, batch.history.runOpen,
             batch.history.currentRunId, batch.history.tweakGeneration);
+    }
+
+    PreparedHistoryResult prepareInvalidateRedo(ref PreparedHistoryToken token) {
+        if (!ownsPrepared(token)) return PreparedHistoryResult.init;
+        ref batch = pendingPrepared_;
+        batch.validated = false;
+        const accepted = !batch.history.lockout &&
+                         batch.history.state == UndoState.Active;
+        if (accepted) batch.history.redoStack = null;
+        batch.accepted = accepted;
+        return PreparedHistoryResult(true, batch.history.undoStack.length,
+            batch.history.redoStack.length, batch.history.runOpen,
+            batch.history.currentRunId, batch.history.tweakGeneration,
+            accepted);
     }
 
     ulong prepareNextRun(ref PreparedHistoryToken token) {
