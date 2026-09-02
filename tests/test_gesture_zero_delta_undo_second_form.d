@@ -1,5 +1,6 @@
-// test_gesture_zero_delta_undo_second_form — task 2660's measured law, wired to
-// a live check as TWO KNOWN DIVERGENCES (self-retiring, red in BOTH directions).
+// test_gesture_zero_delta_undo_second_form — task 2660's two measured laws,
+// wired to independent self-retiring checks. The cutting law remains open;
+// the arm-and-drop law is closed by task 3694.
 //
 // THE LAW, measured and frozen in
 // `tests/fixtures/gesture_zero_delta_undo_second_form.json` (task 2660,
@@ -777,9 +778,9 @@ unittest {
     assert(m.ad1.armsSeen == 1 && m.ad1.dropsSeen == 1,
         format("the single armed-and-dropped region reported %d arms and %d "
                ~ "drops through /api/tool/state; it must report 1 and 1. The "
-               ~ "region never happened, so the ZERO undo steps this block "
-               ~ "reads below is about nothing at all — a deleted region body "
-               ~ "produces exactly the same reading",
+               ~ "region never happened, so the undo-step reading below is "
+               ~ "about nothing at all — a deleted region body cannot count "
+               ~ "as evidence for the lifecycle law",
                m.ad1.armsSeen, m.ad1.dropsSeen));
     assert(m.ad0.armsSeen == 0,
         format("the never-armed BASELINE reported %d arms. It is the quiet "
