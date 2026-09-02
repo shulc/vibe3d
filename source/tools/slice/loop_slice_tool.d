@@ -20,16 +20,20 @@ import editmode : EditMode;
 import params : Param, IntEnumEntry, wireTagForValue;
 import hover_state : g_hoveredEdge;
 import shader : Shader, LitShader;
-import command_history : CommandHistory;
+import command_history : CommandHistory, PreparedHistoryKind;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import selection_product : addNewLoopEdgesAndVerts;
 import display_sync : refreshDisplay;
-import document : primaryModelSpace;
+import document : Layer, primaryModelSpace;
 import perf_probe : g_perf, Cat;
 import prepared_record_context : PreparedRecordContext;
-import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
+import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
+    PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_loop_slice_activation : PreparedLoopSliceActivationOwner;
+import prepared_loop_slice_deactivate : PreparedLoopSliceDeactivateOwner;
+import mesh_gpu : GpuUploadOwner;
+import mesh_edit_delta : MeshEditScope;
 
 struct PreparedLoopSliceActivationImage {
     MeshSnapshot before;
@@ -40,6 +44,21 @@ struct PreparedLoopSliceActivationImage {
     void clear() nothrow @nogc {
         before = MeshSnapshot.init; positions = null;
         count = 0; positionProxy = 0; valid = false;
+    }
+}
+
+struct PreparedLoopSliceDeactivateImage {
+    bool valid, expectedActive, expectedArmed, expectedScrubbing, expectedBuilt;
+    size_t expectedArmedAddr; ulong expectedArmedMutVer;
+    uint[] expectedSeeds, expectedSelectedFaces;
+    MeshSnapshot expectedLive, expectedBefore;
+    Mesh candidate; uint deliveryFlags, deliveryDomains;
+    bool appliesMesh, historyEligible, installBeforeFromLive;
+    void clear() nothrow @nogc {
+        valid = appliesMesh = historyEligible = installBeforeFromLive = false;
+        expectedSeeds = null; expectedSelectedFaces = null;
+        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
+        candidate = Mesh.init; deliveryFlags = deliveryDomains = 0;
     }
 }
 
@@ -834,6 +853,83 @@ public:
         }
         active = false;
         dropArmedPreview();
+    }
+
+    final PreparedLoopSliceDeactivateImage buildPreparedDeactivateState(
+            ref Mesh live) {
+        PreparedLoopSliceDeactivateImage image; image.valid = true;
+        image.expectedActive = active; image.expectedArmed = armed_;
+        image.expectedScrubbing = scrubbing_; image.expectedBuilt = built_;
+        image.expectedArmedAddr = armedKey_.addr;
+        image.expectedArmedMutVer = armedKey_.mutVer;
+        image.expectedSeeds = seeds_.dup;
+        image.expectedSelectedFaces = armedSelFaces_.dup;
+        image.expectedLive = MeshSnapshot.capture(live);
+        image.expectedBefore = before_;
+        if (!active || !armed_) return image;
+        const identityCurrent = armedKey_.matches(live) && before_.filled;
+        if (built_ && identityCurrent && history !is null && gestureFactory !is null)
+            image.historyEligible = true;
+        else if (!built_ && identityCurrent) {
+            image.candidate = detachedPreparedMesh(live);
+            auto shadow = beginPreparedShadow(image.candidate);
+            image.expectedBefore.restore(image.candidate);
+            drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+                image.deliveryDomains); shadow.close(); image.appliesMesh = true;
+        }
+        return image;
+    }
+
+    final bool preparedDeactivateStateMatches(
+            in PreparedLoopSliceDeactivateImage image, ref const Mesh live) const
+            nothrow @nogc {
+        return image.valid && active == image.expectedActive &&
+            armed_ == image.expectedArmed && scrubbing_ == image.expectedScrubbing &&
+            built_ == image.expectedBuilt && armedKey_.addr == image.expectedArmedAddr &&
+            armedKey_.mutVer == image.expectedArmedMutVer &&
+            seeds_ == image.expectedSeeds && armedSelFaces_ == image.expectedSelectedFaces &&
+            image.expectedLive.matches(live) && image.expectedBefore.matches(before_);
+    }
+
+    final void installPreparedDeactivateState(
+            ref PreparedLoopSliceDeactivateImage image) nothrow @nogc {
+        if (!image.valid) return;
+        active = false; armed_ = false; scrubbing_ = false; built_ = false;
+        seeds_ = null; armedSelFaces_ = null; armedKey_ = MeshCacheKey.init;
+        if (image.installBeforeFromLive) image.expectedLive.moveInto(before_);
+        image.clear();
+    }
+
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,
+            Layer layer, GpuUploadOwner uploadOwner) {
+        if (context is null) return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.LoopSlice, false, false);
+        scope(failure) context.discard();
+        auto owner = PreparedLoopSliceDeactivateOwner.prepare(this, layer);
+        bool ok = owner !is null;
+        if (ok && owner.appliesMesh)
+            ok = owner.deliveryFlags != 0 && uploadOwner !is null && uploadOwner.owns(gpu) &&
+                context.prepareStampedMeshImage(layer, owner.candidate,
+                    owner.deliveryFlags, owner.deliveryDomains) &&
+                context.prepareUpload(uploadOwner, owner.candidate);
+        bool historyPrepared;
+        if (ok && owner.historyEligible) {
+            auto cmd = cast(MeshSessionEdit)gestureFactory();
+            if (cmd !is null) {
+                cmd.setSnapshots(owner.beforeSnapshot,
+                    MeshSnapshot.capture(layer.meshRef()), "Loop Slice");
+                historyPrepared = context.prepare(cmd,
+                    PreparedHistoryKind.Plain).accepted;
+                if (historyPrepared) owner.markHistoryPrepared();
+                ok = historyPrepared;
+            } else ok = context.prepareGestureCarrierMismatch();
+        }
+        if (ok) ok = historyPrepared ? context.markHistoryInstall()
+                                     : context.markNoHistoryInstall();
+        if (ok) ok = context.prepareLoopSliceDeactivate(owner);
+        if (!ok) context.discard();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.LoopSlice, historyPrepared, ok);
     }
 
     public override bool hasUncommittedEdit() const {
@@ -1698,6 +1794,9 @@ private:
 
 public:
     final Mesh* preparedActivationMesh() const nothrow @nogc { return mesh; }
+    final bool ownsPreparedLayer(Layer layer) const {
+        return layer !is null && &layer.meshRef() is mesh;
+    }
     version(unittest) final auto preparedOwnerForTest() const nothrow @nogc {
         return preparedToolStateOwner;
     }
@@ -1752,4 +1851,23 @@ public:
             positions_ == [0.5f] && positionProxy_ == 0.5f &&
             before_.filled && before_.matches(*mesh);
     }
+    version(unittest) final void seedPreparedDeactivateForTest(ref Mesh live,
+            bool built) {
+        active = true; armed_ = true; scrubbing_ = false; built_ = built;
+        seeds_ = [0]; armedSelFaces_ = [0];
+        before_ = MeshSnapshot.capture(live);
+        live.vertices[0].x += 0.25f;
+        live.commitChange(MeshEditScope.Position);
+        armedKey_.stamp(live);
+    }
+    version(unittest) final bool preparedDeactivateInstalledForTest(
+            ref Mesh live, bool beforeMatches) const {
+        return !active && !armed_ && !scrubbing_ && !built_ &&
+            seeds_.length == 0 && seeds_.ptr is null &&
+            armedSelFaces_.length == 0 && armedSelFaces_.ptr is null &&
+            armedKey_ == MeshCacheKey.init &&
+            (!beforeMatches || (before_.filled && before_.matches(live)));
+    }
+    version(unittest) final void mutatePreparedDeactivateForTest()
+            nothrow @nogc { scrubbing_ = !scrubbing_; }
 }

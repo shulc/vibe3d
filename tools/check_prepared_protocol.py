@@ -291,6 +291,7 @@ B5Q_PREPARED_LEGACY = {
     ("tools.slice.slice_tool", "SliceTool", "onParamChanged"),
     ("tools.slice.edge_slice_tool", "EdgeSliceTool", "deactivate"),
     ("tools.slice.edge_slice_tool", "EdgeSliceTool", "onParamChanged"),
+    ("tools.slice.loop_slice_tool", "LoopSliceTool", "deactivate"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
@@ -328,7 +329,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "04b6e04a9a3a862ba2732a1051f5165e140269fb215310e06eb4afc1b6eed480"
+    "fd69243d96b8b13a7edf252c7812a42cca22f709d1dacd2581ebc76deb0cc667"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -505,6 +506,7 @@ for path, text in prepared_source_texts.items():
             "prepared_slice_param_update",
             "prepared_edge_slice_deactivate",
             "prepared_edge_slice_param_update",
+            "prepared_loop_slice_deactivate",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
@@ -2619,7 +2621,7 @@ def edge_slice_deactivate_gate(s):
         "target_.installPreparedDeactivateState(image_)")) and \
         context.count("case PreparedResourceKind.EdgeSliceDeactivateState:") == 3 and \
         "e.edgeSliceDeactivate.install();" in context and \
-        "Primitive, Slice, EdgeSlice, TopologyPen" in effect
+        "Primitive, Slice, EdgeSlice, LoopSlice, TopologyPen" in effect
 if not edge_slice_deactivate_gate(edge_slice_deactivate_sources):
     fail("Edge Slice deactivate prepared contract drift")
 for target, old, new, label in (
@@ -2631,8 +2633,8 @@ for target, old, new, label in (
     ("owner", "target.classinfo !is EdgeSliceTool.classinfo", "false", "broaden product"),
     ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
     ("context", "e.edgeSliceDeactivate.install();", "", "drop context install"),
-    ("effect", "Primitive, Slice, EdgeSlice, TopologyPen",
-     "Primitive, Slice, TopologyPen", "drop effect kind"),
+    ("effect", "Primitive, Slice, EdgeSlice, LoopSlice, TopologyPen",
+     "Primitive, Slice, LoopSlice, TopologyPen", "drop effect kind"),
 ):
     mutant = dict(edge_slice_deactivate_sources)
     if target == "tool":
@@ -2652,6 +2654,73 @@ run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(copy_fixture)], cwd=ROOT,
 if run.returncode == 0 or ("not copyable" not in run.stdout and
         not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
     fail("Edge Slice deactivate token copy was not rejected:\n" + run.stdout)
+
+loop_slice_deactivate_sources = {
+    "tool": (ROOT / "source/tools/slice/loop_slice_tool.d").read_text(),
+    "owner": (ROOT / "source/prepared_loop_slice_deactivate.d").read_text(),
+    "context": record_context,
+    "effect": edge_slice_deactivate_sources["effect"],
+}
+def loop_slice_deactivate_gate(s):
+    tool, owner, context, effect = (s[k] for k in
+        ("tool", "owner", "context", "effect"))
+    start = tool.find("final PreparedLoopSliceDeactivateImage buildPreparedDeactivateState")
+    end = tool.find("public override bool hasUncommittedEdit", start)
+    product = tool[start:end]
+    return all(x in product for x in (
+        "image.expectedLive = MeshSnapshot.capture(live);",
+        "image.expectedBefore = before_;", "detachedPreparedMesh(live)",
+        "image.expectedBefore.restore(image.candidate)",
+        "image.expectedLive.matches(live)",
+        "image.expectedBefore.matches(before_)", "uploadOwner.owns(gpu)",
+        "context.prepareStampedMeshImage(layer, owner.candidate",
+        "context.prepareUpload(uploadOwner, owner.candidate)",
+        "owner.markHistoryPrepared()",
+        "context.prepareGestureCarrierMismatch()",
+        "context.prepareLoopSliceDeactivate(owner)")) and all(x in owner for x in (
+        "target.classinfo !is LoopSliceTool.classinfo",
+        "!target.ownsPreparedLayer(layer)", "&layer_.meshRef() !is source_",
+        "prepared_.owner != owner_", "prepared_.generation != generation_",
+        "validatedToken_.owner != owner_",
+        "validatedToken_.generation != generation_",
+        "target_.installPreparedDeactivateState(image_)")) and \
+        context.count("case PreparedResourceKind.LoopSliceDeactivateState:") == 3 and \
+        "e.loopSliceDeactivate.install();" in context and \
+        "Primitive, Slice, EdgeSlice, LoopSlice, TopologyPen" in effect
+if not loop_slice_deactivate_gate(loop_slice_deactivate_sources):
+    fail("Loop Slice deactivate prepared contract drift")
+for target, old, new, label in (
+    ("tool", "image.expectedBefore.restore(image.candidate)", "true",
+     "drop detached cancel"),
+    ("tool", "image.expectedLive.matches(live)", "true", "drop live witness"),
+    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
+    ("tool", "owner.markHistoryPrepared()", "true", "drop history state handoff"),
+    ("tool", "context.prepareLoopSliceDeactivate(owner)", "true", "drop state enlist"),
+    ("owner", "target.classinfo !is LoopSliceTool.classinfo", "false",
+     "broaden product"),
+    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
+    ("context", "e.loopSliceDeactivate.install();", "", "drop context install"),
+    ("effect", "Primitive, Slice, EdgeSlice, LoopSlice, TopologyPen",
+     "Primitive, Slice, EdgeSlice, TopologyPen", "drop effect kind"),
+):
+    mutant = dict(loop_slice_deactivate_sources)
+    if target == "tool":
+        text = mutant[target]
+        start = text.find("final PreparedLoopSliceDeactivateImage buildPreparedDeactivateState")
+        end = text.find("public override bool hasUncommittedEdit", start)
+        product = text[start:end].replace(old, new, 1)
+        mutant[target] = text[:start] + product + text[end:]
+    else:
+        mutant[target] = mutant[target].replace(old, new, 1)
+    if mutant[target] == loop_slice_deactivate_sources[target] or \
+            loop_slice_deactivate_gate(mutant):
+        fail(f"Loop Slice deactivate mutation did not RED: {label}")
+copy_fixture = ROOT / "tests/compile_fail/prepared_loop_slice_deactivate_token_copy.d"
+run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(copy_fixture)], cwd=ROOT,
+    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+if run.returncode == 0 or ("not copyable" not in run.stdout and
+        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+    fail("Loop Slice deactivate token copy was not rejected:\n" + run.stdout)
 
 edge_slice_param_sources = {
     "tool": edge_slice_deactivate_sources["tool"],
