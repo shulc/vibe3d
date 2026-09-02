@@ -34,11 +34,12 @@ public:
     @disable this();
 
     static PreparedXfrmUpdateTailOwner prepare(XfrmTransformTool target,
-                                                ref VectorStack vts) {
+                                                ref VectorStack vts,
+                                                bool forceClearNeedsGpu = false) {
         if (target is null || target.classinfo !is XfrmTransformTool.classinfo)
             return null;
         auto owner = new PreparedXfrmUpdateTailOwner(target);
-        owner.image_ = target.buildPreparedUpdateTail(vts);
+        owner.image_ = target.buildPreparedUpdateTail(vts, forceClearNeedsGpu);
         return owner.image_.valid ? owner : null;
     }
 

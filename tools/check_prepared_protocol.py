@@ -457,6 +457,7 @@ for path, text in prepared_source_texts.items():
             "prepared_inherited_noop",
             "prepared_xfrm_activation_session",
             "prepared_xfrm_update_edit_close",
+            "prepared_xfrm_move_regrade",
             "prepared_stroke_extrude_activation",
             "prepared_vertex_merge_activation",
             "prepared_poly_inset_activation",
@@ -6949,8 +6950,8 @@ move_update_production_calls = sum(
     without_unittests(text).count("PreparedMoveUpdateOwner.prepare(") +
     without_unittests(text).count(".prepareMoveUpdate(")
     for text in prepared_source_texts.values())
-if move_update_production_calls != 4:
-    fail("Move update owner escaped its two dormant producers")
+if move_update_production_calls != 6:
+    fail("Move update owner escaped its three dormant producers")
 
 def move_update_producer_gate(move):
     start = move.find("final PreparedMoveUpdateEffect prepareUpdate(")
@@ -7207,6 +7208,8 @@ def xfrm_update_tail_gate(owner, context, xfrm, handles):
             "cachedSubjType_ = image.nextSubject;",
             "installPreparedSharedGizmoPose(image.center, image.basisX,",
             "if (image.writeGpuMatrix) gpuMatrix = image.nextGpuMatrix;",
+            "gpu is image.expectedGpu && needsGpuUpdate == image.expectedNeedsGpu",
+            "if (image.clearNeedsGpu) needsGpuUpdate = false;",
             "projectedGpuMatrix(out bool write) const nothrow @nogc")) and \
         all(x in prepared_handles_body for x in (
             "installPreparedSharedGizmoPose(Vec3 center, Vec3 bX,",
@@ -7229,6 +7232,7 @@ for target, old, new, label in (
     ("context", "e.xfrmUpdateTail.abort();", "", "drop context abort"),
     ("xfrm", "cachedSubjType_ = image.nextSubject;", "", "drop subject install"),
     ("xfrm", "if (image.writeGpuMatrix) gpuMatrix = image.nextGpuMatrix;", "", "drop GPU projection"),
+    ("xfrm", "if (image.clearNeedsGpu) needsGpuUpdate = false;", "", "drop GPU flag clear"),
     ("handles", "if (flagT) moveSub.setWrapperGizmoPose(center, bX, bY, bZ);", "", "drop Move pose"),
     ("handles", "if (flagR) rotateSub.setWrapperGizmoPose(center, bX, bY, bZ);", "", "drop Rotate pose"),
     ("handles", "if (flagS) scaleSub.setWrapperGizmoPose(center, bX, bY, bZ);", "", "drop Scale pose"),
@@ -7471,6 +7475,135 @@ run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(xfrm_boundary_copy)], cwd=ROO
 if run.returncode == 0 or ("not copyable" not in run.stdout and
         not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
     fail("Xfrm update boundary token copy was not rejected:\n" + run.stdout)
+
+xfrm_move_regrade_owner = (ROOT / "source/prepared_xfrm_move_regrade.d").read_text()
+def xfrm_move_regrade_gate(owner, context, xfrm):
+    return all(s in owner for s in (
+        "final class PreparedXfrmMoveRegradeOwner",
+        "target.classinfo !is XfrmTransformTool.classinfo",
+        "target.preparedMeshForUpdate() !is &layer.meshRef()",
+        "prepared_.owner != owner_", "prepared_.generation != generation_",
+        "validatedToken_.owner != owner_",
+        "validatedToken_.generation != generation_",
+        "target_.preparedMoveRegradeMatches(image_, layer_.meshRef())",
+        "target_.installPreparedMoveRegrade(image_);")) and \
+        all(s in context for s in (
+            "bool prepareXfrmMoveRegrade(PreparedXfrmMoveRegradeOwner owner)",
+            "e.xfrmMoveRegrade.validate();", "e.xfrmMoveRegrade.install();",
+            "e.xfrmMoveRegrade.abort();")) and \
+        all(s in xfrm for s in (
+            "PreparedXfrmMoveRegradeImage buildPreparedMoveRegrade(",
+            "buildPreparedRefireCandidate(",
+            "detachedItemTargets[i] = new Layer();",
+            "detachedItemTargets[i].xform = target.xform;",
+            "result.nextItemXforms[i] = target.xform;",
+            "image.wrapperRefire = buildPreparedRefireState(",
+            "preparedMoveRegradeMatches(",
+            "installPreparedMoveRegrade(",
+            "vertexIndicesToProcess = image.nextIndices;",
+            "dragFalloff = image.nextFalloff;",
+            "dragSnap = image.nextSnap;",
+            "dragSymmetry = image.nextSymmetry;",
+            "target.xform = image.nextItemXforms[i];",
+            "installPreparedRefireState(image.wrapperRefire);"))
+if not xfrm_move_regrade_gate(xfrm_move_regrade_owner, record_context,
+        prepared_source_texts[ROOT / "source/tools/transform/xfrm_transform.d"]):
+    fail("Xfrm Move re-grade owner contract drift")
+for target, old, new, label in (
+    ("owner", "target.classinfo !is XfrmTransformTool.classinfo", "false", "broaden product"),
+    ("owner", "target.preparedMeshForUpdate() !is &layer.meshRef()", "false", "drop source identity"),
+    ("owner", "target_.preparedMoveRegradeMatches(image_, layer_.meshRef())", "true", "drop validation"),
+    ("owner", "target_.installPreparedMoveRegrade(image_);", "", "drop install"),
+    ("context", "e.xfrmMoveRegrade.validate();", "true;", "drop context validation"),
+    ("context", "e.xfrmMoveRegrade.install();", "", "drop context install"),
+    ("context", "e.xfrmMoveRegrade.abort();", "", "drop context abort"),
+    ("xfrm", "detachedItemTargets[i] = new Layer();", "detachedItemTargets[i] = target;", "alias live item"),
+    ("xfrm", "vertexIndicesToProcess = image.nextIndices;", "", "drop cache install"),
+    ("xfrm", "dragFalloff = image.nextFalloff;", "", "drop falloff install"),
+    ("xfrm", "target.xform = image.nextItemXforms[i];", "", "drop item install"),
+    ("xfrm", "installPreparedRefireState(image.wrapperRefire);", "", "drop refire state"),
+):
+    o, c = xfrm_move_regrade_owner, record_context
+    x = prepared_source_texts[ROOT / "source/tools/transform/xfrm_transform.d"]
+    if target == "owner": o = o.replace(old, new, 1)
+    elif target == "context": c = c.replace(old, new, 1)
+    else:
+        before, found, after = x.rpartition(old)
+        x = before + new + after if found else x
+    if xfrm_move_regrade_gate(o, c, x):
+        fail(f"Xfrm Move re-grade mutation did not RED: {label}")
+xfrm_move_regrade_copy = ROOT / "tests/compile_fail/prepared_xfrm_move_regrade_token_copy.d"
+run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(xfrm_move_regrade_copy)], cwd=ROOT,
+    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+if run.returncode == 0 or ("not copyable" not in run.stdout and
+        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+    fail("Xfrm Move re-grade token copy was not rejected:\n" + run.stdout)
+
+def complete_xfrm_update_root_gate(xfrm):
+    signature = "final PreparedXfrmUpdateEffect prepareUpdate(ref VectorStack vts,"
+    start = xfrm.find(signature)
+    if start < 0: return False
+    begin = xfrm.find("{", start) + 1
+    body = xfrm[begin:balanced_source(xfrm, begin)-1]
+    required = (
+        "auto projection = projectPreparedUpdatePre(vts);",
+        "PreparedXfrmUpdateEditCloseOwner.prepare(",
+        "PreparedXfrmUpdateBoundaryOwner.prepare(",
+        "PreparedXfrmSlotPollOwner.prepare(this, projection)",
+        "PreparedXfrmMoveRegradeOwner.prepare(",
+        "PreparedMoveUpdateOwner.prepare(moveSub, vts)",
+        "PreparedRotateUpdateOwner.prepare(",
+        "PreparedScaleUpdateOwner.prepare(",
+        "PreparedXfrmUpdateTailOwner.prepare(",
+        "context.consolidate(history.currentRunId)", "context.nextRun()",
+        "context.markHistoryInstall()", "context.markNoHistoryInstall()",
+        "context.prepareXfrmUpdateEditClose(editClose)",
+        "context.prepareXfrmUpdateBoundary(boundaryOwner)",
+        "context.prepareXfrmSlotPoll(slotOwner)",
+        "context.prepareXfrmMoveRegrade(moveRegrade)",
+        "context.prepareUpload(wrapperUpload,",
+        "context.prepareMoveUpdate(moveOwner)",
+        "context.prepareRotateUpdate(rotateOwner)",
+        "context.prepareScaleUpdate(scaleOwner)",
+        "context.prepareXfrmUpdateTail(tailOwner)")
+    if not all(s in body for s in required): return False
+    if body.count("context.prepareUpload(wrapperUpload,") != 2: return False
+    order = (
+        "context.markHistoryInstall()",
+        "context.prepareXfrmUpdateEditClose(editClose)",
+        "context.prepareXfrmUpdateBoundary(boundaryOwner)",
+        "context.prepareXfrmSlotPoll(slotOwner)",
+        "context.prepareXfrmMoveRegrade(moveRegrade)",
+        "context.prepareUpload(wrapperUpload,",
+        "context.prepareMoveUpdate(moveOwner)",
+        "context.prepareRotateUpdate(rotateOwner)",
+        "context.prepareScaleUpdate(scaleOwner)",
+        "context.prepareXfrmUpdateTail(tailOwner)")
+    return all(body.find(order[i]) < body.find(order[i + 1])
+               for i in range(len(order) - 1))
+complete_xfrm_source = prepared_source_texts[
+    ROOT / "source/tools/transform/xfrm_transform.d"]
+if not complete_xfrm_update_root_gate(complete_xfrm_source):
+    fail("complete Xfrm update root contract drift")
+for old, new, label in (
+    ("context.consolidate(history.currentRunId)", "PreparedHistoryResult.init", "drop consolidate"),
+    ("context.prepareXfrmUpdateEditClose(editClose)", "true", "drop edit close"),
+    ("context.prepareXfrmUpdateBoundary(boundaryOwner)", "true", "drop boundary"),
+    ("context.prepareXfrmSlotPoll(slotOwner)", "true", "drop slot latch"),
+    ("context.prepareXfrmMoveRegrade(moveRegrade)", "true", "drop Move re-grade"),
+    ("context.prepareUpload(wrapperUpload,", "context.prepareUpload(null,", "drop upload owner"),
+    ("context.prepareRotateUpdate(rotateOwner)", "true", "drop Rotate bank"),
+    ("context.prepareScaleUpdate(scaleOwner)", "true", "drop Scale bank"),
+    ("context.prepareXfrmUpdateTail(tailOwner)", "true", "drop wrapper tail"),
+):
+    root_start = complete_xfrm_source.find(
+        "final PreparedXfrmUpdateEffect prepareUpdate(ref VectorStack vts,")
+    pos = complete_xfrm_source.find(old, root_start)
+    mutated = complete_xfrm_source
+    if pos >= 0:
+        mutated = (mutated[:pos] + new + mutated[pos + len(old):])
+    if complete_xfrm_update_root_gate(mutated):
+        fail(f"complete Xfrm update root mutation did not RED: {label}")
 
 # Closed inherited base-noop owner infrastructure.  The effective product
 # table above proves DragWeldTool is the sole activate/deactivate admission;

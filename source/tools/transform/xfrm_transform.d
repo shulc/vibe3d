@@ -6,10 +6,15 @@ import prepared_tool_effect : PreparedXfrmActivationEffect,
 import prepared_xfrm_activation_session : PreparedXfrmActivationSessionOwner;
 import prepared_xfrm_refire_state : PreparedXfrmRefireStateImage;
 import prepared_xfrm_update_tail : PreparedXfrmUpdateTailOwner;
+import prepared_xfrm_update_edit_close : PreparedXfrmUpdateEditCloseOwner;
+import prepared_xfrm_slot_poll : PreparedXfrmSlotPollOwner;
+import prepared_xfrm_update_boundary : PreparedXfrmUpdateBoundaryOwner;
+import prepared_xfrm_move_regrade : PreparedXfrmMoveRegradeOwner;
 import prepared_move_update : PreparedMoveUpdateOwner;
 import prepared_rotate_update : PreparedRotateUpdateOwner;
 import prepared_scale_update : PreparedScaleUpdateOwner;
 import document : Layer;
+import mesh_gpu : GpuUploadOwner;
 
 // XfrmTransformTool — `xfrm.transform`: ONE tool that can translate,
 // rotate, and scale based on three boolean flags
@@ -394,14 +399,71 @@ struct PreparedXfrmActivationResetImage {
 /// from the private candidate and replayed later by PreparedRecordContext.
 struct PreparedXfrmRefireCandidate {
     Mesh mesh;
+    int[] vertexIndices;
+    bool[] vertexMask;
+    int vertexCount;
+    bool vertexCacheDirty;
+    bool runFrameValid;
+    Vec3 runFrameOrigin;
+    Vec3 runFrameR;
+    Vec3 runFrameU;
+    Vec3 runFrameF;
+    Layer[] itemTargets;
+    ItemXform[] expectedItemXforms;
+    ItemXform[] nextItemXforms;
     uint deliveryFlags;
     uint deliveryDomains;
+    bool itemPrepared;
     bool applied;
     void clear() nothrow @nogc {
         mesh = Mesh.init;
+        vertexIndices = null;
+        vertexMask = null;
+        itemTargets = null;
+        expectedItemXforms = null;
+        nextItemXforms = null;
         deliveryFlags = deliveryDomains = 0;
-        applied = false;
+        itemPrepared = applied = false;
     }
+}
+
+struct PreparedXfrmMoveRegradeImage {
+    MeshSnapshot expectedLive;
+    Mesh candidate;
+    int[] expectedIndices;
+    int[] nextIndices;
+    bool[] expectedMask;
+    bool[] nextMask;
+    int expectedCount;
+    int nextCount;
+    bool expectedCacheDirty;
+    bool nextCacheDirty;
+    bool expectedNeedsGpu;
+    bool nextNeedsGpu;
+    bool expectedRunFrameValid;
+    bool nextRunFrameValid;
+    Vec3 expectedRunFrameOrigin;
+    Vec3 nextRunFrameOrigin;
+    Vec3 expectedRunFrameR, expectedRunFrameU, expectedRunFrameF;
+    Vec3 nextRunFrameR, nextRunFrameU, nextRunFrameF;
+    FalloffPacket expectedFalloff;
+    FalloffPacket nextFalloff;
+    SnapPacket expectedSnap;
+    SnapPacket nextSnap;
+    SymmetryPacket expectedSymmetry;
+    SymmetryPacket nextSymmetry;
+    Layer[] itemTargets;
+    ItemXform[] expectedItemXforms;
+    ItemXform[] nextItemXforms;
+    PreparedXfrmRefireStateImage wrapperRefire;
+    uint deliveryFlags;
+    uint deliveryDomains;
+    bool panel;
+    bool wrapper;
+    bool meshPrepared;
+    bool itemPrepared;
+    bool valid;
+    void clear() nothrow @nogc { this = PreparedXfrmMoveRegradeImage.init; }
 }
 
 /// Detached final phase of `update`: subject publication, shared gizmo pose
@@ -416,11 +478,14 @@ struct PreparedXfrmUpdateTailImage {
     Vec3 basisZ;
     float[16] expectedGpuMatrix;
     float[16] nextGpuMatrix;
+    GpuMesh* expectedGpu;
     TransformTool expectedActiveDrag;
     MoveTool expectedMove;
     RotateTool expectedRotate;
     ScaleTool expectedScale;
     ubyte flags;
+    bool expectedNeedsGpu;
+    bool clearNeedsGpu;
     bool writeGpuMatrix;
     bool valid;
 
@@ -443,6 +508,7 @@ struct PreparedXfrmEditCloseImage {
     PreparedTransformEditCloseImage rotate;
     PreparedTransformEditCloseImage scale;
     bool itemSubject;
+    SelType expectedSubject;
     bool closeWrapper;
     bool closeRotate;
     bool closeScale;
@@ -456,6 +522,7 @@ struct PreparedXfrmEditCloseImage {
 }
 
 struct PreparedXfrmUpdatePreProjection {
+    SelType subject;
     ulong selectionHash;
     ulong mutationVersion;
     ulong slotSignature;
@@ -539,6 +606,7 @@ struct PreparedXfrmUpdateBoundaryImage {
 class XfrmTransformTool : TransformTool, LiveEvalClient, SlotActivationClient,
                           LifecycleUndoEmitter {
 public:
+    final Mesh* preparedMeshForUpdate() const { return mesh; }
     // T/R/S flags — `T integer 0/1` etc. in the preset config.
     // Default to all enabled (the bare `Transform` preset that shows
     // all three handler banks). Preset loader flips these per-preset
@@ -1480,7 +1548,7 @@ public:
     }
 
     final PreparedXfrmUpdateTailImage buildPreparedUpdateTail(
-            ref VectorStack vts) {
+            ref VectorStack vts, bool forceClearNeedsGpu = false) {
         PreparedXfrmUpdateTailImage image;
         if (!active) return image;
         image.expectedSubject = cachedSubjType_;
@@ -1491,6 +1559,9 @@ public:
         image.expectedMove = moveSub;
         image.expectedRotate = rotateSub;
         image.expectedScale = scaleSub;
+        image.expectedGpu = gpu;
+        image.expectedNeedsGpu = needsGpuUpdate;
+        image.clearNeedsGpu = needsGpuUpdate || forceClearNeedsGpu;
         image.flags = cast(ubyte)((flagT ? 1 : 0) | (flagR ? 2 : 0) |
                                  (flagS ? 4 : 0));
         if (activeDrag is moveSub) image.center = moveSub.handler.center;
@@ -1509,6 +1580,9 @@ public:
         PreparedXfrmUpdatePreProjection p;
         if (!active) return p;
         p.valid = true;
+        p.subject = cachedSubjType_;
+        import toolpipe.packets : SubjectPacket;
+        if (auto sp = vts.get!SubjectPacket()) p.subject = sp.selType;
         p.selectionHash = computeSelectionHash();
         // recorded remainder (1906 §3.6): preparation-time twin of this
         // root's legacy foreign-edit boundary. Position bus epochs include
@@ -1695,9 +1769,13 @@ public:
 
     final PreparedXfrmEditCloseImage buildPreparedUpdateEditClose(
             PreparedRecordContext context, string label,
-            bool closeWrapper = true, bool closeRotateScale = false) {
+            bool closeWrapper = true, bool closeRotateScale = false,
+            bool useItemSubjectOverride = false,
+            bool itemSubjectOverride = false) {
         PreparedXfrmEditCloseImage image;
-        image.itemSubject = itemSubjectActive();
+        image.expectedSubject = cachedSubjType_;
+        image.itemSubject = useItemSubjectOverride
+            ? itemSubjectOverride : itemSubjectActive();
         image.vertex = capturePreparedEditClose();
         image.item = capturePreparedItemEditClose();
         image.rotate = rotateSub.capturePreparedEditClose();
@@ -1751,7 +1829,7 @@ public:
 
     final bool preparedUpdateEditCloseMatches(
             ref const PreparedXfrmEditCloseImage image) const nothrow @nogc {
-        return image.valid && itemSubjectActive() == image.itemSubject &&
+        return image.valid && cachedSubjType_ == image.expectedSubject &&
             preparedEditCloseMatches(image.vertex) &&
             preparedItemEditCloseMatches(image.item) &&
             rotateSub.preparedEditCloseMatches(image.rotate) &&
@@ -1775,6 +1853,7 @@ public:
         return image.valid && active && cachedSubjType_ == image.expectedSubject &&
             activeDrag is image.expectedActiveDrag && moveSub is image.expectedMove &&
             rotateSub is image.expectedRotate && scaleSub is image.expectedScale &&
+            gpu is image.expectedGpu && needsGpuUpdate == image.expectedNeedsGpu &&
             cast(ubyte)((flagT ? 1 : 0) | (flagR ? 2 : 0) | (flagS ? 4 : 0)) ==
                 image.flags && gpuMatrix == image.expectedGpuMatrix;
     }
@@ -1786,6 +1865,7 @@ public:
         installPreparedSharedGizmoPose(image.center, image.basisX,
                                        image.basisY, image.basisZ);
         if (image.writeGpuMatrix) gpuMatrix = image.nextGpuMatrix;
+        if (image.clearNeedsGpu) needsGpuUpdate = false;
         image.clear();
     }
 
@@ -1822,6 +1902,116 @@ public:
                           (scaleOwner !is null && scaleOwner.historyPrepared());
         if (ok) ok = hasHistory ? context.markHistoryInstall()
                                 : context.markNoHistoryInstall();
+        if (ok && flagT) ok = context.prepareMoveUpdate(moveOwner);
+        if (ok && flagR && rotateOwner.meshPrepared()) {
+            ok = rotateOwner.deliveryFlags() != 0 &&
+                context.prepareStampedMeshImage(layer, rotateOwner.candidate(),
+                    rotateOwner.deliveryFlags(), rotateOwner.deliveryDomains());
+        }
+        if (ok && flagR) ok = context.prepareRotateUpdate(rotateOwner);
+        if (ok && flagS && scaleOwner.meshPrepared()) {
+            ok = scaleOwner.deliveryFlags() != 0 &&
+                context.prepareStampedMeshImage(layer, scaleOwner.candidate(),
+                    scaleOwner.deliveryFlags(), scaleOwner.deliveryDomains());
+        }
+        if (ok && flagS) ok = context.prepareScaleUpdate(scaleOwner);
+        if (ok) ok = context.prepareXfrmUpdateTail(tailOwner);
+        if (!ok) context.discard();
+        return PreparedXfrmUpdateEffect(preparedToolStateOwner,
+            PreparedXfrmUpdateKind.Active, ok);
+    }
+
+    /// Complete dormant root for the shipped `update` order. The context owns
+    /// one history image and every state/resource effect is enlisted in legacy
+    /// sequence; unified cutover therefore changes only the door.
+    final PreparedXfrmUpdateEffect prepareUpdate(ref VectorStack vts,
+            PreparedRecordContext context, Layer layer,
+            GpuUploadOwner wrapperUpload) {
+        if (context is null || layer is null ||
+            preparedMeshForUpdate() !is &layer.meshRef())
+            return PreparedXfrmUpdateEffect(preparedToolStateOwner,
+                PreparedXfrmUpdateKind.None, false);
+        scope(failure) context.discard();
+        if (!active) {
+            bool idleOk = context.markNoHistoryInstall();
+            if (!idleOk) context.discard();
+            return PreparedXfrmUpdateEffect(preparedToolStateOwner,
+                PreparedXfrmUpdateKind.InactiveNoop, idleOk);
+        }
+
+        auto projection = projectPreparedUpdatePre(vts);
+        const bool boundary = projection.selectionBoundary ||
+                              projection.slotBoundary;
+        PreparedXfrmUpdateEditCloseOwner editClose;
+        PreparedXfrmUpdateBoundaryOwner boundaryOwner;
+        if (boundary) {
+            editClose = PreparedXfrmUpdateEditCloseOwner.prepare(
+                this, context, "Move", true, true, true,
+                projection.subject == SelType.Item);
+            boundaryOwner = PreparedXfrmUpdateBoundaryOwner.prepare(
+                this, projection);
+        }
+        auto slotOwner = PreparedXfrmSlotPollOwner.prepare(this, projection);
+        PreparedXfrmMoveRegradeOwner moveRegrade;
+        if (projection.panelRegrade || projection.wrapperRegrade)
+            moveRegrade = PreparedXfrmMoveRegradeOwner.prepare(
+                this, layer, projection, context);
+
+        PreparedMoveUpdateOwner moveOwner;
+        PreparedRotateUpdateOwner rotateOwner;
+        PreparedScaleUpdateOwner scaleOwner;
+        if (flagT) moveOwner = PreparedMoveUpdateOwner.prepare(moveSub, vts);
+        if (flagR) rotateOwner = PreparedRotateUpdateOwner.prepare(
+            rotateSub, layer, vts, context);
+        if (flagS) scaleOwner = PreparedScaleUpdateOwner.prepare(
+            scaleSub, layer, vts, context);
+        auto tailOwner = PreparedXfrmUpdateTailOwner.prepare(
+            this, vts, moveRegrade !is null);
+
+        bool ok = projection.valid && slotOwner !is null && tailOwner !is null &&
+            (!boundary || (editClose !is null && boundaryOwner !is null)) &&
+            (!(projection.panelRegrade || projection.wrapperRegrade) ||
+                moveRegrade !is null) &&
+            (!flagT || moveOwner !is null) &&
+            (!flagR || rotateOwner !is null) &&
+            (!flagS || scaleOwner !is null);
+        bool hasHistory = (editClose !is null && editClose.historyPrepared()) ||
+            (moveRegrade !is null && moveRegrade.historyPrepared()) ||
+            (rotateOwner !is null && rotateOwner.historyPrepared()) ||
+            (scaleOwner !is null && scaleOwner.historyPrepared());
+        if (ok && boundaryOwner !is null && boundaryOwner.closesRun()) {
+            auto consolidated = context.consolidate(history.currentRunId);
+            ok = consolidated.accepted && context.nextRun() != 0;
+            hasHistory = hasHistory || ok;
+        }
+        if (ok) ok = hasHistory ? context.markHistoryInstall()
+                                : context.markNoHistoryInstall();
+        if (ok && editClose !is null)
+            ok = context.prepareXfrmUpdateEditClose(editClose);
+        if (ok && boundaryOwner !is null)
+            ok = context.prepareXfrmUpdateBoundary(boundaryOwner);
+        if (ok) ok = context.prepareXfrmSlotPoll(slotOwner);
+        if (ok && moveRegrade !is null && moveRegrade.meshPrepared()) {
+            ok = moveRegrade.deliveryFlags() != 0 &&
+                context.prepareStampedMeshImage(layer, moveRegrade.candidate(),
+                    moveRegrade.deliveryFlags(), moveRegrade.deliveryDomains());
+        }
+        if (ok && moveRegrade !is null)
+            ok = context.prepareXfrmMoveRegrade(moveRegrade);
+
+        // Wrapper upload precedes the sub-tool updates. Item re-grade has no
+        // vertex upload; tail still clears its deferred flag exactly once.
+        if (ok && ((needsGpuUpdate && vertexProcessCount > 0) ||
+                   (moveRegrade !is null && moveRegrade.wantsWrapperUpload()))) {
+            if (wrapperUpload is null || gpu is null ||
+                !wrapperUpload.owns(gpu) || gpu.suppressCageUpload)
+                ok = false;
+            else if (moveRegrade !is null && moveRegrade.meshPrepared())
+                ok = context.prepareUpload(wrapperUpload,
+                                           moveRegrade.candidate());
+            else
+                ok = context.prepareUpload(wrapperUpload, layer.meshRef());
+        }
         if (ok && flagT) ok = context.prepareMoveUpdate(moveOwner);
         if (ok && flagR && rotateOwner.meshPrepared()) {
             ok = rotateOwner.deliveryFlags() != 0 &&
@@ -5027,7 +5217,9 @@ public:
     /// frozen run/frame state, the run baseline, viewport and live pipe
     /// packets.  The real wrapper and live mesh are never written.
     public PreparedXfrmRefireCandidate buildPreparedRefireCandidate(
-            FalloffPacket falloff, SnapPacket snap, SymmetryPacket symmetry) {
+            FalloffPacket falloff, SnapPacket snap, SymmetryPacket symmetry,
+            bool useItemSubjectOverride = false,
+            bool itemSubjectOverride = false) {
         PreparedXfrmRefireCandidate result;
         auto live = mesh;
         if (live is null || editMode is null ||
@@ -5037,9 +5229,30 @@ public:
         MeshSnapshot.capture(*live).restore(result.mesh);
         GpuMesh scratchGpu;
         EditMode scratchMode = *editMode;
+        Layer[] detachedItemTargets;
+        const bool itemSubject = useItemSubjectOverride
+            ? itemSubjectOverride : itemSubjectActive();
+        if (itemSubject) {
+            resolveItemTargets(result.itemTargets);
+            result.expectedItemXforms.length = result.itemTargets.length;
+            detachedItemTargets.length = result.itemTargets.length;
+            foreach (i, target; result.itemTargets) {
+                result.expectedItemXforms[i] = target.xform;
+                detachedItemTargets[i] = new Layer();
+                detachedItemTargets[i].xform = target.xform;
+            }
+        }
+        void detachedItemSource(ref Layer[] outTargets) {
+            outTargets = detachedItemTargets;
+        }
+        SelType detachedSubjectSource() {
+            return itemSubject ? SelType.Item : SelType.Vertex;
+        }
         auto shadow = new XfrmTransformTool(
-            () => &result.mesh, &scratchGpu, &scratchMode, selTypeSrc_,
-            itemTargetsSrc_);
+            () => &result.mesh, &scratchGpu, &scratchMode,
+            &detachedSubjectSource,
+            &detachedItemSource);
+        shadow.cachedSubjType_ = itemSubject ? SelType.Item : SelType.Vertex;
         shadow.flagT = flagT;
         shadow.flagR = flagR;
         shadow.flagS = flagS;
@@ -5065,6 +5278,9 @@ public:
         shadow.runFrameU = runFrameU;
         shadow.runFrameF = runFrameF;
         shadow.runBaselineValid = runBaselineValid;
+        shadow.itemTargets = detachedItemTargets;
+        shadow.itemDragBaseline = itemDragBaseline.dup;
+        shadow.itemBaselineValid = itemBaselineValid;
         shadow.vertexCacheDirty = true;
         shadow.activeDrag = null;
 
@@ -5072,7 +5288,136 @@ public:
         result.applied = shadow.applyTRS(shadow.dragBaseline);
         drainPreparedShadowDelivery(result.mesh, result.deliveryFlags,
                                     result.deliveryDomains);
+        result.vertexIndices = shadow.vertexIndicesToProcess.dup;
+        result.vertexMask = shadow.toProcess.dup;
+        result.vertexCount = shadow.vertexProcessCount;
+        result.vertexCacheDirty = shadow.vertexCacheDirty;
+        result.runFrameValid = shadow.runFrameValid;
+        result.runFrameOrigin = shadow.runFrameOrigin;
+        result.runFrameR = shadow.runFrameR;
+        result.runFrameU = shadow.runFrameU;
+        result.runFrameF = shadow.runFrameF;
+        if (result.itemTargets.length > 0) {
+            result.nextItemXforms.length = detachedItemTargets.length;
+            foreach (i, target; detachedItemTargets)
+                result.nextItemXforms[i] = target.xform;
+            result.itemPrepared = result.applied;
+        }
         return result;
+    }
+
+    public PreparedXfrmMoveRegradeImage buildPreparedMoveRegrade(
+            ref const PreparedXfrmUpdatePreProjection projection,
+            PreparedRecordContext context) {
+        PreparedXfrmMoveRegradeImage image;
+        if (!projection.valid || (!projection.panelRegrade &&
+                                  !projection.wrapperRegrade) || mesh is null)
+            return image;
+        image.expectedLive = MeshSnapshot.capture(*mesh);
+        image.expectedIndices = vertexIndicesToProcess.dup;
+        image.expectedMask = toProcess.dup;
+        image.expectedCount = vertexProcessCount;
+        image.expectedCacheDirty = vertexCacheDirty;
+        image.expectedNeedsGpu = needsGpuUpdate;
+        image.expectedRunFrameValid = runFrameValid;
+        image.expectedRunFrameOrigin = runFrameOrigin;
+        image.expectedRunFrameR = runFrameR;
+        image.expectedRunFrameU = runFrameU;
+        image.expectedRunFrameF = runFrameF;
+        image.expectedFalloff = dragFalloff.ownedDup();
+        image.expectedSnap = dragSnap;
+        image.expectedSymmetry = dragSymmetry.ownedDup();
+        FalloffPacket liveFalloff = projection.liveFalloff.ownedDup();
+        SnapPacket liveSnap = projection.liveSnap;
+        SymmetryPacket liveSymmetry = projection.liveSymmetry.ownedDup();
+        auto prepared = buildPreparedRefireCandidate(
+            liveFalloff, liveSnap, liveSymmetry, true,
+            projection.subject == SelType.Item);
+        if (!prepared.applied) return image;
+        image.candidate = prepared.mesh;
+        image.nextIndices = prepared.vertexIndices;
+        image.nextMask = prepared.vertexMask;
+        image.nextCount = prepared.vertexCount;
+        image.nextCacheDirty = prepared.vertexCacheDirty;
+        image.nextNeedsGpu = true;
+        image.nextRunFrameValid = prepared.runFrameValid;
+        image.nextRunFrameOrigin = prepared.runFrameOrigin;
+        image.nextRunFrameR = prepared.runFrameR;
+        image.nextRunFrameU = prepared.runFrameU;
+        image.nextRunFrameF = prepared.runFrameF;
+        image.nextFalloff = projection.liveFalloff.ownedDup();
+        image.nextSnap = projection.liveSnap;
+        image.nextSymmetry = projection.liveSymmetry.ownedDup();
+        image.itemTargets = prepared.itemTargets;
+        image.expectedItemXforms = prepared.expectedItemXforms;
+        image.nextItemXforms = prepared.nextItemXforms;
+        image.deliveryFlags = prepared.deliveryFlags;
+        image.deliveryDomains = prepared.deliveryDomains;
+        image.itemPrepared = prepared.itemPrepared;
+        image.meshPrepared = !image.itemPrepared;
+        image.panel = projection.panelRegrade;
+        image.wrapper = projection.wrapperRegrade;
+        if (image.wrapper) {
+            image.wrapperRefire = buildPreparedRefireState(context, "Falloff",
+                image.expectedLive.vertices, image.candidate.vertices,
+                image.expectedFalloff, image.nextFalloff,
+                image.expectedSnap, image.nextSnap,
+                image.expectedSymmetry, image.nextSymmetry);
+            if (!image.wrapperRefire.valid)
+                return PreparedXfrmMoveRegradeImage.init;
+        }
+        image.valid = true;
+        return image;
+    }
+
+    public bool preparedMoveRegradeMatches(
+            ref const PreparedXfrmMoveRegradeImage image, in Mesh live) const
+            nothrow @nogc {
+        if (!image.valid || !image.expectedLive.matches(live) ||
+            vertexIndicesToProcess != image.expectedIndices ||
+            toProcess != image.expectedMask ||
+            vertexProcessCount != image.expectedCount ||
+            vertexCacheDirty != image.expectedCacheDirty ||
+            needsGpuUpdate != image.expectedNeedsGpu ||
+            runFrameValid != image.expectedRunFrameValid ||
+            runFrameOrigin != image.expectedRunFrameOrigin ||
+            runFrameR != image.expectedRunFrameR ||
+            runFrameU != image.expectedRunFrameU ||
+            runFrameF != image.expectedRunFrameF ||
+            !falloffPacketsEqual(dragFalloff, image.expectedFalloff) ||
+            !snapPacketsEqual(dragSnap, image.expectedSnap) ||
+            !symmetryPacketsEqual(dragSymmetry, image.expectedSymmetry) ||
+            itemTargets.length != image.itemTargets.length ||
+            image.itemTargets.length != image.expectedItemXforms.length)
+            return false;
+        foreach (i, target; image.itemTargets)
+            if (target is null || itemTargets[i] !is target ||
+                target.xform != image.expectedItemXforms[i]) return false;
+        return !image.wrapperRefire.valid ||
+            preparedRefireStateMatches(image.wrapperRefire);
+    }
+
+    public void installPreparedMoveRegrade(
+            ref PreparedXfrmMoveRegradeImage image) nothrow @nogc {
+        if (!image.valid) return;
+        vertexIndicesToProcess = image.nextIndices; image.nextIndices = null;
+        toProcess = image.nextMask; image.nextMask = null;
+        vertexProcessCount = image.nextCount;
+        vertexCacheDirty = image.nextCacheDirty;
+        needsGpuUpdate = image.nextNeedsGpu;
+        runFrameValid = image.nextRunFrameValid;
+        runFrameOrigin = image.nextRunFrameOrigin;
+        runFrameR = image.nextRunFrameR;
+        runFrameU = image.nextRunFrameU;
+        runFrameF = image.nextRunFrameF;
+        dragFalloff = image.nextFalloff;
+        dragSnap = image.nextSnap;
+        dragSymmetry = image.nextSymmetry;
+        foreach (i, target; image.itemTargets)
+            target.xform = image.nextItemXforms[i];
+        if (image.wrapperRefire.valid)
+            installPreparedRefireState(image.wrapperRefire);
+        image.clear();
     }
 
     /// Prepare the exact history carrier and wrapper-private tail of
@@ -7134,6 +7479,71 @@ unittest {
         installedSelection, installedMutation) && installedSelection == 21 &&
         installedMutation == 22,
         "consumed Xfrm boundary image installed twice");
+
+    // Move re-grade runs the fold on an isolated wrapper, including its cache
+    // outputs. The mesh resource remains a separate context entry, so direct
+    // state installation below must not write the live mesh.
+    Mesh moveRegradeMesh = makeCube();
+    auto moveRegradeBefore = MeshSnapshot.capture(moveRegradeMesh);
+    auto moveRegradeTool = new XfrmTransformTool(
+        () => &moveRegradeMesh, &refireGpu, &refireMode);
+    moveRegradeTool.flagT = true;
+    moveRegradeTool.flagR = false;
+    moveRegradeTool.flagS = false;
+    moveRegradeTool.run.t = Vec3(2, 0, 0);
+    moveRegradeTool.dragBaseline = moveRegradeMesh.vertices.dup;
+    moveRegradeTool.runBaselineValid = true;
+    moveRegradeTool.runFrameValid = true;
+    PreparedXfrmUpdatePreProjection regradeProjection;
+    regradeProjection.valid = true;
+    regradeProjection.panelRegrade = true;
+    auto regrade = moveRegradeTool.buildPreparedMoveRegrade(
+        regradeProjection, null);
+    assert(regrade.valid && regrade.meshPrepared &&
+        moveRegradeBefore.matches(moveRegradeMesh) &&
+        regrade.candidate.vertices != moveRegradeMesh.vertices,
+        "prepared Move re-grade must own a detached changed candidate");
+    assert(moveRegradeTool.preparedMoveRegradeMatches(
+        regrade, moveRegradeMesh));
+    moveRegradeMesh.vertices[0].x += 1;
+    assert(!moveRegradeTool.preparedMoveRegradeMatches(
+        regrade, moveRegradeMesh),
+        "prepared Move re-grade accepted a stale live mesh");
+    moveRegradeBefore.restore(moveRegradeMesh);
+    moveRegradeTool.installPreparedMoveRegrade(regrade);
+    assert(!regrade.valid && moveRegradeBefore.matches(moveRegradeMesh),
+        "Move re-grade private-state install wrote the live mesh");
+    moveRegradeTool.installPreparedMoveRegrade(regrade);
+    assert(moveRegradeBefore.matches(moveRegradeMesh),
+        "consumed Move re-grade image installed twice");
+
+    // Complete-root idle cell: one no-history marker followed by the slot
+    // latch, Move refresh and wrapper tail. Preparation leaves both mesh and
+    // tool live state untouched; the context validates and installs once.
+    auto rootLayer = new Layer();
+    rootLayer.meshRef() = makeCube();
+    auto rootBefore = MeshSnapshot.capture(rootLayer.meshRef());
+    GpuMesh rootGpu;
+    EditMode rootMode = EditMode.Vertices;
+    auto rootTool = new XfrmTransformTool(
+        () => &rootLayer.meshRef(), &rootGpu, &rootMode);
+    rootTool.flagT = true;
+    rootTool.flagR = false;
+    rootTool.flagS = false;
+    rootTool.activate();
+    VectorStack rootVts;
+    auto rootContext = new PreparedRecordContext(null, null);
+    auto rootEffect = rootTool.prepareUpdate(
+        rootVts, rootContext, rootLayer, null);
+    assert(rootEffect.accepted && rootBefore.matches(rootLayer.meshRef()),
+        "complete Xfrm update root mutated live state during preparation");
+    assert(rootContext.validate());
+    rootContext.install();
+    assert(rootContext.installTraceForTest() == [8, 60, 62, 61, 16, 59],
+        "complete Xfrm idle root installed out of legacy order");
+    rootContext.install();
+    assert(rootContext.installTraceForTest() == [8, 60, 62, 61, 16, 59],
+        "complete Xfrm update root installed twice");
 }
 
 static assert(!__traits(compiles, { XfrmPreparedState a; XfrmPreparedState b = a; }));
