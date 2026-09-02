@@ -110,16 +110,15 @@
 //     that the stand can expose the preceding edit.
 //
 // WHAT IS NOT COVERED, and why — read this before adding to it.
-//   * `assertions_for_a_port[3]` is covered for a tool ARMED and left armed
-//     (parity: costs nothing, measured against a fourth cell that never arms
-//     the tool at all — a vibe3d-side baseline the capture has no counterpart
-//     for, and without which that row would compare 0 against 0 by
-//     construction). Its "and DROPPED" half was not measured by this fixture.
-//     RESOLVED ELSEWHERE, 2026-08-30 (task 2660): the second-form capture drove
-//     BOTH shapes, both cost the reference nothing, so the stack-shape term is
-//     ours alone. That is now registry row 87, pinned by
-//     `tests/test_gesture_zero_delta_undo_second_form.d` — not by this file,
-//     whose fixture still cannot see it.
+//   * The original control fixture DID drive the whole no-press path, including
+//     the drop. The old live parity row did not: it left the tool armed and
+//     therefore compared a different region. RESOLVED ELSEWHERE, 2026-08-30
+//     (task 2660): the second-form capture re-drove the complete arm-and-drop
+//     region in both stack shapes and corrected its cost to ONE. Block 2 now
+//     drives that complete region too, takes the number from the later fixture,
+//     and witnesses both endpoints. Registry row 87 and the sibling test own
+//     the corrected law; this file retains an independent agreement row so its
+//     divergence channel cannot pass vacuously.
 //   * Nothing about tools outside the transform family (the fixture's own
 //     `not_measured`). The CUTTING family is measured in the second-form
 //     fixture and read by the sibling file above; this file's scope is
@@ -146,14 +145,21 @@
 //        zero-delta transform gesture now costs 1 undo steps; this file froze
 //        0".
 //
-//   M3 — MAKE THE PARITY ROW FALSE. Drop the tool inside the control cell's
-//        gesture window (`if (d.armTool && !d.press) script("tool.set move
-//        off");` in `runCell`). Block 1's calibration guard reddens first
-//        ("the positive control cost 0 undo steps"), because the control's kB
-//        moves with it; with block 1 removed, block 2 — the parity row —
-//        reddens: "arming the transform tool over the same stand cost 1 undo
-//        steps (kB 2 against the never-armed baseline's 1)". That is also the
-//        measurement behind adjacent fact (a) above.
+//   M3 — MEASURE THE WRONG REGION. The pre-3694 parity row used
+//        `stepsOf(m.control, m.noTool)`: ARM ONLY against never-armed, although
+//        the assertion and fixture both named ARM-AND-DROP. Once lifecycle
+//        became strict LIFO, the owner gate reddened that row first:
+//        "arming the transform tool over the same stand cost 1 undo steps
+//        (kB 2 against the never-armed baseline's 1); the reference costs 0".
+//        That observed red is why block 2 now has its own complete-region cell
+//        rather than changing the expected number under the mismatched drive.
+//
+//   M4 — DELETE THE COMPLETE REGION. Empty `runArmDropParityCell`'s arm/drop
+//        body. The step subtraction can then read zero for a region that never
+//        happened, but block 2's FIRST assertion reddens on "reported 0 arms
+//        and 0 drops ... it must report 1 and 1". This is the same witness and
+//        mutation already executed for the sibling's `runArmDropCell` (task
+//        2660, M6); this file deliberately reuses that proven discriminator.
 //
 //   M2 — DELETE THE GESTURE. `if (d.press)` -> `if (d.press && d.gesture !=
 //        "zero")` in `runCell`, i.e. the zero cell stops pressing at all.
@@ -178,6 +184,8 @@ void main() {}
 enum BASE = "http://localhost:8080";
 
 enum string kFixtureJson = import("fixtures/gesture_zero_delta_undo.json");
+enum string kArmDropFixtureJson =
+    import("fixtures/gesture_zero_delta_undo_second_form.json");
 
 // ---------------------------------------------------------------------------
 // OUR SIDE, FROZEN. Measured on this tree 2026-08-30 through the rig below.
@@ -189,6 +197,7 @@ enum string kFixtureJson = import("fixtures/gesture_zero_delta_undo.json");
 enum long kOursControlSteps  = 0;   // tool armed, no press
 enum long kOursZeroSteps     = 0;   // committed zero-distance gesture
 enum long kOursPositiveSteps = 1;   // committed real drag
+enum long kOursArmDropSteps  = 1;   // complete no-press arm-and-drop region
 
 /// The retirement switch. "open" — we still differ, assert the gap.
 /// "closed" — the law is ported, assert PARITY instead.
@@ -246,6 +255,14 @@ long lifecycleCount() {
 /// and recorded nothing" from "never ran".
 long deliveries() { return getJson("/api/changes")["deliveryCount"].integer; }
 
+/// The armed tool's own id, or "" when no tool is armed. The complete-region
+/// parity cell uses this as a positive witness at both ends: its undo count is
+/// otherwise also satisfied by deleting the region it claims to measure.
+string armedToolId() {
+    auto j = getJson("/api/tool/state");
+    return ("tool" in j) ? j["tool"].str : "";
+}
+
 /// The live gizmo pivot — the point `axisGrabPx` needs to find the +X arm.
 Vec3 evalPivot() {
     auto c = getJson("/api/toolpipe/eval")["actionCenter"]["center"].array;
@@ -291,6 +308,33 @@ struct CellResult {
     string secondUndoStatus;
     bool   secondUndoRevertsPrecedingEdit;
     bool   secondUndoChangedMesh;
+}
+
+struct ArmDropResult {
+    int  kB = -1;
+    int  armsSeen;
+    int  dropsSeen;
+    bool meshChanged;
+}
+
+/// A pointer path with NO button press. It mirrors the gesture transport's
+/// header and timing while keeping `state:0` throughout.
+string buildMoveLog(int vpX, int vpY, int vpW, int vpH,
+                    int x0, int y0, int x1, int y1, int steps)
+{
+    string log = format(
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
+        vpX, vpY, vpW, vpH);
+    int lastX = x0, lastY = y0;
+    foreach (i; 0 .. steps + 1) {
+        const int x = x0 + cast(int)((cast(double)(x1 - x0) * i) / steps);
+        const int y = y0 + cast(int)((cast(double)(y1 - y0) * i) / steps);
+        log ~= format(
+            `{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,"state":0,"mod":0}` ~ "\n",
+            50.0 + i * 50.0, x, y, x - lastX, y - lastY);
+        lastX = x; lastY = y;
+    }
+    return log;
 }
 
 /// Compute the +X move-arrow grab pixel for the CURRENT selection and camera.
@@ -406,12 +450,67 @@ CellResult runCell(CellDrive d, double stdMagPx, int stdSteps) {
     return r;
 }
 
+/// The COMPLETE no-press region named by the parity law: arm, localise and
+/// hover the handle without a button press, drop, then walk undo. This is
+/// separate from `control`, which must stay armed so control/zero/positive
+/// retain identical gesture commit choreography.
+ArmDropResult runArmDropParityCell(double stdMagPx, int stdSteps) {
+    ArmDropResult r;
+
+    post(BASE ~ "/api/reset", "");
+    settle();
+
+    selectVerts([2, 3, 6, 7]);
+    assert(realDrag(stdMagPx, stdSteps),
+        "arm-drop parity: E1 did not move the mesh");
+
+    const preE2 = verts();
+    selectVerts([0, 1, 4, 5]);
+    assert(realDrag(stdMagPx, stdSteps),
+        "arm-drop parity: E2 did not move the mesh");
+    const postE2 = verts();
+    assert(!meshEq(preE2, postE2),
+        "arm-drop parity: E2 left the mesh unchanged");
+
+    script("tool.set move on");
+    settle();
+    if (armedToolId() == "xfrm") ++r.armsSeen;
+
+    int gx, gy; double ux, uy;
+    grabPixel(gx, gy, ux, uy);
+    auto cam = fetchCamera(BASE);
+    playAndWait(buildMoveLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                             gx, gy, gx, gy, 8), BASE);
+    settle();
+
+    script("tool.set move off");
+    settle();
+    if (armedToolId().length == 0) ++r.dropsSeen;
+
+    const postRegion = verts();
+    r.meshChanged = !meshEq(postE2, postRegion);
+
+    foreach (k; 1 .. 7) {
+        auto resp = postJson("/api/undo", "");
+        assert(("status" in resp) && resp["status"].str == "ok",
+            format("arm-drop parity: undo %d did not execute: %s",
+                   k, resp.toString));
+        settle();
+        if (r.kB < 0 && meshEq(verts(), preE2)) r.kB = cast(int) k;
+    }
+    assert(r.kB > 0,
+        "arm-drop parity: no undo in six steps reverted E2");
+    return r;
+}
+
 // ---------------------------------------------------------------------------
 // The measurement, taken once and shared by the blocks below.
 // ---------------------------------------------------------------------------
 struct Measured {
     CellResult noTool, control, zero, positive;
-    long refControl, refZero, refPositive;   // reference entry counts
+    ArmDropResult armDrop;
+    long refZero, refPositive;               // task-2640 entry counts
+    long refArmDrop;                         // corrected complete-region count
     int  refKbControl, refKbZero, refKbPositive;
 }
 
@@ -456,9 +555,13 @@ Measured measured() {
     auto cc = fixtureCase(fx, "control_no_press");
     auto cz = fixtureCase(fx, "zero_distance_gesture");
     auto cp = fixtureCase(fx, "positive_control_real_drag");
-    m.refControl    = cc["entries_recorded"].integer;
     m.refZero       = cz["entries_recorded"].integer;
     m.refPositive   = cp["entries_recorded"].integer;
+
+    auto fxArmDrop = parseJSON(kArmDropFixtureJson);
+    m.refArmDrop = fixtureCase(
+        fxArmDrop, "armed_and_dropped_over_a_model_edit"
+    )["entries_recorded"].integer;
     m.refKbControl  = cast(int) cc["undo_index_that_reverts_the_previous_edit"].integer;
     m.refKbZero     = cast(int) cz["undo_index_that_reverts_the_previous_edit"].integer;
     m.refKbPositive = cast(int) cp["undo_index_that_reverts_the_previous_edit"].integer;
@@ -483,6 +586,7 @@ Measured measured() {
     m.control  = runCell(dctl, dpos.magPx, dpos.steps);
     m.zero     = runCell(dzer, dpos.magPx, dpos.steps);
     m.positive = runCell(dpos, dpos.magPx, dpos.steps);
+    m.armDrop  = runArmDropParityCell(dpos.magPx, dpos.steps);
 
     g_m = new Measured;
     *g_m = m;
@@ -500,7 +604,7 @@ long stepsOf(const ref CellResult c, const ref CellResult control) {
 //     two frozen views of the same capture, related by the fixture's declared
 //     reading `entries(N) = kB(N) - kB(control)`. Re-derive one from the other
 //     so a fixture edited on one side only fails here instead of quietly moving
-//     the target every assertion below aims at.
+//     the target of its task-2640 assertions.
 // ---------------------------------------------------------------------------
 unittest {
     auto fx = parseJSON(kFixtureJson);
@@ -523,6 +627,21 @@ unittest {
         format("the fixture contradicts itself: positive_control_real_drag "
                ~ "declares entries_recorded %d, but its undo indices give "
                ~ "%d - %d = %d", refPositive, kbP, kbC, kbP - kbC));
+
+    // Task 2660 is the corrective capture for the complete no-press region.
+    // Re-derive that later number here too: block 2 must not turn a half-edited
+    // fixture into a new target merely because it imports the newer file.
+    auto fxArmDrop = parseJSON(kArmDropFixtureJson);
+    auto ca = fixtureCase(fxArmDrop, "armed_and_dropped_over_a_model_edit");
+    auto cb = fixtureCase(fxArmDrop, "baseline_no_region_at_all");
+    const long refArmDrop = ca["entries_recorded"].integer;
+    const long kbA = ca["undo_index_that_reverts_the_previous_edit"].integer;
+    const long kbBase = cb["undo_index_that_reverts_the_previous_edit"].integer;
+    assert(refArmDrop == 1 && refArmDrop == kbA - kbBase,
+        format("the corrective arm-and-drop fixture declares %d entries, but "
+               ~ "the measured law is 1 and its undo indices give %d - %d = "
+               ~ "%d. Re-measure; do not patch one side.",
+               refArmDrop, kbA, kbBase, kbA - kbBase));
     assert(refControl == 0,
         format("the fixture's control run declares %d entries; the whole "
                ~ "reading is relative to a control that costs nothing",
@@ -629,24 +748,39 @@ unittest {
 //     "A tool that was armed and dropped WITHOUT any gesture must cost nothing
 //      at all."
 //
-//     Covered for ARMED (see "WHAT IS NOT COVERED" for the dropped half). We
-//     agree with the reference here, and the agreement is load-bearing: a file
-//     whose every assertion is "we differ" passes just as well when the channel
-//     is broken. This row shows the channel CAN agree on the same read.
+//     The quoted zero is the superseded task-2640 reading. Task 2660 re-drove
+//     the COMPLETE region, re-derived its count from undo indices, and corrected
+//     it to ONE. We drive that same complete region here. The agreement remains
+//     load-bearing: a file whose every assertion is "we differ" passes just as
+//     well when the channel is broken. This row shows the channel CAN agree.
 // ---------------------------------------------------------------------------
 unittest {
     auto m = measured();
-    // Measured against a stand where the tool was NEVER ARMED — not against
-    // the control itself, which would be 0 by construction and could not come
-    // out differently.
-    const long ours = stepsOf(m.control, m.noTool);
-    assert(ours == m.refControl,
-        format("arming the transform tool over the same stand cost %d undo "
+    // The witness comes before the number: deleting the whole region can also
+    // make a subtraction read zero, so the endpoints must prove it happened.
+    assert(m.armDrop.armsSeen == 1 && m.armDrop.dropsSeen == 1,
+        format("the complete no-press region reported %d arms and %d drops "
+               ~ "through /api/tool/state; it must report 1 and 1. The region "
+               ~ "never happened, so its undo-step reading is about nothing",
+               m.armDrop.armsSeen, m.armDrop.dropsSeen));
+    assert(!m.armDrop.meshChanged,
+        "the no-press arm-and-drop region changed geometry; it is no longer "
+        ~ "the parity phenomenon the fixture measured");
+
+    // Compare with the same stand where the tool was NEVER ARMED. The later
+    // fixture owns the corrected complete-region number; the task-2640 zero
+    // remains checked in block 0 as the internally consistent historical read.
+    const long ours = m.armDrop.kB - m.noTool.kB;
+    assert(ours == m.refArmDrop,
+        format("a complete no-press transform arm-and-drop region cost %d undo "
                ~ "steps (kB %d against the never-armed baseline's %d); the "
-               ~ "reference costs %d for its whole no-press gesture path. This "
-               ~ "is the PARITY row of the divergence — losing it means the "
-               ~ "read itself moved, not the law.",
-               ours, m.control.kB, m.noTool.kB, m.refControl));
+               ~ "corrected complete-region capture costs %d. This is the "
+               ~ "PARITY row of the divergence — losing it means the read "
+               ~ "itself moved, not the open zero-delta law.",
+               ours, m.armDrop.kB, m.noTool.kB, m.refArmDrop));
+    assert(ours == kOursArmDropSteps,
+        format("the complete arm-and-drop region now costs %d undo steps; "
+               ~ "this file froze %d", ours, kOursArmDropSteps));
     // NOTE: "the control and the zero cell reach the preceding edit at the same
     // index" is deliberately NOT asserted here. It is block 5's whole content,
     // and duplicating it in an EARLIER block would make block 5 unreachable on
