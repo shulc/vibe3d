@@ -27,7 +27,7 @@ import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKin
     PreparedEdgeExtendParamEffect, PreparedEdgeExtendParamKind,
     PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedXfrmUpdateEffect, PreparedXfrmUpdateKind;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_edge_extend_tool_activation : PreparedEdgeExtendToolActivationOwner;
 import prepared_edge_extend_param_update : PreparedEdgeExtendParamUpdateOwner;
 import prepared_edge_extend_deactivate : PreparedEdgeExtendDeactivateOwner;
@@ -161,7 +161,7 @@ struct PreparedEdgeExtendDeactivateImage {
 // ToolDoApplyCommand wraps it with a snapshot pair for undo (so applyHeadless
 // MUST NOT snapshot itself).
 // ---------------------------------------------------------------------------
-class EdgeExtendTool : Tool {
+class EdgeExtendTool : Tool, PreparedToolDoorClient {
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const nothrow @nogc { return meshSrc_(); }
@@ -1189,6 +1189,17 @@ public:
         if (!ok) context.discard();
         return PreparedDeactivateEffect(preparedToolStateOwner,
             PreparedDeactivateKind.EdgeExtend, historyPrepared, ok);
+    }
+
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto upload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);
+        return prepareDeactivate(context, layer, upload).resourceAccepted;
+    }
+
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong, ulong) {
+        return prepareActivate(context).accepted;
     }
 
 private:

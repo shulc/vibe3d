@@ -26,7 +26,7 @@ import viewport_scheme : schemeColor, SchemeColor;
 import document : Layer, primaryModelSpace;
 import overlay_space : OverlaySpace;
 import perf_probe : g_perf, Cat;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
     PreparedDeactivateEffect, PreparedDeactivateKind, PreparedEdgeSliceParamEffect,
     PreparedEdgeSliceParamKind;
@@ -134,7 +134,8 @@ private Vec3 lerpVec3(Vec3 a, Vec3 b, float t) {
 // KeepAliveOnCancel + SessionStepUndo (task 0428; the former renamed in
 // 0430): the survivesEditCancel / tryUndoStepInSession overrides below are
 // the interfaces' implementations (EditSession discovers them by cast).
-final class EdgeSliceTool : Tool, KeepAliveOnCancel, SessionStepUndo {
+final class EdgeSliceTool : Tool, KeepAliveOnCancel, SessionStepUndo,
+                            PreparedToolDoorClient {
 public:
     enum Show { None, Position }
 
@@ -529,6 +530,19 @@ public:
         if (!ok) context.discard();
         return PreparedDeactivateEffect(preparedToolStateOwner,
             PreparedDeactivateKind.EdgeSlice, historyPrepared, ok);
+    }
+
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto upload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);
+        auto handlers = new BoxHandlerBatchResourceOwner(handles_, threadIdentity,
+            contextIdentity);
+        return prepareDeactivate(context, layer, upload, handlers).resourceAccepted;
+    }
+
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong, ulong) {
+        return prepareActivate(context).accepted;
     }
 
     public override bool hasUncommittedEdit() const {

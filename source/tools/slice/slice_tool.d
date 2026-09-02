@@ -27,7 +27,7 @@ import tools.create.create_common : currentWorkplaneFrame, pickWorkplaneFrame, W
 // 0286): the SAME screen-direction → world-axis math the Move gizmo's Ctrl lock
 // uses, so Slice's Ctrl constraint is byte-consistent with Move's, not reinvented.
 import tools.transform.move : chooseConstraintAxis;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_slice_activation : PreparedSliceActivationOwner;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
@@ -676,7 +676,7 @@ void sliceRingPlaneBasis(Vec3 axis, out Vec3 right, out Vec3 up) {
 // from under us (scene reset / layer switch) between the last preview and the
 // drop — a mismatch drops the preview instead of baking a bogus entry.
 // ---------------------------------------------------------------------------
-final class SliceTool : Tool {
+final class SliceTool : Tool, PreparedToolDoorClient {
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const nothrow @nogc { return meshSrc_(); }
@@ -1278,6 +1278,16 @@ public:
         if (!ok) context.discard();
         return PreparedDeactivateEffect(preparedToolStateOwner,
             PreparedDeactivateKind.Slice, historyPrepared, ok);
+    }
+
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer layer,
+            ulong, ulong) {
+        return prepareDeactivate(context, layer).resourceAccepted;
+    }
+
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong, ulong) {
+        return prepareActivate(context).accepted;
     }
 
     version(unittest) final void seedPreparedDeactivateForTest(ref Mesh live) {

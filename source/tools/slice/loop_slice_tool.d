@@ -27,7 +27,7 @@ import selection_product : addNewLoopEdgesAndVerts;
 import display_sync : refreshDisplay;
 import document : Layer, primaryModelSpace;
 import perf_probe : g_perf, Cat;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
     PreparedDeactivateEffect, PreparedDeactivateKind, PreparedLoopSliceParamEffect,
     PreparedLoopSliceParamKind;
@@ -224,7 +224,7 @@ ProfileSample[] profileSamples(LoopProfile p) {
 // KeepAliveOnCancel (task 0428; interface renamed in 0430): the
 // survivesEditCancel override below is the interface's implementation
 // (EditSession discovers it by cast).
-final class LoopSliceTool : Tool, KeepAliveOnCancel {
+final class LoopSliceTool : Tool, KeepAliveOnCancel, PreparedToolDoorClient {
 public:
     // Edit — what a click on the HUD track / a marker does (task 0239).
     // Move (default): reposition the Current slice (today's scrub,
@@ -964,6 +964,17 @@ public:
         if (!ok) context.discard();
         return PreparedDeactivateEffect(preparedToolStateOwner,
             PreparedDeactivateKind.LoopSlice, historyPrepared, ok);
+    }
+
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto upload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);
+        return prepareDeactivate(context, layer, upload).resourceAccepted;
+    }
+
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong, ulong) {
+        return prepareActivate(context).accepted;
     }
 
     public override bool hasUncommittedEdit() const {

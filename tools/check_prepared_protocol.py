@@ -8283,6 +8283,14 @@ private_state_door_clients = {
     "source/tools/deform/magnet.d": ("MagnetTool", "magnetSession"),
     "source/tools/edit/reduce.d": ("ReductionTool", "reductionSession"),
 }
+cutting_door_clients = {
+    "source/tools/slice/slice_tool.d": "SliceTool",
+    "source/tools/slice/edge_slice_tool.d": "EdgeSliceTool",
+    "source/tools/slice/loop_slice_tool.d": "LoopSliceTool",
+}
+gpu_layer_door_clients = {
+    "source/tools/edit/edge_extend.d": "EdgeExtendTool",
+}
 def p10c_door_capability_gate(context, sources, xfrm):
     if not all(x in context for x in (
             "interface PreparedToolDoorClient",
@@ -8305,13 +8313,39 @@ def p10c_door_capability_gate(context, sources, xfrm):
         if "mixin PreparedPrivateStateToolDoorClient!(Layer," not in body or \
                 f"PreparedPrivateStateOwner.{factory});" not in body:
             return False
+    for path, aggregate in cutting_door_clients.items():
+        body = sources[path]
+        if "PreparedToolDoorClient" not in body or \
+                "override bool prepareDoorDeactivate(" not in body or \
+                "override bool prepareDoorActivate(" not in body:
+            return False
+        if aggregate == "SliceTool" and \
+                "prepareDeactivate(context, layer).resourceAccepted" not in body:
+            return False
+        if aggregate == "EdgeSliceTool" and not all(x in body for x in (
+                "new GpuUploadOwner(gpu, threadIdentity, contextIdentity)",
+                "new BoxHandlerBatchResourceOwner(handles_, threadIdentity,",
+                "prepareDeactivate(context, layer, upload, handlers).resourceAccepted")):
+            return False
+        if aggregate == "LoopSliceTool" and not all(x in body for x in (
+                "new GpuUploadOwner(gpu, threadIdentity, contextIdentity)",
+                "prepareDeactivate(context, layer, upload).resourceAccepted")):
+            return False
+    for path, aggregate in gpu_layer_door_clients.items():
+        body = sources[path]
+        if f"class {aggregate} : Tool, PreparedToolDoorClient" not in body or \
+                "new GpuUploadOwner(gpu, threadIdentity, contextIdentity)" not in body or \
+                "prepareDeactivate(context, layer, upload).resourceAccepted" not in body or \
+                "return prepareActivate(context).accepted;" not in body:
+            return False
     return ("PreparedToolDoorClient," in xfrm and
         "override bool prepareDoorDeactivate(" in xfrm and
         "override bool prepareDoorActivate(" in xfrm and
         "return prepareActivate(context).accepted;" in xfrm)
 
 door_sources = {p: (ROOT / p).read_text() for p in
-    set(simple_door_clients) | set(private_state_door_clients)}
+    set(simple_door_clients) | set(private_state_door_clients) |
+    set(cutting_door_clients) | set(gpu_layer_door_clients)}
 door_xfrm = (ROOT / "source/tools/transform/xfrm_transform.d").read_text()
 if not p10c_door_capability_gate(record_context, door_sources, door_xfrm):
     fail("P1.0c prepared door capability tranche drift")
@@ -8328,6 +8362,14 @@ for target, old, new, label in (
      "PreparedPrivateStateOwner.arraySession);",
      "PreparedPrivateStateOwner.cloneSession);",
      "substitute private-state owner"),
+    ("source/tools/slice/edge_slice_tool.d",
+     "new BoxHandlerBatchResourceOwner(handles_, threadIdentity,",
+     "new BoxHandlerBatchResourceOwner(null, threadIdentity,",
+     "drop cutting handler identity"),
+    ("source/tools/edit/edge_extend.d",
+     "new GpuUploadOwner(gpu, threadIdentity, contextIdentity)",
+     "new GpuUploadOwner(null, threadIdentity, contextIdentity)",
+     "drop GPU subject identity"),
     ("xfrm", "return prepareActivate(context).accepted;", "return true;",
      "drop Xfrm activation producer"),
 ):
