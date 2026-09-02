@@ -47,7 +47,8 @@ def writer_keys(rows):
             for r in rows]
 
 def validate_writer_graph(actual, expected):
-    for section in ("hooks", "params", "factories", "products", "surfaces"):
+    for section in ("hooks", "params", "factories", "products",
+                    "lifecycle_products", "surfaces"):
         keys = writer_keys(expected[section])
         if len(keys) != len(set(keys)):
             fail(f"P1.0b.0 duplicate {section} manifest row")
@@ -57,6 +58,31 @@ def validate_writer_graph(actual, expected):
             fail(f"P1.0b.0 {section} symbol mismatch: missing={sorted(ekeys-akeys)} surplus={sorted(akeys-ekeys)}")
     if actual.get("bypasses") != expected.get("bypasses"):
         fail("P1.0b.0 activation/lifecycle bypass callsite set changed")
+    actual_publishers = {r["symbol"]: r for r in actual["internal_publishers"]}
+    expected_publishers = {r["symbol"]: r for r in expected["internal_publishers"]}
+    if actual_publishers.keys() != expected_publishers.keys():
+        fail("P1.0b.0 internal publisher set changed")
+    for symbol, recorded in expected_publishers.items():
+        found = actual_publishers[symbol]
+        if found["semantic_sha256"] != recorded["semantic_sha256"]:
+            fail(f"P1.0b.0 source/prepared_tool_transition.d :: {symbol} "
+                 "body changed with name intact")
+        if found["line"] != recorded["line"]:
+            fail(f"P1.0b.0 source/prepared_tool_transition.d :: {symbol} — "
+                 f"recorded line {recorded['line']}, scanner found {found['line']}")
+    found_classifier = actual["lifecycle_classifier"]
+    recorded_classifier = expected["lifecycle_classifier"]
+    if (found_classifier["path"], found_classifier["symbol"]) != \
+            (recorded_classifier["path"], recorded_classifier["symbol"]):
+        fail("P1.0b.0 lifecycle classifier identity changed")
+    if found_classifier["semantic_sha256"] != \
+            recorded_classifier["semantic_sha256"]:
+        fail("P1.0b.0 source/prepared_tool_transition.d :: "
+             "toolArmEmitsLifecycle body changed with name intact")
+    if found_classifier["line"] != recorded_classifier["line"]:
+        fail("P1.0b.0 source/prepared_tool_transition.d :: "
+             f"toolArmEmitsLifecycle — recorded line {recorded_classifier['line']}, "
+             f"scanner found {found_classifier['line']}")
     if canonical_writer_graph(actual) != canonical_writer_graph(expected):
         fail("P1.0b.0 direct-body/product census changed with names intact")
 

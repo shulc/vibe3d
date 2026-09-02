@@ -59,6 +59,15 @@ def _aggregate(text, pos):
         except ValueError: pass
     return found
 
+def _derives(classes, name, base, seen=None):
+    """Whether a concrete product inherits a named capability."""
+    if seen is None: seen = set()
+    if name in seen: return False
+    seen.add(name)
+    bases = classes.get(name, {}).get("bases", [])
+    return base in bases or any(_derives(classes, parent, base, seen)
+                                for parent in bases)
+
 def _calls(body):
     out = []
     scrub = re.sub(r"//[^\n]*|/\*.*?\*/|\"(?:\\.|[^\"])*\"", " ", body,
@@ -199,6 +208,41 @@ def scan(root):
                          "semantic_sha256": _semantic_digest(body),
                          "prepared_delegations": len(re.findall(
                              r"\b(?:prepareArm|commitPreparedArm|producePreparedEffects|installLegacyPreparedEffects)\s*\(", body))})
+    transition_path = root / "source/prepared_tool_transition.d"
+    transition = _mask_comments(transition_path.read_text())
+    classifier = re.search(
+        r"\bbool\s+toolArmEmitsLifecycle\s*\([^;{}]*\)[^{;]*\{", transition)
+    if not classifier:
+        raise ValueError("lifecycle classifier vanished")
+    classifier_open = classifier.end() - 1
+    classifier_end = _balanced(transition, classifier_open + 1)
+    lifecycle_classifier = {
+        "path": str(transition_path.relative_to(root)),
+        "symbol": "toolArmEmitsLifecycle",
+        "line": transition.count("\n", 0, classifier.start()) + 1,
+        "semantic_sha256": _semantic_digest(
+            transition[classifier_open + 1:classifier_end - 1]),
+    }
+
+    # Freeze the product subset that the reviewed classifier admits. This is
+    # intentionally derived independently of its body fingerprint: one row
+    # says which products participate, the other forces body changes to review.
+    lifecycle_admissions = {}
+    for product in sorted({product for factory in factories
+                           for product in factory["product_types"]}):
+        if _derives(classes, product, "LifecycleUndoEmitter"):
+            lifecycle_admissions[product] = "LifecycleUndoEmitter"
+    for factory in factories:
+        if factory["id"] == "mesh.sliceTool":
+            for product in factory["product_types"]:
+                lifecycle_admissions[product] = "legacy-id:mesh.sliceTool"
+    lifecycle_products = [
+        {"module": classes[name]["module"], "aggregate": name,
+         "symbol": "lifecycleProduct", "signature": name,
+         "admission": lifecycle_admissions[name]}
+        for name in sorted(lifecycle_admissions)
+    ]
+
     bypasses = []
     internal_publishers = []
     bypass_pattern = re.compile(r"\b(?:prepareArm|commitPreparedArm|producePreparedEffects|installLegacyPreparedEffects)\s*\(")
@@ -213,6 +257,10 @@ def scan(root):
             if path.name == "prepared_tool_transition.d" and (
                     (row["symbol"] == "prepareArm" and prefix == "PreparedArm") or
                     (row["symbol"] == "commitPreparedArm" and prefix == "bool")):
+                body_open = text.find("{", match.end())
+                body_end = _balanced(text, body_open + 1)
+                row["semantic_sha256"] = _semantic_digest(
+                    text[body_open + 1:body_end - 1])
                 internal_publishers.append(row)
             else:
                 bypasses.append(row)
@@ -221,7 +269,9 @@ def scan(root):
                 for name in sorted({product for factory in factories
                                     for product in factory["product_types"]})]
     return {"hooks": hooks, "params": params, "factories": factories,
-            "products": products, "surfaces": surfaces, "bypasses": bypasses,
+            "products": products, "lifecycle_classifier": lifecycle_classifier,
+            "lifecycle_products": lifecycle_products,
+            "surfaces": surfaces, "bypasses": bypasses,
             "internal_publishers": internal_publishers}
 
 def canonical(data):

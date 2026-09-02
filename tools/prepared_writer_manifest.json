@@ -1231,14 +1231,45 @@
   ],
   "internal_publishers": [
     {
-      "line": 87,
+      "line": 95,
       "path": "source/prepared_tool_transition.d",
+      "semantic_sha256": "7c6c96a6252544fa3ccbc434be340a62e0149920e35b62d949df53a28fec4846",
       "symbol": "prepareArm"
     },
     {
-      "line": 218,
+      "line": 224,
       "path": "source/prepared_tool_transition.d",
+      "semantic_sha256": "13b323b16cf57231d7a28160538dc181f49e199ae65e540bf37612dac1669689",
       "symbol": "commitPreparedArm"
+    }
+  ],
+  "lifecycle_classifier": {
+    "line": 88,
+    "path": "source/prepared_tool_transition.d",
+    "semantic_sha256": "8b3434f51d4a90920cdb8eba029153f4425023f0c12e8579572efd5eed4c2c79",
+    "symbol": "toolArmEmitsLifecycle"
+  },
+  "lifecycle_products": [
+    {
+      "admission": "legacy-id:mesh.sliceTool",
+      "aggregate": "SliceTool",
+      "module": "tools.slice.slice_tool",
+      "signature": "SliceTool",
+      "symbol": "lifecycleProduct"
+    },
+    {
+      "admission": "LifecycleUndoEmitter",
+      "aggregate": "TopologyPenTool",
+      "module": "tools.edit.topology_pen.tool",
+      "signature": "TopologyPenTool",
+      "symbol": "lifecycleProduct"
+    },
+    {
+      "admission": "LifecycleUndoEmitter",
+      "aggregate": "XfrmTransformTool",
+      "module": "tools.transform.xfrm_transform",
+      "signature": "XfrmTransformTool",
+      "symbol": "lifecycleProduct"
     }
   ],
   "params": [
