@@ -266,6 +266,12 @@ uint[] movingVertexIndices(const(int)[] processed, const ref SymmetryPacket sp,
 
 class TransformTool : Tool {
 public:
+    struct PreparedScalarDeactivateImage {
+        bool valid, active, vertexCacheDirty, needsGpuUpdate, centerManual;
+        bool wholeMeshDrag, propsDragging, editCapturing;
+        int dragAxis;
+        void clear() nothrow @nogc { valid = false; }
+    }
     // app.d reads this every frame and sets u_model accordingly.
     // Reset to identity when not in a whole-mesh drag.
     float[16] gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
@@ -290,6 +296,30 @@ public:
         image.needsGpuUpdate = image.centerManual = image.wholeMeshDrag =
             image.propsDragging = false;
         image.valid = true; return image;
+    }
+    final PreparedScalarDeactivateImage buildPreparedScalarDeactivateImage()
+            const nothrow @nogc {
+        PreparedScalarDeactivateImage image;
+        image.valid = !wholeMeshDrag && !propsDragging && !needsGpuUpdate &&
+            !editCapturing;
+        image.active = active; image.vertexCacheDirty = vertexCacheDirty;
+        image.needsGpuUpdate = needsGpuUpdate; image.centerManual = centerManual;
+        image.wholeMeshDrag = wholeMeshDrag; image.propsDragging = propsDragging;
+        image.editCapturing = editCapturing; image.dragAxis = dragAxis;
+        return image;
+    }
+    final bool preparedScalarDeactivateMatches(
+            in PreparedScalarDeactivateImage image) const nothrow @nogc {
+        return image.valid && active == image.active &&
+            vertexCacheDirty == image.vertexCacheDirty &&
+            needsGpuUpdate == image.needsGpuUpdate && centerManual == image.centerManual &&
+            wholeMeshDrag == image.wholeMeshDrag && propsDragging == image.propsDragging &&
+            editCapturing == image.editCapturing && dragAxis == image.dragAxis;
+    }
+    final void installPreparedScalarDeactivate(
+            ref PreparedScalarDeactivateImage image) nothrow @nogc {
+        if (!image.valid) return;
+        dragAxis = -1; centerManual = false; active = false; image.clear();
     }
     final void installPreparedActivation(
             ref PreparedTransformActivationImage image) nothrow @nogc {

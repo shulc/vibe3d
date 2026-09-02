@@ -10,7 +10,7 @@ import math;
 import editmode : EditMode;
 import params : Param;
 import shader : Shader, LitShader;
-import command_history : CommandHistory;
+import command_history : CommandHistory, PreparedHistoryKind;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
@@ -18,16 +18,19 @@ import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
     PreviewRebuildCounts, PreparedPreviewRebuildImage;
 import mesh_edit_delta : MeshEditDelta, MeshEditScope;
 import tools.transform.xfrm_transform : XfrmTransformTool;
+import tools.transform.xfrm_transform : PreparedXfrmEmbeddedDeactivateImage;
 import pipe_gizmo_host : PipeGizmoHost;
 import tools.transform.move : MoveTool;
 import tools.transform.rotate : RotateTool;
 import tools.transform.scale : ScaleTool;
 import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKind,
-    PreparedEdgeExtendParamEffect, PreparedEdgeExtendParamKind;
+    PreparedEdgeExtendParamEffect, PreparedEdgeExtendParamKind,
+    PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_tool_effect : PreparedXfrmUpdateEffect, PreparedXfrmUpdateKind;
 import prepared_record_context : PreparedRecordContext;
 import prepared_edge_extend_tool_activation : PreparedEdgeExtendToolActivationOwner;
 import prepared_edge_extend_param_update : PreparedEdgeExtendParamUpdateOwner;
+import prepared_edge_extend_deactivate : PreparedEdgeExtendDeactivateOwner;
 import prepared_transform_product_activation : PreparedTransformProductActivationOwner;
 import prepared_xfrm_activation_session : PreparedXfrmActivationSessionOwner;
 import document : Layer;
@@ -66,6 +69,21 @@ struct PreparedEdgeExtendParamImage {
         activateMove = activateRotate = activateScale = false; name = null;
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
         preview.clear(); candidate = Mesh.init; deliveryFlags = deliveryDomains = 0;
+    }
+}
+
+struct PreparedEdgeExtendDeactivateImage {
+    bool valid, expectedActive, expectedBuilt, appliesMesh, historyEligible;
+    int expectedDragBank;
+    MeshSnapshot expectedLive, expectedBefore;
+    PreparedPreviewRebuildImage preview;
+    PreparedXfrmEmbeddedDeactivateImage xfrm;
+    Mesh candidate; uint deliveryFlags, deliveryDomains;
+    void clear() nothrow @nogc {
+        valid = appliesMesh = historyEligible = false;
+        expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
+        preview.clear(); xfrm.clear(); candidate = Mesh.init;
+        deliveryFlags = deliveryDomains = 0;
     }
 }
 
@@ -150,6 +168,7 @@ private:
     GpuMesh*         gpu;
     EditMode*        editMode;
     LitShader        litShader;
+    bool suppressRefreshForTest_;
 
 
 
@@ -421,6 +440,16 @@ public:
     }
     version(unittest) final void mutatePreparedParamForTest(float value)
             nothrow @nogc { shift_ = value; }
+    version(unittest) final void seedPreparedDeactivateForTest(ref Mesh live) {
+        suppressRefreshForTest_ = true; active = true; built = false;
+        before = MeshSnapshot.capture(live); inset_ = 0.2f; rebuildPreview();
+    }
+    version(unittest) final bool preparedDeactivateInstalledForTest() const
+            nothrow @nogc {
+        return !active && !built && dragBank == DragBank.None;
+    }
+    version(unittest) final void mutatePreparedDeactivateForTest()
+            nothrow @nogc { dragBank = DragBank.Rotate; }
 
     // Push the bank switches into the embedded wrapper. flagT/flagR/flagS gate
     // registration with the shared arbiter, the per-frame hit-geometry refresh
@@ -1073,6 +1102,96 @@ private:
         refreshCaches();
     }
 
+    private bool fillCommitCarrier(ref Mesh target, MeshSessionEdit cmd) {
+        before.restore(target);
+        auto ed = MeshEditBatch(target,
+            MeshEditScope.Geometry | MeshEditScope.Marks);
+        cast(void)ed.extendEdgesByMask(target.operandEdgeMask(), inset_, shift_,
+            offsetVec(), rotateVec(), scaleVec(), segments_, livePivot());
+        auto delta = ed.close();
+        if (!delta.isEmpty) { cmd.setDelta(delta, "Edge Extend"); return true; }
+        cmd.setSnapshots(before, MeshSnapshot.capture(target), "Edge Extend");
+        return false;
+    }
+
+public:
+    final PreparedEdgeExtendDeactivateImage buildPreparedDeactivateState(
+            ref Mesh live, MeshSessionEdit cmd) {
+        PreparedEdgeExtendDeactivateImage image; image.valid = true;
+        image.expectedActive = active; image.expectedBuilt = built;
+        image.expectedDragBank = cast(int)dragBank;
+        image.expectedLive = MeshSnapshot.capture(live); image.expectedBefore = before;
+        image.xfrm = xfrm.buildPreparedEmbeddedDeactivateImage();
+        if (!image.xfrm.valid) { image.valid = false; return image; }
+        image.candidate = detachedPreparedMesh(live);
+        auto shadow = beginPreparedShadow(image.candidate);
+        preview_.prepareImage(image.preview);
+        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+            image.deliveryDomains);
+        image.deliveryFlags = image.deliveryDomains = 0;
+        if (active && built && cmd !is null) {
+            cast(void)fillCommitCarrier(image.candidate, cmd);
+            drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+                image.deliveryDomains);
+            image.appliesMesh = image.historyEligible = true;
+        }
+        shadow.close(); return image;
+    }
+
+    final bool preparedDeactivateStateMatches(
+            in PreparedEdgeExtendDeactivateImage image, ref const Mesh live) const
+            nothrow @nogc {
+        return image.valid && active == image.expectedActive &&
+            built == image.expectedBuilt && cast(int)dragBank == image.expectedDragBank &&
+            image.expectedLive.matches(live) && image.expectedBefore.matches(before) &&
+            preview_.matchesImage(image.preview) &&
+            xfrm.preparedEmbeddedDeactivateMatches(image.xfrm);
+    }
+
+    final void installPreparedDeactivateState(
+            ref PreparedEdgeExtendDeactivateImage image) nothrow @nogc {
+        if (!image.valid) return;
+        xfrm.installPreparedEmbeddedDeactivate(image.xfrm);
+        active = false; built = false; preview_.reset();
+        dragBank = DragBank.None;
+        image.clear();
+    }
+
+    final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,
+            Layer layer, GpuUploadOwner uploadOwner) {
+        if (context is null) return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.EdgeExtend, false, false);
+        scope(failure) context.discard();
+        const wantsHistory = active && built && history !is null &&
+            gestureFactory !is null && before.filled;
+        MeshSessionEdit cmd;
+        bool carrierMismatch;
+        if (wantsHistory) {
+            cmd = cast(MeshSessionEdit)gestureFactory();
+            carrierMismatch = cmd is null;
+        }
+        auto owner = PreparedEdgeExtendDeactivateOwner.prepare(this, layer, cmd);
+        bool ok = owner !is null;
+        if (ok && owner.appliesMesh)
+            ok = owner.deliveryFlags != 0 && uploadOwner !is null &&
+                uploadOwner.owns(gpu) &&
+                context.prepareStampedMeshImage(layer, owner.candidate,
+                    owner.deliveryFlags, owner.deliveryDomains) &&
+                context.prepareUpload(uploadOwner, owner.candidate);
+        bool historyPrepared;
+        if (ok && owner.historyEligible) {
+            historyPrepared = context.prepare(cmd, PreparedHistoryKind.Plain).accepted;
+            ok = historyPrepared;
+        } else if (ok && carrierMismatch) ok = context.prepareGestureCarrierMismatch();
+        if (ok) ok = historyPrepared ? context.markHistoryInstall()
+                                     : context.markNoHistoryInstall();
+        if (ok) ok = context.prepareEdgeExtendDeactivate(owner);
+        if (!ok) context.discard();
+        return PreparedDeactivateEffect(preparedToolStateOwner,
+            PreparedDeactivateKind.EdgeExtend, historyPrepared, ok);
+    }
+
+private:
     void commitEdit() {
         if (history is null || gestureFactory is null) return;
         if (!before.filled) return;
@@ -1088,31 +1207,14 @@ private:
         // ORIGINAL edge selection (un-tracked rewind, not part of the logged
         // batch). The pivot is the same frozen pivot the last preview used so
         // the committed geometry matches what the user saw.
-        before.restore(*mesh);
-
         // task 1903 Stage H: the RECORDING `MeshEditBatch` struct replaces the
         // legacy `beginEditBatch(&rec, …)` / `endEditBatch()` /
         // `abortEditBatch()` trio — see edge_extrude.d's twin comment.
-        auto ed = MeshEditBatch(*mesh, MeshEditScope.Geometry | MeshEditScope.Marks);
-        auto mask = currentMask();
-        // task 1905 Stage P0-a: catch the return value the kernel already
-        // produces (it used to be discarded here). INSTRUMENT ONLY — `affected`
-        // is not read below and decides nothing yet; the degenerate-delta
-        // fallback's own rule stays exactly where it was. Capturing it is the
-        // precondition for a later commit to tell "the kernel touched nothing"
-        // (`affected == 0`) apart from "the kernel touched something and the
-        // batch recorded none of it" (`affected > 0 && delta.isEmpty`) — see
-        // the fallback block below and doc/tasks/work/1905-*.md §D2/§Б12.
-        size_t affected = ed.extendEdgesByMask(mask, inset_, shift_,
-                             offsetVec(), rotateVec(), scaleVec(),
-                             segments_, livePivot());
-        auto delta = ed.close();
-
+        const usedDelta = fillCommitCarrier(*mesh, cmd);
         preview_.reset();      // the live mesh was rebuilt outside the seam
         refreshCaches();
 
-        if (!delta.isEmpty) {
-            cmd.setDelta(delta, "Edge Extend");
+        if (usedDelta) {
             recordGestureEdit(cmd, GestureRecordMode.Plain);
             return;
         }
@@ -1124,16 +1226,13 @@ private:
         // is a tool COMMIT-semantics question owned by task 1905.
         //
         // As there, this block has NO witness in either lane — measured at
-        // Stage N with an `assert(false)` probe on the twin site. It is
-        // defensive, and reaching it or deleting it is part of 1905's answer.
-        // `affected` above is now available to that answer but is not yet
-        // consulted — see the comment at its capture site.
-        auto post = MeshSnapshot.capture(*mesh);
-        cmd.setSnapshots(before, post, "Edge Extend");
+        // Stage N with an `assert(false)` probe on the twin site. It remains
+        // the defensive whole-snapshot carrier built by fillCommitCarrier.
         recordGestureEdit(cmd, GestureRecordMode.Plain);
     }
 
     void refreshCaches() {
+        if (suppressRefreshForTest_) return;
         refreshDisplay(mesh, gpu);
     }
 

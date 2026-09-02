@@ -70,6 +70,7 @@ import prepared_edge_slice_param_update : PreparedEdgeSliceParamUpdateOwner;
 import prepared_loop_slice_deactivate : PreparedLoopSliceDeactivateOwner;
 import prepared_loop_slice_param_update : PreparedLoopSliceParamUpdateOwner;
 import prepared_edge_extend_param_update : PreparedEdgeExtendParamUpdateOwner;
+import prepared_edge_extend_deactivate : PreparedEdgeExtendDeactivateOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -105,7 +106,7 @@ private enum PreparedResourceKind : ubyte {
     VertexMergeParamUpdateState, VertexBevelParamUpdateState,
     VertexExtrudeParamUpdateState, SliceDeactivateState, SliceParamUpdateState,
     EdgeSliceDeactivateState, EdgeSliceParamUpdateState, LoopSliceDeactivateState,
-    LoopSliceParamUpdateState, EdgeExtendParamUpdateState
+    LoopSliceParamUpdateState, EdgeExtendParamUpdateState, EdgeExtendDeactivateState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -166,6 +167,7 @@ private struct PreparedResourceEntry {
     PreparedLoopSliceDeactivateOwner loopSliceDeactivate;
     PreparedLoopSliceParamUpdateOwner loopSliceParamUpdate;
     PreparedEdgeExtendParamUpdateOwner edgeExtendParamUpdate;
+    PreparedEdgeExtendDeactivateOwner edgeExtendDeactivate;
     PreparedMirrorDeactivateOwner mirrorDeactivate;
     PreparedBridgeDeactivateOwner bridgeDeactivate;
     ClickPointResourceOwner clickDestroy;
@@ -992,6 +994,16 @@ public:
         PreparedResourceEntry e; e.kind = PreparedResourceKind.EdgeExtendParamUpdateState;
         e.edgeExtendParamUpdate = owner; resources_ ~= e; return true;
     }
+    bool prepareEdgeExtendDeactivate(PreparedEdgeExtendDeactivateOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected Edge Extend deactivate enlist failure");
+        PreparedResourceEntry e; e.kind = PreparedResourceKind.EdgeExtendDeactivateState;
+        e.edgeExtendDeactivate = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -1338,6 +1350,9 @@ public:
             case PreparedResourceKind.EdgeExtendParamUpdateState:
                 ok = e.edgeExtendParamUpdate !is null &&
                     e.edgeExtendParamUpdate.validate(); break;
+            case PreparedResourceKind.EdgeExtendDeactivateState:
+                ok = e.edgeExtendDeactivate !is null &&
+                    e.edgeExtendDeactivate.validate(); break;
             case PreparedResourceKind.MirrorDeactivateState:
                 ok = e.mirrorDeactivate !is null &&
                     e.mirrorDeactivate.validate(); break;
@@ -1648,6 +1663,10 @@ public:
             e.edgeExtendParamUpdate.install();
             version(unittest) installTrace_[installTraceLength_++] = 69;
             break;
+        case PreparedResourceKind.EdgeExtendDeactivateState:
+            e.edgeExtendDeactivate.install();
+            version(unittest) installTrace_[installTraceLength_++] = 70;
+            break;
         case PreparedResourceKind.MirrorDeactivateState:
             e.mirrorDeactivate.install();
             version(unittest) installTrace_[installTraceLength_++] = 40;
@@ -1757,6 +1776,8 @@ private:
             e.loopSliceParamUpdate.abort(); break;
         case PreparedResourceKind.EdgeExtendParamUpdateState:
             e.edgeExtendParamUpdate.abort(); break;
+        case PreparedResourceKind.EdgeExtendDeactivateState:
+            e.edgeExtendDeactivate.abort(); break;
         case PreparedResourceKind.MirrorDeactivateState:
             e.mirrorDeactivate.abort(); break;
         case PreparedResourceKind.BridgeDeactivateState:

@@ -294,6 +294,7 @@ B5Q_PREPARED_LEGACY = {
     ("tools.slice.loop_slice_tool", "LoopSliceTool", "deactivate"),
     ("tools.slice.loop_slice_tool", "LoopSliceTool", "onParamChanged"),
     ("tools.edit.edge_extend", "EdgeExtendTool", "onParamChanged"),
+    ("tools.edit.edge_extend", "EdgeExtendTool", "deactivate"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
@@ -331,7 +332,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "0e65d0e1438c02de5a4775fbb10ca59ebdc8c51dbdab84491c453d115122fbf1"
+    "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -351,7 +352,7 @@ def validate_deferred_rows(rows, require_canonical=True):
             TOOL_STATE_DEFERRED_CANONICAL_SHA256:
         fail("P1.0b.1 checked-in deferred exact values drifted")
 validate_deferred_rows(TOOL_STATE_DEFERRED_ROWS)
-for field in ("batch", "reason"):
+for field in (("batch", "reason") if TOOL_STATE_DEFERRED_ROWS else ()):
     mutant = json.loads(json.dumps(TOOL_STATE_DEFERRED_ROWS))
     mutant[0][field] = "" if field == "reason" else "P9.invalid"
     try: validate_deferred_rows(mutant)
@@ -371,29 +372,36 @@ batch_swap = json.loads(json.dumps(TOOL_STATE_DEFERRED_ROWS))
 batch_pair = next(((i, j) for i in range(len(batch_swap))
                    for j in range(i + 1, len(batch_swap))
                    if batch_swap[i]["batch"] != batch_swap[j]["batch"]), None)
-if batch_pair is None:
+if not batch_swap:
+    pass
+elif batch_pair is None:
     # The tail ledger can legitimately become batch-homogeneous. Keep the
     # mutation effective by substituting a different allowed batch value.
     batch_swap[0]["batch"] = "P1.0b.2+"
 else:
     batch_swap[batch_pair[0]]["batch"], batch_swap[batch_pair[1]]["batch"] = \
         batch_swap[batch_pair[1]]["batch"], batch_swap[batch_pair[0]]["batch"]
-expect_deferred_exact_drift(batch_swap, "allowed-batch swap")
+if batch_swap:
+    expect_deferred_exact_drift(batch_swap, "allowed-batch swap")
 
 reason_swap = json.loads(json.dumps(TOOL_STATE_DEFERRED_ROWS))
 reason_pair = next(((i, j) for i in range(len(reason_swap))
                     for j in range(i + 1, len(reason_swap))
                     if reason_swap[i]["reason"] != reason_swap[j]["reason"]), None)
-if reason_pair is None:
+if not reason_swap:
+    pass
+elif reason_pair is None:
     reason_swap[0]["reason"] += " (mutated)"
 else:
     reason_swap[reason_pair[0]]["reason"], reason_swap[reason_pair[1]]["reason"] = \
         reason_swap[reason_pair[1]]["reason"], reason_swap[reason_pair[0]]["reason"]
-expect_deferred_exact_drift(reason_swap, "allowed-reason swap")
+if reason_swap:
+    expect_deferred_exact_drift(reason_swap, "allowed-reason swap")
 
 reason_replace = json.loads(json.dumps(TOOL_STATE_DEFERRED_ROWS))
-reason_replace[0]["reason"] = "different nonempty reviewed-looking reason"
-expect_deferred_exact_drift(reason_replace, "nonempty-reason replacement")
+if reason_replace:
+    reason_replace[0]["reason"] = "different nonempty reviewed-looking reason"
+    expect_deferred_exact_drift(reason_replace, "nonempty-reason replacement")
 
 # P1.0b.3d dormant implementation/route axis. All twenty frozen roots stay on
 # their exact Legacy bodies; a sibling producer exists and only producer code
@@ -514,6 +522,7 @@ for path, text in prepared_source_texts.items():
             "prepared_loop_slice_deactivate",
             "prepared_loop_slice_param_update",
             "prepared_edge_extend_param_update",
+            "prepared_edge_extend_deactivate",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
@@ -2628,7 +2637,7 @@ def edge_slice_deactivate_gate(s):
         "target_.installPreparedDeactivateState(image_)")) and \
         context.count("case PreparedResourceKind.EdgeSliceDeactivateState:") == 3 and \
         "e.edgeSliceDeactivate.install();" in context and \
-        "Primitive, Slice, EdgeSlice, LoopSlice, TopologyPen" in effect
+        "Primitive, Slice, EdgeSlice, LoopSlice, EdgeExtend," in effect
 if not edge_slice_deactivate_gate(edge_slice_deactivate_sources):
     fail("Edge Slice deactivate prepared contract drift")
 for target, old, new, label in (
@@ -2640,8 +2649,8 @@ for target, old, new, label in (
     ("owner", "target.classinfo !is EdgeSliceTool.classinfo", "false", "broaden product"),
     ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
     ("context", "e.edgeSliceDeactivate.install();", "", "drop context install"),
-    ("effect", "Primitive, Slice, EdgeSlice, LoopSlice, TopologyPen",
-     "Primitive, Slice, LoopSlice, TopologyPen", "drop effect kind"),
+    ("effect", "Primitive, Slice, EdgeSlice, LoopSlice, EdgeExtend,",
+     "Primitive, Slice, LoopSlice, EdgeExtend,", "drop effect kind"),
 ):
     mutant = dict(edge_slice_deactivate_sources)
     if target == "tool":
@@ -2693,7 +2702,7 @@ def loop_slice_deactivate_gate(s):
         "target_.installPreparedDeactivateState(image_)")) and \
         context.count("case PreparedResourceKind.LoopSliceDeactivateState:") == 3 and \
         "e.loopSliceDeactivate.install();" in context and \
-        "Primitive, Slice, EdgeSlice, LoopSlice, TopologyPen" in effect
+        "Primitive, Slice, EdgeSlice, LoopSlice, EdgeExtend," in effect
 if not loop_slice_deactivate_gate(loop_slice_deactivate_sources):
     fail("Loop Slice deactivate prepared contract drift")
 for target, old, new, label in (
@@ -2707,8 +2716,8 @@ for target, old, new, label in (
      "broaden product"),
     ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
     ("context", "e.loopSliceDeactivate.install();", "", "drop context install"),
-    ("effect", "Primitive, Slice, EdgeSlice, LoopSlice, TopologyPen",
-     "Primitive, Slice, EdgeSlice, TopologyPen", "drop effect kind"),
+    ("effect", "Primitive, Slice, EdgeSlice, LoopSlice, EdgeExtend,",
+     "Primitive, Slice, EdgeSlice, EdgeExtend,", "drop effect kind"),
 ):
     mutant = dict(loop_slice_deactivate_sources)
     if target == "tool":
@@ -2937,6 +2946,91 @@ run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(copy_fixture)], cwd=ROOT,
 if run.returncode == 0 or ("not copyable" not in run.stdout and
         not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
     fail("Edge Extend parameter token copy was not rejected:\n" + run.stdout)
+
+edge_extend_deactivate_sources = {
+    "tool": (ROOT / "source/tools/edit/edge_extend.d").read_text(),
+    "owner": (ROOT / "source/prepared_edge_extend_deactivate.d").read_text(),
+    "context": record_context,
+    "xfrm": (ROOT / "source/tools/transform/xfrm_transform.d").read_text(),
+    "transform": (ROOT / "source/tools/transform/transform.d").read_text(),
+    "scale": (ROOT / "source/tools/transform/scale.d").read_text(),
+    "effect": edge_slice_deactivate_sources["effect"],
+}
+def edge_extend_deactivate_gate(s):
+    tool, owner, context, xfrm, transform, scale, effect = (s[k] for k in
+        ("tool", "owner", "context", "xfrm", "transform", "scale", "effect"))
+    start = tool.find("final PreparedEdgeExtendDeactivateImage buildPreparedDeactivateState")
+    end = tool.find("void commitEdit()", start)
+    product = tool[start:end]
+    return all(x in product for x in (
+        "image.expectedLive = MeshSnapshot.capture(live)",
+        "image.expectedBefore = before", "xfrm.buildPreparedEmbeddedDeactivateImage()",
+        "preview_.prepareImage(image.preview)",
+        "fillCommitCarrier(image.candidate, cmd)",
+        "image.expectedLive.matches(live)", "preview_.matchesImage(image.preview)",
+        "xfrm.preparedEmbeddedDeactivateMatches(image.xfrm)",
+        "xfrm.installPreparedEmbeddedDeactivate(image.xfrm)",
+        "uploadOwner.owns(gpu)",
+        "context.prepareStampedMeshImage(layer, owner.candidate",
+        "context.prepareUpload(uploadOwner, owner.candidate)",
+        "context.prepareGestureCarrierMismatch()",
+        "context.prepareEdgeExtendDeactivate(owner)")) and all(x in owner for x in (
+        "target.classinfo !is EdgeExtendTool.classinfo",
+        "!target.ownsPreparedLayer(layer)", "&layer_.meshRef() !is source_",
+        "prepared_.owner != owner_", "prepared_.generation != generation_",
+        "validatedToken_.owner != owner_",
+        "validatedToken_.generation != generation_",
+        "target_.installPreparedDeactivateState(image_)")) and all(x in xfrm for x in (
+    "buildPreparedEmbeddedDeactivateImage() const nothrow @nogc",
+        "history !is null || editIsOpen()", "scaleDragActive || runBaselineValid",
+        "preparedEmbeddedDeactivateMatches(",
+        "installPreparedEmbeddedDeactivate(")) and all(x in transform for x in (
+        "buildPreparedScalarDeactivateImage()", "preparedScalarDeactivateMatches(",
+        "installPreparedScalarDeactivate(",
+        "!wholeMeshDrag && !propsDragging && !needsGpuUpdate")) and all(x in scale for x in (
+        "image.ownsRelative", "SDL_SetRelativeMouseMode(image.preRelative)",
+        "ownsRelativeMouse = false")) and \
+        context.count("case PreparedResourceKind.EdgeExtendDeactivateState:") == 3 and \
+        "e.edgeExtendDeactivate.install();" in context and \
+        "LoopSlice, EdgeExtend," in effect
+if not edge_extend_deactivate_gate(edge_extend_deactivate_sources):
+    fail("Edge Extend deactivate prepared contract drift")
+for target, old, new, label in (
+    ("tool", "fillCommitCarrier(image.candidate, cmd)",
+     "fillCommitCarrier(live, cmd)", "run commit on live"),
+    ("tool", "image.expectedLive.matches(live)", "true", "drop live witness"),
+    ("tool", "preview_.matchesImage(image.preview)", "true", "drop preview witness"),
+    ("tool", "uploadOwner.owns(gpu)", "true", "drop GPU identity"),
+    ("tool", "context.prepareEdgeExtendDeactivate(owner)", "true",
+     "drop final state enlist"),
+    ("owner", "&layer_.meshRef() !is source_", "false", "drop Layer identity"),
+    ("xfrm", "history !is null || editIsOpen()", "false || false",
+     "drop embedded idle proof"),
+    ("transform", "!wholeMeshDrag && !propsDragging && !needsGpuUpdate",
+     "true", "drop scalar GPU proof"),
+    ("scale", "SDL_SetRelativeMouseMode(image.preRelative)", "cast(void)0",
+     "drop relative mouse restore"),
+    ("context", "e.edgeExtendDeactivate.install();", "", "drop context install"),
+    ("effect", "LoopSlice, EdgeExtend,", "LoopSlice,", "drop effect kind"),
+):
+    mutant = dict(edge_extend_deactivate_sources)
+    if target == "tool":
+        text = mutant[target]
+        start = text.find("final PreparedEdgeExtendDeactivateImage buildPreparedDeactivateState")
+        end = text.find("void commitEdit()", start)
+        product = text[start:end].replace(old, new, 1)
+        mutant[target] = text[:start] + product + text[end:]
+    else:
+        mutant[target] = mutant[target].replace(old, new, 1)
+    if mutant[target] == edge_extend_deactivate_sources[target] or \
+            edge_extend_deactivate_gate(mutant):
+        fail(f"Edge Extend deactivate mutation did not RED: {label}")
+copy_fixture = ROOT / "tests/compile_fail/prepared_edge_extend_deactivate_token_copy.d"
+run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(copy_fixture)], cwd=ROOT,
+    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+if run.returncode == 0 or ("not copyable" not in run.stdout and
+        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
+    fail("Edge Extend deactivate token copy was not rejected:\n" + run.stdout)
 
 vertex_extrude_param_sources = {
     "tool": (ROOT / "source/tools/edit/vertex_extrude_tool.d").read_text(),

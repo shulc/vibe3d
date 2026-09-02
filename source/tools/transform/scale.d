@@ -16,6 +16,12 @@ struct PreparedScaleActivationImage {
     bool pendingScaleValid, valid;
     void clear() nothrow @nogc { this = PreparedScaleActivationImage.init; }
 }
+struct PreparedScaleEmbeddedDeactivateImage {
+    TransformTool.PreparedScalarDeactivateImage base;
+    SDL_bool preRelative;
+    bool ownsRelative, valid;
+    void clear() nothrow @nogc { valid = ownsRelative = false; base.clear(); }
+}
 import handler;
 import mesh;
 import editmode;
@@ -147,6 +153,28 @@ private class ScaleHeadHandle : Handler {
 }
 
 class ScaleTool : TransformTool {
+public:
+    final PreparedScaleEmbeddedDeactivateImage
+            buildPreparedEmbeddedDeactivateImage() const nothrow @nogc {
+        PreparedScaleEmbeddedDeactivateImage image;
+        image.base = buildPreparedScalarDeactivateImage();
+        image.preRelative = preDragRelativeMouse;
+        image.ownsRelative = ownsRelativeMouse;
+        image.valid = image.base.valid; return image;
+    }
+    final bool preparedEmbeddedDeactivateMatches(
+            in PreparedScaleEmbeddedDeactivateImage image) const nothrow @nogc {
+        return image.valid && image.preRelative == preDragRelativeMouse &&
+            image.ownsRelative == ownsRelativeMouse &&
+            preparedScalarDeactivateMatches(image.base);
+    }
+    final void installPreparedEmbeddedDeactivate(
+            ref PreparedScaleEmbeddedDeactivateImage image) nothrow @nogc {
+        if (!image.valid) return;
+        if (image.ownsRelative) SDL_SetRelativeMouseMode(image.preRelative);
+        ownsRelativeMouse = false;
+        installPreparedScalarDeactivate(image.base); image.clear();
+    }
     ScaleHandler handler;
     ScaleHeadHandle headX, headY, headZ;
 

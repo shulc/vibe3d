@@ -117,6 +117,19 @@ import edit_session    : LiveEvalClient, SlotActivationClient,
 import tools.transform.move      : MoveTool;
 import tools.transform.rotate    : RotateTool;
 import tools.transform.scale     : ScaleTool;
+import tools.transform.scale     : PreparedScaleEmbeddedDeactivateImage;
+
+struct PreparedXfrmEmbeddedDeactivateImage {
+    TransformTool.PreparedScalarDeactivateImage wrapper, move, rotate;
+    PreparedScaleEmbeddedDeactivateImage scale;
+    bool expectedRecordViaInSession;
+    bool flagT, flagR, flagS;
+    bool valid;
+    void clear() nothrow @nogc {
+        valid = false; wrapper.clear(); move.clear(); rotate.clear(); scale.clear();
+        expectedRecordViaInSession = flagT = flagR = flagS = false;
+    }
+}
 // Task 0719 (T1) — halves of THIS class that live in sibling files as
 // `mixin template`s. Plain (non-selective) imports on purpose: a template
 // mixin resolves its identifiers at the instantiation site, so the template
@@ -1215,6 +1228,64 @@ public:
             context.consolidate(history.currentRunId);
         return PreparedDeactivateEffect(preparedToolStateOwner,
             PreparedDeactivateKind.Xfrm, accepted);
+    }
+
+    final PreparedXfrmEmbeddedDeactivateImage
+            buildPreparedEmbeddedDeactivateImage() const nothrow @nogc {
+        PreparedXfrmEmbeddedDeactivateImage image;
+        // EdgeExtend drives only the banks' gesture-scalar surfaces. The
+        // wrapper itself must therefore still be at an idle run boundary;
+        // any open wrapper edit/history makes this the standalone product and
+        // is deliberately refused here.
+        if (history !is null || editIsOpen() || activeDrag !is null ||
+            dragBaseline.length != 0 || currentRunBank != DragBank.None ||
+            moveDragFastPath || rotDragFastPath || scaleDragFastPath ||
+            scaleDragActive || runBaselineValid || runFrameValid ||
+            refireAnchor.length != 0 || refirePreValid || foldSrc_.length != 0 ||
+            itemEditCapturing_ || itemEditTargets_.length != 0 ||
+            itemEditBefore_.length != 0) return image;
+        image.wrapper = buildPreparedScalarDeactivateImage();
+        image.flagT = flagT; image.flagR = flagR; image.flagS = flagS;
+        if (flagT) image.move = moveSub.buildPreparedScalarDeactivateImage();
+        if (flagR) image.rotate = rotateSub.buildPreparedScalarDeactivateImage();
+        if (flagS) image.scale = scaleSub.buildPreparedEmbeddedDeactivateImage();
+        image.expectedRecordViaInSession = recordViaInSession;
+        image.valid = image.wrapper.valid && (!flagT || image.move.valid) &&
+            (!flagR || image.rotate.valid) && (!flagS || image.scale.valid);
+        return image;
+    }
+
+    final bool preparedEmbeddedDeactivateMatches(
+            in PreparedXfrmEmbeddedDeactivateImage image) const nothrow @nogc {
+        return image.valid && history is null && !editIsOpen() &&
+            flagT == image.flagT && flagR == image.flagR && flagS == image.flagS &&
+            recordViaInSession == image.expectedRecordViaInSession &&
+            activeDrag is null && dragBaseline.length == 0 &&
+            currentRunBank == DragBank.None && !moveDragFastPath &&
+            !rotDragFastPath && !scaleDragFastPath && !scaleDragActive &&
+            !runBaselineValid && !runFrameValid && refireAnchor.length == 0 &&
+            !refirePreValid && foldSrc_.length == 0 && !itemEditCapturing_ &&
+            itemEditTargets_.length == 0 && itemEditBefore_.length == 0 &&
+            preparedScalarDeactivateMatches(image.wrapper) &&
+            (!flagT || moveSub.preparedScalarDeactivateMatches(image.move)) &&
+            (!flagR || rotateSub.preparedScalarDeactivateMatches(image.rotate)) &&
+            (!flagS || scaleSub.preparedEmbeddedDeactivateMatches(image.scale));
+    }
+
+    final void installPreparedEmbeddedDeactivate(
+            ref PreparedXfrmEmbeddedDeactivateImage image) nothrow @nogc {
+        if (!image.valid) return;
+        if (image.flagT) moveSub.installPreparedScalarDeactivate(image.move);
+        if (image.flagR) rotateSub.installPreparedScalarDeactivate(image.rotate);
+        if (image.flagS) scaleSub.installPreparedEmbeddedDeactivate(image.scale);
+        recordViaInSession = false;
+        if (image.flagR) rotateSub.setRecordViaInSession(false);
+        if (image.flagS) scaleSub.setRecordViaInSession(false);
+        currentRunBank = DragBank.None;
+        lastAppliedGestureMutationVersion = ulong.max;
+        armedUndoEpoch = ulong.max;
+        installPreparedScalarDeactivate(image.wrapper);
+        image.clear();
     }
 
     override void deactivate() {
