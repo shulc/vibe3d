@@ -32,6 +32,9 @@ import prepared_tool_effect : PreparedSessionActivateEffect, PreparedActivateKin
 import prepared_slice_activation : PreparedSliceActivationOwner;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_slice_deactivate : PreparedSliceDeactivateOwner;
+import prepared_slice_param_update : PreparedSliceParamUpdateOwner;
+import prepared_tool_effect : PreparedSliceParamEffect, PreparedSliceParamKind;
+import mesh_gpu : GpuUploadOwner;
 import command_history : PreparedHistoryKind;
 import document : Layer;
 import mesh_edit_delta : MeshEditScope;
@@ -59,6 +62,27 @@ struct PreparedSliceDeactivateImage {
     void clear() nothrow @nogc {
         expectedLive = MeshSnapshot.init; expectedBefore = MeshSnapshot.init;
         valid = commitEligible = false;
+    }
+}
+
+struct PreparedSliceParamImage {
+    bool valid, recognized, applies, nextAxisLocked, nextPreviewLive;
+    string pname;
+    bool expectedActive, expectedPreviewLive, expectedHaveBefore;
+    bool expectedAxisLocked, expectedHaveFrozen;
+    int expectedDragPart, expectedAxis, expectedGapSide;
+    bool expectedSplit, expectedCaps, expectedInfinite, expectedSnap;
+    float expectedGap, expectedSnapAngle;
+    Vec3 expectedStart, expectedEnd, expectedVector, expectedFrozenNormal;
+    MeshSnapshot expectedLive, expectedBefore;
+    uint[] expectedRestrictFaces;
+    Mesh candidate;
+    uint deliveryFlags, deliveryDomains;
+    ulong nextMutationVersion;
+    void clear() nothrow @nogc {
+        pname = null; expectedLive = MeshSnapshot.init;
+        expectedBefore = MeshSnapshot.init; expectedRestrictFaces = null;
+        candidate = Mesh.init; valid = recognized = applies = false;
     }
 }
 
@@ -1301,6 +1325,118 @@ public:
     // never an uncommitted edit to coordinate with history navigation.
     override void evaluate() {}
 
+    private static bool preparedParamRecognized(string pname) pure nothrow @nogc {
+        switch (pname) {
+        case "startX": case "startY": case "startZ":
+        case "endX": case "endY": case "endZ":
+        case "split": case "caps": case "gap": case "gapSide":
+        case "axis": case "vectorX": case "vectorY": case "vectorZ":
+        case "infinite": case "snap": case "snapAngle": return true;
+        default: return false;
+        }
+    }
+
+    final PreparedSliceParamImage buildPreparedParamUpdate(
+            string pname, ref Mesh live) {
+        PreparedSliceParamImage image;
+        image.valid = true; image.pname = pname;
+        image.recognized = preparedParamRecognized(pname);
+        image.expectedActive = active;
+        image.expectedPreviewLive = previewLive_;
+        image.expectedHaveBefore = haveBefore_;
+        image.expectedAxisLocked = axisLocked_;
+        image.expectedHaveFrozen = haveFrozen_;
+        image.expectedDragPart = dragPart_;
+        image.expectedAxis = cast(int)axis_;
+        image.expectedGapSide = cast(int)gapSide_;
+        image.expectedSplit = split_; image.expectedCaps = caps_;
+        image.expectedInfinite = infinite_; image.expectedSnap = snap_;
+        image.expectedGap = gap_; image.expectedSnapAngle = snapAngle_;
+        image.expectedStart = start_; image.expectedEnd = end_;
+        image.expectedVector = vector_;
+        image.expectedFrozenNormal = frozenNormal_;
+        image.expectedLive = MeshSnapshot.capture(live);
+        image.expectedBefore = before_;
+        image.expectedRestrictFaces = restrictFaces_.dup;
+        image.nextAxisLocked = axisLocked_ || pname == "axis";
+        image.nextPreviewLive = previewLive_;
+        if (!image.recognized || !active || dragPart_ != DragNone ||
+            !previewLive_ || !haveBefore_ || !before_.filled)
+            return image;
+
+        image.applies = true;
+        image.candidate = detachedPreparedMesh(live);
+        auto shadow = beginPreparedShadow(image.candidate);
+        Vec3 normal = haveFrozen_ ? frozenNormal_ : cachedWorkplaneNormal();
+        int axisMode = image.nextAxisLocked ? cast(int)axis_ : SLICE_AXIS_DRAG;
+        const n = sliceFromBaseline(image.candidate, before_, start_, end_,
+            normal, axisMode, vector_, infinite_, split_, caps_,
+            restrictFaces_, gap_, cast(int)gapSide_);
+        image.nextPreviewLive = n > 0;
+        image.nextMutationVersion = image.candidate.mutationVersion;
+        drainPreparedShadowDelivery(image.candidate, image.deliveryFlags,
+            image.deliveryDomains);
+        shadow.close();
+        return image;
+    }
+
+    final bool preparedParamUpdateMatches(in PreparedSliceParamImage image,
+            ref const Mesh live) const nothrow @nogc {
+        return image.valid && image.pname !is null &&
+            image.recognized == preparedParamRecognized(image.pname) &&
+            active == image.expectedActive &&
+            previewLive_ == image.expectedPreviewLive &&
+            haveBefore_ == image.expectedHaveBefore &&
+            axisLocked_ == image.expectedAxisLocked &&
+            haveFrozen_ == image.expectedHaveFrozen &&
+            dragPart_ == image.expectedDragPart &&
+            cast(int)axis_ == image.expectedAxis &&
+            cast(int)gapSide_ == image.expectedGapSide &&
+            split_ == image.expectedSplit && caps_ == image.expectedCaps &&
+            infinite_ == image.expectedInfinite && snap_ == image.expectedSnap &&
+            gap_ == image.expectedGap && snapAngle_ == image.expectedSnapAngle &&
+            start_ == image.expectedStart && end_ == image.expectedEnd &&
+            vector_ == image.expectedVector &&
+            frozenNormal_ == image.expectedFrozenNormal &&
+            restrictFaces_ == image.expectedRestrictFaces &&
+            image.expectedLive.matches(live) &&
+            image.expectedBefore.matches(before_);
+    }
+
+    final void installPreparedParamUpdate(ref PreparedSliceParamImage image)
+            nothrow @nogc {
+        if (!image.valid) return;
+        axisLocked_ = image.nextAxisLocked;
+        if (image.applies) {
+            previewLive_ = image.nextPreviewLive;
+            armedKey_.addr = cast(size_t)mesh;
+            armedKey_.mutVer = image.nextMutationVersion;
+        }
+        image.clear();
+    }
+
+    final PreparedSliceParamEffect prepareParamChanged(string pname,
+            PreparedRecordContext context, Layer layer,
+            GpuUploadOwner uploadOwner) {
+        if (context is null) return PreparedSliceParamEffect(
+            preparedToolStateOwner, PreparedSliceParamKind.None, false);
+        scope(failure) context.discard();
+        auto owner = PreparedSliceParamUpdateOwner.prepare(this, layer, pname);
+        auto kind = owner is null ? PreparedSliceParamKind.None : owner.effectKind;
+        bool ok = owner !is null;
+        if (ok && owner.applies)
+            ok = owner.deliveryFlags != 0 && uploadOwner !is null &&
+                uploadOwner.owns(gpu) &&
+                context.prepareStampedMeshImage(layer, owner.candidate,
+                    owner.deliveryFlags, owner.deliveryDomains);
+        if (ok) ok = context.prepareSliceParamUpdate(owner);
+        if (ok && owner.applies)
+            ok = context.prepareUpload(uploadOwner, owner.candidate);
+        if (ok) ok = context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return PreparedSliceParamEffect(preparedToolStateOwner, kind, ok);
+    }
+
     // Tool Properties param edit (task 0283). A panel edit of any CUT-AFFECTING
     // param must re-apply to the CURRENT live slice immediately — not wait for
     // the next drag. The field was already written by injectParamsInto BEFORE
@@ -2256,6 +2392,26 @@ public:
             start_ == Vec3(4,5,6) && end_ == Vec3(7,8,9) &&
             rawStart_ == Vec3(10,11,12) && rawEnd_ == Vec3(13,14,15) &&
             frozenNormal_ == Vec3(0,0,1) && vpWorld_.view[0] == 9;
+    }
+    version(unittest) final void seedPreparedParamForTest(ref Mesh live,
+            bool preview = true) {
+        active = true; dragPart_ = DragNone; previewLive_ = preview;
+        haveBefore_ = true; before_ = MeshSnapshot.capture(live);
+        haveFrozen_ = true; frozenNormal_ = Vec3(0, 1, 0);
+        start_ = Vec3(-2, 0, 0); end_ = Vec3(2, 0, 0);
+        axisLocked_ = false; axis_ = SliceAxis.Y; vector_ = Vec3(0, 1, 0);
+        infinite_ = true; split_ = true; caps_ = false; gap_ = 0;
+        gapSide_ = SliceGapSide.Center; restrictFaces_ = null;
+        armedKey_.stamp(live);
+    }
+    version(unittest) final void mutatePreparedParamForTest() nothrow @nogc {
+        split_ = !split_;
+    }
+    version(unittest) final bool preparedParamInstalledForTest(ref Mesh live) const {
+        return previewLive_ && armedKey_.matches(live);
+    }
+    version(unittest) final bool preparedAxisLockedForTest() const nothrow @nogc {
+        return axisLocked_;
     }
     version(unittest) final void clearFaceSelectionForTest() {
         foreach (fi; 0 .. mesh.faces.length) mesh.deselectFace(cast(int)fi);

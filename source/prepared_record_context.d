@@ -64,6 +64,7 @@ import prepared_vertex_merge_param_update : PreparedVertexMergeParamUpdateOwner;
 import prepared_vertex_bevel_param_update : PreparedVertexBevelParamUpdateOwner;
 import prepared_vertex_extrude_param_update : PreparedVertexExtrudeParamUpdateOwner;
 import prepared_slice_deactivate : PreparedSliceDeactivateOwner;
+import prepared_slice_param_update : PreparedSliceParamUpdateOwner;
 import document : Layer;
 import change_bus : PreparedDeliveryJournal, PreparedDeliverySpec, changeBus;
 import change_bus : MeshEditScope;
@@ -97,7 +98,7 @@ private enum PreparedResourceKind : ubyte {
     PolyBevelParamUpdateState, PolyExtrudeParamUpdateState,
     PolyInsetParamUpdateState, ReductionParamUpdateState,
     VertexMergeParamUpdateState, VertexBevelParamUpdateState,
-    VertexExtrudeParamUpdateState, SliceDeactivateState
+    VertexExtrudeParamUpdateState, SliceDeactivateState, SliceParamUpdateState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -152,6 +153,7 @@ private struct PreparedResourceEntry {
     PreparedVertexBevelParamUpdateOwner vertexBevelParamUpdate;
     PreparedVertexExtrudeParamUpdateOwner vertexExtrudeParamUpdate;
     PreparedSliceDeactivateOwner sliceDeactivate;
+    PreparedSliceParamUpdateOwner sliceParamUpdate;
     PreparedMirrorDeactivateOwner mirrorDeactivate;
     PreparedBridgeDeactivateOwner bridgeDeactivate;
     ClickPointResourceOwner clickDestroy;
@@ -913,6 +915,17 @@ public:
         e.kind = PreparedResourceKind.SliceDeactivateState;
         e.sliceDeactivate = owner; resources_ ~= e; return true;
     }
+    bool prepareSliceParamUpdate(PreparedSliceParamUpdateOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        version(unittest) if (failAfterResourceBegin_)
+            throw new Exception("injected Slice param enlist failure");
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.SliceParamUpdateState;
+        e.sliceParamUpdate = owner; resources_ ~= e; return true;
+    }
     bool prepareInheritedNoop(PreparedInheritedNoopOwner owner) {
         if (!begun_ || validated_Once || owner is null) return false;
         resources_.reserve(1 + resources_.length);
@@ -1235,6 +1248,9 @@ public:
             case PreparedResourceKind.SliceDeactivateState:
                 ok = e.sliceDeactivate !is null &&
                     e.sliceDeactivate.validate(); break;
+            case PreparedResourceKind.SliceParamUpdateState:
+                ok = e.sliceParamUpdate !is null &&
+                    e.sliceParamUpdate.validate(); break;
             case PreparedResourceKind.MirrorDeactivateState:
                 ok = e.mirrorDeactivate !is null &&
                     e.mirrorDeactivate.validate(); break;
@@ -1521,6 +1537,10 @@ public:
             e.sliceDeactivate.install();
             version(unittest) installTrace_[installTraceLength_++] = 55;
             break;
+        case PreparedResourceKind.SliceParamUpdateState:
+            e.sliceParamUpdate.install();
+            version(unittest) installTrace_[installTraceLength_++] = 64;
+            break;
         case PreparedResourceKind.MirrorDeactivateState:
             e.mirrorDeactivate.install();
             version(unittest) installTrace_[installTraceLength_++] = 40;
@@ -1618,6 +1638,8 @@ private:
             e.vertexExtrudeParamUpdate.abort(); break;
         case PreparedResourceKind.SliceDeactivateState:
             e.sliceDeactivate.abort(); break;
+        case PreparedResourceKind.SliceParamUpdateState:
+            e.sliceParamUpdate.abort(); break;
         case PreparedResourceKind.MirrorDeactivateState:
             e.mirrorDeactivate.abort(); break;
         case PreparedResourceKind.BridgeDeactivateState:

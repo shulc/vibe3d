@@ -288,6 +288,7 @@ B5Q_PREPARED_LEGACY = {
     ("tools.transform.scale", "ScaleTool", "update"),
     ("tools.transform.xfrm_transform", "XfrmTransformTool", "update"),
     ("tools.edit.topology_pen.tool", "TopologyPenTool", "deactivate"),
+    ("tools.slice.slice_tool", "SliceTool", "onParamChanged"),
 }
 PREPARED_LEGACY = (B3D_PREPARED_LEGACY | B4C_PREPARED_LEGACY |
     B5B_PREPARED_LEGACY | B5D_PREPARED_LEGACY | B5F_PREPARED_LEGACY |
@@ -325,7 +326,7 @@ for relative, methods in converted_sources.items():
 TOOL_STATE_DEFERRED_ROWS = json.loads(
     (ROOT / "tools/prepared_tool_state_deferred.json").read_text())
 TOOL_STATE_DEFERRED_CANONICAL_SHA256 = \
-    "c8016c8e5db24ab90cfee4784bda3de5460b3e1c26b9b884501a847029a4913b"
+    "fdd99cde7ce551471f8386b4f1710c33bd06f8551a4bb0a2b6c6ece18908395e"
 def validate_deferred_rows(rows, require_canonical=True):
     rows = [r for r in rows if (r["key"]["module"], r["key"]["aggregate"],
             r["key"]["symbol"]) not in PREPARED_LEGACY]
@@ -499,6 +500,7 @@ for path, text in prepared_source_texts.items():
             "prepared_vertex_bevel_param_update",
             "prepared_vertex_extrude_param_update",
             "prepared_slice_deactivate",
+            "prepared_slice_param_update",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
@@ -2507,13 +2509,21 @@ def slice_deactivate_gate(s):
     start = tool.find("final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,")
     end = tool.find("version(unittest) final void seedPreparedDeactivateForTest", start)
     producer = tool[start:end]
+    build_start = tool.find(
+        "final PreparedSliceDeactivateImage buildPreparedDeactivateState")
+    build_end = tool.find("final bool preparedDeactivateStateMatches", build_start)
+    builder = tool[build_start:build_end]
+    match_start = build_end
+    match_end = tool.find("final void installPreparedDeactivateState", match_start)
+    matcher = tool[match_start:match_end]
     install_start = tool.find("final void installPreparedDeactivateState(")
     install_end = tool.find("final PreparedDeactivateEffect prepareDeactivate", install_start)
     installer = tool[install_start:install_end]
-    return (all(x in tool for x in (
+    return (all(x in builder for x in (
                 "image.expectedLive = MeshSnapshot.capture(live);",
-                "image.expectedBefore = before_;",
-                "armedKey_.matches(live)",
+                "image.expectedBefore = before_;"))
+            and "armedKey_.matches(live)" in builder
+            and all(x in matcher for x in (
                 "image.expectedLive.matches(live)",
                 "image.expectedBefore.matches(before_)")) and
             all(x in installer for x in (
@@ -2563,6 +2573,7 @@ for target, old, new, label in (
         prepare_start = text.find("final PreparedDeactivateEffect prepareDeactivate(PreparedRecordContext context,")
         install_start = text.find("final void installPreparedDeactivateState(")
         build_start = text.find("final PreparedSliceDeactivateImage buildPreparedDeactivateState")
+        match_start = text.find("final bool preparedDeactivateStateMatches", build_start)
         if label in ("drop history", "drop carrier diagnostic", "drop final state"):
             start = prepare_start
         elif label in ("drop active reset", "drop preview reset", "drop key reset"):
