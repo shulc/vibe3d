@@ -21,7 +21,8 @@ import eventlog : queryMouse;
 import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind,
     PreparedSessionActivateEffect, PreparedActivateKind,
     PreparedDeactivateEffect, PreparedDeactivateKind;
-import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
+    PreparedToolParamDoorClient;
 import prepared_mirror_activation : PreparedMirrorActivationOwner,
     PreparedMirrorDeactivateOwner;
 import mesh_gpu : GpuCreateUploadOwner, GpuUploadOwner, GpuResourceOwner;
@@ -181,7 +182,7 @@ Vec3 derivedLeft(in MirrorParams p) {
 // `rotateBox` (small — drags `angle`, tilting the plane about the fixed
 // `refAxis(axis)`), plus a wire-quad + dashed-axis plane visualization.
 // ---------------------------------------------------------------------------
-class MirrorTool : Tool, PreparedToolDoorClient {
+class MirrorTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const nothrow @nogc { return meshSrc_(); }
@@ -577,6 +578,15 @@ public:
         auto prepared = prepareParamState(name);
         MirrorPreparedState handle;
         if (validatePreparedState(prepared, handle)) installLegacyPreparedState(handle);
+    }
+
+    override bool prepareDoorParamChanged(string name, PreparedRecordContext,
+            Layer, ulong, ulong) {
+        auto prepared = prepareParamState(name);
+        MirrorPreparedState handle;
+        if (!validatePreparedState(prepared, handle)) return false;
+        installLegacyPreparedState(handle);
+        return true;
     }
 
 private:

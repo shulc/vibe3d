@@ -118,7 +118,8 @@ import tools.transform.move      : MoveTool;
 import tools.transform.rotate    : RotateTool;
 import tools.transform.scale     : ScaleTool;
 import tools.transform.scale     : PreparedScaleEmbeddedDeactivateImage;
-import prepared_record_context : PreparedToolDoorClient;
+import prepared_record_context : PreparedToolDoorClient,
+    PreparedToolParamDoorClient;
 
 struct PreparedXfrmEmbeddedDeactivateImage {
     TransformTool.PreparedScalarDeactivateImage wrapper, move, rotate;
@@ -618,7 +619,7 @@ struct PreparedXfrmUpdateBoundaryImage {
 // LifecycleUndoEmitter (task 0428): marker — this tool emits a
 // ToolDeactivationCommand on drop (undo-cursor lifecycle stepping).
 class XfrmTransformTool : TransformTool, LiveEvalClient, SlotActivationClient,
-                          PreparedToolDoorClient,
+                          PreparedToolDoorClient, PreparedToolParamDoorClient,
                           LifecycleUndoEmitter {
 public:
     final Mesh* preparedMeshForUpdate() const { return mesh; }
@@ -2309,6 +2310,15 @@ public:
         auto prepared = prepareParamState(name);
         XfrmPreparedState handle;
         if (validatePreparedState(prepared, handle)) installLegacyPreparedState(handle);
+    }
+
+    override bool prepareDoorParamChanged(string name, PreparedRecordContext,
+            Layer, ulong, ulong) {
+        auto prepared = prepareParamState(name);
+        XfrmPreparedState handle;
+        if (!validatePreparedState(prepared, handle)) return false;
+        installLegacyPreparedState(handle);
+        return true;
     }
 
 private:
@@ -7485,6 +7495,14 @@ unittest {
     assert(tool.validatePreparedState(prepared, handle));
     tool.installLegacyPreparedState(handle);
     assert(tool.run.s == Vec3(2.5f, 2.5f, 2.5f));
+
+    // The activation transaction reaches the same typed producer through the
+    // interface, without invoking the legacy hook on the unpublished tool.
+    tool.uniformVal = 3.5f;
+    tool.run.s = Vec3(1, 1, 1);
+    assert(tool.prepareDoorParamChanged("uniformScale", null, null, 0, 0));
+    assert(tool.run.s == Vec3(3.5f, 3.5f, 3.5f),
+        "candidate-local parameter door omitted the prepared install");
     tool.run.s = Vec3(8, 8, 8);
     tool.installLegacyPreparedState(handle);
     assert(tool.run.s == Vec3(8, 8, 8));

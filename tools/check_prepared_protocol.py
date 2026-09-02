@@ -530,6 +530,7 @@ for path, text in prepared_source_texts.items():
             "tools.edit.tack",
             "tools.edit.bridge_tool",
             "tools.alignment.mirror",
+            "tools.create.sphere",
             "tools.edit.edge_extend",
             "tools.edit.topology_pen.tool",
             "tools.alignment.radial_sweep_tool",

@@ -19,7 +19,8 @@ import std.json : JSONValue;
 import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind,
     PreparedSessionActivateEffect, PreparedActivateKind,
     PreparedDeactivateEffect, PreparedDeactivateKind;
-import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
+    PreparedToolParamDoorClient;
 import prepared_bridge_activation : PreparedBridgeActivationOwner,
     PreparedBridgeDeactivateOwner;
 import mesh_gpu : GpuCreateOwner, GpuCreateUploadOwner, GpuUploadOwner,
@@ -267,7 +268,7 @@ void rebuildBridgePreview(const ref MeshSnapshot baseSnap, ref Mesh previewMesh,
 // adjusts Segments, mapping horizontal pixel delta to an integer span
 // count; Twist / Remove Polygons / Flip Loop Pairing are panel-only.
 // ---------------------------------------------------------------------------
-class BridgeTool : Tool, PreparedToolDoorClient {
+class BridgeTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const nothrow @nogc { return meshSrc_(); }
@@ -654,6 +655,15 @@ public:
         auto prepared = prepareParamState(name);
         BridgePreparedState handle;
         if (validatePreparedState(prepared, handle)) installLegacyPreparedState(handle);
+    }
+
+    override bool prepareDoorParamChanged(string name, PreparedRecordContext,
+            Layer, ulong, ulong) {
+        auto prepared = prepareParamState(name);
+        BridgePreparedState handle;
+        if (!validatePreparedState(prepared, handle)) return false;
+        installLegacyPreparedState(handle);
+        return true;
     }
 
 private:

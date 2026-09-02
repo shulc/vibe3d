@@ -2,7 +2,8 @@ module tools.common.command_wrapper;
 import prepared_tool_effect : PreparedParamDelta, PreparedParamKind,
     PreparedSessionActivateEffect, PreparedActivateKind;
 import prepared_tool_effect : PreparedDeactivateEffect, PreparedDeactivateKind;
-import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient,
+    PreparedToolParamDoorClient;
 import prepared_command_wrapper_activation : PreparedCommandWrapperActivationOwner;
 import handler : ClickPointResourceOwner;
 import command_history : PreparedHistoryKind;
@@ -85,7 +86,8 @@ import ImGui = d_imgui;
 // the wantsRefire / buildRefireCommand / setRefireDriving / onRefireCommitted
 // overrides below are the interface's implementations (EditSession discovers
 // them by cast).
-abstract class CommandWrapperTool : Tool, RefireClient, PreparedToolDoorClient {
+abstract class CommandWrapperTool : Tool, RefireClient, PreparedToolDoorClient,
+                                    PreparedToolParamDoorClient {
     protected Command inner;
     protected Mesh*   meshPtr;
     protected GpuMesh*        gpu;
@@ -648,6 +650,15 @@ abstract class CommandWrapperTool : Tool, RefireClient, PreparedToolDoorClient {
         auto prepared = prepareParamChange(name);
         WrapperPreparedParamHandle handle;
         if (validatePreparedParam(prepared, handle)) installLegacyPreparedParam(handle);
+    }
+
+    override bool prepareDoorParamChanged(string name, PreparedRecordContext,
+            Layer, ulong, ulong) {
+        auto prepared = prepareParamChange(name);
+        WrapperPreparedParamHandle handle;
+        if (!validatePreparedParam(prepared, handle)) return false;
+        installLegacyPreparedParam(handle);
+        return true;
     }
 
 private:

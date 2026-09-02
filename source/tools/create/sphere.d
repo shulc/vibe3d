@@ -11,6 +11,8 @@ import params : Param;
 import shader : LitShader;
 import tools.create.primitive_create_tool : SizedRadialCreateTool;
 import tools.create.create_common : currentWorkplaneFrame;
+import prepared_record_context : PreparedRecordContext, PreparedToolParamDoorClient;
+import document : Layer;
 
 import std.math : sin, cos, acos, PI, abs, sqrt;
 
@@ -516,7 +518,8 @@ private void buildEllipseBase(Mesh* dst, int sides,
 // silently emit a flat ellipse fan instead of a sphere. applyHeadless calls
 // buildByMethod() directly, exactly as it did pre-refactor.
 // ---------------------------------------------------------------------------
-final class SphereTool : SizedRadialCreateTool!SphereParams {
+final class SphereTool : SizedRadialCreateTool!SphereParams,
+                         PreparedToolParamDoorClient {
 private:
     // Last params_.axis value seen — used by onParamChanged("axis") to compute
     // the cyclic shift that needs to be undone before applying the new one.
@@ -618,6 +621,15 @@ public:
         auto prepared = prepareAxisParam(name);
         SpherePreparedParamHandle handle;
         if (validatePreparedParam(prepared, handle)) installLegacyPreparedParam(handle);
+    }
+
+    override bool prepareDoorParamChanged(string name, PreparedRecordContext,
+            Layer, ulong, ulong) {
+        auto prepared = prepareAxisParam(name);
+        SpherePreparedParamHandle handle;
+        if (!validatePreparedParam(prepared, handle)) return false;
+        installLegacyPreparedParam(handle);
+        return true;
     }
 
 private:
