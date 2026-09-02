@@ -6,56 +6,74 @@
     "source": "live-capture",
     "reference_token": "ref-editor@11.2v3",
     "method": "gui-gesture",
-    "captured_utc": "2026-08-31",
+    "captured_utc": "2026-09-02",
     "task": "3690",
-    "notes": "Fresh-process paired branches; every position freezes a geometry digest token and the complete selection tuple."
+    "notes": "Fresh-process paired branches; every position freezes a geometry digest token and the complete selection tuple. The undo_edit rows were re-frozen from capture/single_record/{cmd,key} cell E1: command and keyboard channels agree."
   },
   "reference_token": "ref-editor@11.2v3",
   "laws": [
     {
       "id": "scripted_selection_undo_redo",
       "status": "open",
-      "rival_mutation": "skip the selection entry during undo or redo",
+      "rival_mutation": "skip the selection entry during undo or redo and keep the edit applied at undo_edit",
+      "symbols": {
+        "reference": {"sel_a":[17,19,21,23],"sel_b":[9,11,13,15]},
+        "vibe3d": {"sel_a":[17,19,21,23],"sel_b":[9,11,13,15]}
+      },
+      "derived_from_measured": {
+        "rows": ["redo_edit", "redo_b"],
+        "measured_rows": "toolcards/arm_record_p2_press_cells/findings.md:155-156",
+        "mapping": "toolcards/arm_record_p2_press_cells/findings.md:165-168"
+      },
       "reference": [
-        {"at":"selected_a","geometry":"g0","selection":{"mode":"vertices","indices":[17,19,21,23]}},
-        {"at":"edited","geometry":"g1","selection":{"mode":"vertices","indices":[17,19,21,23]}},
-        {"at":"selected_b","geometry":"g1","selection":{"mode":"vertices","indices":[9,11,13,15]}},
-        {"at":"undo_b","geometry":"g1","selection":{"mode":"vertices","indices":[17,19,21,23]}},
-        {"at":"undo_edit","geometry":"g1","selection":{"mode":"vertices","indices":[17,19,21,23]}},
-        {"at":"redo_edit","geometry":"g1","selection":{"mode":"vertices","indices":[17,19,21,23]}},
-        {"at":"redo_b","geometry":"g1","selection":{"mode":"vertices","indices":[9,11,13,15]}}
+        {"at":"selected_a","geometry":"g0","selection":"sel_a","selection_literal":{"mode":"vertices","indices":[17,19,21,23]}},
+        {"at":"edited","geometry":"g1","selection":"sel_a","selection_literal":{"mode":"vertices","indices":[17,19,21,23]}},
+        {"at":"selected_b","geometry":"g1","selection":"sel_b","selection_literal":{"mode":"vertices","indices":[9,11,13,15]}},
+        {"at":"undo_b","geometry":"g1","selection":"sel_a","selection_literal":{"mode":"vertices","indices":[17,19,21,23]}},
+        {"at":"undo_edit","geometry":"g0","selection":"sel_a","selection_literal":{"mode":"vertices","indices":[17,19,21,23]}},
+        {"at":"redo_edit","geometry":"g1","selection":"sel_a","selection_literal":{"mode":"vertices","indices":[17,19,21,23]}},
+        {"at":"redo_b","geometry":"g1","selection":"sel_b","selection_literal":{"mode":"vertices","indices":[9,11,13,15]}}
       ],
       "vibe3d_current": [
-        {"at":"selected_a","geometry":"g0","selection":{"mode":"vertices","indices":[17,19,21,23]}},
-        {"at":"edited","geometry":"g1","selection":{"mode":"vertices","indices":[17,19,21,23]}},
-        {"at":"selected_b","geometry":"g1","selection":{"mode":"vertices","indices":[9,11,13,15]}},
-        {"at":"undo_b","geometry":"g0","selection":{"mode":"vertices","indices":[9,11,13,15]}},
-        {"at":"undo_edit","geometry":"g0","selection":{"mode":"vertices","indices":[9,11,13,15]}},
-        {"at":"redo_edit","geometry":"g1","selection":{"mode":"vertices","indices":[9,11,13,15]}},
-        {"at":"redo_b","geometry":"g1","selection":{"mode":"vertices","indices":[9,11,13,15]}}
+        {"at":"selected_a","geometry":"g0","selection":"sel_a","selection_literal":{"mode":"vertices","indices":[17,19,21,23]}},
+        {"at":"edited","geometry":"g1","selection":"sel_a","selection_literal":{"mode":"vertices","indices":[17,19,21,23]}},
+        {"at":"selected_b","geometry":"g1","selection":"sel_b","selection_literal":{"mode":"vertices","indices":[9,11,13,15]}},
+        {"at":"undo_b","geometry":"g0","selection":"sel_b","selection_literal":{"mode":"vertices","indices":[9,11,13,15]}},
+        {"at":"undo_edit","geometry":"g0","selection":"sel_b","selection_literal":{"mode":"vertices","indices":[9,11,13,15]}},
+        {"at":"redo_edit","geometry":"g1","selection":"sel_b","selection_literal":{"mode":"vertices","indices":[9,11,13,15]}},
+        {"at":"redo_b","geometry":"g1","selection":"sel_b","selection_literal":{"mode":"vertices","indices":[9,11,13,15]}}
       ]
     },
     {
       "id": "viewport_selection_undo_redo",
       "status": "open",
-      "rival_mutation": "route a viewport selection through a non-recording door",
+      "rival_mutation": "route a viewport selection through a non-recording door and keep the edit applied at undo_edit",
+      "symbols": {
+        "reference": {"sel_a":[17,19,21,23],"sel_b":[0,6,7]},
+        "vibe3d": {"sel_a":[0],"sel_b":[4,6]}
+      },
+      "derived_from_measured": {
+        "rows": ["redo_edit", "redo_b"],
+        "measured_rows": "toolcards/arm_record_p2_press_cells/findings.md:155-156",
+        "mapping": "toolcards/arm_record_p2_press_cells/findings.md:165-168"
+      },
       "reference": [
-        {"at":"selected_a","geometry":"g0","selection":{"mode":"vertices","indices":[17,19,21,23]}},
-        {"at":"edited","geometry":"g1","selection":{"mode":"vertices","indices":[17,19,21,23]}},
-        {"at":"selected_b","geometry":"g1","selection":{"mode":"vertices","indices":[0,6,7]}},
-        {"at":"undo_b","geometry":"g1","selection":{"mode":"vertices","indices":[17,19,21,23]}},
-        {"at":"undo_edit","geometry":"g1","selection":{"mode":"vertices","indices":[17,19,21,23]}},
-        {"at":"redo_edit","geometry":"g1","selection":{"mode":"vertices","indices":[17,19,21,23]}},
-        {"at":"redo_b","geometry":"g1","selection":{"mode":"vertices","indices":[0,6,7]}}
+        {"at":"selected_a","geometry":"g0","selection":"sel_a","selection_literal":{"mode":"vertices","indices":[17,19,21,23]}},
+        {"at":"edited","geometry":"g1","selection":"sel_a","selection_literal":{"mode":"vertices","indices":[17,19,21,23]}},
+        {"at":"selected_b","geometry":"g1","selection":"sel_b","selection_literal":{"mode":"vertices","indices":[0,6,7]}},
+        {"at":"undo_b","geometry":"g1","selection":"sel_a","selection_literal":{"mode":"vertices","indices":[17,19,21,23]}},
+        {"at":"undo_edit","geometry":"g0","selection":"sel_a","selection_literal":{"mode":"vertices","indices":[17,19,21,23]}},
+        {"at":"redo_edit","geometry":"g1","selection":"sel_a","selection_literal":{"mode":"vertices","indices":[17,19,21,23]}},
+        {"at":"redo_b","geometry":"g1","selection":"sel_b","selection_literal":{"mode":"vertices","indices":[0,6,7]}}
       ],
       "vibe3d_current": [
-        {"at":"selected_a","geometry":"g0","selection":{"mode":"vertices","indices":[0]}},
-        {"at":"edited","geometry":"g1","selection":{"mode":"vertices","indices":[0]}},
-        {"at":"selected_b","geometry":"g1","selection":{"mode":"vertices","indices":[4,6]}},
-        {"at":"undo_b","geometry":"g0","selection":{"mode":"vertices","indices":[4,6]}},
-        {"at":"undo_edit","geometry":"g0","selection":{"mode":"vertices","indices":[4,6]}},
-        {"at":"redo_edit","geometry":"g1","selection":{"mode":"vertices","indices":[4,6]}},
-        {"at":"redo_b","geometry":"g1","selection":{"mode":"vertices","indices":[4,6]}}
+        {"at":"selected_a","geometry":"g0","selection":"sel_a","selection_literal":{"mode":"vertices","indices":[0]}},
+        {"at":"edited","geometry":"g1","selection":"sel_a","selection_literal":{"mode":"vertices","indices":[0]}},
+        {"at":"selected_b","geometry":"g1","selection":"sel_b","selection_literal":{"mode":"vertices","indices":[4,6]}},
+        {"at":"undo_b","geometry":"g0","selection":"sel_b","selection_literal":{"mode":"vertices","indices":[4,6]}},
+        {"at":"undo_edit","geometry":"g0","selection":"sel_b","selection_literal":{"mode":"vertices","indices":[4,6]}},
+        {"at":"redo_edit","geometry":"g1","selection":"sel_b","selection_literal":{"mode":"vertices","indices":[4,6]}},
+        {"at":"redo_b","geometry":"g1","selection":"sel_b","selection_literal":{"mode":"vertices","indices":[4,6]}}
       ]
     }
   ],

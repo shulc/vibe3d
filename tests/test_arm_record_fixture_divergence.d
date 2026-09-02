@@ -3,7 +3,8 @@ import std.file : readText;
 import std.net.curl : get, post;
 import core.thread : Thread;
 import core.time : msecs;
-import std.string : format;
+import std.conv : to;
+import std.string : format, split;
 import std.math : abs;
 import std.process : environment;
 
@@ -26,8 +27,41 @@ JSONValue sel(){auto s=getJson("/api/selection");JSONValue[] ids;foreach(v;s["se
 JSONValue walkPoint(string at,string g){JSONValue[string] o;o["at"]=at;o["geometry"]=g;o["selection"]=sel();return JSONValue(o);}
 void play(string path){auto r=postJson("/api/play-events",readText(path));assert(r["status"].str=="success",r.toString);foreach(_;0..400){auto s=getJson("/api/play-events/status");if(s["finished"].type==JSONType.true_){settle();return;}Thread.sleep(20.msecs);}assert(0,"playback timeout");}
 JSONValue law(JSONValue fx,string id){foreach(v;fx["laws"].array)if(v["id"].str==id)return v;assert(0,id~": missing law");}
-JSONValue rival(string id,JSONValue reference){auto a=parseJSON(reference.toString).array;if(id=="arm_owns_record"){a[0]["record"]="none";a[1]["record"]="new";}else if(id=="move_arm_undo_redo")a[2]["move_family_active"]=true;else if(id=="cutting_arm_undo_redo")a[2]["cutting_family_active"]=false;else if(id=="swap_undo_previous_family")a[2]["tool"]="none";else if(id=="swap_redo_unavailable"){a[1]["result"]="accepted";a[1]["tool"]="cutting";}else if(id=="same_family_on_records_again")a[1]["record"]="none";else if(id=="explicit_off_on_records_on"){a[0]["record"]="new";a[1]["record"]="none";}else if(id=="cutting_arm_owns_record"){a[0]["record"]="none";a[1]["record"]="new";}else if(id=="scripted_selection_undo_redo")a[3]["selection"]=a[2]["selection"];else if(id=="viewport_selection_undo_redo"){foreach(i;3..a.length)a[i]["selection"]=a[2]["selection"];a[3]["geometry"]="g0";a[4]["geometry"]="g0";}return JSONValue(a);}
-void retirement(JSONValue l,JSONValue observed){auto id=l["id"].str,status=l["status"].str;bool mut=environment.get("ARM_RECORD_MUTATION","")==id;assert(status=="open"||status=="closed",id~": invalid status");if(mut)observed=rival(id,l["reference"]);auto target=mut?l["reference"]:(status=="open"?l["vibe3d_current"]:l["reference"]);assert(observed==target,id~": observed="~observed.toString~" target="~target.toString~" literal_delta="~l["rival_mutation"].str);if(!mut&&status=="open")assert(observed!=l["reference"],id~": XPASS — divergence closed unexpectedly");}
+struct RivalResult { JSONValue trajectory; string[] paths; }
+JSONValue pathValue(JSONValue trajectory,string path){auto p=path.split(".");assert(p.length==2,"invalid rival path: "~path);return trajectory.array[p[0].to!size_t][p[1]];}
+void assertRivalLive(JSONValue reference,JSONValue mutated,string[] paths){foreach(path;paths)assert(pathValue(mutated,path)!=pathValue(reference,path),"inert rival path: "~path);}
+string selectionToken(JSONValue symbols,JSONValue literal,string id,string at,string side){assert(literal["mode"].str=="vertices",format("%s %s %s: expected vertex selection literal",id,at,side));foreach(token,indices;symbols.object)if(literal["indices"]==indices)return token;assert(0,format("%s %s %s: selection literal resolves to no symbol",id,at,side));}
+JSONValue fixtureTrajectory(JSONValue l,string side){auto a=parseJSON(l[side].toString).array;auto symbolSide=side=="vibe3d_current"?"vibe3d":side;foreach(ref row;a){auto token=row["selection"].str;auto resolved=selectionToken(l["symbols"][symbolSide],row["selection_literal"],l["id"].str,row["at"].str,symbolSide);assert(resolved==token,format("%s %s %s: selection literal resolves to %s, expected %s",l["id"].str,row["at"].str,symbolSide,resolved,token));row.object.remove("selection_literal");}return JSONValue(a);}
+JSONValue observedTrajectory(JSONValue l,JSONValue observed){if(!("symbols" in l.object))return observed;auto a=parseJSON(observed.toString).array;foreach(ref row;a)row["selection"]=selectionToken(l["symbols"]["vibe3d"],row["selection"],l["id"].str,row["at"].str,"vibe3d");return JSONValue(a);}
+RivalResult rival(string id,JSONValue reference){
+ auto a=parseJSON(reference.toString).array;string[] paths;
+ if(id=="arm_owns_record"){a[0]["record"]="none";paths~="0.record";a[1]["record"]="new";paths~="1.record";}
+ else if(id=="move_arm_undo_redo"){a[2]["move_family_active"]=true;paths~="2.move_family_active";}
+ else if(id=="cutting_arm_undo_redo"){a[2]["cutting_family_active"]=false;paths~="2.cutting_family_active";}
+ else if(id=="swap_undo_previous_family"){a[2]["tool"]="none";paths~="2.tool";}
+ else if(id=="swap_redo_unavailable"){a[1]["result"]="accepted";paths~="1.result";a[1]["tool"]="cutting";paths~="1.tool";}
+ else if(id=="same_family_on_records_again"){a[1]["record"]="none";paths~="1.record";}
+ else if(id=="explicit_off_on_records_on"){a[0]["record"]="new";paths~="0.record";a[1]["record"]="none";paths~="1.record";}
+ else if(id=="cutting_arm_owns_record"){a[0]["record"]="none";paths~="0.record";a[1]["record"]="new";paths~="1.record";}
+ else if(id=="scripted_selection_undo_redo"){a[3]["selection"]=a[2]["selection"];paths~="3.selection";a[4]["geometry"]="g1";paths~="4.geometry";}
+ else if(id=="viewport_selection_undo_redo"){
+  // redo_b restores B under both laws, so row 6 is not a rival discriminator.
+  foreach(i;3..a.length-1){a[i]["selection"]=a[2]["selection"];paths~=format("%s.selection",i);}
+  a[3]["geometry"]="g0";paths~="3.geometry";a[4]["geometry"]="g1";paths~="4.geometry";
+ }
+ return RivalResult(JSONValue(a),paths);
+}
+void retirement(JSONValue l,JSONValue observed){
+ auto id=l["id"].str,status=l["status"].str;
+ auto reference="symbols" in l.object?fixtureTrajectory(l,"reference"):l["reference"];
+ auto current="vibe3d_current" in l.object?("symbols" in l.object?fixtureTrajectory(l,"vibe3d_current"):l["vibe3d_current"]):reference;
+ auto alternative=rival(id,reference);assertRivalLive(reference,alternative.trajectory,alternative.paths);
+ bool mut=environment.get("ARM_RECORD_MUTATION","")==id;assert(status=="open"||status=="closed",id~": invalid status");
+ observed=mut?alternative.trajectory:observedTrajectory(l,observed);
+ auto target=mut?reference:(status=="open"?current:reference);
+ assert(observed==target,id~": observed="~observed.toString~" target="~target.toString~" literal_delta="~l["rival_mutation"].str);
+ if(!mut&&status=="open")assert(observed!=reference,id~": XPASS — divergence closed unexpectedly");
+}
 void retirementFull(JSONValue l,JSONValue observed){retirement(l,observed);}
 JSONValue point(string at,string t,string record=""){settle();JSONValue[string] o;o["at"]=at;o["tool"]=t;o["geometry"]=geomEq(vertices(),toolGeometryBaseline)?"g0":"changed";o["selection"]=sel();if(record.length)o["record"]=record;return JSONValue(o);}
 JSONValue evidencePoint(string at,string record=""){auto p=point(at,tool(),record);p.object.remove("tool");return p;}
