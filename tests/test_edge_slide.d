@@ -294,7 +294,8 @@ unittest { // degraded: command returns ok with vertex unchanged when no rail on
 }
 
 unittest { // no-op slide undo must not truncate the undo stack (0099 regression)
-    // Sequence: real slide → no-op slide (empty touchedIdx) → undo twice.
+    // Sequence: select → real slide → select → no-op slide, then strict
+    // LIFO undo. Each /api/select is an independent UI-state history record.
     //
     // With the bug (revert() returned false on empty touchedIdx):
     //   history.undo() received false → discarded the failed entry AND the entire
@@ -303,7 +304,8 @@ unittest { // no-op slide undo must not truncate the undo stack (0099 regression
     //
     // With the fix (revert() returns true on empty):
     //   the no-op undo is a successful no-op; the prior real slide entry survives
-    //   on the undo stack; both undos return ok; mesh is fully restored.
+    //   on the undo stack. The second undo restores the intervening selection;
+    //   the third reaches the real slide and restores the mesh.
     //
     // edgeSlidePositions() short-circuits at t==0 returning m.vertices.dup
     // unchanged (mesh.d:8995), so t=0 with any selection is a guaranteed
@@ -330,20 +332,36 @@ unittest { // no-op slide undo must not truncate the undo stack (0099 regression
         "undo of no-op slide must return ok (0099 stack-truncation regression): "
         ~ j1.toString);
 
-    // (4) Undo the real slide.  If the stack was truncated in step 3 this entry
-    //     would be gone and the call would return noop or error instead of ok.
+    // (4) Strict LIFO next undoes the second selection record. The real slide
+    //     must still be present after two undo presses.
     auto j2 = postJson("/api/command", `{"id":"history.undo"}`);
     assert(j2["status"].str == "ok",
-        "undo of real slide must return ok after no-op undo (prior entry truncated): "
+        "undo of selection must return ok after no-op undo: "
         ~ j2.toString);
 
-    // (5) Positions must be fully restored to pre-slide state.
+    auto afterTwo = dumpVerts();
+    bool realSlideStillApplied;
+    foreach (i; 0 .. before.length)
+        realSlideStillApplied = realSlideStillApplied
+            || !approxEq(before[i].x, afterTwo[i].x)
+            || !approxEq(before[i].y, afterTwo[i].y)
+            || !approxEq(before[i].z, afterTwo[i].z);
+    assert(realSlideStillApplied,
+        "strict LIFO: real slide must remain applied after undoing no-op slide and selection");
+
+    // (5) The third undo reaches the real slide. If the no-op revert had
+    //     truncated the older stack suffix, this call would be noop/error.
+    auto j3 = postJson("/api/command", `{"id":"history.undo"}`);
+    assert(j3["status"].str == "ok",
+        "undo of real slide must survive the prior no-op undo: " ~ j3.toString);
+
+    // (6) Positions must now be fully restored to pre-slide state.
     auto after = dumpVerts();
     foreach (i; 0 .. before.length)
         assert(approxEq(before[i].x, after[i].x)
             && approxEq(before[i].y, after[i].y)
             && approxEq(before[i].z, after[i].z),
-            format("vert %d not restored after two undos (0099 stack-truncation regression)", i));
+            format("vert %d not restored after three undos (0099 stack-truncation regression)", i));
 }
 
 unittest { // task 0307 (fuzz-found): 3-of-4 quad edges selected must not

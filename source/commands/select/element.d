@@ -14,18 +14,19 @@ import snapshot : SelectionSnapshot;
 ///   remove / del  — deselect the given indices.
 ///
 /// EditMode is NOT changed (contrast with mesh.select which switches mode).
-/// Not undoable.
+/// The selection mutation is one undoable UI-state record.
 class SelectElementCommand : Command {
     private string targetType;
     private string action;
     private int[]  indices;
+    private SelectionSnapshot snap;
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
     }
 
     override string name()  const { return "select.element"; }
-    override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
+    override CmdFlags cmdFlags() const { return CmdFlags.UiState; }
 
     void setTargetType(string t) { targetType = t; }
     void setAction(string a)     { action = a; }
@@ -33,6 +34,8 @@ class SelectElementCommand : Command {
 
     protected override bool applyImpl() {
         mesh.syncSelection();
+        snap = SelectionSnapshot.capture(*mesh);
+        noteUndoRecorded();
         switch (targetType) {
             case "vertex":
                 applyToVertices();
@@ -49,6 +52,10 @@ class SelectElementCommand : Command {
                     "' — expected vertex, edge, or polygon");
         }
         return true;
+    }
+
+    protected override void revertImpl() {
+        snap.restore(*mesh);
     }
 
 private:
@@ -149,4 +156,36 @@ private:
                 "select.element: " ~ typeName ~ " index " ~
                 idx.to!string ~ " out of range");
     }
+}
+
+version (unittest) {
+    import math : Vec3;
+
+    private SelectElementCommand vertexSetCommand(Mesh* m, int[] indices) {
+        View v = new View(0, 0, 1, 1);
+        auto c = new SelectElementCommand(m, v, EditMode.Vertices);
+        c.setTargetType("vertex");
+        c.setAction("set");
+        c.setIndices(indices);
+        return c;
+    }
+}
+
+unittest {
+    auto m = new Mesh;
+    m.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0)];
+    m.syncSelection();
+    m.selectVertex(0);
+
+    auto c = vertexSetCommand(m, [1]);
+    assert(c.isUndoable(), "select.element must create an undoable record");
+    assert(c.isUiUndo(), "select.element record must have the UI-state class");
+    assert(c.apply(), "select.element forward apply must succeed");
+    assert(c.undoRecorded(), "select.element must arm its selection undo image");
+    assert(!m.isVertexSelected(0) && m.isVertexSelected(1),
+        "select.element forward apply must install the requested selection");
+
+    assert(c.revert(), "select.element undo must succeed");
+    assert(m.isVertexSelected(0) && !m.isVertexSelected(1),
+        "select.element undo must restore the complete prior selection");
 }
