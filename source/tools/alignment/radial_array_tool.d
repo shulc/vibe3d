@@ -24,7 +24,7 @@ import tools.create.create_common : screenToConstructionPlane;
 import std.math : sin, cos, atan2, PI;
 import std.json : JSONValue;
 import perf_probe : g_perf, Cat;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_tool_effect : PreparedRadialArrayEffect, PreparedRadialArrayKind;
 import prepared_radial_array_transition : PreparedRadialArrayTransitionOwner;
 import command_history : PreparedHistoryKind;
@@ -174,7 +174,7 @@ struct RadialArrayTransitionImage {
 // applyHeadless(); ToolDoApplyCommand wraps it with a snapshot pair for
 // undo (applyHeadless MUST NOT snapshot itself).
 // ---------------------------------------------------------------------------
-class RadialArrayTool : Tool {
+class RadialArrayTool : Tool, PreparedToolDoorClient {
 private:
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
@@ -404,6 +404,10 @@ public:
         return PreparedRadialArrayEffect(preparedToolStateOwner,
             PreparedRadialArrayKind.Activate, ok);
     }
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong, ulong) {
+        return prepareActivate(context).accepted;
+    }
 
     final PreparedRadialArrayEffect prepareSessionDeactivate(
             PreparedRecordContext context) {
@@ -437,6 +441,10 @@ public:
         if (!ok) context.discard();
         return PreparedRadialArrayEffect(preparedToolStateOwner,
             PreparedRadialArrayKind.Deactivate, ok);
+    }
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer,
+            ulong, ulong) {
+        return prepareSessionDeactivate(context).accepted;
     }
 
     public override bool hasUncommittedEdit() const { return active && built; }

@@ -19,7 +19,7 @@ import shader : Shader, LitShader, drawLitPreview;
 import handler : ToolHandles, BoxHandler, gizmoSize, drawThickLinesExt;
 import drag : planeDragDelta, screenAxisDelta, gesturePrevPixel;
 import eventlog : queryMouse;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_radial_sweep_transition : PreparedRadialSweepTransitionOwner;
 import prepared_tool_effect : PreparedRadialSweepEffect, PreparedRadialSweepKind;
 import mesh_gpu : GpuUploadOwner, GpuResourceOwner, GpuCreateUploadOwner;
@@ -265,7 +265,7 @@ void rebuildRadialSweepPreview(const ref MeshSnapshot baseSnap, ref Mesh preview
 // ---------------------------------------------------------------------------
 // RadialSweepTool
 // ---------------------------------------------------------------------------
-class RadialSweepTool : Tool {
+class RadialSweepTool : Tool, PreparedToolDoorClient {
 private:
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
@@ -387,6 +387,16 @@ public:
         return PreparedRadialSweepEffect(preparedToolStateOwner,
             PreparedRadialSweepKind.Activate, ok);
     }
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto source = mesh;
+        if (source is null || editMode is null) return false;
+        auto profile = PreparedSelectionProfileOwner.radialSweep(this, *source,
+            *editMode);
+        auto upload = new GpuCreateUploadOwner(&previewGpu, threadIdentity,
+            contextIdentity, true);
+        return prepareActivate(context, profile, upload).accepted;
+    }
 
     final PreparedRadialSweepEffect prepareParamChanged(PreparedRecordContext context,
             PreparedRadialSweepTransitionOwner transition, GpuUploadOwner uploadOwner) {
@@ -472,6 +482,14 @@ public:
         if (!ok && context !is null) context.discard();
         return PreparedRadialSweepEffect(preparedToolStateOwner,
             PreparedRadialSweepKind.Deactivate, ok, inserted);
+    }
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto transition = PreparedRadialSweepTransitionOwner.deactivate(this);
+        auto upload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);
+        auto destroy = new GpuResourceOwner(&previewGpu, threadIdentity,
+            contextIdentity);
+        return prepareDeactivate(context, transition, layer, upload, destroy).accepted;
     }
 
     final RadialSweepTransitionImage buildPreparedActivationImage(

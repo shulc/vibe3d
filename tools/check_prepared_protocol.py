@@ -8314,6 +8314,22 @@ resource_lifecycle_door_clients = {
         "prepareDeactivate(context, owner).resourceAccepted",
         "new GpuCreateOwner(&previewGpu_, threadIdentity,"),
 }
+alignment_door_clients = {
+    "source/tools/alignment/mirror.d": (
+        "class MirrorTool : Tool, PreparedToolDoorClient",
+        "new GpuCreateUploadOwner(&previewGpu, threadIdentity,",
+        "new GpuUploadOwner(gpu, threadIdentity, contextIdentity)",
+        "new GpuResourceOwner(&previewGpu, threadIdentity,"),
+    "source/tools/alignment/radial_array_tool.d": (
+        "class RadialArrayTool : Tool, PreparedToolDoorClient",
+        "return prepareActivate(context).accepted;",
+        "return prepareSessionDeactivate(context).accepted;"),
+    "source/tools/alignment/radial_sweep_tool.d": (
+        "class RadialSweepTool : Tool, PreparedToolDoorClient",
+        "PreparedSelectionProfileOwner.radialSweep(this, *source,",
+        "PreparedRadialSweepTransitionOwner.deactivate(this)",
+        "new GpuCreateUploadOwner(&previewGpu, threadIdentity,"),
+}
 def p10c_door_capability_gate(context, sources, xfrm):
     if not all(x in context for x in (
             "interface PreparedToolDoorClient",
@@ -8387,6 +8403,19 @@ def p10c_door_capability_gate(context, sources, xfrm):
     if "contextIdentity, true);" not in tack or \
             "return prepareActivate(context, owner).accepted;" not in tack:
         return False
+    for path, needles in alignment_door_clients.items():
+        if not all(needle in sources[path] for needle in needles):
+            return False
+    mirror = sources["source/tools/alignment/mirror.d"]
+    sweep = sources["source/tools/alignment/radial_sweep_tool.d"]
+    if "contextIdentity, true);" not in mirror or \
+            "prepareDeactivate(context, layer, upload, destroy).resourceAccepted" not in mirror:
+        return False
+    if "contextIdentity, true);" not in sweep or not all(x in sweep for x in (
+            "new GpuUploadOwner(gpu, threadIdentity, contextIdentity)",
+            "new GpuResourceOwner(&previewGpu, threadIdentity,",
+            "prepareDeactivate(context, transition, layer, upload, destroy).accepted")):
+        return False
     return ("PreparedToolDoorClient," in xfrm and
         "override bool prepareDoorDeactivate(" in xfrm and
         "override bool prepareDoorActivate(" in xfrm and
@@ -8396,7 +8425,7 @@ door_sources = {p: (ROOT / p).read_text() for p in
     set(simple_door_clients) | set(private_state_door_clients) |
     set(cutting_door_clients) | set(gpu_layer_door_clients) |
     set(vertex_door_clients) | set(typed_context_door_clients) |
-    set(resource_lifecycle_door_clients)}
+    set(resource_lifecycle_door_clients) | set(alignment_door_clients)}
 door_xfrm = (ROOT / "source/tools/transform/xfrm_transform.d").read_text()
 if not p10c_door_capability_gate(record_context, door_sources, door_xfrm):
     fail("P1.0c prepared door capability tranche drift")
@@ -8437,6 +8466,18 @@ for target, old, new, label in (
      "new GpuCreateOwner(&previewGpu_, threadIdentity,",
      "new GpuCreateOwner(null, threadIdentity,",
      "drop Tack activation GPU identity"),
+    ("source/tools/alignment/mirror.d",
+     "new GpuResourceOwner(&previewGpu, threadIdentity,",
+     "new GpuResourceOwner(null, threadIdentity,",
+     "drop Mirror preview GPU identity"),
+    ("source/tools/alignment/radial_array_tool.d",
+     "return prepareSessionDeactivate(context).accepted;",
+     "return true;",
+     "drop Radial Array deactivation producer"),
+    ("source/tools/alignment/radial_sweep_tool.d",
+     "PreparedSelectionProfileOwner.radialSweep(this, *source,",
+     "PreparedSelectionProfileOwner.radialSweep(null, *source,",
+     "drop Radial Sweep profile subject identity"),
     ("xfrm", "return prepareActivate(context).accepted;", "return true;",
      "drop Xfrm activation producer"),
 ):

@@ -21,7 +21,7 @@ import eventlog : queryMouse;
 import prepared_tool_effect : PreparedToolStateDelta, PreparedToolStateKind,
     PreparedSessionActivateEffect, PreparedActivateKind,
     PreparedDeactivateEffect, PreparedDeactivateKind;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
 import prepared_mirror_activation : PreparedMirrorActivationOwner,
     PreparedMirrorDeactivateOwner;
 import mesh_gpu : GpuCreateUploadOwner, GpuUploadOwner, GpuResourceOwner;
@@ -181,7 +181,7 @@ Vec3 derivedLeft(in MirrorParams p) {
 // `rotateBox` (small — drags `angle`, tilting the plane about the fixed
 // `refAxis(axis)`), plus a wire-quad + dashed-axis plane visualization.
 // ---------------------------------------------------------------------------
-class MirrorTool : Tool {
+class MirrorTool : Tool, PreparedToolDoorClient {
 private:
     Mesh* delegate() nothrow @nogc meshSrc_;
     @property Mesh* mesh() const nothrow @nogc { return meshSrc_(); }
@@ -351,6 +351,12 @@ public:
         return PreparedSessionActivateEffect(preparedToolStateOwner,
             PreparedActivateKind.Mirror, ok);
     }
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto owner = new GpuCreateUploadOwner(&previewGpu, threadIdentity,
+            contextIdentity, true);
+        return prepareActivate(context, owner).accepted;
+    }
 
     version(unittest) final void seedPreparedActivationForTest() {
         baseMask = [true, false]; engaged = true; moverDragAxis = 4;
@@ -449,6 +455,13 @@ public:
         if (!ok) context.discard();
         return PreparedDeactivateEffect(preparedToolStateOwner,
             PreparedDeactivateKind.Mirror, historyPrepared, ok);
+    }
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto upload = new GpuUploadOwner(gpu, threadIdentity, contextIdentity);
+        auto destroy = new GpuResourceOwner(&previewGpu, threadIdentity,
+            contextIdentity);
+        return prepareDeactivate(context, layer, upload, destroy).resourceAccepted;
     }
 
     override void deactivate() {
