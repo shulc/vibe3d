@@ -10,7 +10,8 @@ import math : Vec3, Viewport;
 import shader;
 import params : Param;
 import change_bus : MeshEditScope;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
+import document : Layer;
 import prepared_transform_activation : PreparedTransformActivationOwner;
 import prepared_tool_effect : PreparedTransformActivationEffect,
     PreparedTransformActivationKind;
@@ -34,7 +35,7 @@ import prepared_tool_effect : PreparedTransformActivationEffect,
 /// chain-index spacing (`uniform=true`). `weight` blends
 /// `lerp(source, aligned, weight * falloff)`, matching the rest of the
 /// deform-tool family's WGHT integration (Bend/Push).
-class LinearAlignTool : TransformTool {
+class LinearAlignTool : TransformTool, PreparedToolDoorClient {
 private:
     // Only `mode=line` is implemented — see align_kernels.linearAlignTargets's
     // doc comment for why `curve` ("tries to fit a curve to the selected
@@ -74,6 +75,11 @@ public:
         return PreparedTransformActivationEffect(preparedToolStateOwner,
             PreparedTransformActivationKind.LinearAlign, ok);
     }
+
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong, ulong) { return prepareActivate(context).accepted; }
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer,
+            ulong, ulong) { return context.markNoHistoryInstall(); }
 
     override Param[] params() {
         return [

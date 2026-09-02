@@ -71,19 +71,18 @@ unittest { // /api/toolpipe round-trip: pickedCenter set via
     assert(approxEq(pc[2],  0.70, 1e-4));
 }
 
-unittest { // Empty selection + default pickedCenter (0,0,0) + auto
-           // dist=0.5: cube corners are √3·0.5 ≈ 0.87 from origin,
-           // OUTSIDE the falloff sphere → weight=0 → no motion even
-           // though the moving set covers the whole mesh.
+unittest { // A freshly armed tool is posed through the same prepared VTS door
+           // as its first frame tick. The old constructor-origin window no
+           // longer exists, so a headless apply must observe the posed falloff.
     postJson("/api/reset", "");
     cmd("tool.set xfrm.elementMove on");
     cmd("tool.attr xfrm.elementMove TX 0.3");
     cmd("tool.doApply");
     auto verts = getJson("/api/model")["vertices"].array;
+    bool moved;
     foreach (v; verts)
-        foreach (c; 0 .. 3)
-            assert(approxEq(fabs(v[c].floating), 0.5, 1e-4),
-                "default pickedCenter at origin shouldn't move corners");
+        if (!approxEq(fabs(v[0].floating), 0.5, 1e-4)) moved = true;
+    assert(moved, "prepared arm-time pose did not reach the first apply");
 }
 
 unittest { // pickedCenter is just the falloff anchor, NOT a

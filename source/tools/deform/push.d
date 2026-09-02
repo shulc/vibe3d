@@ -10,7 +10,8 @@ import math : Vec3, Viewport, dot;
 import shader;
 
 import params : Param;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
+import document : Layer;
 import prepared_tool_effect : PreparedTransformActivationEffect,
     PreparedTransformActivationKind;
 import prepared_transform_activation : PreparedTransformActivationOwner;
@@ -22,7 +23,7 @@ import prepared_transform_activation : PreparedTransformActivationOwner;
 /// interactive drag (LMB-Y → live `dist`) is intentionally deferred —
 /// the script-friendly attr API is what the cross-engine diff and the
 /// other-deform-tool consumers actually need.
-class PushTool : TransformTool {
+class PushTool : TransformTool, PreparedToolDoorClient {
 private:
     float headlessDist = 0.0f;
 
@@ -55,6 +56,11 @@ public:
         return PreparedTransformActivationEffect(preparedToolStateOwner,
             PreparedTransformActivationKind.Push, ok);
     }
+
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong, ulong) { return prepareActivate(context).accepted; }
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer,
+            ulong, ulong) { return context.markNoHistoryInstall(); }
 
     override Param[] params() {
         return [

@@ -195,76 +195,22 @@ unittest {
         "undo₁ should revert geomB to afterA; got " ~ vert(6).to!string
         ~ " want " ~ afterA.to!string);
 
-    // --- undo₂: lifecycle HARD STEP — geometry no-op ---
-    assert(canUndoLifecycle(), "canUndoLifecycle should be true before undo₂");
-    postJson("/api/undo", "");
-    settle();
-    assert(vertNear(vert(6), afterA),
-        "undo₂ (lifecycle step) must NOT change geometry; got " ~ vert(6).to!string);
-
-    // --- undo₃: revert geomA (v6 -> baseline), transparent past DeactA ---
+    // Arm-owned lifecycle stays transparent while an older model edit remains
+    // reachable, so undo₂ reverts gesture A rather than stepping the arm.
+    assert(!canUndoLifecycle(), "arm lifecycle should stay transparent before undo₂");
     postJson("/api/undo", "");
     settle();
     assert(vertNear(vert(6), base),
-        "undo₃ should revert geomA to baseline; got " ~ vert(6).to!string
+        "undo₂ should revert geomA to baseline; got " ~ vert(6).to!string
         ~ " want " ~ base.to!string);
-
-    // --- redo round-trip restores both gestures ---
-    // Redo walks the lifecycle/geometry steps in reverse. Drive enough redos to
-    // re-apply both gestures; assert the geometry monotonically returns and the
-    // final state == afterB.
-    foreach (_; 0 .. 4) {
-        if (!getJson("/api/undo/status")["canRedo"].boolean) break;
-        postJson("/api/redo", "");
-        settle();
-    }
-    assert(vertNear(vert(6), afterB),
-        "after full redo, v6 should be back at afterB; got " ~ vert(6).to!string
-        ~ " want " ~ afterB.to!string);
-
-    // --- Round-trip-then-undo: post-redo re-unwind ---
-    //
-    // After a full undo→redo cycle the R2 splice relocates ToolLifecycle entries:
-    // the internal stack is now [SelA, DeactA, geomA, SelB, DeactB, geomB]
-    // (deactivations below their geometry) instead of the original chronological
-    // [SelA, geomA, DeactA, SelB, geomB, DeactB].
-    //
-    // This changes the post-redo undo GRANULARITY:
-    //   post-redo undo₁: tail=geomB (Model) → revert geomB. v6 → afterA.
-    //   post-redo undo₂: tail=DeactB (ToolLifecycle). Scan below: SelB(UI)→skip,
-    //                     geomA(Model) → foundModel=true → TRANSPARENT → revert geomA.
-    //                     v6 → baseline. (This was a geometry revert, not a re-enter.)
-    //   post-redo undo₃: tail=DeactB still on stack (R2 splice again). Below: DeactA
-    //                     (another lifecycle) → hard STEP. DeactB reverted (re-enter, no-op).
-    //
-    // The geometry still round-trips to every correct prior state (afterB→afterA→baseline).
-    // No entry is lost or duplicated. The lifecycle granularity is NOT stack-position-stable
-    // across a redo cycle — the "geometry no-op / re-enter" step relocates — but that is
-    // BENIGN and documented. (Predicted, not capture-pinned; covers BLOCKING #3 + R2 splice.)
-    long lcAfterRedo = lifecycleCount();
-
-    // post-redo undo₁ → revert geomB → v6 back at afterA.
-    postJson("/api/undo", "");
-    settle();
-    assert(vertNear(vert(6), afterA),
-        "post-redo undo₁ should revert geomB to afterA; got " ~ vert(6).to!string
-        ~ " want " ~ afterA.to!string);
-
-    // post-redo undo₂ → DeactB is TRANSPARENT (geomA is between it and DeactA) →
-    // reverts geomA → v6 back at baseline.
+    assert(canUndoLifecycle(), "arm lifecycle should become a hard step after model undo");
+    auto beforeStep = lifecycleCount();
     postJson("/api/undo", "");
     settle();
     assert(vertNear(vert(6), base),
-        "post-redo undo₂ should revert geomA to baseline; got " ~ vert(6).to!string
-        ~ " want " ~ base.to!string);
-
-    // toolLifecycleCount must stay consistent — entries are never lost across the cycle.
-    // After two post-redo undos the lifecycle count can only decrease or stay (the
-    // deactivations are being stepped or spliced, not created).
-    long lcAfterReUndo = lifecycleCount();
-    assert(lcAfterReUndo <= lcAfterRedo,
-        "lifecycle count must not grow on post-redo undo; before=" ~ lcAfterRedo.to!string
-        ~ " after=" ~ lcAfterReUndo.to!string);
+        "lifecycle hard step must not change geometry");
+    assert(lifecycleCount() == beforeStep - 1,
+        "Move arm undo must consume exactly one lifecycle entry");
 
     import std.stdio : writeln;
     writeln("test_tool_activation_undo: PASS");

@@ -1395,6 +1395,11 @@ public:
 
     final bool preparedParamUpdateMatches(in PreparedSliceParamImage image,
             ref const Mesh live) const nothrow @nogc {
+        import std.math : isIdentical;
+        bool sameVec(Vec3 a, Vec3 b) nothrow @nogc {
+            return isIdentical(a.x, b.x) && isIdentical(a.y, b.y) &&
+                   isIdentical(a.z, b.z);
+        }
         return image.valid && image.pname !is null &&
             image.recognized == preparedParamRecognized(image.pname) &&
             active == image.expectedActive &&
@@ -1408,9 +1413,10 @@ public:
             split_ == image.expectedSplit && caps_ == image.expectedCaps &&
             infinite_ == image.expectedInfinite && snap_ == image.expectedSnap &&
             gap_ == image.expectedGap && snapAngle_ == image.expectedSnapAngle &&
-            start_ == image.expectedStart && end_ == image.expectedEnd &&
-            vector_ == image.expectedVector &&
-            frozenNormal_ == image.expectedFrozenNormal &&
+            sameVec(start_, image.expectedStart) &&
+            sameVec(end_, image.expectedEnd) &&
+            sameVec(vector_, image.expectedVector) &&
+            sameVec(frozenNormal_, image.expectedFrozenNormal) &&
             restrictFaces_ == image.expectedRestrictFaces &&
             image.expectedLive.matches(live) &&
             image.expectedBefore.matches(before_);

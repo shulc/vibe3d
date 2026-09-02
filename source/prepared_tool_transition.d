@@ -172,10 +172,14 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
     result.params_ = new PreparedRecordContext(null, observers);
     result.params_.setResourceIdentity(threadIdentity, contextIdentity);
     if (auto paramDoor = cast(PreparedToolParamDoorClient)candidate) {
-        foreach (name; sticky.changedNames)
-            if (!paramDoor.prepareDoorParamChanged(name, result.params_, layer,
-                    threadIdentity, contextIdentity))
-                throw new Exception("prepared sticky parameter refused: " ~ name);
+        // Loop Slice activation consumes the complete restored setting image
+        // and rebuilds its derived positions once. Replaying every sticky
+        // name would prepare that same full image repeatedly before publish.
+        if (id != "mesh.loopSliceTool")
+            foreach (name; sticky.changedNames)
+                if (!paramDoor.prepareDoorParamChanged(name, result.params_, layer,
+                        threadIdentity, contextIdentity))
+                    throw new Exception("prepared sticky parameter refused: " ~ name);
         foreach (name; namedNames)
             if (!paramDoor.prepareDoorParamChanged(name, result.params_, layer,
                     threadIdentity, contextIdentity))
@@ -194,13 +198,16 @@ PreparedArm prepareArm(ToolFactory factory, string id, Tool retainedOld,
         throw new Exception("prepared no-op pose boundary refused");
     }
 
-    bool valid = result.pipe_.validate();
-    if (valid && result.outgoing_ !is null) valid = result.outgoing_.validate();
-    if (valid) valid = result.incoming_.validate();
-    if (valid) valid = result.params_.validate();
-    if (valid) valid = result.pose_.validate();
-    if (!valid)
-        throw new Exception("prepared tool arm validation refused");
+    if (!result.pipe_.validate())
+        throw new Exception("prepared tool arm pipe validation refused");
+    if (result.outgoing_ !is null && !result.outgoing_.validate())
+        throw new Exception("prepared tool arm outgoing validation refused");
+    if (!result.incoming_.validate())
+        throw new Exception("prepared tool arm incoming validation refused");
+    if (!result.params_.validate())
+        throw new Exception("prepared tool arm params validation refused");
+    if (!result.pose_.validate())
+        throw new Exception("prepared tool arm pose validation refused");
 
     cleanupArmed = false;
     return result;

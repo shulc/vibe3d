@@ -12,7 +12,8 @@ import math : Vec3, Vec4, Viewport, dot, cross,
 import shader;
 
 import params : Param;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
+import document : Layer;
 import prepared_tool_effect : PreparedTransformActivationEffect,
     PreparedTransformActivationKind;
 import prepared_transform_activation : PreparedTransformActivationOwner;
@@ -30,7 +31,7 @@ import std.math : PI, abs, sqrt;
 /// Default spine: +X (`spineX=1`). Bend axis
 /// is computed as spine × world-up (`(0, 1, 0)`), falling back to
 /// spine × world-Z if the cross is degenerate.
-class BendTool : TransformTool {
+class BendTool : TransformTool, PreparedToolDoorClient {
 private:
     float headlessAngleDeg = 0.0f;
     Vec3  headlessSpine    = Vec3(1, 0, 0);
@@ -65,6 +66,11 @@ public:
         return PreparedTransformActivationEffect(preparedToolStateOwner,
             PreparedTransformActivationKind.Bend, ok);
     }
+
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong, ulong) { return prepareActivate(context).accepted; }
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer,
+            ulong, ulong) { return context.markNoHistoryInstall(); }
 
     override Param[] params() {
         return [

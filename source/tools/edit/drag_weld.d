@@ -13,6 +13,8 @@ import snapshot : MeshSnapshot;
 import display_sync : refreshDisplay;
 import editmode : EditMode;
 import operator : VectorStack;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
+import document : Layer;
 
 // Pixel pick radius for DragWeldTool source/target vertex selection.
 // A vertex must project within this many pixels of the mouse to be
@@ -43,7 +45,7 @@ private enum float PICK_RADIUS_PX = 12.0f;
 //
 // Gated to Vertices edit mode via supportedModes().
 // ---------------------------------------------------------------------------
-class DragWeldTool : Tool {
+class DragWeldTool : Tool, PreparedToolDoorClient {
 private:
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
@@ -71,6 +73,11 @@ public:
     override string name() const { return "Drag Weld"; }
 
     override Param[] params() { return []; }
+
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong, ulong) { return context.markNoHistoryInstall(); }
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer,
+            ulong, ulong) { return context.markNoHistoryInstall(); }
 
     // Restrict to Vertices mode — mirrors EdgeExtrudeTool.supportedModes().
     override EditMode[] supportedModes() const { return [EditMode.Vertices]; }

@@ -59,50 +59,6 @@
             ]
           }
         }
-      ],
-      "vibe3d_current": [
-        {
-          "at": "arm",
-          "record": "none",
-          "geometry": "g0",
-          "selection": {
-            "mode": "vertices",
-            "indices": [
-              9,
-              11,
-              13,
-              15
-            ]
-          }
-        },
-        {
-          "at": "drop",
-          "record": "lifecycle",
-          "geometry": "g0",
-          "selection": {
-            "mode": "vertices",
-            "indices": [
-              9,
-              11,
-              13,
-              15
-            ]
-          }
-        },
-        {
-          "at": "undo",
-          "move_family_active": true,
-          "geometry": "g0",
-          "selection": {
-            "mode": "vertices",
-            "indices": [
-              9,
-              11,
-              13,
-              15
-            ]
-          }
-        }
       ]
     },
     {
@@ -151,49 +107,6 @@
             ]
           }
         }
-      ],
-      "vibe3d_current": [
-        {
-          "at": "arm",
-          "record": "none",
-          "geometry": "g0",
-          "selection": {
-            "mode": "vertices",
-            "indices": [
-              9,
-              11,
-              13,
-              15
-            ]
-          }
-        },
-        {
-          "at": "undo",
-          "geometry": "g0",
-          "selection": {
-            "mode": "vertices",
-            "indices": [
-              9,
-              11,
-              13,
-              15
-            ]
-          }
-        },
-        {
-          "at": "redo",
-          "move_family_active": true,
-          "geometry": "g0",
-          "selection": {
-            "mode": "vertices",
-            "indices": [
-              9,
-              11,
-              13,
-              15
-            ]
-          }
-        }
       ]
     },
     {
@@ -204,49 +117,6 @@
         {
           "at": "arm",
           "record": "new",
-          "geometry": "g0",
-          "selection": {
-            "mode": "vertices",
-            "indices": [
-              9,
-              11,
-              13,
-              15
-            ]
-          }
-        },
-        {
-          "at": "undo",
-          "geometry": "g0",
-          "selection": {
-            "mode": "vertices",
-            "indices": [
-              9,
-              11,
-              13,
-              15
-            ]
-          }
-        },
-        {
-          "at": "redo",
-          "cutting_family_active": true,
-          "geometry": "g0",
-          "selection": {
-            "mode": "vertices",
-            "indices": [
-              9,
-              11,
-              13,
-              15
-            ]
-          }
-        }
-      ],
-      "vibe3d_current": [
-        {
-          "at": "arm",
-          "record": "none",
           "geometry": "g0",
           "selection": {
             "mode": "vertices",
@@ -334,50 +204,6 @@
             ]
           }
         }
-      ],
-      "vibe3d_current": [
-        {
-          "at": "move",
-          "tool": "move",
-          "geometry": "g0",
-          "selection": {
-            "mode": "vertices",
-            "indices": [
-              9,
-              11,
-              13,
-              15
-            ]
-          }
-        },
-        {
-          "at": "cutting",
-          "tool": "cutting",
-          "geometry": "g0",
-          "selection": {
-            "mode": "vertices",
-            "indices": [
-              9,
-              11,
-              13,
-              15
-            ]
-          }
-        },
-        {
-          "at": "undo",
-          "tool": "move",
-          "geometry": "g0",
-          "selection": {
-            "mode": "vertices",
-            "indices": [
-              9,
-              11,
-              13,
-              15
-            ]
-          }
-        }
       ]
     },
     {
@@ -414,37 +240,6 @@
             ]
           }
         }
-      ],
-      "vibe3d_current": [
-        {
-          "at": "undo",
-          "tool": "move",
-          "geometry": "g0",
-          "selection": {
-            "mode": "vertices",
-            "indices": [
-              9,
-              11,
-              13,
-              15
-            ]
-          }
-        },
-        {
-          "at": "redo",
-          "tool": "none",
-          "result": "accepted",
-          "geometry": "g0",
-          "selection": {
-            "mode": "vertices",
-            "indices": [
-              9,
-              11,
-              13,
-              15
-            ]
-          }
-        }
       ]
     },
     {
@@ -452,37 +247,6 @@
       "status": "closed",
       "rival_mutation": "treat repeated on as idempotent",
       "reference": [
-        {
-          "at": "first_on",
-          "tool": "move",
-          "geometry": "g0",
-          "selection": {
-            "mode": "vertices",
-            "indices": [
-              9,
-              11,
-              13,
-              15
-            ]
-          }
-        },
-        {
-          "at": "second_on",
-          "tool": "move",
-          "record": "new",
-          "geometry": "g0",
-          "selection": {
-            "mode": "vertices",
-            "indices": [
-              9,
-              11,
-              13,
-              15
-            ]
-          }
-        }
-      ],
-      "vibe3d_current": [
         {
           "at": "first_on",
           "tool": "move",
@@ -549,38 +313,6 @@
             ]
           }
         }
-      ],
-      "vibe3d_current": [
-        {
-          "at": "off",
-          "tool": "none",
-          "record": "lifecycle",
-          "geometry": "g0",
-          "selection": {
-            "mode": "vertices",
-            "indices": [
-              9,
-              11,
-              13,
-              15
-            ]
-          }
-        },
-        {
-          "at": "on",
-          "tool": "move",
-          "record": "none",
-          "geometry": "g0",
-          "selection": {
-            "mode": "vertices",
-            "indices": [
-              9,
-              11,
-              13,
-              15
-            ]
-          }
-        }
       ]
     },
     {
@@ -591,36 +323,6 @@
         {
           "at": "arm",
           "record": "new",
-          "geometry": "g0",
-          "selection": {
-            "mode": "vertices",
-            "indices": [
-              9,
-              11,
-              13,
-              15
-            ]
-          }
-        },
-        {
-          "at": "drop",
-          "record": "none",
-          "geometry": "g0",
-          "selection": {
-            "mode": "vertices",
-            "indices": [
-              9,
-              11,
-              13,
-              15
-            ]
-          }
-        }
-      ],
-      "vibe3d_current": [
-        {
-          "at": "arm",
-          "record": "none",
           "geometry": "g0",
           "selection": {
             "mode": "vertices",

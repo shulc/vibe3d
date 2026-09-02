@@ -11,7 +11,8 @@ import math : Vec3, Viewport;
 import shader;
 import params : Param;
 import change_bus : MeshEditScope;
-import prepared_record_context : PreparedRecordContext;
+import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
+import document : Layer;
 import prepared_transform_activation : PreparedTransformActivationOwner;
 import prepared_tool_effect : PreparedTransformActivationEffect,
     PreparedTransformActivationKind;
@@ -38,7 +39,7 @@ import prepared_tool_effect : PreparedTransformActivationEffect,
 /// both auto-computed — no interactive override, see `params()`'s doc
 /// comment). `angle`/`rotate` additively rotate the slot framework;
 /// `weight` blends `lerp(source, aligned, weight * falloff)`.
-class RadialAlignTool : TransformTool {
+class RadialAlignTool : TransformTool, PreparedToolDoorClient {
 private:
     // "circle" / "nside" — see align_kernels.radialAlignTargets's doc
     // comment (CONFIRMED no cylinder/sphere mode exists).
@@ -78,6 +79,11 @@ public:
         return PreparedTransformActivationEffect(preparedToolStateOwner,
             PreparedTransformActivationKind.RadialAlign, ok);
     }
+
+    override bool prepareDoorActivate(PreparedRecordContext context, Layer,
+            ulong, ulong) { return prepareActivate(context).accepted; }
+    override bool prepareDoorDeactivate(PreparedRecordContext context, Layer,
+            ulong, ulong) { return context.markNoHistoryInstall(); }
 
     // `radius` / `centerX/Y/Z` are deliberately NOT exposed here: the
     // reference tool auto-computes both at activation and lets the user

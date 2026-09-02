@@ -322,6 +322,7 @@ private:
     ulong resourceThread_, resourceContext_;
     bool historyMarker_;
     bool noHistoryMarker_;
+    bool inheritedHistoryInstall_;
     PreparedXfrmActivationSessionOwner xfrmLayoutOwner_;
     ubyte xfrmLayoutStage_; // 0=absent, 1=pre, 2=marker, 3=post
     version (unittest) {
@@ -352,6 +353,7 @@ public:
             !receiver.begun_ || receiver.validated_Once ||
             history_ is null || receiver.history_ !is null)
             return false;
+        receiver.inheritedHistoryInstall_ = historyMarker_;
         foreach (ref e; resources_) {
             if (e.kind == PreparedResourceKind.HistoryInstall) {
                 e.kind = PreparedResourceKind.NoHistoryInstall;
@@ -390,6 +392,10 @@ public:
     }
 
     bool markNoHistoryInstall() {
+        if (inheritedHistoryInstall_) {
+            inheritedHistoryInstall_ = false;
+            return markHistoryInstall();
+        }
         if (!begun_ || validated_Once || historyMarker_ ||
             (xfrmLayoutStage_ != 0 && xfrmLayoutStage_ != 1)) return false;
         if (noHistoryMarker_) return true;

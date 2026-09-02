@@ -540,6 +540,7 @@ for path, text in prepared_source_texts.items():
             "tools.alignment.radial_align_tool",
             "tools.deform.bend", "tools.deform.push",
             "tools.deform.stroke_extrude_tool",
+            "tools.edit.drag_weld",
             "tools.edit.vert_merge_tool",
             "tools.edit.poly_inset_tool",
             "tools.edit.poly_extrude"}:
