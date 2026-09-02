@@ -72,6 +72,7 @@ import prepared_loop_slice_param_update : PreparedLoopSliceParamUpdateOwner;
 import prepared_edge_extend_param_update : PreparedEdgeExtendParamUpdateOwner;
 import prepared_edge_extend_deactivate : PreparedEdgeExtendDeactivateOwner;
 import prepared_pipe_activation : PreparedPipeActivationOwner;
+import prepared_box_param : PreparedBoxParamOwner;
 import registry : PreparedPipeAttrs;
 import toolpipe.pipeline : Pipeline;
 import document : Layer;
@@ -135,6 +136,19 @@ mixin template PreparedPenParamDoorClient() {
         auto upload = new GpuUploadOwner(preparedPreviewGpu(), threadIdentity,
                                          contextIdentity);
         return prepareParamChanged(context, name, upload).accepted;
+    }
+}
+
+/// Radial Sweep owns an evolved transition image in addition to its preview
+/// upload, so its door constructs both typed owners before enlistment.
+mixin template PreparedRadialSweepParamDoorClient() {
+    override bool prepareDoorParamChanged(string name,
+            PreparedRecordContext context, Layer,
+            ulong threadIdentity, ulong contextIdentity) {
+        auto transition = PreparedRadialSweepTransitionOwner.param(this, name);
+        auto upload = new GpuUploadOwner(&previewGpu, threadIdentity,
+                                         contextIdentity);
+        return prepareParamChanged(context, transition, upload).accepted;
     }
 }
 
@@ -206,7 +220,7 @@ private enum PreparedResourceKind : ubyte {
     VertexExtrudeParamUpdateState, SliceDeactivateState, SliceParamUpdateState,
     EdgeSliceDeactivateState, EdgeSliceParamUpdateState, LoopSliceDeactivateState,
     LoopSliceParamUpdateState, EdgeExtendParamUpdateState, EdgeExtendDeactivateState,
-    PipeActivationState
+    PipeActivationState, BoxParamState
 }
 private struct PreparedResourceEntry {
     PreparedResourceKind kind;
@@ -271,6 +285,7 @@ private struct PreparedResourceEntry {
     PreparedMirrorDeactivateOwner mirrorDeactivate;
     PreparedBridgeDeactivateOwner bridgeDeactivate;
     PreparedPipeActivationOwner pipeActivation;
+    PreparedBoxParamOwner boxParam;
     ClickPointResourceOwner clickDestroy;
     BoxHandlerBatchResourceOwner boxHandlersDestroy;
     SnapOverlayOwner snapOverlay;
@@ -1255,6 +1270,18 @@ public:
         return true;
     }
 
+    bool prepareBoxParam(PreparedBoxParamOwner owner) {
+        if (!begun_ || validated_Once || owner is null) return false;
+        resources_.reserve(1 + resources_.length);
+        if (!owner.begin()) return false;
+        scope(failure) owner.abort();
+        PreparedResourceEntry e;
+        e.kind = PreparedResourceKind.BoxParamState;
+        e.boxParam = owner;
+        resources_ ~= e;
+        return true;
+    }
+
     ulong nextRun() {
         if (!begun_ || validated_Once || history_ is null) return 0;
         return history_.prepareNextRun(token_);
@@ -1480,6 +1507,8 @@ public:
                     e.bridgeDeactivate.validate(); break;
             case PreparedResourceKind.PipeActivationState:
                 ok = e.pipeActivation !is null && e.pipeActivation.validate(); break;
+            case PreparedResourceKind.BoxParamState:
+                ok = e.boxParam !is null && e.boxParam.validate(); break;
             }
             if (!ok) { invalidateTransaction(); return false; }
         }
@@ -1801,6 +1830,10 @@ public:
             e.pipeActivation.install();
             version(unittest) installTrace_[installTraceLength_++] = 71;
             break;
+        case PreparedResourceKind.BoxParamState:
+            e.boxParam.install();
+            version(unittest) installTrace_[installTraceLength_++] = 72;
+            break;
         }
         if (!installedHistory && history_ !is null)
             history_.installPreparedToken(validated_);
@@ -1924,6 +1957,7 @@ private:
         case PreparedResourceKind.BridgeDeactivateState:
             e.bridgeDeactivate.abort(); break;
         case PreparedResourceKind.PipeActivationState: break;
+        case PreparedResourceKind.BoxParamState: e.boxParam.abort(); break;
         case PreparedResourceKind.RadialArrayTransitionState:
             e.radialArrayTransition.abort(); break;
         case PreparedResourceKind.TransformActivationState:

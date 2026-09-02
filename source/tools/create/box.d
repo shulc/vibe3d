@@ -1,5 +1,7 @@
 module tools.create.box;
 import prepared_record_context : PreparedRecordContext, PreparedToolDoorClient;
+import prepared_record_context : PreparedToolParamDoorClient;
+import prepared_box_param : PreparedBoxParamOwner;
 import prepared_tool_effect : PreparedBoxParamEffect, PreparedSessionActivateEffect,
     PreparedActivateKind, PreparedDeactivateEffect, PreparedDeactivateKind;
 import prepared_private_state : PreparedPrivateStateOwner;
@@ -77,6 +79,25 @@ struct PreparedBoxDeactivateImage {
     }
 }
 
+unittest {
+    import record_observer_hub : RecordObserverHub;
+    import mesh_gpu : GpuMesh;
+    Layer layer = new Layer();
+    GpuMesh sceneGpu;
+    auto box = new BoxTool(() => &layer.meshRef(), &sceneGpu, LitShader.init);
+    box.liveRunActive = true;
+    box.liveUndoDepth = 3;
+    box.paramBeforeValid = true;
+    auto context = new PreparedRecordContext(null, new RecordObserverHub());
+    assert(box.prepareDoorParamChanged("sizeX", context, layer, 7, 11));
+    assert(box.paramBeforeValid,
+           "Box parameter door installed private state during preparation");
+    assert(context.validate()); context.install();
+    assert(box.liveRunActive && box.liveUndoDepth == 3 && !box.paramBeforeValid,
+           "Box parameter door omitted prepared private-state install");
+    assert(context.installTraceForTest() == [72, 8]);
+}
+
 private __gshared View gBoxLiveEditView;
 
 // ---------------------------------------------------------------------------
@@ -119,7 +140,13 @@ private __gshared View gBoxLiveEditView;
 // (the local<->world transforms, worldAxisIdxOf, the Idle-state snap-
 // preview shape) — see task 0418 for the full field/method comparison.
 // ---------------------------------------------------------------------------
-class BoxTool : Tool, KeepAliveOnCancel, PreparedToolDoorClient {
+struct PreparedBoxParamProjection {
+    bool liveRunActive, paramBeforeValid;
+    int liveUndoDepth;
+}
+
+class BoxTool : Tool, KeepAliveOnCancel, PreparedToolDoorClient,
+                PreparedToolParamDoorClient {
 private:
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }
@@ -1056,6 +1083,36 @@ public:
         }
         return PreparedBoxParamEffect(preparedToolStateOwner, accepted,
             nextRunActive, nextUndoDepth, false);
+    }
+
+    final PreparedBoxParamProjection capturePreparedBoxParamProjection()
+            const nothrow @nogc {
+        return PreparedBoxParamProjection(liveRunActive, paramBeforeValid,
+                                          liveUndoDepth);
+    }
+    final bool matchesPreparedBoxParamProjection(
+            in PreparedBoxParamProjection expected) const nothrow @nogc {
+        return liveRunActive == expected.liveRunActive &&
+            paramBeforeValid == expected.paramBeforeValid &&
+            liveUndoDepth == expected.liveUndoDepth;
+    }
+    final void installPreparedBoxParam(in PreparedBoxParamEffect effect)
+            nothrow @nogc {
+        if (effect.owner != preparedToolStateOwner) return;
+        liveRunActive = effect.liveRunActive;
+        liveUndoDepth = effect.liveUndoDepth;
+        paramBeforeValid = effect.paramBeforeValid;
+    }
+    override bool prepareDoorParamChanged(string name,
+            PreparedRecordContext context, Layer, ulong, ulong) {
+        if (context is null) return false;
+        scope(failure) context.discard();
+        auto owner = PreparedBoxParamOwner.prepare(this, context, name);
+        bool ok = owner !is null && context.prepareBoxParam(owner);
+        if (ok) ok = owner.historyAccepted ? context.markHistoryInstall()
+                                           : context.markNoHistoryInstall();
+        if (!ok) context.discard();
+        return ok;
     }
 
     override void onParamChanged(string name) {

@@ -1,4 +1,6 @@
 module tools.alignment.radial_sweep_tool;
+import prepared_record_context : PreparedToolParamDoorClient,
+    PreparedRadialSweepParamDoorClient;
 
 import bindbc.opengl;
 import bindbc.sdl;
@@ -265,7 +267,8 @@ void rebuildRadialSweepPreview(const ref MeshSnapshot baseSnap, ref Mesh preview
 // ---------------------------------------------------------------------------
 // RadialSweepTool
 // ---------------------------------------------------------------------------
-class RadialSweepTool : Tool, PreparedToolDoorClient {
+class RadialSweepTool : Tool, PreparedToolDoorClient, PreparedToolParamDoorClient {
+    mixin PreparedRadialSweepParamDoorClient;
 private:
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh() const { return meshSrc_(); }

@@ -523,6 +523,7 @@ for path, text in prepared_source_texts.items():
             "prepared_loop_slice_param_update",
             "prepared_edge_extend_param_update",
             "prepared_edge_extend_deactivate",
+            "prepared_box_param",
             "tools.slice.edge_slice_tool",
             "tools.slice.loop_slice_tool",
             "tools.slice.slice_tool",
