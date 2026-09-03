@@ -6366,7 +6366,7 @@ struct Mesh {
             // winding-blind, so on a counter-wound pair the two surviving
             // half-edge chains never join head to tail: the walk dies after
             // two corners and the whole component is skipped — measured as
-            // "poly.merge leaves both quads standing" (7 edges, 2 faces).
+            // "vert.merge leaves both quads standing" (7 edges, 2 faces).
             // The reference merges them into one hexagon wound like the FIRST
             // face of the component, so flip every face reached across a
             // same-direction edge, seeded by `comp[0]` — the same face the
@@ -6856,7 +6856,7 @@ struct Mesh {
     // IT IS ABSOLUTE ON PURPOSE, AND THAT IS NOT THE SCALE BUG IT LOOKS LIKE.
     // Every other degeneracy test in this file is deliberately RELATIVE to its
     // own operands, because an absolute floor on an area misclassifies a small
-    // polygon (task 1230 shipped one and `poly.inset` refused a 0.002-unit
+    // polygon (task 1230 shipped one and the inset kernel refused a 0.002-unit
     // face). This one is absolute because the behaviour being matched is
     // absolute: the reference refuses a valid convex ring purely for being
     // small, and 14 measured cells say so. Making it relative would be a
@@ -7759,7 +7759,7 @@ struct Mesh {
     /// between consecutive copies are welded and identical seam faces
     /// dropped (same dedup pass as `mirrorFaces`).
     ///
-    /// `detachSubsetSource` selects the reference editor's poly.array copy
+    /// `detachSubsetSource` selects the captured array-copy
     /// model for a PARTIAL selection. The reference REPLACES each selected
     /// source polygon with `count` fresh copies rather than keeping the
     /// source and appending `count-1` — so a copy landing at the source
@@ -7807,7 +7807,7 @@ struct Mesh {
         size_t origFaceCount = faces.length;
         size_t[] newFaceIndices;
 
-        // FULL-PARITY sub-face copy model (reference poly.array): for a
+        // FULL-PARITY sub-face copy model (captured array behavior): for a
         // strict subset the selected source polygons are REPLACED by `count`
         // fresh copies, so the copy that lands at the source position must
         // own duplicated verts rather than share the seam verts it was
