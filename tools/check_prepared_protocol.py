@@ -1273,8 +1273,8 @@ if found != MANIFEST:
     fail(f"prepared protocol manifest mismatch: missing={sorted(MANIFEST-found)} surplus={sorted(found-MANIFEST)}")
 
 expected_callers = [
-    {"path": "source/app.d", "line": 3914, "symbol": "prepareArm"},
-    {"path": "source/app.d", "line": 3929, "symbol": "commitPreparedArm"},
+    {"path": "source/app.d", "line": 3900, "symbol": "prepareArm"},
+    {"path": "source/app.d", "line": 3915, "symbol": "commitPreparedArm"},
 ]
 if CURRENT_WRITERS.get("bypasses") != expected_callers:
     fail("P1.0c both public doors no longer share the exact prepared funnel")

@@ -164,6 +164,8 @@ struct Registry {
     /// declaration can be checked against BEHAVIOUR over the whole registry
     /// (tests/test_discard_census.d) instead of over a hand-written list.
     bool[string] commandDiscardsWork;
+    /// Snapshot of the single pre-apply tool-drop policy in command.d.
+    bool[string] commandDropsToolBeforeApply;
 
     /// Walk every registered factory once and snapshot its
     /// `supportedModes()` into the cache. Call after all
@@ -177,6 +179,8 @@ struct Registry {
             commandParamsJson[id] = paramsSchemaJson(cmd.params());
             commandNeedsTarget[id] = cmd.needsEditTarget();
             commandDiscardsWork[id] = cmd.discardsUnsavedWork();
+            import command : dropsActiveToolBeforeApply;
+            commandDropsToolBeforeApply[id] = dropsActiveToolBeforeApply(cmd);
             // Fail fast on any command whose name() does not resolve back to
             // a registered command key — a dead replay string in the making
             // (history/scripting re-dispatch cmd.name through
@@ -261,6 +265,14 @@ struct Registry {
             if (!commandDiscardsWork.get(k, false)) continue;
             if (!firstDiscard) buf.put(",");
             firstDiscard = false;
+            buf.put(format(`"%s"`, k));
+        }
+        buf.put(`],"commandsDroppingToolBeforeApply":[`);
+        bool firstToolDrop = true;
+        foreach (k; cmds) {
+            if (!commandDropsToolBeforeApply.get(k, false)) continue;
+            if (!firstToolDrop) buf.put(",");
+            firstToolDrop = false;
             buf.put(format(`"%s"`, k));
         }
         buf.put(`],"toolsNeedingTarget":[`);

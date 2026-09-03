@@ -175,8 +175,9 @@ class SceneReset : Command {
         // two orderings are equivalent today and this one stays true if that
         // refusal is ever relaxed.
         {
-            import tool_disarm : disarmActiveToolBeforeDocumentReplace;
-            disarmActiveToolBeforeDocumentReplace();
+            import tool_disarm : DisarmMode,
+                disarmActiveToolBeforeDocumentReplace;
+            disarmActiveToolBeforeDocumentReplace(DisarmMode.cancelAndDrop);
         }
         snap         = MeshSnapshot.capture(*mesh);
         noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart

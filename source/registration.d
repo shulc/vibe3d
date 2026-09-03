@@ -1718,19 +1718,15 @@ private void registerFileCommands(EditorApp app) {
         auto c = new SceneReset(&mesh(), cameraView, editMode,
                                  &editMode(),
                                  () {
-                                     // Task 0232 fold #1(a): a Loop Slice
-                                     // standing preview must be dropped BEFORE
-                                     // the generic tool-drop below —
-                                     // deactivate()'s normal commit/cancel path
-                                     // would otherwise fire against the mesh
-                                     // this reset already overwrote in place
-                                     // (`*mesh = ...` runs earlier in
-                                     // SceneReset.apply(), before onResetTool).
-                                     // dropArmedPreview() never touches the
-                                     // mesh or history, so its ordering
-                                     // relative to that swap doesn't matter
-                                     // for correctness — it only matters that
-                                     // it runs BEFORE setActiveTool(null).
+                                     // Task 3130 normally crosses the shared
+                                     // seam before SceneReset mutates anything,
+                                     // so onResetTool reaches these casts with
+                                     // no active tool. Keep the old
+                                     // dropArmedPreview() calls only as a
+                                     // defensive fallback if this callback is
+                                     // ever reused without that seam; in that
+                                     // case they must still precede the generic
+                                     // setActiveTool(null) below.
                                      if (auto lst = cast(LoopSliceTool) activeTool)
                                          lst.dropArmedPreview();
                                      if (auto est = cast(EdgeSliceTool) activeTool)

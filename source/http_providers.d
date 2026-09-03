@@ -832,14 +832,14 @@ private void wireModelProviders(HttpServer httpServer, ref EditorApp app,
                 // rather than left to be inferred from a diff.
                 immutable bool isXTarget = document.isTransformTarget(l);
                 a.put(format(
-                    `{"index":%d,"name":%s,"type":%s,"visible":%s,"background":%s,` ~
+                    `{"index":%d,"birthId":%s,"name":%s,"type":%s,"visible":%s,"background":%s,` ~
                     `"foreground":%s,` ~
                     `"active":%s,"selected":%s,"primary":%s,"focused":%s,` ~
                     `"transformTarget":%s,` ~
                     `"vertexCount":%s,"faceCount":%s,` ~
                     `"mutationVersion":%s,"xform":%s,"parent":%d,` ~
                     `"links":%s,"imageSource":%s}`,
-                    i, JSONValue(l.name).toString(),
+                    i, l.birthId.to!string, JSONValue(l.name).toString(),
                     JSONValue(tokenOf(l.kind)).toString(),
                     l.visible ? "true" : "false",
                     document.background(l) ? "true" : "false",

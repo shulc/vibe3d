@@ -2870,11 +2870,10 @@ void main(string[] args) {
         //   * tool.* — the tool's OWN commands (tool.attr / tool.set are
         //     SideEffect anyway; tool.doApply is Model but is the tool applying
         //     itself). They CONTINUE the session, never end it.
-        //   * scene.* / file.* — scene-REPLACE / lifecycle commands
-        //     (scene.reset = file.new, file.load, scene.loadMesh). They DISCARD
-        //     the armed edit via their own dropArmedPreview()+setActiveTool(null)
-        //     teardown; a commit-and-drop here would land a bogus edit entry
-        //     ahead of the reset (test_scene_reset_armed_tool).
+        //   * scene.* / file.* — document-replace / lifecycle commands bypass
+        //     this generic commit-and-drop policy. Their discard behaviour is
+        //     checked over the live registry by tests/test_disarm_census.d,
+        //     so the authoritative set and mechanism are not duplicated here.
         //   * selection / edit-mode commands are UiState (not Model), already
         //     skipped by the flag.
         //   * layer.attr, and ONLY layer.attr, of the `layer.*` family (task
@@ -2892,7 +2891,9 @@ void main(string[] args) {
         //     A blanket `layer.` prefix would be WRONG. Of the Model-class
         //     `layer.*` commands — add, duplicate, reorder, delete, rename,
         //     setVisible, attr, parent (`layer.select` is UiState and already
-        //     skipped) — `layer.attr` is the only one that can change neither
+        //     skipped; on a genuine primary move it probes, restores, drops the
+        //     tool while the old layer is current, then replays its mutation) —
+        //     `layer.attr` is the only one that can change neither
         //     the layer SET nor WHICH layer is primary. add / duplicate make a
         //     NEW layer primary, delete can remove the tool's own target, and
         //     setVisible can promote a different layer when the primary is
@@ -2904,16 +2905,9 @@ void main(string[] args) {
         // Never fires during a refire bracket (those carry only SideEffect
         // tool.attr); after the drop activeTool is null so the tool's own
         // lifecycle-undo emit cannot re-enter this branch.
-        if (activeTool !is null && (cmd.cmdFlags() & CmdFlags.Model)) {
-            import std.string : startsWith;
-            string cn = cmd.name();
-            if (!cn.startsWith("tool.")
-                && !cn.startsWith("scene.")
-                && !cn.startsWith("file.")
-                && cn != "layer.attr") {
-                setActiveTool(null);
-                activeToolId = "";
-            }
+        if (activeTool !is null && dropsActiveToolBeforeApply(cmd)) {
+            setActiveTool(null);
+            activeToolId = "";
         }
         // Task 0616 Ph5 review (S3): a command that knows WHY it declined gets
         // to say so. `Command.refusalReason()` is "" for everything that has
@@ -3182,17 +3176,9 @@ void main(string[] args) {
         import change_bus : MeshChangeAll, noteLayerChange, LayerChange;
         import snap       : invalidateSnapGrids;
         if (dropPendingGuardHook !is null) dropPendingGuardHook();
-        // 0. Task 0232 fold #1(b): drop any Loop Slice standing preview
-        //    BEFORE the tool-drop below. By the time this hook fires the
-        //    primary has ALREADY switched (this command's
-        //    fireSwitchIfChanged runs after the mutation), so `mesh` (via
-        //    the tool's meshSrc_() delegate) already resolves to the NEW
-        //    layer — a generic deactivate()-driven commit/restore would
-        //    touch the WRONG mesh. dropArmedPreview() never touches mesh,
-        //    so it's safe regardless of the swap having already happened;
-        //    it just needs to run before step 1's setActiveTool(null).
-        if (auto lst = cast(LoopSliceTool) activeTool) lst.dropArmedPreview();
-        if (auto est = cast(EdgeSliceTool) activeTool) est.dropArmedPreview();
+        // LayerSelect drops an active tool before moving the primary, while
+        // the tool's original mesh is still current. This hook therefore sees
+        // no active tool for a guarded selection move.
         // 0b. Drop the morph ROUTING TARGET (task 1073, review B2). It is a
         //     NAME resolved per use, so carrying it across a primary change
         //     silently routes the next edit into a same-named map on the new
@@ -3207,7 +3193,7 @@ void main(string[] args) {
             import morph_target : clearMorphTarget;
             clearMorphTarget();
         }
-        // 1. tool-drop (same path as Esc / scene.reset's onResetTool).
+        // 1. tool-drop for non-LayerSelect callers of this hook.
         setActiveTool(null);
         // 2. explicit coalesce barrier on the history.
         history.breakCoalescing();
@@ -3953,8 +3939,9 @@ void main(string[] args) {
     // new geometry, so `deactivate()` — which for a session tool IS the commit
     // point — can only ever see the mesh the gesture was armed on.
     {
-        import tool_disarm : DisarmOutcome, g_disarmActiveTool, kMaxDisarmSteps;
-        g_disarmActiveTool = () {
+        import tool_disarm : DisarmMode, DisarmOutcome,
+            g_disarmActiveTool, kMaxDisarmSteps;
+        g_disarmActiveTool = (DisarmMode mode) {
             DisarmOutcome o;
             if (activeTool is null) return o;
             o.hadTool = true;
@@ -3964,10 +3951,12 @@ void main(string[] args) {
             // one recorded step per call), and equally documented as having no
             // assertable postcondition — so this loop may neither stop after
             // one call nor trust that it ever finishes.
-            while (activeTool.hasUncommittedEdit()
-                   && o.cancelSteps < kMaxDisarmSteps) {
-                activeTool.cancelUncommittedEdit();
-                ++o.cancelSteps;
+            if (mode == DisarmMode.cancelAndDrop) {
+                while (activeTool.hasUncommittedEdit()
+                       && o.cancelSteps < kMaxDisarmSteps) {
+                    activeTool.cancelUncommittedEdit();
+                    ++o.cancelSteps;
+                }
             }
             o.stillArmed = activeTool.hasUncommittedEdit();
             // LAYER 1 — drop the tool outright, still ahead of the replace.

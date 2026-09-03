@@ -803,6 +803,25 @@ final class LayerSelect : LayerCommandBase {
                  Param.enum_("kind", "Kind", &kindArg, kindChoices, "") ];
     }
 
+    /// Apply one item-selection mutation speculatively. If it moves the
+    /// primary layer, restore the exact selection state, drop the active tool
+    /// while its original mesh is current, then replay the mutation.
+    ///
+    /// The delegate contains Document mutators only. History recording,
+    /// publication and callbacks stay outside, so the probe cannot duplicate
+    /// an externally visible effect.
+    private void mutateGuardingPrimary(scope void delegate() mutate) {
+        auto before = doc.captureItemSelection();
+        auto previousPrimary = doc.primary;
+        mutate();
+        if (doc.primary !is previousPrimary) {
+            doc.restoreItemSelection(before);
+            import tool_disarm : dropActiveToolBeforePrimaryMove;
+            dropActiveToolBeforePrimaryMove();
+            mutate();
+        }
+    }
+
     protected override bool applyImpl() {
         if (doc.layers.length == 0) return false;
         prevActiveIndex = doc.activeIndex;
@@ -821,7 +840,7 @@ final class LayerSelect : LayerCommandBase {
         // command would be a second copy of all four, and the first one to
         // drift would do it silently.
         if (modeArg == "clear") {
-            doc.clearItemSelection();
+            mutateGuardingPrimary(() { doc.clearItemSelection(); });
             noteUndoRecorded();   // task 2500
             fireSwitchIfChanged(prevPrimary, prevActiveIndex);
             noteItemSelectionChange();
@@ -852,8 +871,11 @@ final class LayerSelect : LayerCommandBase {
                 return false;
             }
             const batchMode = selModeFromToken(modeArg);
-            foreach (l; doc.layers)
-                if (l !is null && l.kind == want) doc.selectItem(l, batchMode);
+            mutateGuardingPrimary(() {
+                foreach (l; doc.layers)
+                    if (l !is null && l.kind == want)
+                        doc.selectItem(l, batchMode);
+            });
             noteUndoRecorded();   // task 2500
             fireSwitchIfChanged(prevPrimary, prevActiveIndex);
             noteItemSelectionChange();
@@ -914,27 +936,28 @@ final class LayerSelect : LayerCommandBase {
             immutable bool usable = anchor !is null
                 && kindInfo(anchor.kind).isSceneItem
                 && kindInfo(target.kind).isSceneItem;
-            if (!usable) {
-                doc.selectItem(target, SelMode.Set);
-            } else {
-                immutable size_t a = doc.indexOf(anchor);
-                // `Set` FIRST, so the anchor is re-seated at the head and the
-                // adds that follow seat behind it. `Add` never promotes the
-                // edit target (task 0671), so the walk below cannot move it.
-                doc.selectItem(anchor, SelMode.Set);
-                // Walk anchor -> target, so the CLICKED row is touched last
-                // and ends as `focusedItem`. Resource items inside the span
-                // (an image is not a row) are skipped rather than swept in.
-                if (a < idx) {
-                    foreach (i; a + 1 .. idx + 1)
-                        if (kindInfo(doc.layers[i].kind).isSceneItem)
-                            doc.selectItem(doc.layers[i], SelMode.Add);
-                } else if (a > idx) {
-                    foreach_reverse (i; idx .. a)
-                        if (kindInfo(doc.layers[i].kind).isSceneItem)
-                            doc.selectItem(doc.layers[i], SelMode.Add);
+            immutable size_t a = usable ? doc.indexOf(anchor) : size_t.max;
+            mutateGuardingPrimary(() {
+                if (!usable) {
+                    doc.selectItem(target, SelMode.Set);
+                } else {
+                    // `Set` FIRST, so the anchor is re-seated at the head and
+                    // the adds that follow seat behind it. `Add` never
+                    // promotes the edit target.
+                    doc.selectItem(anchor, SelMode.Set);
+                    // Walk anchor -> target, so the clicked row is touched
+                    // last and ends as focusedItem.
+                    if (a < idx) {
+                        foreach (i; a + 1 .. idx + 1)
+                            if (kindInfo(doc.layers[i].kind).isSceneItem)
+                                doc.selectItem(doc.layers[i], SelMode.Add);
+                    } else if (a > idx) {
+                        foreach_reverse (i; idx .. a)
+                            if (kindInfo(doc.layers[i].kind).isSceneItem)
+                                doc.selectItem(doc.layers[i], SelMode.Add);
+                    }
                 }
-            }
+            });
             noteUndoRecorded();   // task 2500
             fireSwitchIfChanged(prevPrimary, prevActiveIndex);
             noteItemSelectionChange();
@@ -944,7 +967,7 @@ final class LayerSelect : LayerCommandBase {
 
         const mode  = selModeFromToken(modeArg);
 
-        doc.selectItem(target, mode);
+        mutateGuardingPrimary(() { doc.selectItem(target, mode); });
         noteUndoRecorded();   // task 2500
 
         // The primary may or may not have moved; fireSwitchIfChanged is a no-op

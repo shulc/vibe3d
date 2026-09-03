@@ -123,6 +123,19 @@ enum CmdFlags : uint {
                             // its own-gesture Model entry sits below it.
 }
 
+/// Whether the application command funnel must drop an active tool before
+/// applying `cmd`. The active-tool presence check stays at the call site;
+/// registry startup evaluates this policy on cold command instances.
+bool dropsActiveToolBeforeApply(const Command cmd) {
+    import std.string : startsWith;
+    if (!(cmd.cmdFlags() & CmdFlags.Model)) return false;
+    const cn = cmd.name();
+    return !cn.startsWith("tool.")
+        && !cn.startsWith("scene.")
+        && !cn.startsWith("file.")
+        && cn != "layer.attr";
+}
+
 // Result of comparing a freshly-applied command against the command that
 // currently sits on top of the undo stack. `Compatible` means the new command
 // is a CONTINUATION of the previous one (same logical edit, same targets) and

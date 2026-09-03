@@ -2207,6 +2207,22 @@ class HttpServer {
         }
     }
 
+    private void route_apiToolDisarm(HttpRequest request, HttpResponse response) {
+        import std.format : format;
+        import tool_disarm : DisarmMode, g_disarmCrossings, g_lastDisarm;
+        const mode = g_lastDisarm.mode == DisarmMode.dropOnly
+            ? "dropOnly" : "cancelAndDrop";
+        response.headers["Content-Type"] = "application/json";
+        response.statusCode = 200;
+        response.body = format(
+            `{"crossings":%s,"hadTool":%s,"cancelSteps":%s,"stillArmed":%s,"mode":"%s"}`,
+            g_disarmCrossings,
+            g_lastDisarm.hadTool ? "true" : "false",
+            g_lastDisarm.cancelSteps,
+            g_lastDisarm.stillArmed ? "true" : "false",
+            mode);
+    }
+
     private void route_apiUiPolicy(HttpRequest request, HttpResponse response) {
         // Task 1520/1521 — what the UI policy did with the last user-origin
         // command line: the guard verdict, whether the prompt was suppressed
@@ -4239,6 +4255,7 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/selection",            "",     Match.exact,  Answered.httpThread, "route_apiSelection"),
     RouteSpec("/api/tool/handles",         "GET",  Match.exact,  Answered.mainThread, "route_apiToolHandles"),
     RouteSpec("/api/tool/state",           "GET",  Match.exact,  Answered.httpThread, "route_apiToolState"),
+    RouteSpec("/api/tool/disarm",          "GET",  Match.exact,  Answered.httpThread, "route_apiToolDisarm"),
     RouteSpec("/api/toolprops/ids",        "GET",  Match.exact,  Answered.httpThread, "route_apiToolpropsIds"),
     RouteSpec("/api/ui/policy",            "GET",  Match.exact,  Answered.httpThread, "route_apiUiPolicy"),
     RouteSpec("/api/buttons/availability", "GET",  Match.exact,  Answered.httpThread, "route_apiButtonsAvailability"),

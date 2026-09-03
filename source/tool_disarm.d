@@ -78,6 +78,14 @@ module tool_disarm;
 /// live-run ladder any tool records and small enough to be free.
 enum int kMaxDisarmSteps = 64;
 
+/// Which half of the seam a caller needs. Document replacement cancels a
+/// pending edit before dropping the tool; a primary-layer move keeps the edit
+/// and only drops, so the tool commits while its original mesh is current.
+enum DisarmMode {
+    cancelAndDrop,
+    dropOnly,
+}
+
 /// What the seam did, for diagnostics and for the unit tests below.
 struct DisarmOutcome {
     /// A tool was active when the document replace began.
@@ -88,17 +96,22 @@ struct DisarmOutcome {
     /// so layer 2 did not hold for it and its drop may have committed into the
     /// pre-replace mesh. Never means foreign geometry — see layer 1 above.
     bool stillArmed;
+    /// The mode requested by this crossing.
+    DisarmMode mode;
 }
 
 /// Installed once by `app.d`. Cancels the active tool's live gesture (bounded)
 /// and then drops the tool, both while the pre-replace mesh is still current.
 /// Null in headless / unit construction, where there is no app and no tool.
-__gshared DisarmOutcome delegate() g_disarmActiveTool;
+__gshared DisarmOutcome delegate(DisarmMode) g_disarmActiveTool;
 
 /// The last outcome, for a test or a future diagnostic route to read. Written
 /// on every crossing, including the no-tool one (so a stale `true` cannot be
 /// mistaken for a fresh one).
 __gshared DisarmOutcome g_lastDisarm;
+
+/// Number of seam crossings, including crossings without an installed hook.
+__gshared ulong g_disarmCrossings;
 
 /// Cross the seam. Call this from a command's `applyImpl` BEFORE it captures
 /// its undo snapshot and BEFORE it writes the new geometry — the whole point
@@ -106,13 +119,22 @@ __gshared DisarmOutcome g_lastDisarm;
 ///
 /// Uninstalled resolver means "there is no tool" (headless / unit), the same
 /// convention `command.g_editTargetResolver` uses.
-DisarmOutcome disarmActiveToolBeforeDocumentReplace() {
+DisarmOutcome disarmActiveToolBeforeDocumentReplace(DisarmMode mode) {
+    ++g_disarmCrossings;
     if (g_disarmActiveTool is null) {
         g_lastDisarm = DisarmOutcome.init;
+        g_lastDisarm.mode = mode;
         return g_lastDisarm;
     }
-    g_lastDisarm = g_disarmActiveTool();
+    g_lastDisarm = g_disarmActiveTool(mode);
+    g_lastDisarm.mode = mode;
     return g_lastDisarm;
+}
+
+/// Drop the active tool before a primary-layer move. The distinct name keeps
+/// layer selection from pretending that it replaces the whole document.
+DisarmOutcome dropActiveToolBeforePrimaryMove() {
+    return disarmActiveToolBeforeDocumentReplace(DisarmMode.dropOnly);
 }
 
 // ---------------------------------------------------------------------------
@@ -123,21 +145,24 @@ DisarmOutcome disarmActiveToolBeforeDocumentReplace() {
 // ---------------------------------------------------------------------------
 unittest {
     // Uninstalled: a no-op that reports nothing, and CLEARS a stale record.
-    g_lastDisarm = DisarmOutcome(true, 3, true);
+    g_lastDisarm = DisarmOutcome(true, 3, true, DisarmMode.cancelAndDrop);
     g_disarmActiveTool = null;
-    auto r = disarmActiveToolBeforeDocumentReplace();
+    auto before = g_disarmCrossings;
+    auto r = disarmActiveToolBeforeDocumentReplace(DisarmMode.cancelAndDrop);
     assert(!r.hadTool && r.cancelSteps == 0 && !r.stillArmed,
         "an uninstalled disarm hook must report the empty outcome");
     assert(!g_lastDisarm.hadTool && !g_lastDisarm.stillArmed,
         "an uninstalled crossing must overwrite the previous record, not keep "
         ~ "it — a stale `stillArmed:true` read as fresh is a false alarm and a "
         ~ "stale `false` hides a real one");
+    assert(g_disarmCrossings == before + 1,
+        "an uninstalled hook is still a seam crossing");
 }
 
 unittest {
     // A gesture that cancels in one step: recorded as one step, not armed.
     bool armed = true;
-    g_disarmActiveTool = () {
+    g_disarmActiveTool = (DisarmMode) {
         DisarmOutcome o;
         o.hadTool = true;
         while (armed && o.cancelSteps < kMaxDisarmSteps) {
@@ -147,7 +172,7 @@ unittest {
         o.stillArmed = armed;
         return o;
     };
-    auto r = disarmActiveToolBeforeDocumentReplace();
+    auto r = disarmActiveToolBeforeDocumentReplace(DisarmMode.cancelAndDrop);
     import std.conv : to;
     assert(r.hadTool, "hadTool must be reported");
     assert(r.cancelSteps == 1,
@@ -161,7 +186,7 @@ unittest {
     // NEVER clears must not spin. Without the `< kMaxDisarmSteps` term this
     // loop does not terminate, which is why the assertion is on the exact cap
     // rather than on "some bound".
-    g_disarmActiveTool = () {
+    g_disarmActiveTool = (DisarmMode) {
         DisarmOutcome o;
         o.hadTool = true;
         bool armed = true;
@@ -170,11 +195,40 @@ unittest {
         o.stillArmed = armed;
         return o;
     };
-    auto r = disarmActiveToolBeforeDocumentReplace();
+    auto r = disarmActiveToolBeforeDocumentReplace(DisarmMode.cancelAndDrop);
     assert(r.cancelSteps == kMaxDisarmSteps,
         "a cancel that never clears must stop AT the cap");
     assert(r.stillArmed,
         "and must report stillArmed, so layer 2's failure is visible rather "
         ~ "than silently assumed to have held");
+    g_disarmActiveTool = null;
+}
+
+unittest {
+    // A live edit is the population floor: without it, zero cancel calls says
+    // only that there was nothing for dropOnly to preserve.
+    bool armed = true;
+    int cancelSteps;
+    g_disarmActiveTool = (DisarmMode mode) {
+        DisarmOutcome o;
+        o.hadTool = true;
+        assert(armed, "the drop-only fixture must start with a live edit");
+        if (mode == DisarmMode.cancelAndDrop) {
+            armed = false;
+            ++cancelSteps;
+        }
+        o.cancelSteps = cancelSteps;
+        o.stillArmed = armed;
+        return o;
+    };
+    assert(armed, "the drop-only fixture must arm a live edit");
+    auto r = dropActiveToolBeforePrimaryMove();
+    import std.conv : to;
+    assert(r.hadTool, "a drop-only crossing must report the active tool");
+    assert(r.cancelSteps == 0,
+        "a drop-only crossing must make zero cancel calls, got "
+        ~ r.cancelSteps.to!string);
+    assert(r.mode == DisarmMode.dropOnly,
+        "the recorded crossing must retain its requested mode");
     g_disarmActiveTool = null;
 }

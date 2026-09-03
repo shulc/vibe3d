@@ -593,9 +593,8 @@ public:
 
     /// Discard the standing preview WITHOUT touching the mesh or recording
     /// anything to history. Safe to call even when nothing is armed, and safe
-    /// to call AFTER the underlying mesh has already been swapped out from
-    /// under this tool (scene.reset / active-layer switch) — see the two
-    /// swap-site call sites in app.d.
+    /// to call after scene.reset has already swapped the underlying mesh — see
+    /// that document-replace call site in app.d.
     public void dropArmedPreview() {
         armed_         = false;
         scrubbing_     = false;

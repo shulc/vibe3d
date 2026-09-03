@@ -141,25 +141,29 @@ class FileLoad : Command {
                            || ext == ".glb" || ext == ".fbx");
 
         if (isNative) {
-            // Native .v3d is the layered source of truth: replace the WHOLE
-            // layer list in place. Snapshot the prior document for undo BEFORE
-            // the swap (readV3d only mutates `document` atomically on success,
-            // so capturing here is safe even when the load rejects).
+            // Parse and validate into a temporary document first. The live
+            // document must remain under an armed tool until success is known,
+            // but the tool must be gone before either the undo snapshot or the
+            // whole-document assignment below.
+            Document parsed;
+            ok = readV3d(path, parsed);
+            if (!ok) {
+                auto why = lastV3dRejectReason();
+                refusal_ = why.length ? (path ~ " — " ~ why)
+                                      : ("could not read " ~ path);
+                return false;
+            }
+            {
+                import tool_disarm : DisarmMode,
+                    disarmActiveToolBeforeDocumentReplace;
+                disarmActiveToolBeforeDocumentReplace(DisarmMode.cancelAndDrop);
+            }
             prevLayers      = document.layers.dup;   // shallow: Layer refs preserved
             prevActiveIndex = document.activeIndex;
             prevSelection   = document.captureItemSelection();   // task 0671
             docSnapped      = true;
             noteUndoRecorded();   // task 2500 — the flag and the image, one statement apart
-            ok = readV3d(path, *document);
-            if (!ok) {
-                // Carry the reader's sentence out to whoever has to tell a
-                // user. `lastV3dRejectReason` is thread-local and describes
-                // the call we just made, so it is read HERE and nowhere later.
-                auto why = lastV3dRejectReason();
-                refusal_ = why.length ? (path ~ " — " ~ why)
-                                      : ("could not read " ~ path);
-                docSnapped = false; prevLayers = null; forgetUndoRecord(); return false;
-            }
+            *document = parsed;
             // readV3d (Stage 3) already re-asserts the full selection-set
             // invariants via the Document mutators: the persisted multi-select
             // SET is restored, the primary is forced selected + visible, and
@@ -181,6 +185,14 @@ class FileLoad : Command {
                 ok = importViaAssimp(path, sc);   // OBJ / glTF / FBX via assimp
             if (!ok) return false;
 
+            // One call dominates both interchange landing paths. Parsing has
+            // succeeded; neither the old snapshot nor the replacement has
+            // happened yet.
+            {
+                import tool_disarm : DisarmMode,
+                    disarmActiveToolBeforeDocumentReplace;
+                disarmActiveToolBeforeDocumentReplace(DisarmMode.cancelAndDrop);
+            }
             if (sc.parts.length > 1) {
                 // Layered (multi-part) interchange import: replace the document.
                 multiLayer      = true;

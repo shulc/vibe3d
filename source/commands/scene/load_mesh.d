@@ -86,8 +86,9 @@ class MeshLoadRaw : Command {
         // kernel against the just-loaded mesh. Validation above deliberately
         // stays first: a load that REFUSES must not disarm the user's tool.
         {
-            import tool_disarm : disarmActiveToolBeforeDocumentReplace;
-            disarmActiveToolBeforeDocumentReplace();
+            import tool_disarm : DisarmMode,
+                disarmActiveToolBeforeDocumentReplace;
+            disarmActiveToolBeforeDocumentReplace(DisarmMode.cancelAndDrop);
         }
         // ---- Snapshot for undo, then swap geometry in ----
         snap         = MeshSnapshot.capture(*mesh);

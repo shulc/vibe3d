@@ -210,7 +210,7 @@ ProfileSample[] profileSamples(LoopProfile p) {
 // `before_`, no undo entry). See doc/loop_slice_slider_hud_impl_plan.md for
 // the full mechanism-by-mechanism rationale (write-point redo invalidation
 // — task 0429, superseding the plan's navHistory redo-cancel —
-// scene.reset/onActiveLayerChanged `dropArmedPreview()` calls, `armedKey_`
+// scene.reset's `dropArmedPreview()` call and the `armedKey_`
 // mesh-swap guard) — none of that changed for v2, only WHAT gets latched
 // (`seeds_[]` instead of a single `seedEdge_`) and WHAT gets rebuilt from
 // (`positions_[]`/`current_` instead of a scalar `position_` + derived
@@ -881,10 +881,9 @@ public:
         // commit point. A mid-scrub interruption, or an armed-but-unbuilt
         // edge case, cancels instead. Both commitEdit()/cancelLiveEdit()
         // self-guard against a mesh swapped out from under us (see their
-        // bodies) — but for the two KNOWN swap sites (scene.reset/file.new,
-        // active-layer switch) app.d calls `dropArmedPreview()` explicitly
-        // BEFORE this ever runs, so `armed_` is already false here in those
-        // cases and this branch is a no-op.
+        // bodies) — but scene.reset/file.new calls `dropArmedPreview()`
+        // explicitly before this ever runs, so `armed_` is already false at
+        // that remaining document-replace site and this branch is a no-op.
         if (active && armed_) {
             if (built_) commitEdit();
             else        cancelLiveEdit();
@@ -1019,13 +1018,12 @@ public:
     }
 
     /// Discard the standing preview WITHOUT touching the mesh or recording
-    /// anything to history. For exit paths where the underlying mesh may
-    /// already have been swapped/overwritten out from under this tool by the
-    /// time this runs — scene.reset's `onResetTool` fires AFTER `*mesh = ...`
-    /// has already run; an active-layer-change hook fires AFTER the primary
-    /// already switched — committing or restoring there would corrupt the
-    /// new mesh or fabricate a bogus undo entry (task 0232). Safe to call
-    /// even when nothing is armed (no-op). Task 0239: resets `seeds_`
+    /// anything to history. The remaining reset callback is defensive:
+    /// scene.reset's `onResetTool` normally runs only after the shared seam
+    /// has already dropped this tool. A primary-layer move is not such an exit
+    /// path: LayerSelect now drops while the old mesh is current, so an armed
+    /// built preview commits normally. Safe to call even when nothing is armed
+    /// (no-op). Task 0239: resets `seeds_`
     /// (formerly the scalar `seedEdge_`) — `positions_`/`current_`/`edit_`/
     /// `mode_`/`count_` are session PARAMS, not per-arm latch state, and are
     /// intentionally left untouched here (they're reset by
