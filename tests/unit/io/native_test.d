@@ -3,7 +3,7 @@
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.io.native_test;
 
-import std.file      : exists, read, write;
+import std.file      : exists, read, remove, write;
 import std.json      : JSONValue, JSONType, parseJSON, JSONException;
 import std.conv      : to;
 import std.format    : format;
@@ -23,6 +23,31 @@ import std.path       : buildPath, dirName, buildNormalizedPath;
 import io.image_path  : writeTestBmp;
 import document       : LinkState;
 import io.native;
+
+// Task 3910 phase 0 control. A conventional face-built mesh has no authored
+// wire state, so adding the optional wire channel must not perturb its stable
+// save -> load -> save bytes.
+unittest {
+    import std.random : uniform;
+    import mesh : makeCube;
+
+    auto p1 = buildPath(tempDir(), format("vibe3d_3910_control_a_%d.v3d",
+                                         uniform(0, int.max)));
+    auto p2 = buildPath(tempDir(), format("vibe3d_3910_control_b_%d.v3d",
+                                         uniform(0, int.max)));
+    scope(exit) {
+        if (exists(p1)) remove(p1);
+        if (exists(p2)) remove(p2);
+    }
+
+    Mesh first = makeCube();
+    writeV3d(first, p1);
+    Mesh back;
+    assert(readV3d(p1, back), "3910 control: reload must succeed");
+    writeV3d(back, p2);
+    assert(read(p1) == read(p2),
+        "3910 control: a face-built document must remain byte-stable");
+}
 
 // ---------------------------------------------------------------------------
 // Task 0616 Ph6 — THE WRITER WRITES EVERY ITEM, and `primaryLayer` is the RAW

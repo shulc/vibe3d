@@ -119,11 +119,12 @@ unittest { // row 39 -- DISCRIMINATING: two edges, two different sets, one survi
     // The weld the reference ran: the two 2 mm-apart end vertices merge, so
     // b0 -> a0 and b1 -> a1; nothing else moves.
     const ulong survivor = edgeKey(a0, a1);
+    // The wire registry is empty; this policy mirrors the production weld.
     selSetRekeyEdges(m, (uint v) {
         if (v == b0) return a0;
         if (v == b1) return a1;
         return v;
-    });
+    }, WireKeyPolicy.dropMoved);
 
     auto p = survivor in m.edgeSetMask;
     assert(p !is null,
@@ -160,7 +161,7 @@ unittest { // row 39 -- CONTROL: both edges in ONE set. Cannot separate.
         if (v == b0) return a0;
         if (v == b1) return a1;
         return v;
-    });
+    }, WireKeyPolicy.dropMoved);
 
     auto p = edgeKey(a0, a1) in m.edgeSetMask;
     assert(p !is null && (*p & 1UL) != 0,
@@ -184,7 +185,8 @@ unittest { // row 39 -- the collapse arm the read also settled
     // Weld the tagged edge's OWN two endpoints together: it collapses to a
     // point. The reference skips such an edge entirely and its membership
     // goes with it.
-    selSetRekeyEdges(m, (uint v) => (v == a1) ? a0 : v);
+    selSetRekeyEdges(m, (uint v) => (v == a1) ? a0 : v,
+                     WireKeyPolicy.dropMoved);
     assert(m.edgeSetMask.length == 0,
            "row 39: an edge whose endpoints weld to the same survivor must "
            ~ "lose its membership, not re-key onto a degenerate key");

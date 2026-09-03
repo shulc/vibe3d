@@ -54,10 +54,9 @@ struct ArcParams {
 // buildArc — emit segments+1 vertices and segments wire edges into `dst`.
 //
 // The caller is responsible for calling dst.buildLoops() afterwards.
-// rebuildEdges() must NOT be called instead — it re-derives edges from
-// faces only and would drop every wire edge (mesh.d:4498-4504).
-// buildLoops() rebuilds the half-edge maps from the existing edges[] and
-// so PRESERVES wire edges (mesh.d:6487-6489).
+// addEdge() registers every segment as authored, so a later rebuildEdges()
+// also preserves the arc. buildLoops() is still the right terminal operation
+// here: it settles half-edge maps directly from the completed edges[] once.
 // ---------------------------------------------------------------------------
 void buildArc(Mesh* dst, const ref ArcParams p)
 {

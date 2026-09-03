@@ -27,7 +27,7 @@ module mesh_analysis;
 // detector, never per element. No detector in this module is worse than
 // O(V + E + F) (see the perf-smoke unittest at the bottom).
 
-import mesh : Mesh;
+import mesh : Mesh, edgeKey;
 // Task 1903 Stage E1 moved the three hygiene/topology detectors this module
 // shares with the mutating fixes out of `struct Mesh` and into free functions
 // over `ref const(Mesh)` (`source/mesh_ops/cleanup.d`). The call sites below
@@ -135,10 +135,16 @@ uint[] duplicateFaceIndices(const ref Mesh mesh) {
     return result;
 }
 
-/// Orphan (unreferenced) vertex indices — vertices no face touches, exactly
-/// what `Mesh.compactUnreferenced` would remove. Ascending vertex-index order.
+/// Orphan vertex indices — vertices touched by neither a face nor a live
+/// authored edge, exactly what `Mesh.compactUnreferenced` would remove.
+/// Ascending vertex-index order.
 uint[] orphanVertexIndices(const ref Mesh mesh) {
     auto referenced = mesh.computeReferencedVertexMask();
+    foreach (ref e; mesh.edges)
+        if (edgeKey(e[0], e[1]) in mesh.wireEdgeKeys) {
+            if (e[0] < referenced.length) referenced[e[0]] = true;
+            if (e[1] < referenced.length) referenced[e[1]] = true;
+        }
     uint[] result;
     foreach (vi, r; referenced)
         if (!r) result ~= cast(uint)vi;

@@ -28,7 +28,7 @@ import change_bus : changeBus;   // the seam counters (task 1903 §5.8 / L1-P1)
 import mesh;            // Mesh, Marks, edgeKey (mutual import — see note below)
 import math : Vec3;
 import mesh_selsets : selSetRekeyEdges, selSetGatherVertexMaskForward,
-    selSetGatherVertexMaskReverse, selSetDropFilterVertexMask;
+    selSetGatherVertexMaskReverse, selSetDropFilterVertexMask, WireKeyPolicy;
 import mesh_planes : kNoSource, FaceSource, rewriteFaces;   // task 1902 Stage H —
     // FaceReindex forward replay is the primitive itself (plan §7.2: "one
     // implementation, so replay and live edit cannot drift"). No cycle:
@@ -3170,8 +3170,12 @@ private void applyForward(ref Mesh m, ref const MeshOpEntry e,
             // no-op and not derivable from the reverse payload: see the Kind
             // doc — a forward that did nothing would leave the restored
             // pre-weld keys for the following `Reindex` to drop outright.
+            // Weld replay is non-injective. Wire keys moved by it were
+            // intentionally dropped live and have no inverse payload; this
+            // arm is therefore a declared no-op for authored wires today.
             selSetRekeyEdges(m, (uint v) =>
-                v < e.perm.length ? e.perm[v] : v);
+                v < e.perm.length ? e.perm[v] : v,
+                WireKeyPolicy.dropMoved);
             break;
     }
 }
@@ -3356,7 +3360,8 @@ private void applyReindexForward(ref Mesh m, in uint[] perm) {
     // Task 1060, Stage 5b: the edge-set registry rides the SAME permutation
     // — `perm[old] == ~0u` is exactly `selSetRekeyEdges`'s "vertex gone"
     // sentinel already.
-    selSetRekeyEdges(m, (uint v) => v < perm.length ? perm[v] : uint.max);
+    selSetRekeyEdges(m, (uint v) => v < perm.length ? perm[v] : uint.max,
+                     WireKeyPolicy.carry);
     // Rewrite face vertex ids old->new.
     foreach (ref f; m.faces)
         foreach (ref vid; f)
@@ -3440,7 +3445,8 @@ private void applyReindexReverse(ref Mesh m, in uint[] perm) {
     // inverse map that is about to rewrite face vertex ids below — `m`'s
     // vertices are back at pre-compaction (old) index space after this
     // function returns, so the edge-set keys must be too.
-    selSetRekeyEdges(m, (uint v) => v < inv.length ? inv[v] : uint.max);
+    selSetRekeyEdges(m, (uint v) => v < inv.length ? inv[v] : uint.max,
+                     WireKeyPolicy.carry);
     foreach (ref f; m.faces)
         foreach (ref vid; f) {
             // A face vid here is a post-compaction `new` id; map back to old.
@@ -3710,7 +3716,13 @@ private void removeVertsForward(ref Mesh m, in uint[] idx) {
         uint nextIdx = 0;
         foreach (i; 0 .. drop.length)
             vremap[i] = drop[i] ? uint.max : nextIdx++;
-        selSetRekeyEdges(m, (uint v) => v < vremap.length ? vremap[v] : uint.max);
+        // No production RemoveVerts reaches this standalone forward arm: the
+        // sole producer writes an immediate Reindex pair, skipped at 848-851.
+        // carry is declared, not witnessed; a direct-removal producer must
+        // revisit this policy and the matching reverse insert arm.
+        selSetRekeyEdges(m,
+            (uint v) => v < vremap.length ? vremap[v] : uint.max,
+            WireKeyPolicy.carry);
     }
 }
 
@@ -3944,7 +3956,12 @@ private void removeVertsReverse(ref Mesh m, in uint[] idx, in Vec3[] pos,
             // points at the wrong (or a now-nonexistent) pair. Preventive
             // close, not measured-by-value — mirrors the note on
             // `vertexSelectionOrder`'s insert two lines above.
-            selSetRekeyEdges(m, (uint v) => v >= vi ? v + 1 : v);
+            // No production RemoveVerts reaches this standalone insert arm:
+            // the compaction pair reverses into the hole-fill arm above.
+            // carry is declared, not witnessed; a future direct-removal
+            // producer must revisit both standalone policies and add a cell.
+            selSetRekeyEdges(m, (uint v) => v >= vi ? v + 1 : v,
+                             WireKeyPolicy.carry);
         }
     }
     // Task 1903 Stage L5-b — the EDGE half, AFTER the whole loop and not
@@ -4615,9 +4632,10 @@ private void finalize(ref Mesh m, MeshEditScope scope_,
     // the tail bump alone is INERT, because `rebuildEdges` publishes its own
     // `commitChange(MeshEditScope.Polygons)` and so moves topologyVersion
     // anyway (measured, task 2060 mutation M3). The derivation half is safe —
-    // `edges` is a pure function of `faces` (index pairs; positions never
-    // enter), the loops family and `edgeIndexMap` are functions of `faces`
-    // alone, and no index-space-stable kind writes `faces`. Their
+    // `edges` is a pure function of `faces` plus live authored-wire keys
+    // (index pairs; positions never enter), while loops and `edgeIndexMap`
+    // are functions of that edge table. No index-space-stable kind writes
+    // faces or authored-wire keys. Their
     // structVersion-keyed validity stamps stay Valid because `structVersion`
     // does not move either (asserted above). The PUBLISH half is NOT part of
     // the win and is re-issued per kind at `commitRestored` below.

@@ -58,6 +58,7 @@ struct MeshSnapshot {
     ulong[]      vertexSetMask;
     string[]     edgeSetNames;
     ulong[ulong] edgeSetMask;
+    bool[ulong]  wireEdgeKeys;
     string[]     polygonSetNames;
     ulong[]      faceSetMask;
     bool     filled = false;
@@ -94,6 +95,7 @@ struct MeshSnapshot {
         s.vertexSetMask = vertexSetMask.dup;
         s.edgeSetNames = edgeSetNames.dup;
         s.edgeSetMask = edgeSetMask.dup;
+        s.wireEdgeKeys = wireEdgeKeys.dup;
         s.polygonSetNames = polygonSetNames.dup;
         s.faceSetMask = faceSetMask.dup;
         s.filled = filled;
@@ -120,6 +122,7 @@ struct MeshSnapshot {
             vertexSetMask != mesh.vertexSetMask ||
             edgeSetNames != mesh.edgeSetNames ||
             edgeSetMask != mesh.edgeSetMask ||
+            wireEdgeKeys != mesh.wireEdgeKeys ||
             polygonSetNames != mesh.polygonSetNames ||
             faceSetMask != mesh.faceSetMask || faces.length != mesh.faces.length)
             return false;
@@ -145,6 +148,7 @@ struct MeshSnapshot {
             vertexSetNames != other.vertexSetNames ||
             vertexSetMask != other.vertexSetMask ||
             edgeSetNames != other.edgeSetNames || edgeSetMask != other.edgeSetMask ||
+            wireEdgeKeys != other.wireEdgeKeys ||
             polygonSetNames != other.polygonSetNames ||
             faceSetMask != other.faceSetMask || faces.length != other.faces.length)
             return false;
@@ -181,6 +185,7 @@ struct MeshSnapshot {
         s.vertexSetMask         = mesh.vertexSetMask.dup;
         s.edgeSetNames          = mesh.edgeSetNames.dup;
         s.edgeSetMask           = mesh.edgeSetMask.dup;
+        s.wireEdgeKeys          = mesh.wireEdgeKeys.dup;
         s.polygonSetNames       = mesh.polygonSetNames.dup;
         s.faceSetMask           = mesh.faceSetMask.dup;
         s.filled               = true;
@@ -270,6 +275,7 @@ struct MeshSnapshot {
         n += planeBytes(vertexSetMask);
         n += planeBytes(edgeSetNames);
         n += planeBytes(edgeSetMask);           // ulong[ulong] — rule 3
+        n += planeBytes(wireEdgeKeys);
         n += planeBytes(polygonSetNames);
         n += planeBytes(faceSetMask);
         return n;
@@ -325,6 +331,7 @@ struct MeshSnapshot {
         mesh.vertexSetMask               = vertexSetMask.dup;
         mesh.edgeSetNames                = edgeSetNames.dup;
         mesh.edgeSetMask                 = edgeSetMask.dup;
+        mesh.wireEdgeKeys                = wireEdgeKeys.dup;
         mesh.polygonSetNames             = polygonSetNames.dup;
         mesh.faceSetMask                 = faceSetMask.dup;
         // TASK 1906 STAGE 2d — A RESTORE IS A STRUCTURAL CHANGE AND MUST SAY SO.
@@ -415,6 +422,7 @@ struct MeshSnapshot {
         mesh.vertexSetMask   = vertexSetMask.dup;
         mesh.edgeSetNames    = edgeSetNames.dup;
         mesh.edgeSetMask     = edgeSetMask.dup;
+        mesh.wireEdgeKeys    = wireEdgeKeys.dup;
         mesh.polygonSetNames = polygonSetNames.dup;
         mesh.faceSetMask     = faceSetMask.dup;
         // Task 1906 stage 2d — same direct `edges`/`faces` write, same reason,

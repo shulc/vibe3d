@@ -2,6 +2,7 @@ module mesh;
 
 import std.math : sqrt, isIdentical;
 import std.array : uninitializedArray;
+import std.algorithm : sort;
 import std.parallelism : parallel;
 import std.range : iota;
 import std.traits : Unqual, isDynamicArray, isAssociativeArray, isStaticArray,
@@ -149,7 +150,7 @@ public import mesh_ops.select_loop;
 // `spikeFacesByMask` and `kPolyBevelEditScope` and nothing else.
 public import mesh_ops.poly_bevel;
 import mesh_selsets : selSetResizeVertex, selSetRekeyEdges,
-    selSetGatherVertexMaskForward;
+    selSetGatherVertexMaskForward, WireKeyPolicy;
 import mesh_planes : rewriteFaces, FaceSource, kNoSource;
 // Snap-visibility instrumentation (task 1350/1351). `perf_probe` imports only
 // core.time, so this is a leaf dependency and cannot cycle; every call compiles
@@ -2774,10 +2775,9 @@ struct Mesh {
     // `rebuildEdges()` for free, but NOT vertex-index-renumbering events
     // (`compactUnreferenced`, a weld) — the key EMBEDS vertex indices, so it
     // rides every event that renumbers or drops a vertex, via
-    // `mesh_selsets.selSetRekeyEdges` at six call sites (Stage 5b of
-    // doc/selection_sets_plan.md: `compactUnreferenced` and
-    // `applyVertexRemapAndRebuild` below, plus the four `mesh_edit_delta.d`
-    // replay functions). Missing any one of them fails SILENTLY — membership
+    // `mesh_selsets.selSetRekeyEdges` at eight production call sites:
+    // `compactUnreferenced`, both weld remaps, and five replay calls in
+    // `mesh_edit_delta.d`. Missing any one fails SILENTLY — membership
     // disappears, or reattaches to the WRONG edge, with no length mismatch
     // and no assertion to trip. An associative array has no length, so it
     // needs no resize hook at all; its only correctness obligation is the
@@ -2791,6 +2791,10 @@ struct Mesh {
     ulong[]      vertexSetMask;
     string[]     edgeSetNames;
     ulong[ulong] edgeSetMask;
+    // Task 3910: authoritative authored-edge registry. Consumers walk and
+    // sort these pair keys; vertex renumbering uses selSetRekeyEdges, while
+    // explicit edge/end-point destruction prunes the matching key.
+    bool[ulong]  wireEdgeKeys;
     string[]     polygonSetNames;
     ulong[]      faceSetMask;
 
@@ -3441,6 +3445,20 @@ struct Mesh {
                 }
             }
         }
+        if (wireEdgeKeys.length != 0) {
+            auto keys = wireEdgeKeys.keys;
+            sort(keys);
+            foreach (key; keys) {
+                const uint a = cast(uint)(key >> 32);
+                const uint b = cast(uint)(key & 0xFFFF_FFFFUL);
+                if (a >= vertices.length || b >= vertices.length || a == b)
+                    continue;
+                if (key !in seen) {
+                    seen[key] = true;
+                    edges ~= [a, b];
+                }
+            }
+        }
         // Structural change: `edges` reassigned directly (no addEdge), so
         // bump once. Contract preserved: edgeIndexMap is intentionally left
         // untouched by this function (see doc comment above) — mark it
@@ -3699,7 +3717,8 @@ struct Mesh {
     /// consumed every face still leaves the joined vertex behind.
     // --- Task 2310: the weld's edge-set MERGE, recorded ---------------------
     //
-    // `selSetRekeyEdges` is called at six sites; at exactly TWO of them — the
+    // `selSetRekeyEdges` is called at eight production sites; at exactly TWO
+    // live weld sites — the
     // weld remaps `applyVertexRemapAndRebuild` and `applyVertexRemap` below —
     // the map is SAME-SPACE and NOT INJECTIVE, so two old endpoint pairs
     // collapse onto one survivor key and their words are OR-merged. Nothing
@@ -3710,7 +3729,10 @@ struct Mesh {
     // edge (which was not a member) and off the restored edge (which was),
     // while V, F, E and every other plane compare equal.
     //
-    // THE OTHER FOUR SITES NEED NOTHING. `compactUnreferenced`'s remap is
+    // The authored-wire registry deliberately DROPS moved endpoints at these
+    // two non-injective maps: unlike selection sets it has no reversible weld
+    // payload, and carrying would manufacture a foreign edge on undo.
+    // THE OTHER SIX SITES NEED NO EDGE-SET MERGE RECORD. `compactUnreferenced`'s remap is
     // injective on survivors — two distinct keys cannot land on one — so its
     // drop-only payload is complete; the four `mesh_edit_delta.d` replay sites
     // ARE the inverse machinery and must not record.
@@ -3818,8 +3840,10 @@ struct Mesh {
         // `Kind.RemoveVerts` payload cannot carry it.
         ulong[] esKeys0, esWords0;
         captureEdgeSetImage(esKeys0, esWords0);
+        // Weld maps are non-injective; there is no wire-key inverse payload.
         selSetRekeyEdges(this, (uint v) =>
-            v < remap.length ? cast(uint) remap[v] : v);
+            v < remap.length ? cast(uint) remap[v] : v,
+            WireKeyPolicy.dropMoved);
         recordEdgeSetMerge(esKeys0, esWords0, remap);
 
         rebuildEdges();
@@ -4917,8 +4941,10 @@ struct Mesh {
         // on a shipped delta path.
         ulong[] esKeys0, esWords0;
         captureEdgeSetImage(esKeys0, esWords0);
+        // Weld maps are non-injective; there is no wire-key inverse payload.
         selSetRekeyEdges(this, (uint v) =>
-            v < remap.length ? cast(uint) remap[v] : v);
+            v < remap.length ? cast(uint) remap[v] : v,
+            WireKeyPolicy.dropMoved);
         recordEdgeSetMerge(esKeys0, esWords0, remap);
 
         rebuildEdges();
@@ -4968,6 +4994,14 @@ struct Mesh {
         bool[] referenced = computeReferencedVertexMask();
         foreach (pi; pinned)
             if (pi < referenced.length) referenced[pi] = true;
+        // `edges` and the registry are both still in the OLD index space.
+        // Only a registered pair that is live in `edges` pins its endpoints;
+        // a stale key cannot retain arbitrary vertices.
+        foreach (ref e; edges)
+            if (edgeKey(e[0], e[1]) in wireEdgeKeys) {
+                if (e[0] < referenced.length) referenced[e[0]] = true;
+                if (e[1] < referenced.length) referenced[e[1]] = true;
+            }
         // Build old→new index map
         uint[] remap;
         remap.length = vertices.length;
@@ -5196,7 +5230,9 @@ struct Mesh {
         // the re-key belongs here unconditionally, not only behind the weld
         // path. `remap[old] == ~0u` here is exactly `selSetRekeyEdges`'s
         // "vertex gone" sentinel, no translation needed.
-        selSetRekeyEdges(this, (uint v) => v < remap.length ? remap[v] : uint.max);
+        selSetRekeyEdges(this,
+            (uint v) => v < remap.length ? remap[v] : uint.max,
+            WireKeyPolicy.carry);
         vertices = newVerts;
         // Re-derive edges from faces (remap can break edge endpoints).
         rebuildEdges();
@@ -5274,6 +5310,11 @@ struct Mesh {
                              bool keepFloatingEdges = false) {
         const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (mask.length != faces.length) return 0;
+        bool[ulong] coveredBefore;
+        if (keepFloatingEdges)
+            foreach (ref face; faces)
+                foreach (i; 0 .. face.length)
+                    coveredBefore[edgeKey(face[i], face[(i + 1) % face.length])] = true;
         uint[][] keptFaces;
         uint[]   oldOfNew;   // newToOld correspondence — task 1902, mesh_planes.rewriteFaces
                               // carries faceMarks/faceMaterial/facePart/faceSelectionOrder/
@@ -5426,7 +5467,17 @@ struct Mesh {
         // `keepFloatingEdges` (task 0477, KILLER-2 fix): skip this rebuild
         // when the caller wants floating edges (bordering no surviving
         // face) to survive instead of being wiped — see the ctor doc above.
-        if (!keepFloatingEdges) rebuildEdges();
+        if (!keepFloatingEdges) {
+            rebuildEdges();
+        } else {
+            // A transition rule, not a definition of every face-less edge:
+            // register only edges this operation has just orphaned.
+            const polyCount = edgePolygonCounts();
+            foreach (ei, ref e; edges)
+                if (ei < polyCount.length && polyCount[ei] == 0 &&
+                    edgeKey(e[0], e[1]) in coveredBefore)
+                    wireEdgeKeys[edgeKey(e[0], e[1])] = true;
+        }
         clearEdgeSelectionResize();
         // Compact orphan vertices (no-op if all verts still referenced).
         // Skipped for Remove (keepOrphans): the faces go, the now-unused
@@ -5613,6 +5664,10 @@ struct Mesh {
 
         // Before anything rewrites `faces[]`: what is face-less right NOW is
         // pre-existing, and nothing this call does can make it collateral.
+        foreach (ref e; edges)
+            if ((e[0] < mask.length && mask[e[0]]) ||
+                (e[1] < mask.length && mask[e[1]]))
+                wireEdgeKeys.remove(edgeKey(e[0], e[1]));
         const loose = captureLooseGeometry();
 
         // Rebuild faces array, dropping each masked vert from every face's
@@ -5825,13 +5880,13 @@ struct Mesh {
     // -----------------------------------------------------------------------
     // Loose (face-less) geometry preservation — task 0502
     //
-    // Every dissolve kernel below ends in `rebuildEdges()` + `compactUnreferenced()`.
-    // BOTH re-derive from `faces[]`, MESH-WIDE: the first rebuilds `edges[]` by
-    // walking the surviving faces, so an edge that borders NO polygon vanishes;
-    // the second drops every vertex no polygon references. Neither looks at
-    // which part of the mesh the caller actually edited, so dissolving ONE
-    // interior edge used to take every bare wire edge and every loose point in
-    // the mesh with it, arbitrarily far from the edit.
+    // Every dissolve kernel below ends in `rebuildEdges()` +
+    // `compactUnreferenced()`. Authored wires now ride both through
+    // `wireEdgeKeys`; this older capture also preserves unregistered legacy /
+    // transient loose geometry. Loose points still need it outright. Neither
+    // tail is scoped to the edited region, so dissolving ONE interior edge
+    // used to take every bare wire edge and every loose point in the mesh with
+    // it, arbitrarily far from the edit.
     //
     // That is pure collateral damage, not a behaviour: vibe3d builds both as
     // ordinary intermediate retopo state (a placed point; a chain drawn before
@@ -5890,11 +5945,12 @@ struct Mesh {
         return pins;
     }
 
-    /// Re-add the bare wire edges of `g` that the rebuild wiped, through the
-    /// `remap` the tail `compactUnreferenced` published. Call AFTER that
+    /// Re-add any unregistered bare wire of `g` that the rebuild could not
+    /// derive, through the `remap` the tail `compactUnreferenced` published.
+    /// Registered wires are already present and deduplicate here. Call AFTER
     /// compaction and BEFORE the terminal `buildLoops()`. A wire is skipped
-    /// when either endpoint was dropped (the edit took it), when the rebuild
-    /// already re-derived it from a surviving face, or when it degenerated.
+    /// when either endpoint was dropped, when it is already live, or when it
+    /// degenerated.
     private void restoreLooseWires(in LooseGeometry g, in uint[] remap) {
         if (g.wires.length == 0) return;
         bool added = false;
@@ -6067,6 +6123,8 @@ struct Mesh {
         if (mask.length != edges.length) return 0;
         // Before anything rewrites `faces[]`: what is face-less right NOW is
         // pre-existing, and nothing this call does can make it collateral.
+        foreach (i, ref e; edges)
+            if (mask[i]) wireEdgeKeys.remove(edgeKey(e[0], e[1]));
         const loose = captureLooseGeometry();
 
         // Touched-region capture (task 0474): remember the POSITIONS of the
@@ -8478,6 +8536,7 @@ struct Mesh {
             ulong[]   rbFaceSetMask          = faceSetMask.dup;    // task 1060, Stage 5c
             ulong[]   rbVertexSetMask        = vertexSetMask.dup;  // task 1060, Stage 5a
             ulong[ulong] rbEdgeSetMask       = edgeSetMask.dup;    // task 1060, Stage 5b —
+            bool[ulong] rbWireEdgeKeys       = wireEdgeKeys.dup;   // task 3910
             // `.dup` is REQUIRED (AA is a reference type; see mesh_selsets.d's
             // storage doc comment) — a bare `= edgeSetMask` would alias the
             // live registry, and the weld/compact below re-keys it in place.
@@ -8560,6 +8619,7 @@ struct Mesh {
                 faceSetMask          = rbFaceSetMask;
                 vertexSetMask        = rbVertexSetMask;   // task 1060, Stage 5a
                 edgeSetMask          = rbEdgeSetMask;     // task 1060, Stage 5b
+                wireEdgeKeys         = rbWireEdgeKeys;
                 meshMaps             = rbMeshMaps;
                 // The rollback put back the very maps that describe the
                 // restored windings, so the corner space this rebuild will
@@ -8798,6 +8858,7 @@ struct Mesh {
 
     void addEdge(uint a, uint b) {
         if (insertEdgeDedup(edgeIndexMap, a, b)) {
+            wireEdgeKeys[edgeKey(a, b)] = true;
             // Structural change: one edge appended, and edgeIndexMap (the
             // map we just inserted into) stays fully in sync.
             ++structVersion;
@@ -8878,6 +8939,17 @@ struct Mesh {
             foreach (k; 0 .. f.length)
                 if (insertEdgeDedup(edgeIndexMap, f[k], f[(k + 1) % f.length]))
                     inserted = true;
+        if (wireEdgeKeys.length != 0) {
+            auto keys = wireEdgeKeys.keys;
+            sort(keys);
+            foreach (key; keys) {
+                const uint a = cast(uint)(key >> 32);
+                const uint b = cast(uint)(key & 0xFFFF_FFFFUL);
+                if (a >= vertices.length || b >= vertices.length || a == b)
+                    continue;
+                if (insertEdgeDedup(edgeIndexMap, a, b)) inserted = true;
+            }
+        }
         if (inserted) {
             // The same three stamps + commit `addEdge` does, ONCE instead of
             // once per edge. Gated on a real insert for the same reason
@@ -9071,6 +9143,43 @@ struct Mesh {
         // Class P tracker hook — inert unless a batch is open.
         if (editRecorder_ !is null)
             editRecorder_.recordAddFace(appendBase, idx);
+    }
+
+    /// Bulk authored-wire append for a loader/builder that owns its scratch
+    /// lookup. ALWAYS records authorship, even when a face already inserted
+    /// the pair. No version/map-state/change writes: terminal buildLoops()
+    /// settles the finished edge table.
+    void addWireEdgeFast(ref uint[ulong] edgeLookup, uint a, uint b) {
+        wireEdgeKeys[edgeKey(a, b)] = true;
+        insertEdgeDedup(edgeLookup, a, b);
+    }
+
+    /// Live edge indices in native-file order: face traversal first, then
+    /// authored pair keys in ascending order. A registry key missing from the
+    /// live edge array is ignored so it cannot shift another edge-map value.
+    uint[] canonicalEdgeOrder() const {
+        uint[ulong] live;
+        foreach (i, ref e; edges) live[edgeKey(e[0], e[1])] = cast(uint)i;
+        bool[ulong] seen;
+        uint[] order;
+        order.reserve(edges.length);
+        foreach (ref face; faces)
+            foreach (i; 0 .. face.length) {
+                const key = edgeKey(face[i], face[(i + 1) % face.length]);
+                if (key in seen) continue;
+                seen[key] = true;
+                if (auto p = key in live) order ~= *p;
+            }
+        if (wireEdgeKeys.length != 0) {
+            auto keys = wireEdgeKeys.keys;
+            sort(keys);
+            foreach (key; keys) {
+                if (key in seen) continue;
+                seen[key] = true;
+                if (auto p = key in live) order ~= *p;
+            }
+        }
+        return order;
     }
 
     /// Append one face to `faces` WITHOUT any of `addFace`'s bookkeeping —
@@ -18021,6 +18130,7 @@ unittest { // P1.0b.3c whole-field deep detachment and refusal seams.
     live.faces._store = [[0u, 1u, 0u]];
     live.vertexMarks = [1u, 2u];
     live.edgeIndexMap[7UL] = 3;
+    live.wireEdgeKeys[edgeKey(0, 1)] = true;
     MeshMap map; map.name = "m"; map.data = [1.0f, 2.0f];
     live.meshMaps = [map];
     auto copy = detachedPreparedMesh(live);
@@ -18038,9 +18148,12 @@ unittest { // P1.0b.3c whole-field deep detachment and refusal seams.
     copy.faces[0][0] = 1;
     copy.meshMaps[0].data[0] = 9;
     copy.edgeIndexMap[7UL] = 9;
+    copy.wireEdgeKeys.remove(edgeKey(0, 1));
     assert(live.vertices.ptr[0] == Vec3(1, 2, 3));
     assert(live.faces[0][0] == 0 && live.meshMaps[0].data[0] == 1);
     assert(live.edgeIndexMap[7UL] == 3);
+    assert((edgeKey(0, 1) in live.wireEdgeKeys) !is null,
+           "authored-wire AA must detach with the prepared mesh");
 
     Mesh unsafe;
     unsafe.noteChange(MeshEditScope.Position);

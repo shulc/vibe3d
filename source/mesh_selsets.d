@@ -76,6 +76,11 @@ enum SetApplyMode { select, deselect, replace }
 /// union / subtract / replace the SET's membership from the live selection.
 enum SetEditMode { add, remove, replace }
 
+/// Authored-wire handling for a vertex-index remap. Compaction carries keys;
+/// a non-injective weld drops every key whose endpoint moved because that
+/// merge is not invertible in the current operation log.
+enum WireKeyPolicy { carry, dropMoved }
+
 // ---------------------------------------------------------------------------
 // Name validation — every creating/renaming verb calls this first.
 // ---------------------------------------------------------------------------
@@ -459,28 +464,48 @@ uint[2][] selSetMembersEdge(const ref Mesh m, string name) {
 /// that read could later revisit under rehash, so a fresh table sidesteps
 /// the question entirely rather than relying on that guarantee).
 ///
-/// Call this at EVERY site that renumbers or drops vertices, before or after
+/// Re-keys BOTH pair-keyed spaces: selection-set membership and authored
+/// wires. Call this at EVERY site that renumbers or drops vertices, before or after
 /// the vertex array itself is rewritten (the key is a pure function of
 /// vertex indices — it does not read `m.edges` or `m.vertices` at all, so
-/// there is no ordering dependency against `rebuildEdges()`). Six call
-/// sites: `Mesh.compactUnreferenced`, `Mesh.applyVertexRemapAndRebuild`, and
+/// there is no ordering dependency against `rebuildEdges()`). Eight production
+/// call sites: `Mesh.compactUnreferenced`, both Mesh weld remaps, and
 /// the four `mesh_edit_delta.d` replay functions
-/// (`applyReindexForward`/`Reverse`, `removeVertsForward`/`Reverse`).
-void selSetRekeyEdges(ref Mesh m, scope uint delegate(uint) nu) {
-    if (m.edgeSetMask.length == 0) return;
-    ulong[ulong] fresh;
-    foreach (key, mask; m.edgeSetMask) {
-        const uint a = cast(uint)(key >> 32);
-        const uint b = cast(uint)(key & 0xFFFF_FFFFUL);
-        const uint na = nu(a);
-        const uint nb = nu(b);
-        if (na == uint.max || nb == uint.max) continue;   // endpoint gone
-        if (na == nb) continue;                            // collapsed to a point
-        const ulong nk = edgeKey(na, nb);
-        if (auto p = nk in fresh) *p |= mask;
-        else fresh[nk] = mask;
+/// (`applyReindexForward`/`Reverse`, `removeVertsForward`/`Reverse`), plus
+/// `Kind.EdgeSetRekey` forward replay. Seven pre-existing test-only calls
+/// mirror them; task 3910's direct policy control adds one call per policy.
+void selSetRekeyEdges(ref Mesh m, scope uint delegate(uint) nu,
+                      WireKeyPolicy wires) {
+    if (m.edgeSetMask.length != 0) {
+        ulong[ulong] fresh;
+        foreach (key, mask; m.edgeSetMask) {
+            const uint a = cast(uint)(key >> 32);
+            const uint b = cast(uint)(key & 0xFFFF_FFFFUL);
+            const uint na = nu(a);
+            const uint nb = nu(b);
+            if (na == uint.max || nb == uint.max) continue; // endpoint gone
+            if (na == nb) continue;                         // collapsed to a point
+            const ulong nk = edgeKey(na, nb);
+            if (auto p = nk in fresh) *p |= mask;
+            else fresh[nk] = mask;
+        }
+        m.edgeSetMask = fresh;
     }
-    m.edgeSetMask = fresh;
+
+    if (m.wireEdgeKeys.length != 0) {
+        bool[ulong] fresh;
+        foreach (key; m.wireEdgeKeys.byKey) {
+            const uint a = cast(uint)(key >> 32);
+            const uint b = cast(uint)(key & 0xFFFF_FFFFUL);
+            const uint na = nu(a);
+            const uint nb = nu(b);
+            if (na == uint.max || nb == uint.max || na == nb) continue;
+            if (wires == WireKeyPolicy.dropMoved && (na != a || nb != b))
+                continue;
+            fresh[edgeKey(na, nb)] = true;
+        }
+        m.wireEdgeKeys = fresh;
+    }
 }
 
 // ---------------------------------------------------------------------------

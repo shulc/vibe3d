@@ -332,9 +332,15 @@ enum string[string] kExemptPlanes = [
 // a regex over the source text, which is what put a wrong number (33) in an
 // earlier draft of that plan):
 //
-//   2026-08-25, task 1906 stage 3 — CURRENT:
+//   2026-08-25, task 1906 stage 3 — superseded:
 //     Mesh.tupleof.length                          == 54
 //     count of those fields that are array-shaped  == 34
+//
+//   2026-09-03, task 3910 — CURRENT:
+//     Mesh.tupleof.length                          == 55
+//     count of those fields that are array-shaped  == 34
+//     `wireEdgeKeys` is keyed by a vertex PAIR, like `edgeSetMask`, not by
+//     one face/vertex/edge index; it is therefore registry state, not a plane.
 //
 //   2026-08-25, task 1903 Stage A — superseded: 55 / 34.
 //   2026-08-25, task 1906 stage 0 — superseded: 56 / 34.
@@ -383,7 +389,7 @@ template countArrayShapedFields(T) {
     }();
 }
 
-static assert(Mesh.tupleof.length == 54,
+static assert(Mesh.tupleof.length == 55,
     "Mesh gained (or lost) an instance field. Classify it before bumping this "
   ~ "count: per-face data goes in kFacePlanes, per-vertex data in kVertPlanes "
   ~ "— INCLUDING data behind a wrapper struct such as FaceList, which is not "
@@ -394,7 +400,7 @@ static assert(Mesh.tupleof.length == 54,
   ~ "below to learn which KIND landed.");
 
 static assert(countArrayShapedFields!Mesh == 34,
-    "Mesh gained (or lost) an ARRAY-shaped field. If the 54-count above moved "
+    "Mesh gained (or lost) an ARRAY-shaped field. If the 55-count above moved "
   ~ "too, the new field is a plain array — a plane candidate, classify it. If "
   ~ "ONLY the count above moved, it is a scalar or a wrapper type.");
 
@@ -466,7 +472,13 @@ static assert(countArrayShapedFields!Mesh == 34,
 // the source text, which is what answered 56 where the compiler answers 54 for
 // the pair above:
 //
-//   2026-08-29, task 3290, plan 2910 after step 3 (`fc55c13c`) — CURRENT:
+//   2026-09-03, task 3910 — CURRENT:
+//     __traits(allMembers, Mesh).length  == 366
+//     countMemberOverloads!Mesh          == 297
+//     One authoritative registry field plus its bulk loader and canonical
+//     file-order methods are the state/operations specified by the codec plan.
+//
+//   2026-08-29, task 3290, plan 2910 after step 3 (`fc55c13c`) — superseded:
 //     __traits(allMembers, Mesh).length  == 363
 //     countMemberOverloads!Mesh          == 295
 //
@@ -527,7 +539,7 @@ template countMemberOverloads(T) {
     }();
 }
 
-static assert(__traits(allMembers, Mesh).length == 363,
+static assert(__traits(allMembers, Mesh).length == 366,
     "`struct Mesh` gained (or lost) a member NAME — a function, a nested type, "
   ~ "an `enum`, an `alias` or a field. This is the step-4 RATCHET of "
   ~ "`doc/tasks/work/2910-mesh-struct-seams.md`: the struct was 13 308 lines on "
@@ -548,7 +560,7 @@ static assert(__traits(allMembers, Mesh).length == 363,
   ~ "below to learn whether a FUNCTION landed or a TYPE. THIS TREE HAS "
   ~ ctfeDec(__traits(allMembers, Mesh).length) ~ " member names.");
 
-static assert(countMemberOverloads!Mesh == 295,
+static assert(countMemberOverloads!Mesh == 297,
     "`struct Mesh` gained (or lost) a member-function OVERLOAD. Read it with "
   ~ "the name count above: if BOTH moved, a whole new function name landed. If "
   ~ "ONLY the name count moved, what landed is a nested type, an `enum` or an "

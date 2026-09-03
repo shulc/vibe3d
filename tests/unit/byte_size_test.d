@@ -181,9 +181,9 @@ unittest // MeshSnapshot.byteSize reads every container field it declares
         }
     }}
 
-    assert(counted >= 19,
+    assert(counted >= 20,
         format("only %s container fields were enumerated on MeshSnapshot; it "
-             ~ "declares 19 — the enumeration is not seeing them", counted));
+             ~ "declares 20 — the enumeration is not seeing them", counted));
 
     // `edgeSetMask` is the one that looks scalar and is not: a `ulong[ulong]`
     // whose naive reading is zero bytes. Named explicitly because the cell

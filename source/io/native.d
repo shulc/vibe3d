@@ -4,6 +4,7 @@ import std.file      : exists, read, write;
 import std.json      : JSONValue, JSONType, parseJSON, JSONException;
 import std.conv      : to;
 import std.format    : format;
+import std.algorithm : sort;
 
 import mesh;
 static import mesh_ = mesh;   // disambiguates mesh.kindInfo(MapKind) from document.kindInfo(LayerKind)
@@ -202,6 +203,8 @@ private void v3dReject(string msg) nothrow { g_v3dRejectReason = msg; v3dWarn("r
 //   {
 //     "vertices":     [[x,y,z], ...],
 //     "faces":        [[i,j,k,...], ...],          // n-gon, vertex indices
+//     "wireEdges":    [[a,b], ...],                // optional (task 3910);
+//                                                    // explicitly authored pairs
 //     "faceSubpatch": [bool, ...],                 // optional; default false
 //     "faceMaterial": [uint, ...],                 // optional; default 0
 //     "surfaces":     [{ "name", "baseColor":[r,g,b],
@@ -217,6 +220,13 @@ private void v3dReject(string msg) nothrow { g_v3dRejectReason = msg; v3dWarn("r
 //                                                  // optional (task 1069); per-vertex,
 //                                                  // dim 3, SPARSE
 //   }
+//
+// `wireEdges` serializes authorship, not a recomputed set of currently
+// face-less pairs. That keeps ordinary face-built/imported meshes at zero
+// entries and preserves an authored pair even when a face also covers it.
+// Pretty-printed cost measured for task 3910: about 153 bytes for the first
+// entry and 104 bytes per additional four-digit pair; an arc pays that cost
+// for its actual wire content, while a cube/grid pays no key at all.
 //
 // `vertexMorphs` (task 1069 addition, kV3dFormatVersion NOT bumped — the same
 // within-version tolerance `edgeMaps` and `selectionSets` rode) carries
@@ -475,6 +485,20 @@ JSONValue meshToJson(ref const Mesh mesh)
     }
     m["faces"] = JSONValue(faces);
 
+    // Authored edges are sparse state: omit the key for ordinary face-built
+    // meshes. Sort the AA keys so save -> load -> save is byte-stable and does
+    // not inherit associative-array or live-edge iteration order.
+    if (mesh.wireEdgeKeys.length != 0) {
+        JSONValue[] wires;
+        auto keys = mesh.wireEdgeKeys.keys;
+        sort(keys);
+        wires.reserve(keys.length);
+        foreach (key; keys)
+            wires ~= JSONValue([JSONValue(cast(long)(key >> 32)),
+                                JSONValue(cast(long)(key & 0xFFFF_FFFFUL))]);
+        m["wireEdges"] = JSONValue(wires);
+    }
+
     // Per-face subpatch flags (parallel to faces). Defensively read through
     // isFaceSubpatch so a short isSubpatch array still yields one entry/face.
     JSONValue[] subpatch;
@@ -582,7 +606,8 @@ JSONValue meshToJson(ref const Mesh mesh)
     // block is written generically off `MapDomain.Edge` the same way
     // `weightMaps` is written generically off `MapDomain.Point` — a future
     // user-authored edge map would ride the same wire shape. `data` is the
-    // FULL dense array (mesh.edges.length entries), zero or not — this codec
+    // FULL dense array in canonical face-then-authored-pair order, zero or
+    // not — this codec
     // never prunes a zero entry (checked 2026-08-17: the reference's crease
     // map type has no zero default, so "never touched" and "explicitly 0"
     // are distinct THERE; ours is a dense MeshMap like every other one, so
@@ -594,6 +619,11 @@ JSONValue meshToJson(ref const Mesh mesh)
     // alongside it without ambiguity. Omitted entirely when no Edge map
     // exists, matching uvMaps/weightMaps' optional-array convention.
     JSONValue[] eMaps;
+    const edgeOrder = mesh.canonicalEdgeOrder();
+    bool identityEdgeOrder = edgeOrder.length == mesh.edges.length;
+    if (identityEdgeOrder)
+        foreach (i, ei; edgeOrder)
+            if (ei != i) { identityEdgeOrder = false; break; }
     foreach (ref map; mesh.meshMaps) {
         if (map.domain != MapDomain.Edge || map.dim != 1) continue;
         JSONValue ej;
@@ -601,9 +631,13 @@ JSONValue meshToJson(ref const Mesh mesh)
                                  ? "creaseWeight" : "");
         ej["name"] = JSONValue(map.name);
         JSONValue[] edata;
-        edata.reserve(map.data.length);
-        foreach (f; map.data)
-            edata ~= JSONValue(f);
+        edata.reserve(edgeOrder.length);
+        if (identityEdgeOrder && map.data.length == edgeOrder.length) {
+            foreach (f; map.data) edata ~= JSONValue(f);
+        } else {
+            foreach (ei; edgeOrder)
+                edata ~= JSONValue(ei < map.data.length ? map.data[ei] : 0.0f);
+        }
         ej["data"] = JSONValue(edata);
         eMaps ~= ej;
     }
@@ -664,8 +698,8 @@ JSONValue meshToJson(ref const Mesh mesh)
     // Edge members are VERTEX-INDEX PAIRS (`[a,b]`), never an edge index —
     // this is the load-bearing half of the storage decision
     // (mesh_selsets.d's doc comment / doc/selection_sets_plan.md §Q1.3/§Q2):
-    // an edge index is invalidated by every topology edit and by this very
-    // loader's own drop of bare wire edges, while a vertex pair degrades
+    // an edge index is invalidated by every topology edit and by any change in
+    // canonical face/authored-pair order, while a vertex pair degrades
     // gracefully (the entry vanishes with its vertex rather than silently
     // reattaching to an unrelated edge).
     JSONValue[] ssVertexArr, ssEdgeArr, ssPolygonArr;
@@ -1676,6 +1710,41 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
                 return false;
             }
 
+    // --- optional: authored wire edges (task 3910) ---
+    // Tolerant like the other additive arrays: malformed or out-of-range
+    // entries are ignored individually. Sort before insertion so the freshly
+    // loaded live edge order is exactly Mesh.canonicalEdgeOrder(): face walk,
+    // then authored pairs by ascending edgeKey.
+    uint[2][] wireEdges;
+    if (auto wp = "wireEdges" in m) {
+        if (wp.type == JSONType.array) {
+            wireEdges.reserve(wp.array.length);
+            foreach (wi, pairJ; wp.array) {
+                if (pairJ.type != JSONType.array || pairJ.array.length != 2) {
+                    v3dWarn(format("ignoring wireEdges[%d]: expected [a,b]", wi));
+                    continue;
+                }
+                long[2] raw;
+                bool valid = true;
+                foreach (k; 0 .. 2) {
+                    const x = pairJ.array[k];
+                    if (x.type == JSONType.integer) raw[k] = x.integer;
+                    else if (x.type == JSONType.uinteger) raw[k] = cast(long)x.uinteger;
+                    else valid = false;
+                }
+                if (!valid || raw[0] < 0 || raw[1] < 0 ||
+                    raw[0] >= nv || raw[1] >= nv || raw[0] == raw[1]) {
+                    v3dWarn(format("ignoring wireEdges[%d]: invalid endpoint pair", wi));
+                    continue;
+                }
+                wireEdges ~= [cast(uint)raw[0], cast(uint)raw[1]];
+            }
+            sort!((a, b) => edgeKey(a[0], a[1]) < edgeKey(b[0], b[1]))(wireEdges);
+        } else {
+            v3dWarn("ignoring non-array \"wireEdges\"");
+        }
+    }
+
     // --- optional: faceSubpatch ---
     // Read into a flat bool[] parallel to `polys` (after degenerate drop the
     // index alignment is best-effort, identical to importLWO's PTCH handling).
@@ -2114,6 +2183,8 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
     uint[ulong] edgeLookup;
     foreach (face; polys)
         mesh.addFaceFast(edgeLookup, face);
+    foreach (ref wire; wireEdges)
+        mesh.addWireEdgeFast(edgeLookup, wire[0], wire[1]);
     mesh.buildLoops();
 
     // Apply per-face subpatch flags (parallel to faces).
@@ -2190,9 +2261,9 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
 
     // Apply staged Edge dim-1 maps (task 1062). Each map must have exactly
     // `edges.length` float entries — `edges` is settled by `buildLoops`
-    // above, so this check (and П4's rebuildEdges()⇄addFaceFast equivalence,
-    // see edge_weight_plan.md §0) is what makes "the Nth entry belongs to
-    // the Nth edge" true after a reload. `addMeshMap` registers a plain
+    // above in canonical order (face traversal, then sorted authored pairs),
+    // so this check is what makes "the Nth entry belongs to the Nth edge"
+    // true after a reload. `addMeshMap` registers a plain
     // Edge/dim-1 map regardless of `kind` — the reserved NAME is what a
     // reader (subpatch_osd.d's creaseWeightMap()) actually keys on, not the
     // `kind` string. An unknown/absent `kind` never blocks the load (still
@@ -2330,8 +2401,7 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
         }
         // Per-PAIR graceful degrade (not per-entry reject, unlike vertex/
         // polygon above): a pair that no longer resolves to a live edge —
-        // e.g. one of its two vertices vanished, or (the measured case) a
-        // bare wire edge the loader drops shifted every later edge index —
+        // for example because one of its two vertices vanished —
         // is exactly the failure mode pair-keying exists to degrade
         // gracefully from. Dropping just that member, not the whole named
         // set, is the same conservative arm `selSetRekeyEdges` takes at

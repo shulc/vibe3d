@@ -1346,10 +1346,10 @@ string[string] dumpMeshPlanes(ref Mesh m)
     // contract is "every plane a snapshot would have restored", and the one
     // way that contract rots silently is a field added to `MeshSnapshot` and
     // not to the table below — the diff then keeps answering "the planes
-    // agree" about a plane it never read. 23 is the 22 state planes plus
+    // agree" about a plane it never read. 24 is the 23 state planes plus
     // `filled`. Precedent for the shape of this guard: `MeshMap.dup`'s own
     // field-count assert (`source/mesh.d`) and the two in `source/snapshot.d`.
-    static assert(MeshSnapshot.tupleof.length == 23,
+    static assert(MeshSnapshot.tupleof.length == 24,
         "MeshSnapshot gained or lost a field — add the plane to "
       ~ "dumpMeshPlanes below, or write here why it is not restorable state, "
       ~ "before bumping this count");
@@ -1392,6 +1392,9 @@ string[string] dumpMeshPlanes(ref Mesh m)
     string eks;
     foreach (k; m.edgeSetMask.keys.dup.sort) eks ~= format(" %d=%d", k, m.edgeSetMask[k]);
     t["edgeSetMask"] = eks;
+    string wks;
+    foreach (k; m.wireEdgeKeys.keys.dup.sort) wks ~= format(" %d", k);
+    t["wireEdgeKeys"] = wks;
 
     // `surfaces` USED TO BE ITS LENGTH ALONE, and the three set-NAME
     // registries were absent outright (Stage K review, MINOR-5). Both holes

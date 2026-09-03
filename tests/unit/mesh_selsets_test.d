@@ -546,7 +546,9 @@ unittest { // test 2d — the MERGE weld through UNDO, funnel B: weldCoincidentV
 unittest { // test 3 — the COLLAPSE: both endpoints map to the same new vertex
     Mesh m;
     m.edgeSetMask[edgeKey(4, 12)] = 1UL;
-    selSetRekeyEdges(m, (uint v) => (v == 4 || v == 12) ? 0u : v);
+    // No wire registry on this stand; the policy documents the live weld twin.
+    selSetRekeyEdges(m, (uint v) => (v == 4 || v == 12) ? 0u : v,
+                     WireKeyPolicy.dropMoved);
     assert(m.edgeSetMask.length == 0,
         "both endpoints collapsing onto one vertex must drop the entry — "
       ~ "a degenerate self-key must never survive");
@@ -561,7 +563,7 @@ unittest { // test 4 — the COLLISION merge: two DIFFERENT tagged edges collaps
         if (v == 2 || v == 6) return 3;
         return v;
     }
-    selSetRekeyEdges(m, &nu);
+    selSetRekeyEdges(m, &nu, WireKeyPolicy.dropMoved);
     const k = edgeKey(0, 3);
     assert((k in m.edgeSetMask) !is null, "the survivor key must exist");
     assert(m.edgeSetMask[k] == 3UL,
@@ -573,13 +575,15 @@ unittest { // test 4 — the COLLISION merge: two DIFFERENT tagged edges collaps
 unittest { // test 5 — the VANISH prune: a dropped key must not resurrect later
     Mesh m;
     m.edgeSetMask[edgeKey(2, 3)] = 1UL;
-    selSetRekeyEdges(m, (uint v) => v == 2 ? uint.max : v);   // vertex 2 gone
+    // No wire registry here; carry mirrors compactUnreferenced.
+    selSetRekeyEdges(m, (uint v) => v == 2 ? uint.max : v,
+                     WireKeyPolicy.carry);   // vertex 2 gone
     assert(m.edgeSetMask.length == 0, "an endpoint going away must drop the entry");
 
     // A later re-key that happens to be identity must not bring anything
     // back — selSetRekeyEdges only ever transforms what is IN the AA right
     // now; nothing "remembers" a pruned key.
-    selSetRekeyEdges(m, (uint v) => v);
+    selSetRekeyEdges(m, (uint v) => v, WireKeyPolicy.carry);
     assert(m.edgeSetMask.length == 0,
         "a pruned key must not come back to life under a later, unrelated re-key");
 }
@@ -709,4 +713,31 @@ unittest { // test 8 — review SHOULD-FIX 5: selSetMembersEdge must be
         "selSetMembersEdge must return members ascending by key — "
       ~ "save/load/save stability and a byte comparison of a document with "
       ~ "edge sets both depend on it; got " ~ to!string(members));
+}
+
+unittest { // task 3910: WireKeyPolicy is read by the shared re-key funnel
+    Mesh mk() {
+        Mesh m;
+        m.addVertex(Vec3(0, 0, 0)); m.addVertex(Vec3(1, 0, 0));
+        m.addVertex(Vec3(1, 1, 0)); m.addVertex(Vec3(0, 1, 0));
+        m.addVertex(Vec3(20, 0, 0)); m.addVertex(Vec3(21, 0, 0));
+        m.addFace([0u, 1u, 2u, 3u]);
+        m.addEdge(5, 4);
+        return m;
+    }
+
+    Mesh a = mk();
+    assert((edgeKey(4, 5) in a.wireEdgeKeys) !is null,
+           "wire-policy fixture: authored key exists");
+    selSetRekeyEdges(a, (uint v) => v == 4 ? 1u : v,
+                     WireKeyPolicy.carry);
+    assert(a.wireEdgeKeys.length == 1 &&
+           (edgeKey(1, 5) in a.wireEdgeKeys) !is null,
+           "wire-policy carry: key must move to (1,5)");
+
+    Mesh b = mk();
+    selSetRekeyEdges(b, (uint v) => v == 4 ? 1u : v,
+                     WireKeyPolicy.dropMoved);
+    assert(b.wireEdgeKeys.length == 0,
+           "wire-policy dropMoved: a moved endpoint must drop the key");
 }
