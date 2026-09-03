@@ -153,6 +153,7 @@ import std.string    : split;
 import core.thread   : Thread;
 import core.time     : dur;
 
+import plane_diff_helpers;
 import topopen_place_helpers : Vec3, Viewport, CameraState,
     fetchCamera, viewportFromCamera, projectToWindow, buildDragLog,
     setupSphereBg, waitPlayerIdle;
@@ -311,30 +312,6 @@ void play(string log) {
 // ---------------------------------------------------------------------------
 // Plane comparison
 // ---------------------------------------------------------------------------
-
-/// Every plane on which two dumps disagree, sorted, with `provenance` skipped.
-///
-/// `provenance` carries the capture SHA and the family label, which differ by
-/// construction; comparing it would redden every cell for the one reason that
-/// is never a finding.
-string[] planeDiff(string aText, string bText) {
-    auto a = parseJSON(aText);
-    auto b = parseJSON(bText);
-    bool[string] keys;
-    foreach (k, _; a.objectNoRef) keys[k] = true;
-    foreach (k, _; b.objectNoRef) keys[k] = true;
-    string[] names;
-    foreach (k, _; keys) if (k != "provenance") names ~= k;
-    names.sort();
-    string[] diff;
-    foreach (k; names) {
-        auto pa = k in a.objectNoRef;
-        auto pb = k in b.objectNoRef;
-        if (pa is null || pb is null) { diff ~= k; continue; }
-        if (pa.toString() != pb.toString()) diff ~= k;
-    }
-    return diff;
-}
 
 /// The two renderings WINDOWED ON THE FIRST DIFFERING CHARACTER — a leading
 /// clip prints two identical strings under the word "differs".

@@ -46,6 +46,7 @@ import std.json;
 import std.math : abs;
 import std.net.curl : get, post;
 
+import plane_diff_helpers;
 import drag_helpers;
 
 void main() {}
@@ -89,27 +90,6 @@ double queryExtrude() {
 string planes() { return getRaw("/api/mesh/planes"); }
 
 long undoLen() { return cast(long) getJson("/api/history")["undo"].array.length; }
-
-/// Every plane on which two dumps disagree, sorted. `provenance` is skipped: it
-/// carries the capture SHA and would differ for the one reason never a finding.
-string[] planeDiff(string aText, string bText) {
-    auto a = parseJSON(aText);
-    auto b = parseJSON(bText);
-    bool[string] keys;
-    foreach (k, _; a.objectNoRef) keys[k] = true;
-    foreach (k, _; b.objectNoRef) keys[k] = true;
-    string[] names;
-    foreach (k, _; keys) if (k != "provenance") names ~= k;
-    names.sort();
-    string[] diff;
-    foreach (k; names) {
-        auto pa = k in a.objectNoRef;
-        auto pb = k in b.objectNoRef;
-        if (pa is null || pb is null) { diff ~= k; continue; }
-        if (pa.toString() != pb.toString()) diff ~= k;
-    }
-    return diff;
-}
 
 /// The screen anchor of a registered handle part.
 void handlePx(int part, out int x, out int y) {

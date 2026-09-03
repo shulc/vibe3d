@@ -41,6 +41,7 @@ import std.conv : to;
 import std.json;
 import std.net.curl : get, post;
 
+import plane_diff_helpers;
 import drag_helpers;
 
 void main() {}
@@ -65,25 +66,6 @@ void cmd(string line) {
 string planes() { return getRaw("/api/mesh/planes"); }
 long undoLen() { return cast(long) getJson("/api/history")["undo"].array.length; }
 size_t vertexCount() { return getJson("/api/model")["vertices"].array.length; }
-
-string[] planeDiff(string aText, string bText) {
-    auto a = parseJSON(aText);
-    auto b = parseJSON(bText);
-    bool[string] keys;
-    foreach (k, _; a.objectNoRef) keys[k] = true;
-    foreach (k, _; b.objectNoRef) keys[k] = true;
-    string[] names;
-    foreach (k, _; keys) if (k != "provenance") names ~= k;
-    names.sort();
-    string[] diff;
-    foreach (k; names) {
-        auto pa = k in a.objectNoRef;
-        auto pb = k in b.objectNoRef;
-        if (pa is null || pb is null) { diff ~= k; continue; }
-        if (pa.toString() != pb.toString()) diff ~= k;
-    }
-    return diff;
-}
 
 unittest { // a free centre haul clones face 4 and records exactly one entry
     // NO PRE-DISARM, DELIBERATELY (task 3130). `/api/reset` cancels and DROPS the
