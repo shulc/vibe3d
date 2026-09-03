@@ -208,14 +208,58 @@ jobs:
     # cache so the Build re-runs preBuildCommands and rebuilds the C lib.
     # (Cheap — a small C static lib.)
     #
-    # lwo2-writer is a `~master` git dep. dub resolves a branch dep ONCE and
-    # freezes it in the runner's persistent package cache — it never re-fetches
-    # when upstream master advances, so a lib bump (e.g. the VMAP/VMAD UV work)
-    # leaves vibe3d source compiling against a stale frozen copy. Drop it so the
-    # Build checks out the current master. (Cheap — pure-D lib, no static build,
-    # unlike bindbc-assimp6 which we leave cached here.)
-    - name: 'Drop cached nfde + lwo2-writer deps (force preBuild / re-fetch)'
-      run: rm -rf ~/.dub/packages/nfde ~/.dub/cache/nfde ~/.dub/packages/lwo2-writer ~/.dub/cache/lwo2-writer || true
+    # lwo2-writer USED TO BE DROPPED HERE AND IS NOT ANY MORE (task 3960).
+    # The rationale that stood here was written on 2026-06-14 (3d45e196) and was
+    # correct then: the dep was `~master`, dub resolves a branch spec ONCE and
+    # freezes it in the runner's persistent package cache, so a lib bump left us
+    # compiling against a stale copy. Twelve days later 60f9b764 ("Pin git
+    # dependencies for CI cache stability", 2026-06-26) moved it to the commit
+    # `fc87b3f3dc719bbc2d75200949155c2484cdc2dd`. The premise died there; the
+    # step did not, and kept deleting a valid cache for 69 days.
+    #
+    # Why the drop is now not merely useless but HARMFUL: it puts a network
+    # fetch of a git dependency on the hot path of EVERY run, and `Build` below
+    # has no continue-on-error, so one refused fetch skips unit + integration +
+    # frames. Measured on runs 33715226371 and 33656720700 — `Build` hard-failed
+    # and four steps read `skipped`; the red said "we learned nothing" and was
+    # shaped exactly like a real failure.
+    #
+    # Why keeping the cache is SAFE, measured rather than argued: dub keys a git
+    # package by the resolved commit, `~/.dub/packages/lwo2-writer/<sha>/`, so a
+    # pin change resolves to a DIFFERENT directory and a stale copy cannot be
+    # served. Two-sided witness in a scratch DUB_HOME, network forced dead with
+    # https_proxy=http://127.0.0.1:1 —
+    #   warm SHA cache  -> `dub describe` exit 0 (resolved fully offline)
+    #   after this rm   -> exit 2, `Error Unable to fetch 'lwo2-writer@git+...'`
+    # the second being byte-for-byte the CI failure above.
+    #
+    # The premise is no longer trusted, it is CHECKED: the step below fails the
+    # job if lwo2-writer stops being a 40-hex commit pin, because at that moment
+    # the cache CAN go stale again and this decision has to be revisited.
+    - name: 'Drop cached nfde dep (force preBuild of the vendored C lib)'
+      run: rm -rf ~/.dub/packages/nfde ~/.dub/cache/nfde || true
+
+    # Guard for the decision directly above. A commit-pinned git dep cannot be
+    # served stale from the SHA-keyed cache; a branch-pinned one can. If someone
+    # moves lwo2-writer back to a branch spec, dropping its cache becomes
+    # necessary again and its absence would be silent — a stale lib compiled
+    # against, with nothing red. Cheap, and it reddens on the reverse decision.
+    - name: 'Git deps we no longer cache-drop are commit-pinned (task 3960)'
+      run: |
+        python3 - <<'EOF'
+        import json, re, sys
+        spec = json.load(open("dub.json"))["dependencies"]["lwo2-writer"]
+        ver = spec.get("version", "")
+        if not re.fullmatch(r"[0-9a-f]{40}", ver):
+            sys.exit(
+                "lwo2-writer is '%s', not a 40-hex commit pin.\n"
+                "The 'Drop cached nfde dep' step above stopped dropping this\n"
+                "package BECAUSE it was commit-pinned and therefore could not go\n"
+                "stale in dub's SHA-keyed cache. A branch spec CAN go stale, so\n"
+                "either restore the drop for it or pin it again. See task 3960."
+                % ver)
+        print("lwo2-writer pinned at %s - cache cannot go stale, drop not needed" % ver)
+        EOF
 
     # Placed BEFORE 'Build' on purpose. 'Build' has no continue-on-error, so a
     # step after it is SKIPPED when it fails — and a skipped check is the exact
@@ -246,9 +290,14 @@ jobs:
       # measured the previous build came back green while main segfaulted).
       # This step builds the binary the suite will use, so it records the
       # stamp the guard checks.
-      run: |
-        dub build --compiler=dmd
-        ./run_test.d --write-stamp
+      #
+      # TASK 3960 — the step no longer runs dub directly. It classifies its own
+      # failure as ENVIRONMENT (exit 2, we learned nothing) or SOURCE (exit 1,
+      # the tree really is broken) and writes the class BOTH to the run summary
+      # and to build_class.txt, which the final gate reads. Same exit convention
+      # as tools/ci/render_compile_check.sh. Rationale + the measured 24-run
+      # classification are in the script header.
+      run: tools/ci/build_check.sh
 
     # Both test steps use continue-on-error + an id so a failure in one does NOT
     # abort the pipeline: the other test set still runs, the summary still
@@ -466,6 +515,14 @@ jobs:
       if: always()
       run: |
         echo "nightly_freshness=${{ steps.nightly_freshness.outcome }} (REPORT ONLY, does not gate) render_compile=${{ steps.render_compile.outcome }} unit=${{ steps.unit.outcome }} integration=${{ steps.integration.outcome }} frames=${{ steps.frames.outcome }}"
+        # TASK 3960 — say which KIND of red this is, in the summary and not only
+        # in a log. A run that never measured anything must not read the same as
+        # one that measured and found a defect.
+        BUILD_CLASS=$(cat build_class.txt 2>/dev/null || echo "NOT-REACHED")
+        echo "build_class=$BUILD_CLASS"
+        if [ "$BUILD_CLASS" = "ENVIRONMENT" ]; then
+          echo "::warning title=Nothing was measured::Build failed on the environment (dub could not obtain its inputs). The unit, integration and frame lanes did not run. This run makes no statement about the code."
+        fi
         # OWNER DECISION 2026-08-28 — the nightly-perf step is REPORT ONLY, both
         # of its terms. It is printed above and carries its own summary lines,
         # and it no longer appears in the conjunction below.
