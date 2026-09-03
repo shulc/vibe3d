@@ -226,7 +226,7 @@ struct InputRouter {
     // Run a command immediately with a baked argstring injected — used by
     // shortcut bindings that pin arguments (`mesh.subdivide: "D ccsds"`), so a
     // param-carrying command applies at once instead of popping the args dialog
-    // (mirrors baking `poly.subdivide ccsds` into its keymap). Positional
+    // (mirrors baking the `mesh.subdivide ccsds` invocation into its keymap). Positional
     // args map onto params() in declaration order; `name:value` args match by
     // name. Injection writes through the same param pointers the dialog uses.
     // Returns false only if the id has no factory.

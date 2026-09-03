@@ -17,7 +17,7 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import std.math : floor;
 
 /// Snap each selected vertex to a regular grid: pos = round(pos / step) * step
-/// per axis. A `vert.quantize` deform command.
+/// per axis. The `mesh.quantize` deform command uses this operation.
 ///
 /// Selection-aware via the same edit-mode mask `MeshTransform` uses:
 /// vertex mode → selected verts; edge/polygon mode → verts of the selected

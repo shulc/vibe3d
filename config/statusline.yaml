@@ -138,7 +138,7 @@ groups:
         action: { kind: command, id: ai.toggle }
         checked: { path: "ai/enabled", equals: "true" }
       # reference-style Snapping pulldown. Master toggle on top (matches the
-      # default @x keybind → tool.snapState true), divider,
+      # default @x keybind → snap enabled), divider,
       # then a checkbox per SnapType. Button face stays highlighted as
       # long as snap is on. Mirrors the snap palette structure but
       # scoped to vibe3d's seven supported types.

@@ -92,7 +92,7 @@ unittest { // count=4 along +X with offset 2 ⇒ 4 cubes spaced 2 apart.
 // ---------------------------------------------------------------------------
 
 unittest { // Array top face count=3 along +Y. FULL-PARITY sub-face copy
-           // model: the reference's poly.array REPLACES the source poly with
+           // model: the captured array behavior REPLACES the source poly with
            // `count` fresh copies (the copy at the source position owns its
            // OWN duplicated seam verts instead of sharing the cube's shared
            // top verts). So the 8 cube verts stay (top 4 still referenced by

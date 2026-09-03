@@ -23,7 +23,7 @@ import commands.mesh.selection_undo : DenseSelectionUndo;
 /// Ring-order dependent since task 1230 (ledger rows 41/49): a face whose
 /// vertex ring starts at a REFLEX corner shifts the other way, matching the
 /// reference. A COLLINEAR ring start changes nothing here — that is smooth
-/// shift's own answer, and it differs from poly.inset's (refuse) and
+/// shift's own answer, and it differs from the inset operation's (refuse) and
 /// poly.bevel's (zero offset) to the same input. See
 /// `math.ringStartCornerSign` and the smooth branch of
 /// `Mesh.extrudeFacesByMask`; the RIGID branch (poly.extrude) has no ring term.

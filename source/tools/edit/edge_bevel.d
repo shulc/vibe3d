@@ -348,7 +348,7 @@ public:
         // preview topology, restore the clean cage first so the kernel applies
         // exactly once (idempotent) — same guard the whole topology-tool family
         // carries (poly.bevel / edge.extrude / poly.extrude / vertex.bevel /
-        // poly.inset). In the pure headless flow (no drag) `before` == the
+        // the polygon inset tool). In the pure headless flow (no drag) `before` == the
         // current mesh, so this is a no-op and ToolDoApplyCommand's pre-snapshot
         // stays clean.
         if (built && before.filled) {

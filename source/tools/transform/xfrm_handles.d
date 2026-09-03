@@ -69,7 +69,7 @@ mixin template XfrmHandlesImpl() {
 
     // Element-move flow active? = the WGHT slot is falloff.element, so a
     // plain click relocates the gizmo onto the picked element (tryPickElement).
-    // Mirrors the reference element-move preset (center.element + falloff.element):
+    // Mirrors the captured element-move preset (element centre + falloff.element):
     // in that mode the reference drops the transform center handle (xfrm.transform
     // -16777211 vs the normal +EASFQG) so every click is an element pick, not
     // a center-handle grab. We match by hiding the Move centerBox below.

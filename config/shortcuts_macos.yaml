@@ -5,8 +5,8 @@ tools:
   xfrm.transform:     Y
   xfrm.elementMove:   T            # ref: t
   mesh.mirrorTool:    "Shift+V"    # ref: shift-v (*.mirror)
-  mesh.loopSliceTool: "Alt+C"      # ref: alt-c (poly.loopSlice)
-  mesh.sliceTool:     "Shift+C"    # ref: shift-c (poly.knife)
+  mesh.loopSliceTool: "Alt+C"      # ref: alt-c
+  mesh.sliceTool:     "Shift+C"    # ref: shift-c
   edge.bevel:         B            # ref: b (*.bevel)
   poly.bevel:         "Shift+B"    # ref: shift-b
   poly.extrude:       "Shift+X"    # ref: shift-x (*.extrude)
@@ -26,12 +26,12 @@ commands:
   select.drop:           Escape
   viewport.fit:          A
   viewport.fit_selected: "Shift+A"
-  mesh.subdivide:        "D ccsds"          # ref: d (poly.subdivide ccsds) — applies immediately
+  mesh.subdivide:        "D ccsds"          # ref: d ccsds — applies immediately
   mesh.subdivide_faceted: "Shift+D"         # ref: shift-d (faceted)
   mesh.triple:           "Shift+T"          # ref: shift-t
-  mesh.flip:             F                  # ref: f (poly.flip)
-  mesh.spinEdge:         V                  # ref: v (edge.spinQuads)
-  mesh.setMaterial:      M                  # ref: m (poly.setMaterial)
+  mesh.flip:             F                  # ref: f
+  mesh.spinEdge:         V                  # ref: v
+  mesh.setMaterial:      M                  # ref: m
   mesh.copy:             "Cmd+C"            # ref: ctrl-c → Cmd on macOS
   mesh.paste:            "Cmd+V"            # ref: ctrl-v → Cmd on macOS
   mesh.cut:              "Cmd+X"            # ref: ctrl-x → Cmd on macOS

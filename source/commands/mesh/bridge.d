@@ -153,7 +153,7 @@ class MeshBridge : Command, Operator {
 
             // Faces EXACTLY bounded by either bridged loop become interior once
             // the two rims are stitched and must be removed — matching the
-            // reference editor's edge.bridge (task 0467: captured two-cap case
+            // captured two-cap bridge behavior (task 0467: the case
             // deletes both caps -> 4f; captured open-tube case, where no single
             // face is bounded by a rim, deletes nothing) and vibe3d's own
             // mesh.bridgeTool. Computed BEFORE bridging: bridgeLoops only

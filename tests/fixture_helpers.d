@@ -361,7 +361,7 @@ void runStep(JSONValue step, string name, string phase, size_t i) {
     } else if ("scale_about" in step) {
         // Scale the selection by per-axis factors about an EXPLICIT pivot, via
         // the /api/transform primitive. Used by scale-parity fixtures: the
-        // reference engine's headless xfrm.scale pivots at the world origin, so
+        // the captured headless scale operation pivots at the world origin, so
         // the fixtures pass pivot [0,0,0] — an engine-agnostic scale (no gizmo /
         // action-center policy involved, no recovery needed).
         auto s = step["scale_about"];
@@ -717,7 +717,7 @@ void runStep(JSONValue step, string name, string phase, size_t i) {
         // Polygon Inset (mesh.polyInsetTool, task 0359) — headless Post-Mode
         // apply of the interactive tool: tool.set on, tool.attr inset <v>,
         // tool.doApply, tool.set off. Mirrors the reference's own
-        // panel-apply gesture (tool.attr poly.inset inset ? + tool.apply).
+        // panel-apply gesture (`tool.attr inset …` followed by `tool.doApply`).
         //   { "poly_inset": { "inset": 0.2 } }
         auto pi = step["poly_inset"];
         double v = asDouble(pi["inset"]);

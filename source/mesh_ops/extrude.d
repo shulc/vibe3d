@@ -3314,7 +3314,7 @@ size_t extrudeFacesByMask(ref MeshEditBatch ed, in bool[] maskIn, float distance
             // r4, where the reference's every vertex moves +0.1 against
             // our -0.1. A COLLINEAR ring start is folded in with convex
             // and changes NOTHING, which is this family's own answer and
-            // not the offset families': poly.inset refuses on that same
+            // not the offset families': the inset kernel refuses on that same
             // input and poly.bevel zeroes its offset (ledger row 49).
             // What is MEASURED is that OUTCOME — the hexagon's collinear
             // rotation matches the reference, and a whole separate cell

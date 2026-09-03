@@ -27,7 +27,7 @@ import commands.mesh.selection_undo : DenseSelectionUndo;
 /// THIS IS THE MEMBER WITH TWO APPEND ROUNDS AND THE FAMILY'S ONLY WINDING
 /// INSTALL. With `detachSubsetSource` on and a strict-subset selection,
 /// `Mesh.arrayFaces` duplicates the source faces' verts at offset 0 and
-/// REPOINTS the source faces at the duplicates (the reference's poly.array copy
+/// REPOINTS the source faces at the duplicates (the captured array-tool copy
 /// model). Those repoints used to be indexed writes reaching no hook — the
 /// forward was fine and the revert left every detached source face pointing at
 /// its duplicate, with V/F/E and every mark word round-tripping, so ONLY a
@@ -128,7 +128,7 @@ class MeshArray : Command, Operator {
         preSel_.capture(*mesh);
 
         // detachSubsetSource: reference parity for a PARTIAL selection — the
-        // reference's poly.array replaces each source poly with `count` fresh
+        // the captured array behavior replaces each source poly with `count` fresh
         // copies (seam verts duplicated) rather than keeping the source and
         // appending count-1 (seam verts shared). No-op for a whole-mesh array.
         // The interactive Clone tool/command deliberately leave this off.

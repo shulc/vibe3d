@@ -1908,7 +1908,7 @@ unittest // Stage F1 — the Loop Slice ring-walk + insertion family
 unittest // Stage F2 — the polygon bevel / inset / spike family
 {
     // ---------------------------------------------------------------------
-    // Stage F2 — poly.bevel + poly.inset + poly.spike. FIVE things are pinned
+    // Stage F2 — poly.bevel + insetFacesByMask + spikeFacesByMask. FIVE things are pinned
     // here that no earlier stage needed:
     //
     //   * THREE receiver classes in ONE file — three mutating entries, TWO

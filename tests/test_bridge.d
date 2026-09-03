@@ -8,7 +8,7 @@
 //
 //   Edge-mode bridge (select both rim loops): bridges then DELETES both caps
 //   (each rim loop exactly bounds one cap face), leaving the 4 quad rungs → 4
-//   faces, 8 verts (open tube). Matches the reference editor's edge.bridge and
+//   faces, 8 verts (open tube). Matches the captured bridge behavior and
 //   vibe3d's mesh.bridgeTool (task 0467 — was 6 faces before the edge-branch
 //   learned to remove the bounding caps like the Polygon branch already did).
 //   Polygon-mode bridge (select both faces): bridges then DELETES both caps,
@@ -151,8 +151,8 @@ int outwardNormals(JSONValue m, float axX = 0.5f, float axY = 0.5f) {
 unittest { // edge-mode bridge: 2 closed 4-cycles → 4 faces, 8 verts, all quads.
            // Each rim loop exactly bounds one cap face, so the mesh.bridge
            // COMMAND removes both caps just like its Polygon branch, the
-           // mesh.bridgeTool, and the reference editor's edge.bridge — captured
-           // ground truth: two-cap edge.bridge → 8v/4f (task 0467). Was 8v/6f
+           // mesh.bridgeTool and the captured ground truth:
+           // two-cap bridge → 8v/4f (task 0467). Was 8v/6f
            // (caps kept) before the edge-branch fix.
     loadCaps();
     setSelection("edges", []);  // switch to edge mode

@@ -526,7 +526,7 @@ unittest {
 }
 
 // --------------------------------------------------------------------------
-// 3. poly.inset — the directionless haul (LAW C) carries the item scale too.
+// 3. Polygon inset — the directionless haul (LAW C) carries the item scale too.
 //
 //    `inset` has no axis, so its conversion is the declared mean of the three
 //    axis gains (`OverlaySpace.meanWorldPerLocal`). Same two stands, same

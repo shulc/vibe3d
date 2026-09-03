@@ -286,7 +286,7 @@ unittest { // pairOf empty when disabled
 }
 
 // -------------------------------------------------------------------------
-// 7.6b: vert.symmetrize-style move via /api/transform translate.
+// 7.6b: `mesh.symmetrize`-style move via /api/transform translate.
 // MeshTransform consults the SYMM packet — selecting vert 0 and translating
 // (0, 1, 0) should also translate vert 1 (its X-mirror).
 // -------------------------------------------------------------------------

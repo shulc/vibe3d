@@ -11,7 +11,7 @@ import toolpipe.stage          : TaskCode;
 
 // ---------------------------------------------------------------------------
 // `snap.toggle` — flip the SnapStage's master enable flag. Bound to
-// `X` (the `tool.snapState` toggle).
+// `X` (the snap-state toggle).
 //
 // Hooked up via config/shortcuts.yaml:
 //   commands:

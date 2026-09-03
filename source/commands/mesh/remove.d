@@ -10,7 +10,7 @@ import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope,
                         captureSelectedEdgeEnds, restoreSelectedEdgeEnds,
                         acceptRecordedEdit;
 
-/// Tier 1.1: "Remove" (`vert.remove` / `edge.remove false` /
+/// Tier 1.1: "Remove" for vertices / edges without dissolve /
 /// `poly.remove`, dispatched by edit mode). Remove and Delete are
 /// DISTINCT topological operations, not aliases:
 ///   - Vertices: both dissolve (identical result).
@@ -308,7 +308,7 @@ version (unittest) {
     }
 }
 
-unittest { // edge.remove / edge.delete leave unrelated loose geometry alone
+unittest { // edge removal leaves unrelated loose geometry alone
     import view : View;
 
     foreach (isDelete; [false, true]) {

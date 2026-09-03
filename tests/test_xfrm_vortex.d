@@ -7,7 +7,7 @@
 // distance-weighted attenuation.
 //
 // `xfrm.vortex` is a ToolPreset combining falloff.cylinder +
-// xfrm.rotate. We verify against an analytical reference.
+// the `rotate` tool. We verify against an analytical reference.
 
 import std.net.curl;
 import std.json;

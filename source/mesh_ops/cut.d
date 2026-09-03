@@ -1142,7 +1142,7 @@ unittest { // cutByPlaneSplitGap: CC×2 OBLIQUE sliver regression (task 0291,
     // Phase 3) — the reported bug: a single-cut + fixed along-edge slide grazes
     // existing verts on dense/curved geometry (a sliver), scattering the seam
     // off the cut plane and producing a self-intersecting cap (reference
-    // capture toolcards/poly.knife/capture/subdiv_gap/: owner case, gap 0.415
+    // captured owner case: the subdivided-edge gap is 0.415
     // center, TWO clean planar/simple caps). The two-cut model is
     // overshoot-immune (every seam sits on a REAL edge∩plane intersection), so
     // this is GREEN where the equivalent direct single-cut+slide call (the

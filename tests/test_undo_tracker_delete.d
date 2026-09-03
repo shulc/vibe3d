@@ -371,7 +371,7 @@ unittest {
         "mesh.delete");
 }
 
-// GRID — remove edges (edge.remove → removeEdgesByMask, same path as delete).
+// GRID — remove edges (`removeEdgesByMask`, same path as delete).
 unittest {
     runScenario("grid/remove/edges", () => resetGrid(2), "edges",
         (JSONValue m) {

@@ -1558,7 +1558,7 @@ unittest { // SCALE INVARIANCE — a small polygon is not a degenerate one
     // not by anything written for the port: `dot(cross, Newell)` grows as the
     // FOURTH power of the ring's size, so the first version of this predicate
     // tested it against an ABSOLUTE 1e-9 floor and classified an ordinary
-    // right angle on a 0.002-unit square as COLLINEAR. `poly.inset` then
+    // right angle on a 0.002-unit square as COLLINEAR. The inset operation then
     // refused a face it had to inset, and
     // `tests/fixtures/poly_inset_dirty_parity.json`'s `inset_tiny_next_big`
     // came back with 11 vertices where it froze 15. The degeneracy test is

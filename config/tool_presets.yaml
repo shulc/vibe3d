@@ -149,7 +149,7 @@ presets:
 
   # ----- Transform sub-tab ----------------------------------------
   # `xfrm.elementMove` mirrors the reference's `tool.set ElementMove` —
-  # the reference preset only sets the ACEN slot (center.element), the WGHT
+  # the reference preset only sets the ACEN slot to element mode; the WGHT
   # slot (falloff.element with mode=automatic) and the ACTR slot
   # (xfrm.transform). It does NOT touch the AXIS slot, so AXIS stays
   # at its default (axis.auto = workplane / world axes). We match

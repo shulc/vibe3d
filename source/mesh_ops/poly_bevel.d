@@ -7,8 +7,8 @@ import std.array : uninitializedArray;
 import mesh_edit_delta : MeshEditScope;
 
 // ---------------------------------------------------------------------------
-// The POLYGON bevel family — poly.bevel (`bevelFacesByMask`), poly.inset
-// (`insetFacesByMask`) and poly.spike (`spikeFacesByMask`), with the
+// The POLYGON bevel family — poly.bevel (`bevelFacesByMask`), the inset
+// kernel (`insetFacesByMask`) and spike kernel (`spikeFacesByMask`), with the
 // corner/normal helpers they share (`insetCorner`, `insetCornerBisector`,
 // `maxSafeUniformInset`, `cornerNormalAt`, `aveNormal`) and the
 // group-boundary contour pair (`findGroupBoundaryContour`,
@@ -132,10 +132,10 @@ private Vec3 insetCorner(const Vec3[] origPos, int i, Vec3 n, float inset) {
     return offsetMeet(origPos[i], ePrev, eNext, n, inset, inset);
 }
 
-// Per-corner direction for insetFacesByMask (poly.inset). Deliberately
+// Per-corner direction for insetFacesByMask. Deliberately
 // SEPARATE from insetCorner/offsetMeet above (used by bevelFacesByMask /
 // poly.bevel's per-edge perpendicular-offset miter law) — task 0359's
-// toolcard capture showed poly.inset uses a DIFFERENT per-vertex law: a
+// the captured inset behavior uses a DIFFERENT per-vertex law: a
 // constant absolute displacement, NOT a per-edge miter offset. Sharing
 // insetCorner would silently change poly.bevel's verified geometry.
 //
@@ -963,7 +963,7 @@ size_t bevelFacesByMask(ref MeshEditBatch ed, const bool[] maskIn, float inset, 
         const Vec3 n = ed.faceNormal(cast(uint)fi);
 
         // --- Task 1230: the reference reads where the ring starts ------
-        // The SAME predicate poly.inset reads (`math.ringStartCornerSign`)
+        // The SAME predicate the inset kernel reads (`math.ringStartCornerSign`)
         // and a DIFFERENT answer to its zero, which is why this is its own
         // call site: measured on `poly_bevel_reflex_and_flat_hex` and
         // `poly_bevel_two_flat_corners_hex`, the reference's bevel is what
@@ -974,7 +974,7 @@ size_t bevelFacesByMask(ref MeshEditBatch ed, const bool[] maskIn, float inset, 
         // `s` used as a FACTOR rather than as a branch: -1 mirrors, +1
         // leaves alone, and 0 falls out as a zero-width ring, which this
         // kernel already builds deliberately (see the fuzz-D6 note above —
-        // inset==0 && shift==0 was never a no-op here). poly.inset REFUSES
+        // inset==0 && shift==0 was never a no-op here). The inset kernel REFUSES
         // on that same input and smooth shift ignores it; three families,
         // three answers, ledger row 49.
         //

@@ -19,7 +19,7 @@
 // the self-contained HTTP-driving style of test_slice_gap_rmb.d /
 // test_fixture_item_transform.d instead.
 //
-// Reference ground truth: toolcards/poly.knife/capture/subdiv_gap/ANALYSIS.md
+// Captured ground truth: owner case with a 0.415 subdivided-edge gap.
 // (owner case: CC^2 cube, plane normal [0,-0.851,0.524], gap 0.415 center —
 // TWO clean planar/simple caps, band between them removed).
 

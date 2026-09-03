@@ -207,7 +207,7 @@ unittest { // screen mode + top-down camera + background plane → projects to Y
 //   1. Build two-layer scene (A=cube, B=flat plane at Y=0, B is background).
 //   2. Select vertex 0 of layer A (default cube v0 ≈ (-0.5, -0.5, -0.5)).
 //   3. Enable CONS (geometry=point).
-//   4. Activate xfrm.move; set TY=5.0 (would move v0 to Y≈4.5 pre-CONS).
+//   4. Activate `move`; set TY=5.0 (would move v0 to Y≈4.5 pre-CONS).
 //   5. tool.doApply — applyTRS runs, CONS post-pass projects v0 onto Y=0 plane.
 //   6. Assert v0.Y ≈ 0 (collapsed onto the plane), not ≈4.5 (raw move).
 //
@@ -240,7 +240,7 @@ unittest { // headless doApply: moved vertex lands on background plane
     // Enable CONS on the toolpipe (geometry=point, default).
     cmd("tool.pipe.attr constrain enabled true");
 
-    // Activate xfrm.move and select vertex 0 of layer A.
+    // Activate `move` and select vertex 0 of layer A.
     cmd("tool.set move");
     selectVert(0);
 
@@ -282,7 +282,7 @@ unittest { // headless doApply: moved vertex lands on background plane
 // Recipe:
 //   1. Build two-layer scene (A=cube, B=flat plane at Y=0 with +Y normal).
 //   2. Enable CONS (geometry=vector).
-//   3. Activate xfrm.move.
+//   3. Activate `move`.
 //   4. Find the first cube vertex with Y > 0 (a top vertex, Y≈+0.5).
 //   5. Select that vertex; apply TY=-0.4 → finalPos.y ≈ 0.1 (still > 0,
 //      never crosses the plane).  Edit delta = (0,-0.4,0) → normalized (0,-1,0).
@@ -298,7 +298,7 @@ unittest { // headless doApply (vector): selected top vertex projected to Y=0 vi
     cmd("tool.pipe.attr constrain enabled true");
     cmd("tool.pipe.attr constrain geometry vector");
 
-    // Activate xfrm.move.
+    // Activate `move`.
     cmd("tool.set move");
 
     // Read cube vertices; find the first one with Y > 0 (top face).

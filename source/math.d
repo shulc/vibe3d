@@ -1657,11 +1657,11 @@ bool frontFacingLocal(const(Vec3)[] verts, const(uint)[] ring, Vec3 eyeLocal)
 //
 // WHERE IT IS MEASURED AND WHERE IT IS APPLIED (all three read it separately,
 // because one input gets three different answers out of them — ledger row 49):
-//   * `Mesh.insetFacesByMask` (poly.inset / outset)  — signed offset, and the
+//   * `Mesh.insetFacesByMask` (inset / outset)       — signed offset, and the
 //     ZERO class REFUSES the face outright.
 //   * `Mesh.bevelFacesByMask` (poly.bevel)           — offset scaled by `s`
 //     itself, so the zero class builds the ring with NO offset.
-//   * `Mesh.extrudeFacesByMask`, smooth branch only (poly.smshift) — the
+//   * `Mesh.extrudeFacesByMask`, smooth-shift branch only — the
 //     COARSE reading, in which zero merges with +1, so a collinear ring start
 //     is not noticed at all.
 // Scored 58/58 exact on the offset families over the frozen orbit corpus, and
@@ -1681,7 +1681,7 @@ bool frontFacingLocal(const(Vec3)[] verts, const(uint)[] ring, Vec3 eyeLocal)
 // power of the ring's size, so on the 0.002-unit square of
 // `tests/fixtures/poly_inset_dirty_parity.json`'s `inset_tiny_next_big` an
 // ordinary RIGHT ANGLE evaluates to 3.2e-11, an absolute 1e-9 floor calls it
-// collinear, and poly.inset then REFUSES a face it must inset. The frozen
+// collinear, and the inset operation then REFUSES a face it must inset. The frozen
 // agreement caught it — 15 vertices expected, 11 produced. A small polygon is
 // not a degenerate one, and only a relative test knows the difference.
 //

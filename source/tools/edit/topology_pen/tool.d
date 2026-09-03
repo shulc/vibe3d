@@ -6413,7 +6413,7 @@ public:
     // and this tool carried its own capture/re-add pair to survive that. Task
     // 0502 moved the preservation INTO the kernels (`Mesh.captureLooseGeometry`
     // and the pins/remap replay around `compactUnreferenced`), where it also
-    // covers `edge.remove` / `edge.delete` — which rode the same kernel and had
+    // covers edge removal — which rode the same kernel and had
     // the same defect. The local copy is gone; nothing here needs to bracket a
     // dissolve any more.
 

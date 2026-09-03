@@ -507,7 +507,7 @@ unittest { // Grid snap dynamic step = 1.0
 
 // -------------------------------------------------------------------------
 // 7.3e: snap.toggle command flips the master enable flag. The
-// `tool.snapState` toggle, bound to X in config/shortcuts.yaml.
+// snap-state toggle, bound to X in config/shortcuts.yaml.
 // -------------------------------------------------------------------------
 
 unittest { // snap.toggle flips enabled false→true

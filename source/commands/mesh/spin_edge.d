@@ -156,7 +156,7 @@ class MeshSpinEdge : Command, Operator {
             // mesh.
             //
             // Scoped to the EDGES branch, which is the gesture the reference
-            // was driven through (`edge.spinQuads` over an edge selection). The
+            // was driven through (`mesh.spinEdge` over an edge selection). The
             // polygon branch below is our own extension — its operand is
             // derived from a face selection, not named edge by edge — and no
             // measurement covers it, so it is left sequential rather than given
