@@ -218,9 +218,9 @@ class ActionCenterStage : Stage, Operator, ToolSwitchTransient {
         Screen     = 6,    // 7.2b
         Border     = 7,    // 7.2e
         Manual     = 8,    // 7.2b
-        // The "(none)" entry in the Action Center popup —
-        // `tool.clearTask "axis" "center"` (drops both ACEN+AXIS from
-        // the toolpipe). We keep the stage installed but publish a
+        // The "(none)" entry in the Action Center popup — it drops both
+        // ACEN and AXIS from the toolpipe. We keep the stage installed but
+        // publish a
         // fixed origin pivot and
         // mark the packet non-Auto, so transform tools can fall back to
         // world origin without a special-case.

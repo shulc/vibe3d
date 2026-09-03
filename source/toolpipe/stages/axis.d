@@ -156,8 +156,8 @@ class AxisStage : Stage, Operator, ToolSwitchTransient {
         Origin     = 7,    // alias of World — rotates around (0,0,0) axes
         Screen     = 8,    // camera-aligned (7.2 follow-up)
         Manual     = 9,    // user-pinned right/up/fwd (7.2 follow-up)
-        // Companion of ActionCenterStage.Mode.None —
-        // tool.clearTask("axis","center") drops both. We keep the stage
+        // Companion of ActionCenterStage.Mode.None — the reference's
+        // "(none)" entry drops BOTH stages from the pipe. We keep the stage
         // installed but publish world XYZ as a sane default basis.
         None       = 10,
         // Task 0082 — new item-hierarchy modes.

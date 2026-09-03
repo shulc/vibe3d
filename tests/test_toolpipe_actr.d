@@ -99,8 +99,8 @@ unittest { // actr.border (axis falls back to select per the mapping)
     assert(stageMode("AXIS") == "select", "got " ~ stageMode("AXIS"));
 }
 
-unittest { // actr.none — the "(none)" Action Center popup entry,
-           // implemented as `tool.clearTask "axis" "center"`.
+unittest { // actr.none — the "(none)" Action Center popup entry, which
+           // drops both stages from the pipe.
            // Both stages report mode "none"; ACEN publishes origin (no
            // pivot), AXIS publishes world XYZ (no orientation override).
     resetCube();
