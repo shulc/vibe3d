@@ -10,17 +10,27 @@ name: nightly-perf
 # workstation, and a daytime build would both slow the desktop and pollute
 # any concurrently-running measurement.
 #
-# Five signals, four of them gating:
-#   1. ops absolute vs committed baseline — RECORDED ONLY for now
-#      (continue-on-error): the Jun-07 baseline is knowingly stale and red
-#      (see doc/tasks/backlog/0680 + the 2026-08-18 audit); re-baselining
-#      before those fixes land would legitimize the debt. FLIP THIS STEP TO
-#      GATING when the baseline is regenerated post-fix.
+# Five signals, ALL FIVE gating (task 1460 flipped the first one):
+#   1. ops absolute vs committed baseline + the debt ledger — GATING.
+#      The Jun-07 baseline is NOT stale and is NOT going to be regenerated:
+#      task 1460 Phase 0 checked out the commit that wrote it, built it the
+#      same way, and ran its own harness on this host — the old code
+#      reproduced its own baseline at median ratio 1.02 with ONE absolute
+#      regression against 19 on today's main. The baseline is honest and the
+#      ~30 red cases were real loss in our code. Regenerating it would have
+#      frozen that loss as the new normal and made it invisible for good, so
+#      the remaining debt is pinned in tools/perf/baseline_debt.json, with an
+#      owner and a date, and this step gates against the pin. Paid rows leave
+#      the ledger instead of becoming a new baseline. New loss on a pinned
+#      case is red immediately;
+#      a pin that stays paid for three consecutive runs is red too, with
+#      "delete this entry" — a ledger that cannot expire is a ledger that
+#      rots.
 #   1b. lane health — GATING (task 1373). The composition of the ops run:
 #      every row OK, every declared case present, every geometry command
 #      either covered by a case or explicitly excluded with a reason. It gates
-#      what (1) cannot, because (1) is a stale-baseline budget comparison and
-#      this is a set of machine-stable facts. A perf case that stops working
+#      what (1) cannot: this is a set of machine-stable composition facts, not
+#      a comparison of timing numbers. A perf case that stops working
 #      used to redden nothing at all; now it reddens here.
 #   2. --vs-last day-over-day gate — GATING. Any per-case kernel median
 #      +20% over the previous comparable nightly fails the run. This is the
@@ -125,9 +135,10 @@ jobs:
     # stays open there. The hold is per STEP (measured worst: ops at 375s), so
     # a neighbouring `./run_test.d` waiting on it cannot exhaust its own 600s
     # budget on one of them; the wrapper's own header has the full argument.
-    - name: 'Ops matrix, absolute vs committed baseline (recorded)'
+    - name: 'Ops matrix, absolute vs committed baseline + debt ledger'
       id: ops
-      continue-on-error: true
+      # GATING since task 1460 — no `continue-on-error`. See the header note
+      # for why the answer was a ledger and not a re-baseline.
       run: |
         set -o pipefail
         env -u WAYLAND_DISPLAY SDL_VIDEODRIVER=x11 DISPLAY=:0 \
@@ -136,6 +147,28 @@ jobs:
 
     - name: 'Day-over-day gate (--vs-last)'
       id: vslast
+      # `always()`, and it is NOT decoration (task 1460). Until `ops` became
+      # gating this step ran unconditionally only because the step before it
+      # could not fail. The moment `ops` can fail, an ops-red would SKIP this
+      # one outright: `steps.vslast.outcome == "skipped"`, vslast.log never
+      # written, the job summary printing "(no output)" — and the lane would
+      # lose its one day-over-day signal on exactly the nights it goes red,
+      # which is how `ops` came to be non-gating in the first place. The Gate
+      # below still aggregates every outcome, so this changes what the log
+      # contains, never what the job decides.
+      #
+      # History itself is safe either way: lib.history.appendHistory runs
+      # AFTER the verdict block in run.d, so a failing ops run still files its
+      # row and tomorrow still has something to compare against.
+      #
+      # KNOWN LIMIT, stated rather than papered over: an `ops` that DIES
+      # (segfault, timeout, wedged instance) never reaches that append, and
+      # then this step compares YESTERDAY's row against the day before and
+      # reads green over a run that never happened. That case is caught one
+      # step down, by `lanehealth`: `ops` removes results.json before it
+      # measures, so a dead `ops` leaves the file absent and lane health fails
+      # on it. It is not caught here, and this comment is the record of that.
+      if: always()
       run: |
         set -o pipefail
         rdmd tools/perf/run.d --vs-last 2>&1 | tee vslast.log
@@ -144,12 +177,12 @@ jobs:
       id: lanehealth
       # GATING, and gating is the whole point of it (task 1373).
       #
-      # The `ops` step above runs under continue-on-error and is deliberately
-      # left out of the Gate, so a perf case that STOPS WORKING today reddens
-      # nothing: it prints ERROR, is dropped from the history map before it is
-      # written, and `--vs-last` only walks the keys of the CURRENT run, so
-      # "was here yesterday, gone today" is never asked. The lane keeps paying
-      # for the case and keeps reading as coverage. This step is the answer to
+      # It answers a question the `ops` step still cannot, even now that
+      # `ops` gates (task 1460): a case that STOPS WORKING prints ERROR, is
+      # dropped from the history map before it is written, and `--vs-last`
+      # only walks the keys of the CURRENT run, so "was here yesterday, gone
+      # today" is never asked there. `ops` compares numbers; a case that
+      # produces no number is invisible to it. This step is the answer to
       # that, kept narrow enough that it can gate from day one:
       #
       #   1. some row in results.json is not OK;
@@ -161,9 +194,15 @@ jobs:
       # a status string, a set of names, a list of command ids. None is a
       # hardware-bound budget and none has a two-month-stale baseline to be
       # wrongly red against, which is exactly the argument the `tools` step
-      # below makes for gating on its first night. It does NOT bring `ops`
-      # back into the gate and it does not touch baseline.json: those are the
-      # other two holes, and they stay with task 1460.
+      # below makes for gating on its first night. Bringing `ops` back into
+      # the gate and dealing with the Jun-07 baseline were the other two
+      # holes; task 1460 closed both, and this step keeps its own job — the
+      # COMPOSITION of the run, which no budget comparison can see.
+      #
+      # A missing results.json is an explicit FAIL here, not a clean read over
+      # an empty input, and that verdict is load-bearing now that `ops` can
+      # die: `ops` removes the file BEFORE it measures, so absent means "this
+      # run produced nothing", never "nobody ever ran one".
       #
       # `always()`: an `ops` step that failed is precisely when this has
       # something to say.
@@ -238,7 +277,7 @@ jobs:
           echo ""
           echo "| signal | outcome |"
           echo "|---|---|"
-          echo "| ops absolute vs baseline (recorded) | ${{ steps.ops.outcome }} |"
+          echo "| ops absolute vs baseline + debt ledger (gating) | ${{ steps.ops.outcome }} |"
           echo "| lane health: rows + declared coverage (gating) | ${{ steps.lanehealth.outcome }} |"
           echo "| day-over-day --vs-last (gating) | ${{ steps.vslast.outcome }} |"
           echo "| tools preview invariants (gating) | ${{ steps.tools.outcome }} |"
@@ -284,11 +323,21 @@ jobs:
 
     - name: 'Gate'
       # Mirrors ci.yaml's aggregate pattern: the job is red iff a GATING
-      # signal failed. The ops step is recorded above but deliberately not
-      # aggregated until the baseline is regenerated post-0680/snap fixes.
+      # signal failed. All five are gating since task 1460 — `ops` compares
+      # against tools/perf/baseline_debt.json, which pins every unresolved,
+      # gate-worthy debt at its measured value, so the step is red for NEW
+      # loss and not for the old loss it already records.
+      #
+      # `ops` is aggregated here as well as failing the job on its own exit
+      # code, and that is not redundant: a step without `continue-on-error`
+      # stops the job at its own failure, but every step after it carries
+      # `if: always()` precisely so the lane still prints its diagnosis. This
+      # expression is what makes the JOB's verdict include `ops` rather than
+      # inheriting whatever the last always() step returned.
       if: always()
       run: |
         echo "ops=${{ steps.ops.outcome }} lanehealth=${{ steps.lanehealth.outcome }} vslast=${{ steps.vslast.outcome }} tools=${{ steps.tools.outcome }} frames=${{ steps.frames.outcome }}"
+        [ "${{ steps.ops.outcome }}" = "success" ] && \
         [ "${{ steps.lanehealth.outcome }}" = "success" ] && \
         [ "${{ steps.vslast.outcome }}" = "success" ] && \
         [ "${{ steps.tools.outcome }}" = "success" ] && \
