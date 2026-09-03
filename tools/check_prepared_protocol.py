@@ -904,7 +904,7 @@ if not re.search(r"struct\s+PreparedLayerMeshToken\s*\{\s*private:\s*ulong\s+bir
                  document_source):
     fail("P1.0b.3c prepared Mesh token stopped being scalar-only")
 if "static foreach (i; 0 .. R.tupleof.length)" not in mesh_source or \
-   "static assert(Mesh.tupleof.length == 54" not in (ROOT / "source/mesh_planes.d").read_text():
+   "static assert(Mesh.tupleof.length == 55" not in (ROOT / "source/mesh_planes.d").read_text():
     fail("P1.0b.3c complete Mesh field ownership census changed")
 if not re.search(r"void\s+installPreparedMeshImage\s*\([^)]*\)\s*nothrow\s+@nogc", mesh_source) or \
    not re.search(r"void\s+installPreparedMesh\s*\([^)]*\)\s*nothrow\s+@nogc", document_source):
