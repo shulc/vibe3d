@@ -13,10 +13,12 @@ module lib.baseline;
 // Extracted from tools/perf/run.d as part of task 0197 (perf tooling
 // consolidation) — pure code-motion, no behavior change.
 
+import std.algorithm : sort;
 import std.array   : appender;
 static import std.file;
 import std.format  : format;
-import std.json    : parseJSON, JSONType;
+import std.json    : parseJSON, JSONType, JSONValue;
+import std.math    : fabs, isNaN;
 import std.socket  : Socket;
 
 import lib.stats : jsonNum;
@@ -139,6 +141,308 @@ Baseline loadBaseline(string path) {
         b.byName[bc.name] = bc;
     }
     return b;
+}
+
+// ---------------------------------------------------------------------------
+// THE DEBT LEDGER (task 1460) — tools/perf/baseline_debt.json
+//
+// WHY IT EXISTS. `baseline.json` was recorded 2026-06-07 and the 2026-08-19
+// tree was measurably slower than it on ~30 cases. Task 1460 Phase 0 checked out the
+// commit that WROTE the baseline, built it the same way, and ran its own
+// harness on this host: the old code reproduced its own baseline at median
+// ratio 1.02 with 1 absolute regression against 19 on today's main. So the
+// baseline is HONEST and the loss is in our code — which means the two
+// obvious repairs are both wrong. Re-recording the baseline would freeze the
+// loss as the new normal and make it invisible for good; leaving the `ops`
+// step out of the nightly gate (what the lane did until now) means a NEW
+// regression on top of the old one reddens nothing either.
+//
+// The ledger is the third option: every unresolved, gate-worthy debt is pinned
+// at its measured value, with an owner and a date, and the gate compares
+// against that pin. New loss on a ledgered case is red immediately; the old
+// loss stays written down instead of forgotten. Paid rows are removed rather
+// than carried forward as a new baseline.
+//
+// A ledger's own failure mode is ROT — an entry outliving the regression it
+// records re-admits the loss for free — so the comparison runs in BOTH
+// directions, and `reconcileDebt` refuses to let an entry outlive its case.
+// ---------------------------------------------------------------------------
+
+// The low edge ("this debt looks paid") is measured from the DEBT, never from
+// the baseline. That is not a taste call, it is arithmetic: with a single
+// shared tolerance the two edges would be `cur > base*(1+tol)` and
+// `cur > debt*(1+tol)`, whose green band is the open interval
+// `(base*(1+tol), debt*(1+tol)]` — of ratio width exactly `debt/base`. Every
+// entry with `debt/base <= 1+tol` would then be RED ON BOTH CLAUSES at the
+// very value it was pinned at. Computed over the ledger as actually seeded
+// (2026-08-19) that is **11 of its 37 ledgered entries**: `*/symmetry=X`,
+// `*/falloff=linear`, `*/falloff=radial`, `*/falloff=cylinder` and
+// `scale/falloff=screen` all sit at ratios 1.18-1.30. Debt-relative, the green
+// band is `[debt*(1-k), debt*(1+tol)]` — 1.4444x wide for every entry whatever
+// its ratio, and the pinned value sits inside it by construction.
+enum double DEBT_IMPROVED_K = 0.10;
+
+// ...and one night under the line is not payment. A `debtPaid` verdict
+// DELETES an entry, so it legalises everything below it permanently; it takes
+// this many CONSECUTIVE comparable runs (the current one counts as the first)
+// before the notice becomes red. Measured reason, not caution:
+// `scale/falloff=cylinder` has nine recorded n=316 history rows and six of
+// them sit below a baseline-relative paid-line, so a one-shot rule would have
+// deleted that entry on most nights of the week for an improvement nobody
+// made.
+enum int DEBT_IMPROVED_STREAK_N = 3;
+
+// One ledgered case.
+struct DebtEntry {
+    // Keyed on `CaseResult.historyKey`, NEVER on the bare case name:
+    // `checkAbsolute` looks the baseline up by `historyKey` (task 1373 F1.7),
+    // which is `name@n<meshN>` for any case that pins a mesh size. A ledger
+    // keyed on the bare name would silently stop matching the moment a case
+    // acquired a pin — the exact way a case "vanishes" that this task exists
+    // to close.
+    string key;
+    // NaN = this case has no comparable row in baseline.json at all (it was
+    // added after the baseline was recorded). Such an entry carries the HIGH
+    // edge only: with no baseline there is no "paid" to detect.
+    double baselineUs = double.nan;
+    double debtUs;
+    double ratio;              // debtUs / baselineUs, or NaN
+    int    samples;            // how many runs the median was taken over
+    double spreadLoUs = double.nan, spreadHiUs = double.nan;  // observed min/max
+    // Per-entry override of the run's global tolerance, for a case whose own
+    // reproduction spread is wider than it. NaN = use the global one.
+    double tol = double.nan;
+    string owner;
+    // `false` = recorded but NOT suppressed: the case still compares against
+    // baseline.json as if the entry were absent. This is how a case whose own
+    // noise exceeds its regression gets WRITTEN DOWN rather than silently
+    // pinned at a number that would flap.
+    bool   ledgered = true;
+    string note;
+}
+
+struct Debt {
+    int       schema;
+    string    recordedAt, recordedCommit, note;
+    RunHeader header;
+    DebtEntry[string] byKey;
+}
+
+Debt loadDebt(string path) {
+    Debt d;
+    auto j = parseJSON(cast(string)std.file.read(path));
+    d.schema         = ("schema" in j) ? cast(int)j["schema"].integer : 0;
+    d.recordedAt     = ("recordedAt" in j) ? j["recordedAt"].str : "";
+    d.recordedCommit = ("recordedCommit" in j) ? j["recordedCommit"].str : "";
+    d.note           = ("note" in j) ? j["note"].str : "";
+    if ("header" in j) {
+        auto h = j["header"];
+        d.header.buildType = ("buildType" in h) ? h["buildType"].str : "";
+        d.header.compiler  = ("compiler"  in h) ? h["compiler"].str  : "";
+        d.header.host      = ("host"      in h) ? h["host"].str      : "";
+        d.header.meshType  = ("meshType"  in h) ? h["meshType"].str  : "";
+        d.header.viewport  = ("viewport"  in h) ? h["viewport"].str  : "";
+        d.header.n         = ("n" in h) ? cast(int)h["n"].integer : 0;
+        d.header.faceCount = ("faceCount" in h) ? h["faceCount"].integer : 0;
+        d.header.repeats   = ("repeats" in h) ? cast(int)h["repeats"].integer : 0;
+    }
+    foreach (ev; j["entries"].array) {
+        DebtEntry e;
+        e.key        = ev["key"].str;
+        e.baselineUs = jsonNumOrNan(ev, "baselineUs");
+        e.debtUs     = jsonNumOrNan(ev, "debtUs");
+        e.ratio      = jsonNumOrNan(ev, "ratio");
+        e.samples    = ("samples" in ev) ? cast(int)ev["samples"].integer : 0;
+        e.spreadLoUs = jsonNumOrNan(ev, "spreadLoUs");
+        e.spreadHiUs = jsonNumOrNan(ev, "spreadHiUs");
+        e.tol        = jsonNumOrNan(ev, "tol");
+        e.owner      = ("owner" in ev) ? ev["owner"].str : "";
+        e.ledgered   = ("ledgered" in ev) ? ev["ledgered"].boolean : true;
+        e.note       = ("note" in ev) ? ev["note"].str : "";
+        d.byKey[e.key] = e;
+    }
+    return d;
+}
+
+// `null` and a missing field both mean "not recorded" ⇒ NaN. An integral
+// literal in the JSON is not an error either (std.json types 3.0 as INTEGER).
+private double jsonNumOrNan(ref JSONValue obj, string field) {
+    if (field !in obj) return double.nan;
+    auto v = obj[field];
+    switch (v.type) {
+        case JSONType.float_:   return v.floating;
+        case JSONType.integer:  return cast(double)v.integer;
+        case JSONType.uinteger: return cast(double)v.uinteger;
+        default:                return double.nan;   // null / anything else
+    }
+}
+
+// The verdict for ONE case against the ledger. Exactly one of the four flags
+// is set when `ok` is false; `improvedNotice` is the one non-failing finding
+// (it is printed, it does not redden the run).
+struct DebtVerdict {
+    bool   ok = true;
+    bool   regressedVsBaseline;   // no entry (or not ledgered) and over baseline
+    bool   regressedVsDebt;       // ledgered and over the pinned value
+    bool   improvedNotice;        // under the pin, but not for long enough yet
+    bool   improvedRed;           // under the pin for N consecutive runs ⇒ delete
+    double refUs   = double.nan;  // the value the limit was computed from
+    double limitUs = double.nan;  // the line `curUs` was compared against
+    int    streak;                // consecutive runs in the improved region
+    string detail;
+}
+
+double debtTolFor(const(DebtEntry)* e, double globalTol) {
+    return (e !is null && !isNaN(e.tol)) ? e.tol : globalTol;
+}
+
+// Is `us` inside this entry's "improved" region? BOTH halves are required,
+// and each rejects a different real scenario:
+//
+//   `us < debt*(1-k)` rejects PARTIAL payment. 1460's own first attribution
+//   target is worth -8..-9% on `move/baseline`, landing at ~17000 µs against
+//   a 13791.2 baseline and an 18458.7 pin. The REJECTED baseline-relative low
+//   edge calls that paid on the spot (17000 <= 13791.2*1.30 = 17928.6) and
+//   deletes the entry with most of the loss still outstanding; this half does
+//   not, because 17000 is above 18458.7*0.9 = 16612.8.
+//
+//   `us <= baseline*(1+tol)` rejects an improvement that is real but not
+//   ENOUGH. `delete/edges/whole` (base 63035.7, pin ~117712) at 90000 µs is
+//   well under debt*0.9 = 105941 — a 24% improvement — and still +43% over
+//   the baseline. Deleting its entry there would make the case RED the next
+//   night, so the entry has to stay.
+//
+// "Paid" means "this entry is no longer suppressing anything", not "back to
+// June": once an entry is deleted its case compares against baseline*(1+tol),
+// which is always TIGHTER than debt*(1+tol). Deletion can only ever tighten
+// the gate, which is why the bar for it is a streak and not a single night.
+bool debtImproved(const ref DebtEntry e, double us, double tol) {
+    if (isNaN(e.baselineUs)) return false;   // no baseline term ⇒ low edge off
+    return us < e.debtUs * (1.0 - DEBT_IMPROVED_K)
+        && us <= e.baselineUs * (1.0 + tol);
+}
+
+// The ledger's law, pure. `base` is null when the run's case has no row in
+// baseline.json; `debt` is null when it has no ledger entry. `recentUs` is
+// this key's medians from the previous comparable runs, NEWEST FIRST — passed
+// in rather than read here so the law stays testable without a history file.
+DebtVerdict judge(const(BaselineCase)* base, const(DebtEntry)* debt,
+                  double curUs, double tol, const(double)[] recentUs) {
+    DebtVerdict v;
+
+    // No entry — or an entry deliberately NOT ledgered — is today's rule,
+    // unchanged: compare to the baseline, skip the noise floor.
+    if (debt is null || !debt.ledgered) {
+        if (base is null) return v;                       // nothing to compare
+        if (base.kernelMedianUs < ABS_NOISE_FLOOR_US) return v;
+        v.refUs   = base.kernelMedianUs;
+        v.limitUs = base.kernelMedianUs * (1.0 + tol);
+        if (curUs > v.limitUs) {
+            v.ok = false;
+            v.regressedVsBaseline = true;
+            v.detail = format("+%.0f%% over baseline (%.1f → %.1f µs)",
+                              (curUs / base.kernelMedianUs - 1.0) * 100,
+                              base.kernelMedianUs, curUs);
+        }
+        return v;
+    }
+
+    // Ledgered. The noise floor does NOT apply: a pin is an explicit operator
+    // decision that this case's number means something.
+    immutable double t = debtTolFor(debt, tol);
+    v.refUs   = debt.debtUs;
+    v.limitUs = debt.debtUs * (1.0 + t);
+
+    if (curUs > v.limitUs) {
+        v.ok = false;
+        v.regressedVsDebt = true;
+        v.detail = format("+%.0f%% over the ledgered debt (%.1f → %.1f µs, "
+                          ~ "owner %s)",
+                          (curUs / debt.debtUs - 1.0) * 100,
+                          debt.debtUs, curUs, debt.owner);
+        return v;
+    }
+
+    if (!debtImproved(*debt, curUs, tol)) return v;
+
+    // In the improved region. Count how far back that has been true — the
+    // current run is the first of the streak, and a run whose row does not
+    // carry this key at all is not evidence and ends it (that is what
+    // `recentUs` stopping short means; the caller does not pad).
+    v.streak = 1;
+    foreach (u; recentUs) {
+        if (!debtImproved(*debt, u, tol)) break;
+        v.streak++;
+    }
+    if (v.streak >= DEBT_IMPROVED_STREAK_N) {
+        v.ok = false;
+        v.improvedRed = true;
+        v.detail = format("debt paid on %d consecutive runs (%.1f µs vs "
+                          ~ "debt %.1f, baseline %.1f) — DELETE this entry "
+                          ~ "from baseline_debt.json",
+                          v.streak, curUs, debt.debtUs, debt.baselineUs);
+    } else {
+        v.improvedNotice = true;
+        v.detail = format("under the debt on %d/%d consecutive runs (%.1f µs "
+                          ~ "vs debt %.1f) — not deleted yet",
+                          v.streak, DEBT_IMPROVED_STREAK_N, curUs, debt.debtUs);
+    }
+    return v;
+}
+
+// A ledger row that no longer describes anything.
+struct DebtOrphan {
+    string key;
+    string reason;
+}
+
+// The ORPHAN GUARD, and it is a separate pass on purpose.
+//
+// `judge` is called from inside the loop over RESULTS, after the
+// `if (p is null) continue;` that skips cases absent from the baseline — so a
+// ledger entry whose case does not exist is a state `judge`'s signature can
+// never see. A unit assertion written through `judge` for this would pass
+// forever whatever the code did. This walks the LEDGER's keys instead.
+//
+// Without it, an entry that is renamed away, that stops producing a row, or
+// that acquires an `@nNN` pin goes on suppressing a case that is no longer
+// there — task 1460's own Hole 2, one level up.
+DebtOrphan[] reconcileDebt(Debt d, Baseline base, const(string)[] runKeys) {
+    bool[string] present;
+    foreach (k; runKeys) present[k] = true;
+
+    DebtOrphan[] orphans;
+    string[] keys;
+    foreach (k, _; d.byKey) keys ~= k;
+    keys.sort();
+    foreach (key; keys) {
+        auto e = d.byKey[key];
+
+        if (key !in present)
+            orphans ~= DebtOrphan(key,
+                "no case in this run produced this key — renamed, removed, or "
+                ~ "newly pinned to a mesh size (the key is a historyKey: "
+                ~ "`name@nNN` once a case pins one)");
+
+        if (isNaN(e.baselineUs)) {
+            if (key in base.byName)
+                orphans ~= DebtOrphan(key,
+                    "entry declares no baseline (baselineUs: null) but "
+                    ~ "baseline.json now HAS a row for it — re-seed the entry");
+        } else if (key !in base.byName) {
+            orphans ~= DebtOrphan(key,
+                "entry carries a baselineUs but baseline.json has no row "
+                ~ "under this key");
+        } else {
+            immutable double b = base.byName[key].kernelMedianUs;
+            if (fabs(b - e.baselineUs) > 1e-6 * (fabs(b) + 1.0))
+                orphans ~= DebtOrphan(key,
+                    format("entry's baselineUs %.4f disagrees with "
+                           ~ "baseline.json's %.4f — one of the two moved",
+                           e.baselineUs, b));
+        }
+    }
+    return orphans;
 }
 
 // ---------------------------------------------------------------------------

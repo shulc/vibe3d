@@ -118,11 +118,94 @@ three clauses:
   case would not false-fail it.
 
 **Absolute baseline** compares each case's `kernelApply` median against
-`baseline.json` (default tolerance +30%, `--tolerance`). `pipeTotal` is NOT
-compared absolutely (it is pipeAcen-dominated and jitters run-to-run; pipeline
-overhead is watched relatively by I4). The `snap=*` cases and sub-microsecond
-selection cases are excluded from the absolute comparison (their moving-set
-size / timing is not stable run-to-run).
+`baseline.json` (default tolerance +30%, `--tolerance`) — or, for a case with
+a row in `baseline_debt.json`, against its **ledgered debt** (see below).
+`pipeTotal` is NOT compared absolutely (it is pipeAcen-dominated and jitters
+run-to-run; pipeline overhead is watched relatively by I4). Sub-microsecond
+selection cases are excluded (baseline under `ABS_NOISE_FLOOR_US` = 50 µs;
+a percentage comparison there is timer granularity). **The `snap=*` cases are
+no longer excluded** — task 1460 falsified the stated reason with the
+harness's own data: all seven snap rows in `baseline.json` carry
+`vertsTouched = 2009780`, bit-identical to `move/baseline`, because a `whole`
+case means an empty selection means the whole mesh and snapping alters the
+DELTA, not the SET. They were hiding a +34…+40 % regression.
+
+## `baseline_debt.json` — the debt ledger (task 1460)
+
+`baseline.json` was recorded 2026-06-07 and the 2026-08-19 tree was measurably
+slower than it on ~30 cases. The two obvious repairs were both wrong, and which one was
+wrong was **measured, not argued**: task 1460 Phase 0 checked out `f06c91b7`
+(the commit that wrote the baseline), built it identically with the same
+`ldc2`, and ran its own harness on this host at the same `n=316`. The old code
+reproduced its own baseline at **median ratio 1.02** with **one** absolute
+regression, against 19 on that day's main, and `vertsTouched` is bit-identical
+across both. So:
+
+* **the baseline is honest** — regenerating it would freeze two months of real
+  loss as the new normal and make it invisible for good;
+* **but leaving `ops` out of the nightly gate** (what the lane did until 1460)
+  means a NEW regression on top of the old one reddens nothing either.
+
+The ledger is the third option. Every unresolved, gate-worthy debt is pinned
+at its measured value, with an owner, a date, its observed spread and its
+sample count, and the gate compares against that pin. New loss on a ledgered
+case is red immediately; the old loss stays written down instead of forgotten.
+After rebasing task 1460 on 2026-09-03, the last three clean n=316 history rows
+(2026-08-31 through 2026-09-02) put 22 original pins below the paid line on all
+three runs. Commit `e25530a4` had hoisted the invariant transform work those
+cases were charging per vertex. Those 22 rows were therefore removed as the
+ledger's own expiry rule requires; 15 ledgered debts and one measured-but-not-
+ledgered row remain.
+
+The comparison runs in **both directions**, because a ledger's failure mode is
+rot — an entry that outlives its regression re-admits the loss for free:
+
+```
+no entry        red   iff  cur > baseline*(1+tol)          (unchanged)
+entry, high     red   iff  cur > debt*(1+tol)
+entry, low      NOTICE     cur < debt*(1-k)  AND  cur <= baseline*(1+tol)
+                red   iff  that notice holds on N consecutive comparable runs
+```
+
+`k = 0.10`, `N = 3` (`DEBT_IMPROVED_K` / `DEBT_IMPROVED_STREAK_N` in
+`lib/baseline.d`). Three things about that low edge are load-bearing and each
+has a measured reason:
+
+* **it is relative to the DEBT, never to the baseline.** With one shared
+  tolerance the two edges would be `base*(1+tol)` and `debt*(1+tol)`, whose
+  green band has ratio width exactly `debt/base` — so every entry with
+  `debt/base <= 1.30` is red on BOTH clauses **at the value it was just
+  pinned at**. That is six of the cases the ledger exists to hold
+  (`*/symmetry=X` at 1.285–1.292, `*/falloff=linear` at 1.241–1.255) and
+  within 0.9 % of a seventh. Debt-relative, the green band is 1.44× wide for
+  every entry whatever its ratio.
+* **the streak.** `scale/falloff=cylinder` has nine recorded n=316 history
+  rows and six of them sit below a baseline-relative "paid" line, so a
+  one-shot rule would have deleted that entry on most nights of the past week
+  for an improvement nobody made.
+* **the `cur <= baseline*(1+tol)` conjunct**, which makes PARTIAL payment
+  silent. Paying only the second of the two drift windows is worth −8…−9 % on
+  `move/baseline` — landing at ~17 000 µs against a 13 791 µs baseline and an
+  18 459 µs pin. Without the conjunct that reads as "debt paid, delete the
+  entry" with +22 % still outstanding, and deleting it legalises that +22 %
+  forever.
+
+Two more properties worth knowing before editing the file:
+
+* **entries are keyed on `historyKey`, not on the case name.** `checkAbsolute`
+  looks the baseline up by `historyKey` (`name@n<meshN>` once a case pins a
+  size, task 1373 F1.7), so a name-keyed entry would silently stop matching the
+  moment a case acquired a pin — the exact way a case "vanishes" that 1460
+  exists to close. `reconcileDebt` walks the LEDGER's keys once per run and
+  fails on any entry that no longer names a live case; that check cannot live
+  in `judge`, which is only ever called for cases that exist.
+* **`ledgered: false` records without suppressing.** A case whose own
+  reproduction spread is wider than its regression cannot carry a single
+  pinned value without flapping, so it is written into the file with the
+  reason and keeps comparing against the baseline.
+
+An absent `baseline_debt.json` means an empty ledger and the pre-1460
+behaviour exactly, so a dev machine or a fresh clone loses nothing.
 
 ## `run_all.d` lanes
 
@@ -492,12 +575,12 @@ host/meshType/n/faceCount/viewport/repeats) + a timestamp + a per-case
 median map (`kernelApplyMedianUs` for `ops`, `p99Ms` for `frames`).
 
 `ops` entries carry a SECOND key for every `snap=*` case,
-`<case>#snapQuery`, holding that case's `snapQuery` median (task 1350). Snap
-cases are excluded from the absolute comparison and I5 only checks that
-`snapCursor` was CALLED, so before this key nothing watched the snap query's
-cost at all and a 20x regression in it (2.4 ms → 56 ms per drag) rode in
-behind a fully green lane. The key needs no new gate: `--vs-last` compares
-by key.
+`<case>#snapQuery`, holding that case's `snapQuery` median (task 1350). The
+absolute comparison now watches the transform kernel for these cases, but it
+does not watch the snap query itself; I5 only checks that `snapCursor` was
+CALLED. Before this key, a 20x regression in the query (2.4 ms → 56 ms per
+drag) therefore rode in behind a fully green lane. The key needs no new gate:
+`--vs-last` compares by key.
 
 ```bash
 rdmd tools/perf/run.d --trend               # last 20 runs (default)
@@ -571,9 +654,10 @@ witness is `tests/unit/perf_vslast_gate_test.d` (which runs in
 gate lane at all — see D1). Like `--trend` it
 is a pure history read. This is the gating signal of the **nightly-perf
 workflow** (`.github/workflows/perf.yaml`): it stays meaningful while the
-absolute lane is knowingly red against a stale committed baseline, because
-it answers a different question — "did TONIGHT's run regress against last
-night's?".
+absolute lane carries known debt, because it answers a different question —
+"did TONIGHT's run regress against last night's?". (The absolute lane is no
+longer *knowingly red*: task 1460 pinned the debt in `baseline_debt.json` and
+`ops` gates again.)
 
 **Contaminated runs never gate, in either direction (task 1840).** A run that
 measured while a foreign vibe3d was alive on the host writes its history entry
@@ -598,9 +682,13 @@ A scheduled workflow (03:30 MSK) runs the full n=316 `ops` matrix + `frames
 where the absolute comparison is valid. The runner is a systemd **user**
 service (`~/.config/systemd/user/github-runner-perf.service`) bound to
 `graphical-session.target`, so jobs render through the real display/GPU; it
-is online only while the owner's session is. Gating signals: `--vs-last` +
-the `frames --ci` counters; the ops absolute verdict is recorded in the job
-summary but does not gate until the baseline is regenerated post-0680. Run
+is online only while the owner's session is. **All five signals gate** since
+task 1460 — `ops` (absolute vs baseline + debt ledger), `lane-health`,
+`--vs-last`, `tools` and `frames --ci`. Every step after `ops` carries
+`if: always()` so an ops-red still prints the rest of the lane's diagnosis;
+`vslast` acquired that guard in the same commit that made `ops` gating, and
+without it the day-over-day comparison would go missing on exactly the nights
+the lane went red. Run
 history persists in `~/perf-history/` on the runner host (symlinked into the
 workspace, out of `actions/checkout`'s clean sweep). Every other Linux CI
 job targets the `ci-vm` label, so nothing else lands on this runner.

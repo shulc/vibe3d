@@ -4114,18 +4114,29 @@ Invariant[] checkFramesInvariants(FrameScenarioResult[] results, bool ciMode,
     return inv;
 }
 
+// One finding from the absolute lane. Since task 1460 it is not always a
+// FAILURE: an entry that has dropped below its ledgered debt is reported as an
+// improvement NOTICE for the first N-1 consecutive runs, because a `debtPaid`
+// verdict deletes a ledger entry and one lucky night is not payment.
 struct AbsRegression {
     string name;
     string metric;     // "kernelApply" | "pipeTotal"
-    double baseUs, curUs, growth;   // growth = cur/base - 1
+    double baseUs, curUs, growth;   // growth = cur/refUs - 1
+    double refUs  = double.nan;     // what `growth` is measured from
+    double debtUs = double.nan;     // NaN when the case has no ledger entry
+    bool   fails  = true;           // false for an improvement NOTICE
+    string kind   = "baseline";     // baseline | debt | improved | debtPaid
+    string detail;
 }
 
 // ABS_NOISE_FLOOR_US now lives in lib.baseline (below this baseline median
 // (µs), a metric is in the timing noise floor and a percentage-growth
 // comparison is meaningless).
 
-// Compare current results to a baseline. Flags a regression when the
-// kernelApply median grows by more than `tolerance` (e.g. 0.30 ⇒ +30%).
+// Compare current results to the baseline AND to the debt ledger. Flags a
+// regression when the kernelApply median grows past the line that applies to
+// the case: `baseline*(1+tolerance)` for a case with no ledger entry,
+// `debt*(1+tol)` for a ledgered one (task 1460).
 //
 // kernelApply is the only metric compared absolutely: it is the actual
 // transform cost and is stable run-to-run (observed full-matrix spread on the
@@ -4140,25 +4151,88 @@ struct AbsRegression {
 // and a percentage comparison there is pure timer granularity. The slow
 // acen=local case is kernelApply-cheap (its cost is pipeAcen, not compared) so
 // it never trips an invariant; it still appears in results/baseline as-is.
-AbsRegression[] checkAbsolute(CaseResult[] results, Baseline base,
-                              double tolerance) {
+// A case with an explicit LEDGER ENTRY is exempt from the floor: a pin is an
+// operator saying this number means something.
+//
+// THE `snap=` EXCLUSION IS GONE (task 1460 Phase 3.5). It read:
+//
+//     // snap cases recompute WHICH verts land on grid points each run, so
+//     // their moving-set size (and thus kernelApply) varies run-to-run and is
+//     // not a stable absolute metric — skip them (snap is still in the table).
+//     if (r.name.canFind("snap=")) continue;
+//
+// and it is falsified by the harness's OWN RECORDED DATA, not by argument:
+// all seven snap rows in tools/perf/baseline.json carry
+// `vertsTouched = 2009780`, bit-identical to `move/baseline`, because a
+// `whole` case means an empty selection means the whole mesh — snapping alters
+// the DELTA, not the SET. Across every n=316 history row `move/snap=vertex`
+// tracks `move/baseline` within 1.6%. The exclusion was hiding eight cases
+// measured at +34..+40% against June. Task 1351's 600x is in `snapQuery` /
+// `snapVisMask`, which are watched under their own history keys; this
+// comparison is kernelApply only, so it does not inherit that noise either.
+//
+// The eighth, `move/snap=vertex+partial`, is still not comparable against
+// June: task 1350 added it AFTER the baseline was recorded, so it has no
+// baseline row, and 1351 dropped its `meshN` pin so its historical values are
+// at a different mesh size. It carries a ledger entry with `baselineUs: null`
+// — high edge only — rather than being silently dropped.
+AbsRegression[] checkAbsolute(CaseResult[] results, Baseline base, Debt debt,
+                              double tolerance,
+                              double[string][] recentRuns,
+                              out size_t compared) {
+    // This key's medians from the previous comparable runs, newest first. A
+    // run whose row does NOT carry the key ends the sequence rather than being
+    // skipped over: "the case did not report" is not evidence that its debt
+    // was paid, and `judge` counts a CONSECUTIVE streak.
+    const(double)[] recentFor(string key) {
+        double[] xs;
+        foreach (m; recentRuns) {
+            auto q = key in m;
+            if (q is null) break;
+            xs ~= *q;
+        }
+        return xs;
+    }
+
     AbsRegression[] regs;
     foreach (r; results) {
         if (r.status != CaseStatus.OK) continue;
-        // snap cases recompute WHICH verts land on grid points each run, so
-        // their moving-set size (and thus kernelApply) varies run-to-run and is
-        // not a stable absolute metric — skip them (snap is still in the table).
-        if (r.name.canFind("snap=")) continue;
         // Looked up (and reported) by `historyKey`: baseline.json is written
         // under that key, so a pinned case finds its own row and not the
-        // bare-named one (task 1373 F1.7).
-        auto p = r.historyKey in base.byName;
-        if (p is null) continue;   // new case absent from baseline — not a regression
-        if (p.kernelMedianUs < ABS_NOISE_FLOOR_US) continue;  // noise floor
-        double g = r.kernelMedianUs / p.kernelMedianUs - 1.0;
-        if (g > tolerance)
-            regs ~= AbsRegression(r.historyKey, "kernelApply",
-                                  p.kernelMedianUs, r.kernelMedianUs, g);
+        // bare-named one (task 1373 F1.7). The ledger is keyed the same way,
+        // deliberately — see DebtEntry.key.
+        auto p  = r.historyKey in base.byName;
+        auto de = r.historyKey in debt.byKey;
+        // Neither a baseline row nor a pin: a genuinely new case, not a
+        // regression. With a pin but no baseline row it IS compared — against
+        // the pin alone, which is what a null `baselineUs` buys.
+        if (p is null && de is null) continue;
+        // Counted here rather than by the caller so the number it prints is
+        // the number this loop actually judged. It used to print
+        // `base.byName.length` — the count of BASELINE ROWS, which is neither
+        // the cases that ran nor the cases compared, and which the noise floor
+        // and (until 1460) the `snap=` skip both silently shrank.
+        compared++;
+
+        auto v = judge(p, de, r.kernelMedianUs, tolerance,
+                       recentFor(r.historyKey));
+        if (v.ok && !v.improvedNotice) continue;
+
+        AbsRegression reg;
+        reg.name    = r.historyKey;
+        reg.metric  = "kernelApply";
+        reg.curUs   = r.kernelMedianUs;
+        reg.refUs   = v.refUs;
+        reg.baseUs  = (p is null) ? double.nan : p.kernelMedianUs;
+        reg.debtUs  = (de is null || !de.ledgered) ? double.nan : de.debtUs;
+        reg.growth  = r.kernelMedianUs / v.refUs - 1.0;
+        reg.fails   = !v.ok;
+        reg.detail  = v.detail;
+        reg.kind    = v.regressedVsBaseline ? "baseline"
+                    : v.regressedVsDebt     ? "debt"
+                    : v.improvedRed         ? "debtPaid"
+                                            : "improved";
+        regs ~= reg;
     }
     return regs;
 }
@@ -5023,23 +5097,24 @@ int runFlameSubcommand(string target, string meshType, int meshParam,
 // ---------------------------------------------------------------------------
 // `--lane-health` — the narrow gate (task 1373 F1.4).
 //
-// WHY IT EXISTS. The `ops` step's own exit code gates nothing: the nightly
-// runs it under `continue-on-error: true` and the job's `Gate` expression
-// aggregates only `vslast`, `tools` and `frames` (.github/workflows/
-// perf.yaml). On top of that, a case that errors is dropped from the history
-// map before it is written, and `checkVsLast` iterates the keys of the
-// CURRENT run — so the direction "this key was here yesterday and is gone
-// today" is never walked. A perf case that stops working therefore costs
-// nightly runtime, reads as coverage, and reddens nothing. Task 1460 holds
-// the general problem; this closes the third of its three holes, narrowly,
-// because without it every case this task adds is unmeasurable in the same
-// way.
+// WHY IT EXISTS. When this was written the `ops` step's own exit code gated
+// nothing — the nightly ran it under `continue-on-error: true` and the job's
+// `Gate` aggregated only `vslast`, `tools` and `frames`. Task 1460 has since
+// made `ops` gating (against tools/perf/baseline_debt.json), so that half of
+// the argument is spent. The OTHER half is not, and it is why this step still
+// exists: a case that errors is dropped from the history map before it is
+// written, and `checkVsLast` iterates the keys of the CURRENT run — so the
+// direction "this key was here yesterday and is gone today" is never walked
+// there either. `ops` compares NUMBERS; a case that produces no number is
+// invisible to it however hard it gates. A perf case that stops working would
+// still cost nightly runtime and read as coverage. That is what this closes.
 //
-// WHY IT CAN BE GATING FROM DAY ONE, unlike the `ops` step it sits next to:
-// everything it checks is a machine-stable fact about the COMPOSITION of the
-// run — a status string, a set of names, a list of command ids. None of it is
-// a hardware-bound budget and none of it has a two-month-stale baseline to be
-// wrongly red against. That is the same argument the `tools` lane's step
+// WHY IT COULD BE GATING FROM DAY ONE, unlike the `ops` step it sits next to
+// (which had to wait for 1460's debt ledger): everything it checks is a
+// machine-stable fact about the COMPOSITION of the run — a status string, a
+// set of names, a list of command ids. None of it is a hardware-bound budget
+// and none of it has a two-month-stale baseline to be wrongly red against.
+// That is the same argument the `tools` lane's step
 // comment makes for itself.
 //
 // It is a PURE FILE READ. No build, no instance, no port — so it cannot kill
@@ -5491,6 +5566,13 @@ int main(string[] args) {
     auto curHeader = currentHeader(meshType, meshParam, mi.faceCount,
                                    viewport, repeats);
     string baselinePath = buildPath(g_repoRoot, "tools", "perf", "baseline.json");
+    // The debt ledger (task 1460). Sits NEXT TO baseline.json rather than
+    // inside it: the baseline is a measurement of a tree that no longer
+    // exists and must stay byte-frozen, while the ledger is a live record of
+    // what we owe against it. One file each keeps "what June measured" and
+    // "what we have not paid back yet" from being edited by the same hand.
+    string debtPath = buildPath(g_repoRoot, "tools", "perf",
+                                "baseline_debt.json");
 
     if (updateBaseline) {
         writeBaselineJson(baselinePath, curHeader, results);
@@ -5542,18 +5624,106 @@ int main(string[] args) {
                      curHeader.buildType, curHeader.compiler,
                      curHeader.meshType, curHeader.n, curHeader.viewport);
         } else {
-            auto regs = checkAbsolute(results, base, tolerance);
+            // The debt ledger (task 1460). Absent file ⇒ an empty ledger,
+            // which makes every case compare against the baseline exactly as
+            // it did before — a dev machine or a fresh clone loses nothing.
+            Debt debt;
+            bool haveDebt = exists(debtPath);
+            if (haveDebt) {
+                debt = loadDebt(debtPath);
+                size_t ledgered = 0;
+                foreach (_, e; debt.byKey) if (e.ledgered) ledgered++;
+                writefln("  debt ledger: %s — %d entries (%d ledgered), " ~
+                         "recorded %s on %s",
+                         debtPath, debt.byKey.length, ledgered,
+                         debt.recordedAt, debt.recordedCommit);
+            }
+
+            // The last N-1 comparable `ops` runs, NEWEST FIRST, for the
+            // streak the low edge is gated on. Read from the same history
+            // file `--vs-last` and `--trend` live on, so the ledger needs no
+            // state file of its own and there is no question of who resets a
+            // counter. Contaminated rows are not evidence in either direction
+            // and are skipped just as `--vs-last` skips them. The current run
+            // is NOT in it: `appendHistory` runs below, after this block.
+            double[string][] recentRuns;
+            try {
+                lib.history.HistoryEntry cur;
+                cur.kind = "ops";
+                cur.header = curHeader;
+                auto entries = lib.history.loadHistory(
+                    lib.history.historyPath(g_repoRoot, curHeader.host));
+                foreach_reverse (e; entries) {
+                    if (!lib.history.comparableEntries(cur, e)) continue;
+                    if (e.contaminated) continue;
+                    recentRuns ~= e.medians;
+                    if (recentRuns.length >= DEBT_IMPROVED_STREAK_N - 1) break;
+                }
+            } catch (Exception e) {
+                stderr.writeln("warning: history read failed: ", e.msg);
+            }
+
+            size_t compared;
+            auto regs = checkAbsolute(results, base, debt, tolerance,
+                                      recentRuns, compared);
+            int notices = 0;
+            foreach (rg; regs) if (!rg.fails) notices++;
             if (regs.length == 0) {
                 writefln("  no regressions (tolerance +%.0f%%, %d cases" ~
-                         " compared)", tolerance * 100, base.byName.length);
+                         " compared against %d baseline rows)",
+                         tolerance * 100, compared, base.byName.length);
             } else {
                 foreach (rg; regs) {
-                    writefln("  [FAIL] %-28s %-12s %+.0f%%  (%.1f → %.1f µs)",
-                             rg.name, rg.metric, rg.growth * 100,
-                             rg.baseUs, rg.curUs);
-                    absFail++;
-                    failures++;
+                    // `vs debt` in the reference column says the case is a
+                    // KNOWN, VALUED loss and the number it was measured
+                    // against is the pin, not the June baseline. Without that
+                    // a reader cannot tell an old debt from a new regression.
+                    writefln("  [%s] %-30s %-12s %+.0f%% vs %s  (%.1f µs)%s",
+                             rg.fails ? "FAIL" : "NOTE", rg.name, rg.metric,
+                             rg.growth * 100,
+                             isNaN(rg.debtUs) ? "baseline" : "debt",
+                             rg.curUs,
+                             rg.detail.length ? "\n         " ~ rg.detail : "");
+                    if (rg.fails) { absFail++; failures++; }
                 }
+                if (notices > 0)
+                    writefln("  (%d improvement notice(s) — reported, not " ~
+                             "gating: a ledger entry is deleted only after " ~
+                             "%d consecutive runs under its pin)",
+                             notices, DEBT_IMPROVED_STREAK_N);
+            }
+
+            // ORPHAN RECONCILE — once per run, OUTSIDE the loop over results,
+            // and that placement is the whole point of it. `judge` is called
+            // from inside a loop that has already skipped every case absent
+            // from the run, so "this ledger entry names a case that no longer
+            // exists" is a state its signature cannot reach; an assertion
+            // written through it would pass forever. This walks the LEDGER's
+            // keys instead.
+            //
+            // Only on an UNFILTERED run: a run asked for a subset of cases
+            // produces a subset of keys, and every other entry would read as
+            // an orphan. Same guard `--lane-health` puts on its own
+            // declared-coverage clause, for the same reason.
+            if (haveDebt && requested.length == 0) {
+                string[] runKeys;
+                foreach (r; results)
+                    if (r.status == CaseStatus.OK) runKeys ~= r.historyKey;
+                auto orphans = reconcileDebt(debt, base, runKeys);
+                if (orphans.length == 0) {
+                    writefln("  ledger reconcile: %d entries, 0 orphans",
+                             debt.byKey.length);
+                } else {
+                    foreach (o; orphans) {
+                        writefln("  [FAIL] ledger orphan %-24s %s",
+                                 o.key, o.reason);
+                        absFail++;
+                        failures++;
+                    }
+                }
+            } else if (haveDebt) {
+                writefln("  (ledger reconcile skipped: run was filtered by %s)",
+                         requested.join(", "));
             }
         }
     }
@@ -5583,15 +5753,13 @@ int main(string[] args) {
             kernelMedianByCase[r.historyKey] = r.kernelMedianUs;
             // Task 1350 — the snap query's own median, under a SECOND key.
             //
-            // Why it has to be in history at all: snap cases are excluded from
-            // the absolute baseline comparison below (their moving set is not
-            // stable enough for a fixed budget), and I5 only asserts that
-            // snapCursor was CALLED. So between the two of them nothing ever
-            // watched snapQuery's cost, and a 20x regression in it (2026-08-18:
-            // 2.4 ms → 56 ms per drag) rode into the tree behind a fully green
-            // lane. Writing it here puts it under the EXISTING `--vs-last`
-            // day-over-day gate for free: at its +20% threshold a 20x regression
-            // reads as +2000%.
+            // Why it has to be in history at all: the absolute lane now watches
+            // these cases' transform-kernel cost, but not the snap QUERY cost;
+            // I5 only asserts that snapCursor was CALLED. So nothing watched
+            // snapQuery's cost, and a 20x regression in it (2026-08-18: 2.4 ms
+            // → 56 ms per drag) rode into the tree behind a fully green lane.
+            // Writing it here puts it under the EXISTING `--vs-last` day-over-day
+            // gate for free.
             //
             // A separate key rather than a second map: `appendHistory` is
             // metric-agnostic by design ({name: value}), and `checkVsLast`
