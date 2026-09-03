@@ -10,7 +10,7 @@
     "captured_utc": "unknown",
     "harness": "tools/local/fixture_gen/translate_no_acen",
     "task": null,
-    "notes": "Headless numeric capture (xfrm.move); no live gizmo drag."
+    "notes": "Headless numeric capture (`move`); no live gizmo drag."
   },
   "parameters": {
     "schema": 1,

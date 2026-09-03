@@ -10,7 +10,7 @@
     "captured_utc": "unknown",
     "harness": "tools/local/fixture_gen/scale_origin",
     "task": null,
-    "notes": "Headless numeric capture via command port (xfrm.scale factor about the world origin); no live mouse/gizmo drag \u2014 see fixture_gen/scale_origin/README.md."
+    "notes": "Headless numeric capture via command port (scale factor about the world origin); no live mouse/gizmo drag \u2014 see fixture_gen/scale_origin/README.md."
   },
   "parameters": {
     "schema": 1,

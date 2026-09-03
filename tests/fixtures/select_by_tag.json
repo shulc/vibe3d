@@ -10,7 +10,7 @@
   "captured_utc": "2026-08-16",
   "harness": "tools/local/capture (task 1051)",
   "task": "1051",
-  "notes": "The tag IDENTITY differs by construction and is not part of the claim: the reference names surfaces ('Red'), we index them (materialId 1). The claim is the SET of polygons. Also measured and deliberately NOT adopted: the reference's poly.setMaterial retags the WHOLE MESH when nothing is selected, where mesh.setMaterial is a no-op -- see the task file."
+  "notes": "The tag IDENTITY differs by construction and is not part of the claim: the capture names surfaces ('Red'), we index them (materialId 1). The claim is the SET of polygons. Also measured and deliberately NOT adopted: the captured material command retags the WHOLE MESH when nothing is selected, where mesh.setMaterial is a no-op -- see the task file."
  },
  "parameters": {
   "schema": 1,

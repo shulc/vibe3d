@@ -889,7 +889,7 @@ unittest {
     // --- (b) PolyInsetTool. NO handle at all: the haul is anchored at the
     //     selection centroid wherever the press lands, so the press is the
     //     viewport centre by construction.
-    cells ~= runCell("poly.inset/centroid-haul", "mesh.polyInsetTool",
+    cells ~= runCell("mesh.polyInsetTool/centroid-haul", "mesh.polyInsetTool",
         "source/tools/edit/poly_inset_tool.d PolyInsetTool.commitEdit",
         "Plain", "MeshSessionEdit",
         { resetCube(); selectMode("polygons", [4]); cmd("history.clear");
@@ -901,7 +901,7 @@ unittest {
             dragPixels(cx, cy, cx, cy - 60, 12);
             gDrove ~= driveDrag(0, -60, 12);
             assert(attrOf("mesh.polyInsetTool", "inset") > 1e-4,
-                "poly.inset: the 60 px haul left `inset` at zero — the press "
+                "mesh.polyInsetTool: the 60 px haul left `inset` at zero — the press "
               ~ "fell outside the viewport the haul is anchored in");
         },
         { cmd("tool.set mesh.polyInsetTool off"); });

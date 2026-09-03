@@ -10,7 +10,7 @@
     "captured_utc": "2026-06-21",
     "harness": "private capture tooling (generator script outside tools/local/fixture_gen/)",
     "task": 2990,
-    "notes": "Driven by tool.setAttr + tool.doApply from the reference's command field, never by a pointer drag \u2014 `method` said \"capture-drag\" until task 2990. `captured_utc` is established rather than inferred: this fixture's expected_pairs regenerate byte-identically from the 2026-06-21 raw captures. Measured values untouched."
+    "notes": "Driven by tool.attr + tool.doApply from the captured command field, never by a pointer drag \u2014 `method` said \"capture-drag\" until task 2990. `captured_utc` is established rather than inferred: this fixture's expected_pairs regenerate byte-identically from the 2026-06-21 raw captures. Measured values untouched."
   },
   "parameters": {
     "schema": 1,

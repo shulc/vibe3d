@@ -10,7 +10,7 @@
     "captured_utc": "2026-06-21",
     "harness": "private capture tooling (generator script outside tools/local/fixture_gen/)",
     "task": 2990,
-    "notes": "Driven by tool.setAttr + tool.doApply, never by a pointer drag \u2014 `method` said \"capture-drag\" until task 2990. `expected_pairs` are byte-identical to softrotate.json's first case, because the capture probe drove the same operation twice under two names; the reference had nothing different to say. Do NOT delete this as a copy: the two fixtures assert different vibe3d config rows. Flipping ONLY xfrm.swirl's rotFalloffBlend from arc to linear reddens this fixture and leaves softrotate.json green (measured, task 2990). Measured values untouched."
+    "notes": "Driven by tool.attr + tool.doApply, never by a pointer drag \u2014 `method` said \"capture-drag\" until task 2990. `expected_pairs` are byte-identical to softrotate.json's first case, because the capture probe drove the same operation twice under two names; the capture had nothing different to say. Do NOT delete this as a copy: the two fixtures assert different vibe3d config rows. Flipping ONLY xfrm.swirl's rotFalloffBlend from arc to linear reddens this fixture and leaves softrotate.json green (measured, task 2990). Measured values untouched."
   },
   "parameters": {
     "schema": 1,

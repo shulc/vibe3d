@@ -824,7 +824,7 @@ unittest {
     //     commits it as EXACTLY ONE entry for the whole chain. The operand
     //     edges are the cube's (4,5) and (6,7) — the pair the shipped
     //     interactive cell uses — found by POSITION, not by index.
-    cells ~= runCell("edge.slice/two-click-chain", "mesh.edgeSliceTool",
+    cells ~= runCell("mesh.edgeSliceTool/two-click-chain", "mesh.edgeSliceTool",
         "source/tools/slice/edge_slice_tool.d EdgeSliceTool.commitChain",
         "Plain", "MeshSessionEdit",
         { resetCube(); cmd("select.typeFrom edge");
@@ -839,15 +839,15 @@ unittest {
                                               vertexAt(m,  0.5, 0.5, 0.5));
             float ax, ay, bx, by;
             assert(projectToWindow(edgeMidpoint(m, eA), vp, ax, ay),
-                "edge.slice: operand edge A projects behind the camera");
+                "mesh.edgeSliceTool: operand edge A projects behind the camera");
             assert(projectToWindow(edgeMidpoint(m, eB), vp, bx, by),
-                "edge.slice: operand edge B projects behind the camera");
+                "mesh.edgeSliceTool: operand edge B projects behind the camera");
 
             click(cast(int) ax, cast(int) ay);
             gDrove ~= driveClickNoOffset();
             auto s1 = getJ("/api/tool/state");
             assert(s1["edgeA"].integer == eA,
-                "edge.slice: the first click latched edge "
+                "mesh.edgeSliceTool: the first click latched edge "
               ~ s1["edgeA"].integer.to!string ~ ", expected " ~ eA.to!string
               ~ ". The GPU picker did not resolve the edge under the cursor. "
               ~ "The shipped `tests/test_edge_slice_tool.d` RETURNS here and "
@@ -859,7 +859,7 @@ unittest {
             auto s2 = getJ("/api/tool/state");
             assert(s2["built"].type == JSONType.true_ &&
                    s2["chainSegments"].integer == 1,
-                "edge.slice: after the second latch the tool reports built="
+                "mesh.edgeSliceTool: after the second latch the tool reports built="
               ~ s2["built"].toString ~ " segments="
               ~ s2["chainSegments"].integer.to!string ~ ", expected a single "
               ~ "built segment — the drop would then record nothing");

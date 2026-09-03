@@ -101,7 +101,7 @@
   "cases": [
     {
       "name": "reported_bug_two_open_arcs_equal",
-      "description": "Exact owner repro (:9000, 2026-07-14): cube minus 2 adjacent faces (right x=+0.5, back y=+0.5), select the 4 boundary edges away from the two connector edges -- two 2-edge open arcs of EQUAL length. Reference tool bridges them into 2 new quads reusing the EXISTING boundary vertices (span=1, no interior rings) -- it literally reconstructs the two deleted faces. This is the case vibe3d's edge.bridge command currently no-ops on (extractSelectedEdgeCycles requires 2 CLOSED cycles); this fixture is the must-pass regression for the bug report.",
+      "description": "Exact owner repro (:9000, 2026-07-14): cube minus 2 adjacent faces (right x=+0.5, back y=+0.5), select the 4 boundary edges away from the two connector edges -- two 2-edge open arcs of EQUAL length. The captured bridge operation creates 2 new quads reusing the EXISTING boundary vertices (span=1, no interior rings) -- it literally reconstructs the two deleted faces. This is the case vibe3d's mesh.bridge command currently no-ops on (extractSelectedEdgeCycles requires 2 CLOSED cycles); this fixture is the must-pass regression for the bug report.",
       "input": [
         { "endpoint": "load-mesh", "body": {
           "vertices": [

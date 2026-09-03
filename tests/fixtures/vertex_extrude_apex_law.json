@@ -342,7 +342,7 @@
     "cell": "cube_corner shift=0.2 width=0.2",
     "drove": [
      {
-      "op": "vert.extrude",
+      "op": "mesh.vertexExtrude",
       "values": {
        "shift": 0.2,
        "width": 0.2
@@ -354,7 +354,7 @@
     "cell": "cube_corner shift=0.1 width=0.3",
     "drove": [
      {
-      "op": "vert.extrude",
+      "op": "mesh.vertexExtrude",
       "values": {
        "shift": 0.1,
        "width": 0.3
@@ -366,7 +366,7 @@
     "cell": "cube_corner shift=0.3 width=0.1",
     "drove": [
      {
-      "op": "vert.extrude",
+      "op": "mesh.vertexExtrude",
       "values": {
        "shift": 0.3,
        "width": 0.1
@@ -378,7 +378,7 @@
     "cell": "cube_corner shift=0.25 width=0",
     "drove": [
      {
-      "op": "vert.extrude",
+      "op": "mesh.vertexExtrude",
       "values": {
        "shift": 0.25,
        "width": 0.0
@@ -390,7 +390,7 @@
     "cell": "cube_corner shift=0 width=0.25",
     "drove": [
      {
-      "op": "vert.extrude",
+      "op": "mesh.vertexExtrude",
       "values": {
        "shift": 0.0,
        "width": 0.25
@@ -402,7 +402,7 @@
     "cell": "irregular_fan_valence4 shift=0.4 width=0.15 (width_then_shift)",
     "drove": [
      {
-      "op": "vert.extrude",
+      "op": "mesh.vertexExtrude",
       "values": {
        "shift": 0.4,
        "width": 0.15,
@@ -415,7 +415,7 @@
     "cell": "irregular_fan_valence4 shift=0.4 width=0.15 (shift_then_width)",
     "drove": [
      {
-      "op": "vert.extrude",
+      "op": "mesh.vertexExtrude",
       "values": {
        "shift": 0.4,
        "width": 0.15,
@@ -428,7 +428,7 @@
     "cell": "irregular_fan_valence4 shift=0.4 width=0.3 (width_then_shift)",
     "drove": [
      {
-      "op": "vert.extrude",
+      "op": "mesh.vertexExtrude",
       "values": {
        "shift": 0.4,
        "width": 0.3,

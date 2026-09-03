@@ -6,7 +6,7 @@
     "derived_from": "hand",
     "cells": [
       {
-        "cell": "edge.slice/two-click-chain",
+        "cell": "mesh.edgeSliceTool/two-click-chain",
         "drove": [
           {
             "op": "tool.set mesh.edgeSliceTool",
@@ -100,7 +100,7 @@
   "provenance": {"schema": 1, "source": "simulated", "reference": "vibe3d-selfgen", "method": "self-drive", "captured_utc": "2026-08-28T14:12:03Z", "harness": "tests/test_tool_gesture_g*.d, driven over /api/play-events against vibe3d's own running instance -- no reference editor involved (see the file's own `recipe`)", "task": "1905", "notes": "captured_utc is the commit date of this file's own top-level `producedBy` SHA, read from git."},
   "cells": [
     {
-      "name": "edge.slice/two-click-chain", "tool": "mesh.edgeSliceTool",
+      "name": "mesh.edgeSliceTool/two-click-chain", "tool": "mesh.edgeSliceTool",
       "recordSite": "source/tools/slice/edge_slice_tool.d EdgeSliceTool.commitChain", "mode": "Plain", "payload": "MeshSessionEdit",
       "liveEntryNames": [],
       "entryNames": ["mesh.bevel_edit"],
