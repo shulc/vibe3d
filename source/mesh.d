@@ -846,25 +846,21 @@ struct MeshKey(Terms...) {
         return true;
     }
 
-    /// The same question over a SUBSET of the declared terms, for a consumer
-    /// whose key answers two different questions from one stamp — the subpatch
-    /// preview's "is my surface fresh" (epoch + mutation) against its "is the
-    /// stencil table still laid out for this topology" (topology alone). The
-    /// address is compared either way; a subset that drops it would not be a
-    /// mesh key. Naming a term the key does not stamp is a compile error.
-    bool matchesOnly(Sub...)(ref const Mesh m) const {
-        static assert(Sub.length >= 1,
-            "matchesOnly with no term is `addr == &m` — say so directly");
-        if (addr != cast(size_t)&m) return false;
-        static foreach (T; Sub) {
-            if (!T.same(this.tupleof[slotOf!T], m)) return false;
-        }
-        return true;
-    }
-
-    /// The same subset question asked of ANOTHER key of this type instead of
-    /// of a live mesh — for a consumer that must sample its terms exactly ONCE
-    /// per call and then both COMPARE and STAMP that one sample.
+    /// The same question over a SUBSET of the declared terms, asked of ANOTHER
+    /// key of this type rather than of a live mesh — for a consumer whose key
+    /// answers two different questions from one stamp (the subpatch preview's
+    /// "is my surface fresh", epoch + mutation, against its "is the stencil
+    /// table still laid out for this topology", topology alone) and which must
+    /// sample its terms exactly ONCE per call and then both COMPARE and STAMP
+    /// that one sample. The address is compared either way; a subset that
+    /// dropped it would not be a mesh key. Naming a term the key does not
+    /// stamp is a compile error.
+    ///
+    /// THERE IS DELIBERATELY NO `matchesOnly(Sub...)(ref const Mesh)` BESIDE
+    /// IT. One was written for this task and had no production caller: every
+    /// consumer that wants a subset also wants the single sample, and asking a
+    /// live mesh for a subset takes a SECOND sample by construction. Task 4060
+    /// review deleted it rather than leave a door open for nobody.
     ///
     /// The subpatch preview is the reason it exists and the reason it is not a
     /// convenience: its epoch term is read from the bus, and a rebuild can
