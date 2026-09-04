@@ -29,8 +29,8 @@ version (unittest) import math : Vec3;
 
 /// Canonical UNDIRECTED edge key: the two vertex indices packed (min, max)
 /// into one ulong, min in the high word — so `key >> 32` is the smaller index
-/// and `key & 0xFFFF_FFFF` the larger (`Mesh.rebuildEdges` decodes it that
-/// way). This is the ONE definition in the tree: task 4066 folded five named
+/// and `key & 0xFFFF_FFFF` the larger (`Mesh.rebuildEdgesFromFaces` decodes
+/// it that way). This is the ONE definition in the tree: task 4066 folded five named
 /// bodies, five nested/static ones and seven inline packs into it. mesh.d
 /// re-exports this module, so `import mesh` and `import mesh : edgeKey` both
 /// reach it.

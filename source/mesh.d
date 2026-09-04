@@ -3413,14 +3413,30 @@ struct Mesh {
 
     // Grow selection arrays to match geometry without clearing.
     // Call after BoxTool or any in-place geometry growth.
+    //
+    // The guards ask the MARKS arrays directly, not the `selectedVertices` /
+    // `selectedEdges` / `selectedFaces` / `isSubpatch` views: each of those
+    // materializes a whole fresh `bool[]` (one per element) purely to have
+    // its `.length` read, and the length it reports IS the marks array's, by
+    // construction — the views are built as `new bool[](<marks>.length)`.
+    // Four allocations of |V| + 2|E| + 2|F| bools, on a call every in-place
+    // geometry growth makes (task 4066).
+    //
+    // The subpatch guard went with them, and it went because writing the
+    // length source out made it readable: `resizeSubpatch()`'s whole body is
+    // `faceMarks.length = faces.length`, which is `resizeFaceSelection()`'s
+    // body too, and it sat under the SAME predicate three lines lower — so
+    // it could only ever run after that predicate had been made false. It
+    // has never been reachable from here (`isSubpatch.length` was
+    // `faceMarks.length` all along); `resizeSubpatch` keeps its other
+    // callers, on the subpatch-only resize path its own comment names.
     void syncSelection() {
-        if (selectedVertices.length < vertices.length) resizeVertexSelection();
-        if (selectedEdges.length    < edges.length)    resizeEdgeSelection();
-        if (selectedFaces.length    < faces.length)    resizeFaceSelection();
+        if (vertexMarks.length < vertices.length) resizeVertexSelection();
+        if (edgeMarks.length   < edges.length)    resizeEdgeSelection();
+        if (faceMarks.length   < faces.length)    resizeFaceSelection();
         if (vertexSelectionOrder.length < vertices.length) vertexSelectionOrder.length = vertices.length;
         if (edgeSelectionOrder.length   < edges.length)    edgeSelectionOrder.length   = edges.length;
         if (faceSelectionOrder.length   < faces.length)    faceSelectionOrder.length   = faces.length;
-        if (isSubpatch.length           < faces.length)    resizeSubpatch();
         if (faceMaterial.length         < faces.length)    faceMaterial.length         = faces.length;
         if (facePart.length             < faces.length)    facePart.length             = faces.length;
         // NIT (task 1060 review): same length-sync facePart gets just above.
