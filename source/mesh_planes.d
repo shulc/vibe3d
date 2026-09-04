@@ -691,6 +691,29 @@ struct FaceReindexRecord {
     FacePlaneDrops dropPlanes;     // their planes, parallel to dropIdx
     FaceIdx[]      survIdx;        // review finding B2 (task 1902 Stage H)
     uint[][]       survLists;      // ditto
+
+    /// The name of the FIRST field above that is not at its `.init` value, or
+    /// `null` when the record is entirely unfilled. Generated from
+    /// `this.tupleof`, so a field added to the list above joins the check
+    /// with no edit — the same property `kFacePlanes` buys the planes.
+    ///
+    /// WHY IT EXISTS (task 4059 review). Collapsing twelve COMPULSORY
+    /// parameters into eight DEFAULT-INITIALISED fields gave up the
+    /// compiler's arity check: a caller may now fill six fields, forget
+    /// `oldFaceCount`, and compile clean. `recordFaceReindex`'s no-op guard
+    /// is `oldFaceCount == 0 && newFaceLists.length == 0`, so such a record
+    /// is swallowed WHOLE and in silence — which is review finding B3
+    /// (a destructive drop-everything rewrite recorded as nothing) coming
+    /// back through a different door. The guard's real precondition is that
+    /// a no-op record is EMPTY, not merely that two of its fields are zero,
+    /// and that is what this states. There is one call site today; this
+    /// stands in for the compiler at the second one.
+    string firstAssignedField() const {
+        static foreach (i, _; typeof(this).tupleof)
+            if (this.tupleof[i] != typeof(this.tupleof[i]).init)
+                return __traits(identifier, typeof(this).tupleof[i]);
+        return null;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -991,7 +1014,20 @@ enum PlaneFit : ubyte {
 /// deliberate — an assertion that itself iterated `kFacePlanes` would go green
 /// over the shortened list, which is the defect `CLAUDE.md`'s "a check that
 /// cannot come out differently" section is about).
-void appendFacePlanes(ref Mesh m, PlaneFit fit = PlaneFit.Exact) {
+///
+/// `fit` HAS NO DEFAULT, and the omission is the point. It carried
+/// `= PlaneFit.Exact` when this landed, and that made the policy split
+/// one-directional: giving a `GrowOnly` site the `Exact` fit is caught by
+/// Block C of `tests/unit/mesh_face_plane_append_test.d`, but the reverse —
+/// an `Exact` site silently taking `GrowOnly` — was witnessed by nothing.
+/// Two call sites were flipped from `Exact` to `GrowOnly` as a mutation and
+/// BOTH runs stayed green at 487 modules. That direction is the dangerous
+/// one: a grow-only fit leaves a plane LONGER than `faces` after a shrink,
+/// and those stale entries become readable again the moment the face array
+/// regrows onto them. Without a default the omission is a compile error at
+/// the site rather than a test's responsibility, which is the check that
+/// cannot be forgotten. All eight call sites spell their fit.
+void appendFacePlanes(ref Mesh m, PlaneFit fit) {
     const size_t want = m.faces.length;
     static foreach (n; kFacePlanes) {
         {
@@ -1014,45 +1050,57 @@ void appendFacePlanes(ref Mesh m, PlaneFit fit = PlaneFit.Exact) {
 // all renumber the whole array. Nothing carried `edgeMarks` or
 // `edgeSelectionOrder` through that. `rebuildEdges`'s own comment named the
 // hazard ("the renumbering hazard this function is famous for — `edgeMarks`
-// is NOT re-indexed"), and the tree's answer was 60 hand-written
+// is NOT re-indexed"), and the tree's answer was 43 hand-written
 // `clearEdgeSelectionResize()` / `resizeEdgeSelection()` calls at the call
 // sites: an edge selection survived a topology edit only because somebody
 // remembered to throw it away.
 //
-// THE CORRESPONDENCE IS A KEY, NOT AN INDEX MAP — this is the shape
-// difference from `rewriteFaces`, and it is forced rather than chosen. A face
-// rewrite HAS a newToOld correspondence because the kernel built the new
-// array and knows where each entry came from. `rebuildEdges` has no such
-// thing: it is handed nothing and derives everything. What survives a
-// re-derive is the edge's undirected endpoint key, which is exactly what
-// `kExemptPlanes` has always said about `edgeSetMask` ("key-space, not
-// index-space — immune to face AND vertex renumbering by construction"). So
-// the edge planes are carried the way `edgeSetMask` is already immune.
+// THE 43 IS CALL EXPRESSIONS, not mentions — the same defect this task
+// already corrected once for `rebuildEdges` (commit `30d8b039`). A plain
+// `grep -rn … source | wc -l` answers 64, counting every comment that NAMES
+// the function, these lines included, so it moves when you write about it.
+// Measured 2026-09-05, 43 across 14 files (21 in `mesh.d`), on this branch
+// AND on the trunk:
 //
-// WHAT IT DOES NOT DECIDE. It does not remove one of the 60 manual resets.
-// Whether `mesh.extrude` should leave the source edge selected is a PRODUCT
-// question about the reference's behaviour, not a consequence of this
-// mechanism, and `CLAUDE.md`'s capture rule puts that class of unknown with
-// the owner rather than with the implementer. The mechanism is here; which
-// ops should now stop clearing is task 4190.
+//     find source -name '*.d' -print0 | xargs -0 perl -0777 -pe \
+//       's{/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"}{ }gs' \
+//       | grep -vE '\bvoid\s+(clearEdgeSelectionResize|resizeEdgeSelection)\s*\(' \
+//       | grep -oE '\b(clearEdgeSelectionResize|resizeEdgeSelection)\s*\(' | wc -l
+//
+// THE CORRESPONDENCE IS A KEY, NOT AN INDEX MAP — forced, not chosen. A face
+// rewrite HAS a newToOld correspondence because the kernel built the new
+// array. `rebuildEdges` is handed nothing and derives everything; what
+// survives a re-derive is the edge's undirected endpoint key, which is what
+// `kExemptPlanes` already says about `edgeSetMask` ("key-space, not
+// index-space — immune to face AND vertex renumbering by construction").
+//
+// WHAT IT DOES NOT DECIDE. It removes none of the 43 manual resets: whether
+// `mesh.extrude` should leave the source edge selected is a law we match,
+// not one we may design, and that is task 4190.
 // ---------------------------------------------------------------------------
 
 /// WHO ASKS FOR THE CARRY, and why it is not simply on.
 ///
 /// MEASURED 2026-09-04, and this is the finding that shaped the enum. Wiring
 /// the carry into `Mesh.rebuildEdges` unconditionally moves EIGHT rows of the
-/// frozen undo-parity corpus — `weld_merge` (mesh.collapse/edge),
-/// `create_stable` (mesh.addPoint), `delete_remove` (mesh.delete/vertices),
-/// `slice_cut` (mesh.axisSlice), `cleanup` (mesh.cleanup/dissolve), `bevel`
-/// (mesh.poly_inset), `vertex_bevel`, `extrude_extend`, each on the
-/// `edgePlanes` plane of its postOp dump. Six are ORDER stamps and two are
-/// Select bits. Every one of them is a change to what the user sees selected
-/// after a shipped operation, and WHICH edges an extrude or an inset should
-/// leave selected is a law we are matching, not one we may design
-/// (`CLAUDE.md`, "Unknowns are CAPTURED, not invented"). So the default arm
-/// is byte-identical to the behaviour before this task and the carry is
-/// opt-in per call site; task 4190 holds the per-op decision, with those
-/// eight rows as its starting evidence.
+/// frozen undo-parity corpus — `weld_merge`, `create_stable`,
+/// `delete_remove`, `slice_cut`, `cleanup`, `bevel`, `vertex_bevel`,
+/// `extrude_extend`, each on the `edgePlanes` plane of its postOp dump (the
+/// per-cell breakdown is in task 4190's card). Six are ORDER stamps, two are
+/// Select bits.
+///
+/// WHAT THOSE EIGHT ROWS PROVE, AND WHAT THEY DO NOT. They prove that arming
+/// the carry CHANGES what the user sees selected after eight shipped
+/// operations — no more. All eight fixtures are SELF-GENERATED from our own
+/// replay (`provenance.source` is `"simulated"`, `provenance.reference` is
+/// `"vibe3d-selfgen"`, and `weld_merge.json`'s own note reads "No reference
+/// editor involved"), so they are not evidence about the reference at all.
+/// WHICH edges an extrude or an inset should leave selected is a law we are
+/// matching, not one we may design (`CLAUDE.md`, "Unknowns are CAPTURED, not
+/// invented") — and it is UNMEASURED. That capture is step 0 of task 4190,
+/// which is why deferring is right: the eight rows say the decision is not
+/// free, and only the capture can settle it. So the default arm is
+/// byte-identical to the behaviour before this task.
 ///
 /// THERE IS ALSO A SOUNDNESS BOUNDARY, and it is why an unconditional carry
 /// would be wrong even once that decision is made. An edge KEY is a pair of
@@ -1131,7 +1179,7 @@ EdgeCarry captureEdgePlanes(ref Mesh m) {
 ///
 /// Also brings the planes to `edges.length`, which `rebuildEdges` did not do
 /// before — the caller's `resizeEdgeSelection()` did. That call is left in
-/// place at all 60 sites: it ALSO resizes the Edge-domain mesh maps, which is
+/// place at all 43 sites: it ALSO resizes the Edge-domain mesh maps, which is
 /// not this primitive's domain.
 void applyEdgePlanes(ref Mesh m, in EdgeCarry c) {
     const size_t want = m.edges.length;

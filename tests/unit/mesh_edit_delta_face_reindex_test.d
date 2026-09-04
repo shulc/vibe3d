@@ -43,6 +43,7 @@ import mesh;
 import mesh_planes;
 import mesh_edit_delta;
 import math : Vec3;
+import core.exception : AssertError;
 import std.format : format;
 import std.conv : to;
 import tests.unit.fixtures : makeTaggedGrid;
@@ -955,4 +956,69 @@ unittest // reverse restores the PRE-rewrite corners under both winding changes
         assertUvEq(uvOfFace(fx.m, of), fx.oldUv[of],
                    format("reverse, old face %d: the pre-rewrite corner "
                         ~ "values must come back", of));
+}
+
+// ---------------------------------------------------------------------------
+// Task 4059 review — THE ARITY CHECK THE STRUCT GAVE UP.
+//
+// `recordFaceReindexIfWanted` used to take TWELVE COMPULSORY PARAMETERS. Task
+// 4059 collapsed them into one `FaceReindexRecord` with EIGHT
+// default-initialised fields, which is a better shape in every way but one:
+// the compiler no longer refuses a caller that forgets an argument. There is
+// exactly one call site today, and it is correct; the risk is the second one.
+// A record built with a drop set but WITHOUT `oldFaceCount` compiles clean and
+// then meets `recordFaceReindex`'s no-op guard
+// (`oldFaceCount == 0 && newFaceLists.length == 0`), which swallows it whole
+// and in silence — review finding B3's defect exactly, re-entering by a new
+// door. `FaceReindexRecord.firstAssignedField` states the guard's real
+// precondition: a no-op record is EMPTY, not merely zero in two fields.
+//
+// The probe is generated from `.tupleof`, so a NINTH field added to the
+// record is covered with no edit here — which is also why this block asserts
+// the probe's own behaviour first and only then drives the tracker.
+// ---------------------------------------------------------------------------
+unittest // a record filled but missing oldFaceCount is refused, not silently dropped
+{
+    // Half 1 — the probe itself, and its NON-VACUITY. An all-init record must
+    // read as empty, or the assert in `recordFaceReindex` would fire on the
+    // genuine no-op it is there to let through.
+    FaceReindexRecord empty;
+    assert(empty.firstAssignedField() is null,
+           "an all-init FaceReindexRecord must read as unfilled, got `"
+         ~ empty.firstAssignedField() ~ "`");
+
+    // …and it must actually SEE a filled field, or half 2 proves nothing.
+    FaceReindexRecord counted;
+    counted.oldFaceCount = 9;
+    assert(counted.firstAssignedField() == "oldFaceCount",
+           "firstAssignedField must name oldFaceCount, got `"
+         ~ counted.firstAssignedField() ~ "`");
+
+    FaceReindexRecord dropped;
+    dropped.dropIdx   = [FaceIdx.assumeFaceSpace(0), FaceIdx.assumeFaceSpace(1)];
+    dropped.dropLists = [[0u, 1u, 2u], [2u, 3u, 0u]];
+    // `oldFaceCount` deliberately NOT set — this is the mistake under test.
+    assert(dropped.firstAssignedField() !is null,
+           "a record carrying a drop set must not read as unfilled");
+
+    // Half 2 — the guard. THE MUTATION TARGET: delete the `assert` in
+    // `MeshEditTracker.recordFaceReindex`'s no-op branch and this line
+    // reddens with "expected AssertError was not thrown".
+    MeshEditTracker tracker;
+    tracker.wantsFaceReindex = true;
+    bool refused = false;
+    try
+        tracker.recordFaceReindex(dropped);
+    catch (AssertError e)
+        refused = true;
+    assert(refused,
+           "recordFaceReindex silently swallowed a FaceReindexRecord that "
+         ~ "carried a drop set but no oldFaceCount — the no-op guard's "
+         ~ "precondition (an EMPTY record) is unchecked again");
+
+    // …and the genuine no-op still passes through without a throw, so the
+    // check above is a discrimination and not a blanket refusal.
+    MeshEditTracker quiet;
+    quiet.wantsFaceReindex = true;
+    quiet.recordFaceReindex(empty);
 }

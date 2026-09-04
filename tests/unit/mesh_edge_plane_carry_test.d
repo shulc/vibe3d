@@ -7,9 +7,11 @@
 // not to the slot it happens to occupy in `edges`. `rebuildEdges` re-derives
 // `edges` from `faces` in face/corner order, so that slot moves whenever the
 // face order or a winding changes. Before this task nothing carried the
-// marks across, and the tree's answer was 60 hand-written
-// `clearEdgeSelectionResize()` calls: the selection survived a topology edit
-// only where somebody remembered to throw it away.
+// marks across, and the tree's answer was 43 hand-written
+// `clearEdgeSelectionResize()` / `resizeEdgeSelection()` calls: the selection
+// survived a topology edit only where somebody remembered to throw it away.
+// (43 is CALL EXPRESSIONS; the command and why a `grep | wc -l` answers 64
+// instead are at `mesh_planes.d`'s "THE 43 IS CALL EXPRESSIONS".)
 //
 // THE RIG IS BUILT BEFORE ANYTHING IS DRIVEN, and that is the point of the
 // first half of each block. An edge whose index does NOT move cannot
@@ -21,9 +23,14 @@
 // THE CARRY IS OPT-IN, and that is a MEASURED decision rather than caution:
 // arming it for every `rebuildEdges` caller moves eight rows of the frozen
 // undo-parity corpus, i.e. changes what a user sees selected after eight
-// shipped operations, and which edges an extrude or an inset should leave
-// selected is a law we are matching. `mesh_planes.EdgePlaneCarry` carries the
-// eight rows and the soundness boundary; task 4190 holds the per-op decision.
+// shipped operations. What those eight rows establish is exactly that — that
+// arming the carry CHANGES observable behaviour — and no more: all eight are
+// SELF-GENERATED from our own replay (`provenance.source == "simulated"`,
+// `reference == "vibe3d-selfgen"`), so they are not evidence about the
+// reference at all. Which edges an extrude or an inset should leave selected
+// is a law we are matching and it is UNMEASURED; that capture is step 0 of
+// task 4190. `mesh_planes.EdgePlaneCarry` carries the eight rows and the
+// soundness boundary; task 4190 holds the per-op decision.
 // So Block A asks for `EdgePlaneCarry.byKey` explicitly, and Blocks B and C
 // drive `Mesh.spinEdge`, the one production caller that asks for it today.
 //

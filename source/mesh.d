@@ -3411,7 +3411,7 @@ struct Mesh {
         // clear pre-existing bits, which is what makes this a SELECTION
         // reset and not a subpatch one (the paragraph above). The four
         // per-plane grows it replaces are named in task 4059's `## Лог`.
-        appendFacePlanes(this);
+        appendFacePlanes(this, PlaneFit.Exact);
         clearVertexSelection();
         clearEdgeSelection();
         clearFaceSelection();
@@ -7692,7 +7692,7 @@ struct Mesh {
         // `facePart` + `faceSetMask`) were one hand-written grow per plane,
         // repeated verbatim in six kernels. `appendFacePlanes` iterates
         // `kFacePlanes`, so a plane added later arrives here for free.
-        appendFacePlanes(this);
+        appendFacePlanes(this, PlaneFit.Exact);
         foreach (fi; 0 .. origFaceCount) {
             deselectFace(cast(int)fi);
         }
@@ -7920,7 +7920,7 @@ struct Mesh {
         // `facePart` + `faceSetMask`) were one hand-written grow per plane,
         // repeated verbatim in six kernels. `appendFacePlanes` iterates
         // `kFacePlanes`, so a plane added later arrives here for free.
-        appendFacePlanes(this);
+        appendFacePlanes(this, PlaneFit.Exact);
         foreach (fi; 0 .. origFaceCount) {
             deselectFace(cast(int)fi);
         }
@@ -8222,7 +8222,7 @@ struct Mesh {
         // `facePart` + `faceSetMask`) were one hand-written grow per plane,
         // repeated verbatim in six kernels. `appendFacePlanes` iterates
         // `kFacePlanes`, so a plane added later arrives here for free.
-        appendFacePlanes(this);
+        appendFacePlanes(this, PlaneFit.Exact);
         foreach (fi; 0 .. origFaceCount) {
             deselectFace(cast(int)fi);
         }
@@ -8458,7 +8458,7 @@ struct Mesh {
         // `facePart` + `faceSetMask`) were one hand-written grow per plane,
         // repeated verbatim in six kernels. `appendFacePlanes` iterates
         // `kFacePlanes`, so a plane added later arrives here for free.
-        appendFacePlanes(this);
+        appendFacePlanes(this, PlaneFit.Exact);
         // Mark the new mirrored faces as the active selection; clear
         // the originals' face-selection bits (they keep their geometry
         // unchanged but lose the "this is selected" tag, matching
@@ -8718,7 +8718,7 @@ struct Mesh {
         // `facePart` + `faceSetMask`) were one hand-written grow per plane,
         // repeated verbatim in six kernels. `appendFacePlanes` iterates
         // `kFacePlanes`, so a plane added later arrives here for free.
-        appendFacePlanes(this);
+        appendFacePlanes(this, PlaneFit.Exact);
         // Clear old face selection first; only new duplicates remain selected.
         foreach (fi; 0 .. origFaceCount) {
             deselectFace(cast(int)fi);
@@ -8795,7 +8795,7 @@ struct Mesh {
         // `facePart` + `faceSetMask`) were one hand-written grow per plane,
         // repeated verbatim in six kernels. `appendFacePlanes` iterates
         // `kFacePlanes`, so a plane added later arrives here for free.
-        appendFacePlanes(this);
+        appendFacePlanes(this, PlaneFit.Exact);
 
         // Deselect all pre-existing faces; only pasted faces end up selected.
         foreach (fi; 0 .. origFaceCount) deselectFace(cast(int)fi);

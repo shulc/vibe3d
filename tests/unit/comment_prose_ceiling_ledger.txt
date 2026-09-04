@@ -9,9 +9,9 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 512
-task-citation-lines 5033
+task-citation-lines 5043
 citing-files 376
-long-comment-runs 280
+long-comment-runs 277
 files-with-long-runs 148
 
 # Exact per-file task-citation allowances, sorted by path.
@@ -26,7 +26,7 @@ allow source/ai3d/job_controller.d 1
 allow source/ai3d/job_events.d 1
 allow source/ai3d/stage_artifact.d 2
 allow source/ai3d/worker_manager.d 2
-allow source/app.d 296
+allow source/app.d 295
 allow source/app_version.d 1
 allow source/argstring.d 3
 allow source/buttonset.d 1
@@ -232,12 +232,12 @@ allow source/json_num.d 1
 allow source/layer_params.d 18
 allow source/log.d 1
 allow source/math.d 24
-allow source/mesh.d 503
+allow source/mesh.d 506
 allow source/mesh_analysis.d 4
 allow source/mesh_corner_maps.d 17
-allow source/mesh_dirty.d 18
+allow source/mesh_dirty.d 14
 allow source/mesh_edge_slice.d 28
-allow source/mesh_edit_delta.d 138
+allow source/mesh_edit_delta.d 140
 allow source/mesh_gpu.d 35
 allow source/mesh_morph.d 1
 allow source/mesh_ops/bevel_curves.d 7
@@ -255,7 +255,7 @@ allow source/mesh_ops/loop_slice.d 95
 allow source/mesh_ops/poly_bevel.d 65
 allow source/mesh_ops/revolve.d 25
 allow source/mesh_ops/select_loop.d 6
-allow source/mesh_planes.d 23
+allow source/mesh_planes.d 39
 allow source/mesh_selsets.d 3
 allow source/mesh_stats.d 5
 allow source/mesh_topo.d 22
@@ -300,7 +300,7 @@ allow source/toolpipe/package.d 1
 allow source/toolpipe/packets.d 10
 allow source/toolpipe/pipeline.d 8
 allow source/toolpipe/stage.d 10
-allow source/toolpipe/stages/actcenter.d 57
+allow source/toolpipe/stages/actcenter.d 56
 allow source/toolpipe/stages/axis.d 15
 allow source/toolpipe/stages/constrain.d 8
 allow source/toolpipe/stages/falloff.d 32
@@ -366,12 +366,12 @@ allow source/tools/transform/move.d 5
 allow source/tools/transform/relocate_plane.d 2
 allow source/tools/transform/rotate.d 4
 allow source/tools/transform/scale.d 12
-allow source/tools/transform/transform.d 35
+allow source/tools/transform/transform.d 32
 allow source/tools/transform/xform_kernels.d 7
 allow source/tools/transform/xfrm_apply.d 19
 allow source/tools/transform/xfrm_handles.d 5
 allow source/tools/transform/xfrm_item.d 9
-allow source/tools/transform/xfrm_transform.d 90
+allow source/tools/transform/xfrm_transform.d 89
 allow source/tsan_preinit.d 1
 allow source/ui/availability.d 1
 allow source/ui/channel_rows.d 2
@@ -388,7 +388,7 @@ allow source/ui/viewport_render.d 38
 allow source/uv_relax.d 1
 allow source/uv_unwrap.d 2
 allow source/view.d 8
-allow source/viewport.d 33
+allow source/viewport.d 32
 allow source/viewport_scheme.d 7
 allow source/weightmap_view.d 1
 
@@ -462,8 +462,8 @@ allow-runs source/io/scene_import.d 1
 allow-runs source/item_kinds.d 1
 allow-runs source/layer_params.d 2
 allow-runs source/math.d 4
-allow-runs source/mesh.d 26
-allow-runs source/mesh_dirty.d 3
+allow-runs source/mesh.d 25
+allow-runs source/mesh_dirty.d 2
 allow-runs source/mesh_edge_slice.d 2
 allow-runs source/mesh_edit_delta.d 7
 allow-runs source/mesh_gpu.d 2
@@ -497,7 +497,7 @@ allow-runs source/shader.d 1
 allow-runs source/snap.d 5
 allow-runs source/snap_election.d 2
 allow-runs source/subpatch_osd.d 3
-allow-runs source/subpatch_preview.d 2
+allow-runs source/subpatch_preview.d 1
 allow-runs source/tool_disarm.d 1
 allow-runs source/toolpipe/guide.d 1
 allow-runs source/toolpipe/obbox.d 2

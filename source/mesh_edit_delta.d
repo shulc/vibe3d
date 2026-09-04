@@ -2861,7 +2861,27 @@ struct MeshEditTracker {
         // exactly the case it most needed to record. `oldFaceCount == 0`
         // names the real no-op: nothing existed before AND nothing exists
         // after.
-        if (rec.oldFaceCount == 0 && rec.newFaceLists.length == 0) return;
+        //
+        // TASK 4059 REVIEW — and the assert below is the half B3's fix could
+        // not state while the call was twelve compulsory parameters. It is
+        // eight default-initialised fields now, so "the caller omitted
+        // `oldFaceCount`" is a thing that compiles, and this guard would
+        // swallow such a record whole. The guard's real precondition is that
+        // a no-op record is EMPTY; `firstAssignedField` says so over EVERY
+        // field, generated from `.tupleof`, so a ninth field is covered
+        // without an edit here.
+        if (rec.oldFaceCount == 0 && rec.newFaceLists.length == 0) {
+            assert(rec.firstAssignedField() is null,
+                   "FaceReindexRecord is being dropped as a no-op "
+                 ~ "(oldFaceCount == 0 and newFaceLists is empty) while its "
+                 ~ "field `" ~ rec.firstAssignedField() ~ "` is filled — a "
+                 ~ "caller built the record and omitted `oldFaceCount`. Twelve "
+                 ~ "compulsory parameters became eight default-initialised "
+                 ~ "fields in task 4059; this assert is what replaced the "
+                 ~ "compiler's arity check. See "
+                 ~ "mesh_planes.FaceReindexRecord.firstAssignedField.");
+            return;
+        }
         MeshOpEntry e;
         e.kind              = MeshOpEntry.Kind.FaceReindex;
         e.faceOldOfNew      = rec.oldOfNew;
