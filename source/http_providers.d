@@ -2881,24 +2881,43 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
         // exactly once except `scene.reset`, but the gate is by id for all four
         // so a second registration of any of them cannot silently inherit
         // another command's argument law.
+        //
+        // A FIELD IS VALIDATED ONLY WHEN THE PAYLOAD SUPPLIES IT (task 4131).
+        // The retired ROUTES made their fields mandatory; `/api/command` never
+        // did, and it must not inherit the obligation, because this injector
+        // runs BEFORE `apply()`. Made unconditional, an argument-less
+        // `{"id":"mesh.transform"}` threw "missing 'kind' string field" where
+        // the command's own refusal — "no mesh item is selected: there is no
+        // mesh edit target" — is what the availability census freezes, and an
+        // argument-less `{"id":"scene.loadMesh"}` threw instead of reaching the
+        // apply the discard census sweeps for. Both went red on this branch.
+        // So each block below is gated on its own keys being PRESENT; what a
+        // present key is allowed to CONTAIN is unchanged, and a supplied-but-
+        // malformed field is still refused here, by name, before `apply()`.
+        // `mesh.select` and `scene.loadMesh` gate on the PAIR — half a payload
+        // (`{"faces":[[0,1,2]]}` with no `vertices`) stays an error, which is
+        // what `tests/test_load_mesh.d` froze — while `mesh.transform`'s
+        // fields are independently optional and gate one by one.
         void injectRetiredWrapperArgs(Command cmd, ref JSONValue pj, string id) {
             import math : Vec3;
 
             if (id == "mesh.select") {
                 auto select = cast(MeshSelect)cmd;
                 assert(select !is null, "mesh.select is not a MeshSelect");
-                if ("mode" !in pj || pj["mode"].type != JSONType.string)
-                    throw new Exception("missing 'mode' string field");
-                if ("indices" !in pj || pj["indices"].type != JSONType.array)
-                    throw new Exception("missing 'indices' array field");
-                int[] indices;
-                foreach (n; pj["indices"].array) {
-                    if (n.type != JSONType.integer && n.type != JSONType.uinteger)
-                        throw new Exception("indices must be integers");
-                    indices ~= cast(int)n.integer;
+                if ("mode" in pj || "indices" in pj) {
+                    if ("mode" !in pj || pj["mode"].type != JSONType.string)
+                        throw new Exception("missing 'mode' string field");
+                    if ("indices" !in pj || pj["indices"].type != JSONType.array)
+                        throw new Exception("missing 'indices' array field");
+                    int[] indices;
+                    foreach (n; pj["indices"].array) {
+                        if (n.type != JSONType.integer && n.type != JSONType.uinteger)
+                            throw new Exception("indices must be integers");
+                        indices ~= cast(int)n.integer;
+                    }
+                    select.setMode(pj["mode"].str);
+                    select.setIndices(indices);
                 }
-                select.setMode(pj["mode"].str);
-                select.setIndices(indices);
             } else if (id == "mesh.transform") {
                 auto transform = cast(MeshTransform)cmd;
                 assert(transform !is null, "mesh.transform is not a MeshTransform");
@@ -2933,59 +2952,68 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                     }
                 }
 
-                if ("kind" !in pj || pj["kind"].type != JSONType.string)
-                    throw new Exception("missing 'kind' string field");
-                transform.setKind(pj["kind"].str);
-                transform.setDelta (vec3From("delta",  Vec3(0, 0, 0)));
-                transform.setAxis  (vec3From("axis",   Vec3(0, 1, 0)));
-                transform.setAngle (floatFrom("angle", 0.0f));
-                transform.setFactor(vec3From("factor", Vec3(1, 1, 1)));
-                transform.setPivot (vec3From("pivot",  Vec3(0, 0, 0)));
+                // Each setter is reached only through its own key. The
+                // defaults below are the ones `MeshTransform`'s constructor
+                // already installs, so an absent key and a call with the
+                // default are the same state — the point of the gate is that
+                // an absent key must not THROW.
+                if ("kind" in pj) {
+                    if (pj["kind"].type != JSONType.string)
+                        throw new Exception("'kind' must be a string");
+                    transform.setKind(pj["kind"].str);
+                }
+                if ("delta"  in pj) transform.setDelta (vec3From("delta",  Vec3(0, 0, 0)));
+                if ("axis"   in pj) transform.setAxis  (vec3From("axis",   Vec3(0, 1, 0)));
+                if ("angle"  in pj) transform.setAngle (floatFrom("angle", 0.0f));
+                if ("factor" in pj) transform.setFactor(vec3From("factor", Vec3(1, 1, 1)));
+                if ("pivot"  in pj) transform.setPivot (vec3From("pivot",  Vec3(0, 0, 0)));
             } else if (id == "scene.loadMesh") {
                 auto loadMesh = cast(MeshLoadRaw)cmd;
                 assert(loadMesh !is null, "scene.loadMesh is not a MeshLoadRaw");
-                if ("vertices" !in pj || pj["vertices"].type != JSONType.array)
-                    throw new Exception("missing 'vertices' array field");
-                if ("faces" !in pj || pj["faces"].type != JSONType.array)
-                    throw new Exception("missing 'faces' array field");
+                if ("vertices" in pj || "faces" in pj) {
+                    if ("vertices" !in pj || pj["vertices"].type != JSONType.array)
+                        throw new Exception("missing 'vertices' array field");
+                    if ("faces" !in pj || pj["faces"].type != JSONType.array)
+                        throw new Exception("missing 'faces' array field");
 
-                double numFrom(JSONValue n) {
-                    switch (n.type) {
-                        case JSONType.integer:  return cast(double)n.integer;
-                        case JSONType.uinteger: return cast(double)n.uinteger;
-                        case JSONType.float_:   return n.floating;
-                        default: throw new Exception("vertex components must be numbers");
+                    double numFrom(JSONValue n) {
+                        switch (n.type) {
+                            case JSONType.integer:  return cast(double)n.integer;
+                            case JSONType.uinteger: return cast(double)n.uinteger;
+                            case JSONType.float_:   return n.floating;
+                            default: throw new Exception("vertex components must be numbers");
+                        }
                     }
-                }
 
-                auto vArr = pj["vertices"].array;
-                Vec3[] verts = new Vec3[](vArr.length);
-                foreach (i, vj; vArr) {
-                    if (vj.type != JSONType.array || vj.array.length != 3)
-                        throw new Exception("each vertex must be [x,y,z]");
-                    verts[i] = Vec3(cast(float)numFrom(vj.array[0]),
-                                    cast(float)numFrom(vj.array[1]),
-                                    cast(float)numFrom(vj.array[2]));
-                }
-
-                auto fArr = pj["faces"].array;
-                uint[][] faces = new uint[][](fArr.length);
-                foreach (i, fj; fArr) {
-                    if (fj.type != JSONType.array)
-                        throw new Exception("each face must be an array of vertex indices");
-                    auto idxArr = fj.array;
-                    uint[] face = new uint[](idxArr.length);
-                    foreach (k, ij; idxArr) {
-                        if (ij.type != JSONType.integer && ij.type != JSONType.uinteger)
-                            throw new Exception("face indices must be integers");
-                        long v = ij.integer;
-                        if (v < 0)
-                            throw new Exception("face index must be non-negative");
-                        face[k] = cast(uint)v;
+                    auto vArr = pj["vertices"].array;
+                    Vec3[] verts = new Vec3[](vArr.length);
+                    foreach (i, vj; vArr) {
+                        if (vj.type != JSONType.array || vj.array.length != 3)
+                            throw new Exception("each vertex must be [x,y,z]");
+                        verts[i] = Vec3(cast(float)numFrom(vj.array[0]),
+                                        cast(float)numFrom(vj.array[1]),
+                                        cast(float)numFrom(vj.array[2]));
                     }
-                    faces[i] = face;
+
+                    auto fArr = pj["faces"].array;
+                    uint[][] faces = new uint[][](fArr.length);
+                    foreach (i, fj; fArr) {
+                        if (fj.type != JSONType.array)
+                            throw new Exception("each face must be an array of vertex indices");
+                        auto idxArr = fj.array;
+                        uint[] face = new uint[](idxArr.length);
+                        foreach (k, ij; idxArr) {
+                            if (ij.type != JSONType.integer && ij.type != JSONType.uinteger)
+                                throw new Exception("face indices must be integers");
+                            long v = ij.integer;
+                            if (v < 0)
+                                throw new Exception("face index must be non-negative");
+                            face[k] = cast(uint)v;
+                        }
+                        faces[i] = face;
+                    }
+                    loadMesh.setData(verts, faces);
                 }
-                loadMesh.setData(verts, faces);
             } else if (id == "scene.reset") {
                 auto reset = cast(SceneReset)cmd;
                 assert(reset !is null, "scene.reset is not a SceneReset");
