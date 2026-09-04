@@ -98,7 +98,7 @@
 // gate would bury the message that matters.
 module tests.unit.version_poll_census_test;
 
-import std.algorithm : any, canFind, endsWith;
+import std.algorithm : any, canFind, endsWith, startsWith;
 import std.array     : appender, array;
 import std.file      : dirEntries, exists, readText, SpanMode;
 import std.format    : format;
@@ -131,187 +131,14 @@ private enum size_t kMarkerWindow = 14;
 /// long-lived loop variable collect unrelated equalities.
 private enum size_t kTwoHopWindow = 6;
 
-// ---------------------------------------------------------------------------
-// Blank comments and/or literals IN PLACE — same length, same line breaks, so a
-// finding still reports the real line number. `keepComments` selects the MARKER
-// view (comments kept, literals blanked) over the CODE view (both blanked);
-// either way the walker still RECOGNISES comments, so a quote mark inside one
-// can never open a literal.
-//
-// HANDLED SINCE TASK 2007: wysiwyg (`r"…"`) and delimited/token strings
-// (`q"…"`, `q{…}`). This block used to claim "neither unhandled form appears in
-// a scanned file today" and rest the whole no-parser argument on that. HALF of
-// it was false, and the false half was the one that matters — MEASURED
-// 2026-08-28 over `source/**` with an identifier-boundary test, which is what
-// the original claim lacked:
-//
-//   * `q{…}` — REAL, and in THREE files: `source/gpu_select.d`,
-//     `source/shader.d`, `source/subpatch_osd.d` (GLSL sources). `gpu_select.d`
-//     is itself a `kRemainder` file, so the desync risk sat directly under a
-//     recorded site.
-//   * `q"…"` — ZERO occurrences. (A naive `grep q"` reports three, all of them
-//     the two characters `q"` INSIDE an ordinary literal: `entry["seq"]`,
-//     `` `{"seq":` ``. The card that raised this item counted that grep.)
-//   * `r"…"` — ZERO occurrences as a LITERAL. The naive `grep r"` reports 166
-//     files and the boundary-aware one still reports four, and all four are
-//     `…"r"…` / `'\r'` inside ordinary literals — `File(path, "r")`,
-//     `enabled["r"]`, `"\\r"`, `,"r":%d`. So the ORIGINAL claim happened to be
-//     true for these two forms and false for the third.
-//
-// Both are lexed now rather than argued about, because "no such literal in the
-// tree today" is a claim that decays silently with every commit, and the one
-// that decayed took the argument down with it. Character literals ARE handled,
-// including `'\''` and `'"'`. The floor at the bottom still notices a desync
-// from any form nobody has thought of, because a desynced scanner eats the rest
-// of the file and the site count collapses.
-// ---------------------------------------------------------------------------
-package string blankNonCode(string src, bool keepComments = false) {
-    auto outBuf = new char[src.length];
-    foreach (i, c; src) outBuf[i] = (c == '\n') ? '\n' : ' ';
-    size_t codeStart = 0;
-    void keep(size_t a, size_t b) {
-        foreach (k; a .. b) if (src[k] != '\n') outBuf[k] = src[k];
-    }
-    // Blank [a, b) by closing the kept run before it and reopening after.
-    void drop(size_t a, size_t b) { keep(codeStart, a); codeStart = b; }
-
-    size_t i = 0;
-    while (i < src.length) {
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '/') {
-            const size_t s = i;
-            while (i < src.length && src[i] != '\n') ++i;
-            if (!keepComments) drop(s, i);
-            continue;
-        }
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '*') {
-            const size_t s = i;
-            i += 2;
-            while (i + 1 < src.length && !(src[i] == '*' && src[i + 1] == '/')) ++i;
-            i = (i + 2 <= src.length) ? i + 2 : src.length;
-            if (!keepComments) drop(s, i);
-            continue;
-        }
-        if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '+') {
-            const size_t s = i;
-            int depth = 0;
-            while (i < src.length) {
-                if (i + 1 < src.length && src[i] == '/' && src[i + 1] == '+') { ++depth; i += 2; continue; }
-                if (i + 1 < src.length && src[i] == '+' && src[i + 1] == '/') { --depth; i += 2; if (depth == 0) break; continue; }
-                ++i;
-            }
-            if (!keepComments) drop(s, i);
-            continue;
-        }
-        // TOKEN and WYSIWYG strings, before the plain `"` handler — they open
-        // on a LETTER, so by the time the walker reaches the quote the prefix
-        // is already behind it. See the block comment above for what was
-        // measured and why this is not the "no such literal here" claim it
-        // replaced.
-        if ((src[i] == 'q' || src[i] == 'r')
-            && (i == 0 || !isIdentChar(src[i - 1]))
-            && i + 1 < src.length) {
-            // `r"…"` — wysiwyg, no escape processing at all.
-            if (src[i] == 'r' && src[i + 1] == '"') {
-                const size_t s = i;
-                i += 2;
-                while (i < src.length && src[i] != '"') ++i;
-                i = (i + 1 <= src.length) ? i + 1 : src.length;
-                drop(s, i);
-                continue;
-            }
-            // `q{…}` — token string, braces NEST.
-            if (src[i] == 'q' && src[i + 1] == '{') {
-                const size_t s = i;
-                i += 2;
-                int depth = 1;
-                while (i < src.length && depth > 0) {
-                    if (src[i] == '{') ++depth;
-                    else if (src[i] == '}') --depth;
-                    ++i;
-                }
-                drop(s, i);
-                continue;
-            }
-            // `q"…"` — delimited. Bracket forms nest; anything else is the
-            // heredoc form, closed by `<ident>"` on its own.
-            if (src[i] == 'q' && src[i + 1] == '"') {
-                const size_t s = i;
-                const char open = (i + 2 < src.length) ? src[i + 2] : '\0';
-                char close = '\0';
-                switch (open) {
-                    case '(': close = ')'; break;
-                    case '[': close = ']'; break;
-                    case '<': close = '>'; break;
-                    case '{': close = '}'; break;
-                    default:  break;
-                }
-                if (close != '\0') {
-                    i += 3;
-                    int depth = 1;
-                    while (i < src.length && depth > 0) {
-                        if (src[i] == open) ++depth;
-                        else if (src[i] == close) --depth;
-                        ++i;
-                    }
-                    if (i < src.length && src[i] == '"') ++i;
-                } else {
-                    // q"IDENT\n … \nIDENT"
-                    size_t t = i + 2;
-                    while (t < src.length && isIdentChar(src[t])) ++t;
-                    const string tag = src[i + 2 .. t];
-                    i = t;
-                    if (tag.length) {
-                        const string term = tag ~ "\"";
-                        while (i + term.length <= src.length
-                               && src[i .. i + term.length] != term) ++i;
-                        i = (i + term.length <= src.length)
-                            ? i + term.length : src.length;
-                    }
-                }
-                drop(s, i);
-                continue;
-            }
-        }
-        if (src[i] == '"') {
-            const size_t s = i;
-            ++i;
-            while (i < src.length && src[i] != '"') {
-                if (src[i] == '\\' && i + 1 < src.length) ++i;
-                ++i;
-            }
-            i = (i + 1 <= src.length) ? i + 1 : src.length;
-            drop(s, i);
-            continue;
-        }
-        if (src[i] == '`') {
-            const size_t s = i;
-            ++i;
-            while (i < src.length && src[i] != '`') ++i;
-            i = (i + 1 <= src.length) ? i + 1 : src.length;
-            drop(s, i);
-            continue;
-        }
-        if (src[i] == '\'') {
-            const size_t s = i;
-            ++i;
-            while (i < src.length && src[i] != '\'') {
-                if (src[i] == '\\' && i + 1 < src.length) ++i;
-                ++i;
-            }
-            i = (i + 1 <= src.length) ? i + 1 : src.length;
-            drop(s, i);
-            continue;
-        }
-        ++i;
-    }
-    keep(codeStart, src.length);
-    return cast(string)outBuf;
-}
-
-private bool isIdentChar(char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-        || (c >= '0' && c <= '9') || c == '_';
-}
+// The two strippers and the whole-identifier test now live in
+// `tests/unit/census_symbols.d` — ONE home, beside the scope walker that has
+// to consume exactly the same code view. They are re-exported here because
+// eight censuses in this package import them by this module's name; that
+// re-export is the only reason this line exists and it retires with them.
+public import tests.unit.census_symbols : blankNonCode, blankUnittestBodies;
+import tests.unit.census_symbols : isIdentChar, enclosingSymbols, symbolAt,
+                                   LedgerRow, LedgerHit, reconcile;
 
 /// `id` appears in `ln` as a whole identifier, not as a substring of a longer
 /// one. Shape C needs this: `ver` must not match `verify`.
@@ -347,9 +174,10 @@ private string assignedCounterCarrier(string ln) {
     return null;
 }
 
-private struct Site {
-    string file;
+package struct Site {
+    string file;      // DIAGNOSTIC ONLY — never a key (task 4056)
     size_t line;      // 1-based, into the ORIGINAL text
+    string symbol;    // the enclosing declaration path: THE KEY
     string text;
     bool   argued;
     string shape;     // "direct" | "wrapped" | "two-hop"
@@ -360,8 +188,9 @@ private struct Site {
 // cells below can feed it a scratch buffer: a probe that has to be written into
 // `source/` and taken out again is a probe nobody re-runs.
 // ---------------------------------------------------------------------------
-private Site[] scanSource(string label, string src) {
+package Site[] scanSource(string label, string src) {
     const string code  = blankUnittestBodies(blankNonCode(src));
+    const string[] syms = enclosingSymbols(code);
     const string marks = blankNonCode(src, /*keepComments=*/true);
     auto codeLines = code.splitLines();
     auto markLines = marks.splitLines();
@@ -379,7 +208,8 @@ private Site[] scanSource(string label, string src) {
 
     auto sites = appender!(Site[]);
     void record(size_t li, string text, string shape) {
-        sites.put(Site(label, li + 1, text.strip, argumentAbove(li), shape));
+        sites.put(Site(label, li + 1, symbolAt(syms, li), text.strip,
+                       argumentAbove(li), shape));
     }
 
     foreach (li, ln; codeLines) {
@@ -414,62 +244,6 @@ private Site[] scanSource(string label, string src) {
     return sites.data;
 }
 
-/// Blank the body of every `unittest` block in an already-code-only view.
-///
-/// `package`, like `blankNonCode` above and for the same reason: the other
-/// censuses in this package need the same two views and a second copy of a
-/// stripper is a second thing to get wrong.
-///
-/// `version (unittest)` is NOT such a block and must survive: it holds
-/// PRODUCTION seams (mock hooks, test-visible accessors) that a poll can hide
-/// in, and there are ~195 of them under `source/`. The two differ by one
-/// character of context — the `(` that precedes the keyword — because a real
-/// `unittest` block is a DECLARATION and can never be parenthesised. That is
-/// the whole test below, and it is a cell (`versionUnittestIsProductionCode`)
-/// rather than a comment because the first version of this scanner got it
-/// wrong while the header claimed otherwise.
-package string blankUnittestBodies(string code) {
-    auto buf = code.dup;
-    void blankBlock(size_t from) {
-        size_t j = from;
-        while (j < buf.length && buf[j] != '{') {
-            if (buf[j] == ';') return;      // `unittest` used as a name; bail
-            ++j;
-        }
-        if (j >= buf.length) return;
-        int depth = 0;
-        for (; j < buf.length; ++j) {
-            const char c = buf[j];
-            if (c == '{') ++depth;
-            else if (c == '}') { --depth; if (depth == 0) { buf[j] = ' '; return; } }
-            if (c != '\n') buf[j] = ' ';
-        }
-    }
-    // True when the keyword at `i` is the `unittest` of `version (unittest)` /
-    // `debug (unittest)` — i.e. the nearest non-blank character before it is an
-    // open parenthesis.
-    bool parenthesised(size_t i) {
-        size_t k = i;
-        while (k > 0 && (buf[k - 1] == ' ' || buf[k - 1] == '\t'
-                      || buf[k - 1] == '\n' || buf[k - 1] == '\r')) --k;
-        return k > 0 && buf[k - 1] == '(';
-    }
-    enum kw = "unittest";
-    size_t i = 0;
-    while (i + kw.length <= buf.length) {
-        if (buf[i .. i + kw.length] == kw
-            && (i == 0 || !isIdentChar(buf[i - 1]))
-            && (i + kw.length >= buf.length || !isIdentChar(buf[i + kw.length]))
-            && !parenthesised(i))
-        {
-            blankBlock(i + kw.length);
-            i += kw.length;
-            continue;
-        }
-        ++i;
-    }
-    return cast(string)buf;
-}
 
 private Site[] scanTree() {
     auto sites = appender!(Site[]);
@@ -767,14 +541,19 @@ unittest {
 // nineteen rows with a paragraph of reasoning each, and the two are edited
 // together. Precedent: `tests/unit/census_ledger.txt`.
 //
-// WHY PER-FILE COUNTS AND NOT `file:line`. A `file:line` table reddens on
-// every unrelated edit ABOVE a row, which trains people to bump a number
-// instead of to think — the objection is recorded in the plan (§4 stage 3) and
-// it is why the 2e census stopped short of this. A per-file count is immune to
-// line drift and to reformatting, and still reddens in BOTH directions the
-// stage-4 validation names: delete a row from the table without deleting the
-// code and the file is over its count; add a poll without adding a row and the
-// file is over its count the other way round.
+// WHY PER-SYMBOL COUNTS AND NOT `file:line`, AND NOT PER FILE EITHER. A
+// `file:line` table reddens on every unrelated edit ABOVE a row, which trains
+// people to bump a number instead of to think — the objection is recorded in
+// the plan (§4 stage 3) and it is why the 2e census stopped short of this. A
+// per-FILE count fixed that and bought a second defect with it (task 4056):
+// the key was then the path of the file a poll happens to live in, so moving
+// `RotateTool.update` to another module — without touching one character of
+// it — reddened this gate and demanded an edit that carries no information.
+// The key is now the ENCLOSING DECLARATION, which is what §3.6's own rows
+// already called the reference ("Line numbers are deliberately absent; the
+// SYMBOL is the reference"), and it reddens in BOTH directions the stage-4
+// validation names — plus one the per-file table could not see at all: a poll
+// that migrates from one function to another INSIDE the same file.
 //
 // WHAT IT DELIBERATELY DOES NOT ASSERT: that no consumer both subscribes to
 // the bus and polls a version on the SAME change class. That property is true
@@ -795,64 +574,79 @@ unittest {
 // have something to say — "write the note" is the more useful of the two.
 // ---------------------------------------------------------------------------
 
-/// One row per FILE of §3.6's site-by-site table. `symbols` is for the failure
-/// message only: it is what a reader needs in order to go and find the rows,
-/// and it is not matched against anything.
-private struct RemainderFile {
-    string file;
-    size_t sites;
-    string symbols;
-}
-
-/// §3.6, "The remainder, SITE BY SITE" — 19 production compares over 9 files,
-/// complete as of stage 4 (2026-08-26). Line numbers are deliberately absent;
-/// the SYMBOL is the reference.
-private static immutable RemainderFile[] kRemainder = [
-    RemainderFile("source/app.d", 3,
-        "rebuildLoopHoverMask (row 20) | the missedPublishers shadow check "
-      ~ "| the cage/preview upload fast path (row 3)"),
-    RemainderFile("source/bvh_pick.d", 1,
-        "BvhPick.pickFace (row 6) — keys on the VBO content it rasterises from"),
-    RemainderFile("source/gpu_select.d", 1,
-        "GpuSelectBuffer.ensureSlot (row 5) — same, uploadVersion"),
-    RemainderFile("source/mesh_gpu.d", 1,
-        "GpuUploadOwner validation — detached CPU image must still target the "
-      ~ "same VBO-content generation; no Mesh change class answers that"),
-    RemainderFile("source/mesh_edit_delta.d", 1,
-        "finalize's fast-path structVersion backstop (task 1903 L0.P1) — an "
-      ~ "ASSERT that the replay wrote no edges, not a freshness poll: nothing "
-      ~ "is memoised on it and `e0.sv` is read from the same mesh a few "
+/// One row of §3.6's site-by-site table, keyed by the ENCLOSING DECLARATION
+/// the compare sits in. `why` is what a reader needs in order to go and find
+/// the row in §3.6; it is not matched against anything.
+///
+/// The rows are `LedgerRow`s from `tests/unit/census_symbols.d`, so the
+/// comparison itself is `reconcile` — one engine, shared with the
+/// confined-publisher and mesh-planes censuses, instead of three copies of the
+/// same arithmetic.
+private static immutable LedgerRow[] kRemainder = [
+    LedgerRow("main.rebuildLoopHoverMask", 1,
+        "row 20 — the loop-hover mask's topology stamp"),
+    LedgerRow("main", 2,
+        "the frame flush block: the missedPublishers shadow check, and the "
+      ~ "cage/preview upload fast path (row 3). Both are in `main` itself"),
+    LedgerRow("BvhPick.pickFace", 1,
+        "row 6 — keys on the VBO content it rasterises from"),
+    LedgerRow("GpuSelectBuffer.ensureSlot", 1,
+        "row 5 — same, uploadVersion"),
+    LedgerRow("MeshCacheKey.matches", 1,
+        "the key TYPE's own compare"),
+    LedgerRow("MeshStructKey.matches", 1,
+        "the key TYPE's own compare"),
+    LedgerRow("MeshTopoKey.matches", 1,
+        "the key TYPE's own compare"),
+    LedgerRow("Mesh.vertexAdjacencyCSR", 1, "row 12"),
+    LedgerRow("Mesh.loopsValid", 1, "row 13, first half"),
+    LedgerRow("Mesh.edgeMapUsable", 1, "row 13, second half"),
+    LedgerRow("SubpatchPreview.rebuildIfStale", 2,
+        "row 10's two terms — `sourceVersion` against the source's "
+      ~ "`mutationVersion`, and `sourceTopologyVersion` against its "
+      ~ "`topologyVersion`. PROVENANCE, carried across from the per-FILE "
+      ~ "table this row replaced: task 4066 moved `SubpatchPreview` out of "
+      ~ "`source/mesh.d` into its own module and these two terms went with "
+      ~ "it, unchanged. Nothing was gained or lost — the census total is 26 "
+      ~ "either side of that move. The path-keyed table had to say so in two "
+      ~ "edits (the mesh.d row 8 → 6, plus a new row of 2 for the new "
+      ~ "module); this row needed none, which is what the key change bought"),
+    LedgerRow("finalize", 1,
+        "the fast-path structVersion backstop (task 1903 L0.P1) — an ASSERT "
+      ~ "that the replay wrote no edges, not a freshness poll: nothing is "
+      ~ "memoised on it and `e0.sv` is read from the same mesh a few "
       ~ "statements earlier, inside the same call"),
-    RemainderFile("source/mesh.d", 6,
-        "MeshCacheKey/MeshStructKey/MeshTopoKey.matches (the key TYPES) "
-      ~ "| vertexAdjacencyCSR (row 12) | loopsValid + edgeMapUsable (row 13). "
-      ~ "Was 8 until task 4066 moved SubpatchPreview to its own module: the "
-      ~ "two rebuildIfStale terms went with it, to the row below. Nothing was "
-      ~ "gained or lost — the census total either side of that move is 26"),
-    RemainderFile("source/render/render_mvp.d", 1,
-        "shadowCheckMeshChanged — diagnostic only, behind VIBE3D_RENDER_HASH_CHECK"),
-    RemainderFile("source/subpatch_preview.d", 2,
-        "SubpatchPreview.rebuildIfStale's two terms (row 10) — moved here "
-      ~ "from source/mesh.d by task 4066's extraction, unchanged"),
-    RemainderFile("source/toolpipe/stages/actcenter.d", 1,
-        "bboxMembershipCached's marksVersion key (task 2006) — the same "
-      ~ "argument as computeSelectionHash's below, one layer up: no watcher "
+    LedgerRow("sameGpuUploadVersion", 1,
+        "GpuUploadOwner validation — a detached CPU image must still target "
+      ~ "the same VBO-content generation; no Mesh change class answers that"),
+    LedgerRow("shadowCheckMeshChanged", 1,
+        "diagnostic only, behind VIBE3D_RENDER_HASH_CHECK"),
+    LedgerRow("ActionCenterStage.bboxMembershipCached", 1,
+        "the marksVersion key (task 2006) — the same argument as "
+      ~ "TransformTool.computeSelectionHash's below, one layer up: no watcher "
       ~ "carries `Marks`, and the thing this counter stands in for is the "
       ~ "O(V) `selectionSignature()` the cache used to call on EVERY "
       ~ "evaluation. Measured at 1M faces (ldc2 -O3 -release): the hash cost "
       ~ "2.23 ms in Vertices/Polygons and 4.46 ms in Edges, against a 1.02 ms "
       ~ "bbox pass — i.e. the key was more expensive than the walk it guarded"),
-    RemainderFile("source/tools/transform/rotate.d", 2,
-        "RotateTool's gesture boundary plus its dormant prepared projection "
-      ~ "(§3.6 row 21's family; same counter and argument)"),
-    RemainderFile("source/tools/transform/scale.d", 2,
-        "ScaleTool's gesture boundary plus its dormant prepared projection "
-      ~ "(same family; same counter and argument)"),
-    RemainderFile("source/tools/transform/transform.d", 1,
-        "computeSelectionHash's marksVersion memo"),
-    RemainderFile("source/tools/transform/xfrm_transform.d", 4,
-        "the gesture staleness gate (row 21) + the wrapper's gesture boundary "
-      ~ "+ its conversion-only prepared projection"),
+    LedgerRow("RotateTool.projectPreparedUpdate", 1,
+        "row 21's family — the dormant prepared projection"),
+    LedgerRow("RotateTool.update", 1,
+        "row 21's family — the gesture boundary"),
+    LedgerRow("ScaleTool.projectPreparedUpdate", 1,
+        "same family, same argument — the dormant prepared projection"),
+    LedgerRow("ScaleTool.update", 1,
+        "same family, same argument — the gesture boundary"),
+    LedgerRow("TransformTool.computeSelectionHash", 1,
+        "the marksVersion memo"),
+    LedgerRow("XfrmTransformTool.update", 1,
+        "the wrapper's gesture boundary"),
+    LedgerRow("XfrmTransformTool.projectPreparedUpdatePre", 1,
+        "the conversion-only prepared projection"),
+    LedgerRow("XfrmTransformTool.preparedRefireEligible", 1,
+        "row 21 — the gesture staleness gate"),
+    LedgerRow("XfrmTransformTool.regradeStampCurrent", 1,
+        "row 21 — the same gate's regrade half"),
 ];
 
 /// The two sites §3.6 keeps by HAND because no line scanner can reach them:
@@ -866,52 +660,27 @@ private enum string kHandMaintained =
   ~ "(stamp-then-compare-whole; §3.6's second table)";
 
 unittest {
-    // Every recorded file must still exist — checked FIRST so a moved module
-    // gets this diagnosis rather than the set gate's "recorded N, found 0"
-    // (stage-4 review: the assert used to sit after the gate and never ran).
-    foreach (ref r; kRemainder)
-        assert(buildPath(repoRoot, r.file).exists, format(
-            "§3.6 records %d version poll(s) in %s and that file is gone. If "
-          ~ "the module moved, move the row; if the polls went with it, delete "
-          ~ "the row and the §3.6 rows together.", r.sites, r.file));
+    // NO "recorded file still exists" PRE-CHECK ANY MORE, and its absence is
+    // the point (task 4056). A symbol has no path to `exists()`, and the
+    // diagnosis that check bought — "the module moved, move the row" — is now
+    // unnecessary for a move and is spelled out by `reconcile`'s own
+    // found-NONE finding for a rename.
     auto sites = scanTree();
 
-    size_t[string] found;
-    foreach (ref s; sites) found[s.file] = found.get(s.file, 0) + 1;
+    auto hits = appender!(LedgerHit[]);
+    foreach (ref s; sites)
+        hits.put(LedgerHit(s.symbol, s.file, s.line,
+                           format("[%s]  %s", s.shape, s.text)));
 
-    auto bad = appender!string;
     size_t recordedTotal = 0;
+    foreach (ref r; kRemainder) recordedTotal += r.count;
 
-    foreach (ref r; kRemainder) {
-        recordedTotal += r.sites;
-        const size_t n = found.get(r.file, 0);
-        if (n == r.sites) continue;
-        bad.put(format(
-            "\n    %s — recorded %d, scanner found %d\n        rows: %s",
-            r.file, r.sites, n, r.symbols));
-        foreach (ref s; sites)
-            if (s.file == r.file)
-                bad.put(format("\n        found  %s:%d [%s]  %s",
-                               s.file, s.line, s.shape, s.text));
-    }
+    const string bad = reconcile(kRemainder, hits.data);
 
-    foreach (f, n; found) {
-        bool recorded = false;
-        foreach (ref r; kRemainder) if (r.file == f) { recorded = true; break; }
-        if (recorded) continue;
-        bad.put(format(
-            "\n    %s — NOT IN THE REMAINDER AT ALL, scanner found %d site(s)",
-            f, n));
-        foreach (ref s; sites)
-            if (s.file == f)
-                bad.put(format("\n        found  %s:%d [%s]  %s",
-                               s.file, s.line, s.shape, s.text));
-    }
-
-    assert(bad.data.length == 0, format(
+    assert(bad.length == 0, format(
         "task 1906 §3.6: the surviving version-poll SET no longer matches the "
       ~ "recorded remainder.%s\n\n"
-      ~ "  Recorded: %d compare(s) over %d file(s). Scanner: %d over %d.\n\n"
+      ~ "  Recorded: %d compare(s) over %d symbol(s). Scanner: %d.\n\n"
       ~ "  A version compare is not wrong by itself — §3.6 of "
       ~ "doc/bus_sync_listeners_plan.md lists the ones that are right, each "
       ~ "with the reason a bus change class cannot answer it. What is wrong is "
@@ -924,11 +693,39 @@ unittest {
       ~ "    * FEWER than recorded — a poll was migrated or deleted, which is "
       ~ "the direction this task exists to move in: drop the §3.6 row and this "
       ~ "count together, in one commit.\n"
-      ~ "    * a file that is not listed at all — same as MORE, and note that "
-      ~ "the file did not previously contain a single version compare.\n\n"
+      ~ "    * a symbol that is not listed at all — same as MORE, and note "
+      ~ "that the declaration did not previously contain a single version "
+      ~ "compare.\n"
+      ~ "    * MOVING a poll's function to another FILE is none of the above "
+      ~ "and must be silent here. If a plain `git mv` reddened this gate, the "
+      ~ "gate is wrong, not the move.\n\n"
       ~ "  Not counted here, by construction: %s",
-        bad.data, recordedTotal, kRemainder.length,
-        sites.length, found.length, kHandMaintained));
+        bad, recordedTotal, kRemainder.length, sites.length,
+        kHandMaintained));
+
+    // POPULATION, after the assertion it protects, and in both halves —
+    // because `reconcile` returning "" is also what an EMPTY table over an
+    // EMPTY scan returns, and that is the vacuity this repo keeps paying for.
+    //  * a floor on the LEDGER, so the table cannot be emptied alongside a
+    //    dead scanner;
+    //  * an EQUALITY between the two totals, which is exact and costs no
+    //    ceremony: `recordedTotal` is summed from the table itself, so a
+    //    legitimate row edit moves both sides at once.
+    assert(kRemainder.length >= 15, format(
+        "the remainder table is down to %d row(s) from 24 — a table that "
+      ~ "small cannot be the §3.6 remainder, and `reconcile` agreeing with it "
+      ~ "over a dead scanner is a green that measured nothing.",
+        kRemainder.length));
+    assert(sites.length == recordedTotal, format(
+        "the scanner found %d compare(s) and the table records %d. The gate "
+      ~ "above passed, so the two agree symbol by symbol; this can therefore "
+      ~ "only mean the arithmetic changed under it.",
+        sites.length, recordedTotal));
+    assert(sites.length >= 8, format(
+        "the version-poll scanner found only %d compare site(s) in source/ — "
+      ~ "it has almost certainly lost its place (an unterminated literal, a "
+      ~ "wysiwyg string, or a stripper bug). Fix the scanner, do not lower "
+      ~ "this floor.", sites.length));
 }
 
 /// The set gate's own discriminator, on scratch buffers rather than on the
@@ -948,11 +745,45 @@ PROBE";
       ~ "reason the set gate exists. If this ever fails, the two gates have "
       ~ "stopped being different questions and the cell below proves nothing.");
 
-    // The set gate's arithmetic, run by hand over the probe: a file nobody
-    // recorded, carrying one site, is a finding.
-    bool recorded = false;
-    foreach (ref r; kRemainder) if (r.file == "source/newcomer.d") recorded = true;
-    assert(!recorded && s.length > 0,
-        "an unrecorded file with a site must be a finding");
+    // The set gate's arithmetic, run for real over the probe — not by hand,
+    // through the same `reconcile` the gate calls: an unrecorded SYMBOL
+    // carrying one site is a finding.
+    assert(s[0].symbol == "f", format(
+        "the enclosing declaration of the probe's compare is `f`; the walker "
+      ~ "said `%s`", s[0].symbol));
+    auto probeHit = [LedgerHit(s[0].symbol, "source/newcomer.d", s[0].line,
+                               s[0].text)];
+    assert(reconcile(kRemainder, probeHit).canFind("NOT RECORDED AT ALL"),
+        "an unrecorded symbol with a site must be a finding: "
+      ~ reconcile(kRemainder, probeHit));
 
+    // AND THE OTHER HALF, which is the whole of task 4056: the SAME probe
+    // scanned as if it lived in a different file yields the same key, so a
+    // `git mv` cannot move this verdict. If this cell ever fails, the path
+    // has crept back into the key.
+    auto moved = scanSource("source/somewhere/else.d", arguedButNew);
+    assert(moved.length == 1 && moved[0].symbol == s[0].symbol, format(
+        "the key must be the declaration, not the path — `%s` in one file and "
+      ~ "`%s` in another", s[0].symbol, moved.length ? moved[0].symbol : "-"));
+    auto movedHit = [LedgerHit(moved[0].symbol, "source/somewhere/else.d",
+                               moved[0].line, moved[0].text)];
+    // The VERDICT must be identical; the DIAGNOSTIC still names the file it
+    // found, and must — a finding a human cannot go and look at is not a
+    // finding. So the comparison drops the `found …` lines and keeps
+    // everything that decides red or green.
+    static string verdictOnly(string s) {
+        auto keep = appender!string;
+        foreach (ln; s.splitLines())
+            if (!ln.strip.startsWith("found  ")) { keep.put(ln); keep.put("\n"); }
+        return keep.data;
+    }
+    assert(verdictOnly(reconcile(kRemainder, movedHit))
+        == verdictOnly(reconcile(kRemainder, probeHit)), format(
+        "the same site in two different files must produce the same verdict:"
+      ~ "\n--- as newcomer.d ---\n%s\n--- as else.d ---\n%s",
+        verdictOnly(reconcile(kRemainder, probeHit)),
+        verdictOnly(reconcile(kRemainder, movedHit))));
+    assert(verdictOnly(reconcile(kRemainder, probeHit)).canFind("f —"),
+        "the verdict must name the SYMBOL `f`, which is the key: "
+      ~ verdictOnly(reconcile(kRemainder, probeHit)));
 }
