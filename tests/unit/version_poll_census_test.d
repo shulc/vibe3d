@@ -823,12 +823,17 @@ private static immutable RemainderFile[] kRemainder = [
       ~ "ASSERT that the replay wrote no edges, not a freshness poll: nothing "
       ~ "is memoised on it and `e0.sv` is read from the same mesh a few "
       ~ "statements earlier, inside the same call"),
-    RemainderFile("source/mesh.d", 8,
+    RemainderFile("source/mesh.d", 6,
         "MeshCacheKey/MeshStructKey/MeshTopoKey.matches (the key TYPES) "
-      ~ "| vertexAdjacencyCSR (row 12) | loopsValid + edgeMapUsable (row 13) "
-      ~ "| SubpatchPreview.rebuildIfStale's two terms (row 10)"),
+      ~ "| vertexAdjacencyCSR (row 12) | loopsValid + edgeMapUsable (row 13). "
+      ~ "Was 8 until task 4066 moved SubpatchPreview to its own module: the "
+      ~ "two rebuildIfStale terms went with it, to the row below. Nothing was "
+      ~ "gained or lost — the census total either side of that move is 26"),
     RemainderFile("source/render/render_mvp.d", 1,
         "shadowCheckMeshChanged — diagnostic only, behind VIBE3D_RENDER_HASH_CHECK"),
+    RemainderFile("source/subpatch_preview.d", 2,
+        "SubpatchPreview.rebuildIfStale's two terms (row 10) — moved here "
+      ~ "from source/mesh.d by task 4066's extraction, unchanged"),
     RemainderFile("source/toolpipe/stages/actcenter.d", 1,
         "bboxMembershipCached's marksVersion key (task 2006) — the same "
       ~ "argument as computeSelectionHash's below, one layer up: no watcher "
