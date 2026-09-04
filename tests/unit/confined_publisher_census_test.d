@@ -78,10 +78,22 @@
 // ===========================================================================
 // HOW IT FAILS, AND THE PROOF THAT IT CAN
 // ===========================================================================
-// Per (file, identifier) counts, so a message can say WHICH door moved rather
-// than "the total went up". Three findings are possible and each has its own
-// sentence: a recorded pair whose count changed, an identifier appearing in a
-// file nobody recorded, and a recorded file that has vanished.
+// Per (DECLARATION, identifier) counts, so a message can say WHICH door moved
+// rather than "the total went up" — and per DECLARATION rather than per FILE
+// since task 4056, because the law is about the three call sites and not about
+// which module they are filed under: `git mv`-ing `XfrmApplyImpl.applyFold`
+// used to redden this census while changing nothing it is about. The findings
+// come from `census_symbols.reconcile` and there are four, each with its own
+// sentence: a recorded pair whose count changed, an identifier in a
+// declaration nobody recorded, a recorded declaration that has vanished, and
+// one symbol realised in two different files (which is the one shape a
+// path-free key could otherwise let a site migrate through unseen).
+//
+// THE OLD TABLE'S PROSE WAS WRONG AND THE SYMBOLS SAY SO. It recorded the two
+// `xfrm_apply.d` publishes as "the applyChain tail and the applyFold tail";
+// the scanner reports `XfrmApplyImpl.applyTRSLegacyPowPath` and
+// `XfrmApplyImpl.applyFold`. A count against a path cannot be checked against
+// its own description — a count against a declaration is the description.
 //
 // SELF-DEFENDING AGAINST VACUITY, in both directions. Every recorded count is
 // non-zero, so a stripper that lost its place and ate a file reports "recorded
@@ -96,12 +108,14 @@ module tests.unit.confined_publisher_census_test;
 
 import std.algorithm : sort;
 import std.array     : appender;
-import std.file      : dirEntries, exists, readText, SpanMode;
+import std.file      : dirEntries, readText, SpanMode;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.string    : splitLines;
 
-import tests.unit.version_poll_census_test : blankNonCode, blankUnittestBodies;
+import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
+                                   enclosingSymbols, symbolAt,
+                                   LedgerRow, LedgerHit, reconcile;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
@@ -111,42 +125,43 @@ private immutable string[] kIdents = [
     "endConfinedDelivery", "deliveryIsConfined",
 ];
 
-private struct SiteRow {
-    string file;
-    string ident;
-    size_t count;
-    string why;     // what those occurrences ARE, and for a call, the
-                    // consumer-side exclusion its claim rests on
-}
-
-/// THE RECORDED SET. Every row says what the occurrences are; every CALL row
-/// additionally names the exclusion set that makes its claim true, because
-/// that — not the call — is the thing a reviewer has to check.
-private immutable SiteRow[] kSites = [
-    SiteRow("source/change_bus.d", "beginConfinedDelivery", 1,
+/// THE RECORDED SET, keyed by the enclosing DECLARATION. Every row says what
+/// the occurrences are; every CALL row additionally names the exclusion set
+/// that makes its claim true, because that — not the call — is the thing a
+/// reviewer has to check.
+///
+/// A declaration's own line sits in its ENCLOSING scope, which is why the
+/// three `ChangeBus` rows and the `Mesh` row read as the aggregate: the door
+/// is declared there. The calls INSIDE `Mesh.publishConfinedChange` carry the
+/// method's own path, so the declaration and its body are two different keys
+/// and neither can absorb the other.
+private static immutable LedgerRow[] kSites = [
+    LedgerRow("ChangeBus|beginConfinedDelivery", 1,
         "the declaration"),
-    SiteRow("source/change_bus.d", "endConfinedDelivery", 1,
+    LedgerRow("ChangeBus|endConfinedDelivery", 1,
         "the declaration (clamped, and counts its own imbalance)"),
-    SiteRow("source/change_bus.d", "deliveryIsConfined", 1,
+    LedgerRow("ChangeBus|deliveryIsConfined", 1,
         "the declaration — the read half"),
 
-    SiteRow("source/mesh.d", "publishConfinedChange", 1,
+    LedgerRow("Mesh|publishConfinedChange", 1,
         "the declaration — the ONLY production pairing of the raw marker, "
       ~ "which is why the two rows below must stay at one each"),
-    SiteRow("source/mesh.d", "beginConfinedDelivery", 1,
+    LedgerRow("Mesh.publishConfinedChange|beginConfinedDelivery", 1,
         "publishConfinedChange opens the window"),
-    SiteRow("source/mesh.d", "endConfinedDelivery", 1,
+    LedgerRow("Mesh.publishConfinedChange|endConfinedDelivery", 1,
         "…and closes it in a scope(exit), so a throw cannot leak the depth"),
 
-    SiteRow("source/mesh_dirty.d", "deliveryIsConfined", 1,
+    LedgerRow("noteMeshChange|deliveryIsConfined", 1,
         "noteMeshChange's gate — the single reader, and the whole of the "
       ~ "settled watcher's semantics"),
 
-    SiteRow("source/tools/transform/xfrm_apply.d", "publishConfinedChange", 2,
-        "the applyChain tail and the applyFold tail. Exclusion: the tool "
-      ~ "passes `movingVertexIndices` to `snapCursor` as `excludeVerts`, and "
+    LedgerRow("XfrmApplyImpl.applyTRSLegacyPowPath|publishConfinedChange", 1,
+        "the legacy pow-path tail. Exclusion: the tool passes "
+      ~ "`movingVertexIndices` to `snapCursor` as `excludeVerts`, and "
       ~ "`kindExcluded` drops any element with an incident moving vertex"),
-    SiteRow("source/tools/transform/transform.d", "publishConfinedChange", 1,
+    LedgerRow("XfrmApplyImpl.applyFold|publishConfinedChange", 1,
+        "the applyFold tail. Same exclusion, same tool"),
+    LedgerRow("TransformTool.uploadToGpu|publishConfinedChange", 1,
         "uploadToGpu's per-apply publish. Exclusion: `toProcess`, the same "
       ~ "set, handed to the same query"),
 ];
@@ -172,24 +187,30 @@ private size_t countIdent(string ln, string id) {
 }
 
 private struct Hit {
-    string file;
+    string file;    // DIAGNOSTIC ONLY — never a key (task 4056)
     string ident;
+    string symbol;  // the enclosing declaration path
     size_t line;    // 1-based, into the ORIGINAL text
     string text;
 }
+
+/// The ledger key: the declaration a door sits in, then the door's own name.
+/// No path, by construction.
+private string keyOf(const Hit h) { return h.symbol ~ "|" ~ h.ident; }
 
 /// Scan one file's text. Split out from the tree walk so the cells below can
 /// feed it a scratch buffer — a probe that has to be written into `source/`
 /// and taken out again is a probe nobody re-runs.
 package Hit[] scanConfinedSource(string label, string src) {
     const string code = blankUnittestBodies(blankNonCode(src));
+    const string[] syms = enclosingSymbols(code);
     auto hits = appender!(Hit[]);
     foreach (li, ln; code.splitLines()) {
         foreach (id; kIdents) {
             const size_t n = countIdent(ln, id);
             foreach (_; 0 .. n) {
                 import std.string : strip;
-                hits.put(Hit(label, id, li + 1, ln.strip));
+                hits.put(Hit(label, id, symbolAt(syms, li), li + 1, ln.strip));
             }
         }
     }
@@ -228,6 +249,18 @@ PROBE";
       ~ "of the two prose mentions above it — it saw %d: %s", h.length, h));
     assert(h[0].ident == "publishConfinedChange", h[0].ident);
     assert(h[0].line == 4, format("wrong line: %d", h[0].line));
+
+    // THE KEY IS THE DECLARATION (task 4056), so the same call scanned under
+    // a different file name yields the SAME key — this is the acceptance
+    // criterion of that task, asserted inside the census it protects rather
+    // than only in the scanner's own module.
+    assert(h[0].symbol == "applyFold", format(
+        "the enclosing declaration is `applyFold`; the walker said `%s`",
+        h[0].symbol));
+    auto moved = scanConfinedSource("somewhere/else.d", probe);
+    assert(moved.length == 1 && keyOf(moved[0]) == keyOf(h[0]), format(
+        "a `git mv` must not move this verdict: `%s` in one file, `%s` in "
+      ~ "another", keyOf(h[0]), moved.length ? keyOf(moved[0]) : "-"));
 }
 
 /// A `unittest` body is not production; a `version (unittest)` block IS. The
@@ -270,57 +303,26 @@ PROBE";
 // THE GATE.
 // ---------------------------------------------------------------------------
 unittest {
-    // Recorded files must still exist — checked FIRST so a moved module gets
-    // that diagnosis instead of the gate's "recorded 2, found 0".
-    foreach (ref r; kSites)
-        assert(buildPath(repoRoot, r.file).exists, format(
-            "task 2000 records %d occurrence(s) of `%s` in %s and that file is "
-          ~ "gone. If the module moved, move the row; if the call went with "
-          ~ "it, move the row to the new file.", r.count, r.ident, r.file));
-
+    // NO "recorded file still exists" PRE-CHECK ANY MORE. It was there to
+    // turn a moved module into a readable diagnosis; since task 4056 a moved
+    // module is not a finding at all, and a RENAMED declaration gets that
+    // diagnosis from `reconcile`'s found-NONE branch instead.
     auto hits = scanTree();
 
-    size_t[string] found;   // "file|ident" -> count
+    auto led = appender!(LedgerHit[]);
     foreach (ref h; hits)
-        found[h.file ~ "|" ~ h.ident] = found.get(h.file ~ "|" ~ h.ident, 0) + 1;
+        led.put(LedgerHit(keyOf(h), h.file, h.line, h.text));
 
-    auto bad = appender!string;
     size_t recordedTotal = 0;
+    foreach (ref r; kSites) recordedTotal += r.count;
 
-    void dump(string file, string ident) {
-        foreach (ref h; hits)
-            if (h.file == file && h.ident == ident)
-                bad.put(format("\n        found  %s:%d  %s",
-                               h.file, h.line, h.text));
-    }
+    const string bad = reconcile(kSites, led.data);
 
-    foreach (ref r; kSites) {
-        recordedTotal += r.count;
-        const size_t n = found.get(r.file ~ "|" ~ r.ident, 0);
-        if (n == r.count) continue;
-        bad.put(format("\n    %s — `%s`: recorded %d, scanner found %d\n"
-                     ~ "        recorded as: %s",
-                       r.file, r.ident, r.count, n, r.why));
-        dump(r.file, r.ident);
-    }
-
-    foreach (key, n; found) {
-        bool recorded = false;
-        foreach (ref r; kSites)
-            if (r.file ~ "|" ~ r.ident == key) { recorded = true; break; }
-        if (recorded) continue;
-        import std.string : indexOf;
-        const i = key.indexOf('|');
-        bad.put(format("\n    %s — `%s`: NOT RECORDED AT ALL, scanner found "
-                     ~ "%d occurrence(s)", key[0 .. i], key[i + 1 .. $], n));
-        dump(key[0 .. i], key[i + 1 .. $]);
-    }
-
-    assert(bad.data.length == 0, format(
+    assert(bad.length == 0, format(
         "task 2000: the CONFINED-DELIVERY caller set no longer matches the "
       ~ "recorded one.%s\n\n"
-      ~ "  Recorded: %d occurrence(s) over %d (file, name) pair(s). "
-      ~ "Scanner: %d over %d.\n\n"
+      ~ "  Recorded: %d occurrence(s) over %d (declaration, name) pair(s). "
+      ~ "Scanner: %d.\n\n"
       ~ "  A confined publish is not an ordinary one. It tells "
       ~ "`mesh_dirty.g_settledGeomEpochs` to WITHHOLD its advance, so the snap "
       ~ "candidate grid and the symmetry pair table keep answering from a "
@@ -339,13 +341,16 @@ unittest {
       ~ "written over `g_settledGeomEpochs`: state, at your own reader, why a "
       ~ "confined change cannot reach your answer. A consumer that cannot "
       ~ "keys on `g_geomEpochs`, which is the default.\n"
-      ~ "    * FEWER than recorded — a site was deleted or moved; drop the "
-      ~ "row in the same commit.\n\n"
+      ~ "    * FEWER than recorded — a site was deleted, or the declaration "
+      ~ "holding it was renamed; move or drop the row in the same commit.\n"
+      ~ "    * MOVING one of these functions to another FILE is none of the "
+      ~ "above and must be silent here. If a plain `git mv` reddened this "
+      ~ "census, the census is wrong, not the move.\n\n"
       ~ "  Getting this wrong is INVISIBLE to every value assertion in the "
       ~ "tree: a cache keyed too narrowly returns a plausible stale answer, "
       ~ "one keyed too widely returns the right answer slowly, and the draw "
       ~ "calls are identical either way.",
-        bad.data, recordedTotal, kSites.length, hits.length, found.length));
+        bad, recordedTotal, kSites.length, hits.length));
 
     // Vacuity floor, AFTER the assertion it protects. The gate above is
     // already self-defending — every recorded count is non-zero, so an eaten
@@ -360,4 +365,19 @@ unittest {
       ~ "stripper lost its place (an unhandled wysiwyg or token string "
       ~ "desyncs it and it eats the rest of the file), not that the mechanism "
       ~ "was removed. Fix the scanner; do not lower this floor.", hits.length));
+
+    // POPULATION, the other half. `reconcile` returning "" is ALSO what an
+    // empty table over an empty scan returns, so the ledger needs its own
+    // floor, and the two totals need to be stated as an equality — which
+    // costs no ceremony, `recordedTotal` being summed from the table itself.
+    assert(kSites.length >= 8, format(
+        "the recorded set is down to %d row(s) from 10. A table that small "
+      ~ "cannot be the confined-delivery caller set, and `reconcile` agreeing "
+      ~ "with it over a dead scanner is a green that measured nothing.",
+        kSites.length));
+    assert(hits.length == recordedTotal, format(
+        "the scanner found %d occurrence(s) and the table records %d. The "
+      ~ "gate above passed, so the two agree declaration by declaration; this "
+      ~ "can therefore only mean the arithmetic changed under it.",
+        hits.length, recordedTotal));
 }
