@@ -1472,7 +1472,7 @@ for module, symbol, _ in NO_LIVE_LEAVES:
 # matched. That half is a filesystem walk, which is exactly what this scanner
 # can see and the compiler cannot. Below, the tree is walked and the D file's
 # module list, both population counts, its copyable-by-design exceptions, its
-# retired-fixture roster and the two non-`*Token` aggregates must all agree with
+# retired-fixture roster and the SEVEN non-`*Token` aggregates must all agree with
 # it -- in BOTH directions, so neither a missing nor a surplus row is green.
 # Cost: one pass over source/**.d, no compiler, measured at 0.06 s.
 TOKEN_CENSUS_D = ROOT / "tests/unit/prepared_tool_transition_test.d"
@@ -1494,6 +1494,53 @@ def prepared_token_declarations():
             rows[(head.group(1), decl.group(1))] = "@disable this(this)" in body
     return rows
 
+# NON-`*Token` PREPARED AGGREGATES. Seven structs under source/ disable their
+# copy without being spelled `*Token`, so the pattern above cannot reach a
+# single one of them. Until 2026-09-04 both this file and the D census claimed
+# there were TWO (`PreparedArm` and `PreparedCandidateOwner`) -- that was the
+# stated rationale for keying the census on the name suffix, and it was wrong
+# by five. The five had simply never had a compile-fail fixture, so nothing
+# regressed when the fixtures went; but `document.PreparedLayerReadScope` was
+# named nowhere in this scanner at all, and a rationale that miscounts its own
+# exceptions is not a rationale. The roster is pinned in BOTH directions
+# against the walk: a new one is a surplus row, and one that loses
+# `@disable this(this)` drops out of the walk and reads as missing.
+NON_TOKEN_AGGREGATE_RE = re.compile(
+    r"\bstruct\s+((?:Prepared|Validated)\w*)\b\s*(?:\([^)]*\))?\s*\{")
+
+def prepared_non_token_noncopyable():
+    """{(module, TypeName)} for every non-copyable Prepared*/Validated* struct
+    under source/ that is NOT spelled `*Token`."""
+    rows = set()
+    for path in sorted(ROOT.glob("source/**/*.d")):
+        text = path.read_text()
+        head = re.search(r"^\s*module\s+([\w.]+)\s*;", text, re.M)
+        if not head:
+            continue
+        for decl in NON_TOKEN_AGGREGATE_RE.finditer(text):
+            if decl.group(1).endswith("Token"):
+                continue
+            body = text[decl.end():balanced_source(text, decl.end()) - 1]
+            if "@disable this(this)" in body:
+                rows.add((head.group(1), decl.group(1)))
+    return rows
+
+# True == the D census can name the type, so the compiler states the property
+# and this scanner only checks that the assert is still there. False == a
+# `private struct`, which `unit.prepared_tool_transition_test` cannot import at
+# all; for those two the walk above IS the check, and there is no D-side row to
+# look for.
+NON_TOKEN_NONCOPYABLE = {
+    ("command_history", "PreparedHistoryImage"): True,
+    ("command_history", "PreparedHistoryBatch"): False,
+    ("document", "PreparedLayerReadScope"): True,
+    ("prepared_tool_transition", "PreparedArm"): True,
+    ("prepared_tool_transition", "PreparedCandidateOwner"): True,
+    ("record_observer_hub", "PreparedRecordObserverImage"): True,
+    ("tools.create.vertex_place", "ValidatedVertexActivate"): False,
+}
+
+
 # Both readers answer None for "not there", and the gate turns that into a
 # drift row rather than an exception: the mutation loop below deletes exactly
 # these declarations on purpose, and a raise would be indistinguishable from
@@ -1508,10 +1555,11 @@ def d_pinned_count(source, expr):
                   source)
     return int(m.group(1)) if m else None
 
-def token_census_gate(source, declared, stray_fixtures):
+def token_census_gate(source, declared, stray_fixtures, non_token):
     """Disagreements between the D census and the tree. Empty == the two halves
     describe the same set. `source` is the D test's text, `declared` the tree
-    walk, `stray_fixtures` whatever is left in tests/compile_fail/."""
+    walk, `stray_fixtures` whatever is left in tests/compile_fail/, `non_token`
+    the walked set of non-copyable aggregates not spelled `*Token`."""
     bad = []
     if stray_fixtures:
         bad.append("tests/compile_fail/ is populated again ("
@@ -1537,21 +1585,48 @@ def token_census_gate(source, declared, stray_fixtures):
             bad.append(f"{expr} population floor is {got}, the tree says {want}")
     copyable = sorted(f"{m}.{n}" for (m, n), disabled in declared.items()
                       if not disabled)
-    listed_copyable = d_string_rows(source, "kCopyableByDesign") or []
-    if sorted(listed_copyable) != copyable:
+    listed_copyable = d_string_rows(source, "kCopyableByDesign")
+    if listed_copyable is None:
+        bad.append("kCopyableByDesign is gone from " + TOKEN_CENSUS_D.name)
+    elif sorted(listed_copyable) != copyable:
         bad.append(f"kCopyableByDesign disagrees with the tree: tree says "
                    f"{copyable}, the census says {sorted(listed_copyable)}")
     names = {n for _, n in declared}
-    retired = d_string_rows(source, "kRetiredCopyFixtureTokens") or []
-    orphaned = [t for t in retired if t not in names]
-    if orphaned:
-        bad.append(f"retired copy fixtures name types the tree no longer "
-                   f"declares: {orphaned}")
-    # PreparedArm and its candidate owner are non-copyable prepared aggregates
-    # that are NOT spelled `*Token`, so the pattern above cannot reach them and
-    # the D census asserts them by name. Require both names, or retiring
-    # `prepared_arm_copy.d` would have left nothing behind.
-    for aggregate in ("PreparedArm", "PreparedCandidateOwner"):
+    # `or []` here was the bug the comment above already forbade: a roster
+    # DELETED WHOLESALE read as an empty list, `orphaned` was then empty over
+    # nothing, and the check passed honestly while measuring no rows at all --
+    # exactly the vacuously-true shape this census exists to refuse. The floor
+    # is beside it, because a roster trimmed to one row is the same defect
+    # slower.
+    retired = d_string_rows(source, "kRetiredCopyFixtureTokens")
+    if retired is None:
+        bad.append("kRetiredCopyFixtureTokens is gone from "
+                   + TOKEN_CENSUS_D.name + " -- with no roster the "
+                   "\"every retired fixture has a replacement\" check is true "
+                   "over an empty set")
+    else:
+        if len(retired) != 75:
+            bad.append(f"the retired-fixture roster holds {len(retired)} names, "
+                       f"the 66 deleted files named 75")
+        orphaned = [t for t in retired if t not in names]
+        if orphaned:
+            bad.append(f"retired copy fixtures name types the tree no longer "
+                       f"declares: {orphaned}")
+    # SEVEN aggregates disable their copy without being spelled `*Token`, so the
+    # pattern above reaches none of them (roster and rationale at
+    # NON_TOKEN_NONCOPYABLE). The walk is compared to the roster in both
+    # directions -- a new one is surplus, one that drops `@disable this(this)`
+    # goes missing -- and the five the D census can name must still say so.
+    if non_token != set(NON_TOKEN_NONCOPYABLE):
+        missing = sorted(f"{m}.{n}" for (m, n) in NON_TOKEN_NONCOPYABLE
+                         if (m, n) not in non_token)
+        surplus = sorted(f"{m}.{n}" for (m, n) in non_token
+                         if (m, n) not in NON_TOKEN_NONCOPYABLE)
+        bad.append(f"non-`*Token` prepared aggregates disagree with the tree: "
+                   f"missing={missing} surplus={surplus}")
+    for (_, aggregate), in_d_census in sorted(NON_TOKEN_NONCOPYABLE.items()):
+        if not in_d_census:
+            continue
         if f"static assert(!__traits(isCopyable, {aggregate})" not in source:
             bad.append(f"{aggregate} lost its non-copyable assert")
     # The seven retired shape fixtures pinned the diagnostic TEXT as well as the
@@ -1582,8 +1657,12 @@ if len(token_declarations) < 100:
          f"below would then be true over almost nothing")
 token_census_source = TOKEN_CENSUS_D.read_text()
 token_stray = sorted(p.name for p in ROOT.glob("tests/compile_fail/*.d"))
+# No separate floor: the roster is compared to the walk in both directions, so
+# a regex that stopped matching empties the walk and every one of the seven
+# reports as missing, by name.
+token_non_token = prepared_non_token_noncopyable()
 token_drift = token_census_gate(token_census_source, token_declarations,
-                                token_stray)
+                                token_stray, token_non_token)
 if token_drift:
     fail("prepared-token census drift:\n  " + "\n  ".join(token_drift))
 
@@ -1615,8 +1694,33 @@ for label, mutate, strays in (
     mutant = mutate(token_census_source)
     if mutant == token_census_source and not strays:
         fail(f"prepared-token census mutation matched nothing: {label}")
-    if not token_census_gate(mutant, token_declarations, strays):
+    if not token_census_gate(mutant, token_declarations, strays,
+                             token_non_token):
         fail(f"prepared-token census mutation did not RED: {label}")
+
+# Potency for the non-`*Token` half. The first two edit the WALK, which is what
+# a source change would do; the third edits the D census, and is aimed at one of
+# the five aggregates that had no coverage of any kind before 2026-09-04.
+for label, mutate_source, mutate_walk in (
+    ("an aggregate dropped its disabled copy",
+     lambda s: s,
+     lambda w: w - {("document", "PreparedLayerReadScope")}),
+    ("an unlisted aggregate disabled its copy",
+     lambda s: s,
+     lambda w: w | {("document", "PreparedUnlistedProbe")}),
+    ("a newly covered aggregate's D assert deleted",
+     lambda s: s.replace(
+         "static assert(!__traits(isCopyable, PreparedRecordObserverImage)",
+         "static assert(true", 1),
+     lambda w: w),
+):
+    mutant_source = mutate_source(token_census_source)
+    mutant_walk = mutate_walk(token_non_token)
+    if mutant_source == token_census_source and mutant_walk == token_non_token:
+        fail(f"non-token aggregate mutation matched nothing: {label}")
+    if not token_census_gate(mutant_source, token_declarations, [],
+                             mutant_walk):
+        fail(f"non-token aggregate mutation did not RED: {label}")
 
 # Potency against the ACTUAL admitted payload, not merely a new rejected type:
 # inject a class reference into PreparedScalar while retaining its name/UDA.
@@ -7543,6 +7647,35 @@ def rs_update_gate(owner, context, tool_source, stem, cls):
             "if (!ok) context.discard();")) and \
         not any(x in update_body for x in (
             f"Prepared{stem}UpdateOwner", f"prepare{stem}Update"))
+
+for stem, cls, owner_path, tool_source in (
+    ("Rotate", "RotateTool", "source/prepared_rotate_update.d", rotate_tool),
+    ("Scale", "ScaleTool", "source/prepared_scale_update.d", scale_tool),
+):
+    rs_owner = (ROOT / owner_path).read_text()
+    if not rs_update_gate(rs_owner, record_context, tool_source, stem, cls):
+        fail(f"{stem} update owner contract drift")
+    for target, old, new, label in (
+        ("owner", f"target.classinfo !is {cls}.classinfo", "false", "broaden exact class"),
+        ("owner", "mesh_ !is &layer_.meshRef()", "false", "drop mesh identity"),
+        ("owner", "target_.preparedWrapperForUpdate() !is wrapper_", "false", "drop wrapper identity"),
+        ("owner", "target_.preparedEditModeForUpdate() != mode_", "false", "drop mode identity"),
+        ("owner", "prepared_.generation != generation_", "false", "drop prepared generation"),
+        ("owner", "validatedToken_.generation != generation_", "false", "drop validated generation"),
+        ("owner", "target_.installPreparedUpdate(image_); consume();", "consume();", "drop fixed install"),
+        ("context", f"e.{stem.lower()}Update.validate();", "true;", "drop context validate"),
+        ("context", f"e.{stem.lower()}Update.install();", "", "drop context install"),
+        ("context", f"e.{stem.lower()}Update.abort();", "", "drop context abort"),
+        ("tool", "context.markHistoryInstall()", "true", "drop history marker"),
+        ("tool", "context.prepareStampedMeshImage(layer, owner.candidate()", "context.prepareStampedMeshImageMissing(layer, owner.candidate()", "drop mesh enlist"),
+        ("tool", f"context.prepare{stem}Update(owner)", "true", "drop owner enlist"),
+    ):
+        mo, co, ts = rs_owner, record_context, tool_source
+        if target == "owner": mo = mo.replace(old, new, 1)
+        elif target == "context": co = co.replace(old, new, 1)
+        else: ts = ts.replace(old, new, 1)
+        if rs_update_gate(mo, co, ts, stem, cls):
+            fail(f"{stem} update mutation did not RED: {label}")
 
 
 # TopologyPen drop jointly closes an optional live-move history carrier and

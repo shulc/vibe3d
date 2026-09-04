@@ -4,7 +4,10 @@ import prepared_tool_effect;
 import prepared_tool_transition;
 import change_bus : ChangeBus, PreparedDeliveryJournal, PreparedDeliverySpec,
                     PreparedMeshSubjectOwner;
-import command_history : CommandHistory, HistoryEntry, HistoryFlags;
+import command_history : CommandHistory, HistoryEntry, HistoryFlags,
+                        PreparedHistoryImage;
+import document : PreparedLayerReadScope;
+import record_observer_hub : PreparedRecordObserverImage;
 import edit_session : LifecycleUndoEmitter;
 import tool : Tool;
 import registry : ToolFactory;
@@ -310,8 +313,14 @@ static assert(kCensusTokens.length == 134,
 
 /// Three tokens ship WITHOUT a disabled copy, and no retired fixture ever
 /// covered one of them (the 66 fixtures named 76 types out of 134). They are
-/// pinned as copyable so the exception cannot rot: see follow-up card 4090 for
-/// whether the asymmetry against their `Validated*` counterparts is intended.
+/// pinned as copyable so the exception cannot rot -- but they are THREE
+/// DIFFERENT cases, not one in triplicate. Only `PreparedGpuResourceToken` has
+/// a `Validated*` counterpart to be asymmetric with; the other two have none,
+/// and for them the copy CANNOT be disabled -- each is consumed by value from
+/// an lvalue, so `@disable this(this)` stops the build (measured 2026-09-04:
+/// handles/shapes.d(2048) and change_bus.d(121/123)). Their defence against a
+/// second consumer is the owner's generation counter, not the postblit. Card
+/// 4090 therefore has ONE decision left, on the GPU pair.
 private enum string[] kCopyableByDesign = [
     "handles.shapes.PreparedClickPointResourceToken",
     "mesh_gpu.PreparedGpuResourceToken",
@@ -334,13 +343,34 @@ static foreach (mod; kTokenModules)
                     ~ "one-shot capability; a copy is a second consumer.");
         }
 
-// PreparedArm and its candidate owner are the two non-copyable prepared
-// aggregates that are not spelled `*Token`, so the pattern above cannot reach
-// them. `prepared_arm_copy.d` was their fixture.
+// SEVEN prepared aggregates are non-copyable without being spelled `*Token`,
+// so the pattern above reaches none of them. Until 2026-09-04 this comment and
+// the Python gate both said TWO -- `PreparedArm` and `PreparedCandidateOwner`,
+// the only pair that had ever owned a compile-fail fixture. Nothing regressed
+// when the fixtures went, because the other five were never covered by
+// anything; but the miscount was the stated rationale for keying the census on
+// the name suffix, so it is corrected here and the roster is walked out of the
+// tree by `token_census_gate` in tools/check_prepared_protocol.py.
+//
+// Five can be named from this module and are asserted below.
+// `prepared_arm_copy.d` was the fixture for the first two.
 static assert(!__traits(isCopyable, PreparedArm),
     "PreparedArm became copyable: restore `@disable this(this)`");
 static assert(!__traits(isCopyable, PreparedCandidateOwner),
     "PreparedCandidateOwner became copyable: restore `@disable this(this)`");
+static assert(!__traits(isCopyable, PreparedHistoryImage),
+    "PreparedHistoryImage became copyable: restore `@disable this(this)`");
+static assert(!__traits(isCopyable, PreparedLayerReadScope),
+    "PreparedLayerReadScope became copyable: restore `@disable this(this)`");
+static assert(!__traits(isCopyable, PreparedRecordObserverImage),
+    "PreparedRecordObserverImage became copyable: restore `@disable this(this)`");
+// The remaining two are `private struct`s -- `command_history.PreparedHistoryBatch`
+// and `tools.create.vertex_place.ValidatedVertexActivate` -- which this module
+// cannot import at any protection level, so no `static assert` can reach them.
+// For those two the scanner's source walk IS the check: it reads the
+// `@disable this(this)` out of the declaration and reports a disagreement with
+// its roster. That is the same division of labour as the module list above --
+// the compiler states what it can see, the scanner states what is on disk.
 
 // EVERY RETIRED FIXTURE HAS A NAMED REPLACEMENT. This is the list of token
 // types the 66 deleted files named, and each must be a member of the census
