@@ -313,8 +313,13 @@ unittest {
                "If it copies, zeroes or reports the plane, add a roster row here " ~
                "saying which and why.",
                problems, render(sc.sites)));
-    assert(hits.length == 9,
-        format("selection-order value-read population changed: expected 9, found %d",
+    // POPULATION FLOOR. It was 9 when this cell was written and is 8 since
+    // task 4059 generated `mesh_planes.d`'s dropped-face record through a
+    // `static foreach`, which put that read out of a text scanner's reach —
+    // see the "ALSO NOT ROSTERED" note above for why the row went away rather
+    // than becoming a zero.
+    assert(hits.length == 8,
+        format("selection-order value-read population changed: expected 8, found %d",
                hits.length));
 }
 
