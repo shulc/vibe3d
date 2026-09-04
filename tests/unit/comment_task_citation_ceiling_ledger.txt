@@ -9,7 +9,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 512
-task-citation-lines 4972
+task-citation-lines 4971
 citing-files 376
 
 # Exact per-file allowances, sorted by path.
@@ -30,7 +30,7 @@ allow source/argstring.d 3
 allow source/buttonset.d 1
 allow source/bvh_pick.d 17
 allow source/camera_stamp.d 3
-allow source/change_bus.d 30
+allow source/change_bus.d 29
 allow source/command.d 23
 allow source/command_history.d 24
 allow source/commands/ai3d/generate.d 1

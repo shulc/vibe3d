@@ -441,46 +441,11 @@ struct ChangeBus {
     /// replaces the exception the command funnel is already handling.
     ulong batchLeaks;
 
-    /// A recording batch closed over an EMPTY op-log while its kernel had
-    /// reported `affected > 0`. Ticked by
-    /// `mesh_edit_delta.acceptRecordedEdit`, which is the one post-close
-    /// ruling both `mesh.delete` and `mesh.remove` go through (task 1903
-    /// stage L3-a, ruling Q-K6).
-    ///
-    /// THIS COUNTER DOES NOT FIX THE DEFECT AND MUST NOT BE READ AS EVIDENCE
-    /// THAT IT WAS FIXED. The branch it counts is a real contradiction: the
-    /// kernel mutated the mesh, nothing recorded it, nothing rolls it back
-    /// (`scope (failure)` does not fire on a plain `return`, and
-    /// `abortEditBatch` pops WITHOUT restoring), so the user gets a mutated
-    /// mesh, `status:error` and NO history entry — the previous entry now
-    /// describing a state that no longer exists. What changes is that the
-    /// event stops being silent and unattributable: it becomes a number,
-    /// asserted 0 in both lanes and driven to exactly 1 by a deliberate unit
-    /// cell.
-    ///
-    /// THREE REMEDIES WERE ANALYSED AND TWO ARE REFUTED BY WHAT THE CODE
-    /// DOES, recorded here so the one-liner is not re-derived:
-    ///
-    ///   * *"capture a `MeshSnapshot` up front and really fall back to it"* —
-    ///     it reintroduces a whole-mesh snapshot on the DEFAULT path, in the
-    ///     two files whose reason for existing at stage L3 is to delete
-    ///     theirs.
-    ///   * *"throw"* — the violation is detected AFTER `endEditBatch()`, so
-    ///     the mesh is already fully written and `abortEditBatch` restores
-    ///     nothing. A throw is the current defect PLUS an exception.
-    ///   * *"record the empty delta and return `true`"* — refuted on the
-    ///     tree, not by preference: `revert()` does not stop at
-    ///     `delta_.revert(*mesh)`. It continues into the map belt (pre-op
-    ///     sized planes onto a still-post-op mesh), the marks belt (whose
-    ///     `preMarksWord_.length == mesh.faces.length` assertion FIRES) and
-    ///     the selection restore; and the redo arm re-runs the kernel on the
-    ///     un-restored mesh. It corrupts BOTH directions. If `true` is ever
-    ///     wanted it must additionally null all four pre-images AND refuse
-    ///     the redo arm, each with its own witness.
-    ///
-    /// Its own counter and not folded into an existing one, for the reason
-    /// Q-K3 already ruled on the map counters: a different event summed into
-    /// an existing number makes that number unreadable.
+    /// A recording batch reported mutation but produced an empty op-log (task
+    /// 1903). This counter makes the already-invalid transaction observable;
+    /// it is not rollback, and production must keep it at zero. The refusal
+    /// alternatives and witness are recorded in
+    /// doc/source_prose_policy.md#emptydeltaovermutation.
     ulong emptyDeltaOverMutation;
 
     /// TASK 1905 — the gesture recorder's belt refused: the tool handed
@@ -935,82 +900,10 @@ void noteCurrentType(SelType t) {
     pendingCurrentTypeSet = true;
 }
 
-// ===========================================================================
-// TASK 1906 STAGE 1 — the re-grade DECOUPLING CENSUS (plan §2.3).
-// ===========================================================================
-//
-// `XfrmTransformTool.lastAppliedGestureMutationVersion` is the one surviving
-// consumer of `mutationVersion` that this task deliberately does NOT move onto
-// the bus: it is not a cache freshness key, it is a gesture-identity guard
-// asking "has a FOREIGN edit landed since my gesture committed?", and the bus
-// has no class for "someone other than me edited". It is the RECORDED
-// REMAINDER, and these two counters are the measurement that says whether the
-// remainder could one day be paid off.
-//
-// The claim under measurement, evaluated at all four of the guard's read sites
-// (`tools/transform/xfrm_transform.d :: regradeStampCurrent`):
-//
-//     (mesh.mutationVersion == lastAppliedGestureMutationVersion)
-//       == (history.undoEpoch() == armedUndoEpoch)
-//
-// A COUNTER, not an `assert`, and the reason is the verdict channel rather
-// than the claim (plan §2.3, Revision 2):
-//
-//   1. the census lives in the EDITOR binary, because it is measured by
-//      driving `./vibe3d` over HTTP with the falloff / refire suite. An
-//      `AssertError` there kills the main thread while the process lives on,
-//      and every later HTTP request then costs the full 120 s command-bridge
-//      timeout — the suite HANGS instead of reporting (dub.json's `check`
-//      buildType comment states this verbatim);
-//   2. a counter gives a NUMBER — how many times the two disagreed out of how
-//      many evaluations — which is what "the disagreement is the finding"
-//      needs. An abort gives only "at least once".
-//
-// WHY THEY LIVE IN `change_bus` AND NOT IN THE TOOL. They must be readable
-// from `/api/changes`, which is answered on the HTTP thread and reads this
-// module's `__gshared` state directly. Declaring them here is what keeps
-// `http_server` free of a dependency on `tools.transform.*` for two integers;
-// both sides already import this module. They are module-level, NOT fields of
-// `ChangeBus`, so `route_apiChanges`'s whole-struct snapshot copy is unchanged
-// and nothing here pretends to be bus traffic.
-//
-// LIFETIME: process-global and monotone, like every other counter on that
-// endpoint. Tests read them as DELTAS across a step.
-//
-// WHY THERE ARE THREE COUNTERS AND NOT TWO (review B1). `regradeCensusChecks`
-// counts EVERY evaluation, and a DISARMED evaluation cannot disagree: both
-// terms hold the same `ulong.max` sentinel, both compares answer false, and
-// the row is scored as an agreement it had no way to avoid. A floor written
-// as `checks > 0` is therefore satisfiable by rows that could never have
-// produced the finding.
-//
-// `regradeCensusArmedChecks` is the honest denominator: only the rows where
-// the stamp is ARMED (`lastAppliedGestureMutationVersion != ulong.max`), i.e.
-// where the two terms are free to differ. The test's floor reads THIS counter.
-//
-// AND THE MEASUREMENT REFUTED THE HYPOTHESIS THAT PROMPTED IT, which is worth
-// more than the guard it added. The review predicted the census was mostly
-// disarmed rows (~76 of 122). It is not: on the block-(2) scenario of
-// `tests/test_refire_after_sync_publish.d` EVERY evaluation is armed — 117 of
-// 117, 120 of 120 (the absolute count is an idle-frame count and varies run to
-// run; the RATIO is 1). The reason is structural: the only
-// live read site is the ARM-2 branch, which short-circuits on
-// `history.runOpen()`, and a run is open only after a gesture that ARMED the
-// stamp on its way through `armRegradeStamp`. So the counter is currently a
-// guarantee rather than a filter — it costs one compare and it keeps the floor
-// honest if that mix ever changes. The census's real weakness was never
-// disarmed rows; it is that every row is armed-and-nothing-happened, which is
-// what block (3) of that file exists to address.
-//
-// It is keyed on the SHIPPED term's arm state, deliberately, and not on
-// `armedUndoEpoch != ulong.max`: the mutation that deletes `armedUndoEpoch`'s
-// arm (plan §5 row `1b`) leaves the epoch term at the sentinel while the
-// version term is armed. Keyed the other way that mutation would silently
-// empty the denominator instead of reddening the verdict.
-//
-// DELETION CONDITION, so this does not become permanent furniture: when open
-// question #21 is decided — either the guard is re-keyed on `undoEpoch` or the
-// remainder is accepted for good — this trio goes with the decision.
+// The temporary re-grade equivalence census (task 1906): `ArmedChecks` is the
+// non-vacuous denominator and all three counters leave together when the guard
+// is re-keyed or explicitly retained. Measurement history and deletion
+// condition: doc/source_prose_policy.md#временная-перепись-re-grade.
 __gshared ulong regradeCensusChecks;        // times the equivalence was evaluated
 __gshared ulong regradeCensusArmedChecks;   // … of those, with the stamp ARMED
 __gshared ulong regradeCensusDisagreements; // times the two terms disagreed
