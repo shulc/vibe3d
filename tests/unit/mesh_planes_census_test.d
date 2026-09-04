@@ -31,6 +31,10 @@ import std.path       : buildPath, dirName, relativePath;
 import std.string     : strip;
 import std.traits     : FieldNameTuple;
 
+import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
+                                   enclosingSymbols, symbolAt,
+                                   LedgerRow, LedgerHit, reconcile;
+
 // ===========================================================================
 // L2 — the name-prefix census.
 // ===========================================================================
@@ -272,7 +276,8 @@ unittest // L1/L2 for MeshOpEntry: every kFacePlanes name maps to a real MeshOpE
 // file, not attempted here.
 // ===========================================================================
 
-struct Violation { string file; size_t line; string text; }
+/// `file` is DIAGNOSTIC ONLY since task 4056 — the ledger keys on `symbol`.
+struct Violation { string file; size_t line; string text; string symbol; }
 
 private enum Scope { Module, Aggregate, Block }
 private bool isIdentChar(char c) { return isAlphaNum(c) || c == '_'; }
@@ -361,6 +366,13 @@ private enum kIndexLoopFormNotScanned = true;
 /// at method (Block) scope, excluding anything inside a `unittest { }` body.
 /// `file` is carried through into each `Violation` purely for reporting.
 Violation[] scanForHandRolledRewrites(string file, string src) {
+    // The enclosing declaration of every line, from the ONE scope walker
+    // (`tests/unit/census_symbols.d`). It is a second pass over the same text
+    // rather than a fourth home-grown scope stack: this file's own
+    // `Scope`/`headOpensAggregate` machinery answers "am I at method scope?",
+    // which is a different question from "WHICH method?", and only the second
+    // one can key a ledger.
+    const string[] syms = enclosingSymbols(blankUnittestBodies(blankNonCode(src)));
     auto out_ = appender!(Violation[]);
     Scope[] stack;
     bool[]  unitStack;      // parallel to `stack`: is this frame (or an ancestor) a unittest body?
@@ -464,7 +476,8 @@ Violation[] scanForHandRolledRewrites(string file, string src) {
                         e++;
                     }
                     if (d == 0 && swapArgsNamePlane(src[k + 1 .. e - 1]))
-                        out_ ~= Violation(file, line, lineTextAt(src, i));
+                        out_ ~= Violation(file, line, lineTextAt(src, i),
+                                          symbolAt(syms, line - 1));
                 }
             }
 
@@ -506,7 +519,8 @@ Violation[] scanForHandRolledRewrites(string file, string src) {
                     // UFCS spelling of finding #4: `faces.swap(tmp)`.
                     if (k + 5 <= src.length && src[k .. k + 5] == ".swap"
                         && !(k + 5 < src.length && isIdentChar(src[k + 5]))) {
-                        out_ ~= Violation(file, line, lineTextAt(src, i));
+                        out_ ~= Violation(file, line, lineTextAt(src, i),
+                                          symbolAt(syms, line - 1));
                     }
                     // A bare `=`, not `==` and not a compound op (those have
                     // a non-whitespace operator char between the identifier
@@ -514,7 +528,8 @@ Violation[] scanForHandRolledRewrites(string file, string src) {
                     // refuses to cross).
                     if (k < src.length && src[k] == '='
                         && !(k + 1 < src.length && src[k + 1] == '=')) {
-                        out_ ~= Violation(file, line, lineTextAt(src, i));
+                        out_ ~= Violation(file, line, lineTextAt(src, i),
+                                          symbolAt(syms, line - 1));
                     }
                 }
             }
@@ -669,106 +684,119 @@ unittest // …and the shapes the two new arms must NOT flag, because a census t
 // via a standalone scan (`scratch/count_allow.d` in this task's lane
 // scratch): every count below is the exact current hit count for its
 // (file, text) key.
-private struct AllowEntry { string file; string text; string reason; size_t count; }
+/// One exempted hand-rolled rewrite, keyed by the DECLARATION it sits in plus
+/// the statement text — not by the file's PATH (task 4056). Moving
+/// `edgeSliceEx` to a third satellite module must not redden this census, and
+/// before this change it did: the entry above records exactly such a move
+/// being paid for by hand.
+///
+/// THE SYMBOL KEY ALSO CLOSES REVIEW FINDING B1 OUTRIGHT rather than working
+/// around it. B1 was that `"m.vertices = ["` is exact-text-identical across
+/// FOUR distinct factories, so a membership test stayed satisfied whether one
+/// existed or five did, and the count was the only signal. Under a
+/// (declaration, text) key those four are four SEPARATE rows — `makeCube`,
+/// `makeDiamond`, `makeOctahedron`, `makeLShape` — so a fifth copy-pasted
+/// factory is an unrecorded KEY, named, instead of a count that drifted.
+private struct AllowEntry { string symbol; string text; string reason; size_t count; }
 
-private immutable AllowEntry[] kAllow = [
-    // --- source/mesh.d: production face/vertex-rewrite sites (Stage B/vertex family) ---
+private static immutable AllowEntry[] kAllow = [
+    // --- struct Mesh: production face/vertex-rewrite sites (Stage B/vertex family) ---
     // Stage B (task 1902) migrated sites 1/2/3/4/5/6/7 onto
     // mesh_planes.rewriteFaces — their hand-rolled `faces = newFaces;` /
     // `faces              = keptFaces;` lines are gone from the source text,
-    // so both former entries here are DEAD and removed in this same commit,
-    // per this file's own header comment ("its hand-rolled line disappears
-    // from the source text ... the corresponding entry below becomes DEAD —
-    // remove it in the SAME commit"). Site 8 (mirrorFacesPlane) is a RESTORE,
-    // not a reindex — see its own kAllow entries and the doc comment at its
-    // call site (mesh.d) for why it stays hand-rolled.
-    AllowEntry("source/mesh.d", "vertices = newVerts;",
-        "vertex-rewrite site: compactUnreferenced", 1),
-    AllowEntry("source/mesh.d", "vertices             = rbVertices;",
-        "vertex-rewrite site: mirrorFacesPlane rollback", 1),
-    AllowEntry("source/mesh.d", "faces                = rbFaces;",
-        "site 8: mirrorFacesPlane (0678 §4 verified-clean list — pure substitution only)", 1),
+    // so both former entries here are DEAD and were removed in that commit.
+    // Site 8 (mirrorFacesPlane) is a RESTORE, not a reindex — see its own
+    // entries and the doc comment at its call site for why it stays
+    // hand-rolled.
+    AllowEntry("Mesh.compactUnreferenced", "vertices = newVerts;",
+        "vertex-rewrite site", 1),
+    AllowEntry("Mesh.mirrorFacesPlane", "vertices             = rbVertices;",
+        "mirrorFacesPlane rollback", 1),
+    AllowEntry("Mesh.mirrorFacesPlane", "faces                = rbFaces;",
+        "site 8 (0678 §4 verified-clean list — pure substitution only)", 1),
 
-    // --- source/mesh.d: permanent exemptions (never migrate) ---
-    AllowEntry("source/mesh.d", "vertices = []; edges = []; faces = [];",
-        "Mesh.clear() — whole-mesh reset, nothing to carry. count=2: the "
-      ~ "scanner emits ONE violation per matched identifier (`faces` AND "
-      ~ "`vertices` both match on this single line), not one per line", 2),
+    // --- struct Mesh: permanent exemptions (never migrate) ---
+    AllowEntry("Mesh.clear", "vertices = []; edges = []; faces = [];",
+        "whole-mesh reset, nothing to carry. count=2: the scanner emits ONE "
+      ~ "violation per matched identifier (`faces` AND `vertices` both match "
+      ~ "on this single line), not one per line", 2),
+
     // MOVED FILE, NOT MOVED CODE (task 3240, plan 2910 step 3): the
-    // edge-slice family left `struct Mesh` for `source/mesh_edge_slice.d`,
-    // so this rollback's file and its receiver spelling both changed while
-    // the site itself is byte-identical. It is retargeted rather than
-    // deleted, and the scan root below GREW to include the new file in the
-    // same commit — deleting the entry would have turned this census green
-    // by removing the code from its field of view, which is the failure
-    // shape CLAUDE.md names first.
-    AllowEntry("source/mesh_edge_slice.d", "m.vertices.length = vertsBeforePass1;",
-        "edgeSliceEx TRUE no-op rollback — restores the exact PRE-Pass-1 "
-      ~ "vertex count, not a renumbering (`.length =` truncation class, "
-      ~ "plan §6 Stage F's sibling: nothing to carry, nothing moved)", 1),
-    AllowEntry("source/mesh.d", "m.vertices = [",
-        "fresh-mesh factories: makeCube / makeDiamond / makeOctahedron / makeLShape", 4),
-    AllowEntry("source/mesh.d", "m.vertices.length = cast(size_t)side * side;",
-        "fresh-mesh factory: makeGridPlane", 1),
-    AllowEntry("source/mesh.d", "m.vertices = preview.vertices.dup;",
-        "subdivide builder: subdivideCube (re-adds OsdAccel's preview into a fresh Mesh)", 1),
-    AllowEntry("source/mesh.d", "result.vertices.length = outVCount;",
-        "subdivide builder: facetedSubdivide — `result` is a FRESH local Mesh", 1),
-    AllowEntry("source/mesh.d", "sub.vertices = cur;",
-        "subdivide builder: smoothSubdivide — `sub` is a working-copy local Mesh", 1),
+    // edge-slice family left `struct Mesh` for `source/mesh_edge_slice.d`.
+    // Under the OLD path key that move cost an edit here — the entry had to
+    // be retargeted, and the honest-looking alternative (delete it) would
+    // have turned this census green by removing the code from its field of
+    // view. Under the symbol key the move is free and the site is still
+    // named: `edgeSliceEx` is `edgeSliceEx` wherever it is filed. That is
+    // the whole of task 4056, and this row is the case that paid for it.
+    AllowEntry("edgeSliceEx", "m.vertices.length = vertsBeforePass1;",
+        "TRUE no-op rollback — restores the exact PRE-Pass-1 vertex count, "
+      ~ "not a renumbering (`.length =` truncation class, plan §6 Stage F's "
+      ~ "sibling: nothing to carry, nothing moved)", 1),
 
-    // --- source/mesh_ops/*.d: production sites ---
+    // --- fresh-mesh factories: one row EACH, per finding B1 above ---
+    AllowEntry("makeCube",       "m.vertices = [", "fresh-mesh factory", 1),
+    AllowEntry("makeDiamond",    "m.vertices = [", "fresh-mesh factory", 1),
+    AllowEntry("makeOctahedron", "m.vertices = [", "fresh-mesh factory", 1),
+    AllowEntry("makeLShape",     "m.vertices = [", "fresh-mesh factory", 1),
+    AllowEntry("makeGridPlane", "m.vertices.length = cast(size_t)side * side;",
+        "fresh-mesh factory", 1),
+
+    // --- subdivide builders: each writes a FRESH local Mesh ---
+    AllowEntry("subdivideCube", "m.vertices = preview.vertices.dup;",
+        "re-adds OsdAccel's preview into a fresh Mesh", 1),
+    AllowEntry("facetedSubdivide", "result.vertices.length = outVCount;",
+        "`result` is a FRESH local Mesh", 1),
+    AllowEntry("smoothSubdivide", "sub.vertices = cur;",
+        "`sub` is a working-copy local Mesh", 1),
+
+    // --- mesh_ops: production sites ---
     // Stage E (task 1902) migrated sites 10/11/12/13/19 onto
-    // mesh_planes.rewriteFaces — their hand-rolled `faces = newFaces;` /
-    // `faces = mergedFaces;` lines are gone from the source text, so all
-    // five former entries here are DEAD and removed in this same commit,
-    // per this file's own header comment. `poly_bevel.d` was never in this
-    // list: measured (plan §6 Stage E), it has no `faces = …` rewrite site
-    // at all (append-only) — the card's family list overstated it.
+    // mesh_planes.rewriteFaces; all five former entries are gone.
+    // `poly_bevel.d` was never in this list: measured (plan §6 Stage E), it
+    // has no `faces = …` rewrite site at all (append-only).
+    //
     // TASK 1903 Stage G RE-SPELLED THIS ENTRY'S TEXT, and nothing else about
     // it. `bevelEdgesByMask` became a free function over `ref MeshEditBatch`,
     // so the two rollback lines read `ed.vertices.length = …` where they read
-    // `vertices.length = …` from inside the mixin body. The exemption's REASON
-    // is unchanged — it restores a saved COUNT, not a renumbering — and so is
-    // the count. (This entry is why a conversion stage must re-read the
-    // censuses in OTHER files that quote its text: `dub build` is green over a
-    // stale allowlist and only `dub test --config=tests` says otherwise.)
-    AllowEntry("source/mesh_ops/edge_bevel.d",
+    // `vertices.length = …` from inside the mixin body. The exemption's
+    // REASON is unchanged — it restores a saved COUNT, not a renumbering —
+    // and so is the count. (This entry is why a conversion stage must re-read
+    // the censuses in OTHER files that quote its text: `dub build` is green
+    // over a stale allowlist and only `dub test --config=tests` says
+    // otherwise.)
+    AllowEntry("bevelEdgesByMask",
         "ed.vertices.length = savedVertCount; // undo any addVertex from the per-vertex pass",
-        "bevelEdgesByMask early-return rollback (both call sites) — restores "
-      ~ "a saved count, not a renumbering", 2),
-    AllowEntry("source/mesh_ops/loop_slice.d", "m.vertices = [",
-        "fresh-mesh test helper: makeTwoDisjointCubes (fixture-only, not version(unittest)-gated)", 1),
+        "early-return rollback (both call sites) — restores a saved count, "
+      ~ "not a renumbering", 2),
+    AllowEntry("makeTwoDisjointCubes", "m.vertices = [",
+        "fresh-mesh test helper (fixture-only, not version(unittest)-gated)", 1),
 
     // TASK 2007, second pass. `vertices[] = src[];` is a BYTE-WISE content
-    // assignment, and until this commit the scanner could not see the form at
+    // assignment, and until that commit the scanner could not see the form at
     // all (the char after the identifier is `[`, so the bare-`=` test never
-    // reached its operator) — the finding's own point was that this occurrence
-    // was ALREADY in production and riding through a fully green census.
+    // reached its operator) — the finding's own point was that this
+    // occurrence was ALREADY in production and riding through a fully green
+    // census.
     //
     // JUDGED SAFE, and the argument is the method's own, not an assumption:
     // `adoptVertexPositions` refuses on a length mismatch, so it can only
-    // overwrite positions IN PLACE — no vertex is added, removed or renumbered,
-    // and there is nothing for `rewriteVertices` to carry. It publishes
-    // `MeshEditScope.Position` deliberately (NOT Geometry) so `topologyVersion`
-    // does not move, which is the whole reason the method exists (task 1620:
-    // the subpatch preview keys its index space on that counter). Its own doc
-    // comment already states the tracker decision — "No tracker hook, matching
-    // the other `commitChange(Position)` sites" — so this entry records a
-    // decision that was argued at the site, rather than granting a new one.
-    AllowEntry("source/mesh.d", "vertices[] = src[];",
-        "Mesh.adoptVertexPositions — in-place, length-checked POSITION "
-      ~ "overwrite; no vertex is added, removed or renumbered, so there is no "
-      ~ "plane to carry and rewriteVertices has nothing to do", 1),
+    // overwrite positions IN PLACE — no vertex is added, removed or
+    // renumbered, and there is nothing for `rewriteVertices` to carry. It
+    // publishes `MeshEditScope.Position` deliberately (NOT Geometry) so
+    // `topologyVersion` does not move, which is the whole reason the method
+    // exists (task 1620: the subpatch preview keys its index space on that
+    // counter).
+    AllowEntry("Mesh.adoptVertexPositions", "vertices[] = src[];",
+        "in-place, length-checked POSITION overwrite; no vertex is added, "
+      ~ "removed or renumbered, so there is no plane to carry and "
+      ~ "rewriteVertices has nothing to do", 1),
 ];
 
-private bool allowed(string file, string text) {
-    foreach (a; kAllow)
-        if (a.file == file && a.text == text) return true;
-    return false;
+/// The ledger key: the declaration, then the statement. No path.
+private string allowKey(string symbol, string text) {
+    return symbol ~ "|" ~ text;
 }
-
-private string allowKey(string file, string text) { return file ~ "\x01" ~ text; }
 
 // ---------------------------------------------------------------------------
 // Its own mutation, run FIRST (plan §3 "The tree-scan gate", verbatim):
@@ -831,48 +859,62 @@ unittest // the gate: every hand-rolled faces/vertices rewrite in mesh.d + mesh_
                 ~ "M5's synthetic-sample check above for the unit-level "
                 ~ "version of this same guard)", hits.length, filesScanned));
 
-    string[] unlisted;
+    // ONE reconciliation, not two passes (task 4056). `unlisted` and the
+    // per-entry count equality were the same question asked twice about a
+    // (file, text) key; `census_symbols.reconcile` asks it once about a
+    // (declaration, text) key and answers in four findings — an unrecorded
+    // key, a count that changed, a recorded key with nothing left, and one
+    // symbol realised in two files.
+    //
+    // Per-key COUNTING is still what closes review finding B1 in the
+    // direction the symbol split cannot: two copies of the same statement
+    // inside ONE function (`Mesh.clear`, `bevelEdgesByMask`) share a key, so
+    // a third copy there moves a count rather than adding a key.
+    auto led = appender!(LedgerHit[]);
     foreach (v; hits)
-        if (!allowed(v.file, v.text))
-            unlisted ~= format("%s:%d  %s", v.file, v.line, v.text);
+        led.put(LedgerHit(allowKey(v.symbol, v.text), v.file, v.line, v.text));
 
-    assert(unlisted.length == 0,
-           "a hand-rolled `faces`/`vertices` rewrite was found OUTSIDE "
-         ~ "mesh_planes.rewriteFaces/rewriteVertices and outside the "
-         ~ "allowlist (kAllow) in this file — route it through the "
-         ~ "primitive, or add a reasoned allowlist entry if it is a "
-         ~ "genuine exemption (Mesh.clear, a fresh-mesh factory, a pure "
-         ~ "rollback):\n  " ~ unlisted.join("\n  "));
-
-    // Per-entry hit-count EQUALITY (task 1902 review finding B1). Membership
-    // alone (`allowed()` above) cannot count: `kAllow`'s
-    // `"faces              = newFaces;"` entry in `source/mesh.d` is
-    // exact-text-identical across FOUR distinct sites, so a membership check
-    // stays satisfied whether all four still exist, a fifth (copy-pasted)
-    // one landed, or one of the four migrated away and only three remain.
-    // Counting closes both directions: a NEW copy-pasted line pushes an
-    // entry's actual count ABOVE its recorded `count` (redden — route it
-    // through the primitive or give it its own reasoned entry); a site that
-    // migrated off the allowlist (plan §6 Stages B–F) pushes it BELOW
-    // (redden — the entry is now DEAD, remove it in the same commit).
-    size_t[string] actual;
-    foreach (v; hits) {
-        immutable string k = allowKey(v.file, v.text);
-        actual[k] = (k in actual ? actual[k] : 0) + 1;
-    }
+    auto rows = appender!(LedgerRow[]);
+    size_t recordedTotal = 0;
     foreach (a; kAllow) {
-        immutable string k = allowKey(a.file, a.text);
-        immutable size_t got = (k in actual) ? actual[k] : 0;
-        assert(got == a.count,
-               format("kAllow entry %s %s (%s): expected %d hand-rolled "
-                    ~ "hit(s), found %d. got > count means a NEW "
-                    ~ "copy-pasted line landed next to this allowed one — "
-                    ~ "route it through mesh_planes.rewriteFaces/"
-                    ~ "rewriteVertices, or give it its OWN reasoned kAllow "
-                    ~ "entry if it is a genuine exemption. got < count "
-                    ~ "means a site this entry named has migrated off the "
-                    ~ "allowlist — this entry is now DEAD; remove it (or "
-                    ~ "shrink its count and its reason) in the SAME commit.",
-                      a.file, a.text, a.reason, a.count, got));
+        rows.put(LedgerRow(allowKey(a.symbol, a.text), a.count, a.reason));
+        recordedTotal += a.count;
     }
+
+    const string bad = reconcile(rows.data, led.data);
+    assert(bad.length == 0, format(
+        "a hand-rolled `faces`/`vertices` rewrite no longer matches the "
+      ~ "recorded allowlist.%s\n\n"
+      ~ "  Recorded: %d hit(s) over %d (declaration, statement) key(s). "
+      ~ "Scanner: %d.\n\n"
+      ~ "    * NOT RECORDED AT ALL — a rewrite outside "
+      ~ "mesh_planes.rewriteFaces/rewriteVertices and outside kAllow. Route "
+      ~ "it through the primitive, or add a reasoned entry if it is a genuine "
+      ~ "exemption (Mesh.clear, a fresh-mesh factory, a pure rollback).\n"
+      ~ "    * MORE than recorded — a NEW copy-pasted line landed inside a "
+      ~ "declaration that already has an allowed one. Same choice as above; "
+      ~ "bumping the count is the answer only when the second copy is as "
+      ~ "exempt as the first, and the reason has to say so.\n"
+      ~ "    * FEWER, or found NONE — a site migrated off the allowlist (plan "
+      ~ "§6 Stages B–F) or its declaration was renamed. The entry is DEAD or "
+      ~ "misnamed; fix it in the SAME commit.\n"
+      ~ "    * MOVING one of these functions to another FILE is none of the "
+      ~ "above and must be silent here — that is what the key is for. The "
+      ~ "`edgeSliceEx` row above records the last time such a move was paid "
+      ~ "for by hand.",
+        bad, recordedTotal, kAllow.length, hits.length));
+
+    // POPULATION, after the assertion it protects and in both halves: a floor
+    // on the LEDGER (so it cannot be emptied alongside a dead scanner) and an
+    // EQUALITY between the two totals, which costs no ceremony because
+    // `recordedTotal` is summed from the table itself.
+    assert(kAllow.length >= 12, format(
+        "the allowlist is down to %d row(s) from 16 — `reconcile` agreeing "
+      ~ "with a table that small over a dead scanner is a green that measured "
+      ~ "nothing.", kAllow.length));
+    assert(hits.length == recordedTotal, format(
+        "the scanner found %d hand-rolled hit(s) and the table records %d. "
+      ~ "The gate above passed, so the two agree key by key; this can "
+      ~ "therefore only mean the arithmetic changed under it.",
+        hits.length, recordedTotal));
 }
