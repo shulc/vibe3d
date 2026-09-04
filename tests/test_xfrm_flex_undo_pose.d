@@ -178,7 +178,7 @@ void undoStep() {
     Thread.sleep(dur!"msecs"(40));
 }
 void redoStep() {
-    postJson("/api/redo", "");
+    postJson("/api/command", commandBody("history.redo"));
     Thread.sleep(dur!"msecs"(80));
     getJson("/api/toolpipe/eval");
     Thread.sleep(dur!"msecs"(40));
@@ -524,7 +524,7 @@ unittest {
     Thread.sleep(dur!"msecs"(80));
     getJson("/api/toolpipe/eval");
     Thread.sleep(dur!"msecs"(40));
-    postJson("/api/redo", "");
+    postJson("/api/command", commandBody("history.redo"));
     Thread.sleep(dur!"msecs"(80));
     getJson("/api/toolpipe/eval");
     Thread.sleep(dur!"msecs"(40));

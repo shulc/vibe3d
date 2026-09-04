@@ -88,7 +88,7 @@ void doUndo() {
     assert(r["status"].str == "ok", "/api/undo failed: " ~ r.toString);
 }
 void doRedo() {
-    auto r = parseJSON(cast(string)post(BASE ~ "/api/redo", ""));
+    auto r = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("history.redo")));
     assert(r["status"].str == "ok", "/api/redo failed: " ~ r.toString);
 }
 

@@ -88,7 +88,7 @@ unittest {
         "undo must restore the exact pre-cut cube");
 
     // /api/redo restores the cut bit-exact.
-    auto r = postJson("/api/redo", "");
+    auto r = postJson("/api/command", commandBody("history.redo"));
     assert(r["status"].str == "ok", "redo must succeed: " ~ r.toString);
     assert(vertexCountLayer(0) == 12 && edgeCountLayer(0) == 20 && faceCountLayer(0) == 10,
         "redo must restore the cut exactly");

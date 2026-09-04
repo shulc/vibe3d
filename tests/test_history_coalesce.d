@@ -87,7 +87,7 @@ JSONValue vertexEdit(int idx, double[3] before, double[3] after,
 }
 
 JSONValue undoStep() { return postJson("/api/command", commandBody("history.undo")); }
-JSONValue redoStep() { return postJson("/api/redo", ""); }
+JSONValue redoStep() { return postJson("/api/command", commandBody("history.redo")); }
 
 // ---------------------------------------------------------------------------
 // (a) Two COMPATIBLE edits (same vertex) coalesce into ONE entry; one undo

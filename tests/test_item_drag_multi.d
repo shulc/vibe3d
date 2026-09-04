@@ -636,7 +636,7 @@ unittest {
         ~ "session captured only the primary, even though the fold moved the "
         ~ "whole set)");
 
-    r = parseJSON(cast(string)post(BASE ~ "/api/redo", ""));
+    r = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("history.redo")));
     assert(r["status"].str == "ok", "/api/redo failed: " ~ r.toString);
     assert(dist3(layerPos(0), draggedA) < 1e-5 && dist3(layerPos(1), draggedB) < 1e-5,
         "redo must re-apply the gesture to BOTH targets");

@@ -319,7 +319,7 @@ Cell runCell(string name, string tool, string recordSite, string mode,
       ~ ", expected back to " ~ u0.to!string ~ " — more than one step means the "
       ~ "entry's revert() answered false and the suffix behind it was truncated");
 
-    auto rr = postJ("/api/redo");
+    auto rr = postJ("/api/command", commandBody("history.redo"));
     assert(rr["status"].str == "ok", name ~ ": /api/redo failed: " ~ rr.toString);
     settle();
     c.postRedo = planes();

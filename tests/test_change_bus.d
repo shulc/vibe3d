@@ -203,7 +203,7 @@ unittest {
         "undo of subdivide must re-publish Points|Polygons");
 
     // Redo → same.
-    postJson("/api/redo", "");
+    postJson("/api/command", commandBody("history.redo"));
     auto afterRedo = settleAfter(afterUndo);
     assert(afterRedo.totalPoints   > afterUndo.totalPoints
         && afterRedo.totalPolygons > afterUndo.totalPolygons,

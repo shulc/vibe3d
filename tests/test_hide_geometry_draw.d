@@ -602,7 +602,7 @@ unittest {
     assert(countTrue(faceHidden()) == 0,
         "undo must clear the hidden set in the model too");
 
-    auto rd = postJson("/api/redo", "");
+    auto rd = postJson("/api/command", commandBody("history.redo"));
     assert(rd["status"].str == "ok", "/api/redo failed: " ~ rd.toString);
     auto redone = gpuBuffers();
     assert(redone.faceVertCount == 18 && redone.vertCount == 7

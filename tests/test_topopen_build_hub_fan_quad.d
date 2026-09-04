@@ -114,7 +114,7 @@ unittest {
         "undo of the quad-build must land exactly on drag2's post-triangle state");
     assert(hasExactFace(1, [0, 2, 1]), "undo must restore the ORIGINAL triangle, not a lingering quad");
 
-    auto r = postJson("/api/redo", "");
+    auto r = postJson("/api/command", commandBody("history.redo"));
     assert(r["status"].str == "ok");
     assert(vertexCountLayer(1) == 4 && edgeCountLayer(1) == 5 && faceCountLayer(1) == 1);
     assert(hasExactFace(1, [2, 0, 1, 3]), "redo must restore the SAME quad winding");

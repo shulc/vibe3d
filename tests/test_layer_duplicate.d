@@ -47,7 +47,7 @@ JSONValue postUndo() {
 }
 
 JSONValue postRedo() {
-    return parseJSON(cast(string)post(baseUrl ~ "/api/redo", ""));
+    return parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("history.redo")));
 }
 
 JSONValue getLayers()              { return getJson("/api/layers"); }

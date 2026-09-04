@@ -147,7 +147,7 @@ unittest { // successful replay response body contains "line" field
     // Undo so the subdivide is reversible, then replay.
     post(testBaseUrl() ~ "/api/command", commandBody("history.undo"));
     // Redo to restore state so replay can apply again (subdivide is repeatable).
-    post(testBaseUrl() ~ "/api/redo", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("history.redo"));
     // Now replay: subdivide again (creates another entry).
     auto resp = postReplay(lastIdx);
     if (resp["status"].str == "ok") {

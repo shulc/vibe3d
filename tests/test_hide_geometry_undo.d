@@ -289,7 +289,7 @@ unittest { // row 2 — REDO of a hide lands back inside a hidden state
     assert(countHidden("faceHidden") == 0 && countHidden("vertexHidden") == 0,
         "setup: the undo must leave nothing hidden");
 
-    auto r = postJson("/api/redo", "");
+    auto r = postJson("/api/command", commandBody("history.redo"));
     assert(r["status"].str == "ok", "/api/redo failed: " ~ r.toString);
 
     assert(hiddenList("faceHidden") == hiddenFaces,

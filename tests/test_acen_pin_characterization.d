@@ -327,7 +327,7 @@ unittest {
         settle();
         record("move_" ~ m ~ "_afterUndo");
 
-        postJson("/api/redo", "");
+        postJson("/api/command", commandBody("history.redo"));
         settle();
         record("move_" ~ m ~ "_afterRedo");
 
@@ -355,7 +355,7 @@ unittest {
     postJson("/api/command", commandBody("history.undo"));
     settle();
     record("move_manual_afterUndo");
-    postJson("/api/redo", "");
+    postJson("/api/command", commandBody("history.redo"));
     settle();
     record("move_manual_afterRedo");
     cmd("tool.set move off");
@@ -373,7 +373,7 @@ unittest {
     postJson("/api/command", commandBody("history.undo"));
     settle();
     record("move_pivot_afterUndo");
-    postJson("/api/redo", "");
+    postJson("/api/command", commandBody("history.redo"));
     settle();
     record("move_pivot_afterRedo");
     cmd("tool.set move off");
@@ -412,11 +412,11 @@ unittest {
     settle();
     record("autoRelocateChain_afterUndoG1");
 
-    postJson("/api/redo", "");
+    postJson("/api/command", commandBody("history.redo"));
     settle();
     record("autoRelocateChain_afterRedoG1");
 
-    postJson("/api/redo", "");
+    postJson("/api/command", commandBody("history.redo"));
     settle();
     record("autoRelocateChain_afterRedoG2");
 
@@ -455,7 +455,7 @@ unittest {
         settle();
         record(c.label ~ "_afterUndo");
 
-        postJson("/api/redo", "");
+        postJson("/api/command", commandBody("history.redo"));
         settle();
         record(c.label ~ "_afterRedo");
 
@@ -496,7 +496,7 @@ unittest {
         settle();
         record(c.label ~ "_afterUndo");
 
-        postJson("/api/redo", "");
+        postJson("/api/command", commandBody("history.redo"));
         settle();
         record(c.label ~ "_afterRedo");
 
@@ -559,7 +559,7 @@ unittest {
         "numeric-edit undo must still revert the GEOMETRY to pre-edit; v6.x="
         ~ v6[0].to!string);
 
-    postJson("/api/redo", "");
+    postJson("/api/command", commandBody("history.redo"));
     settle();
     record("numericMoveTX_afterRedo");
 

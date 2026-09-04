@@ -75,7 +75,7 @@ JSONValue doUndo() {
 }
 
 JSONValue doRedo() {
-    return jpost("/api/redo", "");
+    return jpost("/api/command", commandBody("history.redo"));
 }
 
 JSONValue getSel()  { return jget("/api/selection"); }

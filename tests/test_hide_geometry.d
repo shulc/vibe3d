@@ -64,7 +64,7 @@ void runCmd(string id) {
 }
 
 JSONValue apiUndo() { return postJson("/api/command", commandBody("history.undo")); }
-JSONValue apiRedo() { return postJson("/api/redo", ""); }
+JSONValue apiRedo() { return postJson("/api/command", commandBody("history.redo")); }
 
 JSONValue model() { return getJson("/api/model"); }
 

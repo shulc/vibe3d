@@ -86,7 +86,7 @@ unittest {
     assert(edgeCountLayer(1) == 0, "undo must remove the edge atomically WITH B");
 
     // 4) Redo restores bit-exact.
-    auto r = postJson("/api/redo", "");
+    auto r = postJson("/api/command", commandBody("history.redo"));
     assert(r["status"].str == "ok", "redo must succeed: " ~ r.toString);
     assert(vertexCountLayer(1) == 2, "redo must restore both vertices");
     assert(edgeCountLayer(1) == 1, "redo must restore the edge");

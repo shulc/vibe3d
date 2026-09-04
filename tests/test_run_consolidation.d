@@ -378,7 +378,7 @@ unittest {
         ~ " now=" ~ undoCount().to!string);
 
     // Redo re-applies the consolidated run (run-end geometry restored).
-    postJson("/api/redo", "");
+    postJson("/api/command", commandBody("history.redo"));
     settle();
     assert(vertNear(vert(6), v6Final),
         "redo of the consolidated run re-applies the run-end geometry; expected ("

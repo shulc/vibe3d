@@ -52,7 +52,7 @@ void postSelect(string mode, int[] indices) {
 }
 
 JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/command", commandBody("history.undo"))); }
-JSONValue postRedo() { return parseJSON(post(testBaseUrl() ~ "/api/redo", "")); }
+JSONValue postRedo() { return parseJSON(post(testBaseUrl() ~ "/api/command", commandBody("history.redo"))); }
 JSONValue getModel() { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
 
 // ---------------------------------------------------------------------------

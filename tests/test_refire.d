@@ -66,7 +66,7 @@ JSONValue postUndo() {
 }
 
 JSONValue postRedo() {
-    return parseJSON(post(testBaseUrl() ~ "/api/redo", ""));
+    return parseJSON(post(testBaseUrl() ~ "/api/command", commandBody("history.redo")));
 }
 
 // Run an argstring command line through /api/command (the same main-thread

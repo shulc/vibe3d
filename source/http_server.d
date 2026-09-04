@@ -530,15 +530,6 @@ class HttpServer {
     private alias InjectLayerHandler = void delegate(JSONValue params);
     private InjectLayerHandler injectLayerHandler;
 
-    // ----- /api/redo synchronous bridge ------------------------------------
-    // The handler returns true on success (an entry was redone) or
-    // false on stack-empty / revert-failure. /api/history is a read-only
-    // provider that can be served from the HTTP thread directly (no
-    // main-thread sync) since the labels list is a snapshot at request
-    // time and any race just yields slightly stale labels.
-    private alias UndoRedoHandler = bool delegate();
-    private UndoRedoHandler redoHandler;
-
     // ----- /api/history/jump (multi-step) ----------------------------------
     // CommandHistory.jumpTo(target) called on the main thread via the same
     // sync pattern as /api/undo. `target` is the desired length of undoStack
@@ -687,7 +678,7 @@ class HttpServer {
     // constructed (and self-registered into `bridges`) in the HttpServer
     // constructor, IN THE SAME ORDER the old hand-written app.d tick list used
     // (model, pipeEval, path, command,
-    // cameraSet, gpuSurface, pick, refire, block, undo, jump). Each bridge's
+    // cameraSet, gpuSurface, pick, refire, block, jump). Each bridge's
     // `service` delegate closes over `this` (reading the handler/provider
     // fields above AT TICK TIME, so it works even though app.d wires those
     // fields after HttpServer is constructed).
@@ -817,10 +808,6 @@ class HttpServer {
     struct BlockReq  { string action; string label; }
     struct BlockResp { string error; }
     private MainThreadBridge!(BlockReq, BlockResp) blockBridge;
-
-    struct UndoReq  { }
-    struct UndoResp { bool result; }
-    private MainThreadBridge!(UndoReq, UndoResp) undoBridge;
 
     struct JumpReq  { size_t target; }
     struct JumpResp { bool result; }
@@ -1254,20 +1241,6 @@ class HttpServer {
                 }
             });
 
-        undoBridge = new MainThreadBridge!(UndoReq, UndoResp)(this,
-            (ref UndoReq req, ref UndoResp resp) {
-                auto h = redoHandler;
-                if (h is null) {
-                    resp.result = false;
-                } else {
-                    try {
-                        resp.result = h();
-                    } catch (Exception) {
-                        resp.result = false;
-                    }
-                }
-            });
-
         jumpBridge = new MainThreadBridge!(JumpReq, JumpResp)(this,
             (ref JumpReq req, ref JumpResp resp) {
                 if (jumpHandler is null) {
@@ -1512,13 +1485,6 @@ class HttpServer {
     public void setInjectLayerHandler(InjectLayerHandler handler) {
         this.injectLayerHandler = handler;
     }
-
-    /**
-     * Set the redo callback. Same main-thread sync as the others.
-     * Returns true if a stack entry was applied, false on stack-empty or
-     * revert failure.
-     */
-    public void setRedoHandler(UndoRedoHandler handler) { this.redoHandler = handler; }
 
     /// /api/history/jump (Phase 2 of the history-panel design doc)
     /// — multi-step jump. `target` is the desired undoStack length after
@@ -3466,25 +3432,6 @@ class HttpServer {
         response.headers["Content-Type"] = "application/json";
     }
 
-    private void route_apiRedo(HttpRequest request, HttpResponse response) {
-        // Same main-thread sync pattern as /api/command, via the undo
-        // bridge. tickAll() drains it on the main thread, invoking the
-        // handler and writing resp.result.
-        auto handler = redoHandler;
-        if (handler is null) {
-            response.statusCode = 200;
-            response.body = `{"status":"error","message":"redo handler not set"}`;
-        } else {
-            undoBridge.resp.result = false;
-            undoBridge.submitAndWait();  // timeout is noop-false — no error body
-            response.statusCode = 200;
-            response.body = undoBridge.resp.result
-                ? `{"status":"ok"}`
-                : `{"status":"noop","message":"stack empty or revert failed"}`;
-        }
-        response.headers["Content-Type"] = "application/json";
-    }
-
     private void route_apiRefire(HttpRequest request, HttpResponse response) {
         if (refireHandler is null) {
             response.statusCode = 200;
@@ -4041,7 +3988,6 @@ private enum RouteSpec[] kRoutes = [
     // No other route is a prefix of this one.
     RouteSpec("/api/command",              "POST", Match.prefix, Answered.mainThread, "route_apiCommand"),
     RouteSpec("/api/script",               "POST", Match.prefix, Answered.mainThread, "route_apiScript"),
-    RouteSpec("/api/redo",                 "POST", Match.exact,  Answered.mainThread, "route_apiRedo"),
     RouteSpec("/api/refire",               "POST", Match.exact,  Answered.mainThread, "route_apiRefire"),
     RouteSpec("/api/history/block",        "POST", Match.exact,  Answered.mainThread, "route_apiHistoryBlock"),
     RouteSpec("/api/undo/status",          "GET",  Match.exact,  Answered.httpThread, "route_apiUndoStatus"),
@@ -4082,6 +4028,21 @@ private string routeTableProblem(const RouteSpec[] rs) {
 }
 
 static assert(routeTableProblem(kRoutes) is null, routeTableProblem(kRoutes));
+
+private string retiredWrapperRouteProblem(const RouteSpec[] rs) {
+    enum string[] retired = [
+        "/api/select", "/api/transform", "/api/reset",
+        "/api/load-mesh", "/api/undo", "/api/redo",
+    ];
+    foreach (route; rs)
+        foreach (path; retired)
+            if (route.path == path)
+                return "retired wrapper route remains: " ~ path;
+    return null;
+}
+
+static assert(retiredWrapperRouteProblem(kRoutes) is null,
+              retiredWrapperRouteProblem(kRoutes));
 
 // Every route names a member that exists, and every `route_` member is
 // reachable from at least one route. This has to live at module scope:

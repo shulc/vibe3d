@@ -3341,14 +3341,11 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
     }
 }
 
-// wireHistoryProviders — `/api/redo`, `/api/history*`, `/api/trace*`,
+// wireHistoryProviders — `/api/history*`, `/api/trace*`,
 // `/api/refire` — the undo service and its observables.
 private void wireHistoryProviders(HttpServer httpServer, ref EditorApp app,
                              ref string[] optionalSlots) {
     with (app) {
-        httpServer.setRedoHandler(() {
-            return history.redo();
-        });
         // History panel Phase 2 — multi-step jump via /api/history/jump.
         httpServer.setJumpHandler((size_t target) {
             return history.jumpToVisible(target);

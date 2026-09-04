@@ -103,7 +103,7 @@ size_t undoN(size_t n) {
 size_t redoN(size_t n) {
     size_t did = 0;
     foreach (_; 0 .. n) {
-        auto j = postJson("/api/redo", "");
+        auto j = postJson("/api/command", commandBody("history.redo"));
         if (j["status"].str != "ok") break;
         ++did;
     }

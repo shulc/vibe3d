@@ -66,7 +66,7 @@ unittest {
         "undo must restore A's exact pre-move position");
 
     // Redo re-applies the move exactly.
-    auto r = postJson("/api/redo", "");
+    auto r = postJson("/api/command", commandBody("history.redo"));
     assert(r["status"].str == "ok", "redo must succeed: " ~ r.toString);
 
     auto afterRedo = readVerticesLayer(1);

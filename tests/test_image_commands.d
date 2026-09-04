@@ -61,7 +61,7 @@ void resetCube() {
 }
 
 JSONValue postUndo() { return parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("history.undo"))); }
-JSONValue postRedo() { return parseJSON(cast(string)post(baseUrl ~ "/api/redo", "")); }
+JSONValue postRedo() { return parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("history.redo"))); }
 
 void undoOk(string why) {
     auto u = postUndo();

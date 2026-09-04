@@ -77,7 +77,7 @@ JSONValue getSelection() {
 }
 
 JSONValue postRedo() {
-    return parseJSON(post(testBaseUrl() ~ "/api/redo", ""));
+    return parseJSON(post(testBaseUrl() ~ "/api/command", commandBody("history.redo")));
 }
 
 /// The set of selected-edge indices in the /api/selection payload.

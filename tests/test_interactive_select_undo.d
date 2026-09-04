@@ -97,7 +97,7 @@ JSONValue postUndo() {
 }
 
 JSONValue postRedo() {
-    return parseJSON(post(testBaseUrl() ~ "/api/redo", ""));
+    return parseJSON(post(testBaseUrl() ~ "/api/command", commandBody("history.redo")));
 }
 
 JSONValue getSelection() {

@@ -703,7 +703,7 @@ unittest {
              ~ "3 003 before the fix).", kEdges, dUndo));
 
     const long d2 = deliveries();
-    postJson("/api/redo", "");
+    postJson("/api/command", commandBody("history.redo"));
     const long dRedo = deliveries() - d2;
     assert(dRedo == 1,
         format("REDO delivered %d time(s), expected exactly 1 — CommandHistory.redo() "

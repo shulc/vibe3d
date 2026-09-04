@@ -45,7 +45,7 @@ unittest {
     assert(u["status"].str == "ok", "undo must succeed: " ~ u.toString);
     assert(vertexCountLayer(1) == 0, "undo must remove the placed vertex");
 
-    auto r = postJson("/api/redo", "");
+    auto r = postJson("/api/command", commandBody("history.redo"));
     assert(r["status"].str == "ok", "redo must succeed: " ~ r.toString);
     assert(vertexCountLayer(1) == 1, "redo must restore the placed vertex");
 }

@@ -80,7 +80,7 @@ JSONValue postUndo() {
 }
 
 JSONValue postRedo() {
-    return parseJSON(cast(string)post(testBaseUrl() ~ "/api/redo", ""));
+    return parseJSON(cast(string)post(testBaseUrl() ~ "/api/command", commandBody("history.redo")));
 }
 
 // Drain the undo stack so count-based asserts aren't confused by maxDepth

@@ -104,7 +104,7 @@ unittest {
     assert(edgeCountLayer(1) == 1 && faceCountLayer(1) == 0);
     assert(hasEdgeLayer(1, 0, 1), "drag1's own edge must survive the tri-build's undo");
 
-    auto r = postJson("/api/redo", "");
+    auto r = postJson("/api/command", commandBody("history.redo"));
     assert(r["status"].str == "ok");
     assert(vertexCountLayer(1) == 3 && edgeCountLayer(1) == 3 && faceCountLayer(1) == 1);
     assert(hasExactFace(1, [0, 2, 1]), "redo must restore the SAME winding");
