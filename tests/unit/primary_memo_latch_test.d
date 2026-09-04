@@ -70,9 +70,27 @@ unittest {
     auto head = doc.layers[3];
     assert(doc.primary is head, "setup: a stable multi-selected document");
 
+    // POPULATION FLOOR FOR THE INSTRUMENT ITSELF, and the rate assertion below
+    // is vacuous without it: `<= 1` is satisfied by ZERO, and zero is also what
+    // a counter nobody increments reports. So first make the counter move —
+    // one selection mutation, one read — and require that it did.
+    resetEditTargetDerives();
+    doc.selectItem(doc.layers[5], SelMode.Set);
+    assert(doc.primary is doc.layers[5], "setup: the selection really moved");
+    assert(g_editTargetDerives >= 1,
+        "population floor: the derivation counter is LIVE — a mutation "
+      ~ "followed by a read must derive at least once, or the rate assertion "
+      ~ "below is measuring a counter nobody increments");
+
+    // Back to the pinned state for the window.
+    doc.selectItem(doc.layers[3], SelMode.Set);
+    doc.selectItem(doc.layers[1], SelMode.Add);
+    doc.selectItem(doc.layers[6], SelMode.Add);
+    assert(doc.primary is head, "setup: the multi-selection is re-established");
+
     // A FRAME-SHAPED WINDOW: no mutation at all between the reads, which is
     // what a render frame does — the live measurement in the card's log counted
-    // 78 derivations per frame over exactly this shape.
+    // tens of derivations per frame over exactly this shape.
     resetEditTargetDerives();
     size_t reads = 0;
     foreach (_; 0 .. 30) {
