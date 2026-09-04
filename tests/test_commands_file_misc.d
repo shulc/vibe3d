@@ -45,6 +45,43 @@ void setCamera(string body_) {
     assert(r["status"].str == "ok", "POST /api/camera failed: " ~ r.toString);
 }
 
+unittest { // scene.reset {"empty":true} → an EMPTY scene, not the default cube
+    // TASK 4062 — the semantic-merge cell, and it exists because the failure it
+    // pins is a SILENT WRONG ANSWER. `scene.reset`'s `empty` flag used to reach
+    // the command through a hand-written arm in the HTTP dispatcher; delete
+    // that arm and the same request still answers `status:ok` — and leaves the
+    // default cube standing. Every `{"empty":true}` caller in this suite
+    // (fixture_helpers, the ACEN rigs, the primitive tests) asserts only the
+    // status, so not one of them can see it.
+    //
+    // ORDER: the argument-less reset sits ABOVE the empty one. An `empty` slot
+    // that swallowed EVERY reset reddens there; one that never binds reddens
+    // below. One run buys both halves.
+    post(baseUrl ~ "/api/command", commandBody("scene.reset"));
+    assert(modelVertexCount() == 8,
+        "an argument-less reset is still the default cube; got "
+        ~ modelVertexCount().to!string);
+
+    auto r = parseJSON(cast(string)post(baseUrl ~ "/api/command",
+        commandBody("scene.reset", `{"empty":true}`)));
+    assert(r["status"].str == "ok", "reset(empty) failed: " ~ r.toString);
+    assert(modelVertexCount() == 0,
+        "an EXPLICIT empty reset must empty the scene; got "
+        ~ modelVertexCount().to!string
+        ~ " verts. 8 is the default cube — i.e. the argument was swallowed and "
+        ~ "the request reported ok anyway");
+
+    // …and the OTHER two slots still arrive, so "empty wins" is not the whole
+    // of what this command reads.
+    post(baseUrl ~ "/api/command",
+         commandBody("scene.reset", `{"type":"grid","n":6}`));
+    assert(modelVertexCount() == 49,
+        "a 6-square grid is 7x7 = 49 vertices; got "
+        ~ modelVertexCount().to!string
+        ~ ". `type` and `n` are the two remaining declared slots, and `n` is "
+        ~ "the one the `levels` alias also names");
+}
+
 unittest { // file.new on a cube → empty mesh
     post(baseUrl ~ "/api/command", commandBody("scene.reset"));
     assert(modelVertexCount() == 8, "setup: default cube should have 8 verts");
