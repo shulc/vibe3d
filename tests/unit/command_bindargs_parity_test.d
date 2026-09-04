@@ -53,10 +53,17 @@ import commands.tool.host        : ToolHost;
 import commands.falloff          : FalloffAddCommand;
 import commands.file.load        : FileLoad;
 import commands.workplane        : WorkplaneRotateCommand;
+import commands.layer.commands   : LayerAttr;
+import document                  : Document;
+import mesh                      : makeCube;
 
 private Mesh     gMesh;
 private View     gView;
 private EditMode gMode = EditMode.Vertices;
+// `layer.attr` is a `LayerCommandBase`, so it needs a document to exist. It is
+// never APPLIED here — binding is the whole subject — but the reference must be
+// live, so the document is built once and shared.
+private Document gDoc;
 
 // Every command in the table below is constructible without an app: the ones
 // that need a host take a default-constructed `ToolHost` (nothing here
@@ -77,14 +84,32 @@ private Command build(string id) {
         case "falloff.add":          return new FalloffAddCommand(&gMesh, gView, gMode, host);
         case "file.load":            return new FileLoad(&gMesh, gView, gMode, null);
         case "workplane.rotate":     return new WorkplaneRotateCommand(&gMesh, gView, gMode);
+        case "layer.attr":
+            if (gDoc.layers.length == 0) gDoc = Document.bootstrap(makeCube());
+            return new LayerAttr(&gMesh, gView, gMode, &gDoc, null);
         default: assert(false, "parity table names an unbuildable command: " ~ id);
     }
 }
 
 /// What a bound command looks like: its argument values, plus whether the
 /// payload marked it a read-back. Nothing else — this is a binding test.
+///
+/// A JSON-TEXT SLOT IS APPENDED VERBATIM, and that is the whole point of the
+/// two rows it exists for. `Param.jsonArg_` is the escape hatch the positional
+/// law reserves for a value that is FORWARDED into another schema, where the
+/// argument's JSON TYPE — not its spelling — decides whether the write lands.
+/// `serializeParams` cannot show that: it quotes any string that would re-parse
+/// as a number, so a slot holding `1.5` and one holding `"1.5"` print
+/// identically, and a row over them alone would be green for a binder that
+/// stringified everything on the way through. Printing `name=<raw>` beside it
+/// makes the two doors disagree visibly when one of them coerces.
 private string describe(Command cmd) {
-    auto s = serializeParams(cmd.params());
+    auto ps = cmd.params();
+    auto s  = serializeParams(ps);
+    foreach (ref p; ps) {
+        if (!p.jsonText_()) continue;
+        s ~= format(" %s=<%s>", p.name, *p.sptr);
+    }
     return cmd.isQuery() ? "?" ~ (s.length ? " " ~ s : "") : s;
 }
 
@@ -132,7 +157,7 @@ private static immutable Row[] kRows = [
     // so cannot tell the two apart.
     Row("tool.attr", "xfrm.transform TX 1.5",
         `{"_positional":["xfrm.transform","TX",1.5]}`,
-        `tool:xfrm.transform attr:TX value:"1.5"`),
+        `tool:xfrm.transform attr:TX value:"1.5" value=<1.5>`),
     // …and the stage attr, whose value is a STRING the stage parses, so the
     // same number is spelled out instead.
     Row("tool.pipe.attr", "falloff radius 2.5",
@@ -149,17 +174,47 @@ private static immutable Row[] kRows = [
     // "?" as a VALUE and wrote it; only the HTTP door knew the idiom.
     Row("tool.attr", "xfrm.transform TX ?",
         `{"_positional":["xfrm.transform","TX","?"]}`,
-        "? tool:xfrm.transform attr:TX"),
+        "? tool:xfrm.transform attr:TX value=<>"),
     Row("tool.pipe.attr", "falloff type ?",
         `{"_positional":["falloff","type","?"]}`,
         "? stage:falloff attr:type"),
+
+    // THE SECOND FORWARDING COMMAND. `layer.attr` bends the law in the same
+    // two ways `tool.attr` does and had no row at all: its value slot is a
+    // `Param.jsonArg_` forwarded into the LAYER's schema, and its index slot is
+    // a STRING because it accepts three shapes (an index, a comma list, and
+    // absent-means-active) that only the command can tell apart. Both are
+    // places a later reader would "simplify" the slot to an Int and silently
+    // lose the gang form, so both get a row.
+    Row("layer.attr", "0 pos.x 1.5", `{"_positional":["0","pos.x",1.5]}`,
+        `index:"0" attr:pos.x value:"1.5" value=<1.5>`),
+    Row("layer.attr", `"0,2" pos.x 9.5`, `{"_positional":["0,2","pos.x",9.5]}`,
+        `index:"0,2" attr:pos.x value:"9.5" value=<9.5>`),
+    Row("layer.attr", "0 name ?", `{"_positional":["0","name","?"]}`,
+        `? index:"0" attr:name value=<>`),
+    // A STRING value, and this pair is what makes the raw-text half of
+    // `describe` DISCRIMINATE. On a number the two spellings coincide — `1.5`
+    // is its own JSON text — so the rows above cannot tell a raw forward from a
+    // stringifying one. `Ring` can: forwarded raw it is `"Ring"`, quotes and
+    // all, and scalar-spelled it is `Ring`. That difference is the whole reason
+    // these two slots are `Param.jsonArg_` and not `Param.string_`.
+    Row("layer.attr", "0 name Ring", `{"_positional":["0","name","Ring"]}`,
+        `index:"0" attr:name value:"\"Ring\"" value=<"Ring">`),
+    Row("tool.attr", "xfrm.transform mode local",
+        `{"_positional":["xfrm.transform","mode","local"]}`,
+        `tool:xfrm.transform attr:mode value:"\"local\"" value=<"local">`),
+    // …and the `targets` alias, which is the spelling a NAMED payload used
+    // before the slot was declared.
+    Row("layer.attr", `targets:"0,2" attr:pos.x value:9.5`,
+        `{"targets":"0,2","attr":"pos.x","value":9.5}`,
+        `index:"0,2" attr:pos.x value:"9.5" value=<9.5>`),
 ];
 
 unittest {
     // Anti-vacuity first: a table that lost its rows would make every
     // assertion below true over an empty set.
-    assert(kRows.length == 19,
-           format("the parity table is 19 rows, found %d", kRows.length));
+    assert(kRows.length == 25,
+           format("the parity table is 25 rows, found %d", kRows.length));
 
     // Every row is measured through BOTH doors and every mismatch is
     // collected, so one run names every row a mutation moved rather than
