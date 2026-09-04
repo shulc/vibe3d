@@ -693,6 +693,35 @@ struct FalloffPacket {
     }
 }
 
+/// The SYMM stage's user-facing config — the seven fields a panel, an
+/// argstring, a preset or an undo step can set. `SymmetryPacket` and
+/// `SymmetryStage` both embed this one declaration (task 0710, audit 4 P8).
+///
+/// Before the extraction the packet and stage had already drifted:
+/// `axisIndex` was -1 here and 0 on the stage. The owner has not selected one
+/// product default, so this shared config keeps the packet's -1 sentinel while
+/// `SymmetryStage.reset()` carries the stage's effective 0 as one explicit,
+/// behaviour-preserving exception. Do not silently merge those values.
+struct SymmetryConfig {
+    bool         enabled      = false;        // master on/off
+    int          axisIndex    = -1;           // 0=X 1=Y 2=Z; -1 when disabled
+    float        offset       = 0.0f;         // plane = axis * offset
+    bool         useWorkplane = false;        // mirror ≡ workplane (overrides axis/offset)
+    // WIRED, not reserved (stale comment fixed, task 1060 side-errand):
+    // `SymmetryStage.evaluate` branches on this — true routes to
+    // `symmetry.rebuildPairingTopological` (a real connectivity walk from
+    // on-plane seam vertices), false to the plane-distance pairing. Exposed
+    // as the `topology` HTTP setAttr key and the `mesh.symmetrize` `topology`
+    // arg (source/commands/mesh/symmetrize.d).
+    bool         topology     = false;
+    float        epsilonWorld = 1e-4f;        // pairing tolerance
+
+    // Base side — which side of the plane the user last anchored on.
+    // Drives the mirror loop's choice of "user side" when a symmetric pair
+    // is fully selected. Default +1 so unset state behaves predictably.
+    int          baseSide     = +1;
+}
+
 /// Symmetry packet — populated by SYMM stage in 7.6. v1 ships
 /// X / Y / Z plane axes with optional offset; arbitrary-axis support is
 /// reserved (axisIndex == -1) but no UX path enters it.
@@ -707,18 +736,10 @@ struct FalloffPacket {
 /// kept derived so any pre-7.6 code that read them keeps working
 /// (`axisFlags[axisIndex] == true` when enabled; pivot = axis * offset).
 struct SymmetryPacket {
-    bool         enabled      = false;        // master on/off
-    int          axisIndex    = -1;           // 0=X 1=Y 2=Z; -1 when disabled
-    float        offset       = 0.0f;         // plane = axis * offset
-    bool         useWorkplane = false;        // mirror ≡ workplane (overrides axis/offset)
-    // WIRED, not reserved (stale comment fixed, task 1060 side-errand):
-    // `SymmetryStage.evaluate` branches on this — true routes to
-    // `symmetry.rebuildPairingTopological` (a real connectivity walk from
-    // on-plane seam vertices), false to the plane-distance pairing. Exposed
-    // as the `topology` HTTP setAttr key and the `mesh.symmetrize` `topology`
-    // arg (source/commands/mesh/symmetrize.d).
-    bool         topology     = false;
-    float        epsilonWorld = 1e-4f;        // pairing tolerance
+    /// The seven config fields, embedded. `alias this` keeps every existing
+    /// `pkt.enabled` / `pkt.axisIndex` reader source-compatible.
+    SymmetryConfig config;
+    alias config this;
 
     // Cached plane (populated by SymmetryStage.evaluate from the axis /
     // offset / workplane fields above):
@@ -738,14 +759,6 @@ struct SymmetryPacket {
     // the vert is on the plane (and `onPlane[i]` is also true).
     int[]        vertSign;
 
-    // Base side — which side of the plane the user last anchored on.
-    // Drives the mirror loop's choice of
-    // "user side" when a symmetric pair is fully selected (e.g.
-    // 7.6c auto-add put both sides in the same selection). Default
-    // +1 so unset state behaves predictably; `SymmetryStage.anchorAt`
-    // updates it from a world-space anchor point.
-    int          baseSide = +1;
-
     // Backwards-compat fields the phase-7.0 stub already declared. The
     // stage populates them from `axisIndex` / `offset` so any code that
     // reads them keeps working through the migration.
@@ -756,18 +769,12 @@ struct SymmetryPacket {
     /// views in a live packet and must not alias the next evaluation.
     SymmetryPacket ownedDup() const {
         SymmetryPacket p;
-        p.enabled = enabled;
-        p.axisIndex = axisIndex;
-        p.offset = offset;
-        p.useWorkplane = useWorkplane;
-        p.topology = topology;
-        p.epsilonWorld = epsilonWorld;
+        p.config = config;
         p.planePoint = planePoint;
         p.planeNormal = planeNormal;
         p.pairOf = pairOf.dup;
         p.onPlane = onPlane.dup;
         p.vertSign = vertSign.dup;
-        p.baseSide = baseSide;
         p.axisFlags = axisFlags;
         p.pivot = pivot;
         return p;

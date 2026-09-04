@@ -8,12 +8,70 @@ import math    : Vec3, dot;
 import mesh    : Mesh;
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordSymm;
-import toolpipe.packets  : SymmetryPacket;
+import toolpipe.packets  : SymmetryPacket, SymmetryConfig;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import popup_state       : setStatePath;
 import symmetry          : rebuildPairing, rebuildPairingTopological;
 import params            : Param, IntEnumEntry;
 import toolpipe.stages.symmetry;
+
+unittest { // One symmetry config, with one named behaviour-preserving exception.
+    const packetDefaults = SymmetryPacket.init.config;
+    auto st = new SymmetryStage();
+
+    // `Stage.pipeEnabled` and the config's user toggle are separate storage.
+    // This is the alias-this collision that task 0705 exposed for SnapConfig.
+    assert(st.pipeEnabled,
+        "a freshly constructed symmetry stage is registered in the pipe");
+    assert(!st.enabled,
+        "a fresh symmetry stage's USER toggle must remain off");
+    assert(&st.enabled is &st.config.enabled,
+        "SymmetryStage.enabled must resolve to SymmetryConfig's storage");
+
+    // Owner decision still open: packet fallback means "no axis" (-1), while
+    // constructing/resetting the stage preserves today's X default (0). Keep
+    // the divergence explicit until the owner selects one product behaviour.
+    assert(packetDefaults.axisIndex == -1,
+        format("axisIndex defaults changed: packet=%s, stage=%s; packet -1 "
+             ~ "is the preserved no-axis fallback and stage 0 is preserved X",
+               packetDefaults.axisIndex, st.axisIndex));
+    assert(st.axisIndex == 0,
+        format("axisIndex defaults changed: packet=%s, stage=%s; the stage "
+             ~ "must preserve today's X default while the decision is open",
+               packetDefaults.axisIndex, st.axisIndex));
+
+    // Apart from that named line, the two effective default sets are equal.
+    SymmetryConfig normalizedStage = st.config;
+    normalizedStage.axisIndex = packetDefaults.axisIndex;
+    assert(normalizedStage == packetDefaults,
+        "packet and stage symmetry defaults diverged outside the named "
+        ~ "axisIndex placeholder");
+
+    // Snapshot/restore/reset must move the whole config, not another field
+    // list that can fall behind the declaration.
+    st.enabled      = true;
+    st.axisIndex    = 2;
+    st.offset       = 3.5f;
+    st.useWorkplane = true;
+    st.topology     = true;
+    st.epsilonWorld = 0.25f;
+    st.baseSide     = -1;
+    auto saved = st.snapshotConfigToPacket();
+    assert(saved.config == st.config,
+        "snapshotConfigToPacket must copy the complete SymmetryConfig");
+
+    st.reset();
+    SymmetryConfig expectedStage = SymmetryConfig.init;
+    expectedStage.axisIndex = 0;
+    assert(st.config == expectedStage,
+        "reset must restore SymmetryConfig plus the named stage-axis exception");
+    assert(st.pipeEnabled,
+        "resetting user config must not unregister the stage from the pipe");
+
+    st.restoreConfigFromPacket(saved);
+    assert(st.config == saved.config,
+        "restoreConfigFromPacket must restore the complete SymmetryConfig");
+}
 
 // ---------------------------------------------------------------------------
 // Task 0401 / task 1906 stage 2c — the pairing cache (`pairOf` / `onPlane` /
@@ -128,6 +186,21 @@ unittest {
     auto names = st.knownAttrs();
     assert(names.length == 6,
            "disabled symmetry must still report its full 6-name universe");
+
+    // listAttrs is the read surface for the same six writable names, plus the
+    // deliberate read-only baseSide row. Check the writable universe before
+    // the count so a removed row reports its name rather than only "6 != 7".
+    auto listed = st.listAttrs();
+    foreach (n; names) {
+        bool found;
+        foreach (row; listed) if (row[0] == n) { found = true; break; }
+        assert(found, "symmetry listAttrs is missing writable attr '" ~ n ~ "'");
+    }
+    assert(listed.length == names.length + 1,
+        "symmetry listAttrs must be fullParams/knownAttrs plus read-only baseSide");
+    bool foundBaseSide;
+    foreach (row; listed) if (row[0] == "baseSide") { foundBaseSide = true; break; }
+    assert(foundBaseSide, "symmetry listAttrs lost its read-only baseSide row");
 
     string[string] sample = [
         "enabled": "true", "axis": "x", "offset": "0.5",

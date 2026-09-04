@@ -8,7 +8,7 @@ import mesh_dirty : MeshDirtyKey, g_settledGeomEpochs;
 import editmode : EditMode;
 import toolpipe.stage    : Stage, TaskCode, ordSymm;
 // pipeline imports moved to packet-only — Phase 6 cleanup
-import toolpipe.packets  : SymmetryPacket;
+import toolpipe.packets  : SymmetryPacket, SymmetryConfig;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import popup_state       : setStatePath;
 import symmetry          : rebuildPairing, rebuildPairingTopological;
@@ -66,14 +66,10 @@ class SymmetryStage : Stage, Operator {
     PacketKind[] requiredPackets() const { return [PacketKind.Subject]; }
 
     bool evaluate(ref VectorStack vts) {
-        if (!this.enabled) return false;   // SymmetryStage shadows Stage.enabled
+        if (!this.enabled) return false;
         import toolpipe.packets : WorkplanePacket;
         SymmetryPacket pkt;
-        pkt.enabled      = enabled;
-        pkt.topology     = topology;
-        pkt.epsilonWorld = epsilonWorld;
-        pkt.useWorkplane = useWorkplane;
-        pkt.offset       = offset;
+        pkt.config = config;
 
         // Resolve plane. `useWorkplane` overrides axisIndex+offset.
         // WORK stage has already run (ord 0x30 < SYMM 0x31).
@@ -153,7 +149,6 @@ class SymmetryStage : Stage, Operator {
             pkt.onPlane  = null;
             pkt.vertSign = null;
         }
-        pkt.baseSide = baseSide;
         pkt.axisFlags[0] = enabled && axisIndex == 0;
         pkt.axisFlags[1] = enabled && axisIndex == 1;
         pkt.axisFlags[2] = enabled && axisIndex == 2;
@@ -164,20 +159,11 @@ class SymmetryStage : Stage, Operator {
         return true;
     }
 
-    bool  enabled       = false;
-    int   axisIndex     = 0;          // 0=X 1=Y 2=Z (meaningful when enabled)
-    float offset        = 0.0f;
-    bool  useWorkplane  = false;
-    bool  topology      = false;      // WIRED — see the SymmetryPacket doc
-                                       // comment / evaluate() above (stale
-                                       // "reserved" fixed, task 1060)
-    float epsilonWorld  = 1e-4f;
-
-    // Base side — which side of the plane the user last anchored on.
-    // Updated by `anchorAt(pos)` after every pick that
-    // happens with symmetry enabled. Default +1 so unset state
-    // produces predictable behaviour (positive side drives).
-    int   baseSide      = +1;
+    /// The stage's user-facing config — the SAME seven fields
+    /// `SymmetryPacket` carries. `alias this` keeps all existing field readers
+    /// and Param pointers on the config's storage.
+    SymmetryConfig config;
+    alias config this;
 
 private:
     // Injected refs (mirrors FalloffStage / ActionCenterStage shape).
@@ -229,7 +215,7 @@ public:
     this(Mesh* delegate() meshSrc = null, EditMode* editMode = null) {
         this.meshSrc_ = meshSrc;
         this.editMode_ = editMode;
-        publishState();
+        reset();
     }
 
     override TaskCode taskCode() const pure nothrow @nogc @safe { return TaskCode.Symm; }
@@ -242,13 +228,11 @@ public:
     /// `enabled=true` and any non-X axisIndex leak into the next user
     /// session.
     override void reset() {
-        enabled       = false;
-        axisIndex     = 0;
-        offset        = 0.0f;
-        useWorkplane  = false;
-        topology      = false;
-        epsilonWorld  = 1e-4f;
-        baseSide      = +1;
+        config = SymmetryConfig.init;
+        // Behaviour-preserving placeholder pending the owner's default
+        // decision: packets keep -1 (no axis), while a fresh/reset stage keeps
+        // today's 0 (X). Do not fold this into SymmetryConfig silently.
+        config.axisIndex = 0;
         // Drop the pairing cache too so the next evaluate rebuilds from
         // the post-reset mesh / plane rather than reusing stale pairs.
         cachedMeshKey_.clear();
@@ -278,13 +262,7 @@ public:
     /// (pairOf / onPlane / vertSign rebuild on the next evaluate).
     SymmetryPacket snapshotConfigToPacket() const {
         SymmetryPacket p;
-        p.enabled      = enabled;
-        p.axisIndex    = axisIndex;
-        p.offset       = offset;
-        p.useWorkplane = useWorkplane;
-        p.topology     = topology;
-        p.epsilonWorld = epsilonWorld;
-        p.baseSide     = baseSide;
+        p.config = config;
         return p;
     }
 
@@ -300,13 +278,7 @@ public:
     /// pairOf / onPlane / vertSign from the restored plane; does NOT touch the
     /// injected mesh / editMode refs.
     void restoreConfigFromPacket(const ref SymmetryPacket p) {
-        enabled      = p.enabled;
-        axisIndex    = p.axisIndex;
-        offset       = p.offset;
-        useWorkplane = p.useWorkplane;
-        topology     = p.topology;
-        epsilonWorld = p.epsilonWorld;
-        baseSide     = p.baseSide;
+        config = p.config;
         // The pairing cache is keyed on (mesh key, plane, epsilon); restoring
         // config that changes the plane / epsilon must invalidate it so the
         // next evaluate() rebuilds the mirror table.

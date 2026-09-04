@@ -26,13 +26,10 @@ import toolpipe.packets : SymmetryPacket;
 bool symmetryPacketsEqual(const ref SymmetryPacket a, const ref SymmetryPacket b)
     pure nothrow @nogc @safe
 {
-    return a.enabled      == b.enabled
-        && a.axisIndex    == b.axisIndex
-        && a.offset       == b.offset
-        && a.useWorkplane == b.useWorkplane
-        && a.topology     == b.topology
-        && a.epsilonWorld == b.epsilonWorld
-        && a.baseSide     == b.baseSide;
+    // One compiler-owned comparison over the config sub-struct. The
+    // seven-way conjunction this replaces silently ignored any newly added
+    // config field until a separate edit remembered to extend it.
+    return a.config == b.config;
 }
 
 /// Mirror a world-space point across the plane described by `sp`.
