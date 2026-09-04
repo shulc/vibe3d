@@ -2,6 +2,7 @@ module record_observer_hub;
 
 import core.atomic : atomicOp;
 import command_history : HistoryFlags;
+import step_trace : StepTrace;
 
 private shared ulong nextRecordObserverOwnerId_;
 
@@ -71,8 +72,10 @@ public:
             !(flags & (HistoryFlags.InSession | HistoryFlags.Refire |
                        HistoryFlags.ToolLifecycle))) {
             result.traceEntries ~= preparedTraceJson.idup;
-            if (result.traceEntries.length > 500)
-                result.traceEntries = result.traceEntries[$ - 500 .. $].dup;
+            // The same ring as StepTrace.append's — this image is a detached
+            // copy of that ring, so it evicts at the one cap (task 4066).
+            if (result.traceEntries.length > StepTrace.maxEntries)
+                result.traceEntries = result.traceEntries[$ - StepTrace.maxEntries .. $].dup;
         }
         return true;
     }

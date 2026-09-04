@@ -2940,8 +2940,7 @@ void main(string[] args) {
     // (via history.onRecord delegate) when active. Survives undo /
     // redo / clear-history — saving a macro after several edits
     // produces a replayable script regardless of intervening undos.
-    auto macroRecorder = new MacroRecorder();
-    macroRecorder.bindObserverHub(recordObserverHub);
+    auto macroRecorder = new MacroRecorder(recordObserverHub);
 
     // GET /api/trace — non-destructive per-step capture. Every discrete
     // recorded command appends one entry (command + args + the resulting
