@@ -6,6 +6,7 @@ import mesh;
 import editmode;
 import view;
 import viewport : ViewportManager;
+import params : Param, wireArgs;
 
 /// `viewport.gridSteps <mask>` — the grid's mantissa ladder (task 0570),
 /// registered as a command (task 0761; previously intercepted ahead of the
@@ -22,6 +23,7 @@ import viewport : ViewportManager;
 /// value with no ladder behind it.
 final class ViewportGridSteps : ViewportCommand {
     private int mask_;
+    private string valueArg_;
 
     this(Mesh* mesh, ref View view, EditMode editMode, ViewportManager vpm) {
         super(mesh, view, editMode, vpm);
@@ -32,6 +34,15 @@ final class ViewportGridSteps : ViewportCommand {
     /// `sval`/`mval` as extracted by the Law-2 scan (alias list `value`/
     /// `mask`/`steps`/`rungs`) in `http_providers.d`. Throws — same
     /// messages, verbatim — on an unparseable or out-of-range mask.
+    /// The declared argument, and its three alias spellings — the alias list
+    /// the dispatcher's Law-2 scan used to carry (task 4062).
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("value", "Rungs", &valueArg_, "")
+                .aliases(["mask", "steps", "rungs"])
+        );
+    }
+
     void setRaw(string sval, long mval) {
         import std.string  : strip, split, join;
         import std.conv    : to, ConvException;
@@ -79,6 +90,10 @@ final class ViewportGridSteps : ViewportCommand {
     }
 
     protected override bool applyImpl() {
+        // A numeric argument arrives as its own spelling; `setRaw`'s
+        // `to!long(s)` arm has always accepted that ("a plain number in a
+        // string"), so both wire shapes land on the same ladder.
+        setRaw(valueArg_, long.min);
         import viewgrid : g_viewGrid;
         import prefs    : g_prefs;
 

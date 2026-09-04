@@ -84,8 +84,28 @@ class ArgsDialog {
         }
     }
 
-    /// Whether `cmd` requires a modal dialog (has any params).
+    /// Whether `cmd` requires a modal dialog: it has at least one param the
+    /// dialog would actually DRAW.
+    ///
+    /// TASK 4062 — "has any params" is no longer the same question. Since
+    /// `params()` became the positional-argument declaration, a command that
+    /// takes a wire argument declares one whether or not a human should ever
+    /// be asked to fill it in: `select.vertex`, `ui.about`, `viewport.view`
+    /// and thirty more now carry a schema and would every one of them have
+    /// popped an empty-looking modal in front of a menu click or a shortcut.
+    /// A dialog is for a param a user can SEE, so the gate counts the ones the
+    /// renderer draws.
     static bool needsDialog(Command cmd) {
-        return cmd !is null && cmd.params().length > 0;
+        return cmd !is null && visibleParamCount(cmd) > 0;
     }
+}
+
+/// The params a generic renderer would draw for `cmd` — the schema minus the
+/// hidden rows. The single answer to "would an args dialog show anything?",
+/// read by `ArgsDialog.needsDialog` and by `EditorApp.tryOpenArgsDialog`.
+size_t visibleParamCount(Command cmd) {
+    if (cmd is null) return 0;
+    size_t n = 0;
+    foreach (ref p; cmd.params()) if (!p.hidden_()) ++n;
+    return n;
 }

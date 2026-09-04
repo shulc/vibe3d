@@ -4,6 +4,7 @@ import command;
 import mesh;
 import view;
 import editmode;
+import params : Param, wireArgs;
 
 import trackball : TrackballOption, parseTrackballOption,
                    setTrackballGlobal, setTrackballGlobalOverride,
@@ -48,6 +49,19 @@ class TrackballPrefCommand : Command {
 
     // A preference change is UI/session state, not a mesh edit.
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
+
+    /// The two declared arguments (task 4062). The VALUE is a String slot and
+    /// `command_args.bindArgs` spells any scalar into it, which is what the
+    /// injector this replaces did by hand — `speed 1.0` arrives as a JSON
+    /// number and `global true` as a JSON bool, and a string-only read used to
+    /// drop both while the command reported "value required" for an argument
+    /// that was right there.
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("subject", "Subject", &subject_, ""),
+            Param.string_("value", "Value", &value_, "")
+        );
+    }
 
     void setSubject(string s) { subject_ = s; }
     void setValue(string v)   { value_   = v; }

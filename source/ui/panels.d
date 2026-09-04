@@ -44,6 +44,7 @@ import std.stdio : writeln, writefln, File, stderr;
 import std.math : tan, sin, cos, sqrt, PI, abs;
 import std.conv;
 import std.json : JSONValue, JSONType;
+import command_args : positionalPayload, firstPositionalString;
 import http_server;
 import log : logInfo, logWarn, logError;
 import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
@@ -716,7 +717,7 @@ void drawViewportPropsPanel(EditorApp app) {
                                               ImVec4(0.30f, 0.45f, 0.65f, 1.0f));
                 if (ImGui.Button(lblNames[i]) && uiCommandDelegate !is null)
                     uiCommandDelegate("viewport.layout",
-                        `{"_positional":["` ~ lblIds[i] ~ `"]}`);
+                        positionalPayload([lblIds[i]]));
                 if (cur) ImGui.PopStyleColor(1);
             }
         }
@@ -780,7 +781,7 @@ void drawViewportPropsPanel(EditorApp app) {
                     if (ImGui.Selectable(displayStyleLabel(sv), sel)
                         && uiCommandDelegate !is null)
                         uiCommandDelegate("viewport.displayStyle",
-                            `{"_positional":["` ~ displayStyleId(sv) ~ `"]}`);
+                            positionalPayload([displayStyleId(sv)]));
                     if (sel) ImGui.SetItemDefaultFocus();
                 }
                 ImGui.EndCombo();
@@ -801,7 +802,7 @@ void drawViewportPropsPanel(EditorApp app) {
                     bool sel = (i == wi);
                     if (ImGui.Selectable(wl, sel) && uiCommandDelegate !is null)
                         uiCommandDelegate("viewport.wireOverlay",
-                            `{"_positional":["` ~ wireIds[i] ~ `"]}`);
+                            positionalPayload([wireIds[i]]));
                     if (sel) ImGui.SetItemDefaultFocus();
                 }
                 ImGui.EndCombo();
@@ -819,7 +820,7 @@ void drawViewportPropsPanel(EditorApp app) {
                 if (wa > 1.0f) wa = 1.0f;
                 if (uiCommandDelegate !is null)
                     uiCommandDelegate("viewport.wireAlpha",
-                        `{"_positional":[` ~ format("%.6f", wa) ~ `]}`);
+                        positionalPayload([format("%.6f", wa)]));
             }
         }
 
@@ -857,7 +858,7 @@ void drawViewportPropsPanel(EditorApp app) {
                     if (ImGui.Selectable(rungLabel(m), sel)
                         && uiCommandDelegate !is null)
                         uiCommandDelegate("viewport.gridSteps",
-                            `{"_positional":[` ~ format("%d", m) ~ `]}`);
+                            positionalPayload([format("%d", m)]));
                     if (sel) ImGui.SetItemDefaultFocus();
                 }
                 ImGui.EndCombo();
@@ -873,14 +874,14 @@ void drawViewportPropsPanel(EditorApp app) {
         if (ImGui.BeginCombo("##vpMaster", masterLabel)) {
             bool grpSel = (mid < 0);
             if (ImGui.Selectable("Group master", grpSel) && uiCommandDelegate !is null)
-                uiCommandDelegate("viewport.master", `{"_positional":["-1"]}`);
+                uiCommandDelegate("viewport.master", positionalPayload(["-1"]));
             if (grpSel) ImGui.SetItemDefaultFocus();
             foreach (ci; 0 .. vpm.cellCount) {
                 bool csel = (mid == ci);
                 string clabel = "Cell " ~ to!string(ci);
                 if (ImGui.Selectable(clabel, csel) && uiCommandDelegate !is null)
                     uiCommandDelegate("viewport.master",
-                        `{"_positional":["` ~ to!string(ci) ~ `"]}`);
+                        positionalPayload([to!string(ci)]));
                 if (csel) ImGui.SetItemDefaultFocus();
             }
             ImGui.EndCombo();
@@ -2272,8 +2273,28 @@ void dispatchAction(EditorApp app, ref Action action) {
             activateToolById(action.id);
             break;
         case ActionKind.command:
-            if (!tryOpenArgsDialog(action.id))
-                runCommand(reg.commandFactories[action.id]());
+            // TASK 4062 — THE THIRD FUNNEL, and the reason it was one at all.
+            // This case built the command from its factory and ran it with NO
+            // arguments: a panel row could name a command but never say
+            // anything to it, and a command that acquired an argument later
+            // silently kept its defaults here while the other two funnels bound
+            // one. Routing the id through `uiCommandDelegate` — the same
+            // `dispatchCommandLine` body the HTTP door uses, under the UI
+            // refusal policy — means all three funnels now reach `bindArgs`,
+            // and a panel row that grows an argument tomorrow needs no change
+            // here.
+            //
+            // TWO THINGS DIFFER from the `runCommand` call it replaces, both
+            // deliberate: the dispatch records the id it was asked for (a
+            // `runCommand` caller has none to give, and the guard record said
+            // so), and it records under `RecordMode.Coalescing` rather than
+            // `Record` — which changes nothing for a command that does not
+            // override `compareOp()`, and every command that does takes
+            // arguments this case cannot supply.
+            if (!tryOpenArgsDialog(action.id)) {
+                if (uiCommandDelegate !is null)
+                    uiCommandDelegate(action.id, "");
+            }
             break;
         case ActionKind.script:
             foreach (line; action.scriptLines) {
@@ -2930,14 +2951,12 @@ void drawStatusBar(EditorApp app) {
                 } else if (action.kind == ActionKind.script
                            && action.scriptLines.length > 0) {
                     auto parsed = parseArgstring(action.scriptLines[0]);
-                    if (!parsed.isEmpty
-                        && parsed.commandId == "select.typeFrom"
-                        && "_positional" in parsed.params
-                        && parsed.params["_positional"].type == JSONType.array
-                        && parsed.params["_positional"].array.length > 0
-                        && parsed.params["_positional"].array[0].type == JSONType.string)
+                    if (!parsed.isEmpty && parsed.commandId == "select.typeFrom")
                     {
-                        string t = parsed.params["_positional"].array[0].str;
+                        // The wire key is `command_args`'s to spell, not this
+                        // panel's (task 4062) — a misspelt copy reads "" and
+                        // silently drops the shortcut badge.
+                        immutable t = firstPositionalString(parsed.params);
                         if      (t == "vertex")  editModeId = "vertices";
                         else if (t == "edge")    editModeId = "edges";
                         else if (t == "polygon") editModeId = "polygons";
@@ -3022,8 +3041,13 @@ void drawStatusBar(EditorApp app) {
                             activateToolById(action.id);
                             break;
                         case ActionKind.command:
-                            if (!tryOpenArgsDialog(action.id))
-                                runCommand(reg.commandFactories[action.id]());
+                            // Same funnel as `dispatchAction`'s command case
+                            // (task 4062) — the status bar was the second copy
+                            // of the no-argument factory call.
+                            if (!tryOpenArgsDialog(action.id)) {
+                                if (uiCommandDelegate !is null)
+                                    uiCommandDelegate(action.id, "");
+                            }
                             if (editModeId.length > 0)
                                 setActiveTool(null);
                             break;

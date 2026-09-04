@@ -13,6 +13,7 @@ import toolpipe.packets  : SubjectPacket, SymmetryPacket;
 import symmetry          : applySymmetryMirror, applySymmetryMirrorDelta, projectOnPlane;
 import symmetry_pick     : captureLiveSymmetry;
 import operator          : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import params            : Param, wireArgs;
 // GpuMesh lives in mesh.d, already imported above.
 
 /// Transform the selected vertices by translate / rotate / scale. Replaces
@@ -67,6 +68,29 @@ class MeshTransform : Command, Operator {
 
     override string name() const { return "mesh.transform"; }
     override string label() const { return "Transform " ~ kind; }
+
+    // TASK 4062 — THE ARGUMENTS, DECLARED. Six fields the HTTP dispatcher used
+    // to fill through a hand-written arm (the retired `/api/transform` route's
+    // decode, moved there and then here). Each is INDEPENDENTLY OPTIONAL, which
+    // is the shape task 4131 measured and froze: an argument-less
+    // `{"id":"mesh.transform"}` must reach `evaluate` and answer with the
+    // command's own refusal ("no mesh item is selected"), not with a binder
+    // error about a missing `kind`. A declared parameter is written only when
+    // the payload supplies it, so that is what it now does structurally.
+    //
+    // The constructor's values are the defaults an absent key leaves standing;
+    // they are repeated here as `Param` metadata only — `Param` records a
+    // default, it never writes one.
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("kind",   "Kind",   &kind,   ""),
+            Param.vec3_  ("delta",  "Delta",  &delta,  Vec3(0, 0, 0)),
+            Param.vec3_  ("axis",   "Axis",   &axis,   Vec3(0, 1, 0)),
+            Param.float_ ("angle",  "Angle",  &angle,  0.0f),
+            Param.vec3_  ("factor", "Factor", &factor, Vec3(1, 1, 1)),
+            Param.vec3_  ("pivot",  "Pivot",  &pivot,  Vec3(0, 0, 0)),
+        );
+    }
 
     void setKind(string k)    { kind   = k; }
     void setDelta(Vec3 d)     { delta  = d; }

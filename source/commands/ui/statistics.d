@@ -6,6 +6,7 @@ import command;
 import mesh;
 import view;
 import editmode;
+import params : Param, wireArgs;
 import ui.stat_rows : StatExpand;
 
 // ---------------------------------------------------------------------------
@@ -45,6 +46,7 @@ __gshared StatExpand g_statExpand;
 // ---------------------------------------------------------------------------
 class UiStatisticsCommand : Command {
     private bool show_ = true;
+    private string visibleArg_;
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -54,6 +56,14 @@ class UiStatisticsCommand : Command {
     override string label() const { return "Show/Hide Statistics (test)"; }
 
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
+
+    /// The declared argument (task 4062); the parse and its message stay in
+    /// `setVisible`, which now runs at apply rather than at bind.
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("visible", "Visible", &visibleArg_, "")
+        );
+    }
 
     // Positional arg: "show" | "hide".
     void setVisible(string arg) {
@@ -69,6 +79,7 @@ class UiStatisticsCommand : Command {
     }
 
     protected override bool applyImpl() {
+        if (visibleArg_.length > 0) setVisible(visibleArg_);
         if (!g_testMode)
             throw new Exception(
                 "ui.statistics: only available in --test mode");
@@ -92,6 +103,7 @@ class UiStatisticsCommand : Command {
 class UiStatisticsExpandCommand : Command {
     private string target_ = "";
     private bool   open_   = true;
+    private string stateArg_ = "open";
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -101,6 +113,16 @@ class UiStatisticsExpandCommand : Command {
     override string label() const { return "Expand/Collapse Statistics Row (test)"; }
 
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
+
+    /// The two declared arguments (task 4062). The state slot defaults to
+    /// "open" — the same default the injector's `pos.length >= 2 ? … : "open"`
+    /// supplied, moved to the declaration where it can be read.
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("target", "Target", &target_, ""),
+            Param.string_("state", "State", &stateArg_, "open")
+        );
+    }
 
     void setArgs(string target, string state) {
         target_ = target.strip;
@@ -117,6 +139,7 @@ class UiStatisticsExpandCommand : Command {
     }
 
     protected override bool applyImpl() {
+        setArgs(target_, stateArg_);
         import seltype : SelType;
         if (!g_testMode) {
             baseRefusal_ = "ui.statistics.expand: only available in --test mode";

@@ -4,6 +4,7 @@ import command;
 import mesh;
 import view;
 import editmode;
+import params : Param, wireArgs;
 
 import coord_rounding : CoordinateRounding, parseCoordRounding,
                         setCoordRounding, coordRounding, coordRoundingName;
@@ -37,6 +38,12 @@ class CoordRoundingCommand : Command {
 
     // A preference change is UI/session state, not a mesh edit.
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
+
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("mode", "Mode", &modeName_, "")
+        );
+    }
 
     void setModeName(string n) { modeName_ = n; }
 

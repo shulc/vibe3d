@@ -303,238 +303,16 @@ import viewport        : ViewportManager, Viewport3D;
 // installs for every other cross-module picking call site.
 import document       : primaryModelSpace;
 
-/// Moved VERBATIM from app.d's top level (app.d decomp phase B): private
-/// there, and its only call sites left app.d with the moved HTTP block.
-/// `true` a JSON bool, so a command whose argument is "a value, whatever kind"
-/// cannot read `.str` and hope. `%.9g` rather than `%g` on the float lane so a
-/// value the user typed survives the trip in full precision — `%g`'s six
-/// significant digits would quietly round a speed multiplier.
-private string scalarArgToString(JSONValue v) {
-    import std.format : format;
-    import std.conv   : to;
-    switch (v.type) {
-        case JSONType.string:   return v.str;
-        // json-num-exempt: builds an argstring, not a JSON body
-        case JSONType.float_:   return format("%.9g", v.floating);
-        case JSONType.integer:  return to!string(v.integer);
-        case JSONType.uinteger: return to!string(v.uinteger);
-        case JSONType.true_:    return "true";
-        case JSONType.false_:   return "false";
-        default:                return "";
-    }
-}
-
-// ---------------------------------------------------------------------------
-// oneStringArg — the single string argument of a `viewport.*` command, in
-// whichever spelling the caller used: a bare JSON string body, the first
-// `_positional` entry of an argstring parse, or a named key.
-//
-// Task 0720 (audit №4, D6). D6 reported this parsing "copied 3×". Measured,
-// the viewport block has SIX positional readers following THREE different
-// laws: this one (three arms — `viewport.view`, `viewport.layout` and the
-// three independence toggles), a scalar-of-any-type reader that searches an
-// ALIAS LIST of named keys (`displayStyle`/`wireOverlay`/`wireAlpha`,
-// `gridSteps`), and an int-or-string reader (`viewport.master`). Only the
-// first is one law written out repeatedly, so only the first is folded here;
-// folding the other three sites into this would have changed what they accept.
-//
-// Throws exactly where the inline copies threw: `parseJSON` on a malformed
-// body, which the command handler's own catch turns into
-// `{"status":"error"}`.
-// ---------------------------------------------------------------------------
-private string oneStringArg(string paramsJson, string namedKey) {
-    import std.json : parseJSON, JSONType;
-    string outv = "";
-    if (paramsJson.length > 0) {
-        auto pjv = parseJSON(paramsJson);
-        if (pjv.type == JSONType.string) {
-            outv = pjv.str;
-        } else if (pjv.type == JSONType.object) {
-            if (auto pp = "_positional" in pjv) {
-                if (pp.type == JSONType.array && pp.array.length >= 1
-                    && pp.array[0].type == JSONType.string)
-                    outv = pp.array[0].str;
-            }
-            if (outv.length == 0) {
-                if (auto pp = namedKey in pjv)
-                    if (pp.type == JSONType.string) outv = pp.str;
-            }
-        }
-    }
-    return outv;
-}
-
-unittest {
-    // The three spellings the three folded arms accepted, and the two
-    // non-answers. A positional entry WINS over the named key — that is the
-    // order the inline copies had, and swapping it would silently change
-    // which argument an argstring line with both actually applies.
-    assert(oneStringArg(`"Top"`, "preset") == "Top");
-    assert(oneStringArg(`{"_positional":["Top"]}`, "preset") == "Top");
-    assert(oneStringArg(`{"preset":"Top"}`, "preset") == "Top");
-    assert(oneStringArg(`{"_positional":["Top"],"preset":"Front"}`, "preset") == "Top");
-    assert(oneStringArg("", "preset") == "");
-    assert(oneStringArg(`{"other":"Top"}`, "preset") == "");
-    // Non-string positional entries are not coerced (the arms fall back to
-    // their own default rather than accept a number as a preset name).
-    assert(oneStringArg(`{"_positional":[7]}`, "preset") == "");
-    assert(oneStringArg(`{"preset":7}`, "preset") == "");
-}
-
-// ---------------------------------------------------------------------------
-// injectViewportCommandPositional — argument extraction for the ten
-// `viewport.*` commands (task 0761), called from `uiCommandDelegate`
-// (`wireCommandProviders`, below) right after construction, before apply().
-//
-// Extraction, not command logic: every `switch`/range-check/throw a caller
-// can observe still lives on the command class itself
-// (`commands/viewport/*.d`) — this function's job is only to reproduce the
-// THREE argument-reading laws the original interception used, verbatim, and
-// hand each command the already-typed value(s) it asks for. Operates on the
-// RAW `paramsJson` string (does its own `parseJSON`), not the pre-parsed
-// object the tool.*/select.* injectors receive, because Law 1
-// (`oneStringArg`) accepts a bare JSON string body — a shape those two
-// injectors never see (they only run when `pj.type == JSONType.object`).
-// ---------------------------------------------------------------------------
-private void injectViewportCommandPositional(Command cmd, string paramsJson) {
-    import std.json   : parseJSON, JSONType;
-    import std.string : toLower, strip;
-    import std.conv   : to, ConvException;
-    import commands.viewport.view_preset  : ViewportViewPreset;
-    import commands.viewport.layout_preset : ViewportLayoutPreset;
-    import commands.viewport.independence : ViewportIndependence;
-    import commands.viewport.display      : ViewportDisplayStyle, ViewportWireOverlay,
-                                             ViewportWireAlpha;
-    import commands.viewport.grid_steps   : ViewportGridSteps;
-    import commands.viewport.master       : ViewportMaster;
-
-    // Law 1 — oneStringArg: viewport.view / viewport.layout / the three
-    // independence toggles.
-    if (auto vv = cast(ViewportViewPreset)cmd) {
-        vv.setPreset(oneStringArg(paramsJson, "preset"));
-        return;
-    }
-    if (auto vl = cast(ViewportLayoutPreset)cmd) {
-        vl.setPreset(oneStringArg(paramsJson, "preset"));
-        return;
-    }
-    if (auto vi = cast(ViewportIndependence)cmd) {
-        // Tolerant parse: "no"/"false"/"0" → false; anything else → true.
-        string s = oneStringArg(paramsJson, "value");
-        vi.setValue(!(s == "no" || s == "false" || s == "0"));
-        return;
-    }
-
-    // Law 2 — scalar of ANY type, found by scanning an alias list of named
-    // keys (or the first `_positional` entry, or a bare scalar body):
-    // displayStyle/wireOverlay/wireAlpha share one alias list plus a
-    // `viewport` cell key; gridSteps has its own, separate alias list and no
-    // cell key (application-wide).
-    bool isCellDisplay = (cast(ViewportDisplayStyle)cmd !is null)
-                       || (cast(ViewportWireOverlay)cmd !is null)
-                       || (cast(ViewportWireAlpha)cmd !is null);
-    if (isCellDisplay) {
-        string sval = "";
-        int    cell = -1;
-        bool   haveNum = false;
-        double nval = 0;
-        if (paramsJson.length > 0) {
-            auto pjv = parseJSON(paramsJson);
-            void takeScalar(JSONValue v) {
-                switch (v.type) {
-                    case JSONType.string:   sval = v.str; break;
-                    case JSONType.float_:   nval = v.floating;             haveNum = true; break;
-                    case JSONType.integer:  nval = cast(double)v.integer;  haveNum = true; break;
-                    case JSONType.uinteger: nval = cast(double)v.uinteger; haveNum = true; break;
-                    default: break;
-                }
-            }
-            if (pjv.type != JSONType.object) {
-                takeScalar(pjv);
-            } else {
-                if (auto pp = "_positional" in pjv)
-                    if (pp.type == JSONType.array && pp.array.length >= 1)
-                        takeScalar(pp.array[0]);
-                if (sval.length == 0 && !haveNum) {
-                    // Named forms: the generic "value", plus a per-command
-                    // alias so a caller can be explicit.
-                    foreach (key; ["value", "style", "wire", "overlay", "alpha"]) {
-                        if (auto pp = key in pjv) { takeScalar(*pp); break; }
-                    }
-                }
-                if (auto pp = "viewport" in pjv) {
-                    if (pp.type == JSONType.integer)       cell = cast(int)pp.integer;
-                    else if (pp.type == JSONType.uinteger) cell = cast(int)pp.uinteger;
-                    else if (pp.type == JSONType.float_)   cell = cast(int)pp.floating;
-                    else if (pp.type == JSONType.string) {
-                        try { cell = to!int(pp.str.strip); }
-                        catch (ConvException) { /* keep -1 = active */ }
-                    }
-                }
-            }
-        }
-        if (auto ds = cast(ViewportDisplayStyle)cmd)  { ds.setRaw(sval, cell); return; }
-        if (auto wo = cast(ViewportWireOverlay)cmd)   { wo.setRaw(sval, cell); return; }
-        if (auto wa = cast(ViewportWireAlpha)cmd)     { wa.setRaw(sval, cell, haveNum, nval); return; }
-    }
-
-    if (auto gs = cast(ViewportGridSteps)cmd) {
-        string sval = "";
-        long   mval = long.min;
-        if (paramsJson.length > 0) {
-            auto pjv = parseJSON(paramsJson);
-            void takeScalar(JSONValue v) {
-                switch (v.type) {
-                    case JSONType.string:   sval = v.str;                  break;
-                    case JSONType.integer:  mval = v.integer;              break;
-                    case JSONType.uinteger: mval = cast(long)v.uinteger;   break;
-                    case JSONType.float_:   mval = cast(long)v.floating;   break;
-                    default: break;
-                }
-            }
-            if (pjv.type != JSONType.object) takeScalar(pjv);
-            else {
-                if (auto pp = "_positional" in pjv)
-                    if (pp.type == JSONType.array && pp.array.length >= 1)
-                        takeScalar(pp.array[0]);
-                if (sval.length == 0 && mval == long.min)
-                    foreach (key; ["value", "mask", "steps", "rungs"])
-                        if (auto pp = key in pjv) { takeScalar(*pp); break; }
-            }
-        }
-        gs.setRaw(sval, mval);
-        return;
-    }
-
-    // Law 3 — int-or-string: viewport.master.
-    if (auto vm = cast(ViewportMaster)cmd) {
-        int mid = -1;
-        if (paramsJson.length > 0) {
-            auto pjv = parseJSON(paramsJson);
-            string s = "";
-            if (pjv.type == JSONType.integer)       { mid = cast(int)pjv.integer; }
-            else if (pjv.type == JSONType.uinteger) { mid = cast(int)pjv.uinteger; }
-            else if (pjv.type == JSONType.float_)   { mid = cast(int)pjv.floating; }
-            else if (pjv.type == JSONType.string)   { s = pjv.str; }
-            else if (pjv.type == JSONType.object) {
-                if (auto pp = "_positional" in pjv) {
-                    if (pp.type == JSONType.array && pp.array.length >= 1) {
-                        auto v0 = pp.array[0];
-                        if (v0.type == JSONType.integer)       mid = cast(int)v0.integer;
-                        else if (v0.type == JSONType.uinteger) mid = cast(int)v0.uinteger;
-                        else if (v0.type == JSONType.float_)   mid = cast(int)v0.floating;
-                        else if (v0.type == JSONType.string)   s = v0.str;
-                    }
-                }
-            }
-            if (s.length > 0) {
-                try { mid = to!int(s); } catch (ConvException) { /* keep -1 */ }
-            }
-        }
-        vm.setRaw(mid);
-        return;
-    }
-}
+// TASK 4062 — `oneStringArg`, `injectViewportCommandPositional` and
+// `scalarArgToString` stood here: 250 lines that read the ten `viewport.*`
+// commands' arguments under three different laws, plus the scalar spelling
+// helper the tool injector used. Every one of those arguments is a DECLARED
+// parameter on its own command now (`commands/viewport/*.d`), and
+// `command_args.bindArgs` fills them in declaration order — the same call the
+// keyboard funnel and the panel funnel make. The alias spellings the Law-2
+// scan accepted (`style`/`wire`/`overlay`/`alpha`, `mask`/`steps`/`rungs`)
+// survive as `Param.aliases` on the slots that had them, so the wire contract
+// is unchanged.
 
 void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
     // Slots this build legitimately leaves empty. Appended BESIDE the
@@ -2458,594 +2236,43 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
 private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                              ref string[] optionalSlots) {
     with (app) {
-        void injectToolCommandPositional(Command cmd, ref JSONValue pj)
-        {
-            import std.json : JSONType;
-            if (auto ts = cast(ToolSetCommand)cmd) {
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            ts.setToolId(pos[0].str);
-                        if (pos.length >= 2 && pos[1].type == JSONType.string
-                            && pos[1].str == "off")
-                            ts.setTurnOff(true);
-                    }
-                }
-                // Collect named args (everything except _positional key).
-                import std.json : JSONValue;
-                JSONValue named = JSONValue(cast(JSONValue[string]) null);
-                if (pj.type == JSONType.object) {
-                    foreach (string k, ref v; pj.object) {
-                        if (k != "_positional") named[k] = v;
-                    }
-                }
-                ts.setNamedArgs(named);
-            } else if (auto ta = cast(ToolAttrCommand)cmd) {
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            ta.setToolId(pos[0].str);
-                        if (pos.length >= 2 && pos[1].type == JSONType.string)
-                            ta.setAttrName(pos[1].str);
-                        if (pos.length >= 3) {
-                            // Forms-engine query idiom: a literal "?" in the
-                            // value slot flips the command into read-back mode
-                            // (resolve + box the live value, mutate nothing)
-                            // instead of writing. Any other value writes as
-                            // before — backward-compatible.
-                            if (pos[2].type == JSONType.string && pos[2].str == "?")
-                                ta.setQuery(true);
-                            else
-                                ta.setAttrValue(pos[2]);
-                        }
-                    }
-                }
-            } else if (auto tr = cast(ToolResetCommand)cmd) {
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            tr.setToolId(pos[0].str);
-                    }
-                }
-            } else if (auto tpa = cast(ToolPipeAttrCommand)cmd) {
-                // tool.pipe.attr <stageId> <name> <value>
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            tpa.setStageId(pos[0].str);
-                        if (pos.length >= 2 && pos[1].type == JSONType.string)
-                            tpa.setAttrName(pos[1].str);
-                        if (pos.length >= 3 && pos[2].type == JSONType.string
-                            && pos[2].str == "?") {
-                            // Forms-engine query idiom (stage namespace).
-                            tpa.setQuery(true);
-                        } else if (pos.length >= 3) {
-                            // Value is whatever scalar form was passed —
-                            // stringify so the stage's setAttr can parse it.
-                            import std.conv : to;
-                            string sval;
-                            if      (pos[2].type == JSONType.string)   sval = pos[2].str;
-                            else if (pos[2].type == JSONType.integer)  sval = pos[2].integer.to!string;
-                            else if (pos[2].type == JSONType.uinteger) sval = pos[2].uinteger.to!string;
-                            else if (pos[2].type == JSONType.float_)   sval = pos[2].floating.to!string;
-                            else if (pos[2].type == JSONType.true_)    sval = "true";
-                            else if (pos[2].type == JSONType.false_)   sval = "false";
-                            tpa.setAttrValue(sval);
-                        }
-                    }
-                }
-            } else if (auto la = cast(LayerAttr)cmd) {
-                // layer.attr <index> <attr> <value|?>
-                //   positional[0] = layer index (int; -1 → active)
-                //   positional[1] = attr name (e.g. "pos.x", "name")
-                //   positional[2] = value, or the literal "?" for read-back
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1) {
-                            if      (pos[0].type == JSONType.integer)  la.setIndex(cast(int)pos[0].integer);
-                            else if (pos[0].type == JSONType.uinteger) la.setIndex(cast(int)pos[0].uinteger);
-                            else if (pos[0].type == JSONType.string) {
-                                // TASK 1880 — the target slot takes a LIST
-                                // ("0,3,4") as well as a single index. The
-                                // comma is the discriminator, and it has to be
-                                // checked BEFORE `to!int`: that parse throws on
-                                // a list and the catch below swallows it, which
-                                // would leave `indexArg` at -1 and land a gang
-                                // write silently on the active layer alone.
-                                import std.algorithm : canFind;
-                                if (pos[0].str.canFind(','))
-                                    la.setIndexList(pos[0].str);
-                                else { try { la.setIndex(pos[0].str.to!int); } catch (Exception) {} }
-                            }
-                        }
-                        if (pos.length >= 2 && pos[1].type == JSONType.string)
-                            la.setAttrName(pos[1].str);
-                        if (pos.length >= 3) {
-                            // Forms-engine query idiom: a literal "?" in the
-                            // value slot flips the command into read-back mode.
-                            if (pos[2].type == JSONType.string && pos[2].str == "?")
-                                la.setQuery(true);
-                            else
-                                la.setAttrValue(pos[2]);
-                        }
-                    }
-                }
-            } else if (auto tpe = cast(ToolPanelEditCommand)cmd) {
-                // tool.panelEdit <dx> <dy> <dz> (test-only). Accept int / float
-                // / string scalar forms for each component.
-                import math : Vec3;
-                float comp(JSONValue v) {
-                    if      (v.type == JSONType.integer)  return cast(float)v.integer;
-                    else if (v.type == JSONType.uinteger) return cast(float)v.uinteger;
-                    else if (v.type == JSONType.float_)   return cast(float)v.floating;
-                    else if (v.type == JSONType.string)   { try { return v.str.to!float; } catch (Exception) {} }
-                    return 0.0f;
-                }
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        float dx = pos.length >= 1 ? comp(pos[0]) : 0.0f;
-                        float dy = pos.length >= 2 ? comp(pos[1]) : 0.0f;
-                        float dz = pos.length >= 3 ? comp(pos[2]) : 0.0f;
-                        tpe.setDelta(Vec3(dx, dy, dz));
-                    }
-                }
-            } else if (auto stt = cast(SnapToggleTypeCommand)cmd) {
-                // snap.toggleType <typeName>
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            stt.setTypeName(pos[0].str);
-                    }
-                }
-            } else if (auto snm = cast(SnapModeCommand)cmd) {
-                // snap.mode <global|component|item>
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            snm.setModeName(pos[0].str);
-                    }
-                }
-            } else if (auto crc = cast(CoordRoundingCommand)cmd) {
-                // pref.coordRounding <none|normal|fine|fixed|forcedFixed>
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            crc.setModeName(pos[0].str);
-                    }
-                }
-            } else if (auto tbp = cast(TrackballPrefCommand)cmd) {
-                // pref.trackball <global|override|viewport|speed|tabletSpeed> <value>
-                //
-                // The VALUE is stringified from whatever scalar the argstring
-                // parser produced, not read as a string only: `speed 1.0`
-                // arrives as a JSON number and `global true` as a JSON bool, so
-                // a string-only read silently dropped both and the command then
-                // reported "value required" for an argument that was right
-                // there. The command owns the parsing of the resulting text.
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            tbp.setSubject(pos[0].str);
-                        if (pos.length >= 2)
-                            tbp.setValue(scalarArgToString(pos[1]));
-                    }
-                }
-            } else if (auto utp = cast(UiToolPropertiesCommand)cmd) {
-                // ui.toolProperties <show|hide> (test-only).
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            utp.setVisible(pos[0].str);
-                    }
-                }
-            } else if (auto ull = cast(UiLayerListCommand)cmd) {
-                // ui.layerList <show|hide> (test-only).
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            ull.setVisible(pos[0].str);
-                    }
-                }
-            } else if (auto uil = cast(UiImageListCommand)cmd) {
-                // ui.imageList <show|hide> (test-only; task 0616 Ph4).
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            uil.setVisible(pos[0].str);
-                    }
-                }
-            } else if (auto uch = cast(UiChannelsCommand)cmd) {
-                // ui.channels <show|hide> (test-only; task 0637).
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            uch.setVisible(pos[0].str);
-                    }
-                }
-            } else if (auto ust = cast(UiStatisticsCommand)cmd) {
-                // ui.statistics <show|hide> (test-only; task 1100).
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            ust.setVisible(pos[0].str);
-                    }
-                }
-            } else if (auto use = cast(UiStatisticsExpandCommand)cmd) {
-                // ui.statistics.expand <target> [open|close] (test-only).
-                // `target` is a section label or a "<Section>/<Category>" key —
-                // the same key the row model publishes.
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        string tgt = (pos.length >= 1 && pos[0].type == JSONType.string)
-                                   ? pos[0].str : "";
-                        string st  = (pos.length >= 2 && pos[1].type == JSONType.string)
-                                   ? pos[1].str : "open";
-                        use.setArgs(tgt, st);
-                    }
-                }
-            } else if (auto uvp = cast(UiViewportPropsCommand)cmd) {
-                // ui.viewportProps <show|hide> (test-only).
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            uvp.setVisible(pos[0].str);
-                    }
-                }
-            } else if (auto uab = cast(UiAboutCommand)cmd) {
-                // ui.about <show|hide|toggle> (task 0641). Not test-only —
-                // this is the command the File → About… menu item dispatches.
-                // A bare `ui.about` keeps the command's own default (show).
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            uab.setVisible(pos[0].str);
-                    }
-                }
-            } else if (auto upie = cast(UiPieCommand)cmd) {
-                // ui.pie <menuId|close> (task 1800). The menu id also rides
-                // the keyboard binding as a baked argstring
-                // (`ui.pie: "Ctrl+Space viewport"` in config/shortcuts.yaml),
-                // which funnels through this same positional slot.
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            upie.setMenu(pos[0].str);
-                    }
-                }
-            } else if (auto fad = cast(FalloffAddCommand)cmd) {
-                // falloff.add <type>
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            fad.setTypeName(pos[0].str);
-                    }
-                }
-            } else if (auto frm = cast(FalloffRemoveCommand)cmd) {
-                // falloff.remove <id>
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            frm.setTargetId(pos[0].str);
-                    }
-                }
-            } else if (auto fas = cast(FalloffAutoSizeCommand)cmd) {
-                // falloff.autosize <axis>  (x / y / z)
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            fas.setAxis(pos[0].str);
-                    }
-                }
-            } else if (auto pdc = cast(PathDefineCommand)cmd) {
-                // path.define <csv-verts> [closed]
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            pdc.setVertsCsv(pos[0].str);
-                        if (pos.length >= 2 && pos[1].type == JSONType.string)
-                            pdc.setClosed(pos[1].str == "true");
-                    }
-                }
-            }
-            // tool.doApply has no params.
-
-            // workplane.* commands: read named args (cenX/Y/Z, rotX/Y/Z,
-            // axis, angle, dist). All argstring keys; we
-            // accept JSON scalar types for the value and stringify /
-            // floatify as needed.
-            import std.math : isNaN;
-            bool isNaNFloat(float f) { return isNaN(f); }
-            float readFloat(string key) {
-                if (auto p = key in pj) {
-                    if      (p.type == JSONType.integer)  return cast(float)p.integer;
-                    else if (p.type == JSONType.uinteger) return cast(float)p.uinteger;
-                    else if (p.type == JSONType.float_)   return cast(float)p.floating;
-                    else if (p.type == JSONType.string)   {
-                        try { return p.str.to!float; } catch (Exception) {}
-                    }
-                }
-                return float.nan;
-            }
-            string readString(string key) {
-                if (auto p = key in pj)
-                    if (p.type == JSONType.string) return p.str;
-                return "";
-            }
-            if (auto we = cast(WorkplaneEditCommand)cmd) {
-                float cx = readFloat("cenX");
-                float cy = readFloat("cenY");
-                float cz = readFloat("cenZ");
-                float rx = readFloat("rotX");
-                float ry = readFloat("rotY");
-                float rz = readFloat("rotZ");
-                we.setCenX(cx); we.setCenY(cy); we.setCenZ(cz);
-                we.setRotX(rx); we.setRotY(ry); we.setRotZ(rz);
-            } else if (auto wr = cast(WorkplaneRotateCommand)cmd) {
-                wr.setAxis(readString("axis"));
-                float a = readFloat("angle");
-                if (!isNaNFloat(a)) wr.setAngle(a);
-            } else if (auto wo = cast(WorkplaneOffsetCommand)cmd) {
-                wo.setAxis(readString("axis"));
-                float d = readFloat("dist");
-                if (!isNaNFloat(d)) wo.setDist(d);
-            }
-        }
-
-        // Helper: inject _positional args for select.* commands.
-        // Called from setCommandHandler after injectToolCommandPositional.
-        void injectSelectCommandPositional(Command cmd, ref JSONValue pj)
-        {
-            import std.json : JSONType;
-            if (auto stf = cast(SelectTypeFromCommand)cmd) {
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            stf.setTargetType(pos[0].str);
-                    }
-                }
-            } else if (auto sd = cast(SelectDropCommand)cmd) {
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            sd.setTargetType(pos[0].str);
-                    }
-                }
-            } else if (auto se = cast(SelectElementCommand)cmd) {
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            se.setTargetType(pos[0].str);
-                        if (pos.length >= 2 && pos[1].type == JSONType.string)
-                            se.setAction(pos[1].str);
-                        int[] idx;
-                        foreach (pi; 2 .. pos.length) {
-                            if (pos[pi].type == JSONType.integer)
-                                idx ~= cast(int)pos[pi].integer;
-                            else if (pos[pi].type == JSONType.uinteger)
-                                idx ~= cast(int)pos[pi].uinteger;
-                        }
-                        se.setIndices(idx);
-                    }
-                }
-            } else if (auto sc = cast(SelectConvertCommand)cmd) {
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            sc.setTargetType(pos[0].str);
-                    }
-                }
-            }
-        }
-
-        // Retired HTTP wrapper arguments. These commands predate Param-backed
-        // JSON injection, so their former route validation/configuration now
-        // lives at the one generic command-dispatch point.
+        // TASK 4062 — `injectToolCommandPositional` and
+        // `injectSelectCommandPositional` stood here: ~370 lines of
+        // `cast(ConcreteCommand)` arms, each reading `_positional` by hand and
+        // each free to invent its own rule about types, defaults and what an
+        // absent argument means. Thirty of those commands now declare their
+        // arguments in `params()` and `command_args.bindArgs` fills them.
         //
-        // THE GATE IS THE REGISTERED ID, NOT THE CLASS. A command CLASS is not
-        // a command: `file.new` is registered as a `SceneReset` (registration.d
-        // — "File → New = empty scene", `setEmpty(true)`), and a cast-gated
-        // branch therefore also fires on it. Measured on this branch before the
-        // fix: `POST /api/command {"id":"file.new"}` carries an object body
-        // (the envelope itself, or `{}` from the argstring parser), so this
-        // block ran, found no `"empty"` key, took the primitive arm and called
-        // `reset.setPrimitive("")` — whose side effect is `emptyScene = false`.
-        // `file.new` answered `status:ok` and left the DEFAULT CUBE: 8 vertices
-        // where the command's whole contract is 0. Every id below is registered
-        // exactly once except `scene.reset`, but the gate is by id for all four
-        // so a second registration of any of them cannot silently inherit
-        // another command's argument law.
+        // Two of the arms did not survive as casts and did not need to: the
+        // `tool.set` named-args bag reaches its command through
+        // `Command.setUnboundArgs`, and the `?` read-back through
+        // `Command.acceptsQuery`/`markQuery` — both base hooks, so a command
+        // added next year gets them by declaring, not by editing this file.
+
+        // The FIFTH injector — `injectRetiredWrapperArgs`, the one the
+        // wrapper-route retirement (tasks 4063 / 4131) added here — is gone the
+        // same way the other four are: `mesh.select`, `mesh.transform`,
+        // `scene.loadMesh` and `scene.reset` DECLARE their arguments, and
+        // `bindArgs` above fills them. Nothing about its behaviour was dropped
+        // with it; each rule moved to the command that owns it, named in that
+        // command's `params()`:
         //
-        // A FIELD IS VALIDATED ONLY WHEN THE PAYLOAD SUPPLIES IT (task 4131).
-        // The retired ROUTES made their fields mandatory; `/api/command` never
-        // did, and it must not inherit the obligation, because this injector
-        // runs BEFORE `apply()`. Made unconditional, an argument-less
-        // `{"id":"mesh.transform"}` threw "missing 'kind' string field" where
-        // the command's own refusal — "no mesh item is selected: there is no
-        // mesh edit target" — is what the availability census freezes, and an
-        // argument-less `{"id":"scene.loadMesh"}` threw instead of reaching the
-        // apply the discard census sweeps for. Both went red on this branch.
-        // So each block below is gated on its own keys being PRESENT; what a
-        // present key is allowed to CONTAIN is unchanged, and a supplied-but-
-        // malformed field is still refused here, by name, before `apply()`.
-        // `mesh.select` and `scene.loadMesh` gate on the PAIR — half a payload
-        // (`{"faces":[[0,1,2]]}` with no `vertices`) stays an error, which is
-        // what `tests/test_load_mesh.d` froze — while `mesh.transform`'s
-        // fields are independently optional and gate one by one.
-        void injectRetiredWrapperArgs(Command cmd, ref JSONValue pj, string id) {
-            import math : Vec3;
-
-            if (id == "mesh.select") {
-                auto select = cast(MeshSelect)cmd;
-                assert(select !is null, "mesh.select is not a MeshSelect");
-                if ("mode" in pj || "indices" in pj) {
-                    if ("mode" !in pj || pj["mode"].type != JSONType.string)
-                        throw new Exception("missing 'mode' string field");
-                    if ("indices" !in pj || pj["indices"].type != JSONType.array)
-                        throw new Exception("missing 'indices' array field");
-                    int[] indices;
-                    foreach (n; pj["indices"].array) {
-                        if (n.type != JSONType.integer && n.type != JSONType.uinteger)
-                            throw new Exception("indices must be integers");
-                        indices ~= cast(int)n.integer;
-                    }
-                    select.setMode(pj["mode"].str);
-                    select.setIndices(indices);
-                }
-            } else if (id == "mesh.transform") {
-                auto transform = cast(MeshTransform)cmd;
-                assert(transform !is null, "mesh.transform is not a MeshTransform");
-                Vec3 vec3From(string field, Vec3 def) {
-                    if (field !in pj) return def;
-                    auto a = pj[field].array;
-                    if (a.length != 3)
-                        throw new Exception("'" ~ field ~ "' must be [x,y,z]");
-                    Vec3 r;
-                    foreach (i, n; a) {
-                        double v;
-                        switch (n.type) {
-                            case JSONType.integer:  v = cast(double)n.integer;  break;
-                            case JSONType.uinteger: v = cast(double)n.uinteger; break;
-                            case JSONType.float_:   v = n.floating;             break;
-                            default: throw new Exception("'" ~ field ~ "' components must be numbers");
-                        }
-                        if (i == 0) r.x = cast(float)v;
-                        if (i == 1) r.y = cast(float)v;
-                        if (i == 2) r.z = cast(float)v;
-                    }
-                    return r;
-                }
-                float floatFrom(string field, float def) {
-                    if (field !in pj) return def;
-                    auto n = pj[field];
-                    switch (n.type) {
-                        case JSONType.integer:  return cast(float)n.integer;
-                        case JSONType.uinteger: return cast(float)n.uinteger;
-                        case JSONType.float_:   return cast(float)n.floating;
-                        default: throw new Exception("'" ~ field ~ "' must be a number");
-                    }
-                }
-
-                // Each setter is reached only through its own key. The
-                // defaults below are the ones `MeshTransform`'s constructor
-                // already installs, so an absent key and a call with the
-                // default are the same state — the point of the gate is that
-                // an absent key must not THROW.
-                if ("kind" in pj) {
-                    if (pj["kind"].type != JSONType.string)
-                        throw new Exception("'kind' must be a string");
-                    transform.setKind(pj["kind"].str);
-                }
-                if ("delta"  in pj) transform.setDelta (vec3From("delta",  Vec3(0, 0, 0)));
-                if ("axis"   in pj) transform.setAxis  (vec3From("axis",   Vec3(0, 1, 0)));
-                if ("angle"  in pj) transform.setAngle (floatFrom("angle", 0.0f));
-                if ("factor" in pj) transform.setFactor(vec3From("factor", Vec3(1, 1, 1)));
-                if ("pivot"  in pj) transform.setPivot (vec3From("pivot",  Vec3(0, 0, 0)));
-            } else if (id == "scene.loadMesh") {
-                auto loadMesh = cast(MeshLoadRaw)cmd;
-                assert(loadMesh !is null, "scene.loadMesh is not a MeshLoadRaw");
-                if ("vertices" in pj || "faces" in pj) {
-                    if ("vertices" !in pj || pj["vertices"].type != JSONType.array)
-                        throw new Exception("missing 'vertices' array field");
-                    if ("faces" !in pj || pj["faces"].type != JSONType.array)
-                        throw new Exception("missing 'faces' array field");
-
-                    double numFrom(JSONValue n) {
-                        switch (n.type) {
-                            case JSONType.integer:  return cast(double)n.integer;
-                            case JSONType.uinteger: return cast(double)n.uinteger;
-                            case JSONType.float_:   return n.floating;
-                            default: throw new Exception("vertex components must be numbers");
-                        }
-                    }
-
-                    auto vArr = pj["vertices"].array;
-                    Vec3[] verts = new Vec3[](vArr.length);
-                    foreach (i, vj; vArr) {
-                        if (vj.type != JSONType.array || vj.array.length != 3)
-                            throw new Exception("each vertex must be [x,y,z]");
-                        verts[i] = Vec3(cast(float)numFrom(vj.array[0]),
-                                        cast(float)numFrom(vj.array[1]),
-                                        cast(float)numFrom(vj.array[2]));
-                    }
-
-                    auto fArr = pj["faces"].array;
-                    uint[][] faces = new uint[][](fArr.length);
-                    foreach (i, fj; fArr) {
-                        if (fj.type != JSONType.array)
-                            throw new Exception("each face must be an array of vertex indices");
-                        auto idxArr = fj.array;
-                        uint[] face = new uint[](idxArr.length);
-                        foreach (k, ij; idxArr) {
-                            if (ij.type != JSONType.integer && ij.type != JSONType.uinteger)
-                                throw new Exception("face indices must be integers");
-                            long v = ij.integer;
-                            if (v < 0)
-                                throw new Exception("face index must be non-negative");
-                            face[k] = cast(uint)v;
-                        }
-                        faces[i] = face;
-                    }
-                    loadMesh.setData(verts, faces);
-                }
-            } else if (id == "scene.reset") {
-                auto reset = cast(SceneReset)cmd;
-                assert(reset !is null, "scene.reset is not a SceneReset");
-                bool empty;
-                if (auto p = "empty" in pj) {
-                    if (p.type != JSONType.true_ && p.type != JSONType.false_)
-                        throw new Exception("'empty' must be a boolean");
-                    empty = p.type == JSONType.true_;
-                }
-                if (empty) {
-                    reset.setEmpty(true);
-                } else {
-                    string primitiveType;
-                    if (auto p = "type" in pj) {
-                        if (p.type != JSONType.string)
-                            throw new Exception("'type' must be a string");
-                        primitiveType = p.str;
-                    }
-                    int primitiveParam = -1;
-                    foreach (key; ["n", "levels"]) {
-                        if (auto p = key in pj) {
-                            if (p.type != JSONType.integer && p.type != JSONType.uinteger)
-                                throw new Exception("'" ~ key ~ "' must be an integer");
-                            primitiveParam = cast(int)p.integer;
-                            break;
-                        }
-                    }
-                    reset.setPrimitive(primitiveType);
-                    reset.setPrimitiveParam(primitiveParam);
-                }
-            }
-        }
+        //   * `scene.reset` — `empty` (bool), `type` (string), `n` with the
+        //     `levels` alias. The id-vs-class hazard that block was written to
+        //     fix is now UNREPRESENTABLE rather than guarded: `file.new` and
+        //     `scene.reset` are the same class, so a class gate fired on both,
+        //     but a DECLARED parameter belongs to the instance the factory
+        //     built and `file.new`'s `setEmpty(true)` survives an argument-less
+        //     body because no arm re-writes it.
+        //   * `mesh.select` — `mode` (string), `indices` (int array, absorbing
+        //     the positional tail).
+        //   * `mesh.transform` — `kind`, `delta`, `axis`, `angle`, `factor`,
+        //     `pivot`, each independently optional exactly as task 4131 made
+        //     them.
+        //   * `scene.loadMesh` — `vertices` / `faces`, both raw-JSON slots
+        //     (`Param.jsonArg_`): parallel arrays-of-arrays are a shape
+        //     `Param.Kind` has no spelling for, so the command decodes them
+        //     itself, keeping every message and the pair gate byte-identical.
 
         // ------------------------------------------------------------------
         // ONE dispatcher BODY, TWO refusal policies (task 1520).
@@ -3083,17 +2310,15 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
         // below can name it; the body is otherwise unchanged from the lambda
         // it replaces except at the four policy points marked `refused(...)`.
         void dispatchCommandLine(string id, string paramsJson, CommandOrigin origin) {
-            import std.json : parseJSON, JSONType;
-            import commands.file.load : FileLoad;
-            import commands.file.save : FileSave;
-            import params : injectParamsInto;
+            import std.json     : parseJSON, JSONType;
+            import command_args : bindArgs;
 
             // The ten `viewport.*` commands used to be intercepted here,
             // ahead of `reg.commandFactories` below. Moved into the registry
             // (task 0761) — see `commands/viewport/{view_preset,layout_preset,
             // independence,display,grid_steps,master}.d` for the command
-            // classes and `injectViewportCommandPositional` below for the
-            // argument-parsing law each one preserves verbatim.
+            // classes, each of which declares the argument it takes (task
+            // 4062) rather than having it read for it.
 
             auto factory = id in reg.commandFactories;
             if (factory is null)
@@ -3121,16 +2346,6 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                 if (dropPendingGuard !is null) dropPendingGuard();
             }
 
-            // viewport.* commands (task 0761): argument extraction ahead of
-            // apply(), same position in the dispatch flow the old
-            // interception ran at. Operates on the RAW `paramsJson` string
-            // (not the `pj` object parsed below) because one of the three
-            // argument laws — `oneStringArg`'s — accepts a bare JSON string
-            // body, a shape `injectToolCommandPositional`/
-            // `injectSelectCommandPositional` below never see (they only run
-            // inside the `pj.type == JSONType.object` branch).
-            injectViewportCommandPositional(cmd, paramsJson);
-
             // FormsPanel interactive write: mark a `tool.attr` interactive so
             // the reEvaluate() seam opens the tool's live session on the first
             // edit. The latch is set ONLY by formsInteractiveDispatch around one
@@ -3142,34 +2357,18 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
 
             if (paramsJson.length > 0) {
                 auto pj = parseJSON(paramsJson);
+
+                // TASK 4062 — ONE binder, the same one the keyboard funnel and
+                // the panel funnel call. What stood here was four of them: a
+                // `viewport.*` injector reading the raw string under three
+                // different argument laws, a `"path"` special case casting to
+                // two file classes, `injectParamsInto` over the schema, and two
+                // more injectors casting to thirty-odd tool/select classes.
+                // Every one of those arguments is a DECLARED parameter now, and
+                // `bindArgs` fills the declared slots in declaration order.
+                bindArgs(cmd, pj);
+
                 if (pj.type == JSONType.object) {
-                    // Path special-case for file.load/file.save (OS-native
-                    // dialog quirk — schema-based migration deferred to phase 4).
-                    if ("path" in pj && pj["path"].type == JSONType.string) {
-                        string path = pj["path"].str;
-                        if (auto fl = cast(FileLoad)cmd) fl.setPath(path);
-                        else if (auto fs = cast(FileSave)cmd) fs.setPath(path);
-                    }
-
-                    // Schema-driven injection — works for any command with a
-                    // non-empty params() schema (currently vert.merge,
-                    // vert.join, mesh.move_vertex).
-                    if (cmd.params().length > 0)
-                        injectParamsInto(cmd.params(), pj);
-
-                    // tool.* commands: inject _positional args and named args.
-                    injectToolCommandPositional(cmd, pj);
-
-                    // select.* commands: inject positional args.
-                    injectSelectCommandPositional(cmd, pj);
-
-                    // Commands formerly reached through dedicated HTTP
-                    // wrappers: preserve their payload shapes while applying
-                    // them through this single refusal-aware dispatcher.
-                    // Gated on the registered id — see the function's header
-                    // for the `file.new` case a class gate silently swallowed.
-                    injectRetiredWrapperArgs(cmd, pj, id);
-
                     // Falloff side-channel — mesh.smooth / mesh.jitter /
                     // mesh.quantize accept a `falloff` JSON object that
                     // doesn't fit Param[]'s typed-pointer schema (it's

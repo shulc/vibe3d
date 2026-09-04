@@ -9,6 +9,7 @@ import command;
 import mesh;
 import view;
 import editmode;
+import params : Param, wireArgs;
 import document : Document, Layer;
 import io.lwo_import    : sceneFromLwo;
 import io.scene_import  : importViaAssimp;
@@ -73,6 +74,19 @@ class FileLoad : Command {
 
     /// Skip the native file dialog and load from the given path.
     /// Used by /api/command params; leave unset for normal user flow.
+    /// The declared argument (task 4062). It was a `"path" in pj` special case
+    /// in the HTTP dispatcher with a cast to this class beside a cast to the
+    /// sibling — one of the four hand-written injectors. Declaring it keeps
+    /// the named `path:` spelling every existing caller uses AND gives the
+    /// command a positional form for free; an ABSENT path still means "ask the
+    /// user", which is the whole reason the field is a sentinel rather than a
+    /// default.
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("path", "Path", &explicitPath, "")
+        );
+    }
+
     void setPath(string p) { explicitPath = p; }
 
     /// Configure the dialog framing. `ext` is the single-format target for

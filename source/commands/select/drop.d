@@ -4,6 +4,7 @@ import command;
 import mesh;
 import view;
 import editmode;
+import params : Param, wireArgs;
 import snapshot : SelectionSnapshot;
 
 /// select.drop <vertex|edge|polygon>
@@ -24,6 +25,14 @@ class SelectDropCommand : Command {
 
     override string name()  const { return "select.drop"; }
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
+
+    /// The declared argument (task 4062). Absent leaves the constructor's
+    /// edit-mode-derived default, exactly as the dispatcher's injector did.
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("type", "Type", &targetType, "")
+        );
+    }
 
     void setTargetType(string t) { targetType = t; }
 

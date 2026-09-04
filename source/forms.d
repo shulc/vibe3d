@@ -33,6 +33,7 @@ module forms;
 
 import params : Param, ParamHints, choicesOf, fmtFloatWire;
 import argstring : parseArgstring;
+import command_args : positionalArgs;
 
 import std.json : JSONValue, JSONType;
 import std.string : strip, splitLines;
@@ -321,14 +322,12 @@ Binding parseBinding(string line)
     b.queryIdx  = -1;
     b.namespace = classifyNamespace(parsed.commandId);
 
-    // Collect positionals (argstring stores them under "_positional" as a JSON
-    // array, omitting the key when there are none).
+    // Collect positionals. The wire key is `command_args`'s to spell (task
+    // 4062); a misspelt copy here would read an EMPTY positional list and bind
+    // every control line to its command's defaults, silently.
     string[] pos;
-    if (parsed.params.type == JSONType.object &&
-        ("_positional" in parsed.params)) {
-        foreach (v; parsed.params["_positional"].array)
-            pos ~= jsonToToken(v);
-    }
+    foreach (v; positionalArgs(parsed.params))
+        pos ~= jsonToToken(v);
     b.positionals = pos;
 
     // Count `?` sentinels and record the (single) index.
@@ -1767,7 +1766,7 @@ version (unittest)
         auto line = substituteQuery(b, JSONValue(2.75));
         auto p = parseArgstring(line);
         assert(p.commandId == "tool.attr");
-        auto pos = p.params["_positional"].array;
+        auto pos = positionalArgs(p.params);
         assert(pos.length == 3);
         assert(pos[0].str == "xfrm.transform");
         assert(pos[1].str == "TX");

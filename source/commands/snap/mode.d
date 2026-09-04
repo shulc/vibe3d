@@ -4,6 +4,7 @@ import command;
 import mesh;
 import view;
 import editmode;
+import params : Param, wireArgs;
 
 import toolpipe.pipeline    : g_pipeCtx;
 import toolpipe.stages.snap : SnapStage;
@@ -28,6 +29,12 @@ class SnapModeCommand : Command {
     override string label() const { return "Set Snap Mode"; }
 
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
+
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("mode", "Mode", &modeName_, "")
+        );
+    }
 
     void setModeName(string n) { modeName_ = n; }
 

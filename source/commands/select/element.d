@@ -5,6 +5,7 @@ import mesh;
 import view;
 import editmode;
 import snapshot : SelectionSnapshot;
+import params : Param, wireArgs;
 
 /// select.element <vertex|edge|polygon> <set|add|remove> <indices...>
 ///
@@ -19,6 +20,17 @@ class SelectElementCommand : Command {
     private string targetType;
     private string action;
     private int[]  indices;
+    // The wire form of `indices`: an array slot, which is the ONE shape the
+    // positional law cannot express as a fixed slot count. `bindArgs` gives an
+    // array-kind slot every REMAINING positional, so `select.element vertex
+    // add 3 4 5` fills it — the variable-length list the task's escape hatch
+    // predicted would be the exception, declared rather than hand-read.
+    //
+    // `uint[]` because that is what `Param.intArray_` stores; the cast back is
+    // exact for the 32-bit range, and an out-of-range index is refused by
+    // `checkRange` exactly as before (a negative one arrives as its two's
+    // complement and casts back to the same negative int).
+    private uint[]  indicesArg;
     private SelectionSnapshot snap;
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
@@ -28,11 +40,23 @@ class SelectElementCommand : Command {
     override string name()  const { return "select.element"; }
     override CmdFlags cmdFlags() const { return CmdFlags.UiState; }
 
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("type", "Type", &targetType, ""),
+            Param.string_("action", "Action", &action, ""),
+            Param.intArray_("indices", "Indices", &indicesArg)
+        );
+    }
+
     void setTargetType(string t) { targetType = t; }
     void setAction(string a)     { action = a; }
     void setIndices(int[] i)     { indices = i; }
 
     protected override bool applyImpl() {
+        if (indicesArg.length > 0) {
+            indices.length = indicesArg.length;
+            foreach (i, v; indicesArg) indices[i] = cast(int)v;
+        }
         mesh.syncSelection();
         snap = SelectionSnapshot.capture(*mesh);
         noteUndoRecorded();

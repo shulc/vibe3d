@@ -27,7 +27,7 @@ import command;
 import mesh;
 import view;
 import editmode;
-import params : Param, paramToJson, injectParamsInto;
+import params : Param, paramToJson, injectParamsInto, wireArgs;
 import document : Document, Layer, ItemKind, ItemXform, kindInfo, LinkState,
                   ImageData, ImagePlaneData, MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG;
 import layer_params : LayerPropsProvider;
@@ -1220,6 +1220,18 @@ final class LayerAttr : LayerCommandBase {
     // multi-element sample assigns the one command argument to each element it
     // visits. (Its Relative/Proportional gang modes are a different feature —
     // the tie between the X/Y/Z controls of ONE item, not between items.)
+    // TASK 4062 — the target slot is ONE declared string: "" (the active
+    // layer), a single index ("3"), or a list ("0,3,4"). It was two fields
+    // filled by a `cast(LayerAttr)` arm in the HTTP dispatcher that chose
+    // between `setIndex` and `setIndexList` on the presence of a comma, and
+    // that choice is the command's own — `resolveTargets` below makes it, on
+    // the same discriminator, in the one place that can also say what the
+    // choice MEANS.
+    private string    targetArg_;           // "" => the active layer
+    // The wire form of the value slot: RAW JSON TEXT. The value is forwarded
+    // to the layer's own param schema, so its JSON TYPE decides the write —
+    // see `Param.jsonArg_`, and `tool.attr`, which forwards the same way.
+    private string    attrValueJson_;
     private string    targetsArg_;          // "" => just `indexArg`
     private size_t[]  targets_;             // resolved at apply()
     private JSONValue[] priorValues_;       // one per target, for revert()
@@ -1238,13 +1250,26 @@ final class LayerAttr : LayerCommandBase {
 
     // Programmatic setters (wired from app.d's positional injector, mirroring
     // ToolAttrCommand). The value/`?` discriminator follows the forms idiom.
-    void setIndex(int i)           { indexArg = i; targetsArg_ = ""; }
+    /// The three declared arguments, in wire order (task 4062).
+    ///
+    /// `index` keeps its `targets` spelling as an ALIAS so a named payload
+    /// that used it still binds. It is a STRING because the slot has always
+    /// accepted three shapes and only the command can tell them apart.
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("index", "Index", &targetArg_, "") .aliases(["targets"]),
+            Param.string_("attr", "Attribute", &attrName_, ""),
+            Param.jsonArg_("value", "Value", &attrValueJson_)
+        );
+    }
+
+    void setIndex(int i)           { import std.conv : to; targetArg_ = i.to!string; }
     /// The gang-edit target slot: a comma-separated index list ("0,3,4").
     /// A single index with no comma is accepted too and behaves exactly like
-    /// `setIndex`, so the injector has one path rather than two.
-    void setIndexList(string csv)  { targetsArg_ = csv; }
+    /// `setIndex`, so there is one path rather than two.
+    void setIndexList(string csv)  { targetArg_ = csv; }
     void setAttrName(string n)     { attrName_ = n; }
-    void setAttrValue(JSONValue v) { attrValue_ = v; }
+    void setAttrValue(JSONValue v) { attrValue_ = v; attrValueJson_ = v.toString(); }
     /// This command answers a `?` read-back (task 4062 base protocol).
     override bool acceptsQuery() const { return true; }
     void setQuery(bool v)          { if (v) markQuery(); }
@@ -1254,21 +1279,27 @@ final class LayerAttr : LayerCommandBase {
         return queryResult_.toString();
     }
 
-    override Param[] params() {
-        return [ Param.int_("index", "Index", &indexArg, -1),
-                 Param.string_("targets", "Targets", &targetsArg_, "") ];
-    }
-
     /// Resolve the target list. `targetsArg_` wins when it is set; otherwise
     /// the single `indexArg`, which keeps every pre-1880 caller byte-identical.
     /// Returns false (with `refusal_` set) when a token is not a legal index —
     /// a REFUSAL, never a silent skip: the alternative is a gang write that
     /// quietly lands on fewer items than the user selected.
     private bool resolveTargets() {
-        import std.array  : split;
-        import std.string : strip;
-        import std.conv   : to;
+        import std.array     : split;
+        import std.string    : strip;
+        import std.conv      : to;
+        import std.algorithm : canFind;
         targets_.length = 0;
+        // The comma is the discriminator, and it is checked BEFORE `to!int`:
+        // that parse throws on a list, and a swallowed throw would leave the
+        // index at -1 and land a gang write silently on the active layer alone
+        // (task 1880's note, kept at the place that now makes the choice).
+        indexArg    = -1;
+        targetsArg_ = "";
+        if (targetArg_.length > 0) {
+            if (targetArg_.canFind(',')) targetsArg_ = targetArg_;
+            else { try { indexArg = targetArg_.strip.to!int; } catch (Exception) {} }
+        }
         if (targetsArg_.length == 0) {
             immutable size_t one = resolveIndex(indexArg);
             // Task 0654: the absent-sentinel from `resolveIndex(-1)` — refuse
@@ -1313,6 +1344,8 @@ final class LayerAttr : LayerCommandBase {
     }
 
     protected override bool applyImpl() {
+        import std.json : parseJSON;
+        if (attrValueJson_.length > 0) attrValue_ = parseJSON(attrValueJson_);
         if (attrName_.length == 0)
             throw new Exception("layer.attr: no attribute name specified");
         if (doc.layers.length == 0)

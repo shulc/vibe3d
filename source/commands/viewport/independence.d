@@ -6,6 +6,7 @@ import mesh;
 import editmode;
 import view;
 import viewport : ViewportManager;
+import params : Param, wireArgs;
 
 /// Which of a cell's three independence flags this instance backs. One
 /// class, three registrations (`viewport.indCenter`/`indScale`/`indRotate`)
@@ -35,9 +36,16 @@ final class ViewportIndependence : ViewportCommand {
         }
     }
 
-    /// Tolerant parse, verbatim from the original interception:
-    /// "no"/"false"/"0" -> false; anything else (including an absent/empty
-    /// argument) -> true.
+    /// The tolerant parse — "no"/"false"/"0" -> false, anything else -> true —
+    /// is `command_args.coerceToSlot`'s rule for a Bool slot now, stated once
+    /// for every command instead of once here. An absent argument leaves the
+    /// field at its `true` default, exactly as before.
+    override Param[] params() {
+        return wireArgs(
+            Param.bool_("value", "Value", &val_, true)
+        );
+    }
+
     void setValue(bool val) { val_ = val; }
 
     protected override bool applyImpl() {

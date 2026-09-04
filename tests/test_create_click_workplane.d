@@ -391,7 +391,13 @@ unittest { // the click that used to be dropped in silence, at its own call site
     postJson("/api/command", commandBody("scene.reset", "{}"));
     cmd("viewport.view Front");
     cmd("select.typeFrom polygon");
-    cmd("select.polygon 0");
+    // `select.polygon` switches the selection TYPE; it takes no index, and the
+    // `0` this line used to carry was dropped in silence by the HTTP funnel's
+    // select injector (a non-string positional failed its `type == string`
+    // guard). Task 4062 made that argument REACH the command, which refuses it
+    // — so the line is written as what it always did. Nothing here needs a
+    // polygon selected: the radial-array tool arms on the whole mesh.
+    cmd("select.polygon");
     cmd("tool.set mesh.radialArrayTool");
 
     auto c = readCamera("Front");

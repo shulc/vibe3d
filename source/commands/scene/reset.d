@@ -9,6 +9,7 @@ import document : Document, Layer, ItemXform;
 import snapshot : MeshSnapshot;
 import change_bus : MeshChangeAll;
 import io.doc_state : clearCurrentDoc, requestDocRebaseline;
+import params : Param, wireArgs;
 
 /// Reset the scene to a chosen primitive
 /// (cube/diamond/octahedron/lshape/grid/subdivcube). Replaces the legacy
@@ -103,6 +104,40 @@ class SceneReset : Command {
     // on the single UI dispatch point (`runUiCommand`), so `/api/reset`, which
     // calls `apply()` directly, is unaffected and stays promptless.
     override bool discardsUnsavedWork() const { return true; }
+
+    // TASK 4062 — THE ARGUMENTS, DECLARED.
+    //
+    // These three reached the command through a hand-written injector in the
+    // HTTP dispatcher (`injectRetiredWrapperArgs`, itself the descendant of the
+    // retired `/api/reset` route). Declaring them puts them where every other
+    // command's arguments are, and it is what makes the id-vs-class hazard that
+    // injector was written to fix UNREPRESENTABLE rather than guarded: this
+    // class is registered TWICE, as `scene.reset` and as `file.new`, and the
+    // block keyed on the CLASS therefore fired on both. `file.new`'s factory
+    // calls `setEmpty(true)`; a declared parameter is only written when the
+    // payload SUPPLIES it, so an argument-less `file.new` keeps that `true`
+    // where the injector's else-arm used to call `setPrimitive("")` — whose
+    // side effect is `emptyScene = false` — and hand back the default cube
+    // under a `status:ok`.
+    //
+    // `empty` is declared LAST but read FIRST: `applyImpl` tests `emptyScene`
+    // before the primitive switch, so `{"empty":true,"type":"grid"}` is an
+    // empty scene, which is what the injector's `if (empty) … else …` did.
+    // ORDER IS THE POSITIONAL LAW, so `type` leads the two a human would ever
+    // type — `scene.reset grid 100` — and `empty` sits behind them where no
+    // positional caller can reach it by accident.
+    //
+    // `levels` is an ALIAS of `n`, not a second slot: the injector took the
+    // first of `["n", "levels"]` the payload carried, and both spellings are
+    // live in the suite (`{"type":"grid","n":100}`,
+    // `{"type":"subdivcube","levels":2}`).
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("type",  "Primitive", &primitive,  ""),
+            Param.int_   ("n",     "Parameter", &primParam,  -1).aliases(["levels"]),
+            Param.bool_  ("empty", "Empty",     &emptyScene, false),
+        );
+    }
 
     void setPrimitive(string p) { primitive = p; emptyScene = false; }
     void setEmpty(bool b) { emptyScene = b; }

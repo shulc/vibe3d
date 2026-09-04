@@ -8,6 +8,7 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh    : Mesh, GpuMesh;
 import view;
 import editmode : EditMode;
+import params : Param, wireArgs;
 import math     : Vec3, dot, cross, normalize;
 
 import toolpipe.pipeline : g_pipeCtx;
@@ -84,6 +85,22 @@ class WorkplaneEditCommand : Command, Operator {
     override string label() const { return "Edit Work Plane"; }
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
+    /// The six declared arguments (task 4062). All NAMED — this command has
+    /// no positional form, and declaring them is what gives it one for free.
+    /// Each field starts at NaN, which `WorkplaneStage.edit` reads as "leave
+    /// this channel alone"; an absent key is never written, so the sentinel
+    /// survives exactly as it did through the injector's `readFloat`.
+    override Param[] params() {
+        return wireArgs(
+            Param.float_("cenX", "Center X", &cenX_, float.nan),
+            Param.float_("cenY", "Center Y", &cenY_, float.nan),
+            Param.float_("cenZ", "Center Z", &cenZ_, float.nan),
+            Param.float_("rotX", "Rotate X", &rotX_, float.nan),
+            Param.float_("rotY", "Rotate Y", &rotY_, float.nan),
+            Param.float_("rotZ", "Rotate Z", &rotZ_, float.nan)
+        );
+    }
+
     void setCenX(float v) { cenX_ = v; }
     void setCenY(float v) { cenY_ = v; }
     void setCenZ(float v) { cenZ_ = v; }
@@ -119,6 +136,13 @@ class WorkplaneRotateCommand : Command, Operator {
     override string label() const { return "Rotate Work Plane"; }
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("axis", "Axis", &axisStr_, ""),
+            Param.float_("angle", "Angle", &angleDeg_, 0.0f)
+        );
+    }
+
     void setAxis(string s)  { axisStr_  = s; }
     void setAngle(float v)  { angleDeg_ = v; }
 
@@ -153,6 +177,13 @@ class WorkplaneOffsetCommand : Command, Operator {
     override string name()  const { return "workplane.offset"; }
     override string label() const { return "Offset Work Plane"; }
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
+
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("axis", "Axis", &axisStr_, ""),
+            Param.float_("dist", "Distance", &dist_, 0.0f)
+        );
+    }
 
     void setAxis(string s) { axisStr_ = s; }
     void setDist(float v)  { dist_    = v; }

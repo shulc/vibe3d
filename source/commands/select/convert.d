@@ -4,6 +4,7 @@ import command;
 import mesh;
 import view;
 import editmode;
+import params : Param, wireArgs;
 
 /// select.convert <vertex|edge|polygon>
 ///
@@ -37,6 +38,13 @@ class SelectConvertCommand : Command {
 
     override string name()  const { return "select.convert"; }
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
+
+    /// The declared argument (task 4062).
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("type", "Type", &targetType, "")
+        );
+    }
 
     void setTargetType(string t) { targetType = t; }
     SelectConvertCommand setPromoteHook(void delegate(EditMode) h) { promoteType = h; return this; }

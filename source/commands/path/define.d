@@ -4,6 +4,7 @@ import command;
 import mesh;
 import view;
 import editmode;
+import params : Param, wireArgs;
 
 import toolpipe.pipeline    : g_pipeCtx;
 import toolpipe.stages.path : PathStage;
@@ -17,7 +18,8 @@ import path                 : PathSource;
 // table, replacing entry 0 or appending when the table is empty. Multiple
 // path sources are addressable by index via `tool.pipe.attr path index N`.
 //
-// Positional args (delivered by injectToolCommandPositional in app.d):
+// Positional args — declared in `params()`, bound by `command_args.bindArgs`
+// in declaration order (task 4062):
 //   positional[0] = CSV of uint vertex indices, e.g. "0,1,2"
 //   positional[1] = optional "true" / "false" for the closed flag
 //
@@ -27,6 +29,8 @@ class PathDefineCommand : Command {
 private:
     uint[] verts_;
     bool   closed_ = false;
+    string vertsCsv_;
+    string closedArg_;
 
 public:
     this(Mesh* mesh, ref View view, EditMode editMode) {
@@ -36,6 +40,16 @@ public:
     override string   name()     const { return "path.define"; }
     override string   label()    const { return "Define Path Source"; }
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
+
+    /// The two declared arguments (task 4062). `verts` is the CSV string the
+    /// command parses itself; `closed` compares against the literal "true",
+    /// verbatim from the injector this replaces.
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("verts", "Vertices", &vertsCsv_, ""),
+            Param.string_("closed", "Closed", &closedArg_, "")
+        );
+    }
 
     /// Parse a comma-separated list of uint vertex indices.
     void setVertsCsv(string csv) {
@@ -52,6 +66,8 @@ public:
     void setClosed(bool c) { closed_ = c; }
 
     protected override bool applyImpl() {
+        if (vertsCsv_.length > 0) setVertsCsv(vertsCsv_);
+        if (closedArg_.length > 0) setClosed(closedArg_ == "true");
         import std.conv : to;
         if (g_pipeCtx is null)
             throw new Exception("path.define: pipeline not initialised");

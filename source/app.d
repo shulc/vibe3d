@@ -4672,10 +4672,16 @@ void main(string[] args) {
     // caller then SKIPS its normal runCommand path. Returns false for all
     // other commands (no params, or id not found).
     bool tryOpenArgsDialog(string commandId) {
+        import args_dialog : visibleParamCount;
         auto factory = commandId in reg.commandFactories;
         if (factory is null) return false;
         auto cmd = (*factory)();
-        if (cmd.params().length == 0) return false;
+        // TASK 4062 — VISIBLE params, not any params. `params()` is the
+        // positional-argument declaration now, so a command that takes a wire
+        // argument has a schema even when there is nothing for a human to fill
+        // in; counting the schema would pop a modal in front of every
+        // `select.vertex` key press. See `args_dialog.visibleParamCount`.
+        if (visibleParamCount(cmd) == 0) return false;
         argsDialog.open(cmd);
         return true;
     }
@@ -7081,9 +7087,18 @@ void main(string[] args) {
                                 bool sel = (i == dsIdx);
                                 if (ImGui.Selectable(displayStyleLabel(dv), sel)
                                     && uiCommandDelegate !is null)
+                                {
+                                    // Scoped import, not a module-level one:
+                                    // `tools/check_prepared_protocol.py` pins
+                                    // two `source/app.d` LINE NUMBERS (3898 /
+                                    // 3913) and a line added above them moves
+                                    // both, which is a tracked-scanner edit for
+                                    // an import.
+                                    import command_args : positionalPayload;
                                     uiCommandDelegate("viewport.displayStyle",
-                                        format(`{"_positional":["%s"],"viewport":%d}`,
-                                               displayStyleId(dv), k));
+                                        positionalPayload([displayStyleId(dv)],
+                                            ["viewport": JSONValue(cast(int) k)]));
+                                }
                                 if (sel) ImGui.SetItemDefaultFocus();
                             }
                             ImGui.EndCombo();

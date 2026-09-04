@@ -6,6 +6,7 @@ import mesh;
 import editmode;
 import view;
 import viewport : ViewportManager;
+import params : Param, wireArgs;
 
 /// `viewport.layout <preset>` — switch layout (Single/SplitH/SplitV/Quad).
 /// APPLICATION-WIDE, not per-cell — unlike displayStyle/wireOverlay/
@@ -18,6 +19,12 @@ final class ViewportLayoutPreset : ViewportCommand {
     }
 
     override string name() const { return "viewport.layout"; }
+
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("preset", "Preset", &preset_, "")
+        );
+    }
 
     void setPreset(string preset) { preset_ = preset; }
 

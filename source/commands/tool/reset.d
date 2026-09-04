@@ -5,6 +5,7 @@ import mesh;
 import view;
 import editmode;
 import commands.tool.host : ToolHost;
+import params : Param, wireArgs;
 
 // ---------------------------------------------------------------------------
 // ToolResetCommand — `tool.reset [<toolId>]`
@@ -30,6 +31,12 @@ class ToolResetCommand : Command {
     override string label() const { return "Reset Tool"; }
 
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
+
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("tool", "Tool", &optToolId_, "")
+        );
+    }
 
     void setToolId(string id) { optToolId_ = id; }
 

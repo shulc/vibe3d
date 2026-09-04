@@ -4,6 +4,7 @@ import command;
 import mesh;
 import view;
 import editmode;
+import params : Param, wireArgs;
 
 /// select.typeFrom <vertex|edge|polygon|item>
 /// Switches the current SELECTION TYPE without changing any selection.
@@ -53,6 +54,17 @@ class SelectTypeFromCommand : Command {
 
     override string name()  const { return "select.typeFrom"; }
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
+
+    /// The declared argument, and therefore positional slot 0 (task 4062).
+    /// An ABSENT argument leaves whatever the constructor put here — the
+    /// registered `select.vertex` / `select.edge` / `select.polygon` /
+    /// `select.item` ids each bake their own type, and `injectParamsInto`
+    /// never writes a key the payload did not carry.
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("type", "Type", &targetType, "")
+        );
+    }
 
     void setTargetType(string t) { targetType = t; }
 

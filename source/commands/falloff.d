@@ -5,6 +5,7 @@ import mesh;
 import view;
 import editmode;
 import commands.tool.host : ToolHost;
+import params : Param, wireArgs;
 
 import toolpipe.pipeline         : g_pipeCtx;
 import toolpipe.stages.falloff   : FalloffStage;
@@ -114,7 +115,7 @@ private FalloffStage requireFalloffStage(string who) {
 
 class FalloffAutoSizeCommand : Command {
     private ToolHost toolHost;
-    private string   axis_;   // "x" / "y" / "z" (set by the app.d positional bridge)
+    private string   axis_;   // "x" / "y" / "z" — declared in params()
 
     this(Mesh* mesh, ref View view, EditMode editMode, ToolHost host) {
         super(mesh, view, editMode);
@@ -125,7 +126,13 @@ class FalloffAutoSizeCommand : Command {
     override string label() const { return "Auto Size"; }
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
-    /// Set by the app.d positional-arg bridge (falloff.autosize <axis>).
+    /// The declared argument, and therefore positional slot 0 (task 4062).
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("axis", "Axis", &axis_, "")
+        );
+    }
+
     void setAxis(string a) { axis_ = a; }
 
     protected override bool applyImpl() {
@@ -229,7 +236,12 @@ class FalloffAddCommand : Command {
     override string label() const { return "Add Falloff"; }
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
-    /// Set by the app.d positional-arg bridge (falloff.add <type>).
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("type", "Type", &typeName_, "")
+        );
+    }
+
     void setTypeName(string t) { typeName_ = t; }
 
     protected override bool applyImpl() {
@@ -289,7 +301,12 @@ class FalloffRemoveCommand : Command {
     override string label() const { return "Remove Falloff"; }
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
-    /// Set by the app.d positional-arg bridge (falloff.remove <id>).
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("id", "Falloff", &targetId_, "")
+        );
+    }
+
     void setTargetId(string id) { targetId_ = id; }
 
     protected override bool applyImpl() {

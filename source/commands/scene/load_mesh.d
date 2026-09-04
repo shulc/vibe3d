@@ -8,6 +8,8 @@ import editmode;
 // GpuMesh lives in mesh.d, already imported above.
 import snapshot : MeshSnapshot;
 import change_bus : MeshChangeAll;
+import params : Param, wireArgs;
+import std.json : JSONValue, JSONType, parseJSON;
 
 /// Replace the current mesh with a caller-supplied raw mesh (test-only,
 /// driven by the generic command endpoint). Mirrors `SceneReset`: snapshots the
@@ -49,11 +51,108 @@ class MeshLoadRaw : Command {
     override bool discardsUnsavedWork() const { return true; }
     override string label() const { return "Load mesh"; }
 
+    // The wire form of the two geometry slots: their RAW JSON TEXT (task 4062).
+    private string newVertsJson_;
+    private string newFacesJson_;
+
+    // TASK 4062 — THE ARGUMENTS, DECLARED. These two used to be decoded by a
+    // hand-written arm in the HTTP dispatcher (the retired `/api/load-mesh`
+    // route's decode, moved there and then here).
+    //
+    // WHY RAW-JSON SLOTS AND NOT `Vec3Array` + an index-array kind. `vertices`
+    // would fit `Param.Kind.Vec3Array`; `faces` is a RAGGED array of index
+    // arrays, and `Param.Kind` has no spelling for that — a quad face and a
+    // triangle in the same payload is the normal case, not an edge case. Split
+    // across two mechanisms the PAIR GATE below could not be written at all:
+    // an absent `vertices` and a supplied `[]` are the same `null` slice once
+    // `Vec3Array` has written it, so `{"vertices":[],"faces":[]}` (a live
+    // payload — `test_copilot_cycle.d`) would be indistinguishable from
+    // `{"faces":[…]}` (which must stay an error — `test_load_mesh.d`). The raw
+    // text distinguishes them, so both slots take it and `decodeWireGeometry`
+    // below carries the injector's decode over message for message.
+    override Param[] params() {
+        return wireArgs(
+            Param.jsonArg_("vertices", "Vertices", &newVertsJson_),
+            Param.jsonArg_("faces",    "Faces",    &newFacesJson_),
+        );
+    }
+
     /// Supply the raw geometry to load. Caller owns/builds these arrays;
     /// they are validated against each other (index range) in apply().
     void setData(Vec3[] verts, uint[][] faces) {
         this.newVerts = verts;
         this.newFaces = faces;
+    }
+
+    /// Decode the two declared raw-JSON slots into `newVerts` / `newFaces`.
+    ///
+    /// A FIELD IS VALIDATED ONLY WHEN THE PAYLOAD SUPPLIES IT (task 4131), and
+    /// the two are validated as a PAIR: an argument-less `scene.loadMesh` is a
+    /// load of the empty mesh and must reach `apply()`, while half a payload
+    /// (`{"faces":[[0,1,2]]}` with no `vertices`) is the error
+    /// `test_load_mesh.d` froze. Every message below is the one the dispatcher
+    /// arm raised, unchanged.
+    ///
+    /// Called from the TOP of `applyImpl`, before its own validation and so
+    /// before any live state is touched: a bad payload leaves the scene exactly
+    /// as it was, which is where the dispatcher arm ran too.
+    private void decodeWireGeometry() {
+        if (newVertsJson_.length == 0 && newFacesJson_.length == 0) return;
+
+        JSONValue vj = newVertsJson_.length ? parseJSON(newVertsJson_)
+                                            : JSONValue(null);
+        JSONValue fj = newFacesJson_.length ? parseJSON(newFacesJson_)
+                                            : JSONValue(null);
+        if (vj.type != JSONType.array)
+            throw new Exception("missing 'vertices' array field");
+        if (fj.type != JSONType.array)
+            throw new Exception("missing 'faces' array field");
+
+        double numFrom(JSONValue n) {
+            switch (n.type) {
+                case JSONType.integer:  return cast(double)n.integer;
+                case JSONType.uinteger: return cast(double)n.uinteger;
+                case JSONType.float_:   return n.floating;
+                default: throw new Exception("vertex components must be numbers");
+            }
+        }
+
+        auto vArr = vj.array;
+        Vec3[] decodedVerts = new Vec3[](vArr.length);
+        foreach (i, vv; vArr) {
+            if (vv.type != JSONType.array || vv.array.length != 3)
+                throw new Exception("each vertex must be [x,y,z]");
+            decodedVerts[i] = Vec3(cast(float)numFrom(vv.array[0]),
+                                   cast(float)numFrom(vv.array[1]),
+                                   cast(float)numFrom(vv.array[2]));
+        }
+
+        // `decodedFaces`, not `faces`: these are the PAYLOAD being decoded into
+        // a fresh local, and the live mesh is replaced wholesale by `*mesh = m`
+        // afterwards. A bare `faces[i] = …` in `source/commands/**` is the shape
+        // `command_winding_write_census_test` refuses, and refuses rightly —
+        // there it means a live winding rewritten by hand under an open batch,
+        // which reaches no op-log hook. Naming the local for what it is keeps
+        // that census sharp instead of teaching it an exception.
+        auto fArr = fj.array;
+        uint[][] decodedFaces = new uint[][](fArr.length);
+        foreach (i, ff; fArr) {
+            if (ff.type != JSONType.array)
+                throw new Exception("each face must be an array of vertex indices");
+            auto idxArr = ff.array;
+            uint[] face = new uint[](idxArr.length);
+            foreach (k, ij; idxArr) {
+                if (ij.type != JSONType.integer && ij.type != JSONType.uinteger)
+                    throw new Exception("face indices must be integers");
+                long v = ij.integer;
+                if (v < 0)
+                    throw new Exception("face index must be non-negative");
+                face[k] = cast(uint)v;
+            }
+            decodedFaces[i] = face;
+        }
+
+        setData(decodedVerts, decodedFaces);
     }
 
     /// Install the funnel hook so apply/revert route the editMode write through
@@ -65,6 +164,9 @@ class MeshLoadRaw : Command {
     }
 
     protected override bool applyImpl() {
+        // ---- The declared wire slots become arrays BEFORE anything else ----
+        decodeWireGeometry();
+
         // ---- Validate BEFORE mutating any live state ----
         immutable uint vcount = cast(uint)newVerts.length;
         foreach (fi, ref f; newFaces) {

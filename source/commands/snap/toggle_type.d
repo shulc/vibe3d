@@ -4,6 +4,7 @@ import command;
 import mesh;
 import view;
 import editmode;
+import params : Param, wireArgs;
 
 import toolpipe.pipeline       : g_pipeCtx;
 import toolpipe.stages.snap    : SnapStage;
@@ -33,6 +34,13 @@ class SnapToggleTypeCommand : Command {
     override string label() const { return "Toggle Snap Type"; }
 
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
+
+    /// The declared argument, and therefore positional slot 0 (task 4062).
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("type", "Type", &typeName_, "")
+        );
+    }
 
     void setTypeName(string n) { typeName_ = n; }
 

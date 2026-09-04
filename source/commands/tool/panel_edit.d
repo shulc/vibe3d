@@ -6,6 +6,7 @@ import view;
 import editmode;
 import math : Vec3;
 import commands.tool.host : ToolHost;
+import params : Param, wireArgs;
 import tools.transform.xfrm_transform : XfrmTransformTool;
 
 // ---------------------------------------------------------------------------
@@ -32,6 +33,10 @@ import tools.transform.xfrm_transform : XfrmTransformTool;
 class ToolPanelEditCommand : Command {
     private ToolHost toolHost;
     private Vec3     delta_;
+    // The three declared components (task 4062). Each accepts an int, a float
+    // or a numeric string, which is what the injector this replaces did by
+    // hand — the coercion is `command_args`'s one law now.
+    private float    dx_ = 0, dy_ = 0, dz_ = 0;
 
     this(Mesh* mesh, ref View view, EditMode editMode, ToolHost host) {
         super(mesh, view, editMode);
@@ -44,9 +49,18 @@ class ToolPanelEditCommand : Command {
 
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
-    void setDelta(Vec3 d) { delta_ = d; }
+    void setDelta(Vec3 d) { dx_ = d.x; dy_ = d.y; dz_ = d.z; }
+
+    override Param[] params() {
+        return wireArgs(
+            Param.float_("dx", "dX", &dx_, 0.0f),
+            Param.float_("dy", "dY", &dy_, 0.0f),
+            Param.float_("dz", "dZ", &dz_, 0.0f)
+        );
+    }
 
     protected override bool applyImpl() {
+        delta_ = Vec3(dx_, dy_, dz_);
         if (!g_testMode)
             throw new Exception(
                 "tool.panelEdit: only available in --test mode");

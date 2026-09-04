@@ -6,6 +6,7 @@ import mesh;
 import editmode;
 import view;
 import viewport : ViewportManager;
+import params : Param, wireArgs;
 
 /// `viewport.view <preset>` — camera-only preset switch (task 0215),
 /// registered as a command (task 0761; previously intercepted ahead of the
@@ -26,6 +27,15 @@ final class ViewportViewPreset : ViewportCommand {
     }
 
     override string name() const { return "viewport.view"; }
+
+    /// The one declared argument, and therefore positional slot 0 (task 4062:
+    /// `params()` IS the positional order). It was read by
+    /// `http_providers.oneStringArg`, which no other funnel called.
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("preset", "Preset", &preset_, "")
+        );
+    }
 
     void setPreset(string preset) { preset_ = preset; }
 

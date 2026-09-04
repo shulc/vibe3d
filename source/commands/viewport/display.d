@@ -7,6 +7,20 @@ import editmode;
 import view;
 import viewport      : ViewportManager, Viewport3D;
 import display_state : DisplayStyle, WireOverlay;
+import params : Param, wireArgs;
+
+// TASK 4062 — the three commands below each declare their two arguments
+// (`value`, then the `viewport` cell selector) and let `command_args.bindArgs`
+// fill them in that order. What used to fill them was a shared "Law 2" scan in
+// the HTTP dispatcher that read a scalar of any type from the first positional,
+// a bare body, or one of five named aliases. The aliases survive as
+// `Param.aliases` so the wire contract is unchanged; the scan does not.
+//
+// The VALIDATION did not move an inch — `setRaw` still owns every message —
+// but it now runs from `applyImpl` rather than from the dispatcher's injector.
+// That is the same observable answer on both routes (an exception escaping the
+// dispatch is `status:error` either way), and it is what lets the argument
+// arrive through a declaration instead of a cast.
 
 // ---------------------------------------------------------------------------
 // viewport.displayStyle / wireOverlay / wireAlpha — per-cell display state
@@ -37,6 +51,8 @@ import display_state : DisplayStyle, WireOverlay;
 final class ViewportDisplayStyle : ViewportCommand {
     private int cell_;
     private DisplayStyle style_;
+    private string valueArg_;
+    private int    cellArg_ = -1;
 
     this(Mesh* mesh, ref View view, EditMode editMode, ViewportManager vpm) {
         super(mesh, view, editMode, vpm);
@@ -48,6 +64,14 @@ final class ViewportDisplayStyle : ViewportCommand {
     /// `http_providers.d` (alias list `value`/`style`/`wire`/`overlay`/
     /// `alpha`, plus the `viewport` cell key). Throws — same messages,
     /// verbatim — on an out-of-range cell or an unrecognised value.
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("value", "Style", &valueArg_, "")
+                .aliases(["style", "wire", "overlay", "alpha"]),
+            Param.int_("viewport", "Viewport", &cellArg_, -1)
+        );
+    }
+
     void setRaw(string sval, int cellArg) {
         import std.string : toLower, strip;
         int cell = resolveCellOrThrow(cellArg, name());
@@ -74,6 +98,7 @@ final class ViewportDisplayStyle : ViewportCommand {
     }
 
     protected override bool applyImpl() {
+        setRaw(valueArg_, cellArg_);
         Viewport3D tv = vpm.views[cell_];
         tv.display.active.style = style_;
         // Task 0594: this cell's style is now a CHOICE, not an inheritance.
@@ -87,12 +112,22 @@ final class ViewportDisplayStyle : ViewportCommand {
 final class ViewportWireOverlay : ViewportCommand {
     private int cell_;
     private WireOverlay mode_;
+    private string valueArg_;
+    private int    cellArg_ = -1;
 
     this(Mesh* mesh, ref View view, EditMode editMode, ViewportManager vpm) {
         super(mesh, view, editMode, vpm);
     }
 
     override string name() const { return "viewport.wireOverlay"; }
+
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("value", "Overlay", &valueArg_, "")
+                .aliases(["style", "wire", "overlay", "alpha"]),
+            Param.int_("viewport", "Viewport", &cellArg_, -1)
+        );
+    }
 
     void setRaw(string sval, int cellArg) {
         import std.string : toLower, strip;
@@ -115,6 +150,7 @@ final class ViewportWireOverlay : ViewportCommand {
     }
 
     protected override bool applyImpl() {
+        setRaw(valueArg_, cellArg_);
         Viewport3D tv = vpm.views[cell_];
         tv.display.active.wire = mode_;
         commitCellDisplay(cell_);
@@ -125,6 +161,8 @@ final class ViewportWireOverlay : ViewportCommand {
 final class ViewportWireAlpha : ViewportCommand {
     private int cell_;
     private float alpha_;
+    private string valueArg_;
+    private int    cellArg_ = -1;
 
     this(Mesh* mesh, ref View view, EditMode editMode, ViewportManager vpm) {
         super(mesh, view, editMode, vpm);
@@ -135,6 +173,14 @@ final class ViewportWireAlpha : ViewportCommand {
     /// `haveNum`/`nval` are the Law-2 scan's numeric-scalar result; `sval`
     /// is its string result. A string that parses as a number is accepted
     /// too — verbatim fallback from the original interception.
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("value", "Opacity", &valueArg_, "")
+                .aliases(["style", "wire", "overlay", "alpha"]),
+            Param.int_("viewport", "Viewport", &cellArg_, -1)
+        );
+    }
+
     void setRaw(string sval, int cellArg, bool haveNum, double nval) {
         import std.string : strip;
         import std.conv   : to, ConvException;
@@ -155,6 +201,11 @@ final class ViewportWireAlpha : ViewportCommand {
     }
 
     protected override bool applyImpl() {
+        // A numeric argument reaches the String slot as its own spelling, and
+        // the `!haveNum && sval.length > 0` arm below has always parsed that —
+        // it was the "a string that parses as a number is accepted too"
+        // fallback the original interception carried.
+        setRaw(valueArg_, cellArg_, false, 0);
         Viewport3D tv = vpm.views[cell_];
         tv.display.active.wireAlpha = alpha_;
         commitCellDisplay(cell_);

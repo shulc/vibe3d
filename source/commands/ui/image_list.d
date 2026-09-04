@@ -6,6 +6,7 @@ import command;
 import mesh;
 import view;
 import editmode;
+import params : Param, wireArgs;
 
 // ---------------------------------------------------------------------------
 // g_imageListShown — test-mode visibility flag for the Images window
@@ -41,6 +42,7 @@ __gshared bool g_imageListShown = false;
 // ---------------------------------------------------------------------------
 class UiImageListCommand : Command {
     private bool show_ = true;
+    private string visibleArg_;
 
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
@@ -52,6 +54,18 @@ class UiImageListCommand : Command {
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
     // Positional arg: "show" | "hide".
+    /// The declared argument, and therefore positional slot 0 (task 4062).
+    /// The parse — and its message — stays in `setVisible`; only the moment
+    /// moved, from the dispatcher's injector to `applyImpl`. An ABSENT
+    /// argument keeps the command's own default rather than being parsed as
+    /// an empty string, which is what the injector's `pos.length >= 1` guard
+    /// did.
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("visible", "Visible", &visibleArg_, "")
+        );
+    }
+
     void setVisible(string arg) {
         auto a = arg.strip.toLower;
         switch (a) {
@@ -65,6 +79,7 @@ class UiImageListCommand : Command {
     }
 
     protected override bool applyImpl() {
+        if (visibleArg_.length > 0) setVisible(visibleArg_);
         if (!g_testMode)
             throw new Exception(
                 "ui.imageList: only available in --test mode");

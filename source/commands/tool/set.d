@@ -6,6 +6,8 @@ import view;
 import editmode;
 import commands.tool.host : ToolHost;
 
+import params : Param, wireArgs;
+
 import std.json : JSONValue, JSONType;
 
 // ---------------------------------------------------------------------------
@@ -23,6 +25,7 @@ class ToolSetCommand : Command {
     private ToolHost toolHost;
     private string   toolId_;
     private bool     turnOff_;
+    private string   offArg_;
     private JSONValue namedArgs_;
 
     this(Mesh* mesh, ref View view, EditMode editMode, ToolHost host) {
@@ -37,11 +40,31 @@ class ToolSetCommand : Command {
     // Not undoable — tool activation is UI state, not mesh edit.
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
+    /// The two DECLARED arguments (task 4062). The named pairs are NOT
+    /// declared and cannot be: they belong to the schema of the TOOL this
+    /// command activates, which is not known until apply. They arrive through
+    /// `setUnboundArgs` below — the one base hook the positional law reserves
+    /// for exactly this, and the only override of it in the tree.
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("tool", "Tool", &toolId_, ""),
+            Param.string_("off", "Off", &offArg_, "")
+        );
+    }
+
+    /// Everything the schema above did not claim, forwarded verbatim to the
+    /// tool's own `params()` at activation.
+    override void setUnboundArgs(JSONValue named) { namedArgs_ = named; }
+
     void setToolId(string id)      { toolId_  = id; }
     void setTurnOff(bool v)        { turnOff_ = v; }
     void setNamedArgs(JSONValue pj) { namedArgs_ = pj; }
 
     protected override bool applyImpl() {
+        // `tool.set <id> off` — the second positional is the literal token
+        // "off" and nothing else turns a tool off, verbatim from the injector
+        // this replaces.
+        if (offArg_ == "off") turnOff_ = true;
         if (turnOff_) {
             toolHost.deactivate();
             return true;

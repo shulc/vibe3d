@@ -4,7 +4,7 @@ import command;
 import mesh;
 import view;
 import editmode;
-import params : Param, injectParamsInto, paramToJson;
+import params : Param, injectParamsInto, paramToJson, wireArgs;
 import commands.tool.host : ToolHost;
 
 import std.json : JSONValue, JSONType;
@@ -26,6 +26,13 @@ class ToolAttrCommand : Command {
     private string    toolId_;
     private string    attrName_;
     private JSONValue attrValue_;
+    // The wire form of the value slot: its RAW JSON TEXT (task 4062). The
+    // value is FORWARDED to the active tool's own schema, so its JSON TYPE is
+    // what decides whether the write lands — a scalar spelling would turn 1.5
+    // into a string the tool's Float gate then refuses, and `{1,2,3}` into
+    // something no gate accepts at all. `Param.jsonArg_` is the declared way
+    // to say "this slot is a value of whatever kind"; the round-trip is exact.
+    private string    attrValueJson_;
     // Live re-eval discriminator (re-eval plan D4). Set ONLY via the
     // in-process setInteractive() setter — the FormsPanel calls it before
     // dispatch. It is NEVER wired into the argstring / app.d command-builder
@@ -55,9 +62,17 @@ class ToolAttrCommand : Command {
 
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
 
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("tool", "Tool", &toolId_, ""),
+            Param.string_("attr", "Attribute", &attrName_, ""),
+            Param.jsonArg_("value", "Value", &attrValueJson_)
+        );
+    }
+
     void setToolId(string id)       { toolId_   = id; }
     void setAttrName(string n)      { attrName_ = n; }
-    void setAttrValue(JSONValue v)  { attrValue_ = v; }
+    void setAttrValue(JSONValue v)  { attrValue_ = v; attrValueJson_ = v.toString(); }
     // Programmatic-only: marks this attr write as originating from an
     // interactive panel/form so the FIRST edit OPENS a live session via
     // reEvaluate() (D4). Deliberately has no argstring wiring.
@@ -77,6 +92,8 @@ class ToolAttrCommand : Command {
     }
 
     protected override bool applyImpl() {
+        import std.json : parseJSON;
+        if (attrValueJson_.length > 0) attrValue_ = parseJSON(attrValueJson_);
         if (toolId_.length == 0)
             throw new Exception("tool.attr: no tool id specified");
         if (attrName_.length == 0)

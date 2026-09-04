@@ -8,7 +8,7 @@ import commands.tool.host : ToolHost;
 
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stage    : Stage;
-import params            : paramToJson;
+import params : Param, paramToJson, wireArgs;
 
 import std.json : JSONValue;
 
@@ -51,6 +51,18 @@ class ToolPipeAttrCommand : Command {
 
     // Not undoable — pipe configuration is UI state, not mesh edit.
     override CmdFlags cmdFlags() const { return CmdFlags.SideEffect; }
+
+    /// The three declared arguments (task 4062). The value slot is an
+    /// ordinary String: unlike `tool.attr`, this command hands the stage a
+    /// STRING and the stage parses it (`Stage.setAttr(name, text)`), so the
+    /// scalar spelling is exactly what it wants.
+    override Param[] params() {
+        return wireArgs(
+            Param.string_("stage", "Stage", &stageId_, ""),
+            Param.string_("attr", "Attribute", &attrName_, ""),
+            Param.string_("value", "Value", &attrValue_, "")
+        );
+    }
 
     void setStageId(string id)    { stageId_   = id; }
     void setAttrName(string n)    { attrName_  = n; }

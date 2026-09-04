@@ -12,6 +12,7 @@ import toolpipe.stage    : TaskCode;
 import toolpipe.stages.symmetry : SymmetryStage;
 import symmetry          : mirrorEdge, mirrorFace;
 import symmetry_pick     : captureLiveSymmetry;
+import params            : Param, wireArgs;
 
 /// Replace the current selection with the given indices in the given mode.
 /// Switches editMode to match (vertices/edges/polygons). Used to be a direct
@@ -21,7 +22,11 @@ import symmetry_pick     : captureLiveSymmetry;
 class MeshSelect : Command {
     private EditMode*         editModePtr;       // app.d's editMode (writable)
     private string            mode;
-    private int[]             indices;
+    // `uint[]`, not `int[]`, because `Param.Kind.IntArray` is the declared
+    // spelling of an index list and its storage is `uint[]`. The range check in
+    // `applyImpl` is unchanged in EFFECT: a wire `-1` used to fail the `i < 0`
+    // half, and as a `uint` it fails the `i >= max` half with the same message.
+    private uint[]            indices;
     private SelectionSnapshot snap;
     private EditMode          prevEditMode;
     // Selection-types Stage 5 (audit c): when the app installs this hook, the
@@ -46,8 +51,26 @@ class MeshSelect : Command {
     // UiState (not Model) so a plain geometry undo steps past it.
     override CmdFlags cmdFlags() const { return CmdFlags.UiState; }
 
+    // TASK 4062 — THE ARGUMENTS, DECLARED. `mode` and `indices` used to be
+    // filled by a hand-written arm in the HTTP dispatcher (the retired
+    // `/api/select` route's validation, moved there and then here). The index
+    // list is an ARRAY slot, so it also ABSORBS the positional tail:
+    // `mesh.select vertices 3 4 5` binds the same three indices the JSON body
+    // `{"mode":"vertices","indices":[3,4,5]}` does.
+    override Param[] params() {
+        return wireArgs(
+            Param.string_  ("mode",    "Mode",    &mode, ""),
+            Param.intArray_("indices", "Indices", &indices),
+        );
+    }
+
     void setMode(string m)         { mode    = m; }
-    void setIndices(int[] i)       { indices = i; }
+    /// In-process callers still speak `int[]` (`copilot.selectFinding` builds
+    /// one after clamping it against the live mesh bound).
+    void setIndices(int[] i)       {
+        indices.length = i.length;
+        foreach (k, v; i) indices[k] = cast(uint)v;
+    }
     MeshSelect setPromoteHook(void delegate(EditMode) h) { promoteType = h; return this; }
 
     // Set editMode to `m`, routing through the app funnel when installed so the
@@ -80,39 +103,42 @@ class MeshSelect : Command {
         // deformation. Updated even if the anchor sits on the plane
         // (no-op there — `anchorAt` keeps the previous baseSide).
         if (symmActive && indices.length > 0) {
-            Vec3 anchor = computeAnchor(mode, indices[0]);
+            Vec3 anchor = computeAnchor(mode, cast(int)indices[0]);
             if (auto sym = cast(SymmetryStage)
                           g_pipeCtx.pipeline.findByTask(TaskCode.Symm))
                 sym.anchorAt(anchor);
         }
 
-        int max;
+        // `uint`, matching the declared index slot — the `i < 0` half of the
+        // old test is now unrepresentable and the `i >= max` half catches a
+        // wire `-1` (which arrives as `uint.max`) with the same message.
+        uint max;
         switch (mode) {
             case "vertices":
                 applyEditMode(EditMode.Vertices);
                 mesh.clearVertexSelection();
-                max = cast(int)mesh.vertices.length;
+                max = cast(uint)mesh.vertices.length;
                 foreach (i; indices) {
-                    if (i < 0 || i >= max)
+                    if (i >= max)
                         throw new Exception("vertex index out of range");
-                    mesh.selectVertex(i);
+                    mesh.selectVertex(cast(int)i);
                     if (symmActive) {
                         int mi = symm.pairOf[i];
-                        if (mi >= 0 && mi != i) mesh.selectVertex(mi);
+                        if (mi >= 0 && mi != cast(int)i) mesh.selectVertex(mi);
                     }
                 }
                 break;
             case "edges":
                 applyEditMode(EditMode.Edges);
                 mesh.clearEdgeSelection();
-                max = cast(int)mesh.edges.length;
+                max = cast(uint)mesh.edges.length;
                 foreach (i; indices) {
-                    if (i < 0 || i >= max)
+                    if (i >= max)
                         throw new Exception("edge index out of range");
-                    mesh.selectEdge(i);
+                    mesh.selectEdge(cast(int)i);
                     if (symmActive) {
-                        uint me = mirrorEdge(*mesh, symm, cast(uint)i);
-                        if (me != ~0u && me != cast(uint)i)
+                        uint me = mirrorEdge(*mesh, symm, i);
+                        if (me != ~0u && me != i)
                             mesh.selectEdge(cast(int)me);
                     }
                 }
@@ -120,14 +146,14 @@ class MeshSelect : Command {
             case "polygons":
                 applyEditMode(EditMode.Polygons);
                 mesh.clearFaceSelection();
-                max = cast(int)mesh.faces.length;
+                max = cast(uint)mesh.faces.length;
                 foreach (i; indices) {
-                    if (i < 0 || i >= max)
+                    if (i >= max)
                         throw new Exception("face index out of range");
-                    mesh.selectFace(i);
+                    mesh.selectFace(cast(int)i);
                     if (symmActive) {
-                        uint mf = mirrorFace(*mesh, symm, cast(uint)i);
-                        if (mf != ~0u && mf != cast(uint)i)
+                        uint mf = mirrorFace(*mesh, symm, i);
+                        if (mf != ~0u && mf != i)
                             mesh.selectFace(cast(int)mf);
                     }
                 }
