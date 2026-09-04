@@ -51,7 +51,7 @@ string postCommandRaw(string body) {
 }
 
 JSONValue getModel() { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
-JSONValue postUndo()  { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue postUndo()  { return parseJSON(post(testBaseUrl() ~ "/api/command", commandBody("history.undo"))); }
 
 // Standard fixture: quad [0,1,2,3] on the XY plane.
 void loadQuad() {

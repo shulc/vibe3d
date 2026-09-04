@@ -124,7 +124,7 @@ void undoRoundTrip(string row, in Step[] setup, string cmdJson) {
       ~ "cap. Anything else means the funnel recorded a different number of "
       ~ "entries than the one command it ran");
 
-    auto ru = postJ("/api/undo", "");
+    auto ru = postJ("/api/command", commandBody("history.undo"));
     assert(ru["status"].str == "ok", row ~ ": /api/undo failed: " ~ ru.toString);
 
     // EXACTLY ONE STEP TOOK EFFECT. A `false` from a Model entry's revert()

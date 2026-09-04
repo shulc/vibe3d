@@ -129,7 +129,7 @@ unittest {
 
     // Byte-return: a single Y-axis move drag on the T bank records one undo
     // entry. Undo must restore every vertex to its pre-drag position.
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
     Thread.sleep(dur!"msecs"(120)); // settle after undo
 

@@ -176,7 +176,7 @@ unittest { // Shift+Ctrl+RMB on an edge relaxes its loop and records one entry
     // The undo puts the loop back where it was, which is what makes the entry a
     // real edit record rather than a bookmark. Compared position by position,
     // because the counts cannot see this gesture at all.
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo must succeed: " ~ u.toString);
     auto restored = vertexPositions();
     assert(restored.length == before.length,

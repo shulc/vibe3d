@@ -259,7 +259,7 @@ unittest { // undo still restores the bundle — the snapshot path is untouched
     ok(postJson("/api/command", `{"id":"mesh.bevel","params":{"width":0.4}}`),
        "mesh.bevel");
     assert(vertCount(model()) == 12, "the bevel did not apply; undo proves nothing");
-    ok(postJson("/api/undo", ""), "/api/undo");
+    ok(postJson("/api/command", commandBody("history.undo")), "/api/undo");
     auto m = model();
     assert(vertCount(m) == 8 && faceCount(m) == 3,
         "undo left V=" ~ vertCount(m).to!string ~ " F=" ~ faceCount(m).to!string

@@ -101,7 +101,7 @@ unittest {
         "the press must record the Remove gesture as the resolved LMB action; got "
       ~ st["lmbAction"].str);
 
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo must succeed: " ~ u.toString);
     assert(faceCountLayer(0) == 6, "undo must restore the removed face");
 

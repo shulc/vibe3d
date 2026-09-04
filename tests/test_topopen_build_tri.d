@@ -21,6 +21,7 @@
 //
 // Run via: ./run_test.d topopen_build_tri
 
+import http_command_helpers : commandBody;
 import topopen_place_helpers;
 import std.json;
 import std.math   : abs, sqrt;
@@ -97,7 +98,7 @@ unittest {
 
     // Undo peels ONLY drag2's gesture — back to the 2v/1e state drag1 left,
     // NOT all the way to 0. Redo restores the triangle bit-exact.
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok");
     assert(vertexCountLayer(1) == 2, "undo of the tri-build must land on drag1's 2-vertex state");
     assert(edgeCountLayer(1) == 1 && faceCountLayer(1) == 0);

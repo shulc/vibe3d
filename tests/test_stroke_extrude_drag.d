@@ -182,7 +182,7 @@ unittest { // the stroke builds bands and the drop records exactly one entry
 
     // The undo takes the bands back off, which is what makes the entry a real
     // edit record rather than a bookmark.
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
     import core.thread : Thread;
     import core.time   : dur;

@@ -70,7 +70,7 @@ void clearHistory() {
 }
 
 JSONValue postUndo() {
-    return parseJSON(cast(string)post(baseUrl ~ "/api/undo", ""));
+    return parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("history.undo")));
 }
 
 JSONValue postRedo() {

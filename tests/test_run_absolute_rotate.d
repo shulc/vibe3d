@@ -75,7 +75,7 @@ void settle() {
 void drainHistory() {
     foreach (_; 0 .. 100) {
         if (undoCount() == 0) return;
-        postJson("/api/undo", "");
+        postJson("/api/command", commandBody("history.undo"));
     }
 }
 bool replayIdle() {
@@ -406,7 +406,7 @@ unittest {
     cmd("tool.set TransformRotate off");
     assert(undoCount() == undoBefore + 1,
         "live-session attr edits coalesce to ONE undo entry");
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assert(vertNear(vert(6), baseV6),
         "one undo restores the original");

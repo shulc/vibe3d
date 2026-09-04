@@ -373,7 +373,7 @@ unittest {
     assert("uvMaps" !in meshJ, "uvMaps must be absent after uv.delete");
 
     // undo → map restored
-    post(kBase ~ "/api/undo", "");
+    post(kBase ~ "/api/command", commandBody("history.undo"));
     if (exists(tmp)) remove(tmp);
     meshJ = saveParseMesh(tmp);
     assert("uvMaps" in meshJ, "uvMaps must be present after undo");
@@ -412,7 +412,7 @@ unittest {
     assert(uOld.type == JSONValue.init.type, "old name 'uv' must be gone");
 
     // undo → original name back
-    post(kBase ~ "/api/undo", "");
+    post(kBase ~ "/api/command", commandBody("history.undo"));
     if (exists(tmp)) remove(tmp);
     meshJ = saveParseMesh(tmp);
     auto uRestored = findUvMapByName(meshJ, "uv");
@@ -478,7 +478,7 @@ unittest {
                       dataBefore[i].floating, dataCopy[i].floating));
 
     // undo → back to 1 map
-    post(kBase ~ "/api/undo", "");
+    post(kBase ~ "/api/command", commandBody("history.undo"));
     if (exists(tmp)) remove(tmp);
     auto meshUndo = saveParseMesh(tmp);
     assert(findUvMapByName(meshUndo, "uv2").type == JSONValue.init.type,
@@ -532,7 +532,7 @@ unittest {
                format("clear: data[%d] must be 0, got %g", i, v.floating));
 
     // undo → original values restored byte-exact
-    post(kBase ~ "/api/undo", "");
+    post(kBase ~ "/api/command", commandBody("history.undo"));
     if (exists(tmp)) remove(tmp);
     auto meshUndo = saveParseMesh(tmp);
     auto uvUndo   = findUvMapByName(meshUndo, "uv");

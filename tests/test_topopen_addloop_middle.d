@@ -107,7 +107,7 @@ unittest {
     assert(abs(loOff) > 0.05,
         "middle=false: an off-center release must NOT land on the midpoint");
 
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo must succeed: " ~ u.toString);
     assert(vertexCountLayer(0) == 8 && edgeCountLayer(0) == 12 && faceCountLayer(0) == 6,
         "undo must restore the exact pre-cut cube before the second half");
@@ -149,7 +149,7 @@ unittest {
     assert(hasVertexNear(0, Vec3(0.0f, -0.5f,  0.5f), 1e-5), "midpoint of edge 4-5 must exist");
 
     // One atomic undo entry, exactly like the option-off path.
-    auto u2 = postJson("/api/undo", "");
+    auto u2 = postJson("/api/command", commandBody("history.undo"));
     assert(u2["status"].str == "ok", "undo must succeed: " ~ u2.toString);
     assert(vertexCountLayer(0) == 8 && edgeCountLayer(0) == 12 && faceCountLayer(0) == 6,
         "middle=true's cut must be one atomic undo step");

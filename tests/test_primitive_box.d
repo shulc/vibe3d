@@ -102,7 +102,7 @@ unittest { // undo after prim.cube restores empty mesh
     auto m1 = getModel();
     assert(m1["vertices"].array.length == 8, "before undo: expected 8 verts");
 
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
     auto m2 = getModel();
     assert(m2["vertices"].array.length == 0,

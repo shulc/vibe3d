@@ -94,7 +94,7 @@ unittest {
         assert(f != removedVerts, "the removed face's vertex list must be gone");
 
     // Undo restores the exact pre-removal state (face count back to 6).
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo must succeed: " ~ u.toString);
     assert(faceCountLayer(0) == 6, "undo must restore the removed face");
 }

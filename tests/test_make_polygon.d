@@ -56,7 +56,7 @@ string postCommandRaw(string body) {
 }
 
 JSONValue getModel() { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
-JSONValue postUndo()  { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue postUndo()  { return parseJSON(post(testBaseUrl() ~ "/api/command", commandBody("history.undo"))); }
 
 // Load a 4-vertex coplanar no-face mesh onto the XY plane
 void loadFreeQuadVerts() {

@@ -384,7 +384,7 @@ unittest {
     }
 
     // Undo → byte-exact restore of original (no uvMaps).
-    post(kBase ~ "/api/undo", "");
+    post(kBase ~ "/api/command", commandBody("history.undo"));
     if (exists(tmpSave)) remove(tmpSave);
     runCmd("file.save", `{"path":"` ~ tmpSave ~ `"}`);
     auto j2 = parseJSON(readText(tmpSave));

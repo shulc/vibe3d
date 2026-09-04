@@ -15,6 +15,7 @@
 //
 // Run via: ./run_test.d topopen_build_edge
 
+import http_command_helpers : commandBody;
 import topopen_place_helpers;
 import std.json;
 import std.math   : abs, sqrt;
@@ -79,7 +80,7 @@ unittest {
 
     // 3) One atomic undo removes B + the edge together, back to the
     // 1-vertex/0-edge state the hub click alone left behind.
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo must succeed: " ~ u.toString);
     assert(vertexCountLayer(1) == 1, "undo must remove B (back to 1 vertex)");
     assert(edgeCountLayer(1) == 0, "undo must remove the edge atomically WITH B");

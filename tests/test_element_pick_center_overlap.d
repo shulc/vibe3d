@@ -39,7 +39,7 @@ long undoCount() { return getJson("/api/history")["undo"].array.length; }
 void drainHistory() {
     foreach (_; 0 .. 100) {
         if (undoCount() == 0) return;
-        postJson("/api/undo", "");
+        postJson("/api/command", commandBody("history.undo"));
     }
 }
 

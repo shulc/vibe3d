@@ -395,7 +395,7 @@ Cell runCell(string name, string tool, string recordSite, string mode,
       ~ "expected exactly 1. Zero means the commit never recorded; more than "
       ~ "one means a gesture that should be a single entry split");
 
-    auto ru = postJ("/api/undo");
+    auto ru = postJ("/api/command", commandBody("history.undo"));
     assert(ru["status"].str == "ok", name ~ ": /api/undo failed: " ~ ru.toString);
     settle();
     c.postUndo = planes();
@@ -889,7 +889,7 @@ unittest {
         "CONTROL: two dumps of the SAME unchanged mesh compared as different — "
       ~ "planeDiff() is not a stable predicate");
 
-    postJ("/api/undo");
+    postJ("/api/command", commandBody("history.undo"));
     settle();
 }
 

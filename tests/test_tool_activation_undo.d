@@ -184,7 +184,7 @@ unittest {
         "after gesture B + drop: 2 lifecycle entries; got " ~ lifecycleCount().to!string);
 
     // --- undo₁: revert geomB (v6 -> afterA) ---
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assert(vertNear(vert(6), afterA),
         "undo₁ should revert geomB to afterA; got " ~ vert(6).to!string
@@ -195,7 +195,7 @@ unittest {
     // must stay false.
     assert(canUndoLifecycle(), "undo₂ must see the arm-B lifecycle tail");
     auto beforeArmBStep = lifecycleCount();
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assert(vertNear(vert(6), afterA),
         "undo₂ must consume arm B without reverting geomA; got "
@@ -206,14 +206,14 @@ unittest {
         "undo₂ must consume exactly one lifecycle entry");
 
     // undo₃ now reaches geomA and restores the original geometry.
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assert(vertNear(vert(6), base),
         "undo₃ should revert geomA to baseline; got " ~ vert(6).to!string
         ~ " want " ~ base.to!string);
     assert(canUndoLifecycle(), "undo₄ must see the remaining arm-A lifecycle tail");
     auto beforeStep = lifecycleCount();
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assert(vertNear(vert(6), base),
         "undo₄ lifecycle step must not change geometry");

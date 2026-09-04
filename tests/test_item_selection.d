@@ -43,7 +43,7 @@ void resetCube() {
     cmdJson(`{"id":"history.clear"}`);
 }
 
-JSONValue postUndo() { return parseJSON(cast(string)post(baseUrl ~ "/api/undo", "")); }
+JSONValue postUndo() { return parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("history.undo"))); }
 void undoOk(string why) {
     auto u = postUndo();
     assert(u["status"].str == "ok", "undo (" ~ why ~ ") failed: " ~ u.toString);

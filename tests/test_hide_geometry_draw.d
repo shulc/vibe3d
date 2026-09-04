@@ -590,7 +590,7 @@ unittest {
         ~ "/" ~ hidden.edgeVertCount.to!string
         ~ " — 36/8/24 means the hide never reached the GPU upload");
 
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "/api/undo failed: " ~ u.toString);
     auto undone = gpuBuffers();
     assert(undone.faceVertCount == 36 && undone.vertCount == 8

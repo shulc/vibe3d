@@ -165,7 +165,7 @@ unittest { // undo restores empty
     auto m1 = getModel();
     assert(m1["vertices"].array.length == 9, "before undo: expected 9 verts");
 
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", u.toString);
     auto m2 = getModel();
     assert(m2["vertices"].array.length == 0,

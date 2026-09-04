@@ -172,7 +172,7 @@ bool projectPivot(Cam cam, out double ppx, out double ppy) {
 
 long undoCount() { return getJson("/api/history")["undo"].array.length; }
 void undoStep() {
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     Thread.sleep(dur!"msecs"(80));
     getJson("/api/toolpipe/eval");   // force an idle update tick
     Thread.sleep(dur!"msecs"(40));
@@ -348,7 +348,7 @@ unittest {
         "rotate gesture did not rotate the rendered frame (travel=" ~ frameTravel.to!string ~ ")");
 
     // In-session Ctrl+Z.
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     Thread.sleep(dur!"msecs"(80));
     getJson("/api/toolpipe/eval");   // force an idle update tick
     Thread.sleep(dur!"msecs"(40));
@@ -411,7 +411,7 @@ unittest {
     V3 postCenter = acenCenter();
     assert(maxDev(postCenter, preCenter) > 0.05, "move gesture did not displace the center");
 
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     Thread.sleep(dur!"msecs"(80));
     getJson("/api/toolpipe/eval");
     Thread.sleep(dur!"msecs"(40));
@@ -466,7 +466,7 @@ unittest {
     double scDev = fabs(sc[0].floating-1) + fabs(sc[1].floating-1) + fabs(sc[2].floating-1);
     assert(scDev > 0.05, "scale gesture did not engage (scDev=" ~ scDev.to!string ~ ")");
 
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     Thread.sleep(dur!"msecs"(80));
     getJson("/api/toolpipe/eval");
     Thread.sleep(dur!"msecs"(40));
@@ -520,7 +520,7 @@ unittest {
     assert(travel > 0.1, "rotate gesture did not rotate the rendered frame");
 
     // Undo, then redo.
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     Thread.sleep(dur!"msecs"(80));
     getJson("/api/toolpipe/eval");
     Thread.sleep(dur!"msecs"(40));

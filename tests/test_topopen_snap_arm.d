@@ -258,7 +258,7 @@ unittest {
              ~ "must be ONE undo entry, not one per motion event and not a second "
              ~ "entry for the absorption; depth %d -> %d", undo0, undoDepth()));
 
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo must succeed: " ~ u.toString);
     assert(vertexCountLayer(1) == 4 && edgeCountLayer(1) == 4 && faceCountLayer(1) == 1,
         format("a single undo must restore the whole quad, topology included; got "

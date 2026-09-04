@@ -253,7 +253,7 @@ unittest {
         selectPolys([]);
         cmd(`{"id":"mesh.subdivide"}`);
         assert(bake().polys == 21, "undo row: the bake must have happened first");
-        postOk("/api/undo", "");
+        postOk("/api/command", commandBody("history.undo"));
         auto b = bake();
         assert(b.polys == 6,
             format("undo: %d polygons, want 6 — one entry must take the whole bake",

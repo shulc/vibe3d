@@ -358,7 +358,7 @@ unittest { // undo restores mirror
     auto preUndo = vertexAt(1);
     assert(approxEq(preUndo[1], 1.5), "pre-undo v1.y: " ~ preUndo[1].to!string);
 
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     auto v0 = vertexAt(0);
     auto v1 = vertexAt(1);
     assert(approxEq(v0[1], -0.5) && approxEq(v1[1], -0.5),

@@ -82,7 +82,7 @@ void settle() {
 void drainHistory() {
     foreach (_; 0 .. 100) {
         if (undoCount() == 0) return;
-        postJson("/api/undo", "");
+        postJson("/api/command", commandBody("history.undo"));
     }
 }
 
@@ -247,7 +247,7 @@ unittest {
         ~ (stackAfter - stackBefore).to!string);
 
     // Ctrl+Z #1 reverts run 2 only: v6 back to its post-run-1 scale.
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     auto v6Undo1 = vert(6);
     assert(fabs(v6Undo1[0] - v6Run1[0]) < 1e-3 &&
@@ -260,7 +260,7 @@ unittest {
         ~ v6Run1[2].to!string ~ ")");
 
     // Ctrl+Z #2 reverts run 1: v6 back to the pristine cube corner.
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     auto v6Undo2 = vert(6);
     assert(fabs(v6Undo2[0] - 0.5) < 1e-3 &&
@@ -338,7 +338,7 @@ unittest {
         ~ "undo entries; got " ~ (stackAfter - stackBefore).to!string);
 
     // Ctrl+Z #1 reverts run 2 only: v6 back to its post-run-1 orientation.
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     auto v6Undo1 = vert(6);
     assert(fabs(v6Undo1[0] - v6Run1[0]) < 1e-3 &&
@@ -351,7 +351,7 @@ unittest {
         ~ v6Run1[2].to!string ~ ")");
 
     // Ctrl+Z #2 reverts run 1: v6 back to the pristine cube corner.
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     auto v6Undo2 = vert(6);
     assert(fabs(v6Undo2[0] - 0.5) < 1e-3 &&

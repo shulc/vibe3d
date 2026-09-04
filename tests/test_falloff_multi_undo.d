@@ -73,7 +73,7 @@ void settle() {
 void drainHistory() {
     foreach (_; 0 .. 100) {
         if (undoCount() == 0) return;
-        postJson("/api/undo", "");
+        postJson("/api/command", commandBody("history.undo"));
     }
 }
 
@@ -292,7 +292,7 @@ unittest {
         "drop leaves ONE entry (the surviving rotate gesture); now="
         ~ undoCount().to!string);
 
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "one post-drop Ctrl+Z reverts the consolidated rotate run to the cube");
@@ -352,7 +352,7 @@ unittest {
 
     cmd("tool.set TransformRotate off");
     settle();
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "one post-drop Ctrl+Z reverts the consolidated rotate run to the cube");

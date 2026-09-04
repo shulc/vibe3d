@@ -335,7 +335,7 @@ unittest {
     }
 
     // Undo and verify byte-exact restoration.
-    post(kBase ~ "/api/undo", "");
+    post(kBase ~ "/api/command", commandBody("history.undo"));
 
     if (exists(tmpSave)) remove(tmpSave);
     runCmd("file.save", `{"path":"` ~ tmpSave ~ `"}`);

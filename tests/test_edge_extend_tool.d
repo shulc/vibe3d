@@ -112,7 +112,7 @@ void selectTopFrontAt(JSONValue m, double cx) {
     postSelect("edges", [ei]);
 }
 
-JSONValue postUndo()    { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue postUndo()    { return parseJSON(post(testBaseUrl() ~ "/api/command", commandBody("history.undo"))); }
 JSONValue getModel()    { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
 JSONValue getHistory()  { return parseJSON(get(testBaseUrl() ~ "/api/history")); }
 

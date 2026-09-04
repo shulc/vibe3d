@@ -323,7 +323,7 @@ unittest {
                    format("undo: the bake being undone left %d polygons, but the fixture "
                           ~ "freezes %d as vibe3d's pre-undo count",
                           s.polys, ours["undo"]["polygons_before_undo"].integer));
-            postOk("/api/undo", "");
+            postOk("/api/command", commandBody("history.undo"));
             auto a = snap();
             assert(a.polys == cast(size_t) u["polygons_after_undo"].integer,
                    format("undo: %d polygons, want %d — one entry must take the whole bake",

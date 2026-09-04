@@ -124,7 +124,7 @@ void settle() {
 void drainHistory() {
     foreach (_; 0 .. 100) {
         if (undoCount() == 0) return;
-        postJson("/api/undo", "");
+        postJson("/api/command", commandBody("history.undo"));
     }
 }
 
@@ -369,7 +369,7 @@ unittest {
         ~ "state");
 
     // One post-drop Ctrl+Z reverts the WHOLE run back to the cube corner.
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "one post-drop Ctrl+Z reverts the whole consolidated run to the cube");
@@ -460,12 +460,12 @@ unittest {
     assert(inSessionCount() == 0, "both runs consolidated at the drop");
 
     // Ctrl+Z pops run B -> back to post-run-A; Ctrl+Z pops run A -> cube.
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assert(vertNear(vert(6), v6AfterRunA),
         "Ctrl+Z #1 pops run B back to post-run-A; got (" ~ vert(6)[0].to!string
         ~ "," ~ vert(6)[1].to!string ~ "," ~ vert(6)[2].to!string ~ ")");
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "Ctrl+Z #2 pops run A back to the cube corner");
@@ -561,13 +561,13 @@ unittest {
     // Monotone walk-back: Ctrl+Z #1 pops the resurrected gesture 2 (-> post-
     // gesture-1), Ctrl+Z #2 pops gesture 1 (-> the cube). Both entries step
     // cleanly despite the residual tag.
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assert(vertNear(vert(6), g1),
         "post-drop Ctrl+Z #1 pops gesture 2 back to post-gesture-1; got ("
         ~ vert(6)[0].to!string ~ "," ~ vert(6)[1].to!string ~ ","
         ~ vert(6)[2].to!string ~ ")");
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "post-drop Ctrl+Z #2 reverts gesture 1 back to the cube");
@@ -678,7 +678,7 @@ unittest {
         "drop leaves ONE entry (the surviving gesture; the re-grade was popped) "
         ~ "(D); floor=" ~ floor.to!string ~ " now=" ~ undoCount().to!string);
 
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "one post-drop Ctrl+Z reverts the consolidated run to the cube");
@@ -760,7 +760,7 @@ unittest {
     // merged entry's before[] anchors to the gesture run-start, and the re-grade
     // entry's before[] anchored to the post-gesture snapshot (covering the
     // WIDENED support), so the widened verts (v0) revert cleanly too (OBJ-3).
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "one post-drop Ctrl+Z reverts the consolidated run to the cube (v6)");
@@ -934,7 +934,7 @@ unittest {
     // exactly to the cube. If g2 had been erased (C1), the consolidated entry
     // would carry g2's after WITHOUT its run-start before, and v6 would not land
     // on the cube.
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "one post-drop Ctrl+Z reverts the consolidated run to the cube (v6) — "
@@ -1102,7 +1102,7 @@ unittest {
     // the cube (the run-start entry was evicted), but the walk-back must succeed
     // and strictly shrink the stack.
     long beforePop = undoCount();
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     settle();
     assert(u["status"].str == "ok",
         "post-drop Ctrl+Z over the partially-evicted consolidated run must not "
@@ -1182,13 +1182,13 @@ unittest {
 
     // Ctrl+Z pops the Rotate run -> back to post-Move; Ctrl+Z pops the Move run
     // -> back to the cube.
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assert(vertNear(vert(6), v6AfterMove),
         "Ctrl+Z #1 pops the Rotate run back to the post-Move geometry; got ("
         ~ vert(6)[0].to!string ~ "," ~ vert(6)[1].to!string ~ ","
         ~ vert(6)[2].to!string ~ ")");
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "Ctrl+Z #2 pops the Move run back to the cube corner");
@@ -1273,7 +1273,7 @@ unittest {
     // the next pop.
     postJson("/api/script", "tool.set move off");
     settle();
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assert(fabs(vert(0)[2] - (-0.5)) < 1e-3,
         "Ctrl+Z #1 pops ONLY the foreign entry (v0.z back to -0.5), leaving the "
@@ -1281,7 +1281,7 @@ unittest {
     assert(vertNear(vert(6), v6BeforeForeign),
         "popping the foreign entry must not touch the still-applied run's v6");
 
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "Ctrl+Z #2 pops the consolidated run (v6 back to the cube corner)");

@@ -391,8 +391,8 @@ unittest {
     assert(getJson("/api/tool/state").object.length == 0,
         "the layer switch must have dropped the loop-slice tool");
 
-    auto u1 = postJson("/api/undo", "");
-    auto u2 = postJson("/api/undo", "");
+    auto u1 = postJson("/api/command", commandBody("history.undo"));
+    auto u2 = postJson("/api/command", commandBody("history.undo"));
     assert(u1["status"].str == "ok" && u2["status"].str == "ok",
         "undoing Select Layer and Loop Slice must both succeed");
     assert(counts("?layer=0") == kCube,

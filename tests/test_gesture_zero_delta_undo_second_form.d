@@ -318,7 +318,7 @@ WalkResult undoWalk(string id, const double[][] pre, const double[][] post) {
     WalkResult w;
     const long lifecycleBeforeUndo = lifecycleCount();
     foreach (k; 1 .. 7) {
-        auto resp = postJson("/api/undo", "");
+        auto resp = postJson("/api/command", commandBody("history.undo"));
         settle();
         const v = verts();
         if (k == 1) {

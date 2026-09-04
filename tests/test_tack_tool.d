@@ -215,7 +215,7 @@ unittest {
     ];
     assertVertsMatch(committed, golden.dup, 1e-4, "headless commit golden parity");
 
-    auto undoResp = postJson("/api/undo", "");
+    auto undoResp = postJson("/api/command", commandBody("history.undo"));
     assert(undoResp["status"].str == "ok", "undo failed: " ~ undoResp.toString);
     auto restored = verticesOf(getModel());
     assertVertsMatch(restored, pre, 1e-6, "undo restore");
@@ -352,6 +352,6 @@ unittest {
 
     // Exactly one commit happened this session (the single click) — undo
     // once must restore the pre-tack scene.
-    auto undoResp = postJson("/api/undo", "");
+    auto undoResp = postJson("/api/command", commandBody("history.undo"));
     assert(undoResp["status"].str == "ok", "undo failed: " ~ undoResp.toString);
 }

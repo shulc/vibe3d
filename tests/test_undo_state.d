@@ -54,7 +54,7 @@ unittest { // /api/undo/status tracks active + canUndo/canRedo as edits flow.
     assert(s1["canUndo"].boolean == true && s1["canRedo"].boolean == false,
         "after one edit canUndo true, canRedo false; got " ~ s1.toString);
 
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     auto s2 = getJson("/api/undo/status");
     assert(s2["canUndo"].boolean == false && s2["canRedo"].boolean == true,
         "after undo canRedo true; got " ~ s2.toString);
@@ -80,7 +80,7 @@ unittest { // Lockout freezes recording + undo; releasing restores both.
         ~ baseUndo.to!string ~ " to " ~ historyLen("undo").to!string);
 
     // /api/undo while locked must be a no-op too.
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "noop",
         "locked-out /api/undo must be noop; got " ~ u.toString);
     assert(historyLen("undo") == baseUndo,
@@ -94,7 +94,7 @@ unittest { // Lockout freezes recording + undo; releasing restores both.
         "status must report lockout:false after release; got " ~ sr.toString);
 
     // Undo now works again.
-    auto u2 = postJson("/api/undo", "");
+    auto u2 = postJson("/api/command", commandBody("history.undo"));
     assert(u2["status"].str == "ok",
         "undo after release must succeed; got " ~ u2.toString);
     assert(historyLen("undo") == baseUndo - 1,

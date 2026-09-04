@@ -30,7 +30,7 @@ unittest { // history.clear wipes both undo + redo stacks.
 
     translate(0.1);
     translate(0.1);
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     // Now: undo >= 1, redo == 1.
     size_t undoBefore = historyLen("undo");
     size_t redoBefore = historyLen("redo");

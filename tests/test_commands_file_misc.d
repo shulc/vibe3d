@@ -63,7 +63,7 @@ unittest { // file.new is undoable (SceneReset captures pre-empty mesh)
     assert(modelVertexCount() == 0);
 
     // Undo should restore the 8-vert cube.
-    auto undoResp = parseJSON(cast(string)post(baseUrl ~ "/api/undo", ""));
+    auto undoResp = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("history.undo")));
     assert(undoResp["status"].str == "ok",
         "/api/undo after file.new failed: " ~ undoResp.toString);
     assert(modelVertexCount() == 8,

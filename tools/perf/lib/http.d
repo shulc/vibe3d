@@ -400,14 +400,14 @@ bool setCameraElevation(double elevation) {
     }
 }
 
-// POST /api/undo — same main-thread sync bridge as /api/command. Used by
+// Dispatch history.undo through /api/command. Used by
 // the `undo-spam` frame scenario (task 0200). Returns true on
 // {"status":"ok"}; a stack-empty/revert-failed noop or an error both
 // return false (the caller only cares whether the request round-tripped —
 // the actual per-undo count comes from /api/perf's `undoApply` counter).
 bool postUndo() {
     try {
-        auto resp = post(g_baseUrl ~ "/api/undo", "");
+        auto resp = post(g_baseUrl ~ "/api/command", `{"id":"history.undo"}`);
         auto j = parseJSON(cast(string)resp);
         return ("status" in j) && j["status"].str == "ok";
     } catch (Exception) {

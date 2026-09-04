@@ -430,7 +430,7 @@ unittest {
     runCmd("uv.fit");
 
     // Undo the fit.
-    post(kBase ~ "/api/undo", "");
+    post(kBase ~ "/api/command", commandBody("history.undo"));
 
     // Save post-undo.
     runCmd("file.save", `{"path":"` ~ tmpB ~ `"}`);

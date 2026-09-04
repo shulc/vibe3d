@@ -323,7 +323,7 @@ unittest {
     // the rotate undo hook restores the pin in lockstep — the gizmo center HOLDS
     // (a definite point, not floating / NaN). Without the splice the revert hook
     // would leave the soft pin stale, snapping the gizmo to the weighted centroid.
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     Thread.sleep(dur!"msecs"(60));
     V3 afterUndo = gizmoCenter();
     assert(afterUndo.x == afterUndo.x && afterUndo.y == afterUndo.y
@@ -398,7 +398,7 @@ unittest {
 
     // In-session undo: the soft-pin splice in the scale undo hook keeps the gizmo
     // center finite + consistent with the falloff anchor (mirror of rotate).
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     Thread.sleep(dur!"msecs"(60));
     V3 afterUndo = gizmoCenter();
     assert(afterUndo.x == afterUndo.x && afterUndo.y == afterUndo.y

@@ -13,6 +13,7 @@
 //
 // Run via: ./run_test.d topopen_build_hub_fan_quad
 
+import http_command_helpers : commandBody;
 import topopen_place_helpers;
 import std.json;
 import std.math   : abs, sqrt;
@@ -107,7 +108,7 @@ unittest {
 
     // Undo peels ONLY drag3's quad-splice gesture, back to drag2's
     // 3-vertex/3-edge/1-triangle state; redo restores the quad bit-exact.
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok");
     assert(vertexCountLayer(1) == 3 && edgeCountLayer(1) == 3 && faceCountLayer(1) == 1,
         "undo of the quad-build must land exactly on drag2's post-triangle state");

@@ -86,7 +86,7 @@ JSONValue vertexEdit(int idx, double[3] before, double[3] after,
     return postJson("/api/command", body_);
 }
 
-JSONValue undoStep() { return postJson("/api/undo", ""); }
+JSONValue undoStep() { return postJson("/api/command", commandBody("history.undo")); }
 JSONValue redoStep() { return postJson("/api/redo", ""); }
 
 // ---------------------------------------------------------------------------

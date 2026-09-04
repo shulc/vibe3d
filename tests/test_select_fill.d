@@ -42,7 +42,7 @@ void postCommand(string body) {
     assert(parseJSON(resp)["status"].str == "ok", "/api/command failed: " ~ resp);
 }
 
-JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/command", commandBody("history.undo"))); }
 JSONValue postRedo() { return parseJSON(post(testBaseUrl() ~ "/api/redo", "")); }
 
 JSONValue getSelection() { return parseJSON(get(testBaseUrl() ~ "/api/selection")); }

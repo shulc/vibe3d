@@ -73,7 +73,7 @@ void postTranslate(double dx, double dy, double dz) {
 }
 
 JSONValue postUndo() {
-    return parseJSON(post(testBaseUrl() ~ "/api/undo", ""));
+    return parseJSON(post(testBaseUrl() ~ "/api/command", commandBody("history.undo")));
 }
 
 JSONValue getSelection() {

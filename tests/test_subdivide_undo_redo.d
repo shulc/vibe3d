@@ -18,7 +18,7 @@ unittest { // baseline: /api/undo path
     postJson("/api/command", commandBody("scene.reset"));
     postJson("/api/command", "history.clear");
     postJson("/api/command", "mesh.subdivide");
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
 
     auto h = getJson("/api/history");
     import std.stdio : writeln;
@@ -59,7 +59,7 @@ unittest { // smooth subdivide: undo restores 8/12/6 cube; redo re-applies
     assert(mAfter["faceCount"].integer == 24);
 
     // Undo → back to cube 8/12/6.
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     auto mUndo = parseJSON(cast(string) get(baseUrl ~ "/api/model"));
     assert(mUndo["vertexCount"].integer == 8,
         "smooth undo: expected 8 verts (cube), got "

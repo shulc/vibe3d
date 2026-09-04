@@ -265,7 +265,7 @@ unittest {
              ~ "round trip below is satisfied by an undo that does nothing",
                vertCount(m1), faceCount(m1)));
 
-    auto u = postCmd("/api/undo", "");
+    auto u = postCmd("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "/api/undo failed: " ~ u.toString);
     immutable long d2 = undoDepth();
     assert(d0 - d2 == 0 && d1 - d2 == 1,

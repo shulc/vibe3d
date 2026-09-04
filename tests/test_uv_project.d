@@ -415,7 +415,7 @@ unittest {
            "uv map must be present after uv.project");
 
     // Undo: snapshot taken before addMeshMap restores the absent state.
-    post(kBase ~ "/api/undo", "");
+    post(kBase ~ "/api/command", commandBody("history.undo"));
 
     remove(tmpSave);
     runCmd("file.save", `{"path":"` ~ tmpSave ~ `"}`);

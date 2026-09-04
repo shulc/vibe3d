@@ -622,7 +622,7 @@ unittest {
         "the surviving entry must not still be flagged inSession after the "
         ~ "tool-drop boundary — " ~ h["undo"].array[$ - 1].toString);
 
-    auto r = parseJSON(cast(string)post(BASE ~ "/api/undo", ""));
+    auto r = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("history.undo")));
     assert(r["status"].str == "ok", "/api/undo failed: " ~ r.toString);
 
     auto undoneA = layerPos(0), undoneB = layerPos(1);

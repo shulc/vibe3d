@@ -135,7 +135,7 @@ unittest {
     play(button("SDL_MOUSEBUTTONUP", sx + DX, sy + DY));
     assert(getJson("/api/tool/state")["dragPart"].integer == -1, "mouse-up kept Shift captured");
     cmd("tool.set poly.bevel off");
-    auto undo = parseJSON(cast(string)post(BASE ~ "/api/undo", ""));
+    auto undo = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("history.undo")));
     assert(undo["status"].str == "ok", "undo failed");
     assert(getJson("/api/model")["vertexCount"].integer == 8, "one undo did not restore the cube");
 
@@ -319,7 +319,7 @@ unittest {
     // One discrete undo entry: dropping the tool must NOT double-commit
     // (hasUncommittedEdit is false after re-arm), and one undo restores the cube.
     cmd("tool.set poly.bevel off");
-    auto undo = parseJSON(cast(string)post(BASE ~ "/api/undo", ""));
+    auto undo = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("history.undo")));
     assert(undo["status"].str == "ok", "undo failed");
     assert(getJson("/api/model")["vertexCount"].integer == 8,
         "one undo after apply-and-continue did not restore the cube (commit granularity)");
@@ -355,10 +355,10 @@ unittest {
     assert(v2 > v1, "second chained bevel did not add geometry");
 
     cmd("tool.set poly.bevel off");
-    post(BASE ~ "/api/undo", "");
+    post(BASE ~ "/api/command", commandBody("history.undo"));
     assert(getJson("/api/model")["vertexCount"].integer == v1,
         "first undo did not peel exactly the second bevel (steps must not collapse)");
-    post(BASE ~ "/api/undo", "");
+    post(BASE ~ "/api/command", commandBody("history.undo"));
     assert(getJson("/api/model")["vertexCount"].integer == 8,
         "second undo did not restore the cube (each apply is its own undo step)");
 }
@@ -395,10 +395,10 @@ unittest {
 
     // The bevel commit and the delete are two discrete undo steps: undoing the
     // delete restores the committed beveled mesh; undoing again restores the cube.
-    post(BASE ~ "/api/undo", "");
+    post(BASE ~ "/api/command", commandBody("history.undo"));
     assert(getJson("/api/model")["vertexCount"].integer == vBevel,
         "first undo (delete) did not restore the committed beveled mesh");
-    post(BASE ~ "/api/undo", "");
+    post(BASE ~ "/api/command", commandBody("history.undo"));
     assert(getJson("/api/model")["vertexCount"].integer == 8,
         "second undo (bevel) did not restore the cube — bevel was not committed as its own step");
 }
@@ -441,10 +441,10 @@ unittest {
     // One committed (#1) + one standing (#2, committed on tool-drop) ⇒ two
     // discrete undo steps back to the cube.
     cmd("tool.set poly.bevel off");
-    post(BASE ~ "/api/undo", ""); // peel #2
+    post(BASE ~ "/api/command", commandBody("history.undo")); // peel #2
     assert(getJson("/api/model")["vertexCount"].integer > 8,
         "first undo overshot — combined-gesture steps collapsed");
-    post(BASE ~ "/api/undo", ""); // peel #1
+    post(BASE ~ "/api/command", commandBody("history.undo")); // peel #1
     assert(getJson("/api/model")["vertexCount"].integer == 8,
         "combined gesture did not yield two discrete undo steps");
 }

@@ -69,7 +69,7 @@ void resetCube() {
     clearHistory();
 }
 
-JSONValue postUndo() { return parseJSON(cast(string)post(baseUrl ~ "/api/undo", "")); }
+JSONValue postUndo() { return parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("history.undo"))); }
 JSONValue postRedo() { return parseJSON(cast(string)post(baseUrl ~ "/api/redo", "")); }
 
 JSONValue getLayers() { return getJson("/api/layers"); }

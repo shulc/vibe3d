@@ -123,12 +123,12 @@ void drainAndReset() {
         }
         foreach (_; 0 .. 100) {
             if (undoCount() == 0) break;
-            postJson("/api/undo", "");
+            postJson("/api/command", commandBody("history.undo"));
         }
         resetCube();
         foreach (_; 0 .. 100) {
             if (undoCount() == 0) break;
-            postJson("/api/undo", "");
+            postJson("/api/command", commandBody("history.undo"));
         }
         // Confirm the baseline took: the cube has 8 verts and v6 = (0.5,0.5,0.5).
         // GUARD the length before indexing [6]: under the documented -j1
@@ -199,7 +199,7 @@ unittest {
     assert(canUndo(), "canUndo must be true after a committed session");
 
     // One undo restores the original mesh.
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
     assertVertex(6, 0.5, 0.5, 0.5, "one undo restores the original");
 }
@@ -235,7 +235,7 @@ unittest {
     assert(undoCount() == undoBefore + 1,
         "live-session attr edits coalesce to ONE undo entry; before="
         ~ undoBefore.to!string ~ " after=" ~ undoCount().to!string);
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
     assertVertex(6, 0.5, 0.5, 0.5, "one undo restores the original");
 }
@@ -296,7 +296,7 @@ unittest {
     assert(undoCount() == undoBefore + 1,
         "stage-re-eval session must coalesce to ONE undo entry; before="
         ~ undoBefore.to!string ~ " after=" ~ undoCount().to!string);
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
     assertVertex(6, 0.5, 0.5, 0.5, "one undo restores v6");
     assertVertex(0, -0.5, -0.5, -0.5, "one undo restores v0");
@@ -345,7 +345,7 @@ unittest {
     assert(undoCount() == undoBefore + 1,
         "rotate value-edit session must coalesce to ONE undo entry; before="
         ~ undoBefore.to!string ~ " after=" ~ undoCount().to!string);
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
     assertVertex(6, 0.5, 0.5, 0.5, "one undo restores the original (rotate)");
 }
@@ -388,7 +388,7 @@ unittest {
     assert(undoCount() == undoBefore + 1,
         "asymmetric rotate value-edit session must coalesce to ONE undo entry; before="
         ~ undoBefore.to!string ~ " after=" ~ undoCount().to!string);
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
     assertVertex(6, 1.5, 0.5, 0.5,
         "one undo restores the asymmetric baseline (rotate)");
@@ -427,7 +427,7 @@ unittest {
     assert(undoCount() == undoBefore + 1,
         "scale value-edit session must coalesce to ONE undo entry; before="
         ~ undoBefore.to!string ~ " after=" ~ undoCount().to!string);
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
     assertVertex(6, 0.5, 0.5, 0.5, "one undo restores the original (scale)");
 }
@@ -479,6 +479,6 @@ unittest {
         ~ entries.to!string);
 
     // Undoing every recorded entry restores the original mesh.
-    foreach (_; 0 .. entries) postJson("/api/undo", "");
+    foreach (_; 0 .. entries) postJson("/api/command", commandBody("history.undo"));
     assertVertex(6, 0.5, 0.5, 0.5, "undoing all entries restores the original (combined T+R+S)");
 }

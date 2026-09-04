@@ -63,7 +63,7 @@ void runCmd(string id) {
     assert(r["status"].str == "ok", "/api/command " ~ id ~ " failed: " ~ r.toString);
 }
 
-JSONValue apiUndo() { return postJson("/api/undo", ""); }
+JSONValue apiUndo() { return postJson("/api/command", commandBody("history.undo")); }
 JSONValue apiRedo() { return postJson("/api/redo", ""); }
 
 JSONValue model() { return getJson("/api/model"); }

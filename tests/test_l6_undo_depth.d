@@ -134,7 +134,7 @@ void undoRoundTrip(string row, in Step[] setup, string cmdJson) {
       ~ u1.to!string ~ " — expected +1, or +0 only when the stack is at its "
       ~ "cap");
 
-    auto ru = postJ("/api/undo", "");
+    auto ru = postJ("/api/command", commandBody("history.undo"));
     assert(ru["status"].str == "ok", row ~ ": /api/undo failed: " ~ ru.toString);
 
     immutable size_t u2 = undoDepth();

@@ -76,7 +76,7 @@ void blockEnd() {
 }
 
 JSONValue postUndo() {
-    return parseJSON(cast(string)post(testBaseUrl() ~ "/api/undo", ""));
+    return parseJSON(cast(string)post(testBaseUrl() ~ "/api/command", commandBody("history.undo")));
 }
 
 JSONValue postRedo() {

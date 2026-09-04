@@ -46,7 +46,7 @@ void postSelect(string mode, int[] indices) {
     assert(parseJSON(resp)["status"].str == "ok", "/api/select failed: " ~ resp);
 }
 
-JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/command", commandBody("history.undo"))); }
 JSONValue getModel() { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
 
 // Move v0 to within `dist` of v1 along X (v1 stays at (0.5,-0.5,-0.5)).

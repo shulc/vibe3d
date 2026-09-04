@@ -160,7 +160,7 @@ unittest {
             format("both grabbed endpoints must travel the SAME world distance "
                  ~ "(one shared scalar); got %f vs %f", dist(v3, pre[3]), dist(v0, pre[0])));
 
-        auto u = postJson("/api/undo", "");
+        auto u = postJson("/api/command", commandBody("history.undo"));
         assert(u["status"].str == "ok", "undo must succeed after a real Slide: " ~ u.toString);
         auto restored = readVerticesLayer(0);
         foreach (i, v; restored)
@@ -234,7 +234,7 @@ unittest {
             format("both endpoints must travel the SAME world distance; got %f vs %f",
                    dist(v0b, pre[0]), dist(v1, pre[1])));
 
-        auto u = postJson("/api/undo", "");
+        auto u = postJson("/api/command", commandBody("history.undo"));
         assert(u["status"].str == "ok", "undo must succeed after a real Slide: " ~ u.toString);
         auto restored = readVerticesLayer(0);
         foreach (i, v; restored)

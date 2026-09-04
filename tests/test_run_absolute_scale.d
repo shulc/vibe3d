@@ -63,7 +63,7 @@ void settle() {
 void drainHistory() {
     foreach (_; 0 .. 100) {
         if (undoCount() == 0) return;
-        postJson("/api/undo", "");
+        postJson("/api/command", commandBody("history.undo"));
     }
 }
 
@@ -295,7 +295,7 @@ unittest {
     assert(undoCount() == undoBefore + 1,
         "live-session attr edits coalesce to ONE undo entry; before="
         ~ undoBefore.to!string ~ " after=" ~ undoCount().to!string);
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
     assertVertex(6, 0.5, 0.5, 0.5, "one undo restores the original");
     cmd("tool.set TransformScale off");

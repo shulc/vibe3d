@@ -53,7 +53,7 @@ void postSelect(string mode, int[] indices) {
     assert(parseJSON(resp)["status"].str == "ok");
 }
 
-JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/command", commandBody("history.undo"))); }
 JSONValue getModel() { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
 
 // Load a single quad: a(-1,0,0) — m(0,0,0) — b(1,0,0) — c(0,1,0).

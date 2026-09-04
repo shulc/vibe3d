@@ -234,7 +234,7 @@ unittest {
         ~ undoBefore.to!string ~ " after=" ~ undoCount().to!string);
 
     // One undo restores the original geometry.
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
     assertVertex(6, 0.5, 0.5, 0.5, "one undo restores the original");
 }

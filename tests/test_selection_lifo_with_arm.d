@@ -31,7 +31,7 @@ void establishBaseline() {
 }
 
 JSONValue undo() {
-    auto response = postJson("/api/undo", "");
+    auto response = postJson("/api/command", commandBody("history.undo"));
     assert(response["status"].str == "ok", "undo failed: " ~ response.toString);
     return response;
 }

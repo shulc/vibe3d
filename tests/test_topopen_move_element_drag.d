@@ -195,7 +195,7 @@ unittest {
     assert(undoDepth() == undo0 + 1,
         format("an edge drag must record exactly ONE undo entry, not one per motion event; "
              ~ "depth %d -> %d", undo0, undoDepth()));
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo must succeed: " ~ u.toString);
     auto restored = readVerticesLayer(1);
     foreach (i; 0 .. 4)
@@ -255,7 +255,7 @@ unittest {
     assert(undoDepth() == undo0 + 1,
         format("a polygon drag must record exactly ONE undo entry; depth %d -> %d",
                undo0, undoDepth()));
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo must succeed: " ~ u.toString);
     auto restored = readVerticesLayer(1);
     foreach (i; 0 .. 4)

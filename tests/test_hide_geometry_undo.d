@@ -253,7 +253,7 @@ unittest { // row 1 — undo of an UNHIDE lands back inside a hidden state
         && countHidden("edgeHidden") == 0,
         "setup: unhideAll must clear all three planes");
 
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "/api/undo failed: " ~ u.toString);
 
     // The authoritative plane is back…
@@ -284,7 +284,7 @@ unittest { // row 2 — REDO of a hide lands back inside a hidden state
     hideCornerV0();
     auto hiddenFaces = hiddenList("faceHidden");
 
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "/api/undo failed: " ~ u.toString);
     assert(countHidden("faceHidden") == 0 && countHidden("vertexHidden") == 0,
         "setup: the undo must leave nothing hidden");
@@ -359,7 +359,7 @@ unittest {
         ~ (moved[1][0] - before[1][0]).to!string ~ ") — an apply that no-opped "
         ~ "would leave this row asserting nothing");
 
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "/api/undo failed: " ~ u.toString);
 
     assert(hiddenList("faceHidden") == [0, 4],

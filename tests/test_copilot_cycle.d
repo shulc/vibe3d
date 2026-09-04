@@ -189,7 +189,7 @@ unittest { // redo after undo of a cycle must RE-select the same finding, not ad
     assert(sortedLongs(selection()["selectedEdges"]) == edgesOf(findings[1]),
         "cycle dir:1 from index 0 must select finding[1]");
 
-    postJson("/api/undo", ""); // pop the cycle -> back to finding[0]
+    postJson("/api/command", commandBody("history.undo")); // pop the cycle -> back to finding[0]
     assert(sortedLongs(selection()["selectedEdges"]) == edgesOf(findings[0]),
         "undo of a cycle must restore finding[0]'s selection");
 

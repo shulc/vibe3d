@@ -86,7 +86,7 @@ long undoCount() {
 void drainHistory() {
     foreach (_; 0 .. 100) {
         if (undoCount() == 0) return;
-        postJson("/api/undo", "");
+        postJson("/api/command", commandBody("history.undo"));
     }
 }
 
@@ -323,7 +323,7 @@ unittest {
             "move/" ~ m ~ ": gizmo drag must self-commit ONE in-session entry");
         record("move_" ~ m ~ "_afterDrag");
 
-        postJson("/api/undo", "");
+        postJson("/api/command", commandBody("history.undo"));
         settle();
         record("move_" ~ m ~ "_afterUndo");
 
@@ -352,7 +352,7 @@ unittest {
     dragMoveY(80);
     assert(undoCount() == before + 1, "move/manual: gizmo drag must self-commit");
     record("move_manual_afterDrag");
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     record("move_manual_afterUndo");
     postJson("/api/redo", "");
@@ -370,7 +370,7 @@ unittest {
     dragMoveY(80);
     assert(undoCount() == before + 1, "move/pivot: gizmo drag must self-commit");
     record("move_pivot_afterDrag");
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     record("move_pivot_afterUndo");
     postJson("/api/redo", "");
@@ -404,11 +404,11 @@ unittest {
     assert(undoCount() == afterClick + 1, "gesture 2 must self-commit one entry");
     record("autoRelocateChain_afterGesture2");
 
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     record("autoRelocateChain_afterUndoG2");
 
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     record("autoRelocateChain_afterUndoG1");
 
@@ -451,7 +451,7 @@ unittest {
         assert(undoCount() == before + 1, c.label ~ ": ring drag must self-commit");
         record(c.label ~ "_afterDrag");
 
-        postJson("/api/undo", "");
+        postJson("/api/command", commandBody("history.undo"));
         settle();
         record(c.label ~ "_afterUndo");
 
@@ -492,7 +492,7 @@ unittest {
         assert(undoCount() == before + 1, c.label ~ ": scale drag must self-commit");
         record(c.label ~ "_afterDrag");
 
-        postJson("/api/undo", "");
+        postJson("/api/command", commandBody("history.undo"));
         settle();
         record(c.label ~ "_afterUndo");
 
@@ -541,7 +541,7 @@ unittest {
     settle();
     record("numericMoveTX_afterCommit");
 
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     record("numericMoveTX_afterUndo");
 

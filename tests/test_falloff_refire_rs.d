@@ -116,7 +116,7 @@ void settle() {
 void drainHistory() {
     foreach (_; 0 .. 100) {
         if (undoCount() == 0) return;
-        postJson("/api/undo", "");
+        postJson("/api/command", commandBody("history.undo"));
     }
 }
 
@@ -409,7 +409,7 @@ unittest {
         "drop leaves ONE entry (the surviving rotate gesture) (D); floor="
         ~ floor.to!string ~ " now=" ~ undoCount().to!string);
 
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "one post-drop Ctrl+Z reverts the consolidated rotate run to the cube");
@@ -460,7 +460,7 @@ unittest {
         "drop leaves ONE entry (the surviving scale gesture) (D); now="
         ~ undoCount().to!string);
 
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "one post-drop Ctrl+Z reverts the consolidated scale run to the cube");
@@ -522,7 +522,7 @@ unittest {
         "drop consolidates gesture + BOTH discrete re-grades to ONE (D); now="
         ~ undoCount().to!string);
 
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     // The once-per-window anchors cover the WIDENED support, so v0 reverts
     // cleanly to the cube even though the FIRST tweak's tighter support never
@@ -603,7 +603,7 @@ unittest {
 
     cmd("tool.set TransformRotate off");
     settle();
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     // The consolidated run reverts every touched vert to the run-START state.
     assertVertex(6, 0.5, 0.5, 0.5,
@@ -725,7 +725,7 @@ unittest {
 
     cmd("tool.set move off");
     settle();
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5, "post-drop Ctrl+Z reverts the re-graded run");
     cmd("tool.pipe.attr falloff type none");
@@ -809,7 +809,7 @@ unittest {
 
     cmd("tool.set move off");
     settle();
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5, "post-drop Ctrl+Z reverts the falloff-off run");
     drainHistory();
@@ -988,7 +988,7 @@ unittest {
 
     cmd("tool.set move off");
     settle();
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5, "post-drop Ctrl+Z reverts the symmetric run");
     assertVertex(7, -0.5, 0.5, 0.5,
@@ -1056,7 +1056,7 @@ unittest {
         "the surviving consolidated entry is NOT tagged refire (n==1 strips both "
         ~ "bits); got " ~ refireCount().to!string);
 
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "one post-drop Ctrl+Z reverts the lone surviving rotate gesture to cube");
@@ -1135,12 +1135,12 @@ unittest {
     // Drop consolidates the open Rotate run; the Move run was already a separate
     // surviving entry. So TWO surviving entries: the Move run + the consolidated
     // Rotate run. Two post-drop Ctrl+Z revert both back to the cube.
-    postJson("/api/undo", "");   // pop the consolidated Rotate run
+    postJson("/api/command", commandBody("history.undo"));   // pop the consolidated Rotate run
     settle();
     assert(vertNear(vert(6), v6AfterMove),
         "popping the Rotate run reverts v6 to its post-MOVE position (the Move "
         ~ "run is a SEPARATE surviving entry, untouched by the Rotate re-grade)");
-    postJson("/api/undo", "");   // pop the Move run
+    postJson("/api/command", commandBody("history.undo"));   // pop the Move run
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "popping the Move run reverts v6 to the cube — TWO distinct runs");
@@ -1380,7 +1380,7 @@ unittest {
 
     // ONE post-drop Ctrl+Z: P-A BLOCKER — the merged first.revert (gesture)
     // restores BOTH the geometry (back to the cube) AND the run-start config.
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "one post-drop Ctrl+Z reverts the consolidated move run to the cube");
@@ -1420,7 +1420,7 @@ unittest {
         "drop consolidates the rotate run to ONE entry (D); now="
         ~ undoCount().to!string);
 
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "one post-drop Ctrl+Z reverts the consolidated rotate run to the cube");
@@ -1460,7 +1460,7 @@ unittest {
         "drop consolidates the scale run to ONE entry (D); now="
         ~ undoCount().to!string);
 
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5,
         "one post-drop Ctrl+Z reverts the consolidated scale run to the cube");
@@ -1545,7 +1545,7 @@ unittest {
     // to the cube.
     cmd("tool.set move off");
     settle();
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5, "post-drop undo reverts the move run to the cube");
 
@@ -1597,7 +1597,7 @@ unittest {
     // Post-drop: drop + one undo restores the cube AND the run-start snap config.
     cmd("tool.set move off");
     settle();
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assertVertex(6, 0.5, 0.5, 0.5, "post-drop undo reverts the move run to the cube");
     assert(!querySnapEnabled(),
@@ -1656,9 +1656,9 @@ unittest {
     assert(undoCount() == floor + 2,
         "the drop leaves the two consolidated runs (boundary kept them separate);"
         ~ " got " ~ undoCount().to!string);
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     assert(undoCount() == floor,
         "two post-drop undos unwind BOTH runs back to the select floor; got "

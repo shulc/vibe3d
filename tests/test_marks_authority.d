@@ -136,7 +136,7 @@ unittest { // B4: delete->undo restores BOTH Select and Subpatch, idempotently
 
     // Undo -> snapshot restore writes Select and Subpatch as two independent
     // assigns. Both bit planes must come back exactly as captured.
-    auto undo = postJson("/api/undo", "");
+    auto undo = postJson("/api/command", commandBody("history.undo"));
     assert(ok(undo), "undo failed: " ~ undo.toString);
     assert(faceCount() == 6, "undo restored the deleted face");
 

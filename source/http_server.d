@@ -530,14 +530,13 @@ class HttpServer {
     private alias InjectLayerHandler = void delegate(JSONValue params);
     private InjectLayerHandler injectLayerHandler;
 
-    // ----- /api/undo + /api/redo synchronous bridge ------------------------
-    // The handler returns true on success (an entry was undone/redone) or
+    // ----- /api/redo synchronous bridge ------------------------------------
+    // The handler returns true on success (an entry was redone) or
     // false on stack-empty / revert-failure. /api/history is a read-only
     // provider that can be served from the HTTP thread directly (no
     // main-thread sync) since the labels list is a snapshot at request
     // time and any race just yields slightly stale labels.
     private alias UndoRedoHandler = bool delegate();
-    private UndoRedoHandler undoHandler;
     private UndoRedoHandler redoHandler;
 
     // ----- /api/history/jump (multi-step) ----------------------------------
@@ -819,7 +818,7 @@ class HttpServer {
     struct BlockResp { string error; }
     private MainThreadBridge!(BlockReq, BlockResp) blockBridge;
 
-    struct UndoReq  { bool isRedo; }
+    struct UndoReq  { }
     struct UndoResp { bool result; }
     private MainThreadBridge!(UndoReq, UndoResp) undoBridge;
 
@@ -1257,7 +1256,7 @@ class HttpServer {
 
         undoBridge = new MainThreadBridge!(UndoReq, UndoResp)(this,
             (ref UndoReq req, ref UndoResp resp) {
-                auto h = req.isRedo ? redoHandler : undoHandler;
+                auto h = redoHandler;
                 if (h is null) {
                     resp.result = false;
                 } else {
@@ -1515,11 +1514,10 @@ class HttpServer {
     }
 
     /**
-     * Set the undo/redo callbacks. Same main-thread sync as the others.
+     * Set the redo callback. Same main-thread sync as the others.
      * Returns true if a stack entry was applied, false on stack-empty or
      * revert failure.
      */
-    public void setUndoHandler(UndoRedoHandler handler) { this.undoHandler = handler; }
     public void setRedoHandler(UndoRedoHandler handler) { this.redoHandler = handler; }
 
     /// /api/history/jump (Phase 2 of the history-panel design doc)
@@ -3468,19 +3466,15 @@ class HttpServer {
         response.headers["Content-Type"] = "application/json";
     }
 
-    private void route_apiUndoRedo(HttpRequest request, HttpResponse response) {
+    private void route_apiRedo(HttpRequest request, HttpResponse response) {
         // Same main-thread sync pattern as /api/command, via the undo
         // bridge. tickAll() drains it on the main thread, invoking the
         // handler and writing resp.result.
-        bool isRedo = (request.path == "/api/redo");
-        auto handler = isRedo ? redoHandler : undoHandler;
+        auto handler = redoHandler;
         if (handler is null) {
             response.statusCode = 200;
-            response.body = `{"status":"error","message":"`
-                            ~ (isRedo ? "redo" : "undo")
-                            ~ ` handler not set"}`;
+            response.body = `{"status":"error","message":"redo handler not set"}`;
         } else {
-            undoBridge.req.isRedo = isRedo;
             undoBridge.resp.result = false;
             undoBridge.submitAndWait();  // timeout is noop-false — no error body
             response.statusCode = 200;
@@ -4047,8 +4041,7 @@ private enum RouteSpec[] kRoutes = [
     // No other route is a prefix of this one.
     RouteSpec("/api/command",              "POST", Match.prefix, Answered.mainThread, "route_apiCommand"),
     RouteSpec("/api/script",               "POST", Match.prefix, Answered.mainThread, "route_apiScript"),
-    RouteSpec("/api/undo",                 "POST", Match.exact,  Answered.mainThread, "route_apiUndoRedo"),
-    RouteSpec("/api/redo",                 "POST", Match.exact,  Answered.mainThread, "route_apiUndoRedo"),
+    RouteSpec("/api/redo",                 "POST", Match.exact,  Answered.mainThread, "route_apiRedo"),
     RouteSpec("/api/refire",               "POST", Match.exact,  Answered.mainThread, "route_apiRefire"),
     RouteSpec("/api/history/block",        "POST", Match.exact,  Answered.mainThread, "route_apiHistoryBlock"),
     RouteSpec("/api/undo/status",          "GET",  Match.exact,  Answered.httpThread, "route_apiUndoStatus"),

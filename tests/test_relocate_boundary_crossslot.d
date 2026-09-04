@@ -86,7 +86,7 @@ void settle() {
 void drainHistory() {
     foreach (_; 0 .. 100) {
         if (undoCount() == 0) return;
-        postJson("/api/undo", "");
+        postJson("/api/command", commandBody("history.undo"));
     }
 }
 
@@ -308,7 +308,7 @@ unittest {
     // pop — it did NOT leak across the rotate boundary. A regression where the
     // wrapper Move commit silently no-ops would mis-stage this geometry, not
     // just the count.
-    postJson("/api/undo", "");   // pop Move run 2
+    postJson("/api/command", commandBody("history.undo"));   // pop Move run 2
     settle();
     auto v6Undo1 = vert(6);
     assert(fabs(v6Undo1[0] - v6AfterRot[0]) < 1e-3 &&
@@ -320,10 +320,10 @@ unittest {
         ~ v6AfterRot[0].to!string ~ "," ~ v6AfterRot[1].to!string ~ ","
         ~ v6AfterRot[2].to!string ~ ")");
 
-    postJson("/api/undo", "");   // pop Rotate run
+    postJson("/api/command", commandBody("history.undo"));   // pop Rotate run
     settle();
 
-    postJson("/api/undo", "");   // pop Move run 1
+    postJson("/api/command", commandBody("history.undo"));   // pop Move run 1
     settle();
     auto v6Undo3 = vert(6);
     assert(fabs(v6Undo3[0] - 0.5) < 1e-3 &&

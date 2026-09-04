@@ -227,7 +227,7 @@ unittest // every history entry reports opInverse, and the bit is not a constant
     // Redo entries carry it too — the same command, read from the other stack.
     // The two arms of the provider are two separate loops, so a green undo arm
     // says nothing about this one.
-    auto resp = post(BASE ~ "/api/undo", "");
+    auto resp = post(BASE ~ "/api/command", commandBody("history.undo"));
     assert(parseJSON(cast(string)resp)["status"].str == "ok",
         "/api/undo failed: " ~ cast(string)resp);
     auto h3 = getHistory();

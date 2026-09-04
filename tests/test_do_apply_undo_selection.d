@@ -87,7 +87,7 @@ void cmd(string argstring) {
 }
 
 JSONValue postUndo() {
-    return postJson("/api/undo", "");
+    return postJson("/api/command", commandBody("history.undo"));
 }
 
 JSONValue getSelection() {

@@ -153,7 +153,7 @@ unittest {
            "the committed slice must remain after tool-drop");
 
     // The single entry restores the pristine cube on undo.
-    auto ur = cast(string) post(BASE ~ "/api/undo", "");
+    auto ur = cast(string) post(BASE ~ "/api/command", commandBody("history.undo"));
     assert(parseJSON(ur)["status"].str == "ok", "/api/undo failed: " ~ ur);
     settle();
     assert(vertCount() == 8 && faceCount() == 6,

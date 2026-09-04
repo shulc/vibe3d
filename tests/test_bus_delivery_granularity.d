@@ -692,7 +692,7 @@ unittest {
              ~ "exactly once (Command.apply's batch); got %d", kEdges, dForward));
 
     const long d1 = deliveries();
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     const long dUndo = deliveries() - d1;
     assert(dUndo == 1,
         format("UNDO of a %d-edge remove delivered %d time(s), expected exactly 1. "

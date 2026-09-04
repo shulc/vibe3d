@@ -57,7 +57,7 @@ void postSelect(string mode, int[] indices) {
 }
 
 JSONValue getModel()     { return parseJSON(cast(string) get(testBaseUrl() ~ "/api/model")); }
-JSONValue postUndo()     { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue postUndo()     { return parseJSON(post(testBaseUrl() ~ "/api/command", commandBody("history.undo"))); }
 
 bool approxEq(double a, double b, double eps = 1e-5) { return abs(a - b) < eps; }
 

@@ -72,7 +72,7 @@ void settle() {
 void drainHistory() {
     foreach (_; 0 .. 100) {
         if (undoCount() == 0) return;
-        postJson("/api/undo", "");
+        postJson("/api/command", commandBody("history.undo"));
     }
 }
 
@@ -278,7 +278,7 @@ unittest {
         "TWO undo entries; got " ~ (stackAfter - stackBefore).to!string);
 
     // Ctrl+Z #1 reverts run 2 only: v6 back to post-run-1.
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     auto v6undo1 = vert(6);
     assert(fabs(v6undo1[0] - v6AfterRun1[0]) < 1e-3 &&
@@ -289,7 +289,7 @@ unittest {
         v6undo1[2].to!string ~ ")");
 
     // Ctrl+Z #2 reverts run 1: v6 back to the pristine cube corner.
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     auto v6undo2 = vert(6);
     assert(fabs(v6undo2[0] - 0.5) < 1e-3 &&
@@ -352,7 +352,7 @@ unittest {
         "to ONE entry; got " ~ (stackAfter - stackBefore).to!string);
 
     // One Ctrl+Z reverts BOTH drags to the pristine cube corner.
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     auto v6 = vert(6);
     assert(fabs(v6[0] - 0.5) < 1e-3 &&

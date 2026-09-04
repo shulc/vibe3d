@@ -269,7 +269,7 @@ unittest { // per-click undo granularity
         ~ m0["vertices"].array.length.to!string);
 
     // First undo: 3 → 2 vertices.
-    auto u1 = postJson("/api/undo", "");
+    auto u1 = postJson("/api/command", commandBody("history.undo"));
     assert(u1["status"].str == "ok", "undo 1 failed: " ~ u1.toString);
     auto m1 = getJson("/api/model");
     assert(m1["vertices"].array.length == 2,
@@ -277,7 +277,7 @@ unittest { // per-click undo granularity
         ~ m1["vertices"].array.length.to!string);
 
     // Second undo: 2 → 1 vertex.
-    auto u2 = postJson("/api/undo", "");
+    auto u2 = postJson("/api/command", commandBody("history.undo"));
     assert(u2["status"].str == "ok", "undo 2 failed: " ~ u2.toString);
     auto m2 = getJson("/api/model");
     assert(m2["vertices"].array.length == 1,

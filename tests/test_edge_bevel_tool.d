@@ -158,7 +158,7 @@ unittest {
 
     cmd("tool.set edge.bevel off");
     assert(modelDepth() == depthBefore + 1, "one drag must commit exactly one undo entry");
-    auto undo = parseJSON(cast(string)post(BASE ~ "/api/undo", ""));
+    auto undo = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("history.undo")));
     assert(undo["status"].str == "ok", "undo failed");
     assert(model()["vertexCount"].integer == 8 && model()["faceCount"].integer == 6,
         "one undo did not restore the cube");
@@ -241,7 +241,7 @@ unittest {
     cmd("tool.set edge.bevel off");
     assert(modelDepth() == depthBefore + 1,
         "dropping the standing preview must record exactly one undo entry");
-    auto undo = parseJSON(cast(string)post(BASE ~ "/api/undo", ""));
+    auto undo = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("history.undo")));
     assert(undo["status"].str == "ok", "undo failed");
     assert(model()["vertexCount"].integer == 8 && model()["faceCount"].integer == 6,
         "undo after Round Level edits did not restore the cube");

@@ -148,7 +148,7 @@ unittest { // Ctrl+MMB on an EDGE dissolves it: two quads become one hexagon
         format("the press recorded %d undo entr(ies), expected exactly 1",
                undoDepth() - u0));
 
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo must succeed: " ~ u.toString);
     assert(edgeCountLayer(0) == 12 && faceCountLayer(0) == 6 && vertexCountLayer(0) == 8,
         format("undo must restore the 8/12/6 cube, got %d/%d/%d",
@@ -186,7 +186,7 @@ unittest { // Ctrl+MMB on a VERTEX dissolves it: three quads become one
         format("the press recorded %d undo entr(ies), expected exactly 1",
                undoDepth() - u0));
 
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo must succeed: " ~ u.toString);
     assert(vertexCountLayer(0) == 8 && edgeCountLayer(0) == 12 && faceCountLayer(0) == 6,
         format("undo must restore the 8/12/6 cube, got %d/%d/%d",

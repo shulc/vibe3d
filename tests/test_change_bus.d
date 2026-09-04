@@ -196,7 +196,7 @@ unittest {
         "subdivide must publish Polygons");
 
     // Undo → the class is re-published (snapshot restore emits All ⊇ Geometry).
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     auto afterUndo = settleAfter(afterSub);
     assert(afterUndo.totalPoints   > afterSub.totalPoints
         && afterUndo.totalPolygons > afterSub.totalPolygons,
@@ -394,7 +394,7 @@ unittest {
     playAndWait("tests/events/selection_add.log");
     auto before = settleAfter(mid);
 
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     auto after = settleAfter(before);
     assert(after.totalSelVertex > before.totalSelVertex,
         "undo of a vertex selection must re-publish the Vertex domain");

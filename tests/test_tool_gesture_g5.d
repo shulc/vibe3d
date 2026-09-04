@@ -343,7 +343,7 @@ Cell runCell(string name, string tool, string recordSite, string mode,
       ~ "expected exactly 1. Zero means the commit never recorded; more than "
       ~ "one means an in-session run was left unspliced");
 
-    auto ru = postJ("/api/undo");
+    auto ru = postJ("/api/command", commandBody("history.undo"));
     assert(ru["status"].str == "ok", name ~ ": /api/undo failed: " ~ ru.toString);
     settle();
     c.postUndo = planes();
@@ -790,7 +790,7 @@ unittest {
         "CONTROL: two dumps of the SAME unchanged mesh compared as different — "
       ~ "planeDiff() is not a stable predicate");
 
-    postJ("/api/undo");
+    postJ("/api/command", commandBody("history.undo"));
     settle();
 }
 
@@ -976,7 +976,7 @@ unittest {
         "control: `mesh.subdivide` left " ~ vSub.to!string ~ " vertices — the "
       ~ "command that seeds the redo timeline did nothing");
 
-    auto ru = postJ("/api/undo");
+    auto ru = postJ("/api/command", commandBody("history.undo"));
     assert(ru["status"].str == "ok", "control: /api/undo failed: " ~ ru.toString);
     settle();
     assert(canRedo(),

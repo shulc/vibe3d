@@ -104,7 +104,7 @@ unittest {
         format("arming Topology Pen must add EXACTLY ONE lifecycle row; got %d",
                historyAfter.lifecycleRows - historyBefore.lifecycleRows));
 
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo must succeed: " ~ u.toString);
 
     Vec3[] restored;

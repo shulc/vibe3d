@@ -578,7 +578,7 @@ unittest {
     selectTopFrontEdge();
     cmd(`{"id":"mesh.bevel","params":{"width":0.1}}`);
     assert(vertCount(model()) == 10, "the bevel did not apply; undo proves nothing");
-    auto u = postTo("/api/undo", "");
+    auto u = postTo("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "/api/undo failed: " ~ u.toString);
     auto m = model();
     assert(vertCount(m) == 8 && faceCount(m) == 6,

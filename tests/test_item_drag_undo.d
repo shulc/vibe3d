@@ -84,7 +84,7 @@ void playCtrlZ(Viewport vp) {
 }
 
 void doUndo() {
-    auto r = parseJSON(cast(string)post(BASE ~ "/api/undo", ""));
+    auto r = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("history.undo")));
     assert(r["status"].str == "ok", "/api/undo failed: " ~ r.toString);
 }
 void doRedo() {

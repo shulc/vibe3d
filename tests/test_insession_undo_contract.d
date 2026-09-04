@@ -100,7 +100,7 @@ void settle() {
 void drainHistory() {
     foreach (_; 0 .. 100) {
         if (undoCount() == 0) return;
-        postJson("/api/undo", "");
+        postJson("/api/command", commandBody("history.undo"));
     }
 }
 
@@ -491,7 +491,7 @@ unittest {
 
     // Ctrl+Z #1 pops the post-boundary run (gizmo-relocated + panel deltas):
     // geometry back to the post-run-1 position.
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     auto v6Undo1 = vert(6);
     assert(fabs(v6Undo1[0] - v6AfterRun1[0]) < 1e-3 &&
@@ -502,7 +502,7 @@ unittest {
         v6Undo1[2].to!string ~ ")");
 
     // Ctrl+Z #2 pops run 1: geometry back to the pristine cube corner.
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     auto v6Undo2 = vert(6);
     assert(fabs(v6Undo2[0] - 0.5) < 1e-3 &&

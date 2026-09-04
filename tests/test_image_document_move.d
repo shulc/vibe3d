@@ -369,7 +369,7 @@ unittest {
     }
 
     // --- undo, through the real history stack -------------------------------
-    auto u = parseJSON(cast(string)post(baseUrl ~ "/api/undo", ""));
+    auto u = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("history.undo")));
     assert(u["status"].str == "ok", "undo of the removal failed: " ~ u.toString);
     assert(layerCount() == 6 && layerAt(2)["name"].str == "clipB",
         "the clip is back at its slot");

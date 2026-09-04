@@ -33,7 +33,7 @@ void postCommand(string body) {
 
 string postCommandRaw(string body) { return postRaw("/api/command", body); }
 
-JSONValue postUndo() { return postJ("/api/undo", ""); }
+JSONValue postUndo() { return postJ("/api/command", commandBody("history.undo")); }
 JSONValue getModel()  { return getJ("/api/model"); }
 
 void setPolygonMode() {

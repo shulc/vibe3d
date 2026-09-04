@@ -54,7 +54,7 @@ void postSelect(string mode, int[] indices) {
     assert(parseJSON(resp)["status"].str == "ok", "/api/select failed: " ~ resp);
 }
 
-JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/command", commandBody("history.undo"))); }
 JSONValue postRedo() { return parseJSON(post(testBaseUrl() ~ "/api/redo", "")); }
 JSONValue getModel() { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
 

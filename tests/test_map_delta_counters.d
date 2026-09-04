@@ -93,7 +93,7 @@ void cmdJ(string id, string paramsJson = "{}") {
 size_t undoN(size_t n) {
     size_t did = 0;
     foreach (_; 0 .. n) {
-        auto j = postJson("/api/undo", "");
+        auto j = postJson("/api/command", commandBody("history.undo"));
         if (j["status"].str != "ok") break;
         ++did;
     }

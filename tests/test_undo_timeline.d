@@ -71,7 +71,7 @@ void translate_(double dx, double dy, double dz) {
 }
 
 JSONValue doUndo() {
-    return jpost("/api/undo", "");
+    return jpost("/api/command", commandBody("history.undo"));
 }
 
 JSONValue doRedo() {

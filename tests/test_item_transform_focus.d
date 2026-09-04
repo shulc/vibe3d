@@ -67,7 +67,7 @@ double    posX(size_t i)       { return layerAt(i)["xform"]["pos"].array[0].floa
 bool      isXTarget(size_t i)  { return layerAt(i)["transformTarget"].boolean; }
 JSONValue history()            { return getJson("/api/history"); }
 
-JSONValue doUndo() { return parseJSON(cast(string) post(BASE ~ "/api/undo", "")); }
+JSONValue doUndo() { return parseJSON(cast(string) post(BASE ~ "/api/command", commandBody("history.undo"))); }
 
 /// ONE read of the armed transform tool's own state dump — no polling.
 ///

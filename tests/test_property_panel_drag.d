@@ -51,7 +51,7 @@ string topUndoCommand() {
 void drainHistory() {
     foreach (_; 0 .. 100) {
         if (undoCount() == 0) return;
-        postJson("/api/undo", "");
+        postJson("/api/command", commandBody("history.undo"));
     }
 }
 
@@ -178,7 +178,7 @@ unittest { // a 20-step move-tool drag produces ONE undo entry
     assert(fabs(post6Pre[0] - 0.5) > 0.05,
         "setup: v6.x must have moved away from 0.5 before testing undo");
 
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
 
     auto post6Post = vertexPos(6);
@@ -270,7 +270,7 @@ unittest { // 2 separate move-tool drags in one tool session = 1 entry
         (stackAfter - stackBefore).to!string ~ " entries instead");
 
     // One Ctrl+Z reverts BOTH drags (single run) — geometry back to cube.
-    postJson("/api/undo", "");
+    postJson("/api/command", commandBody("history.undo"));
     settle();
     auto model = getJson("/api/model");
     auto v6 = model["vertices"].array[6].array;

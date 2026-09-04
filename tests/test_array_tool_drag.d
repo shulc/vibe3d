@@ -167,7 +167,7 @@ unittest { // a free centre haul arrays face 4 and records exactly one entry
 
     // The undo takes the copies back off, which is what makes the entry above a
     // real edit record rather than a bookmark.
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
     Thread.sleep(dur!"msecs"(150));
     assert(vertexCount() == v0,

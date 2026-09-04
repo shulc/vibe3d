@@ -240,7 +240,7 @@ unittest {
 /// nothing — an endpoint returns it whatever it did.
 void assertUndoRestoresCube(string what) {
     immutable long d1 = getJson("/api/history")["undo"].array.length;
-    auto u = postTo("/api/undo", "");
+    auto u = postTo("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", what ~ ": /api/undo failed: " ~ u.toString);
     immutable long d2 = getJson("/api/history")["undo"].array.length;
     assert(d1 - d2 == 1,

@@ -177,7 +177,7 @@ unittest {
     assert(undoDepth() == undo0 + 1,
         format("the duplicate must record exactly ONE undo entry; depth %d -> %d",
                undo0, undoDepth()));
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo must succeed: " ~ u.toString);
     assert(vertexCountLayer(1) == 4 && edgeCountLayer(1) == 4 && faceCountLayer(1) == 1,
         "undo must restore the bare quad");

@@ -82,7 +82,7 @@ unittest {
     assert(hasVertexNear(0, Vec3(0.0f, -0.5f,  0.5f), eps), "midpoint of edge 4-5 must exist");
 
     // /api/undo restores the exact pre-cut state.
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo must succeed: " ~ u.toString);
     assert(vertexCountLayer(0) == 8 && edgeCountLayer(0) == 12 && faceCountLayer(0) == 6,
         "undo must restore the exact pre-cut cube");

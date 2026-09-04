@@ -201,7 +201,7 @@ unittest {
     auto post_ = getModel();
     assert(post_["faceCount"].integer == 12);
 
-    auto undoResp = postJson("/api/undo", "");
+    auto undoResp = postJson("/api/command", commandBody("history.undo"));
     assert(undoResp["status"].str == "ok", "undo failed: " ~ undoResp.toString);
 
     auto m = getModel();
@@ -246,7 +246,7 @@ unittest {
         "headless: faces expected 12, got " ~ m["faceCount"].integer.to!string);
 
     // One-shot recorded exactly one undo entry.
-    auto undoResp = postJson("/api/undo", "");
+    auto undoResp = postJson("/api/command", commandBody("history.undo"));
     assert(undoResp["status"].str == "ok", "undo failed: " ~ undoResp.toString);
     auto restored = getModel();
     assert(restored["vertexCount"].integer == 8);

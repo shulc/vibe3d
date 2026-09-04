@@ -47,7 +47,7 @@ void mustOk(JSONValue r, string ctx = "") {
            (ctx.length ? ctx ~ ": " : "") ~ r.toString());
 }
 
-JSONValue postUndo() { return parseJSON(cast(string)post(BASE ~ "/api/undo", "")); }
+JSONValue postUndo() { return parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("history.undo"))); }
 JSONValue getModel() { return parseJSON(cast(string)get (BASE ~ "/api/model")); }
 
 struct V3 { double x, y, z; }

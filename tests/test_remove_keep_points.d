@@ -44,7 +44,7 @@ void postSelect(string mode, int[] indices) {
 }
 
 JSONValue getModel()  { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
-JSONValue postUndo()  { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue postUndo()  { return parseJSON(post(testBaseUrl() ~ "/api/command", commandBody("history.undo"))); }
 
 private double jnum(JSONValue v) {
     return v.type == JSONType.integer ? cast(double)v.integer : v.floating;

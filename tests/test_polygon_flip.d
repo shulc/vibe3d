@@ -34,7 +34,7 @@ void postSelect(string mode, int[] indices) {
            "/api/select failed: " ~ resp);
 }
 
-JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue postUndo() { return parseJSON(post(testBaseUrl() ~ "/api/command", commandBody("history.undo"))); }
 JSONValue getModel()  { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
 
 long undoCount() {

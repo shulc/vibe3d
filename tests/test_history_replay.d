@@ -95,7 +95,7 @@ unittest { // replay reproduces the effect of vert.merge after undo
     assert(mergeIdx >= 0, "vert.merge entry not found in undo stack");
 
     // Undo the merge — verts should be back to 8.
-    post(testBaseUrl() ~ "/api/undo", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("history.undo"));
     int vertsAfterUndo = cast(int)getModel()["vertices"].array.length;
     assert(vertsAfterUndo == 8, "expected 8 verts after undo, got: "
            ~ vertsAfterUndo.to!string);
@@ -145,7 +145,7 @@ unittest { // successful replay response body contains "line" field
     long lastIdx = cast(long)(undo.length - 1);
 
     // Undo so the subdivide is reversible, then replay.
-    post(testBaseUrl() ~ "/api/undo", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("history.undo"));
     // Redo to restore state so replay can apply again (subdivide is repeatable).
     post(testBaseUrl() ~ "/api/redo", "");
     // Now replay: subdivide again (creates another entry).

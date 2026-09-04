@@ -41,7 +41,7 @@ void postCommand(string body) {
 JSONValue getModel() { return parseJSON(get(BASE ~ "/api/model")); }
 
 JSONValue postUndo() {
-    return parseJSON(post(BASE ~ "/api/undo", ""));
+    return parseJSON(post(BASE ~ "/api/command", commandBody("history.undo")));
 }
 
 // Inject a raw mesh.  `verts` is a JSON array-of-array-of-doubles string;

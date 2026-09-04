@@ -44,7 +44,7 @@ void setSelection(string mode, int[] indices) {
 }
 
 void postUndo() {
-    auto resp = post(testBaseUrl() ~ "/api/undo", "");
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("history.undo"));
     assert(parseJSON(resp)["status"].str == "ok", "undo failed: " ~ resp);
 }
 

@@ -137,7 +137,7 @@ unittest { // redo stack entries are also structured objects
     if (r["status"].str != "ok") return;
 
     // Undo so the subdivide entry moves to redo.
-    post(testBaseUrl() ~ "/api/undo", "");
+    post(testBaseUrl() ~ "/api/command", commandBody("history.undo"));
 
     auto h    = getHistory();
     auto redo = h["redo"].array;

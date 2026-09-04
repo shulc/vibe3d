@@ -74,12 +74,12 @@ void drainAndReset() {
         }
         foreach (_; 0 .. 100) {
             if (undoCount() == 0) break;
-            postJson("/api/undo", "");
+            postJson("/api/command", commandBody("history.undo"));
         }
         postJson("/api/command", commandBody("scene.reset"));
         foreach (_; 0 .. 100) {
             if (undoCount() == 0) break;
-            postJson("/api/undo", "");
+            postJson("/api/command", commandBody("history.undo"));
         }
         auto v = vAt(6);
         if (approxEq(v[0], 0.5) && approxEq(v[1], 0.5) && approxEq(v[2], 0.5))

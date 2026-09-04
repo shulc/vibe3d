@@ -160,7 +160,7 @@ unittest {
            format("v5.z must be unchanged (%.5f)", v5z));
 
     // Undo — MeshVertexEdit.revert() restores v6 to (0.5, 0.5, 0.5).
-    jpost("/api/undo", "");
+    jpost("/api/command", commandBody("history.undo"));
 
     auto m2     = jget("/api/model");
     auto verts2 = m2["vertices"].array;

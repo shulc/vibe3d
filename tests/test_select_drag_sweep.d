@@ -266,7 +266,7 @@ unittest { // THE BEFORE-IMAGE: undoing a click restores the SWEPT SET.
 
     // Undo the click's MeshSelectionEdit. Its before-image is the SWEPT set,
     // not an empty selection — that is the whole discriminator.
-    auto u = parseJSON(post(testBaseUrl() ~ "/api/undo", ""));
+    auto u = parseJSON(post(testBaseUrl() ~ "/api/command", commandBody("history.undo")));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
 
     auto restored = selectedVerts();

@@ -9,6 +9,7 @@
 //
 // Run via: ./run_test.d topopen_move_undo_redo
 
+import http_command_helpers : commandBody;
 import topopen_place_helpers;
 import std.json;
 import std.math   : abs, sqrt;
@@ -56,7 +57,7 @@ unittest {
 
     // One undo restores the EXACT pre-move vertex position — a single
     // atomic undo entry, not a partial/incremental one.
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo must succeed: " ~ u.toString);
     assert(vertexCountLayer(1) == 1, "undo must not change the vertex COUNT (Move never adds/removes)");
 

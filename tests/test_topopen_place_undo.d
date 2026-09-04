@@ -8,6 +8,7 @@
 //
 // Run via: ./run_test.d topopen_place_undo
 
+import http_command_helpers : commandBody;
 import topopen_place_helpers;
 import std.json;
 import std.format : format;
@@ -40,7 +41,7 @@ unittest {
 
     assert(vertexCountLayer(1) == 1, "click must place exactly 1 vertex");
 
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo must succeed: " ~ u.toString);
     assert(vertexCountLayer(1) == 0, "undo must remove the placed vertex");
 

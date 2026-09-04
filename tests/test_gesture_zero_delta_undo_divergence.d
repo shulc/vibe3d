@@ -423,7 +423,7 @@ CellResult runCell(CellDrive d, double stdMagPx, int stdSteps) {
     // observation after that real prefix.
     const long lifecycleBeforeUndo = lifecycleCount();
     foreach (k; 1 .. 7) {
-        auto resp = postJson("/api/undo", "");
+        auto resp = postJson("/api/command", commandBody("history.undo"));
         settle();
         const v = verts();
         if (k == 1) {
@@ -487,7 +487,7 @@ ArmDropResult runArmDropParityCell(double stdMagPx, int stdSteps) {
     r.meshChanged = !meshEq(postE2, postRegion);
 
     foreach (k; 1 .. 7) {
-        auto resp = postJson("/api/undo", "");
+        auto resp = postJson("/api/command", commandBody("history.undo"));
         assert(("status" in resp) && resp["status"].str == "ok",
             format("arm-drop parity: undo %d did not execute: %s",
                    k, resp.toString));

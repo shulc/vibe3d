@@ -55,7 +55,7 @@ void postSelect(string mode, int[] indices) {
 
 JSONValue getModel()     { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
 JSONValue getSelection() { return parseJSON(get(testBaseUrl() ~ "/api/selection")); }
-JSONValue postUndo()     { return parseJSON(post(testBaseUrl() ~ "/api/undo", "")); }
+JSONValue postUndo()     { return parseJSON(post(testBaseUrl() ~ "/api/command", commandBody("history.undo"))); }
 JSONValue getHistory()   { return parseJSON(get(testBaseUrl() ~ "/api/history")); }
 
 long undoCount() { return getHistory()["undo"].array.length; }

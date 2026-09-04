@@ -206,7 +206,7 @@ private void noEditTarget() {
 /// Every row below clears history after its Model setup so the selection change
 /// it means to undo is isolated from unrelated setup history.
 private void undoOk(string why) {
-    auto u = parseJSON(cast(string) post(BASE ~ "/api/undo", ""));
+    auto u = parseJSON(cast(string) post(BASE ~ "/api/command", commandBody("history.undo")));
     assert(u["status"].str == "ok", "undo (" ~ why ~ ") failed: " ~ u.toString);
 }
 

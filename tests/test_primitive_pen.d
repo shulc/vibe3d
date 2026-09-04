@@ -597,7 +597,7 @@ unittest { // commit → undo → empty
     auto m1 = getJson("/api/model");
     assert(m1["vertices"].array.length == 3);
 
-    auto u = postJson("/api/undo", "");
+    auto u = postJson("/api/command", commandBody("history.undo"));
     assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
     auto m2 = getJson("/api/model");
     assert(m2["vertices"].array.length == 0,
