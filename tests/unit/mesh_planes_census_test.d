@@ -21,7 +21,7 @@
 module tests.unit.mesh_planes_census_test;
 
 import mesh          : Mesh;
-import mesh_planes    : kFacePlanes, kVertPlanes, kExemptPlanes;
+import mesh_planes    : kFacePlanes, kVertPlanes, kEdgePlanes, kExemptPlanes;
 import std.array      : appender, join;
 import std.ascii      : isAlphaNum, isWhite;
 import std.conv       : to;
@@ -42,7 +42,14 @@ import tests.unit.census_symbols : blankNonCode, blankUnittestBodies,
 private template hasElemPrefix(string name) {
     enum hasElemPrefix = (name.length >= 4 && name[0 .. 4] == "face")
                        || (name.length >= 6 && name[0 .. 6] == "vertex")
-                       || (name.length >= 4 && name[0 .. 4] == "vert");
+                       || (name.length >= 4 && name[0 .. 4] == "vert")
+                       // TASK 4059 — the EDGE domain joined the census when
+                       // `kEdgePlanes` gave it a carry to forget. Before that
+                       // there was no per-edge plane funnel, so selecting the
+                       // prefix would have produced four exemptions and no
+                       // guard; now a new per-edge array must be classified
+                       // like a per-face one.
+                       || (name.length >= 4 && name[0 .. 4] == "edge");
 }
 
 private bool inList(string name, const string[] arr) {
@@ -58,6 +65,7 @@ private bool inList(string name, const string[] arr) {
 // lookups below read instead of the enum names directly.
 private static immutable string[]       kFacePlanesOnce   = kFacePlanes;
 private static immutable string[]       kVertPlanesOnce   = kVertPlanes;
+private static immutable string[]       kEdgePlanesOnce   = kEdgePlanes;
 private static immutable string[string] kExemptPlanesOnce = kExemptPlanes;
 
 unittest // L2: every face/vertex-shaped Mesh field is a carried plane or a documented exemption
@@ -78,15 +86,27 @@ unittest // L2: every face/vertex-shaped Mesh field is a carried plane or a docu
 
     // Non-vacuity (mirrors tests/unit/mark_view_field_guard_test.d's
     // `filesScanned > 100`: "a walk that found no files would report a
-    // clean tree"). Measured 2026-08-25: the true count is 16 — the floor is
-    // 14, not 8, because a floor of 8 would let a selector that lost HALF
-    // its yield (exactly what swapping `.length` for `isDynamicArray` does)
-    // still pass. This is a non-vacuity guard, not a second census; L1's
-    // `== 54` / `== 34` in mesh_planes.d is where the exactness lives.
-    assert(selected.length >= 14,
-           format("only %d face/vertex-shaped Mesh field(s) selected — the "
-                ~ "walk is not reaching what it claims to guard (measured "
-                ~ "2026-08-25: 16 today)", selected.length));
+    // clean tree"). Measured 2026-08-25: 16 with the face/vertex/vert
+    // prefixes. Measured 2026-09-05, after task 4059 added the `edge`
+    // prefix: 23 — the seven new ones are `edges`, `edgeIndexMap`,
+    // `edgeMarks`, `edgeSelectionOrder`, `edgeNonManifold_`, `edgeSetNames`
+    // and `edgeSetMask`. Command and its real output: the floor below was
+    // temporarily raised to `>= 999` and `dub test --config=tests` printed
+    // "only 23 face/vertex-shaped Mesh field(s) selected".
+    //
+    // THE FLOOR IS 20 AND THAT NUMBER IS DERIVED, not rounded. The loss this
+    // guard has to see is a selector that stops reaching a whole DOMAIN:
+    // dropping the `edge` prefix takes 23 to 16, so any floor at or below 16
+    // would let that through silently. 20 refuses it while leaving room for a
+    // field to be legitimately removed. This is a non-vacuity guard, not a
+    // second census; L1's `== 55` / `== 34` in mesh_planes.d is where the
+    // exactness lives.
+    assert(selected.length >= 20,
+           format("only %d face/vertex/edge-shaped Mesh field(s) selected — "
+                ~ "the walk is not reaching what it claims to guard (measured "
+                ~ "2026-09-05: 23 today; 16 of them before the `edge` prefix "
+                ~ "joined, so a count at or below 16 means the whole edge "
+                ~ "domain fell out of the census)", selected.length));
 
     // Named-membership pin, because the floor above does NOT pin the
     // selector itself. Swapping `is(typeof(typeof(f).init.length))` for
@@ -98,18 +118,28 @@ unittest // L2: every face/vertex-shaped Mesh field is a carried plane or a docu
     assert(inList("faces", selected),
            "the .length selector must see FaceList; an isDynamicArray "
          ~ "selector does not");
+    // TASK 4059 — the edge domain's own instance of the same loss, and it is
+    // a DIFFERENT type from `faces`: `edgeIndexMap` is an associative array,
+    // which `isDynamicArray` also refuses while `.length` accepts. Two names,
+    // two type kinds, so the pin does not rest on one wrapper struct staying
+    // the way it is. (`edgeSetMask` is the third such field and is covered by
+    // its `kExemptPlanes` entry.)
+    assert(inList("edgeIndexMap", selected),
+           "the .length selector must see an associative array; an "
+         ~ "isDynamicArray selector does not");
 
     string[] unclassified;
     foreach (name; selected) {
         if (inList(name, kFacePlanesOnce)) continue;
         if (inList(name, kVertPlanesOnce)) continue;
+        if (inList(name, kEdgePlanesOnce)) continue;
         if ((name in kExemptPlanesOnce) !is null) continue;
         unclassified ~= name;
     }
     assert(unclassified.length == 0,
            format("field(s) %s are per-face/per-vertex-shaped (name prefix "
-                ~ "face/vertex/vert, type has .length) but appear in NEITHER "
-                ~ "kFacePlanes/kVertPlanes NOR kExemptPlanes (all in "
+                ~ "face/vertex/vert/edge, type has .length) but appear in "
+                ~ "NEITHER kFacePlanes/kVertPlanes/kEdgePlanes NOR kExemptPlanes (all in "
                 ~ "source/mesh_planes.d) — classify each: does rewriteFaces/"
                 ~ "rewriteVertices need to carry it, or is it exempt (and "
                 ~ "why)? If you just REMOVED this from kFacePlanes, that is "

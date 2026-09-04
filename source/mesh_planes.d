@@ -151,6 +151,7 @@ module mesh_planes;
 // ---------------------------------------------------------------------------
 
 import mesh : Mesh, PolyVertexBlend, PolyVertexGen, FaceIdx;
+import mesh_topo : edgeKey;
 import math : Vec3;
 import std.format : format;
 import std.traits : isDynamicArray, isStaticArray;
@@ -274,6 +275,28 @@ enum string[] kVertPlanes = [
     "vertexMarks", "vertexSelectionOrder", "vertexSetMask",
 ];
 
+/// The per-EDGE planes carried across a `Mesh.rebuildEdges()` by
+/// `captureEdgePlanes`/`applyEdgePlanes` below (task 4059).
+///
+/// WHY THIS LIST IS SHORT AND WHY IT IS NOT A `rewriteEdges`. There is no
+/// edge-domain sibling of `rewriteFaces`, because nothing in the tree hands
+/// `edges` a new array with a newToOld correspondence: `edges` is DERIVED,
+/// re-discovered from `faces` in face/corner order by `Mesh.rebuildEdges`,
+/// and that discovery has no memory of the previous numbering. So the edge
+/// domain's correspondence is not an index map — it is the edge's own
+/// undirected endpoint KEY (`mesh_topo.edgeKey`), which is what
+/// `edgeSetMask`'s exemption below has always said about the edge domain and
+/// is why THAT plane needs no carry at all.
+///
+/// `edgeNonManifold_` is deliberately absent: it is a DERIVED bit that
+/// `buildLoops` recomputes wholesale, in the same class as `faceLoop` /
+/// `vertLoop` in `kExemptPlanes`.
+enum string[] kEdgePlanes = [
+    "edgeMarks",            // Select | Subpatch | Hide | Lock — the edge word,
+                             //   same fold `faceMarks` has for faces.
+    "edgeSelectionOrder",
+];
+
 /// Per-face/per-vertex-SHAPED `Mesh` fields that L2's census selects (name
 /// prefix `face`/`vertex`/`vert`, type has `.length`) but that this
 /// primitive deliberately does NOT carry — each with why. Measured
@@ -281,14 +304,15 @@ enum string[] kVertPlanes = [
 /// census selects 16 fields; 8 are `kFacePlanes`/`kVertPlanes` above, these
 /// first 8 entries are the rest.
 ///
-/// `edgeSetMask` below is the ODD entry: its name starts `edge`, not
-/// `face`/`vertex`/`vert`, so L2's prefix selector never reaches it and this
-/// entry is never consulted at runtime — it is recorded here purely so a
-/// reader classifying `edgeSetMask` (which, being `ulong[ulong]`, LOOKS
-/// exactly like a per-element plane) finds the reason next to its siblings
-/// rather than nowhere (plan §2.4, §9 risk "edgeSetMask mistaken for an
-/// index plane"). See `rewriteVertices`'s doc comment below for who owns the
-/// re-key it names.
+/// TASK 4059 EXTENDED THIS TO THE EDGE DOMAIN. `edgeSetMask` used to be the
+/// ODD entry here — its name starts `edge`, which L2's prefix selector did not
+/// reach, so it was recorded purely so a reader classifying it (being
+/// `ulong[ulong]`, it LOOKS exactly like a per-element plane) found the reason
+/// beside its siblings rather than nowhere. With `kEdgePlanes` above there is
+/// a per-edge carry to be forgotten, so L2 now selects the `edge` prefix too
+/// and the four entries below it are consulted at runtime like every other.
+/// See `rewriteVertices`'s doc comment below for who owns the re-key
+/// `edgeSetMask` names.
 enum string[string] kExemptPlanes = [
     "faces":            "the SUBJECT `rewriteFaces` assigns, not a plane it carries",
     "vertices":         "the SUBJECT `rewriteVertices` assigns, not a plane it carries",
@@ -298,6 +322,10 @@ enum string[string] kExemptPlanes = [
     "vertDartStart":    "derived adjacency cache (CSR offsets), rebuilt by buildLoops",
     "vertDartAdj":      "derived adjacency cache (CSR neighbours), rebuilt by buildLoops",
     "vertexSetNames":   "a NAME registry (string per slot), not a per-element plane",
+    "edges":            "the SUBJECT Mesh.rebuildEdges re-derives, not a plane it carries",
+    "edgeIndexMap":     "derived key->index lookup, rebuilt wholesale by rebuildEdges/buildLoops",
+    "edgeNonManifold_": "derived adjacency bit, rebuilt wholesale by buildLoops (task 1290)",
+    "edgeSetNames":     "a NAME registry (string per slot), not a per-element plane",
     "edgeSetMask":      "key-space (ulong[ulong]), not index-space — immune to face AND "
                        ~ "vertex renumbering by construction. Re-keyed by "
                        ~ "mesh_selsets.selSetRekeyEdges on a VERTEX remap only, which is "
@@ -888,6 +916,166 @@ void appendFacePlanes(ref Mesh m, PlaneFit fit = PlaneFit.Exact) {
             // for why an alias over a `ref` parameter loses the instance.
             if (fit == PlaneFit.Exact || __traits(getMember, m, n).length < want)
                 __traits(getMember, m, n).length = want;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The EDGE domain (task 4059) — the carry `Mesh.rebuildEdges` never had.
+//
+// THE CLASS OF BUG THIS REMOVES, and it is a live one rather than a tidiness
+// itch. `rebuildEdges` empties `edges` and RE-DISCOVERS every edge from
+// `faces` in face/corner order, so an edge's index is a function of the face
+// order it happens to be found in — a spin, a winding rewrite, a face insert
+// all renumber the whole array. Nothing carried `edgeMarks` or
+// `edgeSelectionOrder` through that. `rebuildEdges`'s own comment named the
+// hazard ("the renumbering hazard this function is famous for — `edgeMarks`
+// is NOT re-indexed"), and the tree's answer was 60 hand-written
+// `clearEdgeSelectionResize()` / `resizeEdgeSelection()` calls at the call
+// sites: an edge selection survived a topology edit only because somebody
+// remembered to throw it away.
+//
+// THE CORRESPONDENCE IS A KEY, NOT AN INDEX MAP — this is the shape
+// difference from `rewriteFaces`, and it is forced rather than chosen. A face
+// rewrite HAS a newToOld correspondence because the kernel built the new
+// array and knows where each entry came from. `rebuildEdges` has no such
+// thing: it is handed nothing and derives everything. What survives a
+// re-derive is the edge's undirected endpoint key, which is exactly what
+// `kExemptPlanes` has always said about `edgeSetMask` ("key-space, not
+// index-space — immune to face AND vertex renumbering by construction"). So
+// the edge planes are carried the way `edgeSetMask` is already immune.
+//
+// WHAT IT DOES NOT DECIDE. It does not remove one of the 60 manual resets.
+// Whether `mesh.extrude` should leave the source edge selected is a PRODUCT
+// question about the reference's behaviour, not a consequence of this
+// mechanism, and `CLAUDE.md`'s capture rule puts that class of unknown with
+// the owner rather than with the implementer. The mechanism is here; which
+// ops should now stop clearing is task 4190.
+// ---------------------------------------------------------------------------
+
+/// WHO ASKS FOR THE CARRY, and why it is not simply on.
+///
+/// MEASURED 2026-09-04, and this is the finding that shaped the enum. Wiring
+/// the carry into `Mesh.rebuildEdges` unconditionally moves EIGHT rows of the
+/// frozen undo-parity corpus — `weld_merge` (mesh.collapse/edge),
+/// `create_stable` (mesh.addPoint), `delete_remove` (mesh.delete/vertices),
+/// `slice_cut` (mesh.axisSlice), `cleanup` (mesh.cleanup/dissolve), `bevel`
+/// (mesh.poly_inset), `vertex_bevel`, `extrude_extend`, each on the
+/// `edgePlanes` plane of its postOp dump. Six are ORDER stamps and two are
+/// Select bits. Every one of them is a change to what the user sees selected
+/// after a shipped operation, and WHICH edges an extrude or an inset should
+/// leave selected is a law we are matching, not one we may design
+/// (`CLAUDE.md`, "Unknowns are CAPTURED, not invented"). So the default arm
+/// is byte-identical to the behaviour before this task and the carry is
+/// opt-in per call site; task 4190 holds the per-op decision, with those
+/// eight rows as its starting evidence.
+///
+/// THERE IS ALSO A SOUNDNESS BOUNDARY, and it is why an unconditional carry
+/// would be wrong even once that decision is made. An edge KEY is a pair of
+/// VERTEX INDICES, so a vertex renumbering invalidates every key — and
+/// `rebuildEdges` cannot see one. At `Mesh.compactUnreferenced` and both weld
+/// remaps, `vertices` is reassigned and `faces` rewritten into the new
+/// numbering while `edges` still holds the OLD endpoints, so a key lookup
+/// there can MISS (a dropped mark, the conservative failure) or COLLIDE (a
+/// mark landing on an unrelated edge, the dangerous one). This is the same
+/// boundary `kExemptPlanes`' `edgeSetMask` entry already draws — "re-keyed by
+/// mesh_selsets.selSetRekeyEdges on a VERTEX remap only, which is the
+/// CALLER's obligation". `edgeSetMask` has that re-key; the two planes here do
+/// not, and giving them one is task 4191. Until then `byKey` may only be
+/// asked for by a caller whose kernel renumbers no vertex — today
+/// `Mesh.spinEdge` and `Mesh.spinEdgesByKeys`, which rewrite windings only.
+enum EdgePlaneCarry : ubyte {
+    /// Leave `edgeMarks` / `edgeSelectionOrder` exactly as they are: the
+    /// behaviour every call site had before task 4059, stale index-space
+    /// values and all, with the caller's own `clearEdgeSelectionResize()` /
+    /// `resizeEdgeSelection()` still owning the cleanup. The DEFAULT, so that
+    /// wiring the mechanism changes nothing until somebody asks.
+    leaveIndexed,
+    /// Carry each plane through the rebuild by the edge's undirected endpoint
+    /// KEY, and size the planes to the rebuilt `edges`.
+    byKey,
+}
+
+/// The edge-key -> OLD-edge-index correspondence, taken BEFORE
+/// `Mesh.rebuildEdges` empties `edges`, plus whether there is anything at all
+/// to carry.
+struct EdgeCarry {
+    uint[ulong] oldIndexOfKey;
+    /// False when every value on every plane in `kEdgePlanes` is already
+    /// `T.init` — the common case (no edge has ever been selected, hidden or
+    /// stamped on this mesh). The AA above is then never built, and
+    /// `applyEdgePlanes` degrades to a length fit that allocates only when the
+    /// edge count actually moved. Measured shape, not a guess: `rebuildEdges`
+    /// is called from 182 sites and is already O(corners), so the scan that
+    /// decides this adds a same-order pass with no allocation, while the AA it
+    /// avoids is one hash entry per edge.
+    bool armed;
+}
+
+/// Snapshot the per-edge planes' correspondence. MUST run before
+/// `edges.length = 0`; there is nothing to key from afterwards, and this is
+/// the "right check, wrong moment" trap `CLAUDE.md` names — the value read is
+/// correct and the position is the whole of it.
+EdgeCarry captureEdgePlanes(ref Mesh m) {
+    EdgeCarry c;
+    static foreach (n; kEdgePlanes) {
+        {
+            if (!c.armed) {
+                foreach (v; __traits(getMember, m, n))
+                    if (v != typeof(v).init) { c.armed = true; break; }
+            }
+        }
+    }
+    if (!c.armed) return c;
+    foreach (ei, ref e; m.edges)
+        c.oldIndexOfKey[edgeKey(e[0], e[1])] = cast(uint) ei;
+    return c;
+}
+
+/// Re-lay every plane in `kEdgePlanes` over the REBUILT `edges`, each value
+/// following its edge's endpoint key. An edge the rebuild produced that the
+/// snapshot never saw takes `T.init`; an edge the snapshot had that the
+/// rebuild did not produce is dropped, which is the correct answer — it is
+/// not in the mesh any more.
+///
+/// MUST run after `edges` has been refilled and BEFORE `rebuildEdges`'s own
+/// `commitChange`: the Hide derive that commit runs writes the Select bit of
+/// hidden edges, and it must see the carried marks rather than the pre-carry
+/// ones.
+///
+/// Also brings the planes to `edges.length`, which `rebuildEdges` did not do
+/// before — the caller's `resizeEdgeSelection()` did. That call is left in
+/// place at all 60 sites: it ALSO resizes the Edge-domain mesh maps, which is
+/// not this primitive's domain.
+void applyEdgePlanes(ref Mesh m, in EdgeCarry c) {
+    const size_t want = m.edges.length;
+    if (!c.armed) {
+        // Every value was `T.init`, so an all-`init` plane of the new length
+        // IS the carry's answer — and `.length = want` produces exactly that
+        // (a truncation keeps an all-init prefix; a growth zero-fills), with
+        // no allocation when the count did not move.
+        static foreach (n; kEdgePlanes) {
+            {
+                if (__traits(getMember, m, n).length != want)
+                    __traits(getMember, m, n).length = want;
+            }
+        }
+        return;
+    }
+    static foreach (n; kEdgePlanes) {
+        {
+            // See `rewriteFaces`'s NOTE ON SHAPE for why the member is spelled
+            // out at each use and only the TYPE is aliased.
+            alias PlaneT = typeof(__traits(getMember, m, n));
+            auto srcPlane = __traits(getMember, m, n);   // the OLD buffer
+            PlaneT built;
+            built.length = want;
+            foreach (ei; 0 .. want) {
+                const ulong key = edgeKey(m.edges[ei][0], m.edges[ei][1]);
+                if (auto oi = key in c.oldIndexOfKey)
+                    if (*oi < srcPlane.length) built[ei] = srcPlane[*oi];
+            }
+            __traits(getMember, m, n) = built;
         }
     }
 }

@@ -152,7 +152,8 @@ public import mesh_ops.poly_bevel;
 import mesh_selsets : selSetResizeVertex, selSetRekeyEdges,
     selSetGatherVertexMaskForward, WireKeyPolicy;
 import mesh_planes : rewriteFaces, FaceSource, kNoSource,
-                     appendFacePlanes, PlaneFit;
+                     appendFacePlanes, PlaneFit,
+                     EdgeCarry, EdgePlaneCarry, captureEdgePlanes, applyEdgePlanes;
 // Snap-visibility instrumentation (task 1350/1351). `perf_probe` imports only
 // core.time, so this is a leaf dependency and cannot cycle; every call compiles
 // to nothing unless the `perf`/`perf-count` build defines PerfProbe.
@@ -8862,7 +8863,7 @@ struct Mesh {
     // internally by every topology mutator and by mesh_edit_delta's replay
     // finalize so a delta apply/revert produces the same canonical edge order
     // the kernels do.
-    void rebuildEdges() {
+    void rebuildEdges(EdgePlaneCarry edgePlanes = EdgePlaneCarry.leaveIndexed) {
         version (unittest) ++g_rebuildEdgesRuns;   // task 1471 instrument
         // TASK 1906 STAGE 2d — the PRE-clear edge count, read before the clear
         // that follows. Emptying a non-empty `edges` IS a write to `edges`,
@@ -8870,6 +8871,12 @@ struct Mesh {
         // `else if (hadEdges)` arm at the bottom of this function for the
         // reachable edit that made the `inserted` gate alone insufficient.
         const bool hadEdges = edges.length > 0;
+        // TASK 4059 — the per-edge plane carry, snapshotted HERE and applied
+        // after the refill below. The position is the whole of it: `edges` is
+        // about to be emptied and there is nothing left to key from
+        // afterwards. See `mesh_planes.captureEdgePlanes`.
+        const auto edgeCarry = (edgePlanes == EdgePlaneCarry.byKey)
+                             ? captureEdgePlanes(this) : EdgeCarry.init;
         edges.length = 0;
         edgeIndexMap.clear();
         // Rebuild every deduplicated edge without publishing from the loop,
@@ -8892,6 +8899,14 @@ struct Mesh {
                 if (insertEdgeDedup(edgeIndexMap, a, b)) inserted = true;
             }
         }
+        // TASK 4059 — re-lay `edgeMarks` / `edgeSelectionOrder` over the
+        // rebuilt `edges`, each value following its edge's endpoint KEY. This
+        // runs BEFORE the commit below on purpose: `commitChange`'s Hide
+        // derive writes the Select bit of hidden edges, and it must see the
+        // carried marks, not the pre-carry ones. It is also why the paragraph
+        // above about the hazard "`edgeMarks` is NOT re-indexed" is now a
+        // historical note rather than a live warning.
+        if (edgePlanes == EdgePlaneCarry.byKey) applyEdgePlanes(this, edgeCarry);
         if (inserted) {
             // The same three stamps + commit `addEdge` does, ONCE instead of
             // once per edge. Gated on a real insert for the same reason
@@ -13019,7 +13034,13 @@ struct Mesh {
     /// legal-looking vertex pair. Gate on the bool; never on the value.
     bool spinEdge(uint ei, out uint[2] newDiagonal) {
         if (!spinEdgeRings_(ei, newDiagonal)) return false;
-        rebuildEdges();
+        // TASK 4059 — the first (and today the only) caller to ask for the
+        // per-edge plane carry. A spin rewrites WINDINGS and renumbers no
+        // vertex, so the edge keys the carry is built on are in one numbering
+        // start to finish; that is the soundness precondition
+        // `mesh_planes.EdgePlaneCarry` states, and it is why this site may ask
+        // and `compactUnreferenced` may not.
+        rebuildEdges(EdgePlaneCarry.byKey);
         buildLoops();
         commitChange(MeshEditScope.Geometry);
         return true;
@@ -13397,7 +13418,7 @@ struct Mesh {
             // before-image and its corner payload, and both must be the state
             // the round started from.
             installSpinRings_(roundIdx, roundWind);
-            rebuildEdges();
+            rebuildEdges(EdgePlaneCarry.byKey);   // task 4059 — see Mesh.spinEdge
             buildLoops();
             commitChange(MeshEditScope.Geometry);
             pending = deferred;
