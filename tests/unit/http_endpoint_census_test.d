@@ -25,6 +25,13 @@
 // change, so this catches an offender before a commit either way — and it does
 // so without a live app or a port.
 //
+// KNOWN LIMIT, stated so nobody reads this as total. It matches a literal, so a
+// port assembled at runtime — `"http://localhost:" ~ somePortEnum.to!string` —
+// is invisible to it. That shape has never been written here, and the value it
+// would have to carry is still wrong for the same reason; if it ever appears,
+// widen the rule rather than exempt the file. What the census DOES close is the
+// only shape that has actually occurred: the base URL spelled out.
+//
 // MUTATION: add any `tests/*.d` file containing the text `localhost:8080`, or
 // give one of them its own `getJson`/`postJson`/`postRaw` definition again, and
 // the matching assert below names that file.
