@@ -903,8 +903,8 @@ size_t extrudeEdgesByMask(ref MeshEditBatch ed, in bool[] maskIn, float extrude,
     //     by a different pair yet.
     uint[string] mutualMeetPos;
     uint mutualMeetVert(uint a, uint b) {
-        uint lo = a < b ? a : b, hi = a < b ? b : a;
-        ulong mk = (cast(ulong)lo << 32) | hi;
+        uint lo = a < b ? a : b, hi = a < b ? b : a;   // both read below
+        ulong mk = edgeKey(a, b);
         if (auto p = mk in mutualMeet) return *p;
         Vec3 mid = (ed.vertices[lo] + ed.vertices[hi]) * 0.5f;
         string pk = weldKeyOf(uint.max, mid);   // sentinel v — position-only key
@@ -937,8 +937,7 @@ size_t extrudeEdgesByMask(ref MeshEditBatch ed, in bool[] maskIn, float extrude,
     //     identical `meetPos` (bit-identical — both derive it via the same
     //     `faceCentroid(fi)` call) collapse onto ONE vertex.
     uint mutualMeetVertAt(uint a, uint b, Vec3 meetPos) {
-        uint lo = a < b ? a : b, hi = a < b ? b : a;
-        ulong mk = (cast(ulong)lo << 32) | hi;
+        ulong mk = edgeKey(a, b);
         if (auto p = mk in mutualMeet) return *p;
         string pk = weldKeyOf(uint.max, meetPos);
         if (auto pp = pk in mutualMeetPos) { mutualMeet[mk] = *pp; return *pp; }
@@ -2065,9 +2064,8 @@ size_t extrudeEdgesByMask(ref MeshEditBatch ed, in bool[] maskIn, float extrude,
             if (f.length < 3) continue;
             foreach (k; 0 .. f.length) {
                 uint a = f[k], b = f[(k + 1) % f.length];
-                uint lo = a < b ? a : b, hi = a < b ? b : a;
-                ulong ek = (cast(ulong)lo << 32) | hi;
-                edgeUsers[ek] ~= EdgeUse(cast(uint)fi, (a == lo) ? 1 : -1);
+                ulong ek = edgeKey(a, b);
+                edgeUsers[ek] ~= EdgeUse(cast(uint)fi, (a <= b) ? 1 : -1);
             }
         }
 
@@ -2107,8 +2105,7 @@ size_t extrudeEdgesByMask(ref MeshEditBatch ed, in bool[] maskIn, float extrude,
                 auto f = ed.faces[cur];
                 foreach (k; 0 .. f.length) {
                     uint a = f[k], b = f[(k + 1) % f.length];
-                    uint lo = a < b ? a : b, hi = a < b ? b : a;
-                    ulong ek = (cast(ulong)lo << 32) | hi;
+                    ulong ek = edgeKey(a, b);
                     auto users = edgeUsers[ek];
                     if (users.length != 2) continue;
                     int curSign = 0;

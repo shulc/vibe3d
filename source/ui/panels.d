@@ -295,7 +295,7 @@ version (WithAI) {
 // -- see its own "Task 0419" doc comment for the full rationale on each).
 import editor_app : EditorApp, BgGpu, Layout, OverlayMode,
     kAiToggleAvailable, kGenerateAiAvailable,
-    edgeKey, buildItemFrame, seedDefaultLayoutIfMissing,
+    buildItemFrame, seedDefaultLayoutIfMissing,
     g_layoutIniPathZ, g_forceLayoutReseed, g_pendingLayoutReloadPathZ;
 
 // =============================================================================

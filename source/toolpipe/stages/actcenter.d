@@ -4,7 +4,7 @@ import std.format : format;
 
 import math    : Vec3, Pin, Viewport, screenRay, screenPointToRay, rayPlaneIntersect, applyAffine,
                  ModelSpace;
-import mesh    : Mesh;
+import mesh    : Mesh, edgeKey;
 import mesh_dirty : MeshDirtyKey, g_topoEpochs;  // task 1906 stage 2d (row 15)
 import editmode : EditMode;
 import seltype : SelType;
@@ -1566,10 +1566,6 @@ private:
         // pair (v0,v1) maps to the faces incident on it; two faces sharing a
         // key are edge-adjacent. O(total face corners) to build.
         uint[][ulong] facesByEdgeKey;
-        ulong edgeKey(uint a, uint b) {
-            return a < b ? (cast(ulong)a << 32) | b
-                         : (cast(ulong)b << 32) | a;
-        }
         foreach (fi; 0 .. nF) {
             const(uint)[] f = mesh_.faces[fi];
             foreach (i; 0 .. f.length) {
@@ -1624,10 +1620,6 @@ private:
         // traversal can confirm the connecting edge is selected.
         bool[] inSel = new bool[](nV);
         bool[ulong] selEdgeKey;
-        ulong edgeKey(uint a, uint b) {
-            return a < b ? (cast(ulong)a << 32) | b
-                         : (cast(ulong)b << 32) | a;
-        }
         foreach (i, edge; mesh_.edges) {
             if (mesh_.isEdgeSelected(i)) {
                 inSel[edge[0]] = true;

@@ -45,7 +45,13 @@ module mesh_edge_slice;
 // type is no longer a member of `Mesh`. Both are compile errors, so the step
 // catches itself; the sites are counted in the card.
 
-import mesh          : Mesh, FaceIdx, edgeKey;
+import mesh          : Mesh, FaceIdx;
+// `edgeKey` comes straight from mesh_topo, NOT re-exported through
+// `mesh`: mesh.d `public import`s BOTH modules, and a selective import
+// here makes a module-scope alias that the public import re-exports —
+// so routing it through `mesh` would give every `import mesh : edgeKey`
+// in the tree two candidates for one function (task 4066).
+import mesh_topo     : edgeKey;
 import mesh_planes   : rewriteFaces, FaceSource;
 import mesh_corner_maps : CornerDrop, PolyVertexBlend;
 import mesh_edit_delta  : MeshEditScope;

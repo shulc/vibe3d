@@ -63,7 +63,7 @@ import std.array : array;
 import std.conv  : to;
 
 import math : Vec3;
-import mesh : Mesh;
+import mesh : Mesh, edgeKey;
 
 /// Result of `stitchRegion`. `ok == false` means the patch could not be
 /// pinned back robustly (see `failReason`) — the caller (remesh_job) should
@@ -286,14 +286,11 @@ private void orientConsistently(ref uint[][] faces, size_t anchorCount) {
     import std.algorithm.mutation : reverse;
     if (faces.length == 0) return;
 
-    static ulong ekey(uint a, uint b) {
-        return a < b ? (cast(ulong) a << 32) | b : (cast(ulong) b << 32) | a;
-    }
     size_t[][ulong] edgeFaces;
     foreach (fi, f; faces) {
         const size_t n = f.length;
         foreach (k; 0 .. n)
-            edgeFaces[ekey(f[k], f[cast(size_t)((k + 1) % n)])] ~= fi;
+            edgeFaces[edgeKey(f[k], f[cast(size_t)((k + 1) % n)])] ~= fi;
     }
 
     bool traversesDir(size_t fi, uint a, uint b) {
@@ -317,7 +314,7 @@ private void orientConsistently(ref uint[][] faces, size_t anchorCount) {
         const size_t n = f.length;
         foreach (k; 0 .. n) {
             const uint a = f[k], b = f[cast(size_t)((k + 1) % n)];
-            foreach (nf; edgeFaces[ekey(a, b)]) {
+            foreach (nf; edgeFaces[edgeKey(a, b)]) {
                 if (nf == fi || oriented[nf]) continue;
                 // `fi` traverses a->b; a consistent neighbour traverses b->a.
                 // If it also traverses a->b, it's wound the same way -> flip.
@@ -585,7 +582,7 @@ version (unittest) {
             const size_t n = f.length;
             foreach (k; 0 .. n) {
                 uint a = f[k], b = f[(k + 1) % n];
-                ulong key = a < b ? (cast(ulong) a << 32) | b : (cast(ulong) b << 32) | a;
+                ulong key = edgeKey(a, b);
                 if (auto p = key in ec) ++(*p); else ec[key] = 1;
             }
         }

@@ -39,7 +39,7 @@ import std.stdio   : File, stdin;
 import std.string  : strip;
 import core.time   : MonoTime, Duration;
 
-import mesh : Mesh;
+import mesh : Mesh, edgeKey;
 import math : Vec3;
 import remesh.region_stitch : stitchRegion, StitchResult;
 
@@ -1192,16 +1192,12 @@ version (unittest) {
         }
     }
 
-    private ulong hfEdgeKey(uint a, uint b) {
-        return a < b ? (cast(ulong) a << 32) | b : (cast(ulong) b << 32) | a;
-    }
-
     private int[ulong] hfEdgeUseCounts(const(uint[])[] faces) {
         int[ulong] ec;
         foreach (f; faces) {
             const size_t n = f.length;
             foreach (k; 0 .. n) {
-                ulong key = hfEdgeKey(f[k], f[(k + 1) % n]);
+                ulong key = edgeKey(f[k], f[(k + 1) % n]);
                 if (auto p = key in ec) ++(*p); else ec[key] = 1;
             }
         }

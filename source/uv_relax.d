@@ -16,7 +16,7 @@ module uv_relax;
 /// and `Mesh.smoothSubdivide`, lifted into UV space.  The exact
 /// smoothing law is a vibe3d-divergence; capture-gated parity deferred.
 
-import mesh     : Mesh, MeshMap;
+import mesh     : Mesh, MeshMap, edgeKey;
 import uv_weld  : buildUvClasses, uvEq;
 
 // ---------------------------------------------------------------------------
@@ -123,9 +123,7 @@ bool uvRelax(const ref Mesh m, MeshMap* uv,
         const uint cA = classId[rep[L]];
         const uint cB = classId[rep[m.loops[L].next]];
         if (cA == cB) continue;
-        const uint lo  = cA < cB ? cA : cB;
-        const uint hi  = cA < cB ? cB : cA;
-        const ulong key = (cast(ulong)lo << 32) | hi;
+        const ulong key = edgeKey(cA, cB);
         if (key in edgeSeen) continue;
         edgeSeen[key] = true;
         neighbors[cA] ~= cB;

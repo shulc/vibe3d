@@ -27,6 +27,23 @@ module mesh_topo;
 version (unittest) import mesh;
 version (unittest) import math : Vec3;
 
+/// Canonical UNDIRECTED edge key: the two vertex indices packed (min, max)
+/// into one ulong, min in the high word — so `key >> 32` is the smaller index
+/// and `key & 0xFFFF_FFFF` the larger (`Mesh.rebuildEdges` decodes it that
+/// way). This is the ONE definition in the tree: task 4066 folded five named
+/// bodies, five nested/static ones and seven inline packs into it. mesh.d
+/// re-exports this module, so `import mesh` and `import mesh : edgeKey` both
+/// reach it.
+///
+/// The `(vertex, face)`, `(island, vertex)` and `(from, toward)` keys
+/// elsewhere in the tree are ORDERED pairs packed the same way and are NOT
+/// this function — folding one of those in here would silently canonicalise
+/// a direction that its owner depends on.
+ulong edgeKey(uint a, uint b) pure nothrow @nogc @safe {
+    return a < b ? (cast(ulong)a << 32 | cast(ulong)b)
+                 : (cast(ulong)b << 32 | cast(ulong)a);
+}
+
 /// Half-edge dart: represents the directed edge vert → next(vert) inside one face.
 struct Loop {
     uint vert;   // start vertex of this dart

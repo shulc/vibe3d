@@ -21,7 +21,7 @@ module uv_unwrap;
 /// Angular distortion (`uvAngularDistortion`) is reduced by the solver on
 /// well-shaped inputs but is not provably monotone per-pass.
 
-import mesh    : Mesh, MeshMap;
+import mesh    : Mesh, MeshMap, edgeKey;
 import math    : Vec3, dot, cross;
 import std.math : fabs, sqrt, acos;
 import uv_weld : buildUvClasses;
@@ -39,15 +39,8 @@ private float cotClamp(Vec3 e1, Vec3 e2) pure nothrow @nogc {
     return cot < 0.0f ? 0.0f : cot;
 }
 
-// ---------------------------------------------------------------------------
-// Edge accumulator keyed on (min, max) class-id pair.
-// ---------------------------------------------------------------------------
-
-private ulong edgeKey(uint a, uint b) pure nothrow @nogc {
-    uint lo = a < b ? a : b;
-    uint hi = a < b ? b : a;
-    return (cast(ulong)lo << 32) | hi;
-}
+// The edge accumulator below is keyed on the (min, max) class-id pair —
+// `edgeKey` from mesh_topo (task 4066), the same pack over class ids.
 
 // ---------------------------------------------------------------------------
 // Public kernel.

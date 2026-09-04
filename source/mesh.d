@@ -15424,15 +15424,9 @@ struct CleanupResult {
 }
 
 
-// ---------------------------------------------------------------------------
-// edgeKey
-// ---------------------------------------------------------------------------
-
-// Canonical edge key: always (min, max) packed into a ulong.
-ulong edgeKey(uint a, uint b) {
-    return a < b ? (cast(ulong)a << 32 | cast(ulong)b)
-                 : (cast(ulong)b << 32 | cast(ulong)a);
-}
+// `edgeKey` — the canonical (min, max) undirected-edge key — lives in
+// mesh_topo.d and is re-exported by the `public import` at the top of this
+// file (task 4066: one definition for the tree).
 
 
 
@@ -16885,13 +16879,9 @@ uint[] edgeLoopRing(const ref Mesh m, uint v0, uint v1) {
     const size_t nF = m.faces.length;
     if (v0 == v1 || v0 >= nV || v1 >= nV) return [v0, v1];
 
-    // Undirected edge key packed into a ulong (min,max). Build, per edge:
+    // Keyed by `edgeKey` (undirected, (min,max) packed). Build, per edge:
     //   * the set of incident face indices (edgeFaces)
     //   * per-vertex list of incident undirected-edge keys (vertEdges)
-    static ulong key(uint a, uint b) {
-        return (a < b) ? ((cast(ulong)a << 32) | b)
-                       : ((cast(ulong)b << 32) | a);
-    }
     int[][ulong] edgeFaces;
     ulong[][uint] vertEdges;
     foreach (fi; 0 .. nF) {
@@ -16902,7 +16892,7 @@ uint[] edgeLoopRing(const ref Mesh m, uint v0, uint v1) {
             uint a = f[c];
             uint b = f[(c + 1) % k];
             if (a == b) continue;
-            ulong ek = key(a, b);
+            ulong ek = edgeKey(a, b);
             edgeFaces[ek] ~= cast(int)fi;
             // Track membership without duplicates (small valence).
             bool haveA = false, haveB = false;
@@ -16913,7 +16903,7 @@ uint[] edgeLoopRing(const ref Mesh m, uint v0, uint v1) {
         }
     }
 
-    if (key(v0, v1) !in edgeFaces) return [v0, v1];
+    if (edgeKey(v0, v1) !in edgeFaces) return [v0, v1];
 
     static uint otherEnd(ulong ek, uint v) {
         uint a = cast(uint)(ek >> 32);
@@ -16927,7 +16917,7 @@ uint[] edgeLoopRing(const ref Mesh m, uint v0, uint v1) {
     // when there is not exactly one such candidate (boundary / pole /
     // ambiguous fan → loop stops).
     uint nextLoopVert(uint prev, uint cur) {
-        ulong inEk = key(prev, cur);
+        ulong inEk = edgeKey(prev, cur);
         auto inFaces = edgeFaces.get(inEk, null);
         uint found = uint.max;
         int count = 0;

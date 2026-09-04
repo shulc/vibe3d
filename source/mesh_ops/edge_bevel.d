@@ -646,9 +646,7 @@ size_t bevelEdgesByMask(ref MeshEditBatch ed, const bool[] maskIn, float width,
     }
     RailSpec[ulong] railSpecs;
     uint[][ulong] railInteriorMemo; // canonical pairKey(a,b), a<b → interiors in a→b order
-    static ulong pairKey(uint a, uint b) {
-        return a < b ? (cast(ulong)a << 32 | b) : (cast(ulong)b << 32 | a);
-    }
+    alias pairKey = edgeKey;        // the tree's one (min,max) pack (task 4066)
     // The neighbor of `Vv` inside face `fi` that is NOT `farV` — i.e. the
     // "other" edge of `fi` at `Vv` besides the rail edge (Vv,farV). Its slide
     // point is the finding-(I) pivot the ADJACENT side contributes to this

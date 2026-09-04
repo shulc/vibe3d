@@ -45,7 +45,7 @@ module tools.alignment.align_kernels;
 //   Per-vertex falloff modulation (WGHT stage) multiplies into this same
 //   `weight` at the call site — this module has no falloff dependency.
 
-import mesh     : Mesh;
+import mesh     : Mesh, edgeKey;
 import editmode : EditMode;
 import math     : Vec3, dot, cross;
 import std.math : sqrt, cos, sin, PI, abs;
@@ -63,15 +63,6 @@ import std.algorithm : sort;
 struct AlignChain {
     uint[] verts;
     bool   closed;
-}
-
-/// Pack an unordered vertex-index pair into a single lookup key (min in
-/// the high word). Local helper — deliberately not reaching into Mesh's
-/// own private edge-key helper, since this module only needs read access
-/// to `mesh.edges`/`mesh.faces`, not any Mesh internals.
-private ulong packEdgeKey(uint a, uint b) pure nothrow @nogc @safe {
-    if (a > b) { uint t = a; a = b; b = t; }
-    return (cast(ulong)a << 32) | cast(ulong)b;
 }
 
 /// Extract the ordered chain for the CURRENT selection under `editMode`.
@@ -116,14 +107,14 @@ AlignChain extractAlignChain(Mesh* mesh, EditMode editMode) {
             auto ring = mesh.faces[fi];
             immutable size_t n = ring.length;
             foreach (k; 0 .. n) {
-                ulong key = packEdgeKey(ring[k], ring[(k + 1) % n]);
+                ulong key = edgeKey(ring[k], ring[(k + 1) % n]);
                 if (auto c = key in selCount) ++(*c);
                 else selCount[key] = 1;
             }
         }
         boundaryEdge.length = mesh.edges.length;
         foreach (ei; 0 .. mesh.edges.length) {
-            ulong key = packEdgeKey(mesh.edges[ei][0], mesh.edges[ei][1]);
+            ulong key = edgeKey(mesh.edges[ei][0], mesh.edges[ei][1]);
             if (auto c = key in selCount)
                 boundaryEdge[ei] = (*c == 1);
         }

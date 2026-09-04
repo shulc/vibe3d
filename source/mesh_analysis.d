@@ -213,7 +213,7 @@ private uint[] boundaryLoopToEdgeIndices(const ref Mesh mesh, const(uint)[] loop
     foreach (i; 0 .. loopVerts.length) {
         uint a = loopVerts[i];
         uint b = loopVerts[(i + 1) % loopVerts.length];
-        ulong key = a < b ? (cast(ulong)a << 32) | b : (cast(ulong)b << 32) | a;
+        ulong key = edgeKey(a, b);
         if (auto p = key in mesh.edgeIndexMap) result ~= *p;
     }
     return result;

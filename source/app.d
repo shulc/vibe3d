@@ -289,13 +289,12 @@ import editor_app : resolveOverlayMode;
 // Module-level helpers
 // ---------------------------------------------------------------------------
 
-// edgeKey relocated to editor_app.d (task 0419 Б1 -- used by
-// the UI-panel block now fully relocated to source/ui/panels.d). edgeKey
-// also has a call site here, in the snap-frame JIT install path, so it is
-// imported back. (`countSelected(bool[])` used to live beside it; task 0585
-// removed it — its last caller was the Polygons-mode draw path, which now
-// asks `mesh.countSelectedFaces()` and never materializes a `bool[]`.)
-import editor_app : edgeKey;
+// edgeKey went to editor_app.d in task 0419 Б1 and on to mesh_topo.d in task
+// 4066, which made it the tree's one definition; the call site here (the
+// snap-frame JIT install path) reaches it through `import mesh` above.
+// (`countSelected(bool[])` used to live beside it; task 0585 removed it — its
+// last caller was the Polygons-mode draw path, which now asks
+// `mesh.countSelectedFaces()` and never materializes a `bool[]`.)
 
 
 // ---------------------------------------------------------------------------

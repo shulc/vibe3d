@@ -428,11 +428,6 @@ else              enum bool kAiToggleAvailable = false;
 /// address that says so.
 struct BgGpu { GpuMesh gpu; MeshDirtyKey uploaded; }
 
-ulong edgeKey(uint a, uint b) {
-    uint lo = a < b ? a : b, hi = a < b ? b : a;
-    return (cast(ulong)lo << 32) | hi;
-}
-
 /// Relocated verbatim from app.d's main() (app.d decomp phase B): was a
 /// main()-local enum (declared right above applyOrRefire), moved to module
 /// scope so EditorApp's applyOrRefire hook-delegate field can name the type

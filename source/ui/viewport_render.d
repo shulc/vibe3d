@@ -30,7 +30,7 @@ import viewport_scheme       : schemeColor, SchemeColor;
 import handles.gl_util       : setThickLineScreenSize;
 import document              : Layer, kindInfo;
 import viewport              : Viewport3D;
-import editor_app            : EditorApp, OverlayMode, BgGpu, edgeKey;
+import editor_app            : EditorApp, OverlayMode, BgGpu;
 import perf_probe            : g_fc, g_perf, DrawPass, Cat;
 import toolpipe.pipeline     : g_pipeCtx;
 import toolpipe.stage        : TaskCode;
@@ -53,8 +53,8 @@ version (WithAI) {
 // Phase 6 -- renderViewportSceneToFbo, the last panel entry point. Reads
 // shader/checkerShader/gridShader/gridVao/gridOnlyVertCount/hover x3/
 // faceSelEdgesCache+PrevSel/rebuildLoopHoverMask/litShader/gpu/mesh plus
-// bgGpuByLayer and edgeKey (buildItemFrame's call site left with the snap
-// install, task 1780) -- all
+// bgGpuByLayer (buildItemFrame's call site left with the snap install, task
+// 1780) plus `edgeKey` (from mesh_topo.d since task 4066) -- all
 // relocated to editor_app.d in Phase 1 and imported at this module's header;
 // this phase is a verbatim body move. Keeps its original 6 parameters,
 // EditorApp app prepended as the first (per the plan's Phase 6 note).
