@@ -9,7 +9,7 @@
 # addition nobody argued for. Every row is exact and may only fall.
 # An unlisted source file has a ceiling of zero.
 source-files 512
-task-citation-lines 4968
+task-citation-lines 4967
 citing-files 376
 
 # Exact per-file allowances, sorted by path.
@@ -346,7 +346,7 @@ allow source/tools/edit/preview_rebuild.d 1
 allow source/tools/edit/reduce.d 5
 allow source/tools/edit/smooth_relax.d 1
 allow source/tools/edit/tack.d 6
-allow source/tools/edit/topology_pen/defs.d 18
+allow source/tools/edit/topology_pen/defs.d 17
 allow source/tools/edit/topology_pen/json.d 11
 allow source/tools/edit/topology_pen/package.d 1
 allow source/tools/edit/topology_pen/render.d 10
