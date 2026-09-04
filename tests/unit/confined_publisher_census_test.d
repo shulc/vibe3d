@@ -86,8 +86,10 @@
 // come from `census_symbols.reconcile` and there are four, each with its own
 // sentence: a recorded pair whose count changed, an identifier in a
 // declaration nobody recorded, a recorded declaration that has vanished, and
-// one symbol realised in two different files (which is the one shape a
-// path-free key could otherwise let a site migrate through unseen).
+// one symbol realised in two different files (which catches a PARTIAL
+// migration to a homonym in another module; the wholesale case on a count-1
+// row is a stated, accepted residual — `census_symbols`'s header says so in
+// full, and it is narrowed by this finding rather than closed by it).
 //
 // THE OLD TABLE'S PROSE WAS WRONG AND THE SYMBOLS SAY SO. It recorded the two
 // `xfrm_apply.d` publishes as "the applyChain tail and the applyFold tail";

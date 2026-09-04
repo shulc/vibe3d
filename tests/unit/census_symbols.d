@@ -25,16 +25,41 @@
 // another INSIDE the same file.
 //
 // ===========================================================================
-// WHAT IS NOT WEAKENED, AND THE ONE HOLE THAT IS CLOSED BY HAND
+// WHAT IS NOT WEAKENED, AND THE RESIDUAL THAT IS NARROWED BUT NOT CLOSED
 // ===========================================================================
-// Dropping the module from the key opens exactly one narrow hole: a call
-// deleted from a recorded `applyFold` and added, in the same commit, to a
-// DIFFERENT module's function that also happens to be called `applyFold`
-// would net to the same count. That hole is closed by the AMBIGUITY finding
-// in `reconcile` below — a recorded symbol seen in more than one file is a
-// finding in its own right, so the two homonyms cannot merge silently. A pure
-// move still keeps the symbol in exactly one file and stays green, which is
-// the whole point.
+// Dropping the module from the key opens exactly one shape: a call deleted
+// from a recorded `applyFold` and added, in the same commit, to a DIFFERENT
+// module's function that also happens to be called `applyFold`, netting to
+// the recorded count.
+//
+// The AMBIGUITY finding in `reconcile` below NARROWS that shape. It does not
+// close it, and this header said it did until task 4056's review measured
+// otherwise. Ambiguity fires on a key whose SURVIVING hits are spread over
+// two or more FILES, so what it catches is a PARTIAL migration: the recorded
+// `applyFold` keeps some of its sites and the homonym acquires the rest.
+// A WHOLESALE migration of a row whose count is ONE leaves the key realised
+// in exactly one file again and produces NO finding at all — `found[key] ==
+// r.count` skips the count branch, the key is recorded so it skips the
+// unrecorded branch, and `files.length < 2` skips ambiguity. That is the
+// ordinary row, not a corner: of the 50 rows in the three ledgers converted
+// here, 46 have count 1 (version_poll 22 of 24, confined 10 of 10,
+// mesh_planes 14 of 16).
+//
+// THE RESIDUAL IS ACCEPTED, and the alternative was weighed rather than
+// waved off. Keying on MODULE plus symbol would close it, and in D the module
+// is always knowable — but module names in this tree mirror the directory
+// path (`source/tools/transform/xfrm_apply.d` declares `module
+// tools.transform.xfrm_apply;`), so a `git mv` cannot leave the declaration
+// alone. A module-qualified key is therefore the PATH key with different
+// punctuation, and it would redden on precisely the reorganisations this
+// module exists to survive — paying for every row to defend a shape nobody
+// has yet produced. What is given up in exchange is bounded: the residual
+// needs a call DELETED from one module's function and ADDED to a homonym in
+// another, which is not a code move at all. It edits two bodies in two files
+// and lands in review as a diff to read, whereas the case this key was built
+// for — a directory reorganisation — carries no diff to read and is exactly
+// where a reflex number-bump happens. A pure move keeps the symbol in one
+// file and stays green either way, which is the whole point.
 //
 // ===========================================================================
 // WHY A HAND-ROLLED SCOPE WALKER AND NOT A PARSE
@@ -466,17 +491,19 @@ package struct LedgerHit {
 /// Compare the found multiset against the recorded one. Returns `""` when
 /// they agree, and otherwise a block of findings, one paragraph each.
 ///
-/// FOUR findings, and the fourth is what keeps the module out of the key:
+/// FOUR findings, and the fourth is what makes a module-free key defensible:
 ///   1. a recorded key whose count changed (a vanished key is this with 0);
 ///   2. a key found that nobody recorded;
 ///   3. a recorded key with no occurrences at all, called out in its own
 ///      words because "recorded 2, found 0" reads like a scanner fault;
 ///   4. AMBIGUITY — one key realised in more than one FILE. A pure move keeps
 ///      a symbol in exactly one file, so this never fires on the thing this
-///      module exists to allow; what it catches is the one shape a
-///      module-free key would otherwise miss, namely an occurrence deleted
-///      from a recorded `f` and added to a different module's `f` in the same
-///      commit, netting to the recorded count.
+///      module exists to allow; what it catches is a PARTIAL migration to a
+///      homonym in another module — some sites left behind, some acquired,
+///      the total unchanged. It catches nothing when the migration is
+///      WHOLESALE and the row's count is 1, because the key is then realised
+///      in one file again; that residual is stated in full in this file's
+///      header and deliberately accepted, not closed here.
 package string reconcile(const LedgerRow[] rows, const LedgerHit[] hits)
 {
     size_t[string] found;
@@ -786,7 +813,9 @@ unittest {
 
     // 4. AMBIGUITY — one symbol in two files, netting to the recorded count.
     //    Without this branch the module-free key would let a site migrate
-    //    between two homonymous functions unseen.
+    //    between two homonymous functions unseen. With it, only a PARTIAL
+    //    migration is caught; see the header for the wholesale case, which
+    //    is a stated and accepted residual rather than a covered one.
     LedgerHit[] split = [
         LedgerHit("Mesh.publishConfinedChange", "source/mesh.d", 10, "x"),
         LedgerHit("XfrmApplyImpl.applyFold", "source/tools/a.d", 20, "y"),
