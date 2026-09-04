@@ -22,43 +22,56 @@ import std.file  : write;
 import record_observer_hub : RecordObserverHub;
 
 final class MacroRecorder {
+    private bool     active_;        // start()/stop() toggles
+    private string[] lines_;         // captured command-line buffer
     private RecordObserverHub observerHub_;
 
-    /// The hub IS the recorder's storage: every read and write below forwards
-    /// to it. It is required at construction. The former unbound arm — an
-    /// `observerHub_ is null` branch on every method over a private `active_`
-    /// flag and `lines_` buffer — had exactly one caller shape in the tree,
-    /// app.d's `new MacroRecorder()` followed on the next line by
-    /// `bindObserverHub(hub)`, and no test constructed one at all
-    /// (`grep -rn 'new MacroRecorder' source tests` → app.d only; task 4066).
-    this(RecordObserverHub hub) {
-        assert(hub !is null, "MacroRecorder needs its RecordObserverHub");
+    void bindObserverHub(RecordObserverHub hub) nothrow @nogc {
         observerHub_ = hub;
     }
 
-    bool   active() const { return observerHub_.macroActive; }
-    size_t length() const { return observerHub_.macroLength; }
+    bool active() const { return observerHub_ is null ? active_ : observerHub_.macroActive; }
+    size_t length() const {
+        return observerHub_ is null ? lines_.length : observerHub_.macroLength;
+    }
 
     /// Start a new recording. Clears any prior buffer — `macro.record 1`
     /// always begins a fresh sequence.
-    void start() { observerHub_.startMacro(); }
+    void start() {
+        if (observerHub_ !is null) { observerHub_.startMacro(); return; }
+        active_ = true;
+        lines_.length = 0;
+    }
 
-    void stop() { observerHub_.stopMacro(); }
+    void stop() {
+        if (observerHub_ !is null) { observerHub_.stopMacro(); return; }
+        active_ = false;
+    }
 
     /// Drop the captured buffer without changing active state.
     /// Backs the History panel's "clear macro" affordance.
-    void clear() { observerHub_.clearMacro(); }
+    void clear() {
+        if (observerHub_ !is null) { observerHub_.clearMacro(); return; }
+        lines_.length = 0;
+    }
 
     /// Hook target for `CommandHistory.onRecord`. No-op when inactive.
     /// `_flags` reserved for future filtering (e.g. skip quiet/side-
     /// effect commands), unused today.
     void onCommandRecorded(string commandLine, uint /+flags+/ _flags) {
-        observerHub_.observeLegacy(commandLine, _flags);
+        if (observerHub_ !is null) {
+            observerHub_.observeLegacy(commandLine, _flags); return;
+        }
+        if (!active_) return;
+        if (commandLine.length == 0) return;
+        lines_ ~= commandLine;
     }
 
     /// Snapshot of the captured lines (defensive dup so callers can
     /// keep reading after subsequent record() calls extend the buffer).
-    string[] recordedLines() const { return observerHub_.macroLines(); }
+    string[] recordedLines() const {
+        return observerHub_ is null ? lines_.dup : observerHub_.macroLines();
+    }
 
     /// Write captured lines as a `.lxm` macro file. Returns false when
     /// path is empty (apply() can surface this as a command failure).

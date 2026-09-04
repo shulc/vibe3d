@@ -104,3 +104,16 @@ drop 2 16 1903 the two tracker-on/off parity cells whose OFF arm was the undo ha
 # whose two blocks more than cover the loss, which is why no `drop` line is
 # owed here — recorded so the removal is not invisible to a later reader.
 drop 2 9 3691 removed obsolete synthetic pre-cutover PreparedArm API tests after production unified transaction replacement
+
+# Task 4066 row 8 was written, committed, and then REVERTED inside its own lane:
+# the edit deleted two strings that tools/check_prepared_protocol.py pins
+# verbatim (`macroRecorder.bindObserverHub(recordObserverHub);` in source/app.d,
+# `void bindObserverHub(RecordObserverHub hub)` in source/macro_recorder.d),
+# moved a reference count the same scanner pins (production_hub_refs 7 -> 8),
+# and drifted the evolvePrepared digest plus its trace-cap mutation anchor. The
+# one assert lost here is the `assert(hub !is null)` that row 8's constructor
+# introduced; reverting the row takes it back out, so source/macro_recorder.d
+# returns to exactly its state on main. Nothing that existed before this lane is
+# gone. The row itself is carried to backlog card 4072, blocked on the same
+# P1.0c cutover decision that refuted row 4.
+drop 0 1 4066 the assert(hub !is null) added by row 8's MacroRecorder constructor, removed with the row when it was reverted for breaking five pins of the prepared-protocol census
