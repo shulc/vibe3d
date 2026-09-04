@@ -923,7 +923,7 @@ unittest {
     st.reset();
     assert(st.hitDemandCount == 1,
         "a demand is scoped to a CONSUMER, not to a gesture or a scene: "
-        ~ "`/api/reset` resets the scene, and a consumer that is still alive "
+        ~ "`scene.reset` resets the scene, and a consumer that is still alive "
         ~ "is still reading. The guide registry beside it IS cleared there, "
         ~ "for the opposite reason (a guide IS gesture-scoped), and this "
         ~ "assertion is what keeps the two from being confused for each other");

@@ -86,7 +86,11 @@ enum GuardAnswer {
 /// One guarded dispatch, as the main thread saw it.
 struct GuardRecord {
     string id;          /// the DISPATCHED id ("file.new", "file.import.obj", …)
-    string name;        /// `cmd.name()` ("scene.reset" for BOTH file.new and /api/reset)
+    string name;        /// `cmd.name()` — "scene.reset" for BOTH file.new and
+                        /// the registered `scene.reset`, which is why the
+                        /// record has to carry `id` beside it (and why the
+                        /// dispatcher's test-mode re-baseline gates on the id,
+                        /// not on a cast to the class — task 4063)
     bool   discards;    /// `Command.discardsUnsavedWork()`
     bool   dirty;       /// `docDirty()` at dispatch time
     string verdict;     /// "proceed" | "prompt"
