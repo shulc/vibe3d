@@ -1136,11 +1136,22 @@ protected:
     // uint): a wider same-run change-detector token, harmless — nothing here
     // is persisted or compared across runs.
     ulong computeSelectionHash() {
-        if (selHashKey_.matches(*mesh) && *editMode == selHashKeyMode_)
+        // ONE SAMPLE, compared and then stamped — the shape the other two 4060
+        // conversions use (`ActionCenterStage.bboxMembershipCached`,
+        // `SubpatchPreview.rebuildIfStale`) and the one `mesh_dirty.d`'s recipe
+        // asks for. `matches(*mesh)` + `stamp(*mesh)` read `marksVersion`
+        // TWICE, either side of the walk below; that is sound only as long as
+        // `selectionSignature` stays `const`, which is an incidental property
+        // of a callee rather than a fact about this memo. With one sample a
+        // write landing during the walk leaves the stamp BEHIND the counter
+        // and the next call recomputes — over-invalidation, the safe side.
+        typeof(selHashKey_) cur;
+        cur.stamp(*mesh);
+        if (selHashKey_.agreesOn!MeshTermMarks(cur) && *editMode == selHashKeyMode_)
             return selHashCache_;
         { import perf_probe : g_perf, Cat; g_perf.count(Cat.selectionHashCompute, 1); }
         selHashCache_   = mesh.selectionSignature(*editMode);
-        selHashKey_.stamp(*mesh);
+        selHashKey_     = cur;
         selHashKeyMode_ = *editMode;
         return selHashCache_;
     }
