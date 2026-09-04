@@ -261,6 +261,45 @@ private void endHighlightPasses(OccludedPass occ, bool ranOccluded) {
 // GpuMesh
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// The subpatch-preview carve-out, and the ONE const-cast in this module.
+// ---------------------------------------------------------------------------
+//
+// "An interactive gizmo drag is version-silent" is a LAW of the transform
+// kernels and is FALSE of a drag with a live subpatch preview, because of this
+// function: while a preview is displayed the GPU buffers hold the PREVIEW, so
+// both upload paths below refuse the cage write and publish instead — one
+// extra `Position` delivery per drag step, on the CAGE. That is why the
+// pinning band for a 12-step drag is 12-24 and not 12. Task 4066 gave the
+// carve-out a name: it used to be an inline `(cast(Mesh*)&mesh)` at each of
+// the two sites, with the reasoning split across their two comment blocks.
+//
+// WHY `commitChange` AND NOT `publishChange` (task 0462, and the trap to
+// avoid when "removing the cast"): the preview REBUILD is gated on the bus
+// flag (`meshChangedFlags & (Position|Geometry|Marks)`, the rebuildIfStale
+// call in app.d), and the main loop's cage/preview RE-UPLOAD is gated on the
+// version-bearing key. `publishChange` is deliberately version-silent, so it
+// would rebuild the preview and never re-upload it; a bare `++mutationVersion`
+// is the opposite half and re-uploads a preview that was never rebuilt — the
+// displayed surface goes stale and the debug build trips the
+// `change_bus: MISSED PUBLISHER` guard. `commitChange(Position)` sets the
+// class AND bumps the version, so both happen. That was already the argument
+// under `upload`; the sibling under `uploadSelectedVertices` was converted
+// from the bare bump in task 1906 stage 3 (plan §Stage 3 item 5) "matching the
+// sibling verbatim", and this is now literally the same call.
+//
+// NOTE for 1906 readers: this is a PUBLISHER on the upload path, so both
+// epoch stamps in app.d re-read the epoch AFTER calling `upload` — see their
+// comments.
+//
+// The cast is here because both upload entry points take `ref const Mesh` and
+// their callers hold a const mesh; giving `Mesh` a const-callable publisher
+// instead would hand every holder of a `const Mesh` in the tree the same
+// licence, for these two callers.
+private void publishSuppressedCagePosition(ref const Mesh mesh) {
+    (cast(Mesh*)&mesh).commitChange(MeshEditScope.Position);
+}
+
 struct GpuMesh {
     GLuint faceVao, faceVbo;
     GLuint edgeVao, edgeVbo;
@@ -395,25 +434,11 @@ struct GpuMesh {
                 const uint[] faceOrigin = null) {
         // Redirect tool-side cage refreshes: the GPU buffers currently hold
         // the preview, and the main loop owns re-uploads. A tool moved cage
-        // positions and asked to refresh — PUBLISH that as a Position change
-        // on the notification bus, not a bare mutationVersion bump (task 0462).
-        //
-        // Why a bare bump is wrong: the subpatch-preview rebuild is gated on
-        // the bus FLAG (`meshChangedFlags & (Position|Geometry|Marks)`, see the
-        // rebuildIfStale call in app.d), NOT on mutationVersion. A version-only
-        // bump therefore triggers the main loop's GPU RE-UPLOAD (app.d's
-        // cage/preview block, `gpuUploadedKey_` — since task 1906 stage 2a an
-        // (address, bus-epoch) key, before that `mutationVersion`) of a preview
-        // that was never REBUILT against the moved cage — the displayed surface
-        // goes stale / shifts, and the debug build trips the
-        // `change_bus: MISSED PUBLISHER` guard (mutationVersion advanced with
-        // no pending change flags). commitChange(Position) sets the flag AND
-        // bumps mutationVersion, so the preview rebuilds and the re-upload
-        // still fires. NOTE for 1906 readers: this commit is a PUBLISHER on the
-        // upload path, so both epoch stamps in app.d re-read the epoch AFTER
-        // calling `upload` — see their comments.
+        // positions and asked to refresh — publish that as a Position change
+        // on the notification bus. Which publisher, and why it is not the
+        // version-silent one: `publishSuppressedCagePosition` above.
         if (suppressCageUpload && edgeOrigin.length == 0 && vertOrigin.length == 0) {
-            (cast(Mesh*)&mesh).commitChange(MeshEditScope.Position);
+            publishSuppressedCagePosition(mesh);
             return;
         }
         // Task 1069 — the DRAWN positions. Phase 0 measured the reference's
@@ -1085,21 +1110,17 @@ struct GpuMesh {
     // and we touch the full topology either way.
     void uploadSelectedVertices(ref const Mesh mesh, const bool[] toUpdate) {
         // Preview is currently displayed; cage-indexed scatter writes would
-        // corrupt the VBO. Signal a mutation and let the main loop rebuild
-        // the preview instead.
-        //
-        // TASK 1906 STAGE 3 (plan §Stage 3 item 5) — this was a BARE
-        // `++mutationVersion`, i.e. a version bump with no publish, which is
-        // exactly the shape `changeBus.missedPublishers` exists to count. It
-        // never tripped the guard only because the sibling arm in `upload()`
-        // publishes on the same frame path and the OLD guard was maskable by
-        // any publisher in the frame. The re-pointed guard is per-mesh and not
-        // maskable, so the choice was "convert or exempt": converted, matching
-        // the sibling verbatim, since `commitChange(Position)` sets the class
-        // AND bumps the version and the sibling's own comment argues at length
-        // that the bare bump is the wrong half of that pair.
+        // corrupt the VBO. Publish the move and let the main loop rebuild the
+        // preview instead — the same publisher `upload` uses, and since task
+        // 4066 literally the same call. (It was a BARE `++mutationVersion`
+        // until task 1906 stage 3, plan §Stage 3 item 5: a version bump with
+        // no publish, exactly the shape `changeBus.missedPublishers` counts.
+        // It never tripped the OLD guard only because the sibling arm in
+        // `upload()` publishes on the same frame path and that guard was
+        // maskable by any publisher in the frame; the re-pointed guard is
+        // per-mesh and not maskable.)
         if (suppressCageUpload) {
-            (cast(Mesh*)&mesh).commitChange(MeshEditScope.Position);
+            publishSuppressedCagePosition(mesh);
             return;
         }
         ++uploadVersion;
