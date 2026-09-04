@@ -54,7 +54,12 @@ def reset_app() -> str:
     Resets the app to its initial state: cube mesh, default camera, no selection.
     Always call this before play_events() to ensure a clean slate.
     """
-    return _post("/api/reset")
+    # `/api/reset` was one of six wrapper routes over commands that are also
+    # reachable through the single `/api/command` endpoint; the wrappers were
+    # retired (task 4063) and this posts the registered command instead.
+    # `raise_for_status()` above means a stale wrapper URL would surface as a
+    # 404 rather than silently doing nothing.
+    return _post("/api/command", '{"id":"scene.reset"}')
 
 
 @mcp.tool()

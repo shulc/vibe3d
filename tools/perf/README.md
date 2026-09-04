@@ -259,7 +259,7 @@ ring immediately before its measured window:
   BELOW (`lib.http.setCameraElevation`) — see that function's doc comment
   for why the default above-plane camera silently selects zero faces.
 - **`undo-spam`** (task 0200) — `kUndoSpamN` (8) small per-gesture `move`
-  drags, then `kUndoSpamN` paced `POST /api/undo` calls. **F-I7** asserts the
+  drags, then `kUndoSpamN` paced `history.undo` commands (`POST /api/command`). **F-I7** asserts the
   new `undoApply` counter (`source/perf_probe.d` `Cat.undoApply`, bumped once
   per successful `undo()` at `command_history.d:1090`) equals exactly N —
   immune to main-loop frame batching, unlike `meshCacheRebuilds` which only

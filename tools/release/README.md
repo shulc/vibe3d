@@ -183,7 +183,7 @@ GL and probes the HTTP test server:
 ```bash
 env -u WAYLAND_DISPLAY SDL_VIDEODRIVER=x11 LIBGL_ALWAYS_SOFTWARE=1 \
     xvfb-run -a ./Vibe3D-x86_64.AppImage --test --http-port 8760 &
-curl -s -X POST localhost:8760/api/reset      # {"status":"ok"}
+curl -s -X POST -d '{"id":"scene.reset"}' localhost:8760/api/command   # {"status":"ok"}
 curl -s localhost:8760/api/model              # 8 verts / 6 faces (cube)
 # kill by PID when done
 ```
