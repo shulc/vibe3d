@@ -528,6 +528,52 @@ class CubicArrow : ShaftedArrow {
 }
 
 // ---------------------------------------------------------------------------
+// arcScreenDistance — the pick distance to a circular arc, in window pixels.
+//
+// SemicircleHandler and FullCircleHandler had this scan twice, verbatim apart
+// from the angle expression, and they are the only two shapes in this file
+// that pick against a projected POLYLINE (the plane and disk handles test a
+// screen-space region instead). Both walk `SEGS + 1` samples of the arc,
+// project each, and take the smallest distance to any segment whose two
+// endpoints both projected — a point BEHIND the eye drops the segments it
+// touches rather than the whole arc.
+//
+// `SEGS` is a template parameter because the two callers do not agree on it
+// (32 over π, 64 over 2π — the same arc length per segment, and the same pick
+// tolerance in pixels), and because it sizes the two stack buffers.
+//
+// `startAngle` / `sweep` are `real`, not `float`, so the sample angle stays
+// the expression each caller had: `PI` is `real`, and narrowing the sweep to
+// float first would move the last bits of every angle on the full circle.
+// ---------------------------------------------------------------------------
+private float arcScreenDistance(size_t SEGS)(
+        int mx, int my, const ref Viewport vp,
+        Vec3 center, Vec3 normal, float radius, real startAngle, real sweep)
+{
+    Vec3 right, up;
+    localFrame(normal, right, up);
+    float[2][SEGS + 1] pts;
+    bool[SEGS + 1]     valid;
+    float best = float.infinity;
+    foreach (i; 0 .. SEGS + 1) {
+        float a = startAngle + cast(float)i * sweep / SEGS;
+        Vec3 w = center + right * (cos(a) * radius) + up * (sin(a) * radius);
+        float sx, sy, ndcZ;
+        valid[i] = projectToWindowFull(w, vp, sx, sy, ndcZ);
+        pts[i]   = [sx, sy];
+    }
+    foreach (i; 0 .. SEGS) {
+        if (!valid[i] || !valid[i + 1]) continue;
+        float t;
+        float d = closestOnSegment2D(cast(float)mx, cast(float)my,
+                                     pts[i][0], pts[i][1],
+                                     pts[i+1][0], pts[i+1][1], t);
+        if (d < best) best = d;
+    }
+    return best;
+}
+
+// ---------------------------------------------------------------------------
 // SemicircleHandler : Handler
 // Draws a half-circle arc (0..π) with a given color.
 // Takes the scheme's active colour while hauled; hover does not recolour it.
@@ -624,27 +670,8 @@ public:
 
     override float aiScreenDistance(int mx, int my, const ref Viewport vp)
     {
-        Vec3 right, up;
-        localFrame(normal, right, up);
-        float[2][SEGS + 1] pts;
-        bool[SEGS + 1]     valid;
-        float best = float.infinity;
-        foreach (i; 0 .. SEGS + 1) {
-            float a = startAngle + cast(float)i * PI / SEGS;
-            Vec3 w = center + right * (cos(a) * radius) + up * (sin(a) * radius);
-            float sx, sy, ndcZ;
-            valid[i] = projectToWindowFull(w, vp, sx, sy, ndcZ);
-            pts[i]   = [sx, sy];
-        }
-        foreach (i; 0 .. SEGS) {
-            if (!valid[i] || !valid[i + 1]) continue;
-            float t;
-            float d = closestOnSegment2D(cast(float)mx, cast(float)my,
-                                         pts[i][0], pts[i][1],
-                                         pts[i+1][0], pts[i+1][1], t);
-            if (d < best) best = d;
-        }
-        return best;
+        return .arcScreenDistance!SEGS(mx, my, vp, center, normal, radius,
+                                       startAngle, PI);
     }
 
     // Center-based anchor — serialization-only. A rotate ring's semantically
@@ -752,27 +779,8 @@ public:
 
     override float aiScreenDistance(int mx, int my, const ref Viewport vp)
     {
-        Vec3 right, up;
-        localFrame(normal, right, up);
-        float[2][SEGS + 1] pts;
-        bool[SEGS + 1]     valid;
-        float best = float.infinity;
-        foreach (i; 0 .. SEGS + 1) {
-            float a = cast(float)i * 2.0f * PI / SEGS;
-            Vec3 w = center + right * (cos(a) * radius) + up * (sin(a) * radius);
-            float sx, sy, ndcZ;
-            valid[i] = projectToWindowFull(w, vp, sx, sy, ndcZ);
-            pts[i]   = [sx, sy];
-        }
-        foreach (i; 0 .. SEGS) {
-            if (!valid[i] || !valid[i + 1]) continue;
-            float t;
-            float d = closestOnSegment2D(cast(float)mx, cast(float)my,
-                                         pts[i][0], pts[i][1],
-                                         pts[i+1][0], pts[i+1][1], t);
-            if (d < best) best = d;
-        }
-        return best;
+        return .arcScreenDistance!SEGS(mx, my, vp, center, normal, radius,
+                                       0.0L, 2.0L * PI);
     }
 
     // Center-based anchor — serialization-only (same caveat as
