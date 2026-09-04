@@ -602,12 +602,21 @@ private static immutable LedgerRow[] kRemainder = [
         "row 6 — keys on the VBO content it rasterises from"),
     LedgerRow("GpuSelectBuffer.ensureSlot", 1,
         "row 5 — same, uploadVersion"),
-    LedgerRow("MeshCacheKey.matches", 1,
-        "the key TYPE's own compare"),
-    LedgerRow("MeshStructKey.matches", 1,
-        "the key TYPE's own compare"),
-    LedgerRow("MeshTopoKey.matches", 1,
-        "the key TYPE's own compare"),
+    // TASK 4060 — THESE THREE ROWS USED TO BE `MeshCacheKey.matches`,
+    // `MeshStructKey.matches` and `MeshTopoKey.matches`, one per key STRUCT.
+    // The three structs are now aliases of one `MeshKey!(Terms)` template whose
+    // `matches` names no counter at all, so the compare moved DOWN one level,
+    // to the TERM that owns the counter. The count is unchanged (3), and that
+    // is the whole point of the move: a new cache that keys on an existing
+    // term instantiates `MeshKey!(...)` and adds NO row here, because the
+    // argument for reading that counter was made once, at the term. A new
+    // TERM is still a new row and still has to be argued.
+    LedgerRow("MeshTermMutation.same", 1,
+        "the `mutationVersion` term's own compare"),
+    LedgerRow("MeshTermStruct.same", 1,
+        "the `structVersion` term's own compare"),
+    LedgerRow("MeshTermTopology.same", 1,
+        "the `topologyVersion` term's own compare"),
     LedgerRow("Mesh.vertexAdjacencyCSR", 1, "row 12"),
     LedgerRow("Mesh.loopsValid", 1, "row 13, first half"),
     LedgerRow("Mesh.edgeMapUsable", 1, "row 13, second half"),

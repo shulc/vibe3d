@@ -624,90 +624,108 @@ struct MeshMap {
     }
 }
 
-/// Cache-validity key for a version-keyed cache that lives OUTSIDE the
-/// `Mesh` it was built from (e.g. a toolpipe stage's per-drag cluster or
-/// selection-weight cache). `mutationVersion` alone is not enough for such a
-/// cache: `Mesh` is a value struct whose owning `Layer` can retarget the
-/// stage's `mesh_` delegate to a different primary mid-session, and two
-/// different `Mesh`es can legitimately carry an equal `mutationVersion`
-/// (both default-initialize to 0, or two same-op-count histories collide).
-/// Folding `cast(size_t)&m` in — the same address-key convention already
-/// used by `snap.d` / `bvh_pick.d` — closes that hole:
-/// two distinct `Mesh` instances can never satisfy `matches()` for the same
-/// key, no matter how their `mutationVersion`s line up. (A cache that is
-/// itself co-located ON the `Mesh`, like `vertexAdjacencyCSR` above, needs
-/// no such key — the address IS the object.)
-struct MeshCacheKey {
-    size_t addr   = size_t.max;
-    ulong  mutVer = ulong.max;
+// ---------------------------------------------------------------------------
+// MeshKey — ONE cache-validity key, parameterised by the terms it compares
+// (task 4060). `MeshCacheKey` / `MeshStructKey` / `MeshTopoKey` below are
+// aliases of it and are unchanged in behaviour: same field names, same
+// sentinels, same `matches` / `stamp` / `invalidate` contract.
+//
+// THE RECIPE — WHICH TERMS A NEW CACHE DECLARES — IS NOT HERE. It is the
+// header of `source/mesh_dirty.d`, which is the one place that can state it:
+// half the answer is a bus epoch, and this module cannot see the bus. Read
+// that header before writing a key; what follows is only the mechanism.
+//
+// WHY A TEMPLATE AND NOT THREE STRUCTS. The three differed in ONE token —
+// which counter `matches()` read — and were copied, comment block and all,
+// each time a cache needed a fourth. Measured before the fold (task 4060
+// §Посылка): 38 hand-rolled `ulong …Ver/Epoch/Stamp` fields outside this
+// module, of which the mesh-keyed ones re-implemented this same pair of
+// compares by hand. A term declared once, argued once, is then reusable
+// without a fresh copy of the argument.
+//
+// WHAT THE FOLD DELIBERATELY DID NOT CHANGE: the three types' comparison
+// CONTRACT was checked first and is identical — same parameter form
+// (`ref Mesh`, now widened to `ref const Mesh` so a `const` source can be
+// keyed), same address term, same `size_t.max` / `ulong.max` sentinels, one
+// counter each, and no term that another ignores. The only difference was
+// that `MeshTopoKey`'s three methods were spelled `nothrow @nogc` where the
+// other two were unannotated; a template's members INFER those, so the
+// annotation is not lost, it is derived (`SessionMeshKey.matches` is
+// `nothrow @nogc` and calls straight into this one — if inference ever fails,
+// that call site is a compile error, not a silent widening). Had they
+// differed in contract, this template would have taken a policy parameter and
+// said so; it did not, so it does not.
+//
+// THE CENSUS SEES THE TERMS, NOT THE INSTANTIATIONS, and that is the point.
+// `tests/unit/version_poll_census_test.d` scans for a line naming a mesh
+// counter next to a compare. Each TERM below carries exactly one such line,
+// with its own `recorded remainder` argument; `MeshKey.matches` carries none,
+// because it names no counter. So a NEW cache keyed on an existing term is
+// silent in that census — the argument for reading that counter was made once
+// at the term — while a NEW TERM is a new census row and has to be argued.
+// ---------------------------------------------------------------------------
 
-    // recorded remainder (1906 §3.6): `mutationVersion` owns this compare, and
-    // the type survives stage 2 for ONE consumer group — the slice tools'
-    // `armedKey_` (plan §3.4 row 18). Those are not caches: they guard that an
-    // armed preview's baseline still belongs to THIS mesh at THIS edit,
-    // evaluated between mouse events. A bus epoch answers "did anything
-    // change"; the guard asks "is my baseline still valid", and only an
-    // identity can answer that. Every call site carries the same marker.
-    bool matches(ref Mesh m) const {
-        return addr == cast(size_t)&m && mutVer == m.mutationVersion;
+/// The POSITION-AND-EVERYTHING term: `Mesh.mutationVersion`, bumped on any
+/// topology or vertex-position change that goes through `commitChange`.
+///
+/// USE IT when the cached value depends on where the vertices ARE. Its cost is
+/// stated at `MorphMap.setEntry`: a drag moves this counter once per vertex
+/// per motion event, so a cache carrying only this term rebuilds every frame
+/// of a gesture. Its BLIND SPOT is the opposite one and is the more expensive
+/// mistake: an interactive gizmo transform is version-silent at drag AND at
+/// commit, so this term alone answers "fresh" over a cage that has moved
+/// (task 0401). A position-dependent cache pairs it with a bus epoch —
+/// `mesh_dirty`'s header says which.
+struct MeshTermMutation {
+    /// The field name this term contributes to a `MeshKey`. Kept as the
+    /// spelling the three folded structs used, because call sites read it
+    /// directly (`armedKey_.mutVer`, ~15 sites across the slice tools).
+    enum string field = "mutVer";
+
+    static ulong read(ref const Mesh m) nothrow @nogc {
+        return m.mutationVersion;
     }
-    void stamp(ref Mesh m) {
-        addr   = cast(size_t)&m;
-        mutVer = m.mutationVersion;
-    }
-    void invalidate() {
-        addr   = size_t.max;
-        mutVer = ulong.max;
+    static bool same(ulong v, ref const Mesh m) nothrow @nogc {
+        // recorded remainder (1906 §3.6): `mutationVersion` owns this compare,
+        // and it survives for ONE consumer group — the slice tools' `armedKey_`
+        // (plan §3.4 row 18) — plus `SubpatchPreview`'s freshness half. Those
+        // are not caches: they guard that an armed preview's baseline still
+        // belongs to THIS mesh at THIS edit, evaluated between mouse events. A
+        // bus epoch answers "did anything change"; the guard asks "is my
+        // baseline still valid", and only an identity can answer that.
+        return v == m.mutationVersion;
     }
 }
 
-/// The CONNECTIVITY variant of `MeshCacheKey`, for a cache whose content is a
-/// function of `faces`/`edges` alone (task 0585: the Polygons-mode face->edge
-/// highlight mask). Same address term, same reasoning — see above — but
-/// stamped against `structVersion` instead of `mutationVersion`.
+/// The EDGE-SET term: `Mesh.structVersion`, and read that counter as "writes
+/// to `edges`", which is what it literally is (see `MeshTermTopology` for the
+/// measurement).
 ///
-/// The distinction is not stylistic and it is the whole reason this type
-/// exists. `mutationVersion` is documented at its own declaration as bumped on
-/// any topology OR VERTEX-POSITION change, and `MorphMap.setEntry`'s comment
-/// records the rate: once per vertex per motion event. So a cache keyed on it
-/// rebuilds on every frame of a drag. For a mask that only maps selected faces
-/// to edge indices that rebuild is pure waste, and not cheap waste — read the
-/// rebuild body in `ui/viewport_render.d`: it walks the selected faces into an
-/// associative array, so keying on `mutationVersion` would put an allocation
-/// proportional to the SELECTION back on the per-frame path, which is the
-/// exact defect task 0585 took off it. `structVersion` is bumped only by the
-/// edge/face structural primitives and explicitly not by position, marks or
-/// subpatch writes — precisely the set of changes such a cache must notice.
-///
-/// Use `MeshCacheKey` when the cached value depends on where the vertices ARE;
-/// use this one when it depends only on how they are CONNECTED.
-struct MeshStructKey {
-    size_t addr      = size_t.max;
-    ulong  structVer = ulong.max;
+/// USE IT when the cached value depends only on how the vertices are
+/// CONNECTED — task 0585's Polygons-mode face->edge highlight mask is the
+/// worked example. `structVersion` is bumped only by the edge/face structural
+/// primitives and explicitly not by position, marks or subpatch writes, so the
+/// mask survives a drag intact; keyed on `mutationVersion` instead it would
+/// put an allocation proportional to the SELECTION back on the per-frame path,
+/// which is the exact defect task 0585 took off it.
+struct MeshTermStruct {
+    enum string field = "structVer";
 
-    // recorded remainder (1906 §3.6): `structVersion` owns this compare — and
-    // read that counter as "writes to `edges`", which is what it literally is
-    // (see `MeshTopoKey` below for the measurement). One consumer after stage
-    // 2: `faceSelEdgesKey`, declared in `app.d`, reached through
-    // `editor_app.d`'s pointer bridge and consumed by `ui/viewport_render.d`
-    // (plan §3.4 row 16), where this term covers the EDGE dependency and a
-    // `faceMarks` content diff covers the FACE one. Neither is redundant.
-    bool matches(ref Mesh m) const {
-        return addr == cast(size_t)&m && structVer == m.structVersion;
+    static ulong read(ref const Mesh m) nothrow @nogc {
+        return m.structVersion;
     }
-    void stamp(ref Mesh m) {
-        addr      = cast(size_t)&m;
-        structVer = m.structVersion;
-    }
-    void invalidate() {
-        addr      = size_t.max;
-        structVer = ulong.max;
+    static bool same(ulong v, ref const Mesh m) nothrow @nogc {
+        // recorded remainder (1906 §3.6): `structVersion` owns this compare.
+        // One consumer after stage 2: `faceSelEdgesKey`, declared in `app.d`,
+        // reached through `editor_app.d`'s pointer bridge and consumed by
+        // `ui/viewport_render.d` (plan §3.4 row 16), where this term covers the
+        // EDGE dependency and a `faceMarks` content diff covers the FACE one.
+        // Neither is redundant.
+        return v == m.structVersion;
     }
 }
 
-/// The `Points | Polygons` variant of `MeshCacheKey`, for a cache whose content
-/// is a function of the FACE SET — `faces`, or a per-element count derived from
-/// it — rather than of `edges` (task 1906 stage 2d).
+/// The FACE-SET term: `Mesh.topologyVersion`.
 ///
 /// IT EXISTS BECAUSE `structVersion` DOES NOT MEAN WHAT ITS NAME SUGGESTS, AND
 /// THAT WAS MEASURED, NOT REASONED (2026-08-25). `structVersion` is bumped by
@@ -717,43 +735,124 @@ struct MeshStructKey {
 /// ALL: `deleteFacesByMask(mask, keepOrphans:true, keepFloatingEdges:true)`
 /// takes a 4-quad grid to 3 quads with `structVersion` unchanged (measured;
 /// `topologyVersion` went 4 → 5 on the same call, and `mutationVersion` 4 → 5).
-/// So `MeshStructKey` is correct for a cache over `edges` and SILENTLY WRONG
+/// So `MeshTermStruct` is correct for a cache over `edges` and SILENTLY WRONG
 /// for a cache over `faces` — which is how `PenSnapGuide`'s border counts,
 /// re-keyed onto it, went stale on a face delete.
 ///
-/// `topologyVersion` is the counter that tracks that class: `commitChange`
-/// bumps it for `Points | Polygons` (see §3.6 of doc/bus_sync_listeners_plan.md,
-/// where it is recorded with exactly that owner class). It OVER-invalidates —
-/// a subpatch-mark toggle and a crease-weight write both bump it while `faces`
-/// holds still — and that is the safe direction.
-///
-/// Same address term, same reasoning, as the other two key types above.
-///
-/// Use `MeshCacheKey` when the cached value depends on where the vertices ARE;
-/// `MeshStructKey` when it depends on the EDGE set; this one when it depends on
-/// the FACE set.
-struct MeshTopoKey {
-    size_t addr    = size_t.max;
-    ulong  topoVer = ulong.max;
+/// `commitChange` bumps this one for `Points | Polygons` (see §3.6 of
+/// doc/bus_sync_listeners_plan.md, where it is recorded with exactly that owner
+/// class). It OVER-invalidates — a subpatch-mark toggle and a crease-weight
+/// write both bump it while `faces` holds still — and that is the safe
+/// direction.
+struct MeshTermTopology {
+    enum string field = "topoVer";
 
-    // recorded remainder (1906 §3.6): `topologyVersion` owns this compare. Its
-    // consumer, `PenSnapGuide.polyKey_` (plan §3.4 row 19), is driven headlessly
-    // over SCRATCH meshes no `Document` layer owns — and a `mesh_dirty` epoch
-    // only ever advances for a mesh that IS owned, so an epoch key would read
-    // permanently fresh there. That reachability argument, not the class, is
-    // why this row kept a counter.
-    bool matches(ref Mesh m) const nothrow @nogc {
-        return addr == cast(size_t)&m && topoVer == m.topologyVersion;
+    static ulong read(ref const Mesh m) nothrow @nogc {
+        return m.topologyVersion;
     }
-    void stamp(ref Mesh m) nothrow @nogc {
-        addr    = cast(size_t)&m;
-        topoVer = m.topologyVersion;
-    }
-    void invalidate() nothrow @nogc {
-        addr    = size_t.max;
-        topoVer = ulong.max;
+    static bool same(ulong v, ref const Mesh m) nothrow @nogc {
+        // recorded remainder (1906 §3.6): `topologyVersion` owns this compare.
+        // Two consumers. `PenSnapGuide.polyKey_` (plan §3.4 row 19) is driven
+        // headlessly over SCRATCH meshes no `Document` layer owns — and a
+        // `mesh_dirty` epoch only ever advances for a mesh that IS owned, so an
+        // epoch key would read permanently fresh there. That reachability
+        // argument, not the class, is why this row kept a counter.
+        // `SubpatchPreview`'s layout half (plan §3.4 row 10, second term) is
+        // not a freshness signal at all: it asks "is the stencil table still
+        // laid out for this source topology", which only an identity answers.
+        return v == m.topologyVersion;
     }
 }
+
+/// A cache-validity key for a cache that lives OUTSIDE the `Mesh` it was built
+/// from (a toolpipe stage's per-drag cluster or selection-weight cache, a
+/// tool's armed-preview guard, the subpatch preview's staleness key).
+///
+/// THE ADDRESS TERM IS ALWAYS PRESENT AND IS NOT OPTIONAL. A counter alone is
+/// not enough for such a cache: `Mesh` is a value struct whose owning `Layer`
+/// can retarget a stage's `mesh_` delegate to a different primary mid-session,
+/// and two different `Mesh`es can legitimately carry an equal counter (both
+/// default-initialise to 0, or two same-op-count histories collide). Folding
+/// `cast(size_t)&m` in — the same address-key convention `snap.d` /
+/// `bvh_pick.d` already use — closes that hole: two distinct `Mesh` instances
+/// can never satisfy `matches()` for the same key, no matter how their
+/// counters line up. (A cache that is itself co-located ON the `Mesh`, like
+/// `vertexAdjacencyCSR`, needs no such key — the address IS the object.)
+/// Pinned by the "address is the sole discriminator" cell in
+/// `tests/unit/mesh_test.d` and by `SessionMeshKey`'s term-1 cell.
+///
+/// `Terms` are the term types above (or any type with the same three members).
+/// Each contributes one `ulong` field named by its own `field`, defaulted to
+/// `ulong.max`, which no live counter holds — so a fresh key matches nothing.
+struct MeshKey(Terms...) {
+    import std.meta : staticIndexOf;
+
+    static assert(Terms.length >= 1,
+        "a MeshKey with no term compares only the address, which is an "
+      ~ "identity check and not a freshness key — say which counter or epoch "
+      ~ "it depends on, or use a bare `size_t` address");
+
+    size_t addr = size_t.max;
+
+    static foreach (T; Terms)
+        mixin("ulong " ~ T.field ~ " = ulong.max;");
+
+    /// Compile-time position of `T` among `Terms`, offset past `addr` — the
+    /// index into `this.tupleof` of the field `T` contributes.
+    private template slotOf(T) {
+        enum int i = staticIndexOf!(T, Terms);
+        static assert(i >= 0,
+            "`" ~ T.stringof ~ "` is not a term of this key; a compare may "
+          ~ "only read a term the key actually stamps");
+        enum size_t slotOf = cast(size_t)i + 1;
+    }
+
+    /// Was this key stamped from `m`, with every declared term unchanged?
+    bool matches(ref const Mesh m) const {
+        if (addr != cast(size_t)&m) return false;
+        static foreach (T; Terms) {
+            if (!T.same(this.tupleof[slotOf!T], m)) return false;
+        }
+        return true;
+    }
+
+    /// The same question over a SUBSET of the declared terms, for a consumer
+    /// whose key answers two different questions from one stamp — the subpatch
+    /// preview's "is my surface fresh" (epoch + mutation) against its "is the
+    /// stencil table still laid out for this topology" (topology alone). The
+    /// address is compared either way; a subset that drops it would not be a
+    /// mesh key. Naming a term the key does not stamp is a compile error.
+    bool matchesOnly(Sub...)(ref const Mesh m) const {
+        static assert(Sub.length >= 1,
+            "matchesOnly with no term is `addr == &m` — say so directly");
+        if (addr != cast(size_t)&m) return false;
+        static foreach (T; Sub) {
+            if (!T.same(this.tupleof[slotOf!T], m)) return false;
+        }
+        return true;
+    }
+
+    void stamp(ref const Mesh m) {
+        addr = cast(size_t)&m;
+        static foreach (T; Terms) {
+            this.tupleof[slotOf!T] = T.read(m);
+        }
+    }
+
+    void invalidate() {
+        addr = size_t.max;
+        static foreach (T; Terms) {
+            this.tupleof[slotOf!T] = ulong.max;
+        }
+    }
+}
+
+/// Use it when the cached value depends on where the vertices ARE.
+alias MeshCacheKey  = MeshKey!MeshTermMutation;
+/// Use it when the cached value depends only on the EDGE set.
+alias MeshStructKey = MeshKey!MeshTermStruct;
+/// Use it when the cached value depends only on the FACE set.
+alias MeshTopoKey   = MeshKey!MeshTermTopology;
 
 /// Hermite ease-in/ease-out, `3t²-2t³` — the Bridge Twist per-ring blend
 /// curve (task 0357, see `bridgeTwistedVertex` in source/mesh_ops/bridge.d).
