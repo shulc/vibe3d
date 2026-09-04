@@ -2192,10 +2192,14 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
     // The bound is hoisted, and that is not cosmetic: `mesh.isSubpatch` is a
     // materialized view — it allocates a fresh `bool[]` over every face on
     // each call — so asking it for `.length` once per FACE made this loop
-    // quadratic in the face count. `resizeSubpatch()` above has just set the
-    // marks array to `faces.length`, which is the length that view reports.
+    // quadratic in the face count.
+    //
+    // The bound read here is `faceMarks.length`, because that is the length the
+    // view reports. `resizeSubpatch()` on the line above sets it to
+    // `faces.length`, which makes the two equal today — but the read has to name
+    // the array the view is built over, not the one that happens to match it.
     mesh.resizeSubpatch();
-    const size_t nFaceMarks = mesh.faces.length;
+    const size_t nFaceMarks = mesh.faceMarks.length;
     int subpatchCount = 0;
     foreach (fi, flag; faceSubpatch) {
         if (fi >= nFaceMarks) break;
