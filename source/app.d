@@ -15,7 +15,6 @@ import prefs;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
-import d_imgui.imgui_demo;
 import imgui_impl_sdl2;
 import imgui_event_gate : feedImGui, keyBelongsToEditor;
 import imgui_impl_opengl3;

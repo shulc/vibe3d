@@ -50,7 +50,6 @@ import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
 import prefs;
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
-import d_imgui.imgui_demo;
 import imgui_impl_sdl2;
 import imgui_impl_opengl3;
 import nfde;
