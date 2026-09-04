@@ -2188,10 +2188,17 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
     mesh.buildLoops();
 
     // Apply per-face subpatch flags (parallel to faces).
+    //
+    // The bound is hoisted, and that is not cosmetic: `mesh.isSubpatch` is a
+    // materialized view — it allocates a fresh `bool[]` over every face on
+    // each call — so asking it for `.length` once per FACE made this loop
+    // quadratic in the face count. `resizeSubpatch()` above has just set the
+    // marks array to `faces.length`, which is the length that view reports.
     mesh.resizeSubpatch();
+    const size_t nFaceMarks = mesh.faces.length;
     int subpatchCount = 0;
     foreach (fi, flag; faceSubpatch) {
-        if (fi >= mesh.isSubpatch.length) break;
+        if (fi >= nFaceMarks) break;
         mesh.setFaceSubpatch(fi, flag);
         if (flag) ++subpatchCount;
     }
