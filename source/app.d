@@ -1836,6 +1836,11 @@ void main(string[] args) {
     // scatter-update via glMapBuffer instead of rebuilding the
     // ~50 MB faceData/edgeData/vertData arrays from scratch on every
     // drag frame. `ulong.max` ⇒ no preview uploaded yet, force full.
+    //
+    // NOT a `mesh.MeshKey` (task 4060, declined at its declaration): its
+    // subject is the PREVIEW ALREADY ON THE GPU, not a `Mesh` — it is
+    // compared against `subpatchPreview.sourceTopologyVersion`, i.e. one
+    // cache's stamp against another's, and neither side is a live mesh read.
     ulong gpuUploadedPreviewTopVersion = ulong.max;
 
     Layout layout;

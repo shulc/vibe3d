@@ -143,6 +143,14 @@ struct DirtyKey {
     // (`CameraStamp`'s own field initialisers), so this is a pure
     // representation change — no comparison outcome moves.
     CameraStamp cam;
+    // NOT a `mesh.MeshKey` (task 4060, declined at its declaration). This
+    // struct is a render-input tuple compared WHOLE and carries no mesh
+    // ADDRESS — the cell renders whatever the document's active mesh is —
+    // so wrapping this one field would ADD a term and change an invalidation
+    // outcome, which is not what that task was allowed to do. Of the four
+    // version fields on this struct only this one has a `Mesh` as its
+    // subject at all; `selEpoch` is the global bus selection counter and
+    // `gpuUploadVer` is a VBO generation.
     ulong     meshMutVer;
     ulong     selEpoch;   // bumped on every selection-mark change (Marks class)
     int       editMode_k;

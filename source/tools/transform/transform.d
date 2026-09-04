@@ -495,6 +495,12 @@ protected:
     // gizmo when geometry changes without selection — e.g. after Ctrl+Z
     // reverts a transform, the selection is identical but the verts moved,
     // so the gizmo (= selection centroid) must be recomputed.
+    //
+    // NOT a `mesh.MeshKey` (task 4060, declined at its declaration): a
+    // gesture BOUNDARY latch, not a cache key. Giving it the address term a
+    // `MeshKey` always carries would make a layer switch close the edit,
+    // which is a behaviour change in gesture arming and belongs to task 1905,
+    // not to a change of form.
     ulong  lastMutationVersion;
 
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode,

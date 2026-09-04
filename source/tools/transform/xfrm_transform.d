@@ -6786,6 +6786,11 @@ private:
     //   ulong.max = "no live gesture to re-grade". Reset at activate /
     //   deactivate / resetTransientState and at every run boundary (bank switch,
     //   selection/mutation guard).
+    //
+    // NOT a `mesh.MeshKey` (task 4060, declined at its declaration): its
+    // `ulong.max` MEANS "disarmed", not "never stamped", and it has no
+    // address term to fold in — adding one would change when a re-grade goes
+    // inert. Same argument as `TransformTool.lastMutationVersion`.
     ulong lastAppliedGestureMutationVersion = ulong.max;
 
     // armedUndoEpoch — TASK 1906 §2.3, THE CENSUS'S SECOND TERM. Not a guard:
