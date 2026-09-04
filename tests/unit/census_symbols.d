@@ -56,7 +56,6 @@ import std.array     : appender, join;
 import std.file      : dirEntries, readText, SpanMode;
 import std.format    : format;
 import std.path      : buildPath, dirName;
-import std.string    : splitLines, strip;
 
 package bool isIdentChar(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')

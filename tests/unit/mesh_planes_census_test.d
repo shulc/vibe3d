@@ -659,20 +659,22 @@ unittest // …and the shapes the two new arms must NOT flag, because a census t
 
 // ---------------------------------------------------------------------------
 // The allowlist (Готово item 2 / plan §10: "an allowlist that is a diff
-// line"). One entry per DISTINCT (file, exact matched line text) pair
-// currently in the tree — derived directly from this scanner's own output
-// against the current HEAD, not retyped by hand. As each family migrates
-// onto `mesh_planes.rewriteFaces`/`rewriteVertices` (plan §6 Stages B–F),
-// its hand-rolled line disappears from the source text, the scanner stops
-// reporting it, and the corresponding entry below becomes DEAD — remove it
-// in the SAME commit, so this list is always exactly what the tree still
+// line"). One entry per DISTINCT (ENCLOSING DECLARATION, exact matched line
+// text) pair currently in the tree — derived directly from this scanner's own
+// output against the current HEAD, not retyped by hand. As each family
+// migrates onto `mesh_planes.rewriteFaces`/`rewriteVertices` (plan §6 Stages
+// B–F), its hand-rolled line disappears from the source text, the scanner
+// stops reporting it, and the corresponding entry below becomes DEAD — remove
+// it in the SAME commit, so this list is always exactly what the tree still
 // needs.
 // ---------------------------------------------------------------------------
 
-// `count`: the number of DISTINCT hits (file, line) this (file, text) key
-// is expected to match TODAY. A membership check alone (just `file`+`text`)
-// cannot see two failure modes the count closes (task 1902 review finding
-// B1): (a) a NEW copy-pasted line landing next to an already-allowed one —
+// `count`: the number of DISTINCT hits this (declaration, text) key is
+// expected to match TODAY. A membership check alone cannot see two failure
+// modes the count closes (task 1902 review finding B1); the symbol key of
+// task 4056 closes the FIRST of them outright, and the count is what still
+// closes the second: (a) a NEW copy-pasted line landing next to an
+// already-allowed one —
 // `"faces              = newFaces;"` in `source/mesh.d` is exact-text-
 // identical across FOUR distinct production sites
 // (`applyVertexRemapAndRebuild`, `applyVertexRemap`, `dissolveVerticesByMask`,
@@ -681,9 +683,14 @@ unittest // …and the shapes the two new arms must NOT flag, because a census t
 // migrates off the allowlist (plan §6) — membership has nothing left to miss
 // once the text is gone from one of several sites sharing it, so the count
 // dropping below its recorded value is the only signal. Measured 2026-08-25
-// via a standalone scan (`scratch/count_allow.d` in this task's lane
-// scratch): every count below is the exact current hit count for its
-// (file, text) key.
+// via a standalone scan (`scratch/count_allow.d` in that task's lane scratch)
+// and re-measured 2026-09-04 through the shared walker: every count below is
+// the exact current hit count for its (declaration, text) key. The four
+// factories that shared one text under the old key are now four rows, so
+// finding B1's case (a) is a NAMED unrecorded key rather than a drifting
+// count; case (b) and the two copies inside ONE function (`Mesh.clear`,
+// `bevelEdgesByMask`) are what the count still carries.
+//
 /// One exempted hand-rolled rewrite, keyed by the DECLARATION it sits in plus
 /// the statement text — not by the file's PATH (task 4056). Moving
 /// `edgeSliceEx` to a third satellite module must not redden this census, and
