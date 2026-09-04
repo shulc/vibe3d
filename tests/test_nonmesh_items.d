@@ -11,8 +11,8 @@
 // machinery WITHOUT any button/menu/command-argument a user could reach to
 // CREATE one — see doc/nonmesh_item_types_plan.md §Stage 6. The ONLY source
 // of a non-mesh item here is the test-only injector POST /api/test/layer
-// (source/http_server.d + source/http_providers.d), which bypasses the
-// Command/undo system entirely (it is scaffolding, not a document edit).
+// (source/http_server.d + source/http_providers.d), which configures the
+// registered layer.add command with the injector-only construction shape.
 //
 // Spec cases (plan §Stage 6 validation + §Stage 7 + §Stage 9):
 //   - the injected layer shows up in /api/layers, deselected, non-primary,
@@ -109,8 +109,8 @@ bool approx(double a, double b) {
 
 // ---------------------------------------------------------------------------
 // The ONLY source of a non-mesh item in this slice: POST /api/test/layer.
-// Bypasses the Command/undo system on purpose (test scaffolding, not a
-// document edit) — see the module doc comment above.
+// It preserves the injector's deselected/unfocused shape while applying and
+// recording the registered layer.add command.
 // ---------------------------------------------------------------------------
 void injectEmpty(string name, int index = -1) {
     string body_ = index >= 0
@@ -118,6 +118,24 @@ void injectEmpty(string name, int index = -1) {
         : `{"kind":"empty","name":"` ~ name ~ `"}`;
     auto j = parseJSON(cast(string)post(baseUrl ~ "/api/test/layer", body_));
     assert(j["status"].str == "ok", "inject-layer failed: " ~ j.toString);
+}
+
+unittest {
+    resetCube();
+    clearHistory();
+    injectEmpty("through-command");
+
+    auto undo = getJson("/api/history")["undo"].array;
+    assert(undo.length == 1,
+        "/api/test/layer must record exactly one command; got "
+        ~ undo.length.to!string);
+    assert(undo[0]["command"].str == "layer.add",
+        "/api/test/layer must run the registered layer.add command; got "
+        ~ undo[0].toString);
+
+    cmd("history.undo");
+    assert(layerCount() == 1,
+        "undoing the injected layer.add must remove the injected item");
 }
 
 // Build [MeshA(primary,selected), Empty("E"), MeshB]. A primary. History

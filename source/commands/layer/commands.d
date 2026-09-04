@@ -128,6 +128,9 @@ final class LayerAdd : LayerCommandBase {
     private string nameArg;           // "" → auto "Layer N"
     private size_t prevActiveIndex;
     private size_t addedIndex;
+    private ItemKind addedKind = ItemKind.Mesh;
+    private size_t requestedIndex = size_t.max; // max → append
+    private bool activateAdded = true;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
          void delegate(size_t, size_t) onSwitch) {
@@ -141,44 +144,75 @@ final class LayerAdd : LayerCommandBase {
         return [ Param.string_("name", "Name", &nameArg, "") ];
     }
 
+    /// Configure the test-only layer-injection shape while keeping the edit
+    /// inside this command's apply/revert/history lifecycle.  This is not a
+    /// Param: ordinary `layer.add` remains a mesh append that becomes active;
+    /// only `/api/test/layer` supplies the non-mesh kind/insertion position
+    /// and deliberately leaves item selection/focus untouched.
+    LayerAdd configureInjection(ItemKind kind, size_t index, string name) {
+        addedKind = kind;
+        requestedIndex = index;
+        nameArg = name;
+        activateAdded = false;
+        return this;
+    }
+
     protected override bool applyImpl() {
         prevActiveIndex = doc.activeIndex;
         auto prevLayer  = doc.active();
+        if (requestedIndex != size_t.max && requestedIndex > doc.layers.length) {
+            refusal_ = "layer.add: insertion index is out of range";
+            return false;
+        }
         auto l = new Layer;
         import std.conv : to;
+        l.kind       = addedKind;
         l.name       = nameArg.length ? nameArg
                                       : "Layer " ~ to!string(doc.layers.length + 1);
         l.visible    = true;
-        doc.layers ~= l;
+        if (l.hasImagePlane)
+            l.imagePlaneRef() = new ImagePlaneData();
+        addedIndex = requestedIndex == size_t.max
+            ? doc.layers.length : requestedIndex;
+        doc.layers = doc.layers[0 .. addedIndex] ~ l
+                   ~ doc.layers[addedIndex .. $];
         doc.noteLayerListChanged();
-        addedIndex  = doc.layers.length - 1;
-        // Stage-0 lockstep: set primary + selected + activeIndex together,
-        // BEFORE fireSwitchIfChanged (the hook reads activeMesh() == primary).
-        doc.setActive(addedIndex);
+        if (activateAdded) {
+            // Stage-0 lockstep: set primary + selected + activeIndex together,
+            // BEFORE fireSwitchIfChanged (the hook reads activeMesh() == primary).
+            doc.setActive(addedIndex);
+        }
         noteUndoRecorded();   // task 2500
         // Structural kind from the command; ActiveChanged from the switch hook
-        // (add makes the new layer active), both coalescing into one delivery.
+        // when ordinary layer.add makes the new layer active, both coalescing
+        // into one delivery. Test injection preserves the prior active object.
         noteLayerChange(LayerChange.Added);
-        fireSwitchIfChanged(prevLayer, prevActiveIndex);
+        if (activateAdded)
+            fireSwitchIfChanged(prevLayer, prevActiveIndex);
         return true;
     }
 
     protected override void revertImpl() {
         auto prevLayer = doc.active();
         size_t prevIdx = doc.activeIndex;
-        // Drop the appended layer (it is the tail) and restore the prior active.
-        // History entries that mutated this layer keep it alive via GC, but on a
-        // plain add-then-undo the layer carried no edits, so dropping it is safe.
+        // Drop exactly the inserted layer. History is linear, so later reorder
+        // commands have already been reverted before this entry can be undone.
         if (addedIndex < doc.layers.length) {
-            doc.layers = doc.layers[0 .. addedIndex];
+            doc.layers = doc.layers[0 .. addedIndex]
+                       ~ doc.layers[addedIndex + 1 .. $];
             doc.noteLayerListChanged();
         }
-        // setActive clamps an out-of-range index into the last layer (matching
-        // the prior explicit clamp) and re-establishes primary+selected.
-        doc.setActive(prevActiveIndex);
-        // Undo of an add is a remove; ActiveChanged via the hook.
+        if (activateAdded) {
+            // setActive clamps an out-of-range index into the last layer
+            // (matching the prior explicit clamp) and re-establishes
+            // primary+selected.
+            doc.setActive(prevActiveIndex);
+        }
+        // Undo of an add is a remove; ActiveChanged via the hook for the
+        // ordinary activating form.
         noteLayerChange(LayerChange.Removed);
-        fireSwitchIfChanged(prevLayer, prevIdx);
+        if (activateAdded)
+            fireSwitchIfChanged(prevLayer, prevIdx);
     }
 }
 

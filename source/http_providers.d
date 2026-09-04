@@ -223,7 +223,7 @@ import snapshot : SelectionSnapshot;
 import commands.tool.host     : ToolHost;
 import commands.tool.set      : ToolSetCommand;
 import commands.tool.attr     : ToolAttrCommand;
-import commands.layer.commands : LayerAttr;
+import commands.layer.commands : LayerAdd, LayerAttr;
 import commands.tool.do_apply : ToolDoApplyCommand;
 import commands.tool.reset    : ToolResetCommand;
 import commands.tool.pipe     : ToolPipeAttrCommand;
@@ -3553,17 +3553,12 @@ private void wireMutationHandlers(HttpServer httpServer, ref EditorApp app,
             history.record(cmd);
         });
 
-        // Test-only layer injection (POST /api/test/layer) — task 0615
-        // Stage 6/7. Appends (or inserts) a new `Layer` of the requested
-        // `kind` DIRECTLY into `document.layers`, bypassing the Command/undo
-        // system entirely: this is scaffolding for a test to build a mixed
-        // (non-mesh) document, not a document edit a user should be able to
-        // undo/redo. It never selects, focuses, or primaries the new layer —
-        // a test drives that afterward through the normal `layer.*`
-        // commands, so the resulting state is exactly what a real command
-        // sequence would produce, not a hand-special-cased shortcut. See
-        // http_server.d's `injectLayerHandler` field doc comment for why
-        // this is the ONLY source of a non-mesh item in this slice.
+        // Test-only layer injection (POST /api/test/layer) — task 0615.
+        // The special construction shape (non-mesh kind, optional insertion,
+        // no selection/focus change) is configured on the registered
+        // `layer.add` command, then applied and recorded normally. The route
+        // remains scaffolding, but no longer writes the document outside the
+        // command/undo model.
         //
         // Blocker fix (review round 2): the ROUTE is gated on `testMode` in
         // http_server.d (mirroring /api/changes / /api/play-events), which
@@ -3583,31 +3578,9 @@ private void wireMutationHandlers(HttpServer httpServer, ref EditorApp app,
             if (!kindFromToken(params["kind"].str, k))
                 throw new Exception("unknown layer kind '" ~ params["kind"].str ~ "'");
 
-            auto l = new Layer;
-            l.kind    = k;
-            l.name    = ("name" in params && params["name"].type == JSONType.string)
+            string name = ("name" in params && params["name"].type == JSONType.string)
                 ? params["name"].str
                 : ("Layer " ~ to!string(document.layers.length + 1));
-            l.visible = true;
-            // Task 0612 Stage 3: an injected image PLANE gets its payload
-            // constructed, so the injected item is well-formed — which is the
-            // stated contract of this route ("the resulting state is exactly
-            // what a real command sequence would produce"). Without it every
-            // plane channel would fall back to the base bundle and the item
-            // would be a shape no production path can ever produce.
-            //
-            // Only the plane kind: the IMAGE kind's payload carries an
-            // authored path that this route has no way to supply, and
-            // constructing an empty one would manufacture a row claiming to
-            // name a file it does not — `image.load` is that kind's route and
-            // it takes the path. That asymmetry is the difference between the
-            // two payloads, not an oversight.
-            if (l.hasImagePlane) {
-                import document : ImagePlaneData;
-                l.imagePlaneRef() = new ImagePlaneData();
-            }
-            // Deliberately left deselected/unfocused/non-primary — see the
-            // doc comment above.
 
             // NIT (task 0615 review round 2): a malformed 'index' used to be
             // silently downgraded to an append (out-of-range value, wrong
@@ -3625,17 +3598,18 @@ private void wireMutationHandlers(HttpServer httpServer, ref EditorApp app,
                     throw new Exception("'index' out of range");
                 insertAt = cast(size_t)raw;
             }
-            document.layers = document.layers[0 .. insertAt] ~ l
-                                                             ~ document.layers[insertAt .. $];
-            document.noteLayerListChanged();
-            // Structural kind, matching what a real `layer.add`-style
-            // mutation would publish — keeps `/api/changes`'
-            // missedPublishers count meaningful even though this bypasses
-            // the command system (a non-mesh layer never advances a
-            // mutationVersion, so it cannot itself trip that counter either
-            // way; this is purely for the layer-list-changed signal).
-            import change_bus : noteLayerChange, LayerChange;
-            noteLayerChange(LayerChange.Added);
+            auto factory = "layer.add" in reg.commandFactories;
+            if (factory is null)
+                throw new Exception("unknown command id 'layer.add'");
+            auto cmd = cast(LayerAdd)(*factory)();
+            if (cmd is null)
+                throw new Exception("command 'layer.add' has the wrong type");
+            cmd.configureInjection(k, insertAt, name);
+            if (!cmd.apply())
+                throw new Exception("command 'layer.add' did not apply"
+                    ~ (cmd.refusalReason().length
+                        ? ": " ~ cmd.refusalReason() : ""));
+            history.record(cmd);
         });
         }
     }
