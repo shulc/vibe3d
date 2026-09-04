@@ -14,7 +14,7 @@
 # removed before either scanner runs. `version-ceiling` is policy and is
 # carried over from the previous ledger, never re-measured.
 source-files 511
-unittest-blocks 745
+unittest-blocks 737
 version-ceiling 10
 
 # Per-file unittest counts. Enforced: they sum to `unittest-blocks`, and
@@ -67,7 +67,6 @@ block source/json_num.d 3
 block source/log.d 4
 block source/math.d 19
 block source/mesh.d 20
-block source/mesh_bevel_census.d 8
 block source/mesh_corner_maps.d 1
 block source/mesh_dirty.d 9
 block source/mesh_edit_delta.d 11
