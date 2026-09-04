@@ -150,6 +150,7 @@ final class LayerAdd : LayerCommandBase {
                                       : "Layer " ~ to!string(doc.layers.length + 1);
         l.visible    = true;
         doc.layers ~= l;
+        doc.noteLayerListChanged();
         addedIndex  = doc.layers.length - 1;
         // Stage-0 lockstep: set primary + selected + activeIndex together,
         // BEFORE fireSwitchIfChanged (the hook reads activeMesh() == primary).
@@ -168,8 +169,10 @@ final class LayerAdd : LayerCommandBase {
         // Drop the appended layer (it is the tail) and restore the prior active.
         // History entries that mutated this layer keep it alive via GC, but on a
         // plain add-then-undo the layer carried no edits, so dropping it is safe.
-        if (addedIndex < doc.layers.length)
+        if (addedIndex < doc.layers.length) {
             doc.layers = doc.layers[0 .. addedIndex];
+            doc.noteLayerListChanged();
+        }
         // setActive clamps an out-of-range index into the last layer (matching
         // the prior explicit clamp) and re-establishes primary+selected.
         doc.setActive(prevActiveIndex);
@@ -335,6 +338,7 @@ final class LayerDuplicate : LayerCommandBase {
         // Append and make the clone the active primary (SET-of-one), BEFORE
         // fireSwitchIfChanged so the hook reads the correct (new) active mesh.
         doc.layers  ~= l2;
+        doc.noteLayerListChanged();
         addedIndex   = doc.layers.length - 1;
         doc.setActive(addedIndex);
         added   = l2;
@@ -356,8 +360,10 @@ final class LayerDuplicate : LayerCommandBase {
         size_t prevIdx = doc.activeIndex;
 
         // Drop the clone — it is always the tail (appended by apply).
-        if (addedIndex < doc.layers.length)
+        if (addedIndex < doc.layers.length) {
             doc.layers = doc.layers[0 .. addedIndex];
+            doc.noteLayerListChanged();
+        }
 
         // Task 0671: one exact restore (mirrors LayerDelete.revert).
         doc.restoreItemSelection(prevSelection);
@@ -416,6 +422,7 @@ final class LayerReorder : LayerCommandBase {
         // Splice out, then splice in at the destination.
         doc.layers = doc.layers[0 .. src] ~ doc.layers[src + 1 .. $];
         doc.layers = doc.layers[0 .. dst] ~ moved ~ doc.layers[dst .. $];
+        doc.noteLayerListChanged();
         // NIT (task 0615 Stage 6 review round 2): no explicit re-point of
         // `primary`/`activeIndex` needed here, and — load-bearing — none
         // must be done. `primary` (and `focusedItem`) are class REFERENCES;
@@ -662,6 +669,7 @@ final class LayerDelete : LayerCommandBase {
 
         // Splice the layer out.
         doc.layers = doc.layers[0 .. removedIndex] ~ doc.layers[removedIndex + 1 .. $];
+        doc.noteLayerListChanged();
 
         // Task 0615 §L1: decide the successor by OBJECT IDENTITY, not by
         // array position. If the removed layer was NOT the primary, the
@@ -720,6 +728,7 @@ final class LayerDelete : LayerCommandBase {
         if (removedIndex > doc.layers.length) removedIndex = doc.layers.length;
         doc.layers = doc.layers[0 .. removedIndex] ~ removed
                                                    ~ doc.layers[removedIndex .. $];
+        doc.noteLayerListChanged();
         // TASK 0671 — one exact restore replaces the set-then-re-point pair.
         // The two branches this had (restore `prevPrimary` through
         // `setPrimary`, or rebuild the set through `clearItemSelection` + a

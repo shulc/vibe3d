@@ -222,6 +222,7 @@ class SceneReset : Command {
             // Task 0082: clear the parent link on reset (-j8 bleed fix).
             keep.parent     = null;
             document.layers      = [ keep ];
+            document.noteLayerListChanged();
             // Task 0671: the item-selection state still names the layers this
             // collapse just dropped — forget it wholesale before re-selecting,
             // rather than leaving them reachable from a history bucket.
@@ -349,6 +350,7 @@ class SceneReset : Command {
             keep.xform      = keptPrevXform;
             keep.parent     = keptPrevParent;
             document.layers      = prevLayers;
+            document.noteLayerListChanged();
             // TASK 0671 — one exact restore. `apply()` re-homed a target onto a
             // document that had none so it had somewhere to write; undo owes
             // that back, and the snapshot is what owes it — the

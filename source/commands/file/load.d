@@ -311,6 +311,7 @@ class FileLoad : Command {
         if (docSnapped) {
             // Native path: restore the prior layer list + active index in place.
             document.layers      = prevLayers;
+            document.noteLayerListChanged();
             // TASK 0671 — one exact restore, BEFORE reading activeMesh(). The
             // `setActive(prevActiveIndex)` + `clearItemSelection()` pair this
             // replaces reconstructed the selection from a derived index and a

@@ -204,6 +204,7 @@ final class ImagePlaneAdd : Command {
         immutable size_t prevActiveIndex = doc.activeIndex;
 
         doc.layers ~= created_;
+        doc.noteLayerListChanged();
         // SET-of-one, and since task 0668 it is a genuine SET-of-ONE: the
         // exclusive select drops every other item, INCLUDING the mesh that
         // was the edit target. It used to spare the mesh, which is how
@@ -245,6 +246,7 @@ final class ImagePlaneAdd : Command {
         // splice, so `focusedItem` can never be left naming a non-member.
         if (created_.selected) doc.selectItem(created_, SelMode.Remove);
         doc.layers = doc.layers[0 .. i] ~ doc.layers[i + 1 .. $];
+        doc.noteLayerListChanged();
 
         // TASK 0671 — one exact restore replaces the set / primary / focus
         // trio. ~~Restore the exact prior selection set, then the prior

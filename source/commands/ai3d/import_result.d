@@ -127,6 +127,7 @@ final class Ai3dImportResult : Command {
 
         doc.layers = doc.layers[0 .. insertedIndex] ~ inserted
                                                    ~ doc.layers[insertedIndex .. $];
+        doc.noteLayerListChanged();
         doc.setActive(insertedIndex);
 
         inserted.meshRef().syncSelection();
@@ -157,6 +158,7 @@ final class Ai3dImportResult : Command {
         }
         insertedIndex = found;
         doc.layers = doc.layers[0 .. found] ~ doc.layers[found + 1 .. $];
+        doc.noteLayerListChanged();
 
         doc.restoreItemSelection(preSelection);
         auto active = doc.activeMesh();

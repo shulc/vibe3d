@@ -509,6 +509,7 @@ Document toLayers(const ref ImportedScene scene) {
 
     Document d;
     d.layers      = layers;
+    d.noteLayerListChanged();
     // Stage-0 lockstep: set primary + selected + activeIndex together. The guard
     // above guarantees `layers[primaryIdx]` is visible, so the primary invariant
     // (selected + visible) holds.

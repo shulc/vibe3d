@@ -335,6 +335,7 @@ final class ImageLoad : ImageCommandBase {
         }
 
         doc.layers ~= created_;
+        doc.noteLayerListChanged();
         noteUndoRecorded();   // task 2500 — the image is `created_`
         // Structural add. NOT `setActive`/`selectItem`: an image is not a
         // scene item, so there is no "make it active" to perform, and folding
@@ -364,6 +365,7 @@ final class ImageLoad : ImageCommandBase {
         if (created_.selected) doc.selectItem(created_, SelMode.Remove);
 
         doc.layers = doc.layers[0 .. i] ~ doc.layers[i + 1 .. $];
+        doc.noteLayerListChanged();
         noteLayerChange(LayerChange.Removed);
     }
 }

@@ -5,8 +5,8 @@ module document_selection;
 //
 // Everything `Document` knows about WHO IS SELECTED: the two lists the edit
 // target is derived from, the walk that derives it, the readers built on that
-// walk, and the mutators. `document.d` keeps the item list itself, the payload
-// classes, and the membership helpers.
+// walk, and the mutators. `document.d` keeps the item list itself and the
+// membership helpers; payload classes live in leaf modules.
 //
 // A `mixin template`, not a second struct and not a base class, and the reason
 // is the invariant rather than taste. `Document`'s guarantees — at least one
@@ -68,6 +68,29 @@ mixin template DocumentSelection() {
     private long selSeatBack_  = 0;
     private long selSeatFront_ = 0;
 
+    // Task 4061 — a memo of the DERIVED edit target, never a second target
+    // pointer. `primaryMemo_` is valid only for the selection state whose
+    // front-seat stamp and layer-list generation are recorded beside it.
+    // Every selection mutator below invalidates explicitly; structural
+    // mutators outside this mixin call `noteLayerListChanged()`.
+    private Layer primaryMemo_;
+    private long  primaryMemoSeatFront_;
+    private ulong primaryMemoLayerListVersion_;
+    private ulong layerListVersion_;
+    private bool  primaryMemoValid_;
+
+    private void invalidatePrimaryMemo() nothrow @nogc {
+        primaryMemoValid_ = false;
+    }
+
+    /// Mark a membership/order mutation of `layers`. The array stays public
+    /// for the established document construction and codec surfaces, so this
+    /// is the one required companion call after a live list write.
+    void noteLayerListChanged() nothrow @nogc {
+        ++layerListVersion_;
+        invalidatePrimaryMemo();
+    }
+
     /// The selection STATE of `l` — the reader every other question here is
     /// asked through. Current is searched FIRST, so an item that is both
     /// current and still listed in a bucket (an undo that restored `selected`
@@ -128,12 +151,9 @@ mixin template DocumentSelection() {
     /// carries seat `0`). Without the tie-break, two seat-0 selected meshes
     /// would be mutually unordered and the walk could stall on the first.
     ///
-    /// O(k·n) for the k-th answer, with no allocation, so it is safe on the
-    /// per-frame paths that ask for `primary` ~100 times a frame. The reference
-    /// memoises the same walk and drops the memo on every selection / scene /
-    /// animation event; we do not need to, and a memo that is maintained rather
-    /// than dropped is precisely the stored pointer this task exists to not
-    /// reintroduce.
+    /// O(k·n) for the k-th answer, with no allocation. `primary` memoises only
+    /// the n=0 result and drops that memo on every selection/list mutation;
+    /// this walk remains the sole computation of what the target IS.
     private inout(Layer) nthEditTargetCandidate(size_t n) inout nothrow @nogc {
         { import perf_probe : g_perf, Cat; g_perf.count(Cat.editTargetDerive, 1); }
         size_t emitted = 0;
@@ -187,7 +207,19 @@ mixin template DocumentSelection() {
     /// mutators move items between the current list and the history buckets and
     /// this recomputes.
     inout(Layer) primary() inout nothrow @nogc {
-        return nthEditTargetCandidate(0);
+        // Logical constness: the cached class reference is not document state
+        // and never decides the answer. Cast only the Document storage used by
+        // the memo, then return with the receiver's original qualification.
+        auto self = cast(Document*) &this;
+        if (!self.primaryMemoValid_
+            || self.primaryMemoSeatFront_ != self.selSeatFront_
+            || self.primaryMemoLayerListVersion_ != self.layerListVersion_) {
+            self.primaryMemo_ = cast(Layer) nthEditTargetCandidate(0);
+            self.primaryMemoSeatFront_ = self.selSeatFront_;
+            self.primaryMemoLayerListVersion_ = self.layerListVersion_;
+            self.primaryMemoValid_ = true;
+        }
+        return cast(inout(Layer)) self.primaryMemo_;
     }
 
     /// The single FILTER `foregroundLayersInto`/`foregroundLayerCount` share
@@ -629,6 +661,7 @@ mixin template DocumentSelection() {
     /// `Document` via direct field writes, before its first
     /// invariant-restoring call).
     void setActive(size_t idx) {
+        invalidatePrimaryMemo();
         // Task 0671: nothing to null out on an empty document — the edit
         // target is derived, and a walk over no layers already answers null.
         if (layers.length == 0) { focusedItem = null; return; }
@@ -765,6 +798,7 @@ mixin template DocumentSelection() {
         // S5 / L1: guard membership, not just null — a `Layer` that is not
         // (or no longer) in `layers` must never become target/focus/primary.
         if (layers.length == 0 || l is null || indexOf(l) == layers.length) return;
+        invalidatePrimaryMemo();
 
         final switch (mode) {
             case SelMode.Set:
@@ -843,6 +877,7 @@ mixin template DocumentSelection() {
     /// model of the time there was nowhere else for the target to live. There
     /// is now.
     void clearItemSelection() {
+        invalidatePrimaryMemo();
         foreach (l; layers) noteDeselected(l);
         focusedItem = null;
     }
@@ -925,6 +960,7 @@ mixin template DocumentSelection() {
     /// accident that stops being harmless the first time something iterates
     /// the buckets for another reason.
     void resetSelectionState() {
+        invalidatePrimaryMemo();
         foreach (l; layers) if (l !is null) l.selected = false;
         foreach (k; 0 .. ItemKind.max + 1) deselected_[k] = null;
         focusedItem   = null;
@@ -942,6 +978,7 @@ mixin template DocumentSelection() {
     /// them by membership and keeping the entry is what lets a later reinsert
     /// of the SAME object become live again by identity.
     void restoreItemSelection(ItemSelectionState s) {
+        invalidatePrimaryMemo();
         foreach (l; layers) if (l !is null) l.selected = false;
         foreach (i, l; s.current) {
             if (!isMember(l)) continue;
@@ -994,6 +1031,7 @@ mixin template DocumentSelection() {
     void setPrimary(Layer l) {
         // S5 / L1: same membership guard as `selectItem` — see there.
         if (layers.length == 0 || l is null || indexOf(l) == layers.length) return;
+        invalidatePrimaryMemo();
         noteSelected(l);
         l.selSeat   = --selSeatFront_;
         focusedItem = l;
@@ -1023,6 +1061,7 @@ mixin template DocumentSelection() {
     /// stored pointer wearing a different name.
     void latchEditTarget(Layer l) {
         if (!isMember(l) || l.selected) return;
+        invalidatePrimaryMemo();
         l.selSeat = --selSeatFront_;
         foreach (h; deselected_[l.kind]) if (h is l) return;   // already listed
         deselected_[l.kind] ~= l;

@@ -3627,6 +3627,7 @@ private void wireMutationHandlers(HttpServer httpServer, ref EditorApp app,
             }
             document.layers = document.layers[0 .. insertAt] ~ l
                                                              ~ document.layers[insertAt .. $];
+            document.noteLayerListChanged();
             // Structural kind, matching what a real `layer.add`-style
             // mutation would publish — keeps `/api/changes`'
             // missedPublishers count meaningful even though this bypasses

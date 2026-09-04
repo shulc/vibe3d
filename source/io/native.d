@@ -1439,6 +1439,7 @@ bool readV3d(string path, ref Document document)
         // so far left the caller's document byte-identical. Nothing below can
         // throw.
         document.layers = parsed;
+        document.noteLayerListChanged();
         // Task 0671: the item-selection state names the PREVIOUS document's
         // items (this is the app's live `Document`, handed by `ref`), so drop
         // it wholesale before rebuilding from the file. `clearItemSelection`
