@@ -1,20 +1,29 @@
 // The prepared-protocol census must have a LIVE CALLER, and the caller is
 // `run_test.d` (task 3691 follow-up).
 //
-// THE HOLE THIS CLOSES. The census — `tools/check_prepared_protocol.py`, whose
-// expensive and irreplaceable half hands each of `tests/compile_fail/`'s ~70
-// fixtures to the compiler and requires a REJECTION — used to hang off
-// `preBuildCommands` of dub.json's `tests` configuration. It was moved out of
-// there for cost (38.4 s on every `dub test --config=tests` that rebuilt
-// anything) and into `run_test.d`'s main, as a barrier beside the
+// THE HOLE THIS CLOSES. The census — `tools/check_prepared_protocol.py` —
+// used to hang off `preBuildCommands` of dub.json's `tests` configuration. It
+// was moved out of there for cost (38.4 s on every `dub test --config=tests`
+// that rebuilt anything) and into `run_test.d`'s main, as a barrier beside the
 // test-liveness one. The move is right and the measurement is recorded at both
 // sites. What the move LOST is the thing that made the old placement safe:
 // dub could not silently stop running a preBuildCommand, whereas a call in a
 // D source file can be deleted by anyone, in one line, and BOTH routine lanes
 // stay green while doing it. That is the exact failure this project pays for
 // most — a check that is satisfied by the broken tree too — and it would be
-// invisible: a fixture that quietly starts compiling produces a PASS, not a
+// invisible: a whole-tree property that has drifted produces a PASS, not a
 // red. So the call site itself is pinned here.
+//
+// WHAT THE CENSUS IS NOW (task 4052). Its compile-fail half is gone: the 73
+// fixtures under `tests/compile_fail/` were 72 compiler launches and 21.6 s of
+// its 39.9 s, and both properties they stated are `static assert`s, now in
+// `tests/unit/prepared_tool_transition_test.d`. What survives here is the part
+// that has no assert-shaped substitute — statement ORDER inside another
+// module's function body, caller sets across files no test binary imports,
+// occurrence counts, body digests — plus the half of that new D census a
+// compiler cannot see: that its module list still matches the .d files on
+// disk. So this pin protects a smaller, cheaper scanner, and exactly the
+// scanner that could not have been written as a test.
 //
 // WHY THIS CANNOT BE A SUBSTRING SEARCH. `run_test.d` MENTIONS
 // `protocolCensus()` in prose more often than it calls it: at the time of
@@ -160,7 +169,7 @@ private Verdict wideCensusCall(string src)
     if (window.indexOf(kRefusal) < 0)
         return Verdict(false, 0, "the call is there but `" ~ kRefusal ~ "` is not: "
             ~ "a census that does not refuse the run is a warning, and a warning "
-            ~ "in a build log is how the compile_fail fixtures rot unseen");
+            ~ "in a build log is how a whole-tree property rots unseen");
     if (window.indexOf(kNarrowEsc) < 0)
         return Verdict(false, 0, "no `" ~ kNarrowEsc ~ "` guard on the skip: the "
             ~ "ONLY sanctioned escape is a caller naming a test, and a skip "
@@ -206,11 +215,12 @@ unittest
         "run_test.d no longer calls the prepared-protocol census on the wide "
       ~ "path: %s.\n"
       ~ "That census is the ONLY caller of tools/check_prepared_protocol.py, "
-      ~ "and its compile_fail half checks ~70 fixtures that must FAIL to "
-      ~ "compile — a property no red assert can express, because a fixture "
-      ~ "that quietly starts compiling produces a PASS. With this call gone "
-      ~ "both routine lanes stay green over a tree in which every one of them "
-      ~ "has rotted. Restore the call in main (between the test-liveness "
+      ~ "which pins properties no red assert can express — the ORDER of "
+      ~ "statements inside another module's body, the caller set of a symbol "
+      ~ "across files nothing imports, occurrence counts, body digests. With "
+      ~ "this call gone both routine lanes stay green over a tree in which "
+      ~ "every one of them has drifted. Restore the call in main (between the "
+      ~ "test-liveness "
       ~ "barrier and dubBuild()), or, if it truly must move, move this pin "
       ~ "with it and say in the message where it went.", v.why));
 

@@ -1449,15 +1449,174 @@ for module, symbol, _ in NO_LIVE_LEAVES:
         fail(f"NoLiveMutation {module}.{symbol}: unknown call edge {unknown[0]}")
 """
 
-fixtures = sorted((ROOT / "tests/compile_fail").glob("prepared_effect_*.d"))
-for fixture in fixtures:
-    run = subprocess.run([
-        "dmd", "-c", "-Isource", str(fixture)
-    ], cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0:
-        fail(f"compile-fail fixture unexpectedly compiled: {fixture.name}")
-    if "prepared effect field is not owned" not in run.stdout:
-        fail(f"wrong diagnostic for {fixture.name}:\n{run.stdout}")
+
+# ---------------------------------------------------------------------------
+# The prepared-token copy census: the half a compiler cannot see (task 4052)
+# ---------------------------------------------------------------------------
+# WHAT MOVED. Until 2026-09-04 the non-copyability of a prepared token was
+# stated by one file per token under `tests/compile_fail/` -- 66 of them, each
+# three to six lines of `T original; auto forbiddenCopy = original;` -- and this
+# scanner launched one `dmd -c` per fixture, requiring the rejection to name a
+# disabled copy. Measured on this host with dmd behind a timing wrapper
+# (2026-09-04): 65 such compiles cost 21.5 s of the scanner's 39.9 s wall, and
+# the seven `prepared_effect_*` shape fixtures cost 0.148 s. The property is one
+# `__traits` call, so all 73 fixtures are gone and the assertions live in
+# `tests/unit/prepared_tool_transition_test.d`, paid by the `dub test
+# --config=tests` lane that compiles that module anyway.
+#
+# WHAT COULD NOT MOVE, AND IS THEREFORE WHAT IS LEFT HERE. The D census runs
+# over a hand-written module list, and no compile-time trait enumerates the .d
+# files on disk. A new `source/prepared_*.d` would leave that list short and the
+# census would then be honestly green over a smaller set -- the shape where a
+# pattern matches nothing and the count reads as "unchanged" because it never
+# matched. That half is a filesystem walk, which is exactly what this scanner
+# can see and the compiler cannot. Below, the tree is walked and the D file's
+# module list, both population counts, its copyable-by-design exceptions, its
+# retired-fixture roster and the two non-`*Token` aggregates must all agree with
+# it -- in BOTH directions, so neither a missing nor a surplus row is green.
+# Cost: one pass over source/**.d, no compiler, measured at 0.06 s.
+TOKEN_CENSUS_D = ROOT / "tests/unit/prepared_tool_transition_test.d"
+TOKEN_NAME_RE = re.compile(r"\bstruct\s+((?:Prepared|Validated)\w*Token)\b\s*"
+                           r"(?:\([^)]*\))?\s*\{")
+
+def prepared_token_declarations():
+    """{(module, TypeName): has a disabled copy} for every Prepared*Token /
+    Validated*Token struct under source/. The name pattern is the D census's
+    own predicate, spelled here over the tree instead of over one module."""
+    rows = {}
+    for path in sorted(ROOT.glob("source/**/*.d")):
+        text = path.read_text()
+        head = re.search(r"^\s*module\s+([\w.]+)\s*;", text, re.M)
+        if not head:
+            continue
+        for decl in TOKEN_NAME_RE.finditer(text):
+            body = text[decl.end():balanced_source(text, decl.end()) - 1]
+            rows[(head.group(1), decl.group(1))] = "@disable this(this)" in body
+    return rows
+
+# Both readers answer None for "not there", and the gate turns that into a
+# drift row rather than an exception: the mutation loop below deletes exactly
+# these declarations on purpose, and a raise would be indistinguishable from
+# the scanner crashing.
+def d_string_rows(source, name):
+    block = re.search(r"private enum string\[\] " + name + r" = \[(.*?)\n\];",
+                      source, re.S)
+    return re.findall(r'"([^"]+)"', block.group(1)) if block else None
+
+def d_pinned_count(source, expr):
+    m = re.search(r"static assert\(" + re.escape(expr) + r"\.length == (\d+)",
+                  source)
+    return int(m.group(1)) if m else None
+
+def token_census_gate(source, declared, stray_fixtures):
+    """Disagreements between the D census and the tree. Empty == the two halves
+    describe the same set. `source` is the D test's text, `declared` the tree
+    walk, `stray_fixtures` whatever is left in tests/compile_fail/."""
+    bad = []
+    if stray_fixtures:
+        bad.append("tests/compile_fail/ is populated again ("
+                   + ", ".join(sorted(stray_fixtures)[:4])
+                   + ") -- a fixture that must FAIL to compile has no caller "
+                     "any more, so it would rot green")
+    modules = sorted({m for m, _ in declared})
+    listed = d_string_rows(source, "kTokenModules")
+    if listed is None:
+        bad.append("kTokenModules is gone from " + TOKEN_CENSUS_D.name)
+    elif listed != modules:
+        missing = [m for m in modules if m not in listed]
+        surplus = [m for m in listed if m not in modules]
+        bad.append(f"kTokenModules disagrees with the tree: missing={missing} "
+                   f"surplus={surplus}")
+    for expr, want in (("kTokenModules", len(modules)),
+                       ("kCensusTokens", len(declared))):
+        got = d_pinned_count(source, expr)
+        if got is None:
+            bad.append(f"the population floor on {expr} is gone -- without it "
+                       f"the census is honestly true over an empty set")
+        elif got != want:
+            bad.append(f"{expr} population floor is {got}, the tree says {want}")
+    copyable = sorted(f"{m}.{n}" for (m, n), disabled in declared.items()
+                      if not disabled)
+    listed_copyable = d_string_rows(source, "kCopyableByDesign") or []
+    if sorted(listed_copyable) != copyable:
+        bad.append(f"kCopyableByDesign disagrees with the tree: tree says "
+                   f"{copyable}, the census says {sorted(listed_copyable)}")
+    names = {n for _, n in declared}
+    retired = d_string_rows(source, "kRetiredCopyFixtureTokens") or []
+    orphaned = [t for t in retired if t not in names]
+    if orphaned:
+        bad.append(f"retired copy fixtures name types the tree no longer "
+                   f"declares: {orphaned}")
+    # PreparedArm and its candidate owner are non-copyable prepared aggregates
+    # that are NOT spelled `*Token`, so the pattern above cannot reach them and
+    # the D census asserts them by name. Require both names, or retiring
+    # `prepared_arm_copy.d` would have left nothing behind.
+    for aggregate in ("PreparedArm", "PreparedCandidateOwner"):
+        if f"static assert(!__traits(isCopyable, {aggregate})" not in source:
+            bad.append(f"{aggregate} lost its non-copyable assert")
+    # The seven retired shape fixtures pinned the diagnostic TEXT as well as the
+    # refusal; `__traits(compiles)` cannot see a message, so it is pinned here.
+    effect = (ROOT / "source/prepared_tool_effect.d").read_text()
+    if "prepared effect field is not owned" not in effect:
+        bad.append("the prepared-effect diagnostic text is gone from "
+                   "source/prepared_tool_effect.d")
+    for shape in ("PreparedEffectBorrowedClass", "PreparedEffectDelegate",
+                  "PreparedEffectFunctionPointer", "PreparedEffectNestedPointer",
+                  "PreparedEffectNestedSlice", "PreparedEffectBorrowingView",
+                  # Three of the seven fixtures refused for the WRONG reason --
+                  # no `@PreparedAggregate`, so the recursion they were written
+                  # to state was never reached. These four carry the UDA, so the
+                  # only thing that can refuse them is that recursion, and the
+                  # first is the control that must be ACCEPTED.
+                  "PreparedEffectOwnedAggregate", "PreparedEffectAggregatePointer",
+                  "PreparedEffectAggregateSlice", "PreparedEffectAggregateView"):
+        if f"requirePreparedField!{shape}" not in source:
+            bad.append(f"the replacement for a prepared_effect_* fixture is "
+                       f"gone: {shape}")
+    return bad
+
+token_declarations = prepared_token_declarations()
+if len(token_declarations) < 100:
+    fail(f"prepared-token walk found only {len(token_declarations)} tokens -- "
+         f"the declaration pattern stopped matching, and every comparison "
+         f"below would then be true over almost nothing")
+token_census_source = TOKEN_CENSUS_D.read_text()
+token_stray = sorted(p.name for p in ROOT.glob("tests/compile_fail/*.d"))
+token_drift = token_census_gate(token_census_source, token_declarations,
+                                token_stray)
+if token_drift:
+    fail("prepared-token census drift:\n  " + "\n  ".join(token_drift))
+
+# Potency: every one of these edits must be reported, and the FIRST arm proves
+# the walk itself is load-bearing rather than a formality.
+for label, mutate, strays in (
+    ("a module dropped from the list",
+     lambda s: s.replace('    "prepared_move_update",\n', "", 1), []),
+    ("the module floor loosened",
+     lambda s: s.replace(f"kTokenModules.length == {len(set(m for m, _ in token_declarations))}",
+                         "kTokenModules.length >= 1", 1), []),
+    ("the token floor moved",
+     lambda s: s.replace(f"kCensusTokens.length == {len(token_declarations)}",
+                         f"kCensusTokens.length == {len(token_declarations) - 1}", 1), []),
+    ("a copyable-by-design exception dropped",
+     lambda s: s.replace('    "mesh_gpu.PreparedGpuResourceToken",\n', "", 1), []),
+    ("a retired fixture's type renamed away",
+     lambda s: s.replace('    "PreparedMoveUpdateToken",',
+                         '    "PreparedMoveUpdateTokenGone",', 1), []),
+    ("PreparedArm's assert deleted",
+     lambda s: s.replace("static assert(!__traits(isCopyable, PreparedArm)",
+                         "static assert(true", 1), []),
+    ("a shape fixture's replacement deleted",
+     lambda s: s.replace("requirePreparedField!PreparedEffectBorrowingView",
+                         "requirePreparedField!PreparedToolEffect"), []),
+    ("a compile-fail fixture reappeared",
+     lambda s: s, ["prepared_arm_copy.d"]),
+):
+    mutant = mutate(token_census_source)
+    if mutant == token_census_source and not strays:
+        fail(f"prepared-token census mutation matched nothing: {label}")
+    if not token_census_gate(mutant, token_declarations, strays):
+        fail(f"prepared-token census mutation did not RED: {label}")
 
 # Potency against the ACTUAL admitted payload, not merely a new rejected type:
 # inject a class reference into PreparedScalar while retaining its name/UDA.
@@ -1474,21 +1633,7 @@ with tempfile.TemporaryDirectory(prefix="vibe3d-prepared-carrier-mut-") as td:
     if run.returncode == 0 or "prepared effect field is not owned" not in run.stdout:
         fail("borrow added to admitted PreparedScalar did not fail recursively:\n" + run.stdout)
 
-copy_fixture = ROOT / "tests/compile_fail/prepared_arm_copy.d"
-run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(copy_fixture)], cwd=ROOT,
-                     text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-if run.returncode == 0 or ("not copyable" not in run.stdout
-                           and not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-    fail("PreparedArm copy was not rejected by its disabled copy constructor:\n" + run.stdout)
 
-radial_copy_fixture = ROOT / "tests/compile_fail/prepared_radial_array_token_copy.d"
-run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(radial_copy_fixture)],
-                     cwd=ROOT, text=True, stdout=subprocess.PIPE,
-                     stderr=subprocess.STDOUT)
-if run.returncode == 0 or ("not copyable" not in run.stdout and
-                           not ("copy constructor" in run.stdout and
-                                "disabled" in run.stdout)):
-    fail("RadialArray prepared/validated token copy was not rejected:\n" + run.stdout)
 
 # P1.0b.4b dormant full-upload owner. Keep production at zero callers until
 # P1.0c, and freeze the closed prepare/validate/nothrow-consume boundary plus
@@ -2775,12 +2920,6 @@ for target, old, new, label in (
     if mutant[target] == edge_slice_deactivate_sources[target] or \
             edge_slice_deactivate_gate(mutant):
         fail(f"Edge Slice deactivate mutation did not RED: {label}")
-copy_fixture = ROOT / "tests/compile_fail/prepared_edge_slice_deactivate_token_copy.d"
-run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(copy_fixture)], cwd=ROOT,
-    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-if run.returncode == 0 or ("not copyable" not in run.stdout and
-        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-    fail("Edge Slice deactivate token copy was not rejected:\n" + run.stdout)
 
 loop_slice_deactivate_sources = {
     "tool": (ROOT / "source/tools/slice/loop_slice_tool.d").read_text(),
@@ -2842,12 +2981,6 @@ for target, old, new, label in (
     if mutant[target] == loop_slice_deactivate_sources[target] or \
             loop_slice_deactivate_gate(mutant):
         fail(f"Loop Slice deactivate mutation did not RED: {label}")
-copy_fixture = ROOT / "tests/compile_fail/prepared_loop_slice_deactivate_token_copy.d"
-run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(copy_fixture)], cwd=ROOT,
-    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-if run.returncode == 0 or ("not copyable" not in run.stdout and
-        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-    fail("Loop Slice deactivate token copy was not rejected:\n" + run.stdout)
 
 edge_slice_param_sources = {
     "tool": edge_slice_deactivate_sources["tool"],
@@ -2914,12 +3047,6 @@ for target, old, new, label in (
     else: mutant[target] = mutant[target].replace(old, new, 1)
     if mutant[target] == edge_slice_param_sources[target] or edge_slice_param_gate(mutant):
         fail(f"Edge Slice parameter mutation did not RED: {label}")
-copy_fixture = ROOT / "tests/compile_fail/prepared_edge_slice_param_token_copy.d"
-run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(copy_fixture)], cwd=ROOT,
-    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-if run.returncode == 0 or ("not copyable" not in run.stdout and
-        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-    fail("Edge Slice parameter token copy was not rejected:\n" + run.stdout)
 
 loop_slice_param_sources = {
     "tool": (ROOT / "source/tools/slice/loop_slice_tool.d").read_text(),
@@ -2982,12 +3109,6 @@ for target, old, new, label in (
     if mutant[target] == loop_slice_param_sources[target] or \
             loop_slice_param_gate(mutant):
         fail(f"Loop Slice parameter mutation did not RED: {label}")
-copy_fixture = ROOT / "tests/compile_fail/prepared_loop_slice_param_token_copy.d"
-run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(copy_fixture)], cwd=ROOT,
-    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-if run.returncode == 0 or ("not copyable" not in run.stdout and
-        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-    fail("Loop Slice parameter token copy was not rejected:\n" + run.stdout)
 
 edge_extend_param_sources = {
     "tool": (ROOT / "source/tools/edit/edge_extend.d").read_text(),
@@ -3051,12 +3172,6 @@ for target, old, new, label in (
     if mutant[target] == edge_extend_param_sources[target] or \
             edge_extend_param_gate(mutant):
         fail(f"Edge Extend parameter mutation did not RED: {label}")
-copy_fixture = ROOT / "tests/compile_fail/prepared_edge_extend_param_token_copy.d"
-run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(copy_fixture)], cwd=ROOT,
-    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-if run.returncode == 0 or ("not copyable" not in run.stdout and
-        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-    fail("Edge Extend parameter token copy was not rejected:\n" + run.stdout)
 
 edge_extend_deactivate_sources = {
     "tool": (ROOT / "source/tools/edit/edge_extend.d").read_text(),
@@ -3136,12 +3251,6 @@ for target, old, new, label in (
     if mutant[target] == edge_extend_deactivate_sources[target] or \
             edge_extend_deactivate_gate(mutant):
         fail(f"Edge Extend deactivate mutation did not RED: {label}")
-copy_fixture = ROOT / "tests/compile_fail/prepared_edge_extend_deactivate_token_copy.d"
-run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(copy_fixture)], cwd=ROOT,
-    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-if run.returncode == 0 or ("not copyable" not in run.stdout and
-        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-    fail("Edge Extend deactivate token copy was not rejected:\n" + run.stdout)
 
 vertex_extrude_param_sources = {
     "tool": (ROOT / "source/tools/edit/vertex_extrude_tool.d").read_text(),
@@ -3649,16 +3758,6 @@ for check in stroke_snapshot_match_checks:
             stroke_activation_owner, record_context, stroke_activation_tool, mutant):
         fail("StrokeExtrude snapshot field mutation did not RED: " + check)
 
-for stroke_activation_copy_fixture in (
-    ROOT / "tests/compile_fail/prepared_stroke_extrude_activation_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_stroke_extrude_activation_validated_token_copy.d",
-):
-    run = subprocess.run(["dmd", "-c", *DMD_FLAGS,
-        str(stroke_activation_copy_fixture)], cwd=ROOT, text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0 or ("not copyable" not in run.stdout and
-            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail("StrokeExtrude activation token copy was not rejected:\n" + run.stdout)
 
 # Exact VertexMerge activation: full cage baseline plus the four-field legacy
 # reset, followed by NoHistory. The production hook remains frozen for cutover.
@@ -3743,15 +3842,6 @@ for target, old, new, label in (
     if ((o == vertex_merge_activation_owner and c == record_context and
          t == vertex_merge_activation_tool) or vertex_merge_activation_gate(o,c,t)):
         fail(f"VertexMerge activation mutation did not RED: {label}")
-for fixture in (
-    ROOT / "tests/compile_fail/prepared_vertex_merge_activation_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_vertex_merge_activation_validated_token_copy.d",
-):
-    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0 or ("not copyable" not in run.stdout and
-            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail("VertexMerge activation token copy was not rejected:\n" + run.stdout)
 
 # Exact PolyInset activation uses the same deep-baseline atomic grammar, but
 # its closed product/reset/effect are independently mutation-proven.
@@ -3836,15 +3926,6 @@ for target, old, new, label in (
     if ((o == poly_inset_activation_owner and c == record_context and
          t == poly_inset_activation_tool) or poly_inset_activation_gate(o,c,t)):
         fail(f"PolyInset activation mutation did not RED: {label}")
-for fixture in (
-    ROOT / "tests/compile_fail/prepared_poly_inset_activation_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_poly_inset_activation_validated_token_copy.d",
-):
-    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0 or ("not copyable" not in run.stdout and
-            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail("PolyInset activation token copy was not rejected:\n" + run.stdout)
 
 # Exact PolyExtrude activation additionally owns its selection-derived gizmo
 # frame. Pin both the atomic snapshot grammar and the shared legacy/prepared
@@ -3986,15 +4067,6 @@ for target, old, new, label in (
     if ((o == poly_extrude_activation_owner and c == record_context and
          t == poly_extrude_activation_tool) or poly_extrude_activation_gate(o,c,t)):
         fail(f"PolyExtrude activation mutation did not RED: {label}")
-for fixture in (
-    ROOT / "tests/compile_fail/prepared_poly_extrude_activation_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_poly_extrude_activation_validated_token_copy.d",
-):
-    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0 or ("not copyable" not in run.stdout and
-            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail("PolyExtrude activation token copy was not rejected:\n" + run.stdout)
 
 # Exact SmoothShift activation owns the cage baseline and its five-vector
 # selection frame while preserving all five preset/sticky parameter fields.
@@ -4139,15 +4211,6 @@ for target, old, new, label in (
     if ((o == smooth_shift_activation_owner and c == record_context and
          t == smooth_shift_activation_tool) or smooth_shift_activation_gate(o,c,t)):
         fail(f"SmoothShift activation mutation did not RED: {label}")
-for fixture in (
-    ROOT / "tests/compile_fail/prepared_smooth_shift_activation_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_smooth_shift_activation_validated_token_copy.d",
-):
-    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0 or ("not copyable" not in run.stdout and
-            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail("SmoothShift activation token copy was not rejected:\n" + run.stdout)
 
 # Exact EdgeBevel activation also resets its private PreviewRebuild scratch;
 # that destructive release belongs only to install, never detached prepare.
@@ -4300,15 +4363,6 @@ for target, old, new, label in (
          t == edge_bevel_activation_tool and p == preview_rebuild_source) or
         edge_bevel_activation_gate(o,c,t,p)):
         fail(f"EdgeBevel activation mutation did not RED: {label}")
-for fixture in (
-    ROOT / "tests/compile_fail/prepared_edge_bevel_activation_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_edge_bevel_activation_validated_token_copy.d",
-):
-    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0 or ("not copyable" not in run.stdout and
-            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail("EdgeBevel activation token copy was not rejected:\n" + run.stdout)
 
 # Exact PolyBevel activation detaches the undo baseline and polygon gizmo
 # frame while preserving the user's group/segments/square presets.
@@ -4448,15 +4502,6 @@ for target, old, new, label in (
     if ((o == poly_bevel_activation_owner and c == record_context and
          t == poly_bevel_activation_tool) or poly_bevel_activation_gate(o,c,t)):
         fail(f"PolyBevel activation mutation did not RED: {label}")
-for fixture in (
-    ROOT / "tests/compile_fail/prepared_poly_bevel_activation_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_poly_bevel_activation_validated_token_copy.d",
-):
-    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0 or ("not copyable" not in run.stdout and
-            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail("PolyBevel activation token copy was not rejected:\n" + run.stdout)
 
 # Exact VertexBevel activation owns its detached baseline and vertex-normal
 # gizmo frame; prepare must not touch any live session field.
@@ -4580,15 +4625,6 @@ for target, old, new, label in (
     if ((o == vertex_bevel_activation_owner and c == record_context and
          t == vertex_bevel_activation_tool) or vertex_bevel_activation_gate(o,c,t)):
         fail(f"VertexBevel activation mutation did not RED: {label}")
-for fixture in (
-    ROOT / "tests/compile_fail/prepared_vertex_bevel_activation_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_vertex_bevel_activation_validated_token_copy.d",
-):
-    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0 or ("not copyable" not in run.stdout and
-            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail("VertexBevel activation token copy was not rejected:\n" + run.stdout)
 
 # Exact VertexExtrude activation detaches the baseline and the two-axis
 # vertex-normal frame while preserving every drag/viewport field.
@@ -4721,15 +4757,6 @@ for target, old, new, label in (
     if ((o == vertex_extrude_activation_owner and c == record_context and
          t == vertex_extrude_activation_tool) or vertex_extrude_activation_gate(o,c,t)):
         fail(f"VertexExtrude activation mutation did not RED: {label}")
-for fixture in (
-    ROOT / "tests/compile_fail/prepared_vertex_extrude_activation_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_vertex_extrude_activation_validated_token_copy.d",
-):
-    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0 or ("not copyable" not in run.stdout and
-            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail("VertexExtrude activation token copy was not rejected:\n" + run.stdout)
 
 edge_extrude_activation_owner = (ROOT /
     "source/prepared_edge_extrude_activation.d").read_text()
@@ -4865,15 +4892,6 @@ for target, old, new, label in (
     if ((o == edge_extrude_activation_owner and c == record_context and
          t == edge_extrude_activation_tool) or edge_extrude_activation_gate(o,c,t)):
         fail(f"EdgeExtrude activation mutation did not RED: {label}")
-for fixture in (
-    ROOT / "tests/compile_fail/prepared_edge_extrude_activation_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_edge_extrude_activation_validated_token_copy.d",
-):
-    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0 or ("not copyable" not in run.stdout and
-            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail("EdgeExtrude activation token copy was not rejected:\n" + run.stdout)
 
 edge_slice_activation_owner = (ROOT /
     "source/prepared_edge_slice_activation.d").read_text()
@@ -4978,15 +4996,6 @@ for target, old, new, label in (
     if ((o == edge_slice_activation_owner and c == record_context and
          t == edge_slice_activation_tool) or edge_slice_activation_gate(o,c,t)):
         fail(f"EdgeSlice activation mutation did not RED: {label}")
-for fixture in (
-    ROOT / "tests/compile_fail/prepared_edge_slice_activation_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_edge_slice_activation_validated_token_copy.d",
-):
-    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0 or ("not copyable" not in run.stdout and
-            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail("EdgeSlice activation token copy was not rejected:\n" + run.stdout)
 
 loop_slice_activation_owner = (ROOT /
     "source/prepared_loop_slice_activation.d").read_text()
@@ -5087,15 +5096,6 @@ for target, old, new, label in (
     if ((o == loop_slice_activation_owner and c == record_context and
          t == loop_slice_activation_tool) or loop_slice_activation_gate(o,c,t)):
         fail(f"LoopSlice activation mutation did not RED: {label}")
-for fixture in (
-    ROOT / "tests/compile_fail/prepared_loop_slice_activation_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_loop_slice_activation_validated_token_copy.d",
-):
-    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0 or ("not copyable" not in run.stdout and
-            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail("LoopSlice activation token copy was not rejected:\n" + run.stdout)
 
 slice_activation_owner = (ROOT / "source/prepared_slice_activation.d").read_text()
 slice_activation_tool = (ROOT / "source/tools/slice/slice_tool.d").read_text()
@@ -5187,15 +5187,6 @@ for target, old, new, label in (
     if ((o == slice_activation_owner and c == record_context and
          t == slice_activation_tool) or slice_activation_gate(o,c,t)):
         fail(f"Slice activation mutation did not RED: {label}")
-for fixture in (
-    ROOT / "tests/compile_fail/prepared_slice_activation_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_slice_activation_validated_token_copy.d",
-):
-    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0 or ("not copyable" not in run.stdout and
-            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail("Slice activation token copy was not rejected:\n" + run.stdout)
 
 tack_activation_owner = (ROOT / "source/prepared_tack_activation.d").read_text()
 tack_activation_tool = (ROOT / "source/tools/edit/tack.d").read_text()
@@ -5288,15 +5279,6 @@ for target, old, new, label in (
     if ((o == tack_activation_owner and c == record_context and
          t == tack_activation_tool) or tack_activation_gate(o,c,t)):
         fail(f"Tack activation mutation did not RED: {label}")
-for fixture in (
-    ROOT / "tests/compile_fail/prepared_tack_activation_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_tack_activation_validated_token_copy.d",
-):
-    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0 or ("not copyable" not in run.stdout and
-            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail("Tack activation token copy was not rejected:\n" + run.stdout)
 
 # CommandWrapper activation is one detached CPU session image. The concrete
 # product roster is closed here and in the owner; ClickPointHandler has no GL
@@ -5356,15 +5338,6 @@ for target, old, new, label in (
          t == command_wrapper_activation_tool) or
             command_wrapper_activation_gate(o, c, t)):
         fail(f"CommandWrapper activation mutation did not RED: {label}")
-for fixture in (
-    ROOT / "tests/compile_fail/prepared_command_wrapper_activation_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_command_wrapper_activation_validated_token_copy.d",
-):
-    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0 or ("not copyable" not in run.stdout and
-            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail("CommandWrapper activation token copy was not rejected:\n" + run.stdout)
 
 bridge_activation_owner = (ROOT / "source/prepared_bridge_activation.d").read_text()
 bridge_activation_tool = (ROOT / "source/tools/edit/bridge_tool.d").read_text()
@@ -5440,15 +5413,6 @@ for target, old, new, label in (
     else: t = t.replace(old, new, 1)
     if bridge_activation_gate(o, c, t, g):
         fail(f"Bridge activation mutation did not RED: {label}")
-for fixture in (
-    ROOT / "tests/compile_fail/prepared_bridge_activation_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_bridge_activation_validated_token_copy.d",
-):
-    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0 or ("not copyable" not in run.stdout and
-            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail("Bridge activation token copy was not rejected:\n" + run.stdout)
 
 mirror_activation_owner = (ROOT / "source/prepared_mirror_activation.d").read_text()
 mirror_activation_tool = (ROOT / "source/tools/alignment/mirror.d").read_text()
@@ -5526,15 +5490,6 @@ for target, old, new, label in (
     else: t = t.replace(old, new, 1)
     if mirror_activation_gate(o, c, t, mesh_gpu):
         fail(f"Mirror activation mutation did not RED: {label}")
-for fixture in (
-    ROOT / "tests/compile_fail/prepared_mirror_activation_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_mirror_activation_validated_token_copy.d",
-):
-    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0 or ("not copyable" not in run.stdout and
-            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail("Mirror activation token copy was not rejected:\n" + run.stdout)
 
 def mirror_deactivate_state_gate(owner, context, tool):
     block = owner[owner.find("struct PreparedMirrorDeactivateToken"):]
@@ -5576,15 +5531,6 @@ for target, old, new, label in (
     else: t = t.replace(old, new, 1)
     if mirror_deactivate_state_gate(o, c, t):
         fail(f"Mirror deactivation state mutation did not RED: {label}")
-for fixture in (
-    ROOT / "tests/compile_fail/prepared_mirror_deactivate_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_mirror_deactivate_validated_token_copy.d",
-):
-    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0 or ("not copyable" not in run.stdout and
-            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail("Mirror deactivation token copy was not rejected:\n" + run.stdout)
 
 def bridge_deactivate_state_gate(owner, context, tool):
     block = owner[owner.find("struct PreparedBridgeDeactivateToken"):]
@@ -5629,15 +5575,6 @@ for target, old, new, label in (
         if pos >= 0: t = t[:pos] + new + t[pos + len(old):]
     if bridge_deactivate_state_gate(o, c, t):
         fail(f"Bridge deactivation state mutation did not RED: {label}")
-for fixture in (
-    ROOT / "tests/compile_fail/prepared_bridge_deactivate_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_bridge_deactivate_validated_token_copy.d",
-):
-    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0 or ("not copyable" not in run.stdout and
-            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail("Bridge deactivation token copy was not rejected:\n" + run.stdout)
 
 def bridge_deactivate_producer_gate(tool, effect):
     start = tool.find("final PreparedDeactivateEffect prepareDeactivate(")
@@ -6156,17 +6093,6 @@ for target, old, new, label in (
     else: t = t.replace(old, new, 1)
     if edge_extend_tool_activation_gate(o, c, t):
         fail(f"EdgeExtend activation mutation did not RED: {label}")
-for fixture in (
-    ROOT / "tests/compile_fail/prepared_edge_extend_tool_activation_pre_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_edge_extend_tool_activation_post_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_edge_extend_tool_activation_validated_pre_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_edge_extend_tool_activation_validated_post_token_copy.d",
-):
-    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0 or ("not copyable" not in run.stdout and
-            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail("EdgeExtend activation token copy was not rejected:\n" + run.stdout)
 
 topology_pen_activation_owner = (
     ROOT / "source/prepared_topology_pen_activation.d").read_text()
@@ -6266,15 +6192,6 @@ for target, old, new, label in (
     else: po = po.replace(old, new, 1)
     if topology_pen_activation_gate(o, c, t, s, co, p, po):
         fail(f"TopologyPen activation mutation did not RED: {label}")
-for fixture in (
-    ROOT / "tests/compile_fail/prepared_topology_pen_activation_token_copy.d",
-    ROOT / "tests/compile_fail/prepared_topology_pen_activation_validated_token_copy.d",
-):
-    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(fixture)], cwd=ROOT,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0 or ("not copyable" not in run.stdout and
-            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail("TopologyPen activation token copy was not rejected:\n" + run.stdout)
 
 # P1.0b.5d.1 infrastructure only: a closed four-kind private-state journal,
 # detached whole-Mesh adoption with exact caller-supplied change flags, and a
@@ -7090,12 +7007,6 @@ for path, aggregate in (("tools/transform/transform.d", "TransformTool"),
     if "PreparedTransformActivationOwner" in body or "prepareTransformActivation" in body:
         fail(f"Transform activation owner reached from production hook: {aggregate}")
 
-transform_copy_fixture = ROOT / "tests/compile_fail/prepared_transform_activation_token_copy.d"
-run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(transform_copy_fixture)],
-    cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-if run.returncode == 0 or ("not copyable" not in run.stdout and
-        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-    fail("Transform activation token copy was not rejected:\n" + run.stdout)
 
 # Wrapper-owned Xfrm activation reset image. This is intentionally only the
 # pre/post value projection: enabled sub-products and prepared history are not
@@ -7320,12 +7231,6 @@ for target, old, new, label in (
     if xfrm_activation_session_gate(owner, context, xfrm, transform):
         fail(f"Xfrm activation session mutation did not RED: {label}")
 
-xfrm_copy_fixture = ROOT / "tests/compile_fail/prepared_xfrm_activation_token_copy.d"
-run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(xfrm_copy_fixture)],
-    cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-if run.returncode == 0 or ("not copyable" not in run.stdout and
-        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-    fail("Xfrm activation token copy was not rejected:\n" + run.stdout)
 
 # Exact Move/Rotate/Scale activation owner infrastructure. Xfrm is excluded:
 # its activation owns subtool wiring and history-run lifecycle beyond this image.
@@ -7482,12 +7387,6 @@ for source, name in ((move_tool, "Move"), (rotate_tool, "Rotate"), (scale_tool, 
             "prepareTransformProductActivation" in body:
         fail(f"Transform product owner reached from production {name} hook")
 
-product_copy_fixture = ROOT / "tests/compile_fail/prepared_transform_product_token_copy.d"
-run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(product_copy_fixture)],
-    cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-if run.returncode == 0 or ("not copyable" not in run.stdout and
-        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-    fail("Transform product activation token copy was not rejected:\n" + run.stdout)
 
 # Exact Move update owner plus dormant Prepared+Legacy producer. The production
 # update root itself remains Legacy until P1.0c.
@@ -7604,12 +7503,6 @@ for old, new, label in (
     if move_update_producer_gate(mutant):
         fail(f"Move update producer mutation did not RED: {label}")
 
-move_update_copy_fixture = ROOT / "tests/compile_fail/prepared_move_update_token_copy.d"
-run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(move_update_copy_fixture)],
-    cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-if run.returncode == 0 or ("not copyable" not in run.stdout and
-        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-    fail("Move update token copy was not rejected:\n" + run.stdout)
 
 # Exact Rotate/Scale update owners. These are the first update roots whose
 # detached effect jointly owns mesh delivery, optional refire history and two
@@ -7651,40 +7544,6 @@ def rs_update_gate(owner, context, tool_source, stem, cls):
         not any(x in update_body for x in (
             f"Prepared{stem}UpdateOwner", f"prepare{stem}Update"))
 
-for stem, cls, owner_path, tool_source in (
-    ("Rotate", "RotateTool", "source/prepared_rotate_update.d", rotate_tool),
-    ("Scale", "ScaleTool", "source/prepared_scale_update.d", scale_tool),
-):
-    rs_owner = (ROOT / owner_path).read_text()
-    if not rs_update_gate(rs_owner, record_context, tool_source, stem, cls):
-        fail(f"{stem} update owner contract drift")
-    for target, old, new, label in (
-        ("owner", f"target.classinfo !is {cls}.classinfo", "false", "broaden exact class"),
-        ("owner", "mesh_ !is &layer_.meshRef()", "false", "drop mesh identity"),
-        ("owner", "target_.preparedWrapperForUpdate() !is wrapper_", "false", "drop wrapper identity"),
-        ("owner", "target_.preparedEditModeForUpdate() != mode_", "false", "drop mode identity"),
-        ("owner", "prepared_.generation != generation_", "false", "drop prepared generation"),
-        ("owner", "validatedToken_.generation != generation_", "false", "drop validated generation"),
-        ("owner", "target_.installPreparedUpdate(image_); consume();", "consume();", "drop fixed install"),
-        ("context", f"e.{stem.lower()}Update.validate();", "true;", "drop context validate"),
-        ("context", f"e.{stem.lower()}Update.install();", "", "drop context install"),
-        ("context", f"e.{stem.lower()}Update.abort();", "", "drop context abort"),
-        ("tool", "context.markHistoryInstall()", "true", "drop history marker"),
-        ("tool", "context.prepareStampedMeshImage(layer, owner.candidate()", "context.prepareStampedMeshImageMissing(layer, owner.candidate()", "drop mesh enlist"),
-        ("tool", f"context.prepare{stem}Update(owner)", "true", "drop owner enlist"),
-    ):
-        mo, co, ts = rs_owner, record_context, tool_source
-        if target == "owner": mo = mo.replace(old, new, 1)
-        elif target == "context": co = co.replace(old, new, 1)
-        else: ts = ts.replace(old, new, 1)
-        if rs_update_gate(mo, co, ts, stem, cls):
-            fail(f"{stem} update mutation did not RED: {label}")
-    copy_fixture = ROOT / f"tests/compile_fail/prepared_{stem.lower()}_update_token_copy.d"
-    run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(copy_fixture)],
-        cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if run.returncode == 0 or ("not copyable" not in run.stdout and
-            not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail(f"{stem} update token copy was not rejected:\n" + run.stdout)
 
 # TopologyPen drop jointly closes an optional live-move history carrier and
 # restores two SnapStage planes (guide registry + startup enable push).
@@ -7755,12 +7614,6 @@ for target, old, new, label in (
     else: s = s.replace(old, new, 1)
     if topopen_deact_gate(o, c, t, s):
         fail(f"TopologyPen deactivate mutation did not RED: {label}")
-topopen_copy = ROOT / "tests/compile_fail/prepared_topology_pen_deactivate_token_copy.d"
-run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(topopen_copy)], cwd=ROOT,
-    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-if run.returncode == 0 or ("not copyable" not in run.stdout and
-        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-        fail("TopologyPen deactivate token copy was not rejected:\n" + run.stdout)
 
 # Xfrm update tail is the fixed final phase after the typed T/R/S owners:
 # subject cache -> shared pose -> wrapper GPU projection.
@@ -7833,12 +7686,6 @@ for target, old, new, label in (
         h = before + new + after if found else h
     if xfrm_update_tail_gate(o, c, x, h):
         fail(f"Xfrm update tail mutation did not RED: {label}")
-xfrm_tail_copy = ROOT / "tests/compile_fail/prepared_xfrm_update_tail_token_copy.d"
-run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(xfrm_tail_copy)], cwd=ROOT,
-    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-if run.returncode == 0 or ("not copyable" not in run.stdout and
-        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-    fail("Xfrm update tail token copy was not rejected:\n" + run.stdout)
 
 xfrm_close_owner = (ROOT / "source/prepared_xfrm_update_edit_close.d").read_text()
 xfrm_transform_base = (ROOT / "source/tools/transform/transform.d").read_text()
@@ -7919,12 +7766,6 @@ for target, old, new, label in (
         i = before + new + after if found else i
     if xfrm_update_edit_close_gate(o, c, x, b, i):
         fail(f"Xfrm update edit-close mutation did not RED: {label}")
-xfrm_close_copy = ROOT / "tests/compile_fail/prepared_xfrm_update_edit_close_token_copy.d"
-run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(xfrm_close_copy)], cwd=ROOT,
-    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-if run.returncode == 0 or ("not copyable" not in run.stdout and
-        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-    fail("Xfrm update edit-close token copy was not rejected:\n" + run.stdout)
 
 xfrm_slot_owner = (ROOT / "source/prepared_xfrm_slot_poll.d").read_text()
 def xfrm_slot_poll_gate(owner, context, xfrm):
@@ -7968,12 +7809,6 @@ for target, old, new, label in (
     else: x = x.replace(old, new, 1)
     if xfrm_slot_poll_gate(o, c, x):
         fail(f"Xfrm slot-poll mutation did not RED: {label}")
-xfrm_slot_copy = ROOT / "tests/compile_fail/prepared_xfrm_slot_poll_token_copy.d"
-run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(xfrm_slot_copy)], cwd=ROOT,
-    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-if run.returncode == 0 or ("not copyable" not in run.stdout and
-        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-    fail("Xfrm slot-poll token copy was not rejected:\n" + run.stdout)
 
 xfrm_boundary_owner = (ROOT / "source/prepared_xfrm_update_boundary.d").read_text()
 def xfrm_update_boundary_gate(owner, context, xfrm, acen):
@@ -8054,12 +7889,6 @@ for target, old, new, label in (
         if pos >= 0: a = a[:pos] + new + a[pos + len(old):]
     if xfrm_update_boundary_gate(o, c, x, a):
         fail(f"Xfrm update boundary mutation did not RED: {label}")
-xfrm_boundary_copy = ROOT / "tests/compile_fail/prepared_xfrm_update_boundary_token_copy.d"
-run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(xfrm_boundary_copy)], cwd=ROOT,
-    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-if run.returncode == 0 or ("not copyable" not in run.stdout and
-        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-    fail("Xfrm update boundary token copy was not rejected:\n" + run.stdout)
 
 xfrm_move_regrade_owner = (ROOT / "source/prepared_xfrm_move_regrade.d").read_text()
 def xfrm_move_regrade_gate(owner, context, xfrm):
@@ -8117,12 +7946,6 @@ for target, old, new, label in (
         x = before + new + after if found else x
     if xfrm_move_regrade_gate(o, c, x):
         fail(f"Xfrm Move re-grade mutation did not RED: {label}")
-xfrm_move_regrade_copy = ROOT / "tests/compile_fail/prepared_xfrm_move_regrade_token_copy.d"
-run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(xfrm_move_regrade_copy)], cwd=ROOT,
-    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-if run.returncode == 0 or ("not copyable" not in run.stdout and
-        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-    fail("Xfrm Move re-grade token copy was not rejected:\n" + run.stdout)
 
 def complete_xfrm_update_root_gate(xfrm):
     signature = "final PreparedXfrmUpdateEffect prepareUpdate(ref VectorStack vts,"
@@ -8370,12 +8193,6 @@ for old, new, label in (
     if inherited_noop_producer_gate(mutant):
         fail(f"Inherited base-noop producer mutation did not RED: {label}")
 
-inherited_noop_copy_fixture = ROOT / "tests/compile_fail/prepared_inherited_noop_token_copy.d"
-run = subprocess.run(["dmd", "-c", *DMD_FLAGS, str(inherited_noop_copy_fixture)],
-    cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-if run.returncode == 0 or ("not copyable" not in run.stdout and
-        not ("copy constructor" in run.stdout and "disabled" in run.stdout)):
-    fail("Inherited base-noop token copy was not rejected:\n" + run.stdout)
 
 # P1.0c door capability grows off Tool's universal virtual surface. This first
 # admitted tranche is exact so a class cannot silently inherit the legacy door
@@ -8698,4 +8515,12 @@ for target, old, new, label in (
     if p10c_door_capability_gate(c, sources, xfrm):
         fail(f"P1.0c door capability mutation did not RED: {label}")
 
-print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, 2 shared-funnel callers, {len(fixtures) + 6} compile-fail fixtures)")
+# The old line read "{len(fixtures) + 6} compile-fail fixtures" and said 13 --
+# `fixtures` was bound once, to the seven `prepared_effect_*` files, and the
+# `+ 6` was a literal nobody had recomputed since the copy set grew to 66. It
+# reported 13 while the run compiled 72. A count in a PASS line has to come
+# from the thing counted, or it is a number that cannot move.
+print(f"prepared protocol census PASS ({len(MANIFEST)} symbols, "
+      f"2 shared-funnel callers, {len(token_declarations)} prepared tokens "
+      f"over {len({m for m, _ in token_declarations})} modules cross-checked "
+      f"against {TOKEN_CENSUS_D.relative_to(ROOT)})")
