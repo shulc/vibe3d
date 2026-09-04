@@ -125,7 +125,10 @@ mixin template DocumentSelection() {
     // reads (`selected`, `selSeat`, `deselected_`) lives on the layers and in
     // this mixin, where no cheap structural key exists. Every mutator below
     // calls `invalidatePrimaryMemo()`, and each of those calls has its own
-    // reddening cell in `tests/unit/primary_memo_selection_test.d`.
+    // reddening cell: `tests/unit/primary_memo_select_test.d` (`selectItem`,
+    // `setPrimary`), `..._restore_test.d` (`restoreItemSelection`,
+    // `resetSelectionState`) and `..._latch_test.d` (`latchEditTarget`,
+    // `setActive`, and the derivation-rate pin).
     //
     // ~~A front-seat stamp (`primaryMemoSeatFront_`) was a third term.~~
     // DROPPED (review): `selSeatFront_` moves in exactly two functions,
@@ -146,7 +149,8 @@ mixin template DocumentSelection() {
     /// leaves the array block and its length alone, which is the only shape
     /// `primary`'s own key cannot see (see the block comment above). Every
     /// append / truncation / reconcatenation is covered without this call;
-    /// the 21 existing call sites are a belt and are cheap to keep.
+    /// the 20 existing call sites (one fewer than the 21 array writes — the
+    /// reorder's two splices share a note) are a belt and are cheap to keep.
     void noteLayerListChanged() nothrow @nogc {
         invalidatePrimaryMemo();
     }
