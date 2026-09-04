@@ -8904,9 +8904,16 @@ struct Mesh {
         // rebuilt `edges`, each value following its edge's endpoint KEY. This
         // runs BEFORE the commit below on purpose: `commitChange`'s Hide
         // derive writes the Select bit of hidden edges, and it must see the
-        // carried marks, not the pre-carry ones. It is also why the paragraph
-        // above about the hazard "`edgeMarks` is NOT re-indexed" is now a
-        // historical note rather than a live warning.
+        // carried marks, not the pre-carry ones.
+        //
+        // THE PARAGRAPH ABOVE ABOUT "`edgeMarks` IS NOT RE-INDEXED" IS STILL
+        // LIVE for every caller that does not ask. `leaveIndexed` is the
+        // default and the arm 180 of the 182 call sites take, so on those
+        // paths the hazard reads exactly as it did — the caller's own
+        // `clearEdgeSelectionResize()` is still what stands between a stale
+        // mark and a live index. Turning the default over is a per-op
+        // behaviour decision with eight measured witnesses; see
+        // `mesh_planes.EdgePlaneCarry` and task 4190.
         if (edgePlanes == EdgePlaneCarry.byKey) applyEdgePlanes(this, edgeCarry);
         if (inserted) {
             // The same three stamps + commit `addEdge` does, ONCE instead of
