@@ -832,6 +832,28 @@ struct MeshKey(Terms...) {
         return true;
     }
 
+    /// The same subset question asked of ANOTHER key of this type instead of
+    /// of a live mesh — for a consumer that must sample its terms exactly ONCE
+    /// per call and then both COMPARE and STAMP that one sample.
+    ///
+    /// The subpatch preview is the reason it exists and the reason it is not a
+    /// convenience: its epoch term is read from the bus, and a rebuild can
+    /// take long enough for a publisher to fire during it. Sampling at the
+    /// compare and AGAIN at the stamp would write the later epoch, so a change
+    /// that landed mid-rebuild would be stamped in as already serviced — the
+    /// unsafe direction. One sample, compared here and assigned afterwards,
+    /// leaves the stamp BEHIND the live epoch and the next call rebuilds
+    /// again, which is the safe one.
+    bool agreesOn(Sub...)(ref const typeof(this) other) const {
+        static assert(Sub.length >= 1,
+            "agreesOn with no term compares only the address — say so directly");
+        if (addr != other.addr) return false;
+        static foreach (T; Sub) {
+            if (this.tupleof[slotOf!T] != other.tupleof[slotOf!T]) return false;
+        }
+        return true;
+    }
+
     void stamp(ref const Mesh m) {
         addr = cast(size_t)&m;
         static foreach (T; Terms) {

@@ -21,6 +21,7 @@ module subpatch_preview;
 
 import mesh;
 import math;
+import mesh_dirty;   // MeshTermGeomEpoch (plain, per the note above)
 import subpatch_osd;
 import subpatch_worker;
 
@@ -34,69 +35,74 @@ struct SubpatchPreview {
     Mesh          mesh;
     SubpatchTrace trace;
     bool          active;
-    /// Source mesh ADDRESS this preview was last built against (layers Stage
-    /// 2). Two layers' cages can share an equal (mutationVersion,
-    /// topologyVersion) — e.g. a layer.select swaps the preview source with no
-    /// intervening mutation — so the address is part of the staleness key.
-    /// With one layer this is constant ⇒ invisible. `size_t.max` forces a
-    /// rebuild on first call.
-    size_t        sourceMeshAddr        = size_t.max;
-    /// TASK 1906 STAGE 2d (plan §3.4 row 10) — the freshness half of the
-    /// staleness key is TWO terms, `sourceEpoch` here and `sourceVersion`
-    /// below, and the early-out needs BOTH to match. Together with
-    /// `sourceMeshAddr` the epoch half is a `mesh_dirty.MeshDirtyKey` in two
-    /// fields; the address stays a field of its own because the position-only
-    /// fast path below reads it separately.
+    /// THE STALENESS KEY, ONE VALUE (task 4060). It was four hand-carried
+    /// fields — `sourceMeshAddr`, `sourceEpoch`, `sourceVersion`,
+    /// `sourceTopologyVersion` — stamped and compared term by term at six
+    /// sites. The terms are unchanged and so is every comparison; what moved
+    /// is that each one is now DECLARED once, with its argument at the term
+    /// (`mesh.MeshTermMutation` / `MeshTermTopology`,
+    /// `mesh_dirty.MeshTermGeomEpoch`) instead of restated here.
     ///
-    /// THE EPOCH IS `mesh_dirty.g_geomEpochs` — `Position | Points |
-    /// Polygons`, the same watcher the surface BVH and the cage VBO read, and
-    /// NOT an any-class one. What it buys is the case `mutationVersion` cannot
-    /// see: an interactive gizmo Move/Rotate/Scale updates `source.vertices`
-    /// WITHOUT bumping `source.mutationVersion` — both on drag AND on commit
-    /// (see the warning above `deactivate()`) — so the pre-0401 (address,
-    /// mutationVersion, depth) key was unchanged even though the cage had
-    /// moved. Task 0401 patched that with a `positionsDirty` flag passed in by
-    /// `app.d`, which put the consumer's invalidation decision at the CALL
-    /// SITE and left the IPR caller to remember it separately; the epoch
-    /// carries the same information at the lazy recompute, where the artifact
-    /// is read, and that parameter is gone with it.
+    /// WHY THESE THREE TERMS, since this is the cache the law was measured on
+    /// (task 1906 stage 2d, plan §3.4 row 10):
     ///
-    /// WHY THE COUNTER STAYED RATHER THAN BEING REPLACED — this is the review
-    /// finding the stage was landed on, and the reasoning it replaces
-    /// ("`commitChange` bumps `mutationVersion` for every class, so an
-    /// any-class epoch is not a widening") is FALSE. Not every class bump goes
-    /// through `commitChange`: `Mesh.noteSelectionChange` — the funnel under
-    /// every marks setter — publishes `Marks` and deliberately bumps NO
-    /// version, and `noteChange(Visibility)` and `app.d`'s
-    /// `noteChange(MeshChangeAll)` are version-silent the same way. All three
-    /// reach a per-mesh epoch through `app.d`'s per-layer feed. An any-class
-    /// epoch therefore invalidates this cache on a plain SELECTION CLICK,
-    /// which the counter never did: MEASURED at six `selectVertex` calls with
-    /// a live preview — cage `mutationVersion` 13 -> 13, preview work 1 -> 7,
-    /// i.e. the OSD stencil evaluate plus the VBO fan-out on every frame in
-    /// which the user picks something. With the split key that delta is 0
-    /// (`tests/unit/subpatch_osd_test.d`, the "version-silent selection
-    /// clicks" block).
+    ///  * ADDRESS — always present in a `MeshKey`. Two layers' cages can share
+    ///    an equal (epoch, mutationVersion, topologyVersion); a `layer.select`
+    ///    swaps the preview source with no intervening mutation. With one
+    ///    layer this term is constant ⇒ invisible.
+    ///  * GEOM EPOCH (`g_geomEpochs`, i.e. `Position | Points | Polygons` —
+    ///    the same watcher the surface BVH and the cage VBO read, and NOT an
+    ///    any-class one). It carries what the counter cannot: an interactive
+    ///    gizmo Move/Rotate/Scale updates `source.vertices` WITHOUT bumping
+    ///    `source.mutationVersion`, on drag AND on commit, so the pre-0401
+    ///    (address, mutationVersion, depth) key was unchanged even though the
+    ///    cage had moved. Task 0401 patched that with a `positionsDirty` flag
+    ///    passed in by `app.d`, which put the consumer's invalidation decision
+    ///    at the CALL SITE; the epoch carries the same information at the lazy
+    ///    recompute, where the artifact is read, and that parameter is gone.
+    ///  * MUTATION VERSION — every class `g_geomEpochs` deliberately drops.
+    ///    `Tab`/`setSubpatch` write `Marks`, `setCreaseWeight` writes
+    ///    `Material`; neither is in the geometry mask, and both MUST rebuild
+    ///    the preview (a missed crease rebuild presents as "the written weight
+    ///    does nothing" — task 1062 §3). Both go through `commitChange`, so
+    ///    both move the counter.
     ///
-    /// `ulong.max` is never a real epoch, so a fresh preview always rebuilds.
-    ulong         sourceEpoch           = ulong.max;
-    /// The SECOND freshness term, and the one that carries every class
-    /// `g_geomEpochs` deliberately drops. `Tab`/`setSubpatch` write `Marks`,
-    /// `setCreaseWeight` writes `Material`; neither is in the geometry mask,
-    /// and both MUST rebuild the preview (a missed crease rebuild presents as
-    /// "the written weight does nothing" — task 1062 §3). Both go through
-    /// `commitChange`, so both move `mutationVersion`, and that is exactly the
-    /// half of the old key worth keeping. The two terms are complementary, not
-    /// redundant: neither alone is the invalidation set this cache needs.
+    ///    AN ANY-CLASS EPOCH IS NOT A SUBSTITUTE and the reasoning that says
+    ///    it is ("`commitChange` bumps `mutationVersion` for every class") is
+    ///    FALSE: `Mesh.noteSelectionChange` publishes `Marks` and bumps NO
+    ///    version, and `noteChange(Visibility)` / `app.d`'s
+    ///    `noteChange(MeshChangeAll)` are version-silent the same way. All
+    ///    three reach a per-mesh epoch, so an any-class watcher would
+    ///    invalidate on a plain SELECTION CLICK, which the counter never did:
+    ///    MEASURED at six `selectVertex` calls with a live preview — cage
+    ///    `mutationVersion` 13 -> 13, preview work 1 -> 7, i.e. the OSD
+    ///    stencil evaluate plus the VBO fan-out on every frame in which the
+    ///    user picks something. With the split key that delta is 0
+    ///    (`tests/unit/subpatch_osd_test.d`, "version-silent selection
+    ///    clicks"). A term can only ever ADD rebuilds, never remove one, so
+    ///    the 0401 guarantee is unaffected by its presence.
+    ///  * TOPOLOGY VERSION — and this one is NOT a freshness signal, which is
+    ///    why it is read through `agreesOn!MeshTermTopology` and not as part
+    ///    of the freshness early-out. It is the INDEX-SPACE IDENTITY of the
+    ///    stencil table already built: "is the limit surface still laid out
+    ///    for this source topology, so new positions can be scattered into
+    ///    it". A change class answers "something moved"; only an identity
+    ///    answers "the layout is the same one".
     ///
-    /// A term can only ever ADD rebuilds, never remove one, so the 0401
-    /// guarantee is unaffected by its presence.
-    ulong         sourceVersion         = ulong.max;
-    /// Last source.topologyVersion we built against. While
-    /// `source.topologyVersion` is unchanged but mutationVersion
-    /// bumped (move/rotate/scale drag), we skip the full rebuild and
-    /// re-evaluate stencil positions via `osdAccel.refresh`.
-    ulong         sourceTopologyVersion = ulong.max;
+    /// Every term defaults to `ulong.max` and the address to `size_t.max`, so
+    /// a fresh preview always rebuilds.
+    MeshKey!(MeshTermGeomEpoch, MeshTermMutation, MeshTermTopology) sourceKey;
+
+    /// The layout term, under the name `app.d` reads it by. Read-only: the
+    /// key is the storage. Kept as a NAME rather than folded into
+    /// `sourceKey.topoVer` at the call site because `app.d`'s
+    /// `gpuUploadedPreviewTopVersion` compare is a recorded version poll, and
+    /// `version_poll_census_test` finds it by the counter named ON the compare
+    /// line — spell it `.topoVer` there and a live gate stops seeing a live
+    /// poll.
+    @property ulong sourceTopologyVersion() const nothrow @nogc {
+        return sourceKey.topoVer;
+    }
     int           depth                 = -1;
 
     /// How many times this preview has BUILT a subdivided surface for the cage
@@ -434,10 +440,7 @@ struct SubpatchPreview {
         // circuits for the frames the build is running, instead of trying to
         // dispatch again on every one of them.
         depth                 = d;
-        sourceMeshAddr        = cast(size_t)&source;
-        sourceEpoch           = stampSourceEpoch(source);
-        sourceVersion         = source.mutationVersion;
-        sourceTopologyVersion = source.topologyVersion;
+        sourceKey.stamp(source);
 
         osdAccel.joinInFlightHook = &this.joinInFlight;
         ++topologyBuilds;      // task 1620 — see the field's doc comment
@@ -534,10 +537,7 @@ struct SubpatchPreview {
         ++mesh.mutationVersion;
         active                = true;
         depth                 = d;
-        sourceMeshAddr        = cast(size_t)&source;
-        sourceEpoch           = stampSourceEpoch(source);
-        sourceVersion         = source.mutationVersion;
-        sourceTopologyVersion = source.topologyVersion;
+        sourceKey.stamp(source);
         reusablePreviewKey    = computeReusablePreviewKey(source, d);
         reusablePreviewReady  = true;
         buildCageVertPreview(source);
@@ -595,7 +595,7 @@ struct SubpatchPreview {
     ///
     /// A scene reset replaces the source mesh IN PLACE (same heap address,
     /// fresh contents), so a still-`active` preview whose cached
-    /// (sourceMeshAddr, sourceEpoch, sourceVersion, depth) key happens to match the
+    /// `sourceKey` + `depth` happens to match the
     /// replacement would be left live by `rebuildIfStale`'s early-out — a
     /// cross-reset state leak. While the preview is live,
     /// `GpuMesh.suppressCageUpload` turns a tool-side cage upload into a bare
@@ -607,10 +607,7 @@ struct SubpatchPreview {
     /// non-subpatch mesh), so no reset can carry the preview into a fresh scene.
     void deactivate() {
         active                = false;
-        sourceMeshAddr        = size_t.max;
-        sourceEpoch           = ulong.max;
-        sourceVersion         = ulong.max;
-        sourceTopologyVersion = ulong.max;
+        sourceKey.invalidate();
         depth                 = -1;
         reusablePreviewReady  = false;
         reusablePreviewKey    = 0;
@@ -685,65 +682,53 @@ struct SubpatchPreview {
     /// pieces that didn't make it onto GPU. Caller (app.d main loop)
     /// supplies gpu.{face,edge,vert}Vbo + matching counts.
     ///
-    /// The epoch to stamp for `source`, read from the change bus's per-mesh
-    /// GEOMETRY table (task 1906 stage 2d). One place, because the three
-    /// rebuild entry points (`rebuild`, `dispatchBuild`, `pumpAsyncBuild`)
-    /// each stamp at their own moment and one of them silently reading a
-    /// different table than the early-out does is the whole failure mode of a
-    /// split key. The `mutationVersion` half is stamped alongside it at every
-    /// one of those sites — see `sourceVersion`.
-    private static ulong stampSourceEpoch(ref const Mesh source) nothrow @nogc {
-        import mesh_dirty : g_geomEpochs;
-        return g_geomEpochs.epochFor(cast(size_t)&source);
-    }
-
     /// TASK 1906 STAGE 2d — there is no `positionsDirty` parameter any more.
-    /// The staleness key's freshness half is two terms read here at the lazy
-    /// recompute: `mesh_dirty.g_geomEpochs` for this mesh's address, and
-    /// `source.mutationVersion`. See `sourceEpoch` / `sourceVersion` for why
-    /// it takes both and why an any-class epoch alone is a widening rather
-    /// than parity. A caller with no bus in scope (a unit test over a scratch
-    /// cage no `Document` owns, and therefore no delivery at all) drives the
-    /// listener body by hand:
+    /// The freshness half of the key is two terms read here at the lazy
+    /// recompute — the geometry epoch and `mutationVersion` — and `sourceKey`
+    /// says which terms and why. A caller with no bus in scope (a unit test
+    /// over a scratch cage no `Document` owns, and therefore no delivery at
+    /// all) drives the listener body by hand:
     /// `mesh_dirty.noteMeshChange(cast(size_t)&cage, flags)`.
     ///
-    /// The epoch is sampled ONCE, here, and that same sample is what the
-    /// rebuild stamps. A publisher that fires DURING the rebuild therefore
-    /// leaves the stamp behind the live epoch and the next call rebuilds
-    /// again — over-invalidation, which is the safe direction.
+    /// EVERY TERM IS SAMPLED ONCE, into `cur`, and that same sample is what
+    /// the rebuild stamps. This is why the two early-outs below ask
+    /// `agreesOn` (key against key) rather than `matches` (key against the
+    /// live mesh): a publisher that fires DURING the rebuild must leave the
+    /// stamp BEHIND the live epoch, so the next call rebuilds again —
+    /// over-invalidation, the safe direction. Re-reading the bus at the stamp
+    /// would write the later epoch and swallow that change.
     void rebuildIfStale(ref const Mesh source, int d,
                          const(GpuFanOutTargets)* targets = null) {
         lastRefreshFannedOut    = false;
         lastRefreshSkipNonFace  = false;
-        const srcAddr = cast(size_t)&source;
-        import mesh_dirty : g_geomEpochs;
-        const ulong srcEpoch = g_geomEpochs.epochFor(srcAddr);
-        // recorded remainder (1906 §3.6): `mutationVersion` owns the THIRD term
-        // of this early-out and is REQUIRED beside the epoch, not belt-and-
-        // braces. `GeomEpochMask` deliberately drops `Marks` (a Tab toggle) and
-        // `Material` (a crease weight); the counter carries both. The epoch
-        // carries what the counter cannot — the version-silent gizmo `Position`
-        // of task 0401. Dropping either term is a live bug, and each has its
-        // own witness (see `sourceEpoch` / `sourceVersion`).
-        if (sourceMeshAddr == srcAddr
-            && sourceEpoch == srcEpoch
-            && sourceVersion == source.mutationVersion && depth == d)
+        typeof(sourceKey) cur;
+        cur.stamp(source);
+        // The freshness early-out: address + geometry epoch + `mutationVersion`
+        // + depth. All three terms are REQUIRED, none is belt-and-braces, and
+        // the argument for each now lives at the term it names (see
+        // `sourceKey`): the epoch carries the version-silent gizmo `Position`
+        // of task 0401, and the counter carries the `Marks` / `Material`
+        // classes `GeomEpochMask` drops. `topoVer` is stamped in `cur` but is
+        // deliberately NOT part of THIS question — see the fast path below.
+        if (sourceKey.agreesOn!(MeshTermGeomEpoch, MeshTermMutation)(cur)
+            && depth == d)
             return;
         // Position-only fast path: SAME source mesh, cage topology + depth
         // unchanged → ask OSD's stencil table for new limit positions. A
         // different source address (layer switch) must NOT take this path — the
-        // cached stencil table belongs to the prior layer's cage.
+        // cached stencil table belongs to the prior layer's cage, and the
+        // address term inside `agreesOn` is what refuses it.
         //
-        // recorded remainder (1906 §3.6): `topologyVersion` owns the
-        // `sourceTopologyVersion` term below, and it is NOT a freshness signal.
-        // It is the INDEX-SPACE IDENTITY of the stencil table already built —
-        // "is the limit surface still laid out for this source topology, so new
-        // positions can be scattered into it". A change class answers "something
-        // moved"; only an identity answers "the layout is the same one".
+        // `topologyVersion` is NOT a freshness signal here. It is the
+        // INDEX-SPACE IDENTITY of the stencil table already built — "is the
+        // limit surface still laid out for this source topology, so new
+        // positions can be scattered into it". A change class answers
+        // "something moved"; only an identity answers "the layout is the same
+        // one". That is why it is a SUBSET compare and not a fourth term of
+        // the early-out above.
         if (active
-            && sourceMeshAddr == srcAddr
+            && sourceKey.agreesOn!MeshTermTopology(cur)
             && depth == d
-            && sourceTopologyVersion == source.topologyVersion
             && osdAccel.valid)
         {
             bool didFace  = false;
@@ -789,9 +774,7 @@ struct SubpatchPreview {
                 osdAccel.refresh(source, mesh);
             }
             ++mesh.mutationVersion;
-            sourceMeshAddr = srcAddr;
-            sourceEpoch    = srcEpoch;
-            sourceVersion  = source.mutationVersion;
+            sourceKey = cur;
             return;
         }
         if (!active && d > 0 && source.hasAnySubpatch()
@@ -800,10 +783,7 @@ struct SubpatchPreview {
             && mesh.vertices.length != 0)
         {
             depth                 = d;
-            sourceMeshAddr        = srcAddr;
-            sourceEpoch           = srcEpoch;
-            sourceVersion         = source.mutationVersion;
-            sourceTopologyVersion = source.topologyVersion;
+            sourceKey             = cur;
             active                = true;
             ++mesh.mutationVersion;
             return;
@@ -856,10 +836,7 @@ struct SubpatchPreview {
 
     void rebuild(ref const Mesh source, int d) {
         depth                 = d;
-        sourceMeshAddr        = cast(size_t)&source;
-        sourceEpoch           = stampSourceEpoch(source);
-        sourceVersion         = source.mutationVersion;
-        sourceTopologyVersion = source.topologyVersion;
+        sourceKey.stamp(source);
         if (d <= 0) {
             cageVertPreview.length = 0;
             osdAccel.clear();

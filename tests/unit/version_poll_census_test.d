@@ -107,12 +107,20 @@ import std.string    : splitLines, strip, toLower;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
-/// The counters §3.6 tracks. `sourceVersion` / `sourceTopologyVersion` are
-/// `SubpatchPreview`'s two freshness terms (row 10) — they are copies of the
-/// mesh counters and belong to the same census.
+/// The counters §3.6 tracks. `sourceTopologyVersion` is `SubpatchPreview`'s
+/// layout term (row 10) reached through its read-only accessor — a copy of a
+/// mesh counter, and it belongs to the same census because `app.d` compares it.
+///
+/// `sourceVersion` WAS in this list and is not any more (task 4060). It named
+/// a field that no longer exists: the preview's freshness terms are terms of a
+/// `MeshKey` now, and nothing in `source/**` spells that identifier outside a
+/// comment, which the scanner blanks. A pattern that can only ever match zero
+/// lines is not a check — it is a row that reads "unchanged" for the one
+/// reason that cannot be distinguished from working. Removing it moved the
+/// scanner's finding count by 0 (measured: 24 before and after).
 private immutable string[] kCounters = [
     "mutationVersion", "structVersion", "topologyVersion", "marksVersion",
-    "uploadVersion", "sourceVersion", "sourceTopologyVersion",
+    "uploadVersion", "sourceTopologyVersion",
 ];
 
 /// The marker a compare must carry, matched case-insensitively so both the
@@ -620,16 +628,21 @@ private static immutable LedgerRow[] kRemainder = [
     LedgerRow("Mesh.vertexAdjacencyCSR", 1, "row 12"),
     LedgerRow("Mesh.loopsValid", 1, "row 13, first half"),
     LedgerRow("Mesh.edgeMapUsable", 1, "row 13, second half"),
-    LedgerRow("SubpatchPreview.rebuildIfStale", 2,
-        "row 10's two terms — `sourceVersion` against the source's "
-      ~ "`mutationVersion`, and `sourceTopologyVersion` against its "
-      ~ "`topologyVersion`. PROVENANCE, carried across from the per-FILE "
-      ~ "table this row replaced: task 4066 moved `SubpatchPreview` out of "
-      ~ "`source/mesh.d` into its own module and these two terms went with "
-      ~ "it, unchanged. Nothing was gained or lost — the census total is 26 "
-      ~ "either side of that move. The path-keyed table had to say so in two "
-      ~ "edits (the mesh.d row 8 → 6, plus a new row of 2 for the new "
-      ~ "module); this row needed none, which is what the key change bought"),
+    // TASK 4060 — `SubpatchPreview.rebuildIfStale`, 2 compares, IS GONE, and
+    // this is the "FEWER than recorded" direction the message below calls the
+    // one this task exists to move in. Row 10's two terms were four
+    // hand-carried fields compared term by term in that function; they are now
+    // the terms of one `MeshKey!(MeshTermGeomEpoch, MeshTermMutation,
+    // MeshTermTopology)` and the two compares are `agreesOn` calls that name
+    // no counter. The arguments did not evaporate — they moved to the term
+    // declarations, which are the three rows above. Total 26 -> 24.
+    //
+    // WHAT DID NOT MOVE, deliberately: `app.d`'s
+    // `gpuUploadedPreviewTopVersion == subpatchPreview.sourceTopologyVersion`
+    // is still a recorded poll under `main` below, and `SubpatchPreview` keeps
+    // a read-only `sourceTopologyVersion` accessor so that compare still names
+    // the counter on its own line. Spelled `.sourceKey.topoVer` there, a live
+    // gate would silently stop seeing a live poll.
     LedgerRow("finalize", 1,
         "the fast-path structVersion backstop (task 1903 L0.P1) — an ASSERT "
       ~ "that the replay wrote no edges, not a freshness poll: nothing is "

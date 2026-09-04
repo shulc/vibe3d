@@ -189,6 +189,35 @@ struct MeshDirtyKey {
     void clear() nothrow @nogc { addr = 0; epoch = ulong.max; }
 }
 
+/// The GEOMETRY-EPOCH term of a `mesh.MeshKey` — `g_geomEpochs` for the key's
+/// own mesh address. It is how a cache spells "position, through the bus"
+/// inside the same key that carries its counter terms, instead of carrying an
+/// epoch beside a `MeshDirtyKey` by hand (task 4060).
+///
+/// USE IT whenever the cached value depends on where the vertices ARE. It is
+/// the term `mutationVersion` cannot replace: an interactive gizmo transform
+/// is version-silent at drag AND at commit, so a counter-only key answers
+/// "fresh" over a cage that has moved (task 0401 lost three caches to exactly
+/// that, and 1906 found a fourth). It is equally the term that cannot replace
+/// the counter: `GeomEpochMask` drops `Marks` and `Material`, so a Tab toggle
+/// and a crease-weight write move no epoch here. A position-dependent cache
+/// declares BOTH; see this module's header for the full recipe.
+///
+/// `read` and `same` are TEMPLATED on the mesh type, deliberately: it keeps
+/// this module free of `import mesh`, which imports this one back. The key's
+/// address term and this term's subject are the same `&m`, by construction.
+struct MeshTermGeomEpoch {
+    enum string field = "geomEpoch";
+
+    static ulong read(M)(ref const M m) nothrow @nogc {
+        return g_geomEpochs.epochFor(cast(size_t)&m);
+    }
+    static bool same(M)(ulong v, ref const M m) nothrow @nogc {
+        return v == g_geomEpochs.epochFor(cast(size_t)&m);
+    }
+}
+
+
 // THE THREE WATCHER MASKS ARE NAMED, and that is not tidiness (task 1906
 // stage 2e). A consumer may legitimately DECLINE to key on any of them —
 // `render/render_mvp.d`'s IPR accumulator does, because its trigger set is
@@ -285,7 +314,7 @@ __gshared MeshDirtyEpochs g_settledGeomEpochs =
 // version-silent `Position`) AND on `mutationVersion` (which carries `Marks`
 // for Tab and `Material` for a crease weight, neither of which is in the
 // geometry mask). Two complementary terms, both required to hit; see
-// `Mesh.SubpatchPreview.sourceEpoch` / `.sourceVersion`.
+// `SubpatchPreview.sourceKey`, whose terms they are.
 
 /// CONNECTIVITY classes only — `Points | Polygons`, i.e. `MeshEditScope
 /// .Geometry` with `Position` deliberately EXCLUDED (task 1906 stage 2d, plan

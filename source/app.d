@@ -6182,7 +6182,7 @@ void main(string[] args) {
         // preview must rebuild on Position (drag moved cage verts), Geometry
         // (cage topology changed) AND Marks — Tab toggling the subpatch bit
         // changes marks, not geometry, yet must rebuild the preview. The
-        // internal `sourceVersion` / `sourceTopologyVersion` early-outs inside
+        // internal `sourceKey` early-outs inside
         // rebuildIfStale stay as a correctness backstop during burn-in, so a
         // missed flag degrades to "preview rebuilds a frame late at worst",
         // never to a wrong preview.
