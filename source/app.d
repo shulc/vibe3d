@@ -4148,9 +4148,23 @@ void main(string[] args) {
                     }
                     break;
                 case ActionKind.popup:
+                    import ui.mode_popup : dynamicModePopupItems;
                     foreach (ref pi; a.popupItems) {
-                        if (pi.kind == PopupItemKind.action)
+                        if (pi.kind == PopupItemKind.action) {
                             check(pi.action);
+                        } else if (pi.kind == PopupItemKind.dynamic) {
+                            foreach (ref row; dynamicModePopupItems(pi))
+                                check(row.action);
+                        } else if (pi.kind == PopupItemKind.submenu) {
+                            foreach (ref sub; pi.subItems) {
+                                if (sub.kind == PopupItemKind.action) {
+                                    check(sub.action);
+                                } else if (sub.kind == PopupItemKind.dynamic) {
+                                    foreach (ref row; dynamicModePopupItems(sub))
+                                        check(row.action);
+                                }
+                            }
+                        }
                     }
                     break;
             }

@@ -45,9 +45,10 @@ struct Action {
 //                  of items. Drawn as `ImGui.TextDisabled`. No action.
 //   - `dynamic`  — a placeholder the renderer expands into a runtime-
 //                  generated list of rows (keyed by `dynamicKind:`).
-//                  The config can't know these rows up front — e.g.
-//                  the live stack of falloff instances. No action /
-//                  label; the renderer owns the rows it emits.
+//                  The config can't know their labels/actions up front —
+//                  e.g. the live stack of falloff instances. A provider may
+//                  accept a curated `tags:` list; the renderer still owns the
+//                  rows it emits.
 //
 // `kind: separator` is accepted as a YAML alias of `divider` (matches
 // the term used by config/statusline.yaml's grouping plan).
@@ -86,6 +87,8 @@ struct PopupItem {
     string        dynamicKind;  // valid for dynamic only — selects the
                                 // runtime row provider (e.g.
                                 // "falloffStack").
+    string[]      dynamicTags;  // valid for dynamic only — optional ordered
+                                // provider-specific wire-tag selection.
 }
 
 // One-modifier override: when the corresponding key is held, the button
@@ -578,6 +581,13 @@ private PopupItem parsePopupItem(NodeT)(NodeT itemNode, string ctxLabel,
                 idx, ctxLabel, path));
         pi.kind        = PopupItemKind.dynamic;
         pi.dynamicKind = itemNode["dynamicKind"].as!string;
+        if (itemNode.containsKey("tags")) {
+            import dyaml : Node;
+            foreach (Node tagNode; itemNode["tags"]) {
+                string tag = tagNode.as!string;
+                if (tag.length > 0) pi.dynamicTags ~= tag;
+            }
+        }
         return pi;
     }
 

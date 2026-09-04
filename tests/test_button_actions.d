@@ -24,6 +24,7 @@ import std.stdio     : writeln, writefln;
 import buttonset     : loadButtons, loadStatusLine, Panel, Group, Button,
                        Action, ActionKind, PopupItemKind, allButtons;
 import argstring     : parseArgstring;
+import ui.mode_popup : dynamicModePopupItems;
 
 void main() {}
 
@@ -96,11 +97,22 @@ unittest {
                 foreach (ref pi; a.popupItems) {
                     if (pi.kind == PopupItemKind.action) {
                         checkAction(ctx ~ "/popup/" ~ pi.label, pi.action);
+                    } else if (pi.kind == PopupItemKind.dynamic) {
+                        foreach (ref row; dynamicModePopupItems(pi))
+                            checkAction(ctx ~ "/popup/dynamic/" ~ row.label,
+                                        row.action);
                     } else if (pi.kind == PopupItemKind.submenu) {
-                        foreach (ref sub; pi.subItems)
-                            if (sub.kind == PopupItemKind.action)
+                        foreach (ref sub; pi.subItems) {
+                            if (sub.kind == PopupItemKind.action) {
                                 checkAction(ctx ~ "/submenu/" ~ pi.label ~ "/" ~ sub.label,
                                             sub.action);
+                            } else if (sub.kind == PopupItemKind.dynamic) {
+                                foreach (ref row; dynamicModePopupItems(sub))
+                                    checkAction(ctx ~ "/submenu/" ~ pi.label
+                                                ~ "/dynamic/" ~ row.label,
+                                                row.action);
+                            }
+                        }
                     }
                 }
                 break;

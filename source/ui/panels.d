@@ -66,6 +66,7 @@ import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
 // Task 0669 — "would this action refuse if pressed", and the per-frame record
 // of what the bars actually drew. See source/ui/availability.d.
 import ui.availability : actionRefusal, recordDrawnButton;
+import ui.mode_popup : dynamicModeCheckedLabel, dynamicModePopupItems;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 import bvh_pick : BvhPick;
 import tools.transform.transform;
@@ -466,9 +467,12 @@ string firstCheckedLabel(ref PopupItem[] items) {
                 string s = firstCheckedLabel(it.subItems);
                 if (s.length > 0) return s;
                 break;
+            case PopupItemKind.dynamic:
+                string s = dynamicModeCheckedLabel(it);
+                if (s.length > 0) return s;
+                break;
             case PopupItemKind.divider:
             case PopupItemKind.header:
-            case PopupItemKind.dynamic:
                 break;
         }
     }
@@ -2351,14 +2355,22 @@ void renderFalloffStackItems(EditorApp app) {
 // actual rows depend on live state the YAML can't enumerate. New
 // providers add a branch here. Unknown keys render a disabled hint
 // rather than throwing mid-frame.
-void renderDynamicPopupItems(EditorApp app, string kind) {
+void renderDynamicPopupItems(EditorApp app, ref PopupItem provider) {
     with (app) {
-    switch (kind) {
+    switch (provider.dynamicKind) {
         case "falloffStack":
             renderFalloffStackItems(app);
             break;
+        case "acenModes":
+        case "axisModes":
+            PopupItem[] rows = dynamicModePopupItems(provider);
+            if (rows.length == 0)
+                ImGui.TextDisabled("(no modes configured)");
+            else
+                renderPopupItems(app, rows);
+            break;
         default:
-            ImGui.TextDisabled("(unknown dynamic '%s')", kind);
+            ImGui.TextDisabled("(unknown dynamic '%s')", provider.dynamicKind);
             break;
     }
     }
@@ -2419,7 +2431,7 @@ void renderPopupItems(EditorApp app, ref PopupItem[] items) {
                 }
                 break;
             case PopupItemKind.dynamic:
-                renderDynamicPopupItems(app, it.dynamicKind);
+                renderDynamicPopupItems(app, it);
                 break;
         }
     }

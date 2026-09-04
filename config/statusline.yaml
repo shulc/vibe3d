@@ -46,39 +46,7 @@ groups:
           dynamicLabel: true
           checked: { path: "actionCenter/mode", notEquals: "none" }
           items:
-            - label: (none)
-              action: { kind: command, id: actr.none }
-              checked: { path: "actionCenter/mode", equals: "none" }
-            - label: Automatic
-              action: { kind: command, id: actr.auto }
-              checked: { path: "actionCenter/mode", equals: "auto" }
-            - label: Selection
-              action: { kind: command, id: actr.select }
-              checked: { path: "actionCenter/mode", equals: "select" }
-            - label: Selection Border
-              action: { kind: command, id: actr.border }
-              checked: { path: "actionCenter/mode", equals: "border" }
-            - label: Selection Center Auto Axis
-              action: { kind: command, id: actr.selectauto }
-              checked: { path: "actionCenter/mode", equals: "selectauto" }
-            - label: Element
-              action: { kind: command, id: actr.element }
-              checked: { path: "actionCenter/mode", equals: "element" }
-            - label: Screen
-              action: { kind: command, id: actr.screen }
-              checked: { path: "actionCenter/mode", equals: "screen" }
-            - label: Origin
-              action: { kind: command, id: actr.origin }
-              checked: { path: "actionCenter/mode", equals: "origin" }
-            - label: Local
-              action: { kind: command, id: actr.local }
-              checked: { path: "actionCenter/mode", equals: "local" }
-            - label: Pivot
-              action: { kind: command, id: actr.pivot }
-              checked: { path: "actionCenter/mode", equals: "pivot" }
-            - label: Parent
-              action: { kind: command, id: actr.parent }
-              checked: { path: "actionCenter/mode", equals: "parent" }
+            - { kind: dynamic, dynamicKind: acenModes, tags: [none, auto, select, border, selectauto, element, screen, origin, local, pivot, parent] }
             - { kind: divider }
             - kind: submenu
               label: Center
@@ -113,27 +81,7 @@ groups:
               # the reference's axis submenu. Maps to vibe3d's
               # AxisStage.applySetAttr("mode", ...).
               items:
-                - label: Automatic
-                  action: { kind: script, lines: ["tool.pipe.attr axis mode auto"] }
-                  checked: { path: "axis/mode", equals: "auto" }
-                - label: World
-                  action: { kind: script, lines: ["tool.pipe.attr axis mode world"] }
-                  checked: { path: "axis/mode", equals: "world" }
-                - label: Work Plane
-                  action: { kind: script, lines: ["tool.pipe.attr axis mode workplane"] }
-                  checked: { path: "axis/mode", equals: "workplane" }
-                - label: Selection
-                  action: { kind: script, lines: ["tool.pipe.attr axis mode select"] }
-                  checked: { path: "axis/mode", equals: "select" }
-                - label: Element
-                  action: { kind: script, lines: ["tool.pipe.attr axis mode element"] }
-                  checked: { path: "axis/mode", equals: "element" }
-                - label: Screen
-                  action: { kind: script, lines: ["tool.pipe.attr axis mode screen"] }
-                  checked: { path: "axis/mode", equals: "screen" }
-                - label: Local
-                  action: { kind: script, lines: ["tool.pipe.attr axis mode local"] }
-                  checked: { path: "axis/mode", equals: "local" }
+                - { kind: dynamic, dynamicKind: axisModes, tags: [auto, world, workplane, select, element, screen, local] }
       - label: "AI"
         action: { kind: command, id: ai.toggle }
         checked: { path: "ai/enabled", equals: "true" }

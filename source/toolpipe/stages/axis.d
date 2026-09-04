@@ -1096,6 +1096,14 @@ private:
         IntEnumEntry(cast(int)Mode.Parent,     "parent",     "Parent"),
     ];
 
+    /// Read-only UI view of the axis mode table. Class members are private by
+    /// default, so popup providers need this narrow accessor rather than a
+    /// mutable reference to the table storage.
+    public static const(IntEnumEntry)[] popupModeEntries() pure nothrow @safe
+    {
+        return modeEntries;
+    }
+
     static assert(tableCoversEnumOf!Mode(modeEntries),
         "AxisStage.modeEntries must carry an entry for every Mode — a new "
         ~ "member needs a wire tag (parse + stringify read it) and a UI label");
@@ -1247,10 +1255,10 @@ unittest {
 }
 
 // Task 0705 (audit 4, A5 second half): the statusline's Axis submenu is a
-// CURATED SUBSET of the modes — 7 of 13 — and until this task there was
-// nothing on the code side for it to be a subset OF. Its labels were the only
-// human names for axis modes anywhere in the tree, and each row spelled the
-// wire tag twice (once in the script line, once in `checked.equals`).
+// CURATED SUBSET of the modes — 7 of 13 — and until that task there was
+// nothing on the code side for it to be a subset OF. Task 0713 leaves only
+// those seven ordered tags in YAML; the provider derives label, action and
+// checked state from this table.
 //
 // Pinned as a subset, not as equality: which modes the submenu offers is a
 // UI curation decision and is expected to be smaller than the table. What may
@@ -1259,8 +1267,8 @@ unittest {
 // publishes.
 unittest {
     import std.file  : exists;
-    import std.array : split;
-    import buttonset : loadStatusLine, ActionKind, PopupItemKind;
+    import buttonset : loadStatusLine, ActionKind, PopupItem, PopupItemKind;
+    import ui.mode_popup : axisModeItems;
 
     enum yamlPath = "config/statusline.yaml";
     assert(exists(yamlPath),
@@ -1268,45 +1276,60 @@ unittest {
            ~ "root (the directory holding dub.json), e.g. "
            ~ "`dub test --config=tests`");
 
-    int rows = 0;
+    PopupItem[] rows;
+    string[] configuredTags;
     foreach (g; loadStatusLine(yamlPath)) {
         foreach (ref b; g.buttons) {
             if (b.action.kind != ActionKind.popup) continue;
             foreach (ref pi; b.action.popupItems) {
                 if (pi.kind != PopupItemKind.submenu || pi.label != "Axis") continue;
                 foreach (ref si; pi.subItems) {
-                    if (si.kind != PopupItemKind.action) continue;
-                    // `tool.pipe.attr axis mode <tag>`
-                    auto words = si.action.scriptLines.length ? si.action.scriptLines[0].split : null;
-                    if (words.length != 4 || words[0] != "tool.pipe.attr"
-                        || words[1] != "axis" || words[2] != "mode") continue;
-                    ++rows;
-                    immutable tag = words[3];
-
-                    int v;
-                    assert(valueForWireTag(AxisStage.modeEntries, tag, v),
-                        "statusline Axis submenu offers '" ~ tag
-                        ~ "', which AxisStage.applySetAttr would refuse");
-                    string want;
-                    foreach (e; AxisStage.modeEntries)
-                        if (e.wireTag == tag) want = e.userLabel;
-                    assert(si.label == want,
-                        "statusline Axis row '" ~ si.label ~ "' and the stage "
-                        ~ "table's label '" ~ want ~ "' name the same mode two "
-                        ~ "different ways");
-                    assert(si.checked.path == "axis/mode",
-                        "an Axis row must tick off the axis/mode state path");
-                    assert(si.checked.equals_ == tag,
-                        "statusline Axis row for '" ~ tag ~ "' ticks on '"
-                        ~ si.checked.equals_ ~ "' — it would never tick, or "
-                        ~ "would tick for a different mode");
+                    if (si.kind != PopupItemKind.dynamic ||
+                        si.dynamicKind != "axisModes") continue;
+                    configuredTags ~= si.dynamicTags;
+                    rows ~= axisModeItems(
+                        AxisStage.popupModeEntries(), si.dynamicTags);
                 }
             }
         }
     }
-    assert(rows >= 7,
-        "the statusline Axis submenu lost rows — it offered 7 modes when this "
-        ~ "pin was written; removing one is a UI decision, so say so here");
+
+    string firstMissing = configuredTags.length > 0 ? configuredTags[0] : "<none>";
+    foreach (tag; configuredTags) {
+        bool found;
+        foreach (ref row; rows)
+            if (row.checked.equals_ == tag) found = true;
+        if (!found) { firstMissing = tag; break; }
+    }
+    assert(rows.length == 7,
+        format("Axis mode provider emitted %d rows; expected 7; first missing "
+               ~ "configured mode '%s'", rows.length, firstMissing));
+    assert(configuredTags.length == rows.length,
+        "Axis mode provider must emit one row for every configured tag");
+
+    foreach (i, ref row; rows) {
+        immutable tag = configuredTags[i];
+        int v;
+        assert(valueForWireTag(AxisStage.popupModeEntries(), tag, v),
+            "statusline Axis submenu offers '" ~ tag
+            ~ "', which AxisStage.applySetAttr would refuse");
+        string want;
+        foreach (e; AxisStage.popupModeEntries())
+            if (e.wireTag == tag) want = e.userLabel;
+        assert(row.label == want,
+            "statusline Axis row '" ~ row.label ~ "' and the stage table's "
+            ~ "label '" ~ want ~ "' name the same mode two different ways");
+        assert(row.action.kind == ActionKind.script &&
+               row.action.scriptLines.length == 1 &&
+               row.action.scriptLines[0] == "tool.pipe.attr axis mode " ~ tag,
+            "statusline Axis row for '" ~ tag ~ "' emits the wrong action");
+        assert(row.checked.path == "axis/mode",
+            "an Axis row must tick off the axis/mode state path");
+        assert(row.checked.equals_ == tag,
+            "statusline Axis row for '" ~ tag ~ "' ticks on '"
+            ~ row.checked.equals_ ~ "' — it would never tick, or would tick "
+            ~ "for a different mode");
+    }
 }
 
 // ---------------------------------------------------------------------------

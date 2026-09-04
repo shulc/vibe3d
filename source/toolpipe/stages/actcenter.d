@@ -266,6 +266,13 @@ class ActionCenterStage : Stage, Operator, ToolSwitchTransient {
         IntEnumEntry(cast(int)Mode.Parent,     "parent",     "Parent"),
     ];
 
+    /// Read-only UI view of the panel-visible mode table. The storage stays
+    /// module-private; popup providers receive no mutable route back to it.
+    public static const(IntEnumEntry)[] popupModeEntries() pure nothrow @safe
+    {
+        return modeEntries;
+    }
+
     private static immutable IntEnumEntry[] modeEntriesFull = [
         IntEnumEntry(cast(int)Mode.Auto,       "auto",       "Automatic"),
         IntEnumEntry(cast(int)Mode.Select,     "select",     "Selection"),
@@ -2318,7 +2325,6 @@ unittest {
     assert(sawUX && sawUY && sawUZ);
 
     // --- Panel table (11) ⊆ full wire table (12) -----------------------------
-    assert(ActionCenterStage.modeEntries.length == 11);
     assert(ActionCenterStage.modeEntriesFull.length == 12);
     foreach (e; ActionCenterStage.modeEntries) {
         int v;
@@ -2820,18 +2826,15 @@ unittest {
 
 
 
-// task 0678 A4 — status-line coverage: the "Action Center" popup in
-// config/statusline.yaml is a hand-maintained mirror of the panel mode table
-// (`modeEntries`).  The two drifted once already: actr.pivot / actr.parent
-// were registered (task 0082) but never added to the YAML, leaving both modes
-// unreachable from the UI — the startup id-validator only checks that listed
-// ids RESOLVE, never that the listing is COMPLETE.  Pin SET EQUALITY between
-// the popup's direct `actr.<tag>` items and modeEntries' wire tags, so adding
-// or removing a mode must touch both.  (The "Center"/"Axis" submenus are
-// deliberately curated SUBSETS mirroring the reference's, and are not pinned.)
+// Task 0678 A4 introduced status-line coverage after actr.pivot / actr.parent
+// were registered but absent from the UI. Task 0713 replaces the duplicated
+// YAML labels/actions/checks with a dynamic provider and re-aims that coverage
+// at the provider's concrete output. The YAML retains only its curation input:
+// the ordered tag list.
 unittest {
     import std.file : exists;
-    import buttonset : loadStatusLine, ActionKind, PopupItemKind;
+    import buttonset : loadStatusLine, ActionKind, PopupItem, PopupItemKind;
+    import ui.mode_popup : actionCenterModeItems;
 
     enum yamlPath = "config/statusline.yaml";
     // A hard fail beats a silent skip for a gate test — but say what to DO
@@ -2843,18 +2846,11 @@ unittest {
            ~ "root (the directory holding dub.json), e.g. "
            ~ "`dub test --config=tests`");
 
-    // Task 0705 (audit 4, A4-full): the row carries the mode THREE times —
-    // the command id `actr.<tag>`, the state query `checked.equals: <tag>`,
-    // and the human `label:`. 0679 pinned the first against `modeEntries` and
-    // left the other two free to drift. A wrong `checked.equals` silently
-    // stops ticking (or ticks the wrong row); a label edited in one of the two
-    // places is a UI that names the same mode two ways. All three are pinned
-    // now, so the YAML is a *rendering* of the table rather than a second copy
-    // of it — which is as close to structural as a static YAML file gets. The
-    // renderer-side fix (a `dynamicKind` provider that emits these rows from
-    // `modeEntries` and deletes them from the YAML) is filed as 0713.
-    struct Row { string label; string checkedEquals; }
-    Row[string] got;
+    // Task 0713: the YAML now carries only the curated tag order. The provider
+    // emits label, action and checked-state from modeEntries; pin its OUTPUT,
+    // not the representation that asks for it.
+    PopupItem[] rows;
+    string[] configuredTags;
     bool sawPopup = false;
     foreach (g; loadStatusLine(yamlPath)) {
         foreach (ref b; g.buttons) {
@@ -2862,33 +2858,50 @@ unittest {
                 continue;
             sawPopup = true;
             foreach (ref pi; b.action.popupItems) {
-                if (pi.kind != PopupItemKind.action) continue;  // divider/submenu
-                const string id = pi.action.id;
-                enum pfx = "actr.";
-                if (id.length > pfx.length && id[0 .. pfx.length] == pfx)
-                    got[id[pfx.length .. $]] = Row(pi.label, pi.checked.equals_);
+                if (pi.kind == PopupItemKind.dynamic &&
+                    pi.dynamicKind == "acenModes") {
+                    configuredTags ~= pi.dynamicTags;
+                    rows ~= actionCenterModeItems(
+                        ActionCenterStage.popupModeEntries(), pi.dynamicTags);
+                }
             }
         }
     }
     assert(sawPopup, "statusline must carry an 'Action Center' popup");
 
-    foreach (e; ActionCenterStage.modeEntries) {
-        auto row = e.wireTag in got;
-        assert(row !is null,
+    string firstMissing = "<none>";
+    foreach (tag; configuredTags) {
+        bool found;
+        foreach (ref row; rows)
+            if (row.action.id == "actr." ~ tag) found = true;
+        if (!found) { firstMissing = tag; break; }
+    }
+    assert(rows.length == 11,
+           format("Action Center mode provider emitted %d rows; expected 11; "
+                  ~ "first missing mode '%s'", rows.length, firstMissing));
+
+    foreach (e; ActionCenterStage.popupModeEntries()) {
+        PopupItem* row;
+        size_t copies;
+        foreach (ref candidate; rows) {
+            if (candidate.action.id != "actr." ~ e.wireTag) continue;
+            row = &candidate;
+            ++copies;
+        }
+        assert(copies == 1,
                "panel mode '" ~ e.wireTag ~ "' has no actr." ~ e.wireTag
-               ~ " item in the statusline Action Center popup");
+               ~ " unique provider row in the statusline Action Center popup");
         assert(row.label == e.userLabel,
                "statusline actr." ~ e.wireTag ~ " is labelled '" ~ row.label
                ~ "' but the panel calls the same mode '" ~ e.userLabel
                ~ "' — one UI, two names for one mode");
-        assert(row.checkedEquals == e.wireTag,
+        assert(row.action.kind == ActionKind.command,
+               "statusline actr." ~ e.wireTag ~ " is not a command row");
+        assert(row.checked.path == "actionCenter/mode",
+               "an Action Center row must tick off actionCenter/mode");
+        assert(row.checked.equals_ == e.wireTag,
                "statusline actr." ~ e.wireTag ~ " ticks on state '"
-               ~ row.checkedEquals ~ "' — it would never tick, or would tick "
+               ~ row.checked.equals_ ~ "' — it would never tick, or would tick "
                ~ "for a different mode");
-    }
-    foreach (tag, _; got) {
-        int v;
-        assert(valueForWireTag(ActionCenterStage.modeEntries, tag, v),
-               "statusline actr." ~ tag ~ " has no matching panel mode entry");
     }
 }
