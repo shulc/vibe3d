@@ -2325,6 +2325,15 @@ unittest {
     assert(sawUX && sawUY && sawUZ);
 
     // --- Panel table (11) ⊆ full wire table (12) -----------------------------
+    // Both lengths are asserted. Task 0713 dropped the "11" for a while, on
+    // the theory that the statusline pin below subsumes it — it does not, by
+    // KIND. This is a table-local invariant (the panel table is 11 of the 12
+    // wire modes) that the comment one line up states as a number; the
+    // statusline pin is a cross-artifact check that loads
+    // config/statusline.yaml and would go with it.
+    assert(ActionCenterStage.modeEntries.length == 11,
+           "the panel mode table is 11 of the 12 wire modes — the comment "
+           ~ "above and the statusline's curated list both say 11");
     assert(ActionCenterStage.modeEntriesFull.length == 12);
     foreach (e; ActionCenterStage.modeEntries) {
         int v;
@@ -2828,13 +2837,26 @@ unittest {
 
 // Task 0678 A4 introduced status-line coverage after actr.pivot / actr.parent
 // were registered but absent from the UI. Task 0713 replaces the duplicated
-// YAML labels/actions/checks with a dynamic provider and re-aims that coverage
-// at the provider's concrete output. The YAML retains only its curation input:
+// YAML labels/actions/checks with dynamic providers and re-aims that coverage
+// at the providers' concrete output. The YAML retains only its curation input:
 // the ordered tag list.
+//
+// The pin enters through `dynamicModePopupItems` — the SAME kind-string
+// dispatcher the panel renderer, the startup id-validator and
+// tests/test_button_actions.d go through — never through a leaf builder.
+// Calling the builder directly leaves the mapping untested: renaming the
+// dispatcher's case labels made both menus render "(no modes configured)" and
+// the startup validator validate zero ids, with the module lane still green.
+//
+// The Center submenu stays a CURATED SUBSET — 7 of the 11 panel modes — and
+// WHICH modes it offers is a UI decision that is deliberately NOT pinned.
+// What is pinned is that each tag it names resolves to exactly one generated
+// row whose label, action and checked state come from the table, so the seven
+// hand-copied labels that used to sit there cannot come back.
 unittest {
     import std.file : exists;
     import buttonset : loadStatusLine, ActionKind, PopupItem, PopupItemKind;
-    import ui.mode_popup : actionCenterModeItems;
+    import ui.mode_popup : dynamicModePopupItems;
 
     enum yamlPath = "config/statusline.yaml";
     // A hard fail beats a silent skip for a gate test — but say what to DO
@@ -2849,9 +2871,12 @@ unittest {
     // Task 0713: the YAML now carries only the curated tag order. The provider
     // emits label, action and checked-state from modeEntries; pin its OUTPUT,
     // not the representation that asks for it.
-    PopupItem[] rows;
-    string[] configuredTags;
-    bool sawPopup = false;
+    PopupItem[] rows;            // top-level combined presets  (acenModes)
+    string[]    configuredTags;
+    PopupItem[] centerRows;      // Center submenu, ACEN stage only
+    string[]    centerTags;
+    bool sawPopup  = false;
+    bool sawCenter = false;
     foreach (g; loadStatusLine(yamlPath)) {
         foreach (ref b; g.buttons) {
             if (b.action.kind != ActionKind.popup || b.label != "Action Center")
@@ -2861,13 +2886,22 @@ unittest {
                 if (pi.kind == PopupItemKind.dynamic &&
                     pi.dynamicKind == "acenModes") {
                     configuredTags ~= pi.dynamicTags;
-                    rows ~= actionCenterModeItems(
-                        ActionCenterStage.popupModeEntries(), pi.dynamicTags);
+                    rows ~= dynamicModePopupItems(pi);
+                } else if (pi.kind == PopupItemKind.submenu
+                           && pi.label == "Center") {
+                    sawCenter = true;
+                    foreach (ref si; pi.subItems) {
+                        if (si.kind != PopupItemKind.dynamic
+                            || si.dynamicKind != "acenStageModes") continue;
+                        centerTags ~= si.dynamicTags;
+                        centerRows ~= dynamicModePopupItems(si);
+                    }
                 }
             }
         }
     }
     assert(sawPopup, "statusline must carry an 'Action Center' popup");
+    assert(sawCenter, "the Action Center popup must carry a 'Center' submenu");
 
     string firstMissing = "<none>";
     foreach (tag; configuredTags) {
@@ -2901,6 +2935,49 @@ unittest {
                "an Action Center row must tick off actionCenter/mode");
         assert(row.checked.equals_ == e.wireTag,
                "statusline actr." ~ e.wireTag ~ " ticks on state '"
+               ~ row.checked.equals_ ~ "' — it would never tick, or would tick "
+               ~ "for a different mode");
+    }
+
+    // --- Center submenu: same table, ACEN stage only -------------------------
+    // Population floor first. Without it every per-row assert below is
+    // vacuously true over an empty list — a renamed provider key, or a tag the
+    // table does not carry, would report nothing at all.
+    string firstCenterMissing = "<none>";
+    foreach (tag; centerTags) {
+        bool found;
+        foreach (ref row; centerRows)
+            if (row.checked.equals_ == tag) found = true;
+        if (!found) { firstCenterMissing = tag; break; }
+    }
+    assert(centerRows.length == 7,
+           format("Center submenu provider emitted %d rows; expected 7; "
+                  ~ "first missing mode '%s'", centerRows.length,
+                  firstCenterMissing));
+    assert(centerTags.length == centerRows.length,
+           "the Center submenu must emit one row for every configured tag");
+
+    foreach (i, ref row; centerRows) {
+        immutable tag = centerTags[i];
+        string want;
+        foreach (e; ActionCenterStage.popupModeEntries())
+            if (e.wireTag == tag) want = e.userLabel;
+        assert(want.length > 0,
+               "Center submenu offers '" ~ tag ~ "', which is not a panel mode");
+        assert(row.label == want,
+               "Center submenu row '" ~ row.label ~ "' and the stage table's "
+               ~ "label '" ~ want ~ "' name the same mode two different ways");
+        assert(row.action.kind == ActionKind.script
+               && row.action.scriptLines.length == 1
+               && row.action.scriptLines[0] ==
+                      "tool.pipe.attr actionCenter mode " ~ tag,
+               "Center submenu row for '" ~ tag ~ "' emits the wrong action — "
+               ~ "it must drive the action-centre stage alone, leaving axis "
+               ~ "untouched");
+        assert(row.checked.path == "actionCenter/mode",
+               "a Center submenu row must tick off actionCenter/mode");
+        assert(row.checked.equals_ == tag,
+               "Center submenu row for '" ~ tag ~ "' ticks on '"
                ~ row.checked.equals_ ~ "' — it would never tick, or would tick "
                ~ "for a different mode");
     }

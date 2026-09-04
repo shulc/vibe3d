@@ -19,6 +19,7 @@ import http_client : testBaseUrl;
 import std.net.curl  : get;
 import std.json      : parseJSON, JSONValue;
 import std.conv      : to;
+import std.format    : format;
 import std.string    : strip;
 import std.stdio     : writeln, writefln;
 import buttonset     : loadButtons, loadStatusLine, Panel, Group, Button,
@@ -60,6 +61,13 @@ unittest {
     auto reg          = fetchRegistry();
 
     int      checked  = 0;
+    // Rows produced by the dynamicKind dispatcher (ui.mode_popup). Counted
+    // separately from `checked`: these ids used to be static YAML rows the
+    // walk could not miss, and are now conditional on a kind-string matching
+    // a case label, so their contribution has to be floored on its own — a
+    // floor on the grand total would be swallowed by the hundreds of static
+    // ids around them.
+    int      dynamicRows = 0;
     string[] failures;
 
     void checkAction(string ctx, ref const(Action) a) {
@@ -98,19 +106,23 @@ unittest {
                     if (pi.kind == PopupItemKind.action) {
                         checkAction(ctx ~ "/popup/" ~ pi.label, pi.action);
                     } else if (pi.kind == PopupItemKind.dynamic) {
-                        foreach (ref row; dynamicModePopupItems(pi))
+                        foreach (ref row; dynamicModePopupItems(pi)) {
+                            ++dynamicRows;
                             checkAction(ctx ~ "/popup/dynamic/" ~ row.label,
                                         row.action);
+                        }
                     } else if (pi.kind == PopupItemKind.submenu) {
                         foreach (ref sub; pi.subItems) {
                             if (sub.kind == PopupItemKind.action) {
                                 checkAction(ctx ~ "/submenu/" ~ pi.label ~ "/" ~ sub.label,
                                             sub.action);
                             } else if (sub.kind == PopupItemKind.dynamic) {
-                                foreach (ref row; dynamicModePopupItems(sub))
+                                foreach (ref row; dynamicModePopupItems(sub)) {
+                                    ++dynamicRows;
                                     checkAction(ctx ~ "/submenu/" ~ pi.label
                                                 ~ "/dynamic/" ~ row.label,
                                                 row.action);
+                                }
                             }
                         }
                     }
@@ -153,7 +165,21 @@ unittest {
         foreach (ref btn; grp.buttons)
             checkButton("<statusline>/" ~ grp.title, btn);
 
-    writefln("button_actions: %d action ids verified", checked);
+    // Population floor BEFORE the report (task 0713). Eighteen of these ids
+    // were unconditional static configuration rows until this task; they are
+    // now emitted by a provider selected on a kind string, so a renamed or
+    // deleted case label validates nothing at all and this test would still
+    // print a plausible total and pass. 11 combined Action Center presets +
+    // 7 Center submenu + 7 Axis submenu = 25.
+    assert(dynamicRows >= 25,
+           format("dynamic mode providers expanded %d popup rows; expected at "
+                  ~ "least 25 (11 Action Center + 7 Center + 7 Axis). A "
+                  ~ "provider key that no longer dispatches leaves these ids "
+                  ~ "unvalidated, and the count below says nothing about them.",
+                  dynamicRows));
+
+    writefln("button_actions: %d action ids verified (%d from dynamic mode "
+             ~ "providers)", checked, dynamicRows);
 
     if (failures.length > 0) {
         writeln("FAIL — unresolved ids:");

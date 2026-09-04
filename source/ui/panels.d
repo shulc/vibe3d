@@ -2362,6 +2362,7 @@ void renderDynamicPopupItems(EditorApp app, ref PopupItem provider) {
             renderFalloffStackItems(app);
             break;
         case "acenModes":
+        case "acenStageModes":
         case "axisModes":
             PopupItem[] rows = dynamicModePopupItems(provider);
             if (rows.length == 0)

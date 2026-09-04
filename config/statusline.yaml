@@ -54,27 +54,7 @@ groups:
               # the reference's centers submenu. Maps to vibe3d's
               # ActionCenterStage.applySetAttr("mode", ...).
               items:
-                - label: Automatic
-                  action: { kind: script, lines: ["tool.pipe.attr actionCenter mode auto"] }
-                  checked: { path: "actionCenter/mode", equals: "auto" }
-                - label: Selection
-                  action: { kind: script, lines: ["tool.pipe.attr actionCenter mode select"] }
-                  checked: { path: "actionCenter/mode", equals: "select" }
-                - label: Selection Border
-                  action: { kind: script, lines: ["tool.pipe.attr actionCenter mode border"] }
-                  checked: { path: "actionCenter/mode", equals: "border" }
-                - label: Element
-                  action: { kind: script, lines: ["tool.pipe.attr actionCenter mode element"] }
-                  checked: { path: "actionCenter/mode", equals: "element" }
-                - label: Screen
-                  action: { kind: script, lines: ["tool.pipe.attr actionCenter mode screen"] }
-                  checked: { path: "actionCenter/mode", equals: "screen" }
-                - label: Origin
-                  action: { kind: script, lines: ["tool.pipe.attr actionCenter mode origin"] }
-                  checked: { path: "actionCenter/mode", equals: "origin" }
-                - label: Local
-                  action: { kind: script, lines: ["tool.pipe.attr actionCenter mode local"] }
-                  checked: { path: "actionCenter/mode", equals: "local" }
+                - { kind: dynamic, dynamicKind: acenStageModes, tags: [auto, select, border, element, screen, origin, local] }
             - kind: submenu
               label: Axis
               # Granular AXIS-only — leaves ACEN untouched. Mirrors

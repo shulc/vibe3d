@@ -1268,7 +1268,11 @@ unittest {
 unittest {
     import std.file  : exists;
     import buttonset : loadStatusLine, ActionKind, PopupItem, PopupItemKind;
-    import ui.mode_popup : axisModeItems;
+    // Through the kind-string dispatcher, not the leaf builder: the dispatcher
+    // is what the renderer, the startup id-validator and test_button_actions
+    // call, and renaming its case labels emptied every menu while a
+    // builder-facing pin stayed green.
+    import ui.mode_popup : dynamicModePopupItems;
 
     enum yamlPath = "config/statusline.yaml";
     assert(exists(yamlPath),
@@ -1287,8 +1291,7 @@ unittest {
                     if (si.kind != PopupItemKind.dynamic ||
                         si.dynamicKind != "axisModes") continue;
                     configuredTags ~= si.dynamicTags;
-                    rows ~= axisModeItems(
-                        AxisStage.popupModeEntries(), si.dynamicTags);
+                    rows ~= dynamicModePopupItems(si);
                 }
             }
         }
