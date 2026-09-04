@@ -248,7 +248,9 @@
 		{
 			"name": "tests",
 			"versions": [
-				"WithAI"
+				"WithAI",
+				"DocumentUnitTests",
+				"PerfProbe"
 			],
 			"dependencies": {
 				"d-onnxruntime": {
