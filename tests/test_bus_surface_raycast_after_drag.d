@@ -231,7 +231,7 @@ unittest {
     assert(selR["status"].str == "ok", "select failed: " ~ selR.toString);
 
     const double x0 = meanX();
-    auto trR = postJson("/api/transform", `{"kind":"translate","delta":[-1.6,0,0]}`);
+    auto trR = postJson("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[-1.6,0,0]}`));
     assert("error" !in trR, "/api/transform failed: " ~ trR.toString);
     const double dx = meanX() - x0;
     assert(fabs(dx) > 1.2,

@@ -116,8 +116,7 @@ unittest { // cage vertex moves through /api/transform while subpatch is active
 
     // Translate the selection by (0, 1, 0) — same input the move tool
     // would produce on a Y-axis gizmo drag.
-    auto r = postJson("/api/transform",
-                       `{"kind":"translate","delta":[0,1,0]}`);
+    auto r = postJson("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[0,1,0]}`));
     assert(r["status"].str == "ok",
         "/api/transform reported error: " ~ r.toString);
 
@@ -156,8 +155,7 @@ unittest { // gpu.faceVbo (the surface that the user sees) actually
     // Move vertex 0 by (0, 1, 0).
     postJson("/api/command", "select.typeFrom vertex");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
-    auto r = postJson("/api/transform",
-                       `{"kind":"translate","delta":[0,1,0]}`);
+    auto r = postJson("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[0,1,0]}`));
     assert(r["status"].str == "ok",
         "/api/transform reported error: " ~ r.toString);
 

@@ -544,8 +544,7 @@ unittest {
     const Px bg = probe1(pxBg[0], pxBg[1]);
 
     const double x0 = meanCageX();
-    auto t = postJson("/api/transform",
-                      format(`{"kind":"translate","delta":[%.6f,0,0]}`, wantDx));
+    auto t = postJson("/api/command", commandBody("mesh.transform", format(`{"kind":"translate","delta":[%.6f,0,0]}`, wantDx)));
     assert(t["status"].str == "ok", "/api/transform failed: " ~ t.toString);
     waitPreviewSettled();
     settle();

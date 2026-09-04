@@ -83,8 +83,7 @@ unittest { // /api/model emits in-range edges + faces; both stable under a move
     auto sel = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
     assert(parseJSON(sel)["status"].str == "ok", "/api/select failed: " ~ sel);
 
-    auto xf = post(testBaseUrl() ~ "/api/transform",
-        `{"kind":"translate","delta":[1.0,0.5,-0.25]}`);
+    auto xf = post(testBaseUrl() ~ "/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[1.0,0.5,-0.25]}`));
     assert(parseJSON(xf)["status"].str == "ok", "/api/transform failed: " ~ xf);
 
     auto after = getModel();

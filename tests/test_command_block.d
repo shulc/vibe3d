@@ -56,7 +56,7 @@ void postSelect(string mode, int[] indices) {
 }
 
 void postTransform(string body) {
-    auto resp = post(testBaseUrl() ~ "/api/transform", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.transform", body));
     assert(parseJSON(cast(string)resp)["status"].str == "ok",
         "/api/transform failed: " ~ cast(string)resp);
 }

@@ -20,6 +20,7 @@
 // MeshSelectionEdit per drag (coalesced at record time).
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.file : read;
@@ -124,8 +125,7 @@ JSONValue topSelectionEntry() {
 }
 
 JSONValue translate(double dx) {
-    return parseJSON(post(testBaseUrl() ~ "/api/transform",
-        `{"kind":"translate","delta":[` ~ dx.to!string ~ `,0,0]}`));
+    return parseJSON(post(testBaseUrl() ~ "/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[` ~ dx.to!string ~ `,0,0]}`)));
 }
 
 // ---------------------------------------------------------------------------

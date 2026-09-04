@@ -67,8 +67,7 @@ void postSelect(string mode, int[] indices) {
 
 void postTranslate(double dx, double dy, double dz) {
     import std.format : format;
-    auto resp = post(testBaseUrl() ~ "/api/transform",
-        format(`{"kind":"translate","delta":[%.10g,%.10g,%.10g]}`, dx, dy, dz));
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.transform", format(`{"kind":"translate","delta":[%.10g,%.10g,%.10g]}`, dx, dy, dz)));
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/transform failed: " ~ resp);
 }

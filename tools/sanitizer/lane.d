@@ -2451,7 +2451,6 @@ enum SweepRoute[] kSweepRoutes = [
     SweepRoute("/api/recorded-events", "GET", null),
     SweepRoute("/api/reset", "POST", `{}`),
     SweepRoute("/api/play-events/status", "GET", null),
-    SweepRoute("/api/transform", "POST", `{}`),
     SweepRoute("/api/load-mesh", "POST", `{}`),
     SweepRoute("/api/test/layer", "POST", `{}`),
     SweepRoute("/api/command", "POST", `{}`),

@@ -16,7 +16,7 @@ import operator          : Operator, Task, VectorStack, PacketKind, OperatorActr
 // GpuMesh lives in mesh.d, already imported above.
 
 /// Transform the selected vertices by translate / rotate / scale. Replaces
-/// the legacy /api/transform direct handler. Selection-aware: in Vertices
+/// the retired dedicated HTTP transform wrapper. Selection-aware: in Vertices
 /// mode transforms selected verts; in Edges/Polygons modes transforms the
 /// verts of the selected edges/faces.
 ///
@@ -139,8 +139,7 @@ class MeshTransform : Command, Operator {
     // pass 1's is the vmask enumeration, pass 2's is a diff over the array.
     // -----------------------------------------------------------------------
     private bool applyKernel(ref MeshEditBatch ed) {
-        // Build affected-vertex mask from selection + edit mode (matches
-        // the original transformHandler in app.d).
+        // Build affected-vertex mask from selection + edit mode.
         //
         // Perf (task 0388): `mesh.selectedX` is a @property that rebuilds a
         // whole `bool[]` per read — indexing it inside these loops was

@@ -183,7 +183,7 @@ unittest {
     cmd("tool.pipe.attr symmetry enabled false");
 
     const double x0 = vpos(6)[0];
-    auto trR = postJson("/api/transform", `{"kind":"translate","delta":[1.0,0,0]}`);
+    auto trR = postJson("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[1.0,0,0]}`));
     assert("error" !in trR, "/api/transform failed: " ~ trR.toString);
     const double dx = vpos(6)[0] - x0;
     assert(dx > 0.5,

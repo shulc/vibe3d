@@ -50,7 +50,7 @@ private string endpointPath(string ep) {
         case "reset":     return BASE ~ "/api/reset";
         case "select":    return BASE ~ "/api/command";
         case "command":   return BASE ~ "/api/command";
-        case "transform": return BASE ~ "/api/transform";
+        case "transform": return BASE ~ "/api/command";
         case "script":    return BASE ~ "/api/script";
         case "load-mesh": return BASE ~ "/api/load-mesh";
         // POST /api/camera (topology-pen P0 fixtures need explicit camera
@@ -98,6 +98,8 @@ private void postStep(JSONValue step, string name, string phase, size_t i) {
                 : "";
     if (ep == "select")
         body = commandBody("mesh.select", body);
+    else if (ep == "transform")
+        body = commandBody("mesh.transform", body);
     bool allowError = ("allowError" in step) && step["allowError"].type == JSONType.true_;
     auto resp = cast(string) post(endpointPath(ep), body);
     if (resp.length && resp[0] == '{') {
@@ -356,10 +358,11 @@ void runStep(JSONValue step, string name, string phase, size_t i) {
         auto ax = jvec3(r["axis"]);
         auto pv = jvec3(r["pivot"]);
         double rad = asDouble(r["angle_deg"]) * (PI / 180.0);
-        auto resp = cast(string) post(BASE ~ "/api/transform",
-            format(`{"kind":"rotate","axis":[%.10g,%.10g,%.10g],"angle":%.10g,`
-                   ~ `"pivot":[%.10g,%.10g,%.10g]}`,
-                   ax[0], ax[1], ax[2], rad, pv[0], pv[1], pv[2]));
+        auto resp = cast(string) post(BASE ~ "/api/command",
+            commandBody("mesh.transform",
+                format(`{"kind":"rotate","axis":[%.10g,%.10g,%.10g],"angle":%.10g,`
+                       ~ `"pivot":[%.10g,%.10g,%.10g]}`,
+                       ax[0], ax[1], ax[2], rad, pv[0], pv[1], pv[2])));
         auto j = parseJSON(resp);
         if ("status" !in j || j["status"].str != "ok")
             assert(false, format("%s: rotate_about failed: %s", ctx, resp));
@@ -372,10 +375,11 @@ void runStep(JSONValue step, string name, string phase, size_t i) {
         auto s = step["scale_about"];
         auto fac = jvec3(s["factor"]);
         auto pv = jvec3(s["pivot"]);
-        auto resp = cast(string) post(BASE ~ "/api/transform",
-            format(`{"kind":"scale","factor":[%.10g,%.10g,%.10g],`
-                   ~ `"pivot":[%.10g,%.10g,%.10g]}`,
-                   fac[0], fac[1], fac[2], pv[0], pv[1], pv[2]));
+        auto resp = cast(string) post(BASE ~ "/api/command",
+            commandBody("mesh.transform",
+                format(`{"kind":"scale","factor":[%.10g,%.10g,%.10g],`
+                       ~ `"pivot":[%.10g,%.10g,%.10g]}`,
+                       fac[0], fac[1], fac[2], pv[0], pv[1], pv[2])));
         auto j = parseJSON(resp);
         if ("status" !in j || j["status"].str != "ok")
             assert(false, format("%s: scale_about failed: %s", ctx, resp));

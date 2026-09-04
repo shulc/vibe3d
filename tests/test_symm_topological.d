@@ -73,8 +73,7 @@ void selectVertices(int[] indices) {
     assert(resp["status"].str == "ok", "select failed: " ~ resp.toString);
 }
 JSONValue translate(double dx, double dy, double dz) {
-    return postJson("/api/transform",
-        format(`{"kind":"translate","delta":[%.6g,%.6g,%.6g]}`, dx, dy, dz));
+    return postJson("/api/command", commandBody("mesh.transform", format(`{"kind":"translate","delta":[%.6g,%.6g,%.6g]}`, dx, dy, dz)));
 }
 
 bool approx(double a, double b, double eps = 1e-3) { return fabs(a - b) < eps; }

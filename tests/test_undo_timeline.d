@@ -66,8 +66,7 @@ void select_(string mode, int[] indices) {
 
 void translate_(double dx, double dy, double dz) {
     import std.format : format;
-    auto j = jpost("/api/transform",
-        format(`{"kind":"translate","delta":[%.10g,%.10g,%.10g]}`, dx, dy, dz));
+    auto j = jpost("/api/command", commandBody("mesh.transform", format(`{"kind":"translate","delta":[%.10g,%.10g,%.10g]}`, dx, dy, dz)));
     assert(j["status"].str == "ok", "/api/transform failed: " ~ j.toString);
 }
 

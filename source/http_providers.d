@@ -2868,6 +2868,8 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
         // JSON injection, so their former route validation/configuration now
         // lives at the one generic command-dispatch point.
         void injectRetiredWrapperArgs(Command cmd, ref JSONValue pj) {
+            import math : Vec3;
+
             if (auto select = cast(MeshSelect)cmd) {
                 if ("mode" !in pj || pj["mode"].type != JSONType.string)
                     throw new Exception("missing 'mode' string field");
@@ -2881,6 +2883,46 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                 }
                 select.setMode(pj["mode"].str);
                 select.setIndices(indices);
+            } else if (auto transform = cast(MeshTransform)cmd) {
+                Vec3 vec3From(string field, Vec3 def) {
+                    if (field !in pj) return def;
+                    auto a = pj[field].array;
+                    if (a.length != 3)
+                        throw new Exception("'" ~ field ~ "' must be [x,y,z]");
+                    Vec3 r;
+                    foreach (i, n; a) {
+                        double v;
+                        switch (n.type) {
+                            case JSONType.integer:  v = cast(double)n.integer;  break;
+                            case JSONType.uinteger: v = cast(double)n.uinteger; break;
+                            case JSONType.float_:   v = n.floating;             break;
+                            default: throw new Exception("'" ~ field ~ "' components must be numbers");
+                        }
+                        if (i == 0) r.x = cast(float)v;
+                        if (i == 1) r.y = cast(float)v;
+                        if (i == 2) r.z = cast(float)v;
+                    }
+                    return r;
+                }
+                float floatFrom(string field, float def) {
+                    if (field !in pj) return def;
+                    auto n = pj[field];
+                    switch (n.type) {
+                        case JSONType.integer:  return cast(float)n.integer;
+                        case JSONType.uinteger: return cast(float)n.uinteger;
+                        case JSONType.float_:   return cast(float)n.floating;
+                        default: throw new Exception("'" ~ field ~ "' must be a number");
+                    }
+                }
+
+                if ("kind" !in pj || pj["kind"].type != JSONType.string)
+                    throw new Exception("missing 'kind' string field");
+                transform.setKind(pj["kind"].str);
+                transform.setDelta (vec3From("delta",  Vec3(0, 0, 0)));
+                transform.setAxis  (vec3From("axis",   Vec3(0, 1, 0)));
+                transform.setAngle (floatFrom("angle", 0.0f));
+                transform.setFactor(vec3From("factor", Vec3(1, 1, 1)));
+                transform.setPivot (vec3From("pivot",  Vec3(0, 0, 0)));
             }
         }
 
@@ -3369,9 +3411,6 @@ private void wireHistoryProviders(HttpServer httpServer, ref EditorApp app,
             else throw new Exception("invalid block action '" ~ action ~ "'");
         });
 
-        // Phase A.5: dispatch mesh.transform through the unified Command path
-        // (MeshSelect) so selection changes land on the undo stack and
-        // share the same snapshot/revert mechanism as everything else.
     }
 }
 
@@ -3380,51 +3419,6 @@ private void wireHistoryProviders(HttpServer httpServer, ref EditorApp app,
 private void wireMutationHandlers(HttpServer httpServer, ref EditorApp app,
                              ref string[] optionalSlots) {
     with (app) {
-        // Phase A.5: dispatch /api/transform through MeshTransform command.
-        httpServer.setTransformHandler((string kind, JSONValue params) {
-            import math : Vec3;
-
-            // Helper to read a 3-vector field with default value.
-            Vec3 vec3From(string field, Vec3 def) {
-                if (field !in params) return def;
-                auto a = params[field].array;
-                if (a.length != 3) throw new Exception("'" ~ field ~ "' must be [x,y,z]");
-                Vec3 r;
-                foreach (i, n; a) {
-                    double v;
-                    switch (n.type) {
-                        case JSONType.integer:  v = cast(double)n.integer;  break;
-                        case JSONType.uinteger: v = cast(double)n.uinteger; break;
-                        case JSONType.float_:   v = n.floating;             break;
-                        default: throw new Exception("'" ~ field ~ "' components must be numbers");
-                    }
-                    if (i == 0) r.x = cast(float)v;
-                    if (i == 1) r.y = cast(float)v;
-                    if (i == 2) r.z = cast(float)v;
-                }
-                return r;
-            }
-            float floatFrom(string field, float def) {
-                if (field !in params) return def;
-                auto n = params[field];
-                switch (n.type) {
-                    case JSONType.integer:  return cast(float)n.integer;
-                    case JSONType.uinteger: return cast(float)n.uinteger;
-                    case JSONType.float_:   return cast(float)n.floating;
-                    default: throw new Exception("'" ~ field ~ "' must be a number");
-                }
-            }
-
-            auto cmd = cast(MeshTransform)reg.commandFactories["mesh.transform"]();
-            cmd.setKind(kind);
-            cmd.setDelta (vec3From("delta",  Vec3(0, 0, 0)));
-            cmd.setAxis  (vec3From("axis",   Vec3(0, 1, 0)));
-            cmd.setAngle (floatFrom("angle", 0.0f));
-            cmd.setFactor(vec3From("factor", Vec3(1, 1, 1)));
-            cmd.setPivot (vec3From("pivot",  Vec3(0, 0, 0)));
-            applyOrRefireThrowing(cmd, RecordMode.Record, "mesh.transform did not apply");
-        });
-
         // Phase A.5: dispatch /api/reset through SceneReset command.
         // Note: scene.reset is undoable but since /api/reset is also used
         // by tests to bring vibe3d to a fresh state, we may want a way

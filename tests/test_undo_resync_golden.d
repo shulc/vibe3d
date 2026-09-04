@@ -108,7 +108,7 @@ unittest {
     //    geometry, not a crash.
     auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[2,3,6,7]}`));
     assert(sel["status"].str == "ok", "select failed: " ~ sel.toString);
-    auto xf = postJson("/api/transform", `{"kind":"translate","delta":[0.4,0.3,0.2]}`);
+    auto xf = postJson("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[0.4,0.3,0.2]}`));
     assert(xf["status"].str == "ok", "translate failed: " ~ xf.toString);
 
     size_t undoAfterEdit = undoLen();

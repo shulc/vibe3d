@@ -162,7 +162,7 @@ unittest {
     // by a DIFFERENT, still-pickable vertex.
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     settle();
-    postOk("/api/transform", `{"kind":"translate","delta":[1.0,0,0]}`);
+    postOk("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[1.0,0,0]}`));
     settle(600);
 
     auto m1 = getJson("/api/model");

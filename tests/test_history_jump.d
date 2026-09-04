@@ -46,8 +46,7 @@ void clearHistory() {
 }
 
 void translate(double dx) {
-    auto resp = postJson("/api/transform",
-        `{"kind":"translate","delta":[` ~ dx.to!string ~ `,0,0]}`);
+    auto resp = postJson("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[` ~ dx.to!string ~ `,0,0]}`));
     assert(resp["status"].str == "ok", "translate failed: " ~ resp.toString);
 }
 

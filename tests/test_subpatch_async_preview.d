@@ -471,7 +471,7 @@ unittest {
     assert(prev().pending, "setup: a build must be in flight");
 
     selectMode("vertices", [0]);
-    auto r = postJson("/api/transform", `{"kind":"translate","delta":[0,3,0]}`);
+    auto r = postJson("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[0,3,0]}`));
     assert(r["status"].str == "ok", "/api/transform failed: " ~ r.toString);
 
     hold(0);

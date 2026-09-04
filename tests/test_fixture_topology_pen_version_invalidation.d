@@ -122,7 +122,7 @@ unittest {
     cmd("layer.select index:1");   // layer1 primary now (layer0 becomes background)
     auto selR = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(selR["status"].str == "ok", "select failed: " ~ selR.toString);
-    auto trR = postJson("/api/transform", `{"kind":"translate","delta":[0,2,0]}`);
+    auto trR = postJson("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[0,2,0]}`));
     assert("error" !in trR, "/api/transform failed: " ~ trR.toString);
     cmd("layer.select index:0");   // back to: layer0 primary, layer1 background
 

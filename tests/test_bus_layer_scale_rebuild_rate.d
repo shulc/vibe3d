@@ -74,6 +74,7 @@
 // remains a named non-goal (a hover/snap sweep over background layers would
 // need its own stand and its own card).
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.format  : format;
@@ -110,8 +111,7 @@ long framesNow()         { return getJson("/api/frames/counts")["frames"].intege
 void addLayerAndPublish(int i) {
     cmd("layer.duplicate");
     const double d = (i % 2 == 0) ? 0.01 : -0.01;
-    postJson("/api/transform",
-        format(`{"kind":"translate","delta":[%f,0,0]}`, d));
+    postJson("/api/command", commandBody("mesh.transform", format(`{"kind":"translate","delta":[%f,0,0]}`, d)));
 }
 
 // ---------------------------------------------------------------------------

@@ -41,13 +41,13 @@ void setSelection(string mode, int[] indices) {
 }
 
 void runTransform(string body) {
-    auto resp = post(testBaseUrl() ~ "/api/transform", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.transform", body));
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/transform failed: " ~ resp);
 }
 
 string runTransformAllowError(string body) {
-    return cast(string)post(testBaseUrl() ~ "/api/transform", body);
+    return cast(string)post(testBaseUrl() ~ "/api/command", commandBody("mesh.transform", body));
 }
 
 double[3] vertexAt(int idx) {

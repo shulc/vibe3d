@@ -303,8 +303,7 @@ unittest { // translate one corner with X-symm → mirror also moves
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     // Select vert 0 = (-0.5, -0.5, -0.5) only.
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
-    postJson("/api/transform",
-        `{"kind":"translate","delta":[0,1,0]}`);
+    postJson("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[0,1,0]}`));
 
     auto v0 = vertexAt(0);
     auto v1 = vertexAt(1);
@@ -334,8 +333,7 @@ unittest { // translate along the X axis with X-symm → mirror moves opposite
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
-    postJson("/api/transform",
-        `{"kind":"translate","delta":[-1,0,0]}`);
+    postJson("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[-1,0,0]}`));
     auto v0 = vertexAt(0);
     auto v1 = vertexAt(1);
     // v0 moved from -0.5 to -1.5; mirror at -(-1.5) = 1.5
@@ -355,8 +353,7 @@ unittest { // undo restores mirror
     postJson("/api/command", "tool.pipe.attr symmetry enabled true");
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
-    postJson("/api/transform",
-        `{"kind":"translate","delta":[0,2,0]}`);
+    postJson("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[0,2,0]}`));
     // sanity
     auto preUndo = vertexAt(1);
     assert(approxEq(preUndo[1], 1.5), "pre-undo v1.y: " ~ preUndo[1].to!string);
@@ -385,8 +382,7 @@ unittest { // on-plane vertex projected
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     postJson("/api/command", "tool.pipe.attr symmetry offset -0.5");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
-    postJson("/api/transform",
-        `{"kind":"translate","delta":[1,1,1]}`);
+    postJson("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[1,1,1]}`));
     auto v0 = vertexAt(0);
     // X projected onto plane (perpendicular stripped) → stays at -0.5.
     assert(approxEq(v0[0], -0.5) && approxEq(v0[1], 0.5) && approxEq(v0[2], 0.5),
@@ -534,8 +530,7 @@ unittest { // pick +X face, translate +X → symmetric expansion
     // face 3 = +X face ({1,2,6,5}). Auto-symmetry adds face 2 = -X
     // face ({0,4,7,3}). BaseSide should anchor on +X (face 3's centroid).
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[3]}`));
-    postJson("/api/transform",
-        `{"kind":"translate","delta":[1,0,0]}`);
+    postJson("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[1,0,0]}`));
     // Expected (cube of half-extent 0.5 + +1 translate driven from +X):
     //   +X face verts (1,2,5,6) at x = +0.5 + 1 = +1.5
     //   -X face verts (0,3,4,7) at x = -(+1.5) = -1.5 (mirror write)
@@ -562,8 +557,7 @@ unittest { // pick -X face, translate +X → symmetric collapse / cross-plane
     // (TOWARD the plane and beyond), face 2 moves +X, face 3 follows
     // with mirrored delta (-X): both cross to the OTHER side at ±0.5.
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[2]}`));
-    postJson("/api/transform",
-        `{"kind":"translate","delta":[1,0,0]}`);
+    postJson("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[1,0,0]}`));
     foreach (i; [0, 3, 4, 7]) {
         auto v = vertexAt(i);
         assert(approxEq(v[0],  0.5),
@@ -598,8 +592,7 @@ unittest { // pick face3 w/ symm, disable symm, translate → both faces move to
     assert(faceSelection().length == 2, "selection should survive symm off");
     // Translate +X. With symmetry off, NO mirror pass — both faces
     // shift by +X uniformly. Cube becomes a +X-translated cube.
-    postJson("/api/transform",
-        `{"kind":"translate","delta":[1,0,0]}`);
+    postJson("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[1,0,0]}`));
     foreach (i; 0 .. 8) {
         auto v = vertexAt(i);
         // Each vert's X = original_x + 1; original X was ±0.5.
@@ -682,9 +675,8 @@ unittest { // rotate +X face around Y axis with X-symm → mirror rotates the ot
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[3]}`));
     // Rotate by 90° around Y, pivot at +X face centroid (+0.5, 0, 0).
     import std.math : PI;
-    auto resp = postJson("/api/transform",
-        `{"kind":"rotate","axis":[0,1,0],"angle":` ~ (PI / 2.0).to!string
-        ~ `,"pivot":[0.5,0,0]}`);
+    auto resp = postJson("/api/command", commandBody("mesh.transform", `{"kind":"rotate","axis":[0,1,0],"angle":` ~ (PI / 2.0).to!string
+        ~ `,"pivot":[0.5,0,0]}`));
     assert(resp["status"].str == "ok", "rotate failed: " ~ resp.toString);
 
     // Original cube +X face verts (1,2,6,5) at x=+0.5; after 90° rot
@@ -718,8 +710,7 @@ unittest { // scale +X face along Y with X-symm → mirror scales too
     postJson("/api/command", "tool.pipe.attr symmetry axis x");
     postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[3]}`));
     // Scale Y by 2× around pivot (+0.5, 0, 0).
-    auto resp = postJson("/api/transform",
-        `{"kind":"scale","factor":[1,2,1],"pivot":[0.5,0,0]}`);
+    auto resp = postJson("/api/command", commandBody("mesh.transform", `{"kind":"scale","factor":[1,2,1],"pivot":[0.5,0,0]}`));
     assert(resp["status"].str == "ok", "scale failed: " ~ resp.toString);
 
     // v2 was at (+0.5,+0.5,-0.5); after Y×2 at pivot (.,0,.) → (+0.5,+1,-0.5).

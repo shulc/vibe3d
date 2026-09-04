@@ -244,7 +244,7 @@ unittest {
     assert(selR["status"].str == "ok", "select failed: " ~ selR.toString);
 
     cmd("tool.pipe.attr snap enabled false");
-    auto trR = postJson("/api/transform", `{"kind":"translate","delta":[2.0,0,0]}`);
+    auto trR = postJson("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[2.0,0,0]}`));
     assert("error" !in trR, "/api/transform failed: " ~ trR.toString);
     cmd("tool.pipe.attr snap enabled true");
     settle();

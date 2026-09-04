@@ -121,7 +121,7 @@ unittest {
 
     // The ONE publication in the window. `mesh.transform` ends in
     // `commitChange(MeshEditScope.Position)`.
-    postOk("/api/transform", `{"kind":"translate","delta":[2.0,0,0]}`);
+    postOk("/api/command", commandBody("mesh.transform", `{"kind":"translate","delta":[2.0,0,0]}`));
     settle();
 
     auto after = getJson("/api/changes");

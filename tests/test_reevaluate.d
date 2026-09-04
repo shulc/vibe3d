@@ -37,7 +37,7 @@ bool approxEqual(double a, double b, double eps = 1e-4) {
 
 
 void postTransform(string body) {
-    auto r = postJson("/api/transform", body);
+    auto r = postJson("/api/command", commandBody("mesh.transform", body));
     assert(r["status"].str == "ok", "/api/transform failed: " ~ r.toString);
 }
 

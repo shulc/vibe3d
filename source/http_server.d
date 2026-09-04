@@ -520,10 +520,6 @@ class HttpServer {
     // Concurrent /api/command queries would race this single slot; any future
     // parallel-request work must revisit (per-epoch slot or a lock).
 
-    // ----- /api/transform synchronous bridge -------------------------------
-    private alias TransformHandler = void delegate(string kind, JSONValue params);
-    private TransformHandler transformHandler;
-
     // ----- /api/load-mesh synchronous bridge -------------------------------
     // POST /api/load-mesh {"vertices":[[x,y,z],...],"faces":[[i,j,k,...],...]}
     // replaces the live mesh with caller-supplied raw geometry. Test-only
@@ -705,7 +701,7 @@ class HttpServer {
     // MainThreadBridge instances (task 0183 C3) — one per marshaled endpoint,
     // constructed (and self-registered into `bridges`) in the HttpServer
     // constructor, IN THE SAME ORDER the old hand-written app.d tick list used
-    // (reset, model, pipeEval, path, command, transform, loadMesh,
+    // (reset, model, pipeEval, path, command, loadMesh,
     // cameraSet, gpuSurface, pick, refire, block, undo, jump). Each bridge's
     // `service` delegate closes over `this` (reading the handler/provider
     // fields above AT TICK TIME, so it works even though app.d wires those
@@ -751,10 +747,6 @@ class HttpServer {
     struct CmdReq  { string id; string params; bool interactive; bool uiOrigin; }
     struct CmdResp { string error; string result; }
     private MainThreadBridge!(CmdReq, CmdResp) commandBridge;
-
-    struct XfReq  { string kind; JSONValue params; }
-    struct XfResp { string error; }
-    private MainThreadBridge!(XfReq, XfResp) transformBridge;
 
     struct LoadMeshReq  { JSONValue params; }
     struct LoadMeshResp { string error; }
@@ -1073,20 +1065,6 @@ class HttpServer {
                             uiCommandHandler(req.id, req.params);
                         else
                             commandHandler(req.id, req.params);
-                        resp.error = "";
-                    } catch (Exception e) {
-                        resp.error = e.msg;
-                    }
-                }
-            });
-
-        transformBridge = new MainThreadBridge!(XfReq, XfResp)(this,
-            (ref XfReq req, ref XfResp resp) {
-                if (transformHandler is null) {
-                    resp.error = "transform handler not set";
-                } else {
-                    try {
-                        transformHandler(req.kind, req.params);
                         resp.error = "";
                     } catch (Exception e) {
                         resp.error = e.msg;
@@ -1577,17 +1555,9 @@ class HttpServer {
     }
 
     /**
-     * Set the transform handler callback. Same synchronous main-thread
-     * dispatch as the others — see tickTransform().
-     */
-    public void setTransformHandler(TransformHandler handler) {
-        this.transformHandler = handler;
-    }
-
-    /**
      * Set the load-mesh handler callback (POST /api/load-mesh). Same
-     * synchronous main-thread dispatch as setTransformHandler — see
-     * tickLoadMesh(). Test-only raw-mesh injection.
+     * synchronous main-thread dispatch as the other mutation bridges.
+     * Test-only raw-mesh injection.
      */
     public void setLoadMeshHandler(LoadMeshHandler handler) {
         this.loadMeshHandler = handler;
@@ -3364,37 +3334,6 @@ class HttpServer {
         response.headers["Content-Type"] = "application/json";
     }
 
-    private void route_apiTransform(HttpRequest request, HttpResponse response) {
-        if (transformHandler is null) {
-            response.statusCode = 200;
-            response.body = `{"status":"error","message":"transform handler not set"}`;
-        } else {
-            try {
-                auto j = parseJSON(request.body);
-                if ("kind" !in j || j["kind"].type != JSONType.string)
-                    throw new Exception("missing 'kind' string field");
-                transformBridge.req.kind   = j["kind"].str;
-                transformBridge.req.params = j;  // pass full request body for handler
-                transformBridge.resp.error = "";
-                if (!transformBridge.submitAndWait())
-                    transformBridge.resp.error = "timeout waiting for main thread";
-                if (transformBridge.resp.error.length == 0) {
-                    response.statusCode = 200;
-                    response.body = `{"status":"ok"}`;
-                } else {
-                    response.statusCode = 200;
-                    response.body = `{"status":"error","message":"`
-                                    ~ jsonEsc(transformBridge.resp.error) ~ `"}`;
-                }
-            } catch (Exception e) {
-                response.statusCode = 200;
-                response.body = `{"status":"error","message":"`
-                                ~ jsonEsc(e.msg) ~ `"}`;
-            }
-        }
-        response.headers["Content-Type"] = "application/json";
-    }
-
     private void route_apiLoadMesh(HttpRequest request, HttpResponse response) {
         // Test-only raw-mesh injection. Validate the JSON shape on the
         // HTTP thread (so we can report counts), then dispatch to the
@@ -4228,7 +4167,6 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/recorded-events",      "GET",  Match.exact,  Answered.httpThread, "route_apiRecordedEvents"),
     RouteSpec("/api/reset",                "POST", Match.prefix, Answered.mainThread, "route_apiReset"),
     RouteSpec("/api/play-events/status",   "GET",  Match.exact,  Answered.httpThread, "route_apiPlayEventsStatus"),
-    RouteSpec("/api/transform",            "POST", Match.exact,  Answered.mainThread, "route_apiTransform"),
     RouteSpec("/api/load-mesh",            "POST", Match.exact,  Answered.mainThread, "route_apiLoadMesh"),
     RouteSpec("/api/test/layer",           "POST", Match.exact,  Answered.mainThread, "route_apiTestLayer"),
     // Match.prefix (task 1520): `?origin=ui` puts a query string on the path,
