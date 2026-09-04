@@ -629,7 +629,56 @@ class Command {
 
     // Schema: list of parameters. Default: none. Commands that surface
     // an args dialog or accept JSON params via /api/command override this.
+    //
+    // TASK 4062 — this list is also the POSITIONAL ORDER. `command_args.bindArgs`
+    // fills slot i from the i-th positional argument, for every funnel, so a
+    // command's declaration is the single statement of what its arguments are
+    // and in which order they arrive. Before 4062 the HTTP dispatcher carried
+    // four hand-written injectors that cast to 37 concrete classes and filled
+    // their fields through setters, while the keyboard funnel used declaration
+    // order over `params()` — so the same line bound differently depending on
+    // which door it came in by.
     Param[] params() { return []; }
+
+    // ---- The `?` read-back protocol (task 4062) ---------------------------
+    //
+    // `cmd <target> <attr> ?` READS the named attribute instead of writing it:
+    // the command resolves the attribute, boxes the live value as JSON and
+    // mutates nothing. It was three private, non-virtual `isQuery()` /
+    // `queryResultJsonOrEmpty()` pairs on three unrelated command classes
+    // (`tool.attr`, `tool.pipe.attr`, `layer.attr`), reachable only through
+    // three copy-pasted `cast` blocks in the HTTP dispatcher — which is why a
+    // `?` line entered from the keyboard funnel silently WROTE the literal
+    // string "?" instead of reading anything.
+    //
+    // It is on the base because the DISPATCHER needs to ask the question, and
+    // a dispatcher that has to know the concrete class in order to ask it can
+    // only ever serve the classes someone remembered to add.
+    //
+    // A command opts in by overriding `acceptsQuery()`; only then does
+    // `bindArgs` honour a `?` in a value slot. That gate is load-bearing
+    // rather than ceremonial: without it, `select.element vertex ?` would set
+    // the flag on a command with no read-back behaviour, and the dispatcher's
+    // short-circuit would apply it, answer an empty result and record no
+    // history — a silent wrong answer in place of an ordinary refusal.
+    bool acceptsQuery() const { return false; }
+
+    /// True when the payload carried the `?` idiom AND this command accepts it.
+    /// `final`: the flag has one writer (`markQuery`, from `bindArgs`), so a
+    /// second, class-local notion of "am I a query" cannot drift away from the
+    /// one the dispatcher reads.
+    final bool isQuery() const { return query_; }
+
+    /// Called by `bindArgs` when the value slot held the literal `?`. No-op
+    /// unless the command opted in via `acceptsQuery()`.
+    final void markQuery() { if (acceptsQuery()) query_ = true; }
+
+    /// The boxed read-back, serialised, for the HTTP marshal. Empty when this
+    /// command is not a query or resolved nothing. Overridden by the three
+    /// commands that answer a `?`.
+    string queryResultJson() const { return ""; }
+
+    private bool query_;
 
     // Called immediately before opening an args dialog. Override to set
     // defaults that depend on the current selection / scene state.

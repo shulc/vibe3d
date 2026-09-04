@@ -38,10 +38,9 @@ class ToolAttrCommand : Command {
     // value into queryResult_ instead of writing anything. A query mutates
     // nothing (no injectParamsInto / onParamChanged / evaluate / reEvaluate),
     // so the command stays a pure read even though it remains
-    // CmdFlags.SideEffect. Set ONLY via setQuery() — like setInteractive() it
-    // has no argstring wiring; app.d flips it when the value positional is the
-    // literal "?" token.
-    private bool      query_;
+    // CmdFlags.SideEffect. The flag itself lives on `Command` since task 4062
+    // (`acceptsQuery`/`isQuery`/`markQuery`); `bindArgs` raises it when the
+    // value positional is the literal "?" token.
     private JSONValue queryResult_;
 
     this(Mesh* mesh, ref View view, EditMode editMode, ToolHost host) {
@@ -63,15 +62,17 @@ class ToolAttrCommand : Command {
     // interactive panel/form so the FIRST edit OPENS a live session via
     // reEvaluate() (D4). Deliberately has no argstring wiring.
     void setInteractive(bool v)     { interactive_ = v; }
-    // Forms-engine query (read-back) mode. Programmatic-only; see query_ above.
-    void setQuery(bool v)           { query_ = v; }
-    bool isQuery() const            { return query_; }
+    /// This command answers a `?` read-back (task 4062 base protocol).
+    override bool acceptsQuery() const { return true; }
+    // Forms-engine query (read-back) mode. In-process callers still say
+    // `setQuery(true)`; the flag is the base's.
+    void setQuery(bool v)           { if (v) markQuery(); }
     // Boxed live value of the queried attr, valid after a query-mode apply().
     JSONValue queryResult() const   { return queryResult_; }
     // Serialised query result for the HTTP marshal (empty if not a query).
-    string queryResultJsonOrEmpty() const {
+    override string queryResultJson() const {
         import std.json : JSONType;
-        if (!query_ || queryResult_.type == JSONType.null_) return "";
+        if (!isQuery() || queryResult_.type == JSONType.null_) return "";
         return queryResult_.toString();
     }
 
@@ -97,7 +98,7 @@ class ToolAttrCommand : Command {
         // onParamChanged / evaluate / reEvaluate — a query is a pure read, so
         // it moves no geometry and opens no live session (guarding the
         // reEvaluate trigger path).
-        if (query_) {
+        if (isQuery()) {
             foreach (ref p; t.params()) {
                 if (p.name == attrName_) {
                     queryResult_ = paramToJson(p);

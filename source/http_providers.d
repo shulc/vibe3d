@@ -3205,32 +3205,16 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                 // HTTP thread via setCmdResult(); the in-process renderer reads
                 // queryResult() directly. A non-query (write) tool.attr /
                 // tool.pipe.attr falls through to the normal paths below.
-                if (auto taq = cast(ToolAttrCommand)cmd) {
-                    if (taq.isQuery()) {
-                        if (!taq.apply()) { refused(cmd, id, origin); return; }
-                        if (httpServer !is null)
-                            httpServer.setCmdResult(taq.queryResultJsonOrEmpty());
-                        return;
-                    }
-                }
-                if (auto tpaq = cast(ToolPipeAttrCommand)cmd) {
-                    if (tpaq.isQuery()) {
-                        if (!tpaq.apply()) { refused(cmd, id, origin); return; }
-                        if (httpServer !is null)
-                            httpServer.setCmdResult(tpaq.queryResultJsonOrEmpty());
-                        return;
-                    }
-                }
-                // layer.attr query (`?`): same pure-read short-circuit as the
-                // tool/stage attr queries — resolve + box the live layer Param
-                // value, record no history, return the boxed JSON.
-                if (auto laq = cast(LayerAttr)cmd) {
-                    if (laq.isQuery()) {
-                        if (!laq.apply()) { refused(cmd, id, origin); return; }
-                        if (httpServer !is null)
-                            httpServer.setCmdResult(laq.queryResultJsonOrEmpty());
-                        return;
-                    }
+                //
+                // TASK 4062 — ONE block, asked of the BASE. It was three
+                // copy-pasted casts (`ToolAttrCommand`, `ToolPipeAttrCommand`,
+                // `LayerAttr`), which is to say the protocol only worked for
+                // the classes someone had remembered to add a fourth copy for.
+                if (cmd.isQuery()) {
+                    if (!cmd.apply()) { refused(cmd, id, origin); return; }
+                    if (httpServer !is null)
+                        httpServer.setCmdResult(cmd.queryResultJson());
+                    return;
                 }
                 // Refire (undo/redo migration P4) — the dispatch decision +
                 // driver bracket live in EditSession.tryRefireDispatch (task
@@ -3317,7 +3301,7 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                 // re-grade reads.
                 if (id == "tool.pipe.attr" && !formsInteractiveLatch) {
                     bool isQuery = false;
-                    if (auto tpa = cast(ToolPipeAttrCommand)cmd) isQuery = tpa.isQuery();
+                    isQuery = cmd.isQuery();
                     if (!isQuery) history.bumpTweakGeneration();
                 }
             }

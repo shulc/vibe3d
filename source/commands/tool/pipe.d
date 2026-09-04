@@ -36,8 +36,8 @@ class ToolPipeAttrCommand : Command {
     // Query (read-back) mode — forms-engine `?` idiom, mirroring
     // ToolAttrCommand. When set, apply() resolves attrName_ against the named
     // stage's params() and boxes the live value into queryResult_ instead of
-    // calling setAttr / reEvaluate. A query mutates nothing.
-    private bool      query_;
+    // calling setAttr / reEvaluate. A query mutates nothing. The flag itself
+    // lives on `Command` since task 4062.
     private JSONValue queryResult_;
 
     this(Mesh* mesh, ref View view, EditMode editMode, ToolHost host) {
@@ -55,13 +55,15 @@ class ToolPipeAttrCommand : Command {
     void setStageId(string id)    { stageId_   = id; }
     void setAttrName(string n)    { attrName_  = n; }
     void setAttrValue(string v)   { attrValue_ = v; }
-    // Forms-engine query (read-back) mode. Programmatic-only; see query_ above.
-    void setQuery(bool v)         { query_ = v; }
-    bool isQuery() const          { return query_; }
+    /// This command answers a `?` read-back (task 4062 base protocol).
+    override bool acceptsQuery() const { return true; }
+    // Forms-engine query (read-back) mode. In-process callers still say
+    // `setQuery(true)`; the flag is the base's.
+    void setQuery(bool v)         { if (v) markQuery(); }
     JSONValue queryResult() const { return queryResult_; }
-    string queryResultJsonOrEmpty() const {
+    override string queryResultJson() const {
         import std.json : JSONType;
-        if (!query_ || queryResult_.type == JSONType.null_) return "";
+        if (!isQuery() || queryResult_.type == JSONType.null_) return "";
         return queryResult_.toString();
     }
 
@@ -86,7 +88,7 @@ class ToolPipeAttrCommand : Command {
         // params() is type-filtered for some stages (e.g. falloff), so an attr
         // not exposed by the CURRENT state resolves as unknown — that matches
         // the runtime-visibility model and is fine for Phase 1's read-back.
-        if (query_) {
+        if (isQuery()) {
             foreach (ref p; matched.params()) {
                 if (p.name == attrName_) {
                     queryResult_ = paramToJson(p);

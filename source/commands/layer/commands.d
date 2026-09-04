@@ -1199,7 +1199,6 @@ final class LayerAttr : LayerCommandBase {
     private int       indexArg = -1;      // -1 → active (resolveIndex)
     private string    attrName_;
     private JSONValue attrValue_;
-    private bool      query_;
     private JSONValue queryResult_;
     // Undo snapshot: the PRIOR JSON value of the touched param (so revert()
     // restores exactly that one attr). The resolved layer index is captured at
@@ -1246,11 +1245,12 @@ final class LayerAttr : LayerCommandBase {
     void setIndexList(string csv)  { targetsArg_ = csv; }
     void setAttrName(string n)     { attrName_ = n; }
     void setAttrValue(JSONValue v) { attrValue_ = v; }
-    void setQuery(bool v)          { query_ = v; }
-    bool isQuery() const           { return query_; }
+    /// This command answers a `?` read-back (task 4062 base protocol).
+    override bool acceptsQuery() const { return true; }
+    void setQuery(bool v)          { if (v) markQuery(); }
     JSONValue queryResult() const  { return queryResult_; }
-    string queryResultJsonOrEmpty() const {
-        if (!query_ || queryResult_.type == JSONType.null_) return "";
+    override string queryResultJson() const {
+        if (!isQuery() || queryResult_.type == JSONType.null_) return "";
         return queryResult_.toString();
     }
 
@@ -1336,7 +1336,7 @@ final class LayerAttr : LayerCommandBase {
 
         // Query (read-back) mode: box the live value and return WITHOUT mutating
         // (no injectParamsInto, no bus, no history). A pure read.
-        if (query_) {
+        if (isQuery()) {
             queryResult_ = paramToJson(*found);
             return true;
         }
