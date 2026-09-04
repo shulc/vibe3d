@@ -226,29 +226,32 @@ struct InputRouter {
     // Run a command immediately with a baked argstring injected — used by
     // shortcut bindings that pin arguments (`mesh.subdivide: "D ccsds"`), so a
     // param-carrying command applies at once instead of popping the args dialog
-    // (mirrors baking the `mesh.subdivide ccsds` invocation into its keymap). Positional
-    // args map onto params() in declaration order; `name:value` args match by
-    // name. Injection writes through the same param pointers the dialog uses.
+    // (mirrors baking the `mesh.subdivide ccsds` invocation into its keymap).
     // Returns false only if the id has no factory.
+    //
+    // TASK 4062 — the binding is `command_args.bindArgs`, the same call the
+    // HTTP dispatcher and the panel funnel make. The body that stood here did
+    // the positional half of that law itself (positionals onto `params()` in
+    // declaration order) and NOTHING else: it skipped the `?` read-back
+    // protocol, so a keyboard-bound `layer.attr 0 pos.x ?` wrote the literal
+    // string "?" where the HTTP door would have read the value back; and it
+    // skipped the four family injectors, so for the 47 ids whose arguments only
+    // those injectors knew about it dropped every argument on the floor and
+    // fired the command with its defaults. `layer.attr 0 pos.x 1.5` from a
+    // shortcut bound `index:0`, `targets:"pos.x"` and no value at all.
+    //
+    // The `schema.length > 0` gate went with it, and deliberately: it is the
+    // reason the drop was silent. `bindArgs` is the one place that decides what
+    // an unclaimed argument means.
     bool runCommandWithArgs(string commandId, string argstr) {
-        import std.json  : JSONValue, JSONType;
-        import params    : injectParamsInto;
-        import argstring : parseArgstring;
+        import argstring    : parseArgstring;
+        import command_args : bindArgs;
         auto factory = commandId in app.reg.commandFactories;
         if (factory is null) return false;
-        auto cmd    = (*factory)();
-        auto schema = cmd.params();
-        if (argstr.length > 0 && schema.length > 0) {
+        auto cmd = (*factory)();
+        if (argstr.length > 0) {
             auto pj = parseArgstring(commandId ~ " " ~ argstr).params;
-            if (pj.type == JSONType.object) {
-                // Positional args → schema order (so "ccsds" fills `mode`).
-                if (auto pos = "_positional" in pj)
-                    if (pos.type == JSONType.array)
-                        foreach (i, ref v; pos.array)
-                            if (i < schema.length)
-                                pj.object[schema[i].name] = v;
-                injectParamsInto(schema, pj);
-            }
+            bindArgs(cmd, pj);
         }
         app.runCommand(cmd);
         return true;

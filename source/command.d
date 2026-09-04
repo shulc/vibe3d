@@ -7,6 +7,7 @@ import seltype : SelType, geometrySelType;
 import math : Viewport;
 import params : Param, ParamHints;
 import mesh_edit_delta : MeshEditScope;
+import std.json : JSONValue;
 
 // Test-automation gate (re-eval plan D5). Set true ONLY when the editor is
 // launched with --test (app.d), mirroring the HttpServer.setTestMode flag the
@@ -679,6 +680,18 @@ class Command {
     string queryResultJson() const { return ""; }
 
     private bool query_;
+
+    /// Named payload keys the SCHEMA did not claim, handed over whole (task
+    /// 4062). Default: ignored — an argument a command did not declare is not
+    /// an argument, and dropping it is what every funnel already did.
+    ///
+    /// One override, `tool.set`, which forwards `name:value` pairs to the
+    /// params() of the TOOL it activates — a schema this command cannot know
+    /// at declaration time, and the one shape the positional law genuinely
+    /// cannot express. It is a base hook rather than a cast in the funnel so
+    /// that the funnel stays free of concrete command classes; that freedom is
+    /// the whole point of the task.
+    void setUnboundArgs(JSONValue named) {}
 
     // Called immediately before opening an args dialog. Override to set
     // defaults that depend on the current selection / scene state.

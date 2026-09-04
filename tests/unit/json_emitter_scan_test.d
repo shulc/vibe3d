@@ -357,6 +357,13 @@ private immutable string[] kScanned = [
     "source/http_json.d",
     "source/http_providers.d",
     "source/view.d",
+    // TASK 4062 — `scalarArgToString` moved from http_providers.d to
+    // command_args.d with the argument-binding law, and its
+    // `json-num-exempt:` marker went with it. The file is scanned so the
+    // marker stays under the gate: it is exempt because it spells a value into
+    // an ARGSTRING, and an argstring is not a JSON body — but "not a JSON
+    // body" is a claim that has to keep being checked at its new address.
+    "source/command_args.d",
 ];
 
 unittest {
@@ -390,13 +397,15 @@ unittest {
     }
 
     // --- non-vacuity: an empty walk must FAIL, not report a clean tree -----
-    // The 4 is a LITERAL and not `kScanned.length`. Measured: written as
+    // The 5 is a LITERAL and not `kScanned.length`. Measured: written as
     // `filesScanned == kScanned.length` this assertion is self-consistent —
     // emptying `kScanned` leaves it green, so it detects nothing. Only
     // `totalSpecsSeen > 0` caught mutation M7, and one witness for a
-    // non-vacuity check is one too few.
-    assert(filesScanned == 4,
-        format("the gate must read all four body-assembling files, it read %d",
+    // non-vacuity check is one too few. (Task 4062 raised it from 4 to 5:
+    // `source/command_args.d` joined the list when `scalarArgToString` moved
+    // there with its exemption marker.)
+    assert(filesScanned == 5,
+        format("the gate must read all five body-assembling files, it read %d",
                filesScanned));
     assert(totalSpecsSeen > 0,
         "the scan saw no float specifier anywhere in four files that are full "
@@ -437,7 +446,7 @@ unittest {
              ~ "`%s` marker is a deliberate act: write the reason in the task "
              ~ "card and raise this number on purpose.\n%d exemption(s):\n  %s",
                kExemptMarker, ex.length, ex.join("\n  ")));
-    assert(ex[0] == "source/http_providers.d :: builds an argstring, not a "
+    assert(ex[0] == "source/command_args.d :: builds an argstring, not a "
                   ~ "JSON body", ex[0]);
     assert(ex[1] == "source/http_providers.d :: clamped to the [0,1] weight "
                   ~ "contract above, task 1550 decision 4.1", ex[1]);

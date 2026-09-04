@@ -40,6 +40,12 @@ import params      : Param, IntEnumEntry, isUserSet, fmtFloatWire;
 // Public API
 // ---------------------------------------------------------------------------
 
+/// The key positional arguments are collected under in a parsed line's
+/// params object. Named once (task 4062): it was spelled out 53 times across
+/// five modules, and a misspelt copy binds NOTHING while reporting success.
+/// `command_args` re-exports the readers and writers that use it.
+enum string kPositionalKey = "_positional";
+
 /// Result of parsing one argstring line.
 struct ParsedLine {
     /// True for empty lines and comment lines — skip without error.
@@ -521,7 +527,7 @@ private struct Parser
         }
 
         if (positionalArgs.length > 0)
-            params["_positional"] = JSONValue(positionalArgs);
+            params[kPositionalKey] = JSONValue(positionalArgs);
 
         ParsedLine r;
         r.isEmpty   = false;

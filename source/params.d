@@ -240,6 +240,26 @@ enum ParamFlags : uint {
     // the correct behaviour (e.g. every primitive builder's segment/side/
     // order subdivision-count knobs), so callers opt in per-Param.
     EnforceBounds = 1 << 3,
+    // JsonText (task 4062) — a String param whose storage holds the argument's
+    // RAW JSON TEXT rather than its scalar spelling. Read by exactly one
+    // consumer, `command_args.bindArgs`, when it coerces a positional or named
+    // argument to the declared kind: an ordinary String slot takes `1.5` as
+    // `1.5` and `"abc"` as `abc`, a JsonText slot takes them as `1.5` and
+    // `"abc"` — the text `parseJSON` hands back unchanged.
+    //
+    // It exists because two commands FORWARD their value slot instead of
+    // consuming it: `tool.attr <tool> <attr> <value>` and
+    // `layer.attr <index> <attr> <value>` hand the value to
+    // `injectParamsInto` against the TARGET's schema, so the value's JSON TYPE
+    // is what decides whether the write lands. Stringifying `{1,2,3}` to
+    // `1,2,3` or `1.5` to a string would break the target's own gate. This is
+    // the "explicit flag" the task's law reserves for a command whose argument
+    // its declaration cannot otherwise express; the round-trip is exact
+    // (std.json prints doubles at 18 significant digits).
+    //
+    // Everything else — the UI renderers, `isUserSet`, `serializeParams` —
+    // sees a plain String param and needs no case of its own.
+    JsonText = 1 << 4,
 }
 
 struct Param {
@@ -262,6 +282,7 @@ struct Param {
     bool readonly_()  const { return (flags & ParamFlags.ReadOnly)  != 0; }
     bool transient_() const { return (flags & ParamFlags.Transient) != 0; }
     bool enforceBounds_() const { return (flags & ParamFlags.EnforceBounds) != 0; }
+    bool jsonText_()   const { return (flags & ParamFlags.JsonText)   != 0; }
 
     // Exactly one pointer is non-null, matching `kind`.
     union {
@@ -274,6 +295,22 @@ struct Param {
         uint[]*  uiaPtr;  // IntArray:  pointer to a uint[] slice header
         Vec3[]*  v3aPtr;  // Vec3Array: pointer to a Vec3[] slice header
     }
+
+    // Additional wire spellings this parameter answers to (task 4062). Read by
+    // exactly one consumer, `command_args.bindArgs`, and only for a NAMED key:
+    // when the payload carries no key called `name`, the first alias present is
+    // bound instead. Positional binding never consults it (position is the
+    // name).
+    //
+    // It exists to keep a wire contract the injectors it replaces already had:
+    // `viewport.displayStyle` and its two siblings scanned an alias list
+    // (`value`/`style`/`wire`/`overlay`/`alpha`) and `viewport.gridSteps` its
+    // own (`value`/`mask`/`steps`/`rungs`). Declaring the alias beside the
+    // parameter is what lets those spellings survive the move without a
+    // per-command reader — and it is a NARROW mechanism on purpose: an alias
+    // never appears in serialised output, so `serializeParams` still emits one
+    // canonical spelling.
+    string[] aliasNames;
 
     // For Kind.Enum: list of [internal_tag, user_label] pairs.
     // internal_tag is what is stored in *sptr and sent over the wire.
@@ -437,6 +474,24 @@ struct Param {
     // ParamFlags.EnforceBounds above for when this is (and is NOT) the
     // right choice for a given param.
     Param enforceBounds() { flags |= ParamFlags.EnforceBounds; return this; }
+
+    /// Additional wire spellings for a NAMED argument — see `aliasNames`.
+    Param aliases(string[] names) { aliasNames = names; return this; }
+
+    /// A String slot that carries the argument's RAW JSON TEXT — see
+    /// ParamFlags.JsonText. Declared through its own factory rather than a
+    /// chainable setter so the call site reads as its own kind of slot.
+    static Param jsonArg_(string name, string label, string* storage)
+    {
+        Param p;
+        p.name       = name;
+        p.label      = label;
+        p.kind       = Kind.String;
+        p.sptr       = storage;
+        p.default_.s = "";
+        p.flags      = ParamFlags.JsonText;
+        return p;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -909,7 +964,7 @@ string paramSchemaJson(const ref Param p)
     auto v = appender!string;
     v.put(format(`{"name":"%s","kind":"%s","enforceBounds":%s,"value":%s`,
         p.name, p.kind, p.enforceBounds_ ? "true" : "false",
-        paramToJson(p).toString()));
+        paramValueJson(p)));
     if (p.hints.hasMinF)      v.put(format(`,"min":%s`, p.hints.minF));
     else if (p.hints.hasMinI) v.put(format(`,"min":%d`, p.hints.minI));
     if (p.hints.hasMaxF)      v.put(format(`,"max":%s`, p.hints.maxF));
@@ -942,6 +997,33 @@ string paramSchemaJson(const ref Param p)
     }
     v.put(`}`);
     return v.data;
+}
+
+// The `value` field of the schema above, and the reason it is not just
+// `paramToJson(p).toString()` (task 4062).
+//
+// `std.json` REFUSES to encode a non-finite double — it throws
+// `Cannot encode NaN` rather than writing an unparseable token — and the whole
+// schema is serialised ONCE at startup, inside `Registry.cacheSupportedModes`,
+// which is not inside any `try`. So a single Param whose live value is
+// non-finite at construction did not produce a bad body: it killed the process
+// before the HTTP server ever answered. Measured here on `workplane.edit`,
+// whose six channels initialise to `float.nan` BY DESIGN (the stage reads NaN
+// as "leave this channel alone") and which acquired a schema when commands
+// began declaring their arguments.
+//
+// `null` is the same answer `json_num.jsonNum` gives for the same reason, and
+// it is chosen for the same reason: `0` would make the body parse and report a
+// plausible-but-wrong value. Every FINITE value still goes through
+// `paramToJson`, so this changes no existing byte of `/api/registry?params=1`.
+private string paramValueJson(const ref Param p)
+{
+    import std.math : isFinite;
+    if (p.kind == Param.Kind.Float && !isFinite(*p.fptr)) return "null";
+    if (p.kind == Param.Kind.Vec3_
+        && !(isFinite(p.vptr.x) && isFinite(p.vptr.y) && isFinite(p.vptr.z)))
+        return "null";
+    return paramToJson(p).toString();
 }
 
 /// `[` + comma-joined `paramSchemaJson` + `]`. Empty schema → `[]`.
@@ -1092,6 +1174,31 @@ string[2][] choicesOf(const ref Param p)
 // and `io/native.d` decision 6 already settled it. Widening tolerance to those
 // is a separate decision with its own witness.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// wireArgs — declare a command's POSITIONAL ARGUMENTS (task 4062).
+//
+// `params()` carries two different intentions since the argument-binding law
+// landed, and only one of them belongs in front of a user. A tool's schema is
+// a set of SETTINGS: a generic renderer draws them, an args dialog asks for
+// them, the sticky store remembers them. A command's schema is its ARGUMENT
+// LIST — the positional order `command_args.bindArgs` fills — and asking a
+// user to fill in `select.vertex`'s `type` in a modal is not a feature.
+//
+// So a command that declares arguments wraps them here, which sets
+// `ParamFlags.Hidden` on each. That flag already means exactly "the generic UI
+// renderers skip this row"; `ArgsDialog.needsDialog` and
+// `EditorApp.tryOpenArgsDialog` count the VISIBLE rows, so a command whose
+// whole schema is wire arguments pops no dialog — the behaviour every one of
+// those commands had when its schema was empty.
+//
+// Everything else about the params is unchanged: they bind, they inject, they
+// serialise. Only the drawing is suppressed.
+// ---------------------------------------------------------------------------
+Param[] wireArgs(Param[] ps...) {
+    foreach (ref p; ps) p.flags |= ParamFlags.Hidden;
+    return ps.dup;
+}
 
 /// See the section header above. `Refuse` is the default everywhere.
 enum InjectPolicy {
