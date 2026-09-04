@@ -1298,7 +1298,22 @@ final class LayerAttr : LayerCommandBase {
         targetsArg_ = "";
         if (targetArg_.length > 0) {
             if (targetArg_.canFind(',')) targetsArg_ = targetArg_;
-            else { try { indexArg = targetArg_.strip.to!int; } catch (Exception) {} }
+            else {
+                // AND THE SINGLE-INDEX ARM REFUSES TOO. This `catch` used to be
+                // empty, which is the very thing the paragraph above forbids:
+                // a swallowed throw leaves `indexArg` at -1, `resolveIndex(-1)`
+                // answers the ACTIVE layer, and `layer.attr bogus visible false`
+                // writes to a layer the caller never named and reports `ok`.
+                // The list arm below has always refused an unparseable token;
+                // this one now refuses with the same shape, naming the SLOT
+                // (`index`) rather than a list position it does not have.
+                auto t = targetArg_.strip;
+                try { indexArg = t.to!int; }
+                catch (Exception) {
+                    refusal_ = "layer.attr: index '" ~ t ~ "' is not an index";
+                    return false;
+                }
+            }
         }
         if (targetsArg_.length == 0) {
             immutable size_t one = resolveIndex(indexArg);

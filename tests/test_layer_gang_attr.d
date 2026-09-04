@@ -204,3 +204,40 @@ unittest {  // W6 — the same index twice is one target, not two
         ~ "layer 0 taken AFTER its own write restores 9.5, leaving the undo a "
         ~ "silent no-op for that layer");
 }
+
+unittest {  // W7 — a SINGLE index that is not a number REFUSES, naming the slot
+    // The LIST arm has refused an unparseable token since 1880 (W3 above); the
+    // single-index arm had an EMPTY `catch`, which is the very thing the
+    // paragraph over `resolveTargets` forbids. A swallowed parse leaves
+    // `indexArg` at -1, and `resolveIndex(-1)` answers the ACTIVE layer — so
+    // `layer.attr bogus pos.x 7.0` wrote to a layer nobody named and reported
+    // `ok`.
+    //
+    // THE DISCRIMINATING HALF IS NOT THE ERROR, IT IS THAT NOTHING MOVED. The
+    // rig leaves layer 2 active, so the swallow is visible as [1, 2, 7] rather
+    // than as an exception — the failure mode is a silent WRONG ANSWER, and a
+    // test that only asked "did it error" would say nothing about where the
+    // write went.
+    import std.algorithm : canFind;
+    rig();
+
+    // Green above red: a LEGAL single index still writes. A refusal widened
+    // until it rejects every single-index call reddens on this line, above the
+    // one below, so a single run separates "too strict" from "not strict".
+    cmd("layer.attr 1 pos.x 7.0");
+    assertPos([1.0, 7.0, 3.0],
+        "a legal single index still writes — the refusal below must be about "
+        ~ "the token, not about the single-index path");
+    cmd("history.undo");
+    assertPos([1.0, 2.0, 3.0], "back to the rig before the refusal case");
+
+    auto msg = cmdRefused("layer.attr bogus pos.x 7.0",
+        "a single index that is not a number");
+    assert(msg.canFind("index"),
+        "the refusal must NAME THE SLOT it could not read, so the caller can "
+        ~ "tell it from the attr and the value — got: " ~ msg);
+    assertPos([1.0, 2.0, 3.0],
+        "and NOTHING moved. A swallowed parse leaves the index at -1, which "
+        ~ "`resolveIndex` answers with the ACTIVE layer: the write lands on "
+        ~ "layer 2 and reports ok, which reads [1.0, 2.0, 7.0]");
+}
