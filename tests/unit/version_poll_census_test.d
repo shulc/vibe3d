@@ -574,6 +574,16 @@ unittest {
 // have something to say — "write the note" is the more useful of the two.
 // ---------------------------------------------------------------------------
 
+/// SEEN RED, 2026-09-04 after the key changed (task 4056): both of task
+/// 1906's recorded set-gate mutations still redden, now naming the symbol.
+///   * 4-SET-a (table edited, code untouched): `Mesh.vertexAdjacencyCSR —
+///     recorded 2, scanner found 1`.
+///   * 4-SET-b (an ARGUED new poll in source/snapshot.d): `mutation4056Poll —
+///     NOT RECORDED AT ALL`, with the MARKER gate above it green, which is
+///     the half of 4-SET-b that this gate exists for.
+/// And the move it was costing is silent: `sameGpuUploadVersion` lifted into
+/// its own module, body untouched, left this census green.
+///
 /// One row of §3.6's site-by-site table, keyed by the ENCLOSING DECLARATION
 /// the compare sits in. `why` is what a reader needs in order to go and find
 /// the row in §3.6; it is not matched against anything.

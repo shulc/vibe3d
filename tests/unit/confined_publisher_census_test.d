@@ -104,6 +104,14 @@
 //
 // SEEN RED, 2026-08-26: adding `mesh.publishConfinedChange(MeshEditScope
 // .Position);` to a fourth site turned this module red naming that file.
+//
+// SEEN RED AGAIN AFTER THE KEY CHANGED, 2026-09-04 (task 4056): the SAME
+// mutation, in the same file, now names the DECLARATION —
+// `mutation4056Drill|publishConfinedChange — NOT RECORDED AT ALL, scanner
+// found 1 occurrence(s) / found source/tools/transform/rotate.d:2009`. And
+// the move it was costing is now silent: renaming `xfrm_apply.d` (module line
+// and its one import, no other edit) left this census green while three
+// path-keyed checks elsewhere reddened on nothing.
 module tests.unit.confined_publisher_census_test;
 
 import std.algorithm : sort;

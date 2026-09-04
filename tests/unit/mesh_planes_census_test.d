@@ -691,6 +691,16 @@ unittest // …and the shapes the two new arms must NOT flag, because a census t
 // count; case (b) and the two copies inside ONE function (`Mesh.clear`,
 // `bevelEdgesByMask`) are what the count still carries.
 //
+/// SEEN RED, 2026-09-04 after the key changed (task 4056): task 1902's
+/// recorded B1-allowlist-paste mutation — an allowed statement copied into a
+/// NEW declaration — still reddens, and now says which:
+/// `mutationB1Drill|m.vertices.length = vertsBeforePass1; — NOT RECORDED AT
+/// ALL`. (Its first placement, inside `struct Mesh`, did not compile: task
+/// 2910's member ratchet in mesh_planes.d fired first. It was moved to a
+/// satellite this census already scans.) And the move it was costing is
+/// silent: `makeTwoDisjointCubes` lifted into its own mesh_ops module, body
+/// untouched, left this census green.
+///
 /// One exempted hand-rolled rewrite, keyed by the DECLARATION it sits in plus
 /// the statement text — not by the file's PATH (task 4056). Moving
 /// `edgeSliceEx` to a third satellite module must not redden this census, and
