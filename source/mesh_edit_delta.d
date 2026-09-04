@@ -29,7 +29,8 @@ import mesh;            // Mesh, Marks, edgeKey (mutual import — see note belo
 import math : Vec3;
 import mesh_selsets : selSetRekeyEdges, selSetGatherVertexMaskForward,
     selSetGatherVertexMaskReverse, selSetDropFilterVertexMask, WireKeyPolicy;
-import mesh_planes : kNoSource, FaceSource, rewriteFaces;   // task 1902 Stage H —
+import mesh_planes : kNoSource, FaceSource, rewriteFaces,
+                     kFacePlanes, kFacePlaneEntryField, FaceReindexRecord;   // task 1902 Stage H —
     // FaceReindex forward replay is the primitive itself (plan §7.2: "one
     // implementation, so replay and live edit cannot drift"). No cycle:
     // mesh_planes.d does not import mesh_edit_delta.d.
@@ -2850,10 +2851,7 @@ struct MeshEditTracker {
     // via `Mesh.wantsFaceReindexRecording()` — so this method unconditionally
     // appends; callers that skip the gate get an entry regardless, which is
     // why `Mesh.recordFaceReindexIfWanted` re-checks the flag before calling.
-    void recordFaceReindex(uint[] oldOfNew, uint oldFaceCount, uint[][] newFaceLists,
-                           FaceIdx[] dropIdx, uint[][] dropLists, uint[] dropMat,
-                           uint[] dropPrt, uint[] dropSub, ulong[] dropSetMsk,
-                           int[] dropOrd, FaceIdx[] survIdx, uint[][] survLists) {
+    void recordFaceReindex(FaceReindexRecord rec) {
         // Review finding B3: this used to read
         // `if (oldOfNew.length == 0 && newFaceLists.length == 0) return;` —
         // `oldOfNew.length` is `newFaces.length` at the call site, which is
@@ -2863,21 +2861,28 @@ struct MeshEditTracker {
         // exactly the case it most needed to record. `oldFaceCount == 0`
         // names the real no-op: nothing existed before AND nothing exists
         // after.
-        if (oldFaceCount == 0 && newFaceLists.length == 0) return;
+        if (rec.oldFaceCount == 0 && rec.newFaceLists.length == 0) return;
         MeshOpEntry e;
         e.kind              = MeshOpEntry.Kind.FaceReindex;
-        e.faceOldOfNew      = oldOfNew;
-        e.oldFaceCount      = oldFaceCount;
-        e.newFaceLists      = newFaceLists;
-        e.fIdx              = dropIdx;
-        e.faceLists         = dropLists;
-        e.faceMat           = dropMat;
-        e.facePrt           = dropPrt;
-        e.faceSub           = dropSub;
-        e.faceSetMsk        = dropSetMsk;
-        e.faceOrd           = dropOrd;
-        e.faceSurvivorIdx   = survIdx;      // review finding B2
-        e.faceSurvivorLists = survLists;    // review finding B2
+        e.faceOldOfNew      = rec.oldOfNew;
+        e.oldFaceCount      = rec.oldFaceCount;
+        e.newFaceLists      = rec.newFaceLists;
+        e.fIdx              = rec.dropIdx;
+        e.faceLists         = rec.dropLists;
+        // TASK 4059 — the per-face plane group, from `kFacePlanes` through
+        // `kFacePlaneEntryField`. This is the line that makes "a plane added
+        // to kFacePlanes with no matching MeshOpEntry field" a COMPILE error
+        // (the AA index fails at CTFE) instead of a silently uncarried undo
+        // payload that only the census test could catch, and only at runtime.
+        static foreach (n; kFacePlanes) {
+            {
+                enum string entryField = kFacePlaneEntryField[n];
+                __traits(getMember, e, entryField) =
+                    __traits(getMember, rec.dropPlanes, n);
+            }
+        }
+        e.faceSurvivorIdx   = rec.survIdx;      // review finding B2
+        e.faceSurvivorLists = rec.survLists;    // review finding B2
         append(e);
     }
 

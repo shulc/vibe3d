@@ -270,6 +270,35 @@ enum string[] kFacePlanes = [
     "faceSetMask",
 ];
 
+/// `kFacePlanes` name -> the `MeshOpEntry` field that carries it in the
+/// op-log (task 4059; MOVED here from `tests/unit/mesh_planes_census_test.d`,
+/// where it lived as a test-side hand-maintained copy).
+///
+/// WHY IT MOVED. The comment above says a new `kFacePlanes` entry "is a new
+/// field `MeshOpEntry` should probably also carry — check that file when
+/// extending this one". "Check that file" is exactly the obligation this
+/// module exists to delete: the op-log's recorder listed the same five planes
+/// a THIRD time, by hand, as twelve parameters on
+/// `Mesh.recordFaceReindexIfWanted`. With the correspondence stated here,
+/// `MeshEditTracker.recordFaceReindex` fills the entry with a `static
+/// foreach` over `kFacePlanes`, so a plane added to that list is a COMPILE
+/// error here (no mapping) rather than a silently uncarried undo payload.
+///
+/// `faceMarks` maps to `faceSub`, and the value is NARROWED: only the
+/// Subpatch BIT rides the drop set, not the whole word. That is a
+/// pre-existing, documented limit of `RemoveFaces`'s own reverse — Select and
+/// Hide are restored through their own delta kinds — and `FaceReindex`
+/// inherits it rather than inventing a new rule. `FacePlaneDrops.captureFace`
+/// below is where the narrowing lives, in ONE place, instead of at each
+/// recorder call site.
+enum string[string] kFacePlaneEntryField = [
+    "faceMarks":          "faceSub",
+    "faceMaterial":       "faceMat",
+    "facePart":           "facePrt",
+    "faceSelectionOrder": "faceOrd",
+    "faceSetMask":        "faceSetMsk",
+];
+
 /// The per-vertex planes carried by `rewriteVertices`.
 enum string[] kVertPlanes = [
     "vertexMarks", "vertexSelectionOrder", "vertexSetMask",
@@ -599,6 +628,69 @@ static assert(countMemberOverloads!Mesh == 297,
   ~ "`ref Mesh`, not in the struct. THIS TREE HAS "
   ~ ctfeDec(countMemberOverloads!Mesh) ~ " member-function overloads.");
 // ---------------------------------------------------------------------------
+// The op-log payload (task 4059) — the THIRD enumeration of the same five
+// planes, now derived from the first.
+// ---------------------------------------------------------------------------
+
+/// One value per `kFacePlanes` plane, for a LIST of faces, in the shapes
+/// `MeshOpEntry` stores. The fields are GENERATED from `kFacePlanes`, so
+/// adding a plane there adds a field here with no edit.
+struct FacePlaneDrops {
+    static foreach (n; kFacePlanes)
+        mixin("typeof(Mesh." ~ n ~ ") " ~ n ~ ";");
+
+    /// Append face `fi`'s value on every plane. Reads the planes LAZILY —
+    /// `facePart` / `faceMaterial` / `faceSetMask` grow on write and read as
+    /// `T.init` past their length by convention (their own declarations in
+    /// mesh.d say so), so an out-of-range index is a legal zero and not a
+    /// bug to bounds-check away.
+    ///
+    /// MUST be called BEFORE the carry that overwrites the planes: the whole
+    /// point of a drop payload is "the planes of an old face no new face
+    /// names", and those values are gone the moment `rewriteFaces`'s carry
+    /// loop runs. `CLAUDE.md`'s "the check is CORRECT but runs at the wrong
+    /// MOMENT" applies to captures as much as to assertions.
+    void captureFace(ref Mesh m, size_t fi) {
+        static foreach (n; kFacePlanes) {
+            {
+                static if (n == "faceMarks") {
+                    // THE ONE NARROWING, stated once. `MeshOpEntry.faceSub`
+                    // carries the Subpatch BIT alone, not the whole mark word
+                    // — see `kFacePlaneEntryField`'s doc comment for why that
+                    // is inherited rather than chosen.
+                    __traits(getMember, this, n) ~= (m.isFaceSubpatch(fi) ? 1u : 0u);
+                } else {
+                    auto src = __traits(getMember, m, n);
+                    __traits(getMember, this, n) ~=
+                        (fi < src.length) ? src[fi] : typeof(src[0]).init;
+                }
+            }
+        }
+    }
+}
+
+/// Everything a `Kind.FaceReindex` op-log entry needs, in ONE value.
+///
+/// It replaces a twelve-parameter call — `recordFaceReindexIfWanted(oldOfNew,
+/// oldFaceCount, newFaceLists, dropIdx, dropLists, dropMat, dropPrt, dropSub,
+/// dropSetMsk, dropOrd, survIdx, survLists)` — five of whose parameters were
+/// the plane list written out a third time by hand, in an order nothing
+/// checked. A positional list of five same-shaped `uint[]`/`int[]`/`ulong[]`
+/// arguments is one transposition away from recording the wrong plane under
+/// the wrong name, and no count can see that: swap `dropMat` and `dropPrt` and
+/// every length, every arity and every face index still agrees.
+struct FaceReindexRecord {
+    uint[]         oldOfNew;       // newToOld, TOTAL over the new face array
+    uint           oldFaceCount;
+    uint[][]       newFaceLists;   // POST-rewrite windings
+    FaceIdx[]      dropIdx;        // old indices no new face names
+    uint[][]       dropLists;      // their PRE-rewrite windings
+    FacePlaneDrops dropPlanes;     // their planes, parallel to dropIdx
+    FaceIdx[]      survIdx;        // review finding B2 (task 1902 Stage H)
+    uint[][]       survLists;      // ditto
+}
+
+// ---------------------------------------------------------------------------
 // The primitive.
 // ---------------------------------------------------------------------------
 
@@ -659,16 +751,12 @@ void rewriteFaces(ref Mesh m, uint[][] newFaces, in FaceSource src,
     // rewrite (every rewrite today) pays exactly one bool+null check here
     // and allocates nothing.
     const bool wantFaceReindexRecord = m.wantsFaceReindexRecording();
-    FaceIdx[] recDropIdx;
-    uint[][]  recDropLists;
-    uint[]    recDropMat, recDropPrt, recDropSub;
-    ulong[]   recDropSetMsk;
-    int[]     recDropOrd;
-    FaceIdx[] recSurvIdx;      // review finding B2
-    uint[][]  recSurvLists;    // review finding B2
-    uint      recOldFaceCount;
+    // TASK 4059 — one value, and its per-face plane group is GENERATED from
+    // `kFacePlanes` (see `FacePlaneDrops`). The nine locals this replaces were
+    // the plane list written out a third time by hand.
+    FaceReindexRecord rec;
     if (wantFaceReindexRecord) {
-        recOldFaceCount = cast(uint) m.faces.length;
+        rec.oldFaceCount = cast(uint) m.faces.length;
         // Task 1903 Stage J — the per-CORNER half of the entry. The forward
         // carry below is many-to-one and lossy (a corner on an inserted vertex
         // is a weighted BLEND, a swept wall corner is GENERATED — neither the
@@ -696,7 +784,7 @@ void rewriteFaces(ref Mesh m, uint[][] newFaces, in FaceSource src,
         // at this caller and only `Δ` at the other three.
         if (m.hasPolyVertexMap()) {
             FaceIdx[] allOld;
-            allOld.reserve(recOldFaceCount);
+            allOld.reserve(rec.oldFaceCount);
             foreach (fi; m.faceIndices) allOld ~= fi;
             m.recordPolyVertexPayload(allOld);
         }
@@ -705,23 +793,19 @@ void rewriteFaces(ref Mesh m, uint[][] newFaces, in FaceSource src,
         // and, for a survivor, the FIRST new index naming it: the same
         // tie-break `applyFaceReindexReverse` uses ("all such copies are
         // equal … within one entry", plan §7.2).
-        bool[] named = new bool[](recOldFaceCount);
-        uint[] firstNewOfOld = new uint[](recOldFaceCount);
+        bool[] named = new bool[](rec.oldFaceCount);
+        uint[] firstNewOfOld = new uint[](rec.oldFaceCount);
         firstNewOfOld[] = uint.max;
         foreach (nf, of; src.oldOfNew) {
-            if (of == kNoSource || of >= recOldFaceCount) continue;
+            if (of == kNoSource || of >= rec.oldFaceCount) continue;
             named[of] = true;
             if (firstNewOfOld[of] == uint.max) firstNewOfOld[of] = cast(uint) nf;
         }
         foreach (fi; m.faceIndices) {
             if (!named[fi]) {
-                recDropIdx    ~= fi;
-                recDropLists  ~= m.faces[fi].dup;
-                recDropMat    ~= (fi < m.faceMaterial.length) ? m.faceMaterial[fi] : 0;
-                recDropPrt    ~= (fi < m.facePart.length) ? m.facePart[fi] : 0;
-                recDropSub    ~= (m.isFaceSubpatch(fi) ? 1u : 0u);
-                recDropSetMsk ~= (fi < m.faceSetMask.length) ? m.faceSetMask[fi] : 0UL;
-                recDropOrd    ~= (fi < m.faceSelectionOrder.length) ? m.faceSelectionOrder[fi] : 0;
+                rec.dropIdx   ~= fi;
+                rec.dropLists ~= m.faces[fi].dup;
+                rec.dropPlanes.captureFace(m, fi);   // task 4059 — every plane, from the list
                 continue;
             }
             // Review finding B2: a survivor's winding at reverse time would
@@ -737,8 +821,8 @@ void rewriteFaces(ref Mesh m, uint[][] newFaces, in FaceSource src,
             // beyond this one comparison.
             const uint nf = firstNewOfOld[fi];
             if (nf < newFaces.length && newFaces[nf] != m.faces[fi]) {
-                recSurvIdx   ~= fi;
-                recSurvLists ~= m.faces[fi].dup;
+                rec.survIdx   ~= fi;
+                rec.survLists ~= m.faces[fi].dup;
             }
         }
     }
@@ -792,13 +876,10 @@ void rewriteFaces(ref Mesh m, uint[][] newFaces, in FaceSource src,
     // §7.2 names). This is a correction to §7.2's field table, recorded in
     // the task card's `## Лог`, not a silent addition.
     if (wantFaceReindexRecord) {
-        uint[][] recNewLists;
-        recNewLists.reserve(newFaces.length);
-        foreach (l; newFaces) recNewLists ~= l.dup;
-        m.recordFaceReindexIfWanted(src.oldOfNew.dup, recOldFaceCount, recNewLists,
-                                    recDropIdx, recDropLists, recDropMat, recDropPrt,
-                                    recDropSub, recDropSetMsk, recDropOrd,
-                                    recSurvIdx, recSurvLists);
+        rec.oldOfNew = src.oldOfNew.dup;
+        rec.newFaceLists.reserve(newFaces.length);
+        foreach (l; newFaces) rec.newFaceLists ~= l.dup;
+        m.recordFaceReindexIfWanted(rec);
     }
 }
 

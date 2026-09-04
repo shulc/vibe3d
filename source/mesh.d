@@ -153,7 +153,8 @@ import mesh_selsets : selSetResizeVertex, selSetRekeyEdges,
     selSetGatherVertexMaskForward, WireKeyPolicy;
 import mesh_planes : rewriteFaces, FaceSource, kNoSource,
                      appendFacePlanes, PlaneFit,
-                     EdgeCarry, EdgePlaneCarry, captureEdgePlanes, applyEdgePlanes;
+                     EdgeCarry, EdgePlaneCarry, captureEdgePlanes, applyEdgePlanes,
+                     FaceReindexRecord;
 // Snap-visibility instrumentation (task 1350/1351). `perf_probe` imports only
 // core.time, so this is a leaf dependency and cannot cycle; every call compiles
 // to nothing unless the `perf`/`perf-count` build defines PerfProbe.
@@ -3110,14 +3111,14 @@ struct Mesh {
     /// (`mesh_planes.rewriteFaces`) already gates its own capture on
     /// `wantsFaceReindexRecording()`, so this second check costs one branch
     /// on an already-decided-armed path, never a surprise no-op.
-    void recordFaceReindexIfWanted(uint[] oldOfNew, uint oldFaceCount, uint[][] newFaceLists,
-                                   FaceIdx[] dropIdx, uint[][] dropLists, uint[] dropMat,
-                                   uint[] dropPrt, uint[] dropSub, ulong[] dropSetMsk,
-                                   int[] dropOrd, FaceIdx[] survIdx, uint[][] survLists) {
+    /// TASK 4059 — ONE parameter, down from twelve. Five of the twelve were
+    /// `kFacePlanes` written out a third time, positionally: five same-shaped
+    /// array arguments in a row that no count could tell apart if two were
+    /// swapped. They now ride inside `FaceReindexRecord.dropPlanes`, whose
+    /// fields are generated from that list.
+    void recordFaceReindexIfWanted(FaceReindexRecord rec) {
         if (editRecorder_ is null || !editRecorder_.wantsFaceReindex) return;
-        editRecorder_.recordFaceReindex(oldOfNew, oldFaceCount, newFaceLists,
-                                        dropIdx, dropLists, dropMat, dropPrt, dropSub,
-                                        dropSetMsk, dropOrd, survIdx, survLists);
+        editRecorder_.recordFaceReindex(rec);
     }
 
     // Install one in-place face winding and record its live before-image

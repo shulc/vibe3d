@@ -21,7 +21,8 @@
 module tests.unit.mesh_planes_census_test;
 
 import mesh          : Mesh;
-import mesh_planes    : kFacePlanes, kVertPlanes, kEdgePlanes, kExemptPlanes;
+import mesh_planes    : kFacePlanes, kVertPlanes, kEdgePlanes, kExemptPlanes,
+                        kFacePlaneEntryField;
 import std.array      : appender, join;
 import std.ascii      : isAlphaNum, isWhite;
 import std.conv       : to;
@@ -191,20 +192,20 @@ private bool hasSubstring(string haystack, string needle) {
 // `MeshOpEntry.tupleof`). This is that missing guard.
 // ===========================================================================
 
-/// `kFacePlanes` name -> `MeshOpEntry` field name (or `null` when the entry
-/// deliberately carries something NARROWER, with the reason spelled out).
-/// `faceMarks` has no direct counterpart: only its Subpatch BIT rides the
-/// drop set, via `faceSub` — a pre-existing, documented limit of
-/// `RemoveFaces`'s own reverse (Select/Hide are restored through their own
-/// delta kinds, not this one; `FaceReindex` inherits the same limit rather
-/// than inventing a new one, see its own Kind doc in mesh_edit_delta.d).
-package enum string[string] kFacePlaneToEntryField = [
-    "faceMarks":          "faceSub",
-    "faceMaterial":       "faceMat",
-    "facePart":           "facePrt",
-    "faceSelectionOrder": "faceOrd",
-    "faceSetMask":        "faceSetMsk",
-];
+/// TASK 4059 MOVED THIS TABLE INTO PRODUCTION. It was a hand-maintained
+/// test-side copy of the `kFacePlanes` -> `MeshOpEntry` correspondence;
+/// `MeshEditTracker.recordFaceReindex` now fills the entry with a `static
+/// foreach` over it, so a missing line is a COMPILE error at that site rather
+/// than a runtime finding here. The alias keeps this file's own assertions —
+/// which check the OTHER direction, and a compiler cannot — reading as they
+/// did.
+///
+/// `faceMarks` maps to `faceSub` and the value is NARROWED to the Subpatch
+/// BIT: a pre-existing, documented limit of `RemoveFaces`'s own reverse
+/// (Select/Hide are restored through their own delta kinds), which
+/// `FaceReindex` inherits rather than replacing. The narrowing itself now
+/// lives at `mesh_planes.FacePlaneDrops.captureFace`.
+alias kFacePlaneToEntryField = kFacePlaneEntryField;
 
 unittest // L1/L2 for MeshOpEntry: every kFacePlanes name maps to a real MeshOpEntry field
 {
