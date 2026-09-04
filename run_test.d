@@ -1924,9 +1924,30 @@ bool prepareWorker(ref Worker w) {
 // establish it themselves at the top of their first unittest, so this reset is
 // belt-and-suspenders for them and load-bearing for the state-asserting ones.
 //
-// Driven over HTTP with curl (already this runner's transport). Best-effort:
-// any failure here is non-fatal (the per-test reset, if present, still runs).
-void resetBetweenTests(ushort port) {
+// Driven over HTTP with curl (already this runner's transport). The state
+// VERIFY below stays best-effort — a scene that will not come clean is retried
+// and then handed to the test's own preamble. What is NOT best-effort any more
+// is the reset ITSELF answering: see `command` below.
+//
+// Task 4063: the two mutating calls here used to be `POST /api/reset` and
+// `POST /api/select`, two wrapper routes over commands that are also reachable
+// through `/api/command`. Those wrappers are gone, and this function is why
+// their removal had to be checked here first: `curl` exits 0 on a 404, the
+// helper returned the body unexamined, and so a runner posting to a route that
+// no longer exists resets NOTHING while reporting nothing. Every one of the
+// six state-bleed channels above comes straight back, the eight-attempt retry
+// budget is burned in full at every test transition, and the gate stays green
+// throughout. The envelopes are inlined rather than taken from
+// `tests/http_command_helpers.d` because this runner is a standalone `rdmd`
+// script and does not compile the test tree.
+//
+// Returns false when the reset could not be DRIVEN at all (route gone, command
+// id unregistered, command refused, server unreachable). The caller stops that
+// worker's slice and reports it; a broken baseline makes every later result on
+// that worker meaningless, which is exactly the reading this silence used to
+// hide.
+bool resetBetweenTests(ushort port, ref string failure) {
+    import std.algorithm : min;
     string base = format("http://localhost:%d", port);
     string curl(string verb, string path, string data = "") {
         // -s silent, -m short timeout so a wedged server never stalls the run.
@@ -1935,6 +1956,20 @@ void resetBetweenTests(ushort port) {
             : format("curl -s -m 5 -X %s '%s%s'",          verb,       base, path);
         auto r = executeShell(cmd);
         return r.status == 0 ? r.output : "";
+    }
+    // Drive one REGISTERED command through the single generic endpoint and say
+    // whether it applied. `/api/command` answers 200 `{"status":"ok"}` on
+    // apply and 200 `{"status":"error","message":…}` on refusal; a route that
+    // does not exist answers a 404 HTML page, and an unreachable server gives
+    // us "" from `curl` above. All four are distinguished by the one test
+    // below, and the last three are the ones that used to read as success.
+    string lastBody;
+    bool command(string id, string params = null) {
+        immutable env = params.length
+            ? `{"id":"` ~ id ~ `","params":` ~ params ~ `}`
+            : `{"id":"` ~ id ~ `"}`;
+        lastBody = curl("POST", "/api/command", env);
+        return lastBody.canFind(`"status":"ok"`);
     }
     // Deactivate + drain-replay + reset + clear history, then VERIFY the cube
     // and selection/edit-mode baseline are actually pristine, retrying
@@ -2017,21 +2052,33 @@ void resetBetweenTests(ushort port) {
         //     reset below then wipes whatever they did.
         Thread.sleep(120.msecs);
         // 3. Reset to the pristine startup cube.
-        curl("POST", "/api/reset");
+        if (!command("scene.reset")) {
+            failure = "scene.reset did not apply: " ~ (lastBody.length
+                ? lastBody[0 .. min($, 300)] : "(no response from the server)");
+            return false;
+        }
         // 3b. Normalize the edit mode back to Vertices and keep all component
         //     selections empty. SceneReset already does this; the explicit
         //     select is a cheap guard for older/bisected app binaries.
-        curl("POST", "/api/select", `{"mode":"vertices","indices":[]}`);
+        if (!command("mesh.select", `{"mode":"vertices","indices":[]}`)) {
+            failure = "mesh.select did not apply: " ~ (lastBody.length
+                ? lastBody[0 .. min($, 300)] : "(no response from the server)");
+            return false;
+        }
         // 4. Clear undo/redo without undoing the reset/select we just applied.
         //    Undo-draining here can restore the prior test's mesh/selection.
         curl("POST", "/api/command", "history.clear");
-        if (cubePristine() && selectionPristine()) return;
+        if (cubePristine() && selectionPristine()) return true;
         Thread.sleep(20.msecs);
     }
-    // Last reset stands; the test's own preamble (if any) gets the final word.
-    curl("POST", "/api/reset");
-    curl("POST", "/api/select", `{"mode":"vertices","indices":[]}`);
+    // The scene would not verify clean in eight attempts. The reset itself
+    // ANSWERED every time (a refusal returns above), so this is a dirty-state
+    // reading, not a broken harness: last reset stands and the test's own
+    // preamble, if any, gets the final word — the pre-4063 behaviour.
+    command("scene.reset");
+    command("mesh.select", `{"mode":"vertices","indices":[]}`);
     curl("POST", "/api/command", "history.clear");
+    return true;
 }
 
 TestResult[] runWorker(ref Worker w, bool verbose) {
@@ -2040,7 +2087,28 @@ TestResult[] runWorker(ref Worker w, bool verbose) {
         // Re-baseline the shared instance before each test so a prior test's
         // leftover state (draining replay, active tool, undo entries, mutated
         // mesh) cannot bleed in. Kills the cross-test state-bleed flake family.
-        resetBetweenTests(w.port);
+        //
+        // A reset that cannot be DRIVEN stops this worker's slice and lands in
+        // the summary as a red row. Continuing would run every remaining test
+        // on this worker against whatever the previous one left behind, and
+        // report the results as if the baseline had held — the failure mode
+        // task 4063 found already shipped once (see resetBetweenTests).
+        string resetFailure;
+        if (!resetBetweenTests(w.port, resetFailure)) {
+            synchronized {
+                stderr.writeln(red(format(
+                    "  worker %d: the between-test reset could not be driven — %s",
+                    w.id, resetFailure)));
+                stderr.writefln(red("  worker %d: abandoning its remaining %d "
+                    ~ "test(s); every result after an un-driven baseline is "
+                    ~ "cross-test bleed reported as a verdict."),
+                    w.id, w.bins.length - out_.length);
+                stderr.flush();
+            }
+            out_ ~= TestResult(format("runner:reset-between-tests[w%d]", w.id),
+                               TestStatus.failed, resetFailure, 0);
+            break;
+        }
         auto r = runOne(b, verbose, w.port);
         synchronized {
             // The three markers are the FIRST field of the line on purpose:
