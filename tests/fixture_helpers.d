@@ -52,7 +52,7 @@ private string endpointPath(string ep) {
         case "command":   return BASE ~ "/api/command";
         case "transform": return BASE ~ "/api/command";
         case "script":    return BASE ~ "/api/script";
-        case "load-mesh": return BASE ~ "/api/load-mesh";
+        case "load-mesh": return BASE ~ "/api/command";
         // POST /api/camera (topology-pen P0 fixtures need explicit camera
         // placement — azimuth/elevation/distance/focus — to pin a
         // background-surface raycast's world hit point precisely).
@@ -100,6 +100,8 @@ private void postStep(JSONValue step, string name, string phase, size_t i) {
         body = commandBody("mesh.select", body);
     else if (ep == "transform")
         body = commandBody("mesh.transform", body);
+    else if (ep == "load-mesh")
+        body = commandBody("scene.loadMesh", body);
     bool allowError = ("allowError" in step) && step["allowError"].type == JSONType.true_;
     auto resp = cast(string) post(endpointPath(ep), body);
     if (resp.length && resp[0] == '{') {
@@ -1553,7 +1555,8 @@ void runSelectLoopSuite(string fixtureJson) {
         string cn = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
 
         post(BASE ~ "/api/reset?empty=true", "");
-        auto lr = parseJSON(cast(string) post(BASE ~ "/api/load-mesh", cs["mesh"].toString));
+        auto lr = parseJSON(cast(string) post(BASE ~ "/api/command",
+            commandBody("scene.loadMesh", cs["mesh"].toString)));
         if ("status" in lr) assert(lr["status"].str == "ok",
             format("%s: load-mesh failed: %s", cn, lr.toString));
 
@@ -1627,7 +1630,8 @@ void runSelectLoopFvSuite(string fixtureJson) {
         bool isVert = mode == "vertex";
 
         post(BASE ~ "/api/reset?empty=true", "");
-        auto lr = parseJSON(cast(string) post(BASE ~ "/api/load-mesh", cs["mesh"].toString));
+        auto lr = parseJSON(cast(string) post(BASE ~ "/api/command",
+            commandBody("scene.loadMesh", cs["mesh"].toString)));
         if ("status" in lr) assert(lr["status"].str == "ok",
             format("%s: load-mesh failed: %s", cn, lr.toString));
 

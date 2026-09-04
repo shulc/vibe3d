@@ -56,7 +56,7 @@ void loadBackgroundPlane() {
         "vertices":[[-10,0,-10],[10,0,-10],[10,0,10],[-10,0,10]],
         "faces":[[0,2,1],[0,3,2]]
     }`;
-    auto r = postJson("/api/load-mesh", body_);
+    auto r = postJson("/api/command", commandBody("scene.loadMesh", body_));
     assert(r["status"].str == "ok",
         "load-mesh failed: " ~ r.toString);
 }

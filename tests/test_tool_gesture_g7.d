@@ -142,6 +142,7 @@
 //
 // LANE: `./run_test.d --no-build test_tool_gesture_g7`.
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.algorithm : sort, canFind, startsWith, endsWith;
 import std.array     : appender;
 import std.conv      : to;
@@ -724,11 +725,11 @@ void standEmptyPrimary() {
 /// cells press on.
 void standQuadPrimary() {
     setupSphereBg(kBgR, kBgLon, kBgLat);
-    auto lq = postJ("/api/load-mesh", format(
+    auto lq = postJ("/api/command", commandBody("scene.loadMesh", format(
         `{"vertices":[[%.4f,%.4f,0.0],[%.4f,%.4f,0.0],[%.4f,%.4f,0.0],[%.4f,%.4f,0.0]],`
       ~ `"faces":[[0,1,2,3]]}`,
         -kQuadHalf, -kQuadHalf,  kQuadHalf, -kQuadHalf,
-         kQuadHalf,  kQuadHalf, -kQuadHalf,  kQuadHalf));
+         kQuadHalf,  kQuadHalf, -kQuadHalf,  kQuadHalf)));
     assert(lq["status"].str == "ok", "load-mesh (primary quad) failed: " ~ lq.toString);
     assert(vertexCount() == 4 && edgeCount() == 4 && faceCount() == 1,
         "stand: the primary layer must hold exactly the quad, got "

@@ -21,8 +21,10 @@
 
 module topopen_place_helpers;
 
+
 public import http_client : getJson, postJson;
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.json;
 import std.math    : sqrt, sin, cos, PI, abs;
 import std.format  : format;
@@ -436,14 +438,14 @@ string cubeMeshBody() {
 
 void setupSphereBg(float R, int lon = 32, int lat = 24) {
     postJson("/api/reset", "");
-    auto lr = postJson("/api/load-mesh", sphereMeshBody(R, lon, lat));
+    auto lr = postJson("/api/command", commandBody("scene.loadMesh", sphereMeshBody(R, lon, lat)));
     assert(lr["status"].str == "ok", "load-mesh (sphere) failed: " ~ lr.toString);
     cmd("layer.add name:Edit");
 }
 
 void setupCubeBg() {
     postJson("/api/reset", "");
-    auto lr = postJson("/api/load-mesh", cubeMeshBody());
+    auto lr = postJson("/api/command", commandBody("scene.loadMesh", cubeMeshBody()));
     assert(lr["status"].str == "ok", "load-mesh (cube) failed: " ~ lr.toString);
     cmd("layer.add name:Edit");
 }

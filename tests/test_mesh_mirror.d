@@ -44,7 +44,7 @@ void postReset(bool empty) {
 }
 
 void postLoadMesh(string body) {
-    auto resp = post(testBaseUrl() ~ "/api/load-mesh", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("scene.loadMesh", body));
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/load-mesh failed: " ~ resp);
 }

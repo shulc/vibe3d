@@ -15,6 +15,7 @@
 // a normal mesh" case and the "every face is bad" wipe case are covered here.
 
 import http_client : testBaseUrl, postRaw;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -28,7 +29,7 @@ JSONValue postJ(string path, string body) { return parseJSON(postRaw(path, body)
 JSONValue getJ(string path) { return parseJSON(cast(string)get(BASE ~ path)); }
 
 void postLoadMesh(string body) {
-    auto resp = postJ("/api/load-mesh", body);
+    auto resp = postJ("/api/command", commandBody("scene.loadMesh", body));
     assert(resp["status"].str == "ok", "/api/load-mesh failed: " ~ resp.toString);
 }
 

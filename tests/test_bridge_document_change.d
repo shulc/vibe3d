@@ -142,7 +142,7 @@ JSONValue armBridgeHaul() {
 
     auto r = postJson("/api/reset?empty=true", "");
     assert(r["status"].str == "ok", "reset(empty) failed: " ~ r.toString);
-    r = postJson("/api/load-mesh", kTwoCaps);
+    r = postJson("/api/command", commandBody("scene.loadMesh", kTwoCaps));
     assert(r["status"].str == "ok", "/api/load-mesh failed: " ~ r.toString);
     // `/api/load-mesh` RESETS THE CAMERA — frame AFTER the load, never before.
     r = postJson("/api/camera",
@@ -181,7 +181,7 @@ JSONValue armBridgeHaul() {
 void loadCapsStand() {
     auto r = postJson("/api/reset?empty=true", "");
     assert(r["status"].str == "ok", "reset(empty) failed: " ~ r.toString);
-    r = postJson("/api/load-mesh", kTwoCaps);
+    r = postJson("/api/command", commandBody("scene.loadMesh", kTwoCaps));
     assert(r["status"].str == "ok", "/api/load-mesh failed: " ~ r.toString);
     // `/api/load-mesh` RESETS THE CAMERA — frame AFTER the load, never before.
     r = postJson("/api/camera",

@@ -255,8 +255,7 @@ private int[2] fbo(DHVec3 world) {
 }
 
 private void loadMesh(string verts, string faces) {
-    auto j = postJson("/api/load-mesh",
-                      format(`{"vertices":%s,"faces":%s}`, verts, faces));
+    auto j = postJson("/api/command", commandBody("scene.loadMesh", format(`{"vertices":%s,"faces":%s}`, verts, faces)));
     assert(j["status"].str == "ok", "load-mesh failed: " ~ j.toString);
 }
 

@@ -81,7 +81,7 @@ unittest {
             "vertices": rig["vertices"],
             "faces":    rig["faces"],
         ]);
-        postOk("/api/load-mesh", mesh.toString);
+        postOk("/api/command", commandBody("scene.loadMesh", mesh.toString));
     }
 
     auto item = rig["item"];

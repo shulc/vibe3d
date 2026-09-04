@@ -207,11 +207,11 @@ unittest {
     // Hidden: f0 (quad) + f2 (triangle). They share no vertex, so the fixture
     // is also asymmetric in the derived planes.
     resetEmpty();
-    auto lr = parseJSON(cast(string)post(BASE ~ "/api/load-mesh", `{
+    auto lr = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.loadMesh", `{
         "vertices": [[0,0,0],[1,0,0],[2,0,0],[3,0,0],
                      [0,0,1],[1,0,1],[2,0,1],[3,0,1]],
         "faces": [[0,1,5,4],[1,2,6,5],[2,3,6],[3,7,6]]
-    }`));
+    }`)));
     assert(lr["status"].str == "ok", "/api/load-mesh failed: " ~ lr.toString);
     runCmd("history.clear");
 

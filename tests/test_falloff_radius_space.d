@@ -194,8 +194,7 @@ void buildStand(JSONValue kase) {
         verts ~= (i ? "," : "") ~ format("[%.10g,%.10g,%.10g]", p[0], p[1], p[2]);
     }
     verts ~= "]";
-    auto lm = postJson("/api/load-mesh",
-                       format(`{"vertices":%s,"faces":[]}`, verts));
+    auto lm = postJson("/api/command", commandBody("scene.loadMesh", format(`{"vertices":%s,"faces":[]}`, verts)));
     assert(lm["status"].str == "ok", "load-mesh failed: " ~ lm.toString());
 
     auto item = kase["item"];

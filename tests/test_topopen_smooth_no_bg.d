@@ -13,6 +13,7 @@
 //
 // Run via: ./run_test.d topopen_smooth_no_bg
 
+import http_command_helpers : commandBody;
 import topopen_place_helpers;
 import std.json;
 import std.format : format;
@@ -49,7 +50,7 @@ unittest {
         Vec3 C = Vec3(0, 0, 1);
         Vec3 B = Vec3(0, 10, 0);   // far from the mean of A/C -> relax must visibly move it
 
-        auto lr = postJson("/api/load-mesh", trianglePatchBody(A, B, C));
+        auto lr = postJson("/api/command", commandBody("scene.loadMesh", trianglePatchBody(A, B, C)));
         assert(lr["status"].str == "ok", "load-mesh (triangle patch) failed: " ~ lr.toString);
         assert(vertexCountLayer(0) == 3 && edgeCountLayer(0) == 3 && faceCountLayer(0) == 1,
             "setup: primary layer must be the untouched 1-triangle patch, no bg layer exists");
@@ -81,7 +82,7 @@ unittest {
     {
         postJson("/api/reset", "");
 
-        auto lr = postJson("/api/load-mesh", disconnectedPointsBody());
+        auto lr = postJson("/api/command", commandBody("scene.loadMesh", disconnectedPointsBody()));
         assert(lr["status"].str == "ok", "load-mesh (disconnected points) failed: " ~ lr.toString);
         assert(vertexCountLayer(0) == 3 && edgeCountLayer(0) == 0 && faceCountLayer(0) == 0,
             "setup: primary layer must be 3 isolated points with NO edges");

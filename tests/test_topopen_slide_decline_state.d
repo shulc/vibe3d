@@ -30,6 +30,7 @@
 //
 // Run via: ./run_test.d topopen_slide_decline_state
 
+import http_command_helpers : commandBody;
 import topopen_place_helpers;
 import std.json;
 import std.math   : sqrt;
@@ -90,7 +91,7 @@ int edgeIndexOf(int[2][] edges, int a, int b) {
 
 unittest {
     postJson("/api/reset", "");
-    auto lr = postJson("/api/load-mesh", dominoMeshBody());
+    auto lr = postJson("/api/command", commandBody("scene.loadMesh", dominoMeshBody()));
     assert(lr["status"].str == "ok", "load-mesh (domino) failed: " ~ lr.toString);
 
     postJson("/api/camera", format(

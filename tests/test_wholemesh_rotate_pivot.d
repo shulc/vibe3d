@@ -26,6 +26,7 @@
 // non-rigid/launched transform, fails here.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, sin, cos, atan2, PI;
@@ -68,7 +69,7 @@ unittest { // whole-mesh rotate pivots at the centroid; mesh cannot fly
         ~ `[4,0,4],[5,0,4],[5,0,5],[4,0,5],`
         ~ `[4,6,4],[5,6,4],[5,6,5],[4,6,5]],`
         ~ `"faces":[[0,1,2,3],[4,5,6,7],[0,1,5,4],[1,2,6,5],[2,3,7,6],[3,0,4,7]]}`;
-    auto lr = post(testBaseUrl() ~ "/api/load-mesh", mesh);
+    auto lr = post(testBaseUrl() ~ "/api/command", commandBody("scene.loadMesh", mesh));
     assert(parseJSON(cast(string)lr)["status"].str == "ok",
         "load-mesh failed: " ~ cast(string)lr);
 

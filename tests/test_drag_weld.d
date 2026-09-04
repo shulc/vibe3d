@@ -22,6 +22,7 @@
 //   given the live camera state — no hardcoded pixels, no fragile approximations.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv  : to;
@@ -50,7 +51,7 @@ void postReset(bool empty = false) {
 }
 
 void postLoadMesh(string body_) {
-    auto r = parseJSON(cast(string)post(baseUrl ~ "/api/load-mesh", body_));
+    auto r = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("scene.loadMesh", body_)));
     assert(r["status"].str == "ok", "/api/load-mesh failed: " ~ r.toString);
 }
 

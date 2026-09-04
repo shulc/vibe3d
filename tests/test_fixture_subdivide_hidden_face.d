@@ -107,7 +107,7 @@ void buildRigAndHide(JSONValue rig) {
     postOk("/api/reset", "");
     cmd(`{"id":"history.clear"}`);
     JSONValue mesh = JSONValue(["vertices": rig["vertices_list"], "faces": rig["faces"]]);
-    postOk("/api/load-mesh", mesh.toString);
+    postOk("/api/command", commandBody("scene.loadMesh", mesh.toString));
 
     immutable int hf = cast(int) rig["hidden_face"].integer;
     selectPolys([hf]);

@@ -65,7 +65,7 @@ JSONValue getModel() { return parseJSON(get(BASE ~ "/api/model")); }
 JSONValue getSelection() { return parseJSON(get(BASE ~ "/api/selection")); }
 
 void loadMesh(string json) {
-    auto resp = post(BASE ~ "/api/load-mesh", json);
+    auto resp = post(BASE ~ "/api/command", commandBody("scene.loadMesh", json));
     assert(parseJSON(resp)["status"].str == "ok", "/api/load-mesh failed: " ~ resp);
 }
 

@@ -1,6 +1,6 @@
-// Tests for the test-only raw-mesh injection endpoint POST /api/load-mesh.
+// Tests for test-only raw-mesh injection through scene.loadMesh.
 //
-// The endpoint replaces the live mesh with caller-supplied vertices + faces
+// The command replaces the live mesh with caller-supplied vertices + faces
 // (faces are vertex-index lists, any degree >= 3), rebuilds all derived data
 // (deduplicated edges, half-edge loops, selection/mark/material arrays),
 // clears the selection, and refreshes the GPU + screen-space caches — the
@@ -18,7 +18,7 @@ import std.conv : to;
 void main() {}
 
 string postLoadMesh(string body) {
-    return cast(string)post(testBaseUrl() ~ "/api/load-mesh", body);
+    return cast(string)post(testBaseUrl() ~ "/api/command", commandBody("scene.loadMesh", body));
 }
 
 void resetCube() {
@@ -51,15 +51,11 @@ enum string kTetra =
 // Happy path
 // ---------------------------------------------------------------------------
 
-unittest { // load a tetra → response reports the supplied counts
+unittest { // load a tetra → generic command response reports success
     resetCube();
     auto resp = parseJSON(postLoadMesh(kTetra));
     assert(resp["status"].str == "ok",
         "load-mesh failed: " ~ resp.toString);
-    assert(resp["vertexCount"].integer == 4,
-        "expected vertexCount 4, got " ~ resp["vertexCount"].integer.to!string);
-    assert(resp["faceCount"].integer == 4,
-        "expected faceCount 4, got " ~ resp["faceCount"].integer.to!string);
 }
 
 unittest { // /api/model round-trips the loaded geometry with rebuilt edges

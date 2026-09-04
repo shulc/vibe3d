@@ -8,6 +8,7 @@
 //   5. /api/reset clears the source (no -j8 bleed).
 
 import http_client : testBaseUrl, getJson, postJson, postRaw;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -47,7 +48,7 @@ void loadMesh(float[][] verts, uint[][] faces) {
         buf.put("]");
     }
     buf.put("]}");
-    postJson("/api/load-mesh", buf.data);
+    postJson("/api/command", commandBody("scene.loadMesh", buf.data));
 }
 
 // Query /api/path at t and return the parsed JSON.

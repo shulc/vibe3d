@@ -68,7 +68,7 @@ void postCommand(string body) {
 // Inject a raw mesh ({"vertices":[[x,y,z],...],"faces":[[i,j,...],...]}) as the
 // live mesh (test-only path). Used by the non-planar closed-loop fixture below.
 void postLoadMesh(string body) {
-    auto resp = post(testBaseUrl() ~ "/api/load-mesh", body);
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("scene.loadMesh", body));
     assert(parseJSON(resp)["status"].str == "ok", "/api/load-mesh failed: " ~ resp);
 }
 

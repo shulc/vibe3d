@@ -30,6 +30,7 @@
 //
 // Run via: ./run_test.d topopen_smooth_undo
 
+import http_command_helpers : commandBody;
 import topopen_place_helpers;
 import std.json;
 import std.format : format;
@@ -58,7 +59,7 @@ string irregularHexBody() {
 unittest {
     postJson("/api/reset", "");   // single layer == primary (layer 0)
 
-    auto lr = postJson("/api/load-mesh", irregularHexBody());
+    auto lr = postJson("/api/command", commandBody("scene.loadMesh", irregularHexBody()));
     assert(lr["status"].str == "ok", "load-mesh (irregular hexahedron) failed: " ~ lr.toString);
 
     postJson("/api/camera", format(

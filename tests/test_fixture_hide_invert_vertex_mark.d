@@ -224,7 +224,7 @@ unittest {
     cmd(`{"id":"history.clear"}`);
     {
         JSONValue mesh = JSONValue(["vertices": rig["vertices"], "faces": rig["faces"]]);
-        postOk("/api/load-mesh", mesh.toString);
+        postOk("/api/command", commandBody("scene.loadMesh", mesh.toString));
     }
 
     // ---- the rig's premise, asserted, not assumed ---------------------------

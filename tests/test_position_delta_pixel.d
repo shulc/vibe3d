@@ -67,6 +67,7 @@
 // the one wire counter that separates fast from slow); block 2 is the PIXEL
 // tier (the display-refresh claim, which nothing else can see).
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -157,8 +158,7 @@ void loadOpenPatch() {
             faces ~= format("[%d,%d,%d,%d]", a, a + 1, a + N + 2, a + N + 1);
         }
     faces ~= "]";
-    auto j = postJson("/api/load-mesh",
-                      format(`{"vertices":%s,"faces":%s}`, verts, faces));
+    auto j = postJson("/api/command", commandBody("scene.loadMesh", format(`{"vertices":%s,"faces":%s}`, verts, faces)));
     assert(j["status"].str == "ok", "load-mesh failed: " ~ j.toString);
 }
 

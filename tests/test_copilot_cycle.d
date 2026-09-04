@@ -18,6 +18,7 @@
 // `true` re-enables every assertion as-is.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.algorithm : sort;
@@ -154,7 +155,7 @@ unittest { // cycling with an empty findings list is a safe no-op, not a crash
     // legitimately reports a naked-boundary Topology finding (Phase 4 changed
     // the Phase-1 "flat grid = 0 findings" contract), so load empty instead.
     if (!kCopilotEnabled) { stderr.writeln("SKIP: test_copilot_cycle (kCopilotEnabled=false, task 0422)"); return; }
-    postJson("/api/load-mesh", `{"vertices":[],"faces":[]}`);
+    postJson("/api/command", commandBody("scene.loadMesh", `{"vertices":[],"faces":[]}`));
     runCmd("ai.enable");
     runCmd("copilot.analyze");
     assert(getJson("/api/ai/analyze").array.length == 0,

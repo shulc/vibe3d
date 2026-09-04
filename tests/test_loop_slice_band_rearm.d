@@ -64,7 +64,7 @@ void resetScene() {
 }
 
 void loadMesh(string body_) {
-    auto r = parseJSON(cast(string) post(BASE ~ "/api/load-mesh", body_));
+    auto r = parseJSON(cast(string) post(BASE ~ "/api/command", commandBody("scene.loadMesh", body_)));
     assert(r["status"].str == "ok", "/api/load-mesh failed: " ~ r.toString);
 }
 

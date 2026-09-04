@@ -687,8 +687,7 @@ unittest { // MIXED FACE DEGREES — the one reading here that can see POSITION
         next += d;
     }
     verts ~= "]"; faces ~= "]";
-    auto lm = parseJSON(httpPost("/api/load-mesh",
-                        format(`{"vertices":%s,"faces":%s}`, verts, faces)));
+    auto lm = parseJSON(httpPost("/api/command", commandBody("scene.loadMesh", format(`{"vertices":%s,"faces":%s}`, verts, faces))));
     assert(lm["status"].str == "ok", "load-mesh failed: " ~ lm.toString);
     settle();
 
@@ -770,8 +769,7 @@ unittest { // PRIMARY-LAYER SWITCH — the cache is not a function of the select
         bFaces ~= format("[%d,%d,%d,%d]", base, base + 1, base + 2, base + 3);
     }
     bVerts ~= "]"; bFaces ~= "]";
-    auto lm = parseJSON(httpPost("/api/load-mesh",
-                        format(`{"vertices":%s,"faces":%s}`, bVerts, bFaces)));
+    auto lm = parseJSON(httpPost("/api/command", commandBody("scene.loadMesh", format(`{"vertices":%s,"faces":%s}`, bVerts, bFaces))));
     assert(lm["status"].str == "ok", "load-mesh into layer B failed: " ~ lm.toString);
     settle();
 

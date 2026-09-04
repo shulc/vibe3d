@@ -144,7 +144,7 @@ int[] hiddenVertexList() {
 }
 
 void loadMesh(string meshJson) {
-    auto r = postJson("/api/load-mesh", meshJson);
+    auto r = postJson("/api/command", commandBody("scene.loadMesh", meshJson));
     assert("error" !in r, "/api/load-mesh failed: " ~ r.toString);
 }
 

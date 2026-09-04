@@ -24,6 +24,7 @@
 //
 // Run via: ./run_test.d topopen_display_toggles
 
+import http_command_helpers : commandBody;
 import topopen_place_helpers;
 import std.json;
 import std.math   : sqrt;
@@ -84,11 +85,11 @@ void releaseAt(CameraState c, int px, int py) {
 unittest {
     setupSphereBg(R, LON, LAT);
 
-    auto lq = postJson("/api/load-mesh", format(
+    auto lq = postJson("/api/command", commandBody("scene.loadMesh", format(
         `{"vertices":[[%.4f,%.4f,0.0],[%.4f,%.4f,0.0],[%.4f,%.4f,0.0],[%.4f,%.4f,0.0]],`
       ~ `"faces":[[0,1,2,3]]}`,
         -kQuadHalf, -kQuadHalf,  kQuadHalf, -kQuadHalf,
-         kQuadHalf,  kQuadHalf, -kQuadHalf,  kQuadHalf));
+         kQuadHalf,  kQuadHalf, -kQuadHalf,  kQuadHalf)));
     assert(lq["status"].str == "ok", "load-mesh (primary quad) failed: " ~ lq.toString);
 
     // Camera LAST — `/api/load-mesh` restores the post-load camera.

@@ -293,7 +293,7 @@ enum string ROTATED_CUBE = `{"vertices":[`
 
 unittest { // Local and Select stay in lockstep off the world axes too
     ok(post(BASE ~ "/api/reset", ""), "reset");
-    auto lm = post(BASE ~ "/api/load-mesh", ROTATED_CUBE);
+    auto lm = post(BASE ~ "/api/command", commandBody("scene.loadMesh", ROTATED_CUBE));
     assert(parseJSON(cast(string)lm)["status"].str == "ok",
            "load-mesh failed: " ~ cast(string)lm);
     ok(post(BASE ~ "/api/command", commandBody("mesh.select", SEL_TOP_FACE)), "select");

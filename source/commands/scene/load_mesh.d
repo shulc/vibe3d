@@ -10,7 +10,7 @@ import snapshot : MeshSnapshot;
 import change_bus : MeshChangeAll;
 
 /// Replace the current mesh with a caller-supplied raw mesh (test-only,
-/// driven by `POST /api/load-mesh`). Mirrors `SceneReset`: snapshots the
+/// driven by the generic command endpoint). Mirrors `SceneReset`: snapshots the
 /// pre-load mesh for undo, swaps in the new geometry, rebuilds every
 /// derived structure (edges, half-edge loops, selection/mark/material
 /// arrays), clears the selection, and refreshes the GPU + screen-space

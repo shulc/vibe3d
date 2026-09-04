@@ -11,6 +11,7 @@
 // predicted.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.exception : enforce;
@@ -211,9 +212,9 @@ unittest { // HIDDEN ELEMENTS — MEASURED here, not assumed (risk 8). The answe
     resetApp();
     // A stand with BOTH triangles and quads, so a SUBSET can be hidden and the
     // row that covers it still has something to count.
-    httpPost("/api/load-mesh", `{"vertices":[[0,0,0],[1,0,0],[1,1,0],[0,1,0],`
+    httpPost("/api/command", commandBody("scene.loadMesh", `{"vertices":[[0,0,0],[1,0,0],[1,1,0],[0,1,0],`
         ~ `[2,0,0],[3,0,0],[3,1,0],[2,2,0],[4,0,0]],`
-        ~ `"faces":[[0,1,2,3],[4,5,6],[6,7,8]]}`);
+        ~ `"faces":[[0,1,2,3],[4,5,6],[6,7,8]]}`));
     settle();
     cmd("select.typeFrom polygon");
     cmd("select.drop polygon");

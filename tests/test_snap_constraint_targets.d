@@ -8,6 +8,7 @@
 //  Stage 6: screen-space edge Intersection
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math   : fabs, sqrt;
@@ -320,9 +321,8 @@ unittest { // Global mode: vertex snap still fires
 
 unittest { // Intersection snap fires on crossing edge pair
     // Load an X-crossing mesh.
-    postJson("/api/load-mesh",
-        `{"vertices":[[-1,-1,0],[1,1,0],[-1,1,0],[1,-1,0]],` ~
-        `"faces":[[0,1,2],[0,3,1],[2,0,3]]}`);
+    postJson("/api/command", commandBody("scene.loadMesh", `{"vertices":[[-1,-1,0],[1,1,0],[-1,1,0],[1,-1,0]],` ~
+        `"faces":[[0,1,2],[0,3,1],[2,0,3]]}`));
     postJson("/api/camera",
         `{"azimuth":0.0,"elevation":0.0,"distance":5.0,` ~
         `"focus":{"x":0,"y":0,"z":0}}`);

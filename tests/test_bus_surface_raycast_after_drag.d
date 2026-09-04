@@ -153,7 +153,7 @@ void buildTwoLayerRig() {
     cmd("tool.pipe.attr constrain geometry screen");
 
     cmd("layer.add name:Bg");
-    auto lr = postJson("/api/load-mesh", kCubeBody);
+    auto lr = postJson("/api/command", commandBody("scene.loadMesh", kCubeBody));
     assert(lr["status"].str == "ok", "load-mesh failed: " ~ lr.toString);
     cmd("layer.setVisible index:1 value:true");
     cmd("layer.select index:0");     // layer0 primary, layer1 background

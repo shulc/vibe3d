@@ -661,7 +661,7 @@ void resetCube() {
 /// `/api/load-mesh` RESETS THE CAMERA, so every stand that loads a scene sets
 /// the camera AFTER the load, never before.
 void loadMesh(string body_) {
-    auto r = postJ("/api/load-mesh", body_);
+    auto r = postJ("/api/command", commandBody("scene.loadMesh", body_));
     assert(r["status"].str == "ok", "/api/load-mesh failed: " ~ r.toString);
 }
 

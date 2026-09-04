@@ -6,6 +6,7 @@
 //
 // Run via: ./run_test.d bvh_pick_equivalence
 import http_client : testBaseUrl, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -158,7 +159,7 @@ unittest {
         "vertices":[[0,0,0],[2,0,0],[2,0,1],[1,0,1],[1,0,2],[0,0,2]],
         "faces":[[0,1,2,3,4,5]]
     }`;
-    auto lr = postJson("/api/load-mesh", meshJson);
+    auto lr = postJson("/api/command", commandBody("scene.loadMesh", meshJson));
     assert("error" !in lr, "/api/load-mesh: " ~ lr.toString);
 
     // Camera looking straight down (+Y → looking at -Y).

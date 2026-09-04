@@ -13,6 +13,7 @@
 //
 // Run via: ./run_test.d topopen_hover_indicator_state
 
+import http_command_helpers : commandBody;
 import topopen_place_helpers;
 import std.json;
 import std.format : format;
@@ -38,7 +39,7 @@ string hoverMotionLog(int vpX, int vpY, int vpW, int vpH, int px, int py) {
 
 unittest {
     postJson("/api/reset", "");
-    auto lr = postJson("/api/load-mesh", quadMeshBody());
+    auto lr = postJson("/api/command", commandBody("scene.loadMesh", quadMeshBody()));
     assert(lr["status"].str == "ok", "load-mesh (quad) failed: " ~ lr.toString);
     // No `layer.add` — the loaded quad STAYS primary (layer 0), unlike the
     // sphere-bg fixtures elsewhere in this suite (which deliberately demote

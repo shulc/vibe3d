@@ -35,7 +35,7 @@ JSONValue postCmd(string path, string body_) {
 
 // Load the two-cap fixture: 8 verts, 2 quad faces (one per cap).
 void loadCaps() {
-    auto r = postCmd("/api/load-mesh", `{
+    auto r = postCmd("/api/command", commandBody("scene.loadMesh", `{
         "vertices": [
             [0,0,0],[1,0,0],[1,1,0],[0,1,0],
             [0,0,1],[1,0,1],[1,1,1],[0,1,1]
@@ -44,7 +44,7 @@ void loadCaps() {
             [0,1,2,3],
             [4,5,6,7]
         ]
-    }`);
+    }`));
     assert(r["status"].str == "ok", "/api/load-mesh failed: " ~ r.toString);
 }
 
@@ -266,7 +266,7 @@ int findEdgeIdx(JSONValue m, int a, int b) {
 
 // cube minus 2 adjacent faces (right x=+0.5, back y=+0.5): 8v/4f/11e.
 void loadOpenHoleCube() {
-    auto r = postCmd("/api/load-mesh", `{
+    auto r = postCmd("/api/command", commandBody("scene.loadMesh", `{
         "vertices": [
             [-0.5,-0.5,-0.5],[0.5,-0.5,-0.5],[0.5,0.5,-0.5],[-0.5,0.5,-0.5],
             [-0.5,-0.5,0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]
@@ -277,7 +277,7 @@ void loadOpenHoleCube() {
             [0,4,7,3],
             [0,1,5,4]
         ]
-    }`);
+    }`));
     assert(r["status"].str == "ok", "/api/load-mesh failed: " ~ r.toString);
 }
 
@@ -343,7 +343,7 @@ unittest { // opposite-handed polygon bridge: auto-heuristic produces consistent
     // loopA [0,1,2,3] at z=0: CCW from +z → normal = +z.
     // loopB [4,7,6,5] at z=1: CW from +z  → normal = −z (opposite to loopA).
     // Same 8 vertex positions as loadCaps; only the winding of cap B is reversed.
-    auto r = postCmd("/api/load-mesh", `{
+    auto r = postCmd("/api/command", commandBody("scene.loadMesh", `{
         "vertices": [
             [0,0,0],[1,0,0],[1,1,0],[0,1,0],
             [0,0,1],[1,0,1],[1,1,1],[0,1,1]
@@ -352,7 +352,7 @@ unittest { // opposite-handed polygon bridge: auto-heuristic produces consistent
             [0,1,2,3],
             [4,7,6,5]
         ]
-    }`);
+    }`));
     assert(r["status"].str == "ok", "/api/load-mesh failed: " ~ r.toString);
 
     // Polygon-mode bridge: both faces selected; caps are deleted, 4 lateral

@@ -102,7 +102,7 @@ string cellHash() {
 unittest {
     postJson("/api/reset", "");
     settle();
-    auto lm = postJson("/api/load-mesh", RIG);
+    auto lm = postJson("/api/command", commandBody("scene.loadMesh", RIG));
     assert(lm["status"].str == "ok" || lm["status"].str == "success",
            "/api/load-mesh failed: " ~ lm.toString);
     // AFTER the load: /api/load-mesh re-frames the camera.

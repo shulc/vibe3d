@@ -40,7 +40,7 @@ void resetCube() {
 }
 
 void postLoadMesh(string body_) {
-    auto resp = post(baseUrl ~ "/api/load-mesh", body_);
+    auto resp = post(baseUrl ~ "/api/command", commandBody("scene.loadMesh", body_));
     assert(parseJSON(resp)["status"].str == "ok", "/api/load-mesh failed: " ~ resp);
 }
 

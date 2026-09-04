@@ -31,6 +31,7 @@
 // Run via: ./run_test.d topology_pen_tool
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math    : fabs;
@@ -90,7 +91,7 @@ unittest {
 
     // Same scene as the Tier-B "bg_cube_topface_center" fixture case.
     cmd("layer.add name:Bg");
-    auto lr = postJson("/api/load-mesh", cubeMeshBody());
+    auto lr = postJson("/api/command", commandBody("scene.loadMesh", cubeMeshBody()));
     assert(lr["status"].str == "ok", "load-mesh failed: " ~ lr.toString);
     cmd("layer.setVisible index:1 value:true");
     cmd("layer.select index:0");   // layer0 primary (foreground), layer1 background

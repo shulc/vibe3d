@@ -87,7 +87,7 @@ void loadMesh(Vec3[] verts, int[][] faces) {
         foreach (k, vi; f) fs ~= format("%s%d", k ? "," : "", vi);
         fs ~= "]";
     }
-    auto j = postJson("/api/load-mesh", `{"vertices":[` ~ vs ~ `],"faces":[` ~ fs ~ `]}`);
+    auto j = postJson("/api/command", commandBody("scene.loadMesh", `{"vertices":[` ~ vs ~ `],"faces":[` ~ fs ~ `]}`));
     assert(j["status"].str == "ok", "/api/load-mesh failed: " ~ j.toString);
 }
 

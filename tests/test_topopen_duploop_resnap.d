@@ -47,6 +47,7 @@
 //
 // Run via: ./run_test.d topopen_duploop_resnap
 
+import http_command_helpers : commandBody;
 import topopen_place_helpers;
 import std.json;
 import std.math   : abs, sqrt;
@@ -85,7 +86,7 @@ double distSq(Vec3 a, Vec3 b) { Vec3 d = a - b; return cast(double)dot(d, d); }
 unittest {
     setupSphereBg(R, LON, LAT);
 
-    auto lr = postJson("/api/load-mesh", gridPatchBody());
+    auto lr = postJson("/api/command", commandBody("scene.loadMesh", gridPatchBody()));
     assert(lr["status"].str == "ok", "load-mesh (grid patch) failed: " ~ lr.toString);
     assert(vertexCountLayer(1) == 9 && edgeCountLayer(1) == 12 && faceCountLayer(1) == 4,
         "setup: primary layer must be the untouched 3x3 grid patch");

@@ -2923,6 +2923,49 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                 transform.setAngle (floatFrom("angle", 0.0f));
                 transform.setFactor(vec3From("factor", Vec3(1, 1, 1)));
                 transform.setPivot (vec3From("pivot",  Vec3(0, 0, 0)));
+            } else if (auto loadMesh = cast(MeshLoadRaw)cmd) {
+                if ("vertices" !in pj || pj["vertices"].type != JSONType.array)
+                    throw new Exception("missing 'vertices' array field");
+                if ("faces" !in pj || pj["faces"].type != JSONType.array)
+                    throw new Exception("missing 'faces' array field");
+
+                double numFrom(JSONValue n) {
+                    switch (n.type) {
+                        case JSONType.integer:  return cast(double)n.integer;
+                        case JSONType.uinteger: return cast(double)n.uinteger;
+                        case JSONType.float_:   return n.floating;
+                        default: throw new Exception("vertex components must be numbers");
+                    }
+                }
+
+                auto vArr = pj["vertices"].array;
+                Vec3[] verts = new Vec3[](vArr.length);
+                foreach (i, vj; vArr) {
+                    if (vj.type != JSONType.array || vj.array.length != 3)
+                        throw new Exception("each vertex must be [x,y,z]");
+                    verts[i] = Vec3(cast(float)numFrom(vj.array[0]),
+                                    cast(float)numFrom(vj.array[1]),
+                                    cast(float)numFrom(vj.array[2]));
+                }
+
+                auto fArr = pj["faces"].array;
+                uint[][] faces = new uint[][](fArr.length);
+                foreach (i, fj; fArr) {
+                    if (fj.type != JSONType.array)
+                        throw new Exception("each face must be an array of vertex indices");
+                    auto idxArr = fj.array;
+                    uint[] face = new uint[](idxArr.length);
+                    foreach (k, ij; idxArr) {
+                        if (ij.type != JSONType.integer && ij.type != JSONType.uinteger)
+                            throw new Exception("face indices must be integers");
+                        long v = ij.integer;
+                        if (v < 0)
+                            throw new Exception("face index must be non-negative");
+                        face[k] = cast(uint)v;
+                    }
+                    faces[i] = face;
+                }
+                loadMesh.setData(verts, faces);
             }
         }
 
@@ -3414,7 +3457,7 @@ private void wireHistoryProviders(HttpServer httpServer, ref EditorApp app,
     }
 }
 
-// wireMutationHandlers — `/api/transform`, `/api/reset`, `/api/load-mesh`,
+// wireMutationHandlers — `/api/reset`,
 // `/api/test/layer` — the POST routes that change the document.
 private void wireMutationHandlers(HttpServer httpServer, ref EditorApp app,
                              ref string[] optionalSlots) {
@@ -3506,63 +3549,6 @@ private void wireMutationHandlers(HttpServer httpServer, ref EditorApp app,
             // entries from a scene it just discarded. Null when HTTP is off
             // (release/default runs never construct stepTrace).
             if (stepTrace !is null) stepTrace.reset();
-        });
-
-        // Test-only raw-mesh injection (POST /api/load-mesh). Parses the
-        // JSON payload into Vec3 verts + uint[] faces, then dispatches the
-        // MeshLoadRaw command on the main thread (GPU upload + cache refresh
-        // need the GL/main thread). MeshLoadRaw re-validates degree / index
-        // range before touching the live mesh.
-        httpServer.setLoadMeshHandler((JSONValue params) {
-            import math : Vec3;
-
-            if ("vertices" !in params || params["vertices"].type != JSONType.array)
-                throw new Exception("missing 'vertices' array field");
-            if ("faces" !in params || params["faces"].type != JSONType.array)
-                throw new Exception("missing 'faces' array field");
-
-            double numFrom(JSONValue n) {
-                switch (n.type) {
-                    case JSONType.integer:  return cast(double)n.integer;
-                    case JSONType.uinteger: return cast(double)n.uinteger;
-                    case JSONType.float_:   return n.floating;
-                    default: throw new Exception("vertex components must be numbers");
-                }
-            }
-
-            auto vArr = params["vertices"].array;
-            Vec3[] verts = new Vec3[](vArr.length);
-            foreach (i, vj; vArr) {
-                if (vj.type != JSONType.array || vj.array.length != 3)
-                    throw new Exception("each vertex must be [x,y,z]");
-                verts[i] = Vec3(cast(float)numFrom(vj.array[0]),
-                                cast(float)numFrom(vj.array[1]),
-                                cast(float)numFrom(vj.array[2]));
-            }
-
-            auto fArr = params["faces"].array;
-            uint[][] faces = new uint[][](fArr.length);
-            foreach (i, fj; fArr) {
-                if (fj.type != JSONType.array)
-                    throw new Exception("each face must be an array of vertex indices");
-                auto idxArr = fj.array;
-                uint[] face = new uint[](idxArr.length);
-                foreach (k, ij; idxArr) {
-                    if (ij.type != JSONType.integer && ij.type != JSONType.uinteger)
-                        throw new Exception("face indices must be integers");
-                    long v = ij.integer;
-                    if (v < 0)
-                        throw new Exception("face index must be non-negative");
-                    face[k] = cast(uint)v;
-                }
-                faces[i] = face;
-            }
-
-            auto cmd = cast(MeshLoadRaw)reg.commandFactories["scene.loadMesh"]();
-            cmd.setData(verts, faces);
-            if (!cmd.apply())
-                throw new Exception("scene.loadMesh did not apply");
-            history.record(cmd);
         });
 
         // Test-only layer injection (POST /api/test/layer) — task 0615.

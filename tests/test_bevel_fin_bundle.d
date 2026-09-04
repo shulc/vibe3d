@@ -70,7 +70,7 @@ void loadFinBundle(int n) {
         faces ~= `[0,` ~ (2 + 2 * k).to!string ~ `,` ~ (3 + 2 * k).to!string ~ `,1]`;
     }
     faces ~= `]`;
-    ok(postJson("/api/load-mesh", `{"vertices":` ~ verts ~ `,"faces":` ~ faces ~ `}`),
+    ok(postJson("/api/command", commandBody("scene.loadMesh", `{"vertices":` ~ verts ~ `,"faces":` ~ faces ~ `}`)),
        "/api/load-mesh (fin bundle)");
 }
 

@@ -185,7 +185,7 @@ void buildStand(bool transformed) {
         faces ~= "]";
     }
     faces ~= "]";
-    auto lm = postJson("/api/load-mesh", format(`{"vertices":%s,"faces":%s}`, verts, faces));
+    auto lm = postJson("/api/command", commandBody("scene.loadMesh", format(`{"vertices":%s,"faces":%s}`, verts, faces)));
     assert(lm["status"].str == "ok", "load-mesh failed: " ~ lm.toString());
 
     // Written in BOTH stands, identity included, so neither inherits a

@@ -40,7 +40,7 @@ void resetCube() {
 }
 
 string loadMesh(string body) {
-    return cast(string)post(testBaseUrl() ~ "/api/load-mesh", body);
+    return cast(string)post(testBaseUrl() ~ "/api/command", commandBody("scene.loadMesh", body));
 }
 
 void postCommand(string body) {

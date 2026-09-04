@@ -42,7 +42,7 @@ bool approxEq(double a, double b, double eps = 1e-5) {
 // resulting vertex dump.
 double[3][] loadAndAlignAllFaces(string meshJson) {
     postJson("/api/reset", "");
-    auto resp = postJson("/api/load-mesh", meshJson);
+    auto resp = postJson("/api/command", commandBody("scene.loadMesh", meshJson));
     assert(resp["status"].str == "ok",
         "/api/load-mesh failed: " ~ resp.toString);
 
@@ -114,13 +114,12 @@ unittest { // multi-island — two disjoint warped quads, each flattened indepen
     // Two quads far apart (x≈0 and x≈10) with different warp directions;
     // selecting both faces must flatten each to its own plane, not one combined plane.
     postJson("/api/reset", "");
-    auto resp = postJson("/api/load-mesh",
-        `{"vertices":[` ~
+    auto resp = postJson("/api/command", commandBody("scene.loadMesh", `{"vertices":[` ~
         // Island 0 near x=0
         `[0,0,0],[1,0,0],[1,0.4,1],[0,-0.4,1],` ~
         // Island 1 near x=10
         `[10,0,0],[11,0,0],[11,-0.3,1],[10,0.3,1]],` ~
-        `"faces":[[0,1,2,3],[4,5,6,7]]}`);
+        `"faces":[[0,1,2,3],[4,5,6,7]]}`));
     assert(resp["status"].str == "ok",
         "/api/load-mesh failed: " ~ resp.toString);
 
@@ -164,9 +163,8 @@ unittest { // multi-island — two disjoint warped quads, each flattened indepen
 
 unittest { // undo restores original (warped) positions
     postJson("/api/reset", "");
-    postJson("/api/load-mesh",
-        `{"vertices":[[-1,0,-1],[1,0,-1],[1,0.5,1],[-1,-0.5,1]],` ~
-        `"faces":[[0,1,2,3]]}`);
+    postJson("/api/command", commandBody("scene.loadMesh", `{"vertices":[[-1,0,-1],[1,0,-1],[1,0.5,1],[-1,-0.5,1]],` ~
+        `"faces":[[0,1,2,3]]}`));
     cmd("select.typeFrom polygon");
     auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
     assert(sel["status"].str == "ok", "/api/select failed: " ~ sel.toString);
@@ -202,9 +200,8 @@ unittest { // no-op on already-planar tilted quad — must NOT return ok, verts 
     // returns false on a no-op, so /api/command responds {"status":"error"},
     // and cmd() would incorrectly fail the test.
     postJson("/api/reset", "");
-    postJson("/api/load-mesh",
-        `{"vertices":[[0,0,0],[1,0,0.3],[1,1,0.5],[0,1,0.2]],` ~
-        `"faces":[[0,1,2,3]]}`);
+    postJson("/api/command", commandBody("scene.loadMesh", `{"vertices":[[0,0,0],[1,0,0.3],[1,1,0.5],[0,1,0.2]],` ~
+        `"faces":[[0,1,2,3]]}`));
     cmd("select.typeFrom polygon");
     auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
     assert(sel["status"].str == "ok", "/api/select failed: " ~ sel.toString);

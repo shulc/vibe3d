@@ -77,11 +77,11 @@ string getSelection()
 void loadMeshJson(string json, string tag)
 {
     string tmp = buildPath(tempDir(), format("perf_select_loop_%s.json", tag));
-    write(tmp, json);
+    write(tmp, `{"id":"scene.loadMesh","params":` ~ json ~ `}`);
     scope(exit) if (exists(tmp)) remove(tmp);
     auto rr = execute(["curl","-s","-o","/dev/null","--max-time","600",
                        "-H","Content-Type: application/json",
-                       "--data-binary","@" ~ tmp, url("/api/load-mesh")]);
+                       "--data-binary","@" ~ tmp, url("/api/command")]);
     if (rr.status != 0) throw new Exception("load-mesh curl failed: " ~ rr.output);
 }
 

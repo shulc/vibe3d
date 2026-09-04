@@ -26,6 +26,7 @@
 //   contain a surviving pixel in the Edge ID-FBO (depth-pre-pass baked).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.file : read;
@@ -81,11 +82,10 @@ int setupOccluderScene() {
     auto r = postJson("/api/reset", "");
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
 
-    r = postJson("/api/load-mesh",
-        `{"vertices":[` ~
+    r = postJson("/api/command", commandBody("scene.loadMesh", `{"vertices":[` ~
             `[-1.2,-1.2,0],[1.2,-1.2,0],[1.2,1.2,0],[-1.2,1.2,0],` ~
             `[1.8,0,-1],[0,0,-1],[1.8,-0.1,-1]` ~
-        `],"faces":[[0,1,2,3],[4,5,6]]}`);
+        `],"faces":[[0,1,2,3],[4,5,6]]}`));
     assert(r["status"].str == "ok", "load-mesh failed: " ~ r.toString);
 
     r = postJson("/api/camera",

@@ -71,7 +71,7 @@ void cmd(string s) {
     assert(r["status"].str == "ok", "cmd `" ~ s ~ "` failed: " ~ r.toString);
 }
 void loadMesh(string body_) {
-    auto r = postCmd("/api/load-mesh", body_);
+    auto r = postCmd("/api/command", commandBody("scene.loadMesh", body_));
     assert(r["status"].str == "ok", "/api/load-mesh failed: " ~ r.toString);
 }
 JSONValue model() { return getJson("/api/model"); }

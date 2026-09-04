@@ -1,5 +1,7 @@
 module item_rig_helpers;
 
+
+import http_command_helpers : commandBody;
 // The three-item rig shared by
 //   tests/test_fixture_item_acen_primary_of_three.d  (which item the shared
 //                                                     action centre follows)
@@ -119,10 +121,10 @@ void buildThreeItemRig(JSONValue rig) {
 
     // /api/load-mesh targets the primary, and a fresh layer becomes primary,
     // so add-then-load gives each of the three its own copy of the geometry.
-    rigPostOk("/api/load-mesh", mesh.toString);
+    rigPostOk("/api/command", commandBody("scene.loadMesh", mesh.toString));
     foreach (_; 0 .. rig["items"].array.length - 1) {
         rigCmd(`{"id":"layer.add"}`);
-        rigPostOk("/api/load-mesh", mesh.toString);
+        rigPostOk("/api/command", commandBody("scene.loadMesh", mesh.toString));
     }
 
     foreach (i, it; rig["items"].array) {

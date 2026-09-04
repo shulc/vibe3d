@@ -48,6 +48,7 @@
 // deterministic without an event log.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.algorithm : canFind;
 import std.conv : to;
 import std.json;
@@ -280,7 +281,7 @@ unittest {
     cmd("history.clear");
     armEngagedMirror();
 
-    auto r = postJson("/api/load-mesh", kTwoCaps);
+    auto r = postJson("/api/command", commandBody("scene.loadMesh", kTwoCaps));
     assert(r["status"].str == "ok", "/api/load-mesh failed: " ~ r.toString);
 
     auto c = counts();

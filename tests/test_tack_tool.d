@@ -55,7 +55,7 @@ string sceneJson() {
 }
 
 void loadScene() {
-    auto r = parseJSON(cast(string) post(baseUrl ~ "/api/load-mesh", sceneJson()));
+    auto r = parseJSON(cast(string) post(baseUrl ~ "/api/command", commandBody("scene.loadMesh", sceneJson())));
     assert(r["status"].str == "ok", "load-mesh failed: " ~ r.toString);
 }
 

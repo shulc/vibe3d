@@ -137,8 +137,7 @@ void loadRig() {
         faces ~= "]";
     }
     faces ~= "]";
-    auto resp = post(testBaseUrl() ~ "/api/load-mesh",
-        `{"vertices":` ~ verts ~ `,"faces":` ~ faces ~ `}`);
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("scene.loadMesh", `{"vertices":` ~ verts ~ `,"faces":` ~ faces ~ `}`));
     assert(parseJSON(resp)["status"].str == "ok", "/api/load-mesh rig failed: " ~ resp);
 
     auto m = getModel();

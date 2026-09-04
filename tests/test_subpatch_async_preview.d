@@ -75,7 +75,7 @@ void hidePolygons(int[] faces) {
 }
 
 void loadMesh(string json) {
-    auto r = postJson("/api/load-mesh", json);
+    auto r = postJson("/api/command", commandBody("scene.loadMesh", json));
     assert(r["status"].str == "ok", "/api/load-mesh failed: " ~ r.toString);
 }
 

@@ -82,7 +82,7 @@ string show(Vec3 v) { return format("(%.5f, %.5f, %.5f)", v.x, v.y, v.z); }
 
 Frame frameFor(string sel, string mesh = null, string actr = "select") {
     ok(post(BASE ~ "/api/reset", ""), "reset");
-    if (mesh !is null) ok(post(BASE ~ "/api/load-mesh", mesh), "load-mesh");
+    if (mesh !is null) ok(post(BASE ~ "/api/command", commandBody("scene.loadMesh", mesh)), "load-mesh");
     ok(post(BASE ~ "/api/command", commandBody("mesh.select", sel)), "select");
     ok(post(BASE ~ "/api/script", "actr." ~ actr), "actr." ~ actr);
     auto ev = parseJSON(cast(string)get(BASE ~ "/api/toolpipe/eval"));

@@ -43,7 +43,7 @@ JSONValue postJ(string path, string body) { return parseJSON(postRaw(path, body)
 JSONValue getJ(string path) { return parseJSON(cast(string)get(BASE ~ path)); }
 
 void postLoadMesh(string body) {
-    auto resp = postJ("/api/load-mesh", body);
+    auto resp = postJ("/api/command", commandBody("scene.loadMesh", body));
     assert(resp["status"].str == "ok", "/api/load-mesh failed: " ~ resp.toString);
 }
 

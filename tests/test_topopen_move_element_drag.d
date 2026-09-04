@@ -43,6 +43,7 @@
 //
 // Run via: ./run_test.d topopen_move_element_drag
 
+import http_command_helpers : commandBody;
 import topopen_place_helpers;
 import std.json;
 import std.math   : sqrt, abs;
@@ -91,11 +92,11 @@ bool sameVec(double[] a, Vec3 b, double tol) {
 CameraState setupRig() {
     setupSphereBg(R, LON, LAT);
 
-    auto lq = postJson("/api/load-mesh", format(
+    auto lq = postJson("/api/command", commandBody("scene.loadMesh", format(
         `{"vertices":[[%.4f,%.4f,0.0],[%.4f,%.4f,0.0],[%.4f,%.4f,0.0],[%.4f,%.4f,0.0]],`
       ~ `"faces":[[0,1,2,3]]}`,
         -kQuadHalf, -kQuadHalf,  kQuadHalf, -kQuadHalf,
-         kQuadHalf,  kQuadHalf, -kQuadHalf,  kQuadHalf));
+         kQuadHalf,  kQuadHalf, -kQuadHalf,  kQuadHalf)));
     assert(lq["status"].str == "ok", "load-mesh (primary quad) failed: " ~ lq.toString);
     assert(vertexCountLayer(1) == 4 && edgeCountLayer(1) == 4 && faceCountLayer(1) == 1,
         "setup: the primary layer must hold exactly the quad");

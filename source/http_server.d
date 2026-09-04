@@ -520,27 +520,15 @@ class HttpServer {
     // Concurrent /api/command queries would race this single slot; any future
     // parallel-request work must revisit (per-epoch slot or a lock).
 
-    // ----- /api/load-mesh synchronous bridge -------------------------------
-    // POST /api/load-mesh {"vertices":[[x,y,z],...],"faces":[[i,j,k,...],...]}
-    // replaces the live mesh with caller-supplied raw geometry. Test-only
-    // injection path (mirrors /api/reset's main-thread bridge): the handler
-    // builds a fresh Mesh, rebuilds derived data and refreshes GPU + caches
-    // on the main thread, leaving the same consistent post-load state.
-    private alias LoadMeshHandler = void delegate(JSONValue params);
-    private LoadMeshHandler loadMeshHandler;
-
     // ----- /api/test/layer synchronous bridge -------------------------------
     // POST /api/test/layer {"kind":"empty","name":"...","index":N}
-    // appends (or inserts) a layer of the given KIND directly into the live
-    // document — task 0615 Stage 6/7. This is deliberately NOT a Command: it
-    // is unreachable from `/api/command` by name, from `config/buttons.yaml`,
-    // and from any UI affordance. The document format cannot yet persist a
+    // appends (or inserts) a layer of the given kind through `layer.add`.
+    // The document format cannot yet persist a
     // non-mesh item (Stage 8/v8 is deferred to task 0616 by owner decision —
     // see doc/nonmesh_item_types_plan.md §Stage 6), so no path a real user
     // could reach — command argument, button, or menu — may create one in
     // this slice; a test driving this ONE dedicated endpoint is the sole
-    // source. Mirrors `/api/load-mesh`'s main-thread bridge (the live
-    // `Document` is touched from the main/GL thread only).
+    // source. The live `Document` is touched from the main/GL thread only.
     private alias InjectLayerHandler = void delegate(JSONValue params);
     private InjectLayerHandler injectLayerHandler;
 
@@ -701,7 +689,7 @@ class HttpServer {
     // MainThreadBridge instances (task 0183 C3) — one per marshaled endpoint,
     // constructed (and self-registered into `bridges`) in the HttpServer
     // constructor, IN THE SAME ORDER the old hand-written app.d tick list used
-    // (reset, model, pipeEval, path, command, loadMesh,
+    // (reset, model, pipeEval, path, command,
     // cameraSet, gpuSurface, pick, refire, block, undo, jump). Each bridge's
     // `service` delegate closes over `this` (reading the handler/provider
     // fields above AT TICK TIME, so it works even though app.d wires those
@@ -747,10 +735,6 @@ class HttpServer {
     struct CmdReq  { string id; string params; bool interactive; bool uiOrigin; }
     struct CmdResp { string error; string result; }
     private MainThreadBridge!(CmdReq, CmdResp) commandBridge;
-
-    struct LoadMeshReq  { JSONValue params; }
-    struct LoadMeshResp { string error; }
-    private MainThreadBridge!(LoadMeshReq, LoadMeshResp) loadMeshBridge;
 
     struct InjectLayerReq  { JSONValue params; }
     struct InjectLayerResp { string error; }
@@ -1065,20 +1049,6 @@ class HttpServer {
                             uiCommandHandler(req.id, req.params);
                         else
                             commandHandler(req.id, req.params);
-                        resp.error = "";
-                    } catch (Exception e) {
-                        resp.error = e.msg;
-                    }
-                }
-            });
-
-        loadMeshBridge = new MainThreadBridge!(LoadMeshReq, LoadMeshResp)(this,
-            (ref LoadMeshReq req, ref LoadMeshResp resp) {
-                if (loadMeshHandler is null) {
-                    resp.error = "load-mesh handler not set";
-                } else {
-                    try {
-                        loadMeshHandler(req.params);
                         resp.error = "";
                     } catch (Exception e) {
                         resp.error = e.msg;
@@ -1555,17 +1525,8 @@ class HttpServer {
     }
 
     /**
-     * Set the load-mesh handler callback (POST /api/load-mesh). Same
-     * synchronous main-thread dispatch as the other mutation bridges.
-     * Test-only raw-mesh injection.
-     */
-    public void setLoadMeshHandler(LoadMeshHandler handler) {
-        this.loadMeshHandler = handler;
-    }
-
-    /**
      * Set the test-only layer-injection handler (POST /api/test/layer). Same
-     * synchronous main-thread dispatch as setLoadMeshHandler. See the
+     * synchronous main-thread dispatch as the other mutation bridges. See the
      * `injectLayerHandler` field doc comment for the full rationale.
      */
     public void setInjectLayerHandler(InjectLayerHandler handler) {
@@ -3334,51 +3295,6 @@ class HttpServer {
         response.headers["Content-Type"] = "application/json";
     }
 
-    private void route_apiLoadMesh(HttpRequest request, HttpResponse response) {
-        // Test-only raw-mesh injection. Validate the JSON shape on the
-        // HTTP thread (so we can report counts), then dispatch to the
-        // main thread via the same epoch bridge as /api/transform. The
-        // main-thread handler re-validates index range / degree before
-        // touching the live mesh and throws on bad input.
-        if (loadMeshHandler is null) {
-            response.statusCode = 200;
-            response.body = `{"status":"error","message":"load-mesh handler not set"}`;
-        } else {
-            try {
-                auto j = parseJSON(request.body);
-                if (j.type != JSONType.object)
-                    throw new Exception("body must be a JSON object");
-                if ("vertices" !in j || j["vertices"].type != JSONType.array)
-                    throw new Exception("missing 'vertices' array field");
-                if ("faces" !in j || j["faces"].type != JSONType.array)
-                    throw new Exception("missing 'faces' array field");
-                long vCount = cast(long)j["vertices"].array.length;
-                long fCount = cast(long)j["faces"].array.length;
-
-                loadMeshBridge.req.params = j;
-                loadMeshBridge.resp.error = "";
-                if (!loadMeshBridge.submitAndWait())
-                    loadMeshBridge.resp.error = "timeout waiting for main thread";
-                if (loadMeshBridge.resp.error.length == 0) {
-                    import std.format : format;
-                    response.statusCode = 200;
-                    response.body = format(
-                        `{"status":"ok","vertexCount":%d,"faceCount":%d}`,
-                        vCount, fCount);
-                } else {
-                    response.statusCode = 200;
-                    response.body = `{"status":"error","message":"`
-                                    ~ jsonEsc(loadMeshBridge.resp.error) ~ `"}`;
-                }
-            } catch (Exception e) {
-                response.statusCode = 200;
-                response.body = `{"status":"error","message":"`
-                                ~ jsonEsc(e.msg) ~ `"}`;
-            }
-        }
-        response.headers["Content-Type"] = "application/json";
-    }
-
     private void route_apiTestLayer(HttpRequest request, HttpResponse response) {
         // Test-only layer injection (task 0615 Stage 6/7) — see the
         // `injectLayerHandler` field doc comment above for the full
@@ -4167,7 +4083,6 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/recorded-events",      "GET",  Match.exact,  Answered.httpThread, "route_apiRecordedEvents"),
     RouteSpec("/api/reset",                "POST", Match.prefix, Answered.mainThread, "route_apiReset"),
     RouteSpec("/api/play-events/status",   "GET",  Match.exact,  Answered.httpThread, "route_apiPlayEventsStatus"),
-    RouteSpec("/api/load-mesh",            "POST", Match.exact,  Answered.mainThread, "route_apiLoadMesh"),
     RouteSpec("/api/test/layer",           "POST", Match.exact,  Answered.mainThread, "route_apiTestLayer"),
     // Match.prefix (task 1520): `?origin=ui` puts a query string on the path,
     // and Match.exact compares the whole path — the query would never match.

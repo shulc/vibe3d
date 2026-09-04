@@ -104,10 +104,10 @@ void buildClosedQuadProfile() {
     // load-mesh replaces the current mesh entirely; no reset required, but
     // an explicit reset first keeps the mode clean.
     postJson("/api/reset?empty=true", "");
-    auto r = postJson("/api/load-mesh", `{
+    auto r = postJson("/api/command", commandBody("scene.loadMesh", `{
         "vertices": [[1,0,0],[0,0,1],[-1,0,0],[0,0,-1]],
         "faces": [[0,1,2,3]]
-    }`);
+    }`));
     assert(r["status"].str == "ok", "buildClosedQuadProfile /api/load-mesh failed: " ~ r.toString);
 }
 

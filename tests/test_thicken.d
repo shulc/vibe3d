@@ -6,6 +6,7 @@
 //   closedCube — 8 verts, 6 quads, closed (no boundary).
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -29,7 +30,7 @@ JSONValue getModel() {
 }
 
 void loadMesh(string json) {
-    auto r = postCmd("/api/load-mesh", json);
+    auto r = postCmd("/api/command", commandBody("scene.loadMesh", json));
     assert(r["status"].str == "ok", "/api/load-mesh failed: " ~ r.toString);
 }
 

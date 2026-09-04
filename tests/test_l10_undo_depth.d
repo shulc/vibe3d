@@ -201,8 +201,8 @@ unittest { // mesh.detriangulate — same operand shape as quadruple
 unittest { // poly.unify — a duplicate face is the only operand it accepts
     undoRoundTrip("poly.unify",
         [Step("/api/reset?empty=true", ""),
-         Step("/api/load-mesh", `{"vertices":[[0,0,0],[1,0,0],[1,1,0],[0,1,0]],`
-                              ~ `"faces":[[0,1,2,3],[0,1,2,3]]}`)],
+         Step("/api/command", commandBody("scene.loadMesh", `{"vertices":[[0,0,0],[1,0,0],[1,1,0],[0,1,0]],`
+                              ~ `"faces":[[0,1,2,3],[0,1,2,3]]}`))],
         `{"id":"poly.unify"}`);
 }
 
@@ -256,8 +256,8 @@ unittest { // mesh.edgeJoin — a pentagon, dissolving its one 2-valent corner
     // would report as "did not apply" rather than as a wrong stand.
     undoRoundTrip("mesh.edgeJoin",
         [Step("/api/reset?empty=true", ""),
-         Step("/api/load-mesh", `{"vertices":[[0,0,0],[1,0,0],[2,0,0],[2,1,0],`
-                              ~ `[0,1,0]],"faces":[[0,1,2,3,4]]}`),
+         Step("/api/command", commandBody("scene.loadMesh", `{"vertices":[[0,0,0],[1,0,0],[2,0,0],[2,1,0],`
+                              ~ `[0,1,0]],"faces":[[0,1,2,3,4]]}`)),
          Step("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[0,1]}`))],
         `{"id":"mesh.edgeJoin"}`);
 }
@@ -275,8 +275,8 @@ unittest { // mesh.sweep — polygon mode, the arm that DELETES the profile face
     // come back one face short with every count still right.
     undoRoundTrip("mesh.sweep",
         [Step("/api/reset?empty=true", ""),
-         Step("/api/load-mesh", `{"vertices":[[1,0,0],[0,0,1],[-1,0,0],`
-                              ~ `[0,0,-1]],"faces":[[0,1,2,3]]}`),
+         Step("/api/command", commandBody("scene.loadMesh", `{"vertices":[[1,0,0],[0,0,1],[-1,0,0],`
+                              ~ `[0,0,-1]],"faces":[[0,1,2,3]]}`)),
          Step("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`))],
         `{"id":"mesh.sweep","count":6,"axis":"Y","angle":6.2831853}`);
 }

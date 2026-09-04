@@ -226,7 +226,7 @@ void buildStandFull(bool transformed, double sclY, double az, double el) {
         faces ~= "]";
     }
     faces ~= "]";
-    auto lm = postJson("/api/load-mesh", format(`{"vertices":%s,"faces":%s}`, verts, faces));
+    auto lm = postJson("/api/command", commandBody("scene.loadMesh", format(`{"vertices":%s,"faces":%s}`, verts, faces)));
     assert(lm["status"].str == "ok", "load-mesh failed: " ~ lm.toString());
 
     static immutable string[3] ax = ["x", "y", "z"];

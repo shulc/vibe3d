@@ -60,8 +60,7 @@ JSONValue getModel() { return parseJSON(get(testBaseUrl() ~ "/api/model")); }
 // Edges built from face [0,1,2,3]: 0=[0,1], 1=[1,2], 2=[2,3], 3=[3,0].
 // Vertex 1 (m) is incident to edges 0 and 1 only → degree 2.
 void loadQuadStrip() {
-    auto resp = post(testBaseUrl() ~ "/api/load-mesh",
-        `{"vertices":[[-1,0,0],[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2,3]]}`);
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("scene.loadMesh", `{"vertices":[[-1,0,0],[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2,3]]}`));
     assert(parseJSON(resp)["status"].str == "ok",
            "load-mesh failed: " ~ cast(string)resp);
 }

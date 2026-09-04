@@ -7,6 +7,7 @@
 // Stage 3: on-plane projection, unpaired safe-skip, both driver sides, undo.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv  : to;
@@ -47,7 +48,7 @@ JSONValue postUndo() {
 // `faces` is a JSON array-of-array-of-ints string.
 void loadMesh(string verts, string faces) {
     string body = `{"vertices":` ~ verts ~ `,"faces":` ~ faces ~ `}`;
-    auto resp = post(BASE ~ "/api/load-mesh", body);
+    auto resp = post(BASE ~ "/api/command", commandBody("scene.loadMesh", body));
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/load-mesh failed: " ~ resp);
 }

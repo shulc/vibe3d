@@ -106,8 +106,7 @@ void standMesh() {
             faces ~= format("[%d,%d,%d,%d]", a, a + 1, a + N + 2, a + N + 1);
         }
     faces ~= "]";
-    auto r = postJson("/api/load-mesh",
-                      format(`{"vertices":%s,"faces":%s}`, verts, faces));
+    auto r = postJson("/api/command", commandBody("scene.loadMesh", format(`{"vertices":%s,"faces":%s}`, verts, faces)));
     assert(r["status"].str == "ok", "load-mesh failed: " ~ r.toString);
     ok("select.typeFrom vertex");
 }

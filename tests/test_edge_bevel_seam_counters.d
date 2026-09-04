@@ -116,8 +116,7 @@ void loadFinBundle(int n) {
         faces ~= `[0,` ~ (2 + 2 * k).to!string ~ `,` ~ (3 + 2 * k).to!string ~ `,1]`;
     }
     faces ~= `]`;
-    auto r = postTo("/api/load-mesh",
-                    `{"vertices":` ~ verts ~ `,"faces":` ~ faces ~ `}`);
+    auto r = postTo("/api/command", commandBody("scene.loadMesh", `{"vertices":` ~ verts ~ `,"faces":` ~ faces ~ `}`));
     assert(r["status"].str == "ok", "/api/load-mesh (fin bundle) failed: " ~ r.toString);
 }
 

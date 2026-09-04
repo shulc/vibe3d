@@ -310,8 +310,7 @@ unittest {
     }
     verts ~= `]`;
     string faces = `[[0,2,3,1],[0,4,5,1],[0,6,7,1]]`;
-    auto lr = parseJSON(cast(string)post(BASE ~ "/api/load-mesh",
-        `{"vertices":` ~ verts ~ `,"faces":` ~ faces ~ `}`));
+    auto lr = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("scene.loadMesh", `{"vertices":` ~ verts ~ `,"faces":` ~ faces ~ `}`)));
     assert(lr["status"].str == "ok", "/api/load-mesh (fin bundle) failed: " ~ lr.toString);
 
     auto m0 = model();

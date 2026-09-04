@@ -17,6 +17,7 @@
 //
 // Run via: ./run_test.d topopen_smooth_resnap
 
+import http_command_helpers : commandBody;
 import topopen_place_helpers;
 import std.json;
 import std.math   : sqrt, abs;
@@ -74,7 +75,7 @@ unittest {
     Vec3 C = Vec3(0, R, 0);
     Vec3 B = Vec3(1.0f, 1.0f, 5.0f);
 
-    auto lr = postJson("/api/load-mesh", trianglePatchBody(A, B, C));
+    auto lr = postJson("/api/command", commandBody("scene.loadMesh", trianglePatchBody(A, B, C)));
     assert(lr["status"].str == "ok", "load-mesh (triangle patch) failed: " ~ lr.toString);
     assert(vertexCountLayer(1) == 3 && edgeCountLayer(1) == 3 && faceCountLayer(1) == 1,
         "setup: primary layer must be the untouched 1-triangle patch");

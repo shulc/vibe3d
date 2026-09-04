@@ -14,6 +14,7 @@
 //
 // Run via: ./run_test.d topopen_addloop_heavy
 
+import http_command_helpers : commandBody;
 import topopen_place_helpers;
 import std.json;
 import std.math   : cos, sin, PI;
@@ -72,7 +73,7 @@ unittest {
     enum float H = 0.5f;
 
     postJson("/api/reset", "");
-    auto lr = postJson("/api/load-mesh", tubeMeshBody(R, H, N));
+    auto lr = postJson("/api/command", commandBody("scene.loadMesh", tubeMeshBody(R, H, N)));
     assert(lr["status"].str == "ok", "load-mesh (tube) failed: " ~ lr.toString);
 
     postJson("/api/camera", format(

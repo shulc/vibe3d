@@ -56,7 +56,7 @@ double[3] vertexPos(JSONValue model, int idx) {
 
 void reset()        { postJson("/api/reset", ""); }
 void loadMesh(string j) {
-    auto resp = postJson("/api/load-mesh", j);
+    auto resp = postJson("/api/command", commandBody("scene.loadMesh", j));
     assert(resp["status"].str == "ok", "load-mesh failed: " ~ resp.toString);
 }
 void setSymmetry(bool enabled, bool topology) {

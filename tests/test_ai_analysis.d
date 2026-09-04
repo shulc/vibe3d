@@ -15,6 +15,7 @@
 // sane element sets, not the fine-grained fidelity guarantee.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -35,7 +36,7 @@ void resetGrid(int n) {
 }
 
 void postLoadMesh(string body_) {
-    auto resp = postJson("/api/load-mesh", body_);
+    auto resp = postJson("/api/command", commandBody("scene.loadMesh", body_));
     assert(resp["status"].str == "ok", "/api/load-mesh failed: " ~ resp.toString);
 }
 

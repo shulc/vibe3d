@@ -84,7 +84,7 @@ unittest { // a bare horizontal haul bridges the two caps, and the drop records 
     auto r = postJson("/api/reset?empty=true", "");
     assert(r["status"].str == "ok", "reset(empty) failed: " ~ r.toString);
 
-    r = postJson("/api/load-mesh", kTwoCaps);
+    r = postJson("/api/command", commandBody("scene.loadMesh", kTwoCaps));
     assert(r["status"].str == "ok", "/api/load-mesh failed: " ~ r.toString);
 
     // `/api/load-mesh` RESETS THE CAMERA, so the framing is set AFTER the load,
