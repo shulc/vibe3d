@@ -1,10 +1,10 @@
 // Tests for Phase A undo/redo over the HTTP API. Covers:
-//   • /api/undo, /api/redo, /api/history endpoints
-//   • mesh.select revert (via /api/select)
-//   • mesh.transform revert (via /api/transform)
+//   • history.undo / history.redo over /api/command, and /api/history
+//   • mesh.select revert
+//   • mesh.transform revert
 //   • mesh.* commands via /api/command (subdivide, etc.)
 //   • redo timeline cleared by new action
-//   • noop on empty stacks
+//   • refusal on empty stacks
 //
 // Cube layout (centered at origin, size 1):
 //   v0=(-,-,-)  v1=(+,-,-)  v2=(+,+,-)  v3=(-,+,-)
@@ -310,7 +310,7 @@ unittest { // mesh.subdivide_faceted: same shape as Catmull-Clark, no smoothing
 }
 
 // ---------------------------------------------------------------------------
-// Redo timeline & noop semantics
+// Redo timeline & empty-stack refusal semantics
 // ---------------------------------------------------------------------------
 
 unittest { // new action clears the redo timeline
@@ -324,27 +324,38 @@ unittest { // new action clears the redo timeline
     assert(redoStackSize() == 0,
         "new action should clear redo, got " ~ redoStackSize().to!string);
 
-    // Redo is now noop.
+    // Redo is now a REFUSAL. `/api/redo` used to answer its own
+    // wrapper-specific `status:noop`; that route is gone and the registered
+    // `history.redo` runs through the one generic dispatcher, which has no
+    // such branch: `applyImpl` returning false is a refusal, answered
+    // `status:error` with the dispatcher's message. Shape pinned by
+    // `test_http_command.d`'s empty-history cell.
     auto r = postRedo();
-    assert(r["status"].str == "noop",
-        "redo on cleared timeline should be noop, got: " ~ r.toString);
+    assert(r["status"].str == "error",
+        "redo on cleared timeline should be refused, got: " ~ r.toString);
+    assert(r["message"].str == "command 'history.redo' did not apply",
+        "redo refusal message changed: " ~ r.toString);
 }
 
-unittest { // /api/undo on empty stack returns noop
+unittest { // history.undo on an empty stack is refused
     resetCube();
     drainUndo();   // pop everything (including the reset entry)
 
     auto u = postUndo();
-    assert(u["status"].str == "noop",
-        "undo on empty stack should be noop, got: " ~ u.toString);
+    assert(u["status"].str == "error",
+        "undo on empty stack should be refused, got: " ~ u.toString);
+    assert(u["message"].str == "command 'history.undo' did not apply",
+        "undo refusal message changed: " ~ u.toString);
 }
 
-unittest { // /api/redo on empty stack returns noop
+unittest { // history.redo on an empty stack is refused
     resetCube();
     // Fresh state has no redoable history (reset just landed on undo).
     auto r = postRedo();
-    assert(r["status"].str == "noop",
-        "redo on empty stack should be noop, got: " ~ r.toString);
+    assert(r["status"].str == "error",
+        "redo on empty stack should be refused, got: " ~ r.toString);
+    assert(r["message"].str == "command 'history.redo' did not apply",
+        "redo refusal message changed: " ~ r.toString);
 }
 
 // ---------------------------------------------------------------------------

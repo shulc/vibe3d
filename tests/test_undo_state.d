@@ -79,10 +79,17 @@ unittest { // Lockout freezes recording + undo; releasing restores both.
         "locked-out edit must NOT record; undo grew from "
         ~ baseUndo.to!string ~ " to " ~ historyLen("undo").to!string);
 
-    // /api/undo while locked must be a no-op too.
+    // A locked-out `history.undo` must not pop either — and it says so as a
+    // REFUSAL. The dedicated `/api/undo` wrapper that answered its own
+    // `status:noop` is gone (task 4063); the registered command goes through
+    // the generic dispatcher, where `applyImpl` returning false is
+    // `status:error` plus the dispatcher's message. Shape pinned by
+    // `test_http_command.d`'s empty-history cell.
     auto u = postJson("/api/command", commandBody("history.undo"));
-    assert(u["status"].str == "noop",
-        "locked-out /api/undo must be noop; got " ~ u.toString);
+    assert(u["status"].str == "error",
+        "locked-out history.undo must be refused; got " ~ u.toString);
+    assert(u["message"].str == "command 'history.undo' did not apply",
+        "locked-out history.undo refusal message changed; got " ~ u.toString);
     assert(historyLen("undo") == baseUndo,
         "locked-out undo must not pop the stack");
 

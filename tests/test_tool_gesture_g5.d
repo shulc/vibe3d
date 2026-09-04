@@ -40,9 +40,9 @@
 //
 //   * the cells must survive it. They do, by construction: each drops its tool
 //     BEFORE undoing, so the redo it then presses was pushed by its own undo,
-//     never by a timeline a preview could have killed. A redo that answers
-//     `noop` because the timeline was deliberately killed and a redo that
-//     answers `noop` because the entry failed to revert are DIFFERENT states,
+//     never by a timeline a preview could have killed. A redo REFUSED because
+//     the timeline was deliberately killed and a redo refused because the
+//     entry failed to revert are DIFFERENT states carrying the SAME message,
 //     and `runCell` refuses the second by name.
 //   * the primitive's own witness is thin, measured rather than assumed. The
 //     shipped `tests/test_standing_preview_redo.d` reaches two of the four
@@ -957,11 +957,11 @@ unittest {
 //      1. a real command, then `/api/undo` -> canRedo must be TRUE;
 //      2. activating the tool must LEAVE it true (so the kill below belongs to
 //         the latch, not to activation);
-//      3. only then the latch -> canRedo false, mesh UNCHANGED, and `/api/redo`
-//         answering `noop`.
-//    A killed timeline and a failed revert both answer `noop`, so the mesh
-//    compare is what tells them apart: a failed revert would have moved the
-//    mesh or left the stack non-empty.
+//      3. only then the latch -> canRedo false, mesh UNCHANGED, and
+//         `history.redo` REFUSED.
+//    A killed timeline and a failed revert are both refusals with the same
+//    dispatcher message, so the mesh compare is what tells them apart: a
+//    failed revert would have moved the mesh or left the stack non-empty.
 // ---------------------------------------------------------------------------
 unittest {
     resetCube();
@@ -1021,14 +1021,20 @@ unittest {
       ~ "history and must kill redo, or a redo pressed under the preview "
       ~ "replays onto a mesh nobody recorded");
 
+    // A killed timeline refuses. `/api/redo` used to answer its own
+    // `status:noop`; that wrapper is gone (task 4063) and `history.redo` now
+    // runs through the generic dispatcher, whose only answer to
+    // `applyImpl == false` is `status:error` with the message below.
     auto rr = postJ("/api/command", commandBody("history.redo"));
-    assert(rr["status"].str == "noop",
-        "with the timeline killed, /api/redo answered '" ~ rr["status"].str
-      ~ "', expected 'noop': " ~ rr.toString);
+    assert(rr["status"].str == "error",
+        "with the timeline killed, history.redo answered '" ~ rr["status"].str
+      ~ "', expected 'error': " ~ rr.toString);
+    assert(rr["message"].str == "command 'history.redo' did not apply",
+        "the killed-timeline refusal message changed: " ~ rr.toString);
     assert(planes() == beforeLatch,
         "the dead redo press MOVED the mesh — a killed timeline and a failed "
-      ~ "revert both answer `noop`, and this is the compare that tells them "
-      ~ "apart");
+      ~ "revert are BOTH refusals with the same message, and this is the "
+      ~ "compare that tells them apart");
 
     cmd("tool.set mesh.edgeSliceTool off");
     settle();
