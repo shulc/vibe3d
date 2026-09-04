@@ -110,12 +110,12 @@ unittest { // /api/select: empty indices clears current selection
 }
 
 unittest { // empty history undo/redo preserve /api/command refusal semantics
-    auto cleared = parseJSON(post("http://localhost:8080/api/command",
+    auto cleared = parseJSON(post(testBaseUrl() ~ "/api/command",
                                   commandBody("history.clear")));
     assert(cleared["status"].str == "ok", "history.clear failed");
 
     foreach (id; ["history.undo", "history.redo"]) {
-        auto response = parseJSON(post("http://localhost:8080/api/command",
+        auto response = parseJSON(post(testBaseUrl() ~ "/api/command",
                                        commandBody(id)));
         assert(response["status"].str == "error",
             id ~ " must report an empty-stack refusal: " ~ response.toString);
