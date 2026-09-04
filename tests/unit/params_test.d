@@ -660,3 +660,78 @@ unittest { // Prepared candidate injection owns names in schema order.
     catch (Exception) refused = true;
     assert(refused, "prepared injection weakened the strict JSON object contract");
 }
+
+unittest { // a NON-FINITE param value serialises as `null` instead of THROWING
+    // TASK 4062 — THE CRASH THAT HAD A FIX AND NO TEST, which is worse than
+    // the crash: the next reader sees a two-line `isFinite` guard around a
+    // value "that cannot happen" and deletes it as dead defensiveness.
+    //
+    // `Registry.cacheSupportedModes` serialises EVERY registered command's
+    // schema once at startup, outside any `try`, and `std.json` REFUSES a
+    // non-finite double — it throws `Cannot encode NaN` rather than writing an
+    // unparseable token. `workplane.edit`'s six channels initialise to
+    // `float.nan` BY DESIGN (the stage reads NaN as "leave this channel
+    // alone"), so the moment commands began declaring their arguments the
+    // binary died in `_Dmain` before the HTTP server answered one request.
+    //
+    // ORDER: the finite rows sit ABOVE the non-finite ones. druntime stops a
+    // module at its first failed assert, so a guard widened until it swallows
+    // real values reddens HERE, and a guard REMOVED reddens below — one run
+    // buys both halves.
+    import std.algorithm : canFind;
+
+    float f = 1.5f;
+    auto pf = Param.float_("f", "F", &f, 0.0f);
+    assert(paramSchemaJson(pf).canFind(`"value":1.5`),
+        "a FINITE float still serialises as its own number: "
+        ~ paramSchemaJson(pf));
+
+    Vec3 v = Vec3(1, 2, 3);
+    auto pv = Param.vec3_("v", "V", &v, Vec3(0, 0, 0));
+    assert(paramSchemaJson(pv).canFind(`"value":[1.0,2.0,3.0]`),
+        "a FINITE Vec3 still serialises as its own triple: "
+        ~ paramSchemaJson(pv));
+
+    // ---- and now the values that used to take the process down ----------
+    f = float.nan;
+    assert(paramSchemaJson(pf).canFind(`"value":null`),
+        "a NaN float must serialise as null: " ~ paramSchemaJson(pf));
+
+    f = float.infinity;
+    assert(paramSchemaJson(pf).canFind(`"value":null`),
+        "an infinite float must serialise as null: " ~ paramSchemaJson(pf));
+
+    // ONE non-finite component is enough — a Vec3 is encoded whole, so a
+    // per-component test would pass while `std.json` still threw on the array.
+    v = Vec3(1, float.nan, 3);
+    assert(paramSchemaJson(pv).canFind(`"value":null`),
+        "a Vec3 with ONE non-finite component must serialise as null: "
+        ~ paramSchemaJson(pv));
+
+    // The whole-schema wrapper is the function `cacheSupportedModes` actually
+    // calls, and it is the one that must not throw. Asserting on
+    // `paramSchemaJson` alone would leave the caller untested.
+    f = float.nan;
+    v = Vec3(float.infinity, 0, 0);
+    string schema;
+    bool threw = false;
+    try schema = paramsSchemaJson([pf, pv]);
+    catch (Exception) threw = true;
+    assert(!threw,
+        "paramsSchemaJson — the call `Registry.cacheSupportedModes` makes at "
+        ~ "startup, outside any try — must not throw on a non-finite value");
+    assert(schema.canFind(`"value":null`),
+        "and the body it produced must still parse: " ~ schema);
+
+    // A POPULATION FLOOR on the parse: `canFind` over a body that lost its
+    // params entirely would be false, but a body of `[]` would make every
+    // claim above vacuous if they had been written as "no value is bad".
+    import std.json : parseJSON;
+    auto parsed = parseJSON(schema);
+    assert(parsed.array.length == 2,
+        "the schema names both params, so the null above is a VALUE and not "
+        ~ "an empty array: " ~ schema);
+    assert(parsed.array[0]["value"].type == JSONType.null_
+        && parsed.array[1]["value"].type == JSONType.null_,
+        "both non-finite values reached the body as JSON null: " ~ schema);
+}
