@@ -39,8 +39,9 @@ import std.conv      : to, octal;
 import std.datetime.stopwatch : StopWatch, AutoStart;
 import std.json      : JSONValue, parseJSON, JSONType;
 import std.math      : isNaN;
-// Import std.file fully so the per-worker scratch source-write can call
-// `std.file.write` without colliding with the `write` from std.stdio.
+// Import std.file fully so the timings cache, the build stamp and the mold
+// probe can call `std.file.write` without colliding with the `write` from
+// std.stdio.
 static import std.file;
 import std.file : exists, isFile, isDir, mkdirRecurse, rmdirRecurse,
                   dirEntries, SpanMode, tempDir, readText, getcwd;
@@ -1315,22 +1316,24 @@ string[] gateViolations(string testsDir) {
 }
 
 /// Compile each test in `paths` into `outDir`. Tests resolve their worker's
-/// endpoint at runtime through `VIBE3D_TEST_PORT`; sources are compiled as-is.
+/// endpoint at runtime through `VIBE3D_TEST_PORT`; sources are compiled AS-IS,
+/// straight from tests/ — `outDir` receives binaries and their `.out` logs and
+/// nothing else, which is why no `-I=<outDir>` appears on the lines below.
 string[] compileTests(string[] paths, string outDir) {
+    // Pull every injected module (see injectedTestModules) into the
+    // compilation so a test can `import drag_helpers;` — or
+    // `import liveness_gate : scenario;` — without duplicating shared code.
+    // `http_client` reads the per-worker port from the child environment, so
+    // these sources are compiled without scratch copies. Globbed ONCE: the set
+    // cannot change mid-run, and re-reading tests/ per test binary was ~750
+    // directory scans a worker.
+    string helpers;
+    foreach (m; injectedTestModules()) helpers ~= " " ~ m;
+
     string[] bins;
     foreach (p; paths) {
         string name = baseName(p).stripExtension;
         string of   = buildPath(outDir, name);
-        string src  = p;
-        // Pull every injected module (see injectedTestModules) into the
-        // compilation so a test can `import drag_helpers;` — or
-        // `import liveness_gate : scenario;` — without duplicating shared
-        // code. `http_client` reads the per-worker port from the child
-        // environment, so these sources are compiled without scratch copies.
-        string helpers;
-        foreach (m; injectedTestModules()) {
-            helpers ~= " " ~ m;
-        }
         // -J=tests lets a test embed a golden fixture via
         // `import("fixtures/<name>.json")` (see tests/fixture_helpers.d).
         //
@@ -1348,16 +1351,16 @@ string[] compileTests(string[] paths, string outDir) {
                 // Link the prebuilt project lib instead of recompiling it via
                 // `-i`. Order is load-bearing: test.o, then the project lib,
                 // then the dep archives/link tail (mold is order-strict).
-                cmd = format("dmd -unittest -J=tests -I=%s -I=tests%s%s %s %s%s%s -of=%s 2>&1",
-                             outDir, helpers, sourceCompileFlags(), src,
+                cmd = format("dmd -unittest -J=tests -I=tests%s%s %s %s%s%s -of=%s 2>&1",
+                             helpers, sourceCompileFlags(), p,
                              projLibPath, sourceLinkTail(), moldFlag, of);
             } else {
-                cmd = format("dmd -unittest -i -J=tests -I=%s -I=tests%s%s %s -of=%s 2>&1",
-                             outDir, helpers, sourceTestFlags(), src, of);
+                cmd = format("dmd -unittest -i -J=tests -I=tests%s%s %s -of=%s 2>&1",
+                             helpers, sourceTestFlags(), p, of);
             }
         } else {
-            cmd = format("dmd -unittest -J=tests -I=%s -I=tests%s %s -w -of=%s 2>&1",
-                         outDir, helpers, src, of);
+            cmd = format("dmd -unittest -J=tests -I=tests%s %s -w -of=%s 2>&1",
+                         helpers, p, of);
         }
         auto r = executeShell(cmd);
         if (r.status != 0) {
