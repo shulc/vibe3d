@@ -33,6 +33,28 @@ module document_selection;
 // DEFINITION in `document.d` — there must be none left, only calls.
 // ---------------------------------------------------------------------------
 
+version (unittest) {
+    /// Task 4061 — how many times `nthEditTargetCandidate` actually ran.
+    ///
+    /// `version (unittest)` and NOT a `perf_probe.Cat`, following the call
+    /// `mesh_visibility.d`'s `VisibilityCounters` already made and for the
+    /// same reason: the perf counters are gated on `version(PerfProbe)`,
+    /// which the `tests` build configuration does not define, so a pin
+    /// written against `Cat.editTargetDerive` reads zero in the gate that
+    /// actually runs it — a green that measured nothing. Gating on
+    /// `unittest` puts the counter exactly where the pin is and costs the
+    /// shipped build nothing: the increment is not compiled.
+    ///
+    /// `Cat.editTargetDerive` stays beside it and keeps answering the other
+    /// question — cost per frame in a running `--build=perf-count` editor,
+    /// which is where this task's before/after numbers come from.
+    __gshared long g_editTargetDerives;
+
+    /// Reset before a counted window. Not `= 0` at the call site, so the pin
+    /// and the counter cannot disagree about which name is the live one.
+    void resetEditTargetDerives() nothrow @nogc { g_editTargetDerives = 0; }
+}
+
 /// Mixed into `Document`. There is exactly one instantiation and there is
 /// meant to be exactly one: this is a file boundary, not a reusable component.
 mixin template DocumentSelection() {
@@ -68,26 +90,64 @@ mixin template DocumentSelection() {
     private long selSeatBack_  = 0;
     private long selSeatFront_ = 0;
 
+    // -----------------------------------------------------------------------
     // Task 4061 — a memo of the DERIVED edit target, never a second target
-    // pointer. `primaryMemo_` is valid only for the selection state whose
-    // front-seat stamp and layer-list generation are recorded beside it.
-    // Every selection mutator below invalidates explicitly; structural
-    // mutators outside this mixin call `noteLayerListChanged()`.
-    private Layer primaryMemo_;
-    private long  primaryMemoSeatFront_;
-    private ulong primaryMemoLayerListVersion_;
-    private ulong layerListVersion_;
-    private bool  primaryMemoValid_;
+    // pointer. Two terms, and they cover two different KINDS of mutation.
+    //
+    // THE LIST TERM IS THE ARRAY'S OWN (block, length) PAIR, not a counter
+    // somebody has to remember to bump. `layers` is a public field with 21
+    // production writes, and every one of them is an append, a truncation or
+    // a slice reconcatenation — `~=`, `layers[0 .. i]`, `a[0 .. i] ~ a[i+1 ..
+    // $]`, or a whole-array assignment. An append either reallocates (new
+    // block) or extends in place (same block, DIFFERENT length); the other
+    // three always produce a different block or a different length. So the
+    // pair moves at all 21 sites BY CONSTRUCTION, with nothing left for a
+    // future 22nd site to remember. The generation counter this replaced was
+    // remembered at 21 sites and witnessed at one: deleting the call from the
+    // reorder path, and from the delete-revert path, left the whole module
+    // lane green (review of this task, measured one mutation per run).
+    //
+    // `primaryMemoLayersBlock_` is a REAL pointer, deliberately, not a
+    // `size_t`. The GC therefore scans it, so the block it names cannot be
+    // collected and handed to a later allocation while the memo still refers
+    // to it — a pointer match means the SAME allocation and not merely the
+    // same address. That is what closes the ABA hazard the address-keyed
+    // caches elsewhere in the tree need a birth id for (`Layer.birthId`).
+    //
+    // THE BELT is `noteLayerListChanged()`, kept for exactly one shape the
+    // pair cannot see: an IN-PLACE element assignment (`layers[i] = x`, a
+    // swap-based permutation). There is no such write in the tree today —
+    // and if one is added, the pair is blind to it while the tie-break on
+    // `layers` order is not. Pinned, with the pair held constant, by
+    // `tests/unit/primary_memo_order_test.d`'s second cell.
+    //
+    // THE SELECTION TERM IS EXPLICIT INVALIDATION, because the state the walk
+    // reads (`selected`, `selSeat`, `deselected_`) lives on the layers and in
+    // this mixin, where no cheap structural key exists. Every mutator below
+    // calls `invalidatePrimaryMemo()`, and each of those calls has its own
+    // reddening cell in `tests/unit/primary_memo_selection_test.d`.
+    //
+    // ~~A front-seat stamp (`primaryMemoSeatFront_`) was a third term.~~
+    // DROPPED (review): `selSeatFront_` moves in exactly two functions,
+    // `setPrimary` and `latchEditTarget`, and both already invalidate on the
+    // line above the move — so the term could never be the reason a memo was
+    // dropped, and a key term that cannot fire is a key term nobody can test.
+    // -----------------------------------------------------------------------
+    private Layer         primaryMemo_;
+    private const(void)*  primaryMemoLayersBlock_;
+    private size_t        primaryMemoLayersLength_;
+    private bool          primaryMemoValid_;
 
     private void invalidatePrimaryMemo() nothrow @nogc {
         primaryMemoValid_ = false;
     }
 
-    /// Mark a membership/order mutation of `layers`. The array stays public
-    /// for the established document construction and codec surfaces, so this
-    /// is the one required companion call after a live list write.
+    /// Mark an IN-PLACE membership/order mutation of `layers` — one that
+    /// leaves the array block and its length alone, which is the only shape
+    /// `primary`'s own key cannot see (see the block comment above). Every
+    /// append / truncation / reconcatenation is covered without this call;
+    /// the 21 existing call sites are a belt and are cheap to keep.
     void noteLayerListChanged() nothrow @nogc {
-        ++layerListVersion_;
         invalidatePrimaryMemo();
     }
 
@@ -152,10 +212,16 @@ mixin template DocumentSelection() {
     /// would be mutually unordered and the walk could stall on the first.
     ///
     /// O(k·n) for the k-th answer, with no allocation. `primary` memoises only
-    /// the n=0 result and drops that memo on every selection/list mutation;
-    /// this walk remains the sole computation of what the target IS.
+    /// the n=0 result, keyed on the layer array's own `(block, length)` pair
+    /// plus explicit invalidation from every selection mutator; this walk
+    /// remains the sole computation of what the target IS.
     private inout(Layer) nthEditTargetCandidate(size_t n) inout nothrow @nogc {
         { import perf_probe : g_perf, Cat; g_perf.count(Cat.editTargetDerive, 1); }
+        // Task 4061 — the same event, counted a second time for the gate that
+        // actually runs. See `g_editTargetDerives`' own comment for why the
+        // perf counter alone could not carry the pin.
+        version (unittest) { import document_selection : g_editTargetDerives;
+                             ++g_editTargetDerives; }
         size_t emitted = 0;
         foreach (stage; 0 .. 2) {
             immutable want = stage == 0 ? SelState.Current : SelState.History;
@@ -206,17 +272,36 @@ mixin template DocumentSelection() {
     /// see the struct's doc comment. Nothing assigns the edit target; the
     /// mutators move items between the current list and the history buckets and
     /// this recomputes.
+    /// MEMOISED, AND THE MEMO WRITES THROUGH A CONST CAST. Two consequences,
+    /// both stated because each one falsifies something that used to be true:
+    ///
+    ///   * A `const(Document)*` no longer proves the document is byte-
+    ///     unchanged across a call. It still proves what the drawers actually
+    ///     rely on — that no mutating COMMAND can be built over it and no
+    ///     selection/list mutator can be reached — but `ui/panels.d`'s
+    ///     statistics-panel header used to spell it as a no-mutation proof
+    ///     and now spells the narrower claim.
+    ///   * MAIN THREAD ONLY. The memo is written without synchronisation, so
+    ///     two threads reading `primary` concurrently is a data race, not
+    ///     merely a redundant walk. That is a constraint this accessor now
+    ///     DEPENDS on rather than one it introduces: every document-touching
+    ///     HTTP route already marshals onto the main thread through its own
+    ///     bridge (`http_server.d`'s header states the rule and gives
+    ///     `/api/layers` as the case that had to be corrected to obey it),
+    ///     because a splice between two reads of `layers` already produced
+    ///     wrong answers. If a reader is ever moved off the main thread, this
+    ///     memo has to be moved with it.
     inout(Layer) primary() inout nothrow @nogc {
         // Logical constness: the cached class reference is not document state
         // and never decides the answer. Cast only the Document storage used by
         // the memo, then return with the receiver's original qualification.
         auto self = cast(Document*) &this;
         if (!self.primaryMemoValid_
-            || self.primaryMemoSeatFront_ != self.selSeatFront_
-            || self.primaryMemoLayerListVersion_ != self.layerListVersion_) {
+            || self.primaryMemoLayersBlock_  !is cast(const(void)*) self.layers.ptr
+            || self.primaryMemoLayersLength_ != self.layers.length) {
             self.primaryMemo_ = cast(Layer) nthEditTargetCandidate(0);
-            self.primaryMemoSeatFront_ = self.selSeatFront_;
-            self.primaryMemoLayerListVersion_ = self.layerListVersion_;
+            self.primaryMemoLayersBlock_  = cast(const(void)*) self.layers.ptr;
+            self.primaryMemoLayersLength_ = self.layers.length;
             self.primaryMemoValid_ = true;
         }
         return cast(inout(Layer)) self.primaryMemo_;
@@ -1146,8 +1231,21 @@ mixin template DocumentSelection() {
     ///
     /// DELETED (task 0671) — with the whole hazard it repaired. A STALE
     /// primary was possible only because `primary` was a stored pointer that a
-    /// direct `layers = …` write could orphan. The edit target is now derived
-    /// by ENUMERATING `layers`, so "non-null but no longer a member" has no
-    /// representation: the walk simply stops seeing an item that left. Two
-    /// mutator arms called this and both lost their reason to at the same time.
+    /// direct `layers = …` write could orphan. The edit target became derived
+    /// by ENUMERATING `layers`, so the walk simply stops seeing an item that
+    /// left. Two mutator arms called this and both lost their reason to at the
+    /// same time.
+    ///
+    /// ~~So "non-null but no longer a member" has no representation.~~
+    /// CORRECTED (task 4061 review). That sentence stopped being true the
+    /// moment `primary` grew a memo: `primaryMemo_` IS a stored pointer, and
+    /// a stale one names exactly that state — the reviewer's mutation
+    /// (invalidation deleted from the delete path) produced it, and commands
+    /// bind a `Mesh*` off the answer, so it is dereferenced rather than
+    /// caught. What is true now is narrower and is a property of the KEY, not
+    /// of the model: the memo's `(block, length)` term moves at every one of
+    /// the 21 production writes to `layers` by construction (see the memo's
+    /// own block comment), so a spliced-out layer cannot survive as an
+    /// answer. The DERIVATION still has no representation for it; the CACHE
+    /// in front of the derivation does, and the key is what forbids it.
 }

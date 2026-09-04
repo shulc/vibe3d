@@ -4255,6 +4255,14 @@ void drawToolPropertiesPanel(EditorApp app) {
 //      cannot construct a mutating command over the document's mesh either, so
 //      "count this row by running its own command and looking at the result"
 //      does not compile here any more than it does in the kernel.
+//      NARROWED (task 4061): read that as "no mutation the panel could
+//      PERFORM", not as "the bytes of the document do not change across the
+//      call". `Document.primary` now memoises the edit-target walk and writes
+//      the memo through a logical-const cast, so a `const(Document)*` no
+//      longer proves byte-stability — see `document_selection.d:primary`,
+//      which also carries the main-thread-only constraint that comes with it.
+//      Nothing here depends on byte-stability; the property this list needs is
+//      that no mutating command is CONSTRUCTIBLE, and that is untouched.
 //   2. The `run` delegate is the ONE place `const` stops, and it is necessary —
 //      a clickable column has to be able to fire a command. That is exactly why
 //      a mesh fingerprint is taken around a real draw frame in

@@ -991,6 +991,22 @@ ModelSpace primaryModelSpace() {
         ? primaryModelSpaceResolver() : ModelSpace.world();
 }
 
+// THE ONE PLACE A PRODUCTION MODULE IMPORTS A TEST MODULE, and it is a live
+// CIRCULAR import: `tests.unit.document_test` imports `document`, and this
+// instantiation imports it straight back. It compiles and it runs, because
+// neither module has a `static this()` — a circular import with module
+// constructors aborts at startup with "cyclic dependency" — and because a
+// `mixin template` needs only the template's declaration, not an initialised
+// module. Two guards keep that from being an accident: `DocumentUnitTests` is
+// defined by the `tests` configuration ALONE, so no shipped build compiles the
+// edge at all, and neither side may grow a module constructor without the
+// other losing its import first.
+//
+// WHY IT EXISTS: 45 of the moved blocks read module-private `Document` state
+// (`nthEditTargetCandidate`, `deselected_`, the seat counters). Instantiating
+// their bodies here keeps that access without widening the production API to
+// the whole tree, which is the trade the alternative — making the privates
+// package-visible — would have made permanently, for a test-only reason.
 version (DocumentUnitTests) {
     import tests.unit.document_test : DocumentTests;
     mixin DocumentTests;

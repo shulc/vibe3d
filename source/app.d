@@ -5742,8 +5742,10 @@ void main(string[] args) {
         // The parameters are NARROW on purpose — a `const(Document)*`, the
         // current selection type, the expand bits and one dispatch delegate —
         // which is what makes the panel constructible in a unittest and what
-        // extends the panel's own no-mutation proof to the drawer. See
-        // `ui/panels.d`'s header for the drawer.
+        // keeps a mutating command unconstructible in the drawer. (Task 4061
+        // narrowed the claim: `const` here is not a byte-stability proof any
+        // more, because `Document.primary` memoises through a const cast.)
+        // See `ui/panels.d`'s header for the drawer.
         if (!command.g_testMode || g_statisticsShown) {
             import ui.panels : drawStatisticsPanel;
             import commands.ui.statistics : g_statExpand;
