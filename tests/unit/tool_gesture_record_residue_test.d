@@ -62,30 +62,16 @@ import std.file      : dirEntries, exists, readText, SpanMode;
 import std.path      : baseName, buildPath, dirName, relativePath;
 import std.string    : indexOf;
 
-import tests.unit.census_symbols : blankNonCode;
+import tests.unit.census_symbols : blankNonCode, isIdentChar;
 
 private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 
 private alias stripCommentsAndStrings = blankNonCode;
 
-private size_t countOccurrences(string hay, string needle) {
-    size_t n = 0, i = 0;
-    while (i + needle.length <= hay.length) {
-        if (hay[i .. i + needle.length] == needle) { ++n; i += needle.length; }
-        else ++i;
-    }
-    return n;
-}
-
 private size_t lineOf(string src, size_t pos) {
     size_t n = 1;
     foreach (i; 0 .. pos) if (src[i] == '\n') ++n;
     return n;
-}
-
-private bool isIdentChar(char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-        || (c >= '0' && c <= '9') || c == '_';
 }
 
 private struct SurfaceHit { string name; size_t line; }

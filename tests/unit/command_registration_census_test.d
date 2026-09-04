@@ -51,11 +51,6 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 // Scanner
 // ---------------------------------------------------------------------------
 
-private bool isIdentChar(char c) {
-    import std.ascii : isAlphaNum;
-    return isAlphaNum(c) || c == '_';
-}
-
 struct ClassDecl {
     string name;
     string base;       /// the first name after the colon — the base class
