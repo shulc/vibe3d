@@ -79,6 +79,57 @@ private enum string kAnchor   = "PERMANENTLY DENSE";
 // Each row says what the number is MADE OF, so a changed count is legible
 // rather than a number to re-baseline.
 // ---------------------------------------------------------------------------
+// THE TOTAL WENT 22 -> 19 IN THE REKEY, AND THE THREE ARE ACCOUNTED FOR
+// (task 4100 review). This is the one converted census whose population did
+// not conserve, so the number is argued here rather than taken from the
+// scan's own output — a census that silently stops seeing something reports
+// the smaller number just as confidently as the true one.
+//
+// WHAT WENT. The path-keyed table counted `MeshSnapshot` 12, `SelectionSnapshot`
+// 3, `Touched` 4, `Document` 3 = 22 mentions in `source/commands/select/sets.d`.
+// The symbol-keyed rows below sum to 19. The exact three that left are the
+// selective-import names at module scope in that file:
+//     sets.d:8   import snapshot : MeshSnapshot, SelectionSnapshot;   (2)
+//     sets.d:11  import document : Document, Layer;                   (1)
+// `Touched` is declared in this file and never imported, which is why it is
+// the one identifier whose count is unchanged at 4 — a useful cross-check
+// that nothing else moved.
+//
+// THE CAUSE, mechanically. The scan attributes every hit to its enclosing
+// declaration and then keeps `hit.key.startsWith("SelectSet")`. At module
+// scope `symbolAt` answers `"(module scope)"`, which does not start with
+// `SelectSet`, so import lines are dropped by the name filter rather than by
+// a decision about imports.
+//
+// AND THE FILTER IS RIGHT, which is a separate claim and the one that matters:
+//   * AN IMPORT IS NOT A DENSE CAPTURE. This ledger's stated meaning is that
+//     the capture each declaration PROMISES is still in the code, and its two
+//     failure readings are "the count went down, so the undo is restored from
+//     something else" and "the count went up, so there is a caller the
+//     declaration does not admit to". A selective-import name is neither. It
+//     moves when someone rewrites `import snapshot : MeshSnapshot, …` as a
+//     plain `import snapshot;` — no capture changed, and the row would redden.
+//   * IT CANNOT REDDEN ALONE IN THE TRUE DIRECTION. The import exists only
+//     because a field or a capture in the same module names the type, and
+//     both of those are rows below. Delete the last one and its own row
+//     reddens first, so the import term added no discrimination — it was a
+//     third reading of a fact two other rows already carry.
+//   * "WE COULD NOT KEY IT" WOULD BE FALSE, so it is not the argument.
+//     `"(module scope)"` is a real key this scanner emits, and this branch
+//     uses it as a ledger key elsewhere (`commit_seam_census_test.d`'s Stage-M
+//     row `LedgerRow("(module scope)", 1, …)`). Dropping these three is a
+//     judgement about meaning, not a limit of the mechanism.
+//
+// WHAT THE SYMBOL FILTER DOES COST, stated because it is not nothing. BOTH
+// gates below now look only at lines whose enclosing declaration starts with
+// `SelectSet`, so neither sees module scope in the owner's file any more. For
+// GATE S2 that is the deliberate exclusion argued above. For GATE S1 — a
+// `length == 0` gate — it means a recorder call written at module scope (in a
+// `static this`, say) would be invisible. That arm is not left unwatched by
+// accident: GATE S2 runs after S1 in this same module and pins
+// `hits.length == 19` through the same `enclosingSymbols` machinery, so a
+// walker that stopped attributing lines reddens there with its own message
+// instead of turning S1 vacuously green.
 private immutable LedgerRow[] kSetsDense = [
     LedgerRow("SelectSetStore|MeshSnapshot", 1, "store field"),
     LedgerRow("SelectSetStore.applyImpl|MeshSnapshot", 1, "store capture"),
