@@ -42,6 +42,10 @@
 // `http_providers.d` and `registration.d` legitimately open `with (app)` and
 // are none of its business. The census argument only ever applied to the file
 // the forwarders lived in.
+//
+// Section (d) at the bottom (task 4066) extends the same scanner to
+// `registration.d` and `input_router.d` — not as a zero gate, which would be
+// red by design, but as a CLOSED census of the blocks they open on purpose.
 module tests.unit.app_with_app_scan_test;
 
 import std.algorithm : canFind, count;
@@ -65,7 +69,7 @@ private bool isIdentChar(char c) { return isAlphaNum(c) || c == '_'; }
 
 /// Replace every comment and literal with spaces, preserving length and every
 /// newline so that byte offsets and line numbers still address the original.
-private string blankNonCode(string src) {
+string blankNonCode(string src) {
     auto outBuf = new char[src.length];
     outBuf[] = ' ';
     size_t i = 0;
@@ -285,4 +289,83 @@ unittest {
       ~ "inside this block a bare use of one of those names REBINDS to the "
       ~ "EditorApp member instead of failing to compile. Write `ifs.X` or "
       ~ "`app.X` explicitly instead of opening the block.");
+}
+
+// ---------------------------------------------------------------------------
+// (d) THE TWO FILES THAT OPEN `with (app)` ON PURPOSE — a closed census
+//     (task 4066, row 9).
+// ---------------------------------------------------------------------------
+//
+// `registration.d` wraps each registration family in `with (app) { … }` — the
+// 315 factory lambdas inside read bare EditorApp names through it, and its
+// header says so — and `input_router.d` opens it in three handlers, each with
+// a comment on the `buildToolVts` rebinding hazard beside it. Those blocks are
+// deliberate. What this row refuses is a FOURTH input_router block or a
+// fifteenth registration one born without anyone deciding: the failure mode
+// is the one described at the top of this file, a bare name that silently
+// REBINDS to an `EditorApp` member of the same spelling, and it is invisible
+// at the point of introduction. So the set is enumerated, not merely
+// permitted — a block added or removed must change the number here, and the
+// message names every live site so the reviewer can see which one moved.
+//
+// The count is the contract, not the line numbers: a family function that
+// grows or a comment that lands above a block shifts every line and changes
+// nothing about how many blocks exist.
+
+private struct WithAppCensusRow { string file; size_t live; }
+
+/// Measured 2026-09-04 with `scanLiveWith` over the committed files:
+/// `grep -c 'with (app)'` reads 17 and 18 for the two files, but three of
+/// registration.d's and fifteen of input_router.d's are comments and doc
+/// lines — the scanner is what separates them, which is why the recorded
+/// numbers are the scanner's and not grep's.
+private static immutable WithAppCensusRow[] kWithAppCensus = [
+    WithAppCensusRow("source/registration.d", 14),
+    WithAppCensusRow("source/input_router.d",  3),
+];
+
+unittest {
+    foreach (row; kWithAppCensus) {
+        const p = buildPath(gateRepoRoot, row.file);
+        assert(exists(p) && isFile(p),
+            "the census cannot find " ~ p ~ " — it is measuring nothing");
+        const src = readText(p);
+        assert(src.length > 10_000,
+            format("%s read as only %d bytes — the census is scanning the "
+                 ~ "wrong file", row.file, src.length));
+
+        string[] live;
+        foreach (h; scanLiveWith(src))
+            if (h.subject == "app")
+                live ~= format("%s:%d", row.file, h.line);
+
+        // The same differential canary as gate (c): appending one live block
+        // must raise THIS file's count by exactly one, so the number below
+        // is a measurement of this file's content and not a scanner no-op.
+        const canaried = src ~ "\nvoid _guardCanary() { with (app) { hoveredVertex = -1; } }\n";
+        size_t canaryHits;
+        foreach (h; scanLiveWith(canaried))
+            if (h.subject == "app") canaryHits++;
+        assert(canaryHits == live.length + 1,
+            format("appending one live `with (app)` to %s must raise the hit "
+                 ~ "count from %d to %d; the scanner saw %d — the scanner is "
+                 ~ "broken and the census below cannot fail",
+                   row.file, live.length, live.length + 1, canaryHits));
+
+        // POPULATION FLOOR. A row recording zero is the app.d gate in (c),
+        // not a census; a file that opens no block has no business here.
+        assert(row.live > 0,
+            row.file ~ " is recorded with zero live blocks — that is gate (c)'s "
+          ~ "contract, not a census row; delete the row or record the count");
+
+        assert(live.length == row.live,
+            format("%s opens %d live `with (app)` block(s); the census records "
+                 ~ "%d. Live sites: %s. Inside such a block a bare "
+                 ~ "hoveredVertex / hoveredEdge / hoveredFace / buildToolVts "
+                 ~ "rebinds to the EditorApp member of that name without a "
+                 ~ "compile error, so a new block is a decision: write "
+                 ~ "`app.X` explicitly, or update the recorded count here and "
+                 ~ "say why in the commit (task 4066, extending task 0781).",
+                   row.file, live.length, row.live, live));
+    }
 }
