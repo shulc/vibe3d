@@ -13,8 +13,17 @@
 // witnessed on its own, with no list change in sight, in
 // `tests/unit/primary_memo_restore_test.d`; that is what un-masks the pair.
 //
+// WHY A THIRD SELECTION SITS BETWEEN THE DELETE AND THE UNDO, and it is the
+// difference between a cell that discriminates and one that cannot: the state
+// the undo restores is the state that existed BEFORE the delete. If the memo
+// were warmed on that same state and never invalidated, it would answer the
+// restored value by luck and this cell would pass over a memo that had stopped
+// working entirely — the "fixture cannot exhibit the phenomenon" shape. So the
+// memo is deliberately re-warmed on a DIFFERENT layer in between, which the
+// undo must then move away from.
+//
 // MUTATION (M1): `primary()` compares only `primaryMemoValid_` and
-// `noteLayerListChanged()` is emptied. This cell reddens.
+// `noteLayerListChanged()` is emptied. The final assertion reddens.
 module tests.unit.primary_memo_undo_test;
 
 unittest {
@@ -29,8 +38,7 @@ unittest {
     doc.selectItem(doc.layers[3], SelMode.Set);
     doc.selectItem(doc.layers[1], SelMode.Add);
     doc.selectItem(doc.layers[6], SelMode.Add);
-    auto head   = doc.layers[3];
-    auto nextUp = doc.layers[1];
+    auto head = doc.layers[3];
 
     auto view = new View(0, 0, 800, 600);
     auto del  = new LayerDelete(doc.activeMesh(), view, EditMode.Vertices,
@@ -39,19 +47,21 @@ unittest {
     assert(del.apply(), "setup: the layer delete must apply");
     assert(doc.layers.length == 7, "population floor: one layer was removed");
 
-    // WARM THE MEMO on the POST-DELETE answer, so the undo below has a stale
-    // value to be caught holding. Warming before the delete instead would test
-    // the delete path over again and say nothing about the revert.
-    assert(doc.primary is nextUp, "setup: the delete moved the target");
+    // Re-warm the memo on a layer the undo will have to move AWAY from.
+    auto decoy = doc.layers[5];
+    doc.selectItem(decoy, SelMode.Set);
+    assert(doc.primary is decoy,
+        "setup (and the memo warms here): an exclusive select after the "
+      ~ "delete, so the value the memo holds is NOT the one the undo restores");
 
     assert(del.revert(), "setup: the undo of the delete must succeed");
     assert(doc.layers.length == 8,
         "population floor: the undo reinserted exactly the one layer, so the "
-      ~ "assertion below is made over a list that really changed back");
+      ~ "assertion below is made over a list that really changed");
     assert(doc.layers[3] is head, "setup: the layer came back at its own index");
 
     assert(doc.primary is head,
         "undo must hand the edit target back to the restored layer — the "
       ~ "target is derived from the selection state the snapshot restored, "
-      ~ "so a memo that outlived the undo answers the successor forever");
+      ~ "so a memo that outlived the undo keeps answering the decoy");
 }
