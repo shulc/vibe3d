@@ -19,6 +19,7 @@
 // the bus, between test binaries — snapshot-before / read-after and diff).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv    : to, text;
@@ -74,8 +75,7 @@ ulong waitTypeChangedPast(ulong from) {
 
 void selectVia(string mode, int[] indices) {
     string idxs = indices.length ? indices.map!(i => text(i)).join(",") : "";
-    auto j = postJson("/api/select",
-        `{"mode":"` ~ mode ~ `","indices":[` ~ idxs ~ `]}`);
+    auto j = postJson("/api/command", commandBody("mesh.select", `{"mode":"` ~ mode ~ `","indices":[` ~ idxs ~ `]}`));
     assert(j["status"].str == "ok", "select failed: " ~ j.toString);
 }
 

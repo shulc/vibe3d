@@ -55,6 +55,7 @@
 // this task exists for — is fully separated.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math   : fabs, sqrt, sin, cos, PI;
@@ -207,7 +208,7 @@ void buildStand(bool transformed) {
     assert("status" !in cr || cr["status"].str != "error",
            "camera set failed: " ~ cr.toString());
 
-    postJson("/api/select", format(`{"mode":"polygons","indices":[%d]}`, TOP_FACE));
+    postJson("/api/command", commandBody("mesh.select", format(`{"mode":"polygons","indices":[%d]}`, TOP_FACE)));
     settle();
 }
 
@@ -219,9 +220,9 @@ void buildStand(bool transformed) {
 // baked stand's recomputed normal points the same way.
 void selectTopRing(string mode) {
     if (mode == "polygons") {
-        postJson("/api/select", format(`{"mode":"polygons","indices":[%d]}`, TOP_FACE));
+        postJson("/api/command", commandBody("mesh.select", format(`{"mode":"polygons","indices":[%d]}`, TOP_FACE)));
     } else if (mode == "vertices") {
-        postJson("/api/select", `{"mode":"vertices","indices":[2,3,6,7]}`);
+        postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[2,3,6,7]}`));
     } else {
         auto m = getJson("/api/model");
         static immutable int[2][4] ring = [[7,6],[6,2],[2,3],[3,7]];
@@ -239,7 +240,7 @@ void selectTopRing(string mode) {
         string js = "[";
         foreach (k, i; idx) js ~= (k ? "," : "") ~ i.to!string;
         js ~= "]";
-        postJson("/api/select", format(`{"mode":"edges","indices":%s}`, js));
+        postJson("/api/command", commandBody("mesh.select", format(`{"mode":"edges","indices":%s}`, js)));
     }
     settle();
 }

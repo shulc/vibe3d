@@ -25,6 +25,7 @@
 // separate task. The cases here cover the world-input bug + scale isolation.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math   : fabs, sqrt, PI;
@@ -92,13 +93,13 @@ void establishCubeBaseline() {
         Thread.sleep(120.msecs);
         drainHistory();
         postJson("/api/reset", "");
-        postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+        postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
         clearHistory();
         if (cubePristine() && selectionPristine()) return;
         Thread.sleep(20.msecs);
     }
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     clearHistory();
     assert(cubePristine() && selectionPristine(),
         "could not establish pristine cube baseline");
@@ -140,7 +141,7 @@ float cosAngle(Vec3 a, Vec3 b) {
 // Click 95px to the right of the projected pivot center, drag `upPx` upward.
 // Returns the pivot position after mouse-up.
 Vec3 dragViewRingSingleVert6(int upPx) {
-    auto selResp = postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    auto selResp = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     assert(selResp["status"].str == "ok", "select vert6 (ring) failed");
 
     auto cam = fetchCamera();
@@ -165,7 +166,7 @@ Vec3 dragViewRingSingleVert6(int upPx) {
 // derive the world-space handle direction.
 void dragXArrowSingleVert6(Vec3 piv, int px,
                             out Vec3 pivotBefore, out Vec3 pivotAfter) {
-    auto selResp = postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    auto selResp = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     assert(selResp["status"].str == "ok", "select vert6 (X drag) failed");
 
     auto cam = fetchCamera();
@@ -253,7 +254,7 @@ unittest {
     postJson("/api/script", "tool.set Transform\n");
     settle();
 
-    auto selResp = postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    auto selResp = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     assert(selResp["status"].str == "ok", "select vert6 (pure-move control) failed");
 
     Vec3 p0 = readVert6();
@@ -290,7 +291,7 @@ unittest {
     // Scale-only preset, all 8 verts selected so pivot = centroid = origin.
     postJson("/api/script", "tool.set TransformScale\n");
     settle();
-    auto selResp = postJson("/api/select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    auto selResp = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(selResp["status"].str == "ok", "select-all (scale control) failed");
 
     auto cam = fetchCamera();

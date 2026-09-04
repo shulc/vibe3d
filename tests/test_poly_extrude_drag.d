@@ -40,6 +40,7 @@
 // kernel's return, and the count is that claim's consequence read off the mesh.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.json;
@@ -90,7 +91,7 @@ unittest { // a purely horizontal drag on the arrow moves `distance`
     cmd("history.clear");
 
     // Face 3 is the cube's +X face: centroid (0.5,0,0), averaged normal +X.
-    r = postJson("/api/select", `{"mode":"polygons","indices":[3]}`);
+    r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[3]}`));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 
     // The framing is PART OF THE GESTURE: the press point is derived from the

@@ -28,6 +28,7 @@
 // that it responds at all (in perf_probe.d's own unittest).
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.exception : enforce;
@@ -243,7 +244,7 @@ unittest { // draw-CALL count tracks selection fragmentation
     // order. The factor is written as the named constant and NOT as a doubled
     // literal, so a future third pass moves one number.
     resetApp();
-    httpPost("/api/select", `{"mode":"polygons","indices":[0]}`);
+    httpPost("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
     settle();
 
     auto one = lastScene();
@@ -257,7 +258,7 @@ unittest { // draw-CALL count tracks selection fragmentation
 
     // Faces 0, 2, 4 of the cube are non-adjacent IN VBO ORDER, so the run
     // batcher cannot coalesce them: three faces, three submissions per pass.
-    httpPost("/api/select", `{"mode":"polygons","indices":[0,2,4]}`);
+    httpPost("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0,2,4]}`));
     settle();
 
     auto three = lastScene();
@@ -273,7 +274,7 @@ unittest { // draw-CALL count tracks selection fragmentation
                   3 * onePolyVerts, passVerts(three, "faceOverlay")));
 
     // Deselect: the overlay pass disappears entirely, calls AND verts.
-    httpPost("/api/select", `{"mode":"polygons","indices":[]}`);
+    httpPost("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[]}`));
     settle();
     assert(passCalls(lastScene(), "faceOverlay") == 0);
     assert(passVerts(lastScene(), "faceOverlay") == 0);
@@ -494,21 +495,21 @@ void selectPolys(const long[] idx) {
     import std.conv : to;
     string s = "[";
     foreach (i, v; idx) { if (i) s ~= ","; s ~= v.to!string; }
-    httpPost("/api/select", `{"mode":"polygons","indices":` ~ s ~ `]}`);
+    httpPost("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":` ~ s ~ `]}`));
 }
 
 void selectVerts(const long[] idx) {
     import std.conv : to;
     string s = "[";
     foreach (i, v; idx) { if (i) s ~= ","; s ~= v.to!string; }
-    httpPost("/api/select", `{"mode":"vertices","indices":` ~ s ~ `]}`);
+    httpPost("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":` ~ s ~ `]}`));
 }
 
 void selectEdgesBy(const long[] idx) {
     import std.conv : to;
     string s = "[";
     foreach (i, v; idx) { if (i) s ~= ","; s ~= v.to!string; }
-    httpPost("/api/select", `{"mode":"edges","indices":` ~ s ~ `]}`);
+    httpPost("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":` ~ s ~ `]}`));
 }
 
 /// The selection type the RENDERER is feeding back, straight from the app.

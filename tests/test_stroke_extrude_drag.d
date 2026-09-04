@@ -40,6 +40,7 @@
 // second block below drives.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.json;
@@ -84,7 +85,7 @@ void armStand(bool select) {
     auto r = postJson("/api/reset", "");
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     if (select) {
-        r = postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+        r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
         assert(r["status"].str == "ok", "select failed: " ~ r.toString);
     }
     cmd("history.clear");

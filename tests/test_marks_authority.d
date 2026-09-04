@@ -20,6 +20,7 @@
 // undo through /api/*, read state back via /api/model + /api/selection.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.string : format;
@@ -72,7 +73,7 @@ size_t faceCount() {
 // interfere with later steps.
 void markSubpatch(int[] faces) {
     postJson("/api/command", "select.typeFrom polygon");
-    postJson("/api/select", format(`{"mode":"polygons","indices":%s}`, faces.to!string));
+    postJson("/api/command", commandBody("mesh.select", format(`{"mode":"polygons","indices":%s}`, faces.to!string)));
     auto r = postJson("/api/command", "mesh.subpatch_toggle");
     assert(ok(r), "subpatch_toggle failed: " ~ r.toString);
 }
@@ -92,7 +93,7 @@ unittest { // B3: subpatch bit survives deleting an adjacent face
     // Select a DIFFERENT face (1) and delete it. deleteFacesByMask runs the
     // subpatch-write-then-select-clear sequence — the masked Select-clear must
     // not wipe the Subpatch bits of the surviving faces.
-    postJson("/api/select", `{"mode":"polygons","indices":[1]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[1]}`));
     auto del = postJson("/api/command", "mesh.delete");
     assert(ok(del), "mesh.delete failed: " ~ del.toString);
 
@@ -115,7 +116,7 @@ unittest { // B4: delete->undo restores BOTH Select and Subpatch, idempotently
     // gives a state where Select and Subpatch bits live on different faces of
     // the same word array, so an order-dependent restore would corrupt one.
     markSubpatch([1, 4]);
-    postJson("/api/select", `{"mode":"polygons","indices":[0,5]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0,5]}`));
 
     auto subBefore = subpatchFlags();
     auto selBefore = selectedFaceIndices();
@@ -128,7 +129,7 @@ unittest { // B4: delete->undo restores BOTH Select and Subpatch, idempotently
 
     // Select a face NOT in either set (face 2) and delete it. This captures a
     // full MeshSnapshot of the pre-delete cage.
-    postJson("/api/select", `{"mode":"polygons","indices":[2]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[2]}`));
     auto del = postJson("/api/command", "mesh.delete");
     assert(ok(del), "mesh.delete failed: " ~ del.toString);
     assert(faceCount() == 5);

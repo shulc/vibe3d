@@ -42,6 +42,7 @@
 // undo round-trip restores config alongside geometry.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math   : fabs, sqrt, PI;
@@ -407,8 +408,7 @@ unittest {
     cmd("select.typeFrom polygon");
     cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
         ~ "segmentsX:4 segmentsY:4 segmentsZ:4 radius:0");
-    postJson("/api/select",
-        `{"mode":"polygons","indices":[48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63]}`));
     cmd("tool.set move");
     cmd("tool.pipe.attr falloff type selection");
     cmd("tool.pipe.attr falloff steps 1");
@@ -441,7 +441,7 @@ unittest {
 // ===========================================================================
 unittest {
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     postJson("/api/command", `{"id":"mesh.weightmap.create","params":{"name":"wmA"}}`);
     postJson("/api/command", `{"id":"mesh.weightmap.set","params":{"name":"wmA","vert":0,"weight":1.0}}`);
     postJson("/api/command", `{"id":"mesh.weightmap.create","params":{"name":"wmB"}}`);
@@ -483,7 +483,7 @@ unittest {
 // ===========================================================================
 unittest {
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     postJson("/api/command", `{"id":"mesh.weightmap.create","params":{"name":"wmA"}}`);
     postJson("/api/command", `{"id":"mesh.weightmap.set","params":{"name":"wmA","vert":0,"weight":1.0}}`);
     postJson("/api/command", `{"id":"mesh.weightmap.create","params":{"name":"wmB"}}`);

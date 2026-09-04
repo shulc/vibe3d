@@ -15,6 +15,7 @@
 //   leaving the 4 quad rungs → 4 faces, 8 verts (open tube).
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -52,8 +53,7 @@ void setSelection(string mode, int[] indices) {
     foreach (i, v; indices)
         idxJson ~= (i > 0 ? "," : "") ~ v.to!string;
     idxJson ~= "]";
-    auto r = postCmd("/api/select",
-        `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
+    auto r = postCmd("/api/command", commandBody("mesh.select", `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`));
     assert(r["status"].str == "ok", "/api/select failed: " ~ r.toString);
 }
 

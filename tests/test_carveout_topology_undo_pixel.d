@@ -44,6 +44,7 @@
 // hole with background behind it.
 // ===========================================================================
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -226,8 +227,7 @@ unittest {
     // step. MEASURED — that is exactly how this cell first failed, with the
     // whole wireframe reading the selection colour (255,168,41).
     cmd("select.typeFrom polygon");
-    auto sel = postJson("/api/select",
-                        `{"mode":"polygons","indices":[2,3,6,7,10,11,14,15]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[2,3,6,7,10,11,14,15]}`));
     assert(sel["status"].str == "ok", "select failed: " ~ sel.toString);
     settle();
 

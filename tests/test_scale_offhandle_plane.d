@@ -61,6 +61,7 @@
 // and no case here should pretend otherwise.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, abs;
@@ -126,9 +127,8 @@ Outcome runOffHandlePlaneDrag(double fx, double fy, double az = CAM_AZ,
     // selects ONE POLYGON instead, which is what puts a face normal in the
     // AXIS stage's frame — pass it explicitly rather than defaulting to it,
     // so the cases that do not care keep the simpler subject.
-    auto selResp = post(BASE ~ "/api/select",
-                        sel.length ? sel
-                                   : `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    auto selResp = post(BASE ~ "/api/command", commandBody("mesh.select", sel.length ? sel
+                                   : `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",
            "select failed: " ~ cast(string)selResp);
 

@@ -35,6 +35,7 @@
 // that omission is exactly the stale-hover trap the fix closes.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -149,7 +150,7 @@ string pickNoHoverLog(int vpX, int vpY, int vpW, int vpH, int x, int y) {
 // anchors at the FACE CENTROID (clean coords: +Y face → (0,0.5,0), +X face →
 // (0.5,0,0)). vert 6 pre-selected so the preset has a non-empty selection.
 void activateElementMovePreset() {
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     postJson("/api/script", "tool.set xfrm.elementMove on");
     postJson("/api/command", "tool.pipe.attr falloff dist 4");
     postJson("/api/command", "tool.pipe.attr falloff mode polygon");

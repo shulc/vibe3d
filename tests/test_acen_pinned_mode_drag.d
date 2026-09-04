@@ -37,6 +37,7 @@
 //      Guards against "fixing" the pinned modes by making every mode pinned.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math  : fabs, sqrt;
@@ -98,7 +99,7 @@ string[string] acenAttrs() {
 void setup(string mode) {
     pj("/api/reset", "");
     settle();
-    pj("/api/select", format(`{"mode":"polygons","indices":[%d]}`, topFaceIndex()));
+    pj("/api/command", commandBody("mesh.select", format(`{"mode":"polygons","indices":[%d]}`, topFaceIndex())));
     cmd("actr." ~ mode);
     cmd("tool.set move");
     settle();

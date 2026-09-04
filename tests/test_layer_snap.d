@@ -29,6 +29,7 @@
 // active mesh.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -57,8 +58,7 @@ void selectVerts(int[] idx, string baseUrl = testBaseUrl()) {
     string list = "[";
     foreach (i, v; idx) { if (i) list ~= ","; list ~= v.to!string; }
     list ~= "]";
-    auto r = post(baseUrl ~ "/api/select",
-                  `{"mode":"vertices","indices":` ~ list ~ `}`);
+    auto r = post(baseUrl ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":` ~ list ~ `}`));
     assert(parseJSON(cast(string)r)["status"].str == "ok",
         "select failed: " ~ cast(string)r);
 }

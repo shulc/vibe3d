@@ -27,6 +27,7 @@
 // Runner: ./run_test.d test_bus_sel_epoch_stamp
 
 import http_client : getJson, postRaw, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl : get, post;
 import std.json;
 import std.format  : format;
@@ -72,7 +73,7 @@ unittest {
     // A real selection-channel delivery: /api/select drives Mesh.selectVertex,
     // which commits and delivers on the selection channel synchronously
     // (task 1906). The positive control this test exists for.
-    postOk("/api/select", `{"mode":"vertices","indices":[0]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
     settle();
     const long e1 = activeCellSelEpoch();
     assert(e1 > e0,

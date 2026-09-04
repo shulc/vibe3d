@@ -53,6 +53,7 @@
 // something hidden; it needs an event-log fixture and is left to S7.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -83,7 +84,7 @@ void selectFaces(int[] idx) {
     string j = "[";
     foreach (i, v; idx) { if (i) j ~= ","; j ~= v.to!string; }
     j ~= "]";
-    auto r = postJson("/api/select", `{"mode":"polygons","indices":` ~ j ~ `}`);
+    auto r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":` ~ j ~ `}`));
     assert(r["status"].str == "ok", "/api/select failed: " ~ r.toString);
 }
 
@@ -92,7 +93,7 @@ void selectVertices(int[] idx) {
     string j = "[";
     foreach (i, v; idx) { if (i) j ~= ","; j ~= v.to!string; }
     j ~= "]";
-    auto r = postJson("/api/select", `{"mode":"vertices","indices":` ~ j ~ `}`);
+    auto r = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":` ~ j ~ `}`));
     assert(r["status"].str == "ok", "/api/select failed: " ~ r.toString);
 }
 

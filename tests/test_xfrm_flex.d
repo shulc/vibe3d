@@ -23,6 +23,7 @@
 // which run on a subdivided cube with a non-trivial interior.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -64,7 +65,7 @@ unittest { // Single-face selection on a cube: all 4 selected verts
            // selected vert → weight 0; every unselected vert →
            // weight 0; TX should move NOTHING.
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
     auto before = dumpVerts();
 
     cmd("tool.set xfrm.flex on");
@@ -95,7 +96,7 @@ unittest { // Selecting EVERY face on the cube means every selected
            // vert by full strength. This pins down the "no
            // boundary, no constraint" edge case.
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"polygons","indices":[0,1,2,3,4,5]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0,1,2,3,4,5]}`));
     auto before = dumpVerts();
 
     cmd("tool.set xfrm.flex on");
@@ -121,7 +122,7 @@ unittest { // Unselected verts ALWAYS stay put. Select 1 face, set
            // must remain untouched — the falloff does not
            // propagate outside the selection, regardless of steps.
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
     auto before = dumpVerts();
 
     cmd("tool.set xfrm.flex on");

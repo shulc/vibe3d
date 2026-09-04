@@ -15,6 +15,7 @@
 //   * Undo restores.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -127,8 +128,7 @@ unittest { // many iterations converge toward origin
 unittest { // selection-aware: vertex mode + 1 selected vert ⇒ only it moves
     postJson("/api/reset", "");
     cmd("select.typeFrom vertex");
-    auto sel = postJson("/api/select",
-        `{"mode":"vertices","indices":[0]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
     assert(sel["status"].str == "ok");
     cmd("mesh.smooth strn:1 iter:1");
     auto verts = dumpVerts();
@@ -168,11 +168,11 @@ unittest { // undo restores
 unittest { // lockBound:false ⇒ boundary verts move (regression check)
     postJson("/api/reset", "");
     // Select + delete top face (f4 in cube order).
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     cmd("mesh.delete");
     // Now the 4 top verts (originally v2,v3,v6,v7 = corners at y=+0.5)
     // sit on the open seam. Smooth aggressively.
-    postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     cmd("mesh.smooth strn:1 iter:5 lockBound:false");
     auto verts = dumpVerts();
     bool anyMoved = false;
@@ -189,7 +189,7 @@ unittest { // lockBound:false ⇒ boundary verts move (regression check)
 
 unittest { // lockBound:true ⇒ boundary verts STAY put under heavy smoothing
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     cmd("mesh.delete");
     // Capture boundary positions: every vert at y=+0.5 sits on the
     // open seam after deleting the top face.
@@ -203,7 +203,7 @@ unittest { // lockBound:true ⇒ boundary verts STAY put under heavy smoothing
         "setup: expected 4 boundary verts at y=+0.5, got "
         ~ boundaryBefore.length.to!string);
 
-    postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     cmd("mesh.smooth strn:1 iter:10 lockBound:true");
 
     auto after = dumpVerts();
@@ -236,12 +236,12 @@ unittest { // lockBound:true ⇒ boundary verts STAY put under heavy smoothing
 unittest { // lockBound on a CLOSED mesh (cube with no boundary) is a no-op
            // — smoothing identical with lockBound on/off.
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     cmd("mesh.smooth strn:0.5 iter:2 lockBound:false");
     auto noLock = dumpVerts();
 
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     cmd("mesh.smooth strn:0.5 iter:2 lockBound:true");
     auto withLock = dumpVerts();
 
@@ -261,9 +261,9 @@ unittest { // cube-minus-top: top corners are valence-3 (2 horizontal
            // boundary edges + 1 vertical shared edge), so lockCorner
            // locks NOTHING and the verts must move under heavy smooth.
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     cmd("mesh.delete");
-    postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     cmd("mesh.smooth strn:1 iter:5 lockCorner:true");
     auto verts = dumpVerts();
     bool topMoved = false;
@@ -289,13 +289,13 @@ unittest { // single quad (cube minus 5 faces): all 4 remaining verts
            // smooth becomes a no-op.
     postJson("/api/reset", "");
     // Keep f0 (back face), delete f1..f5.
-    postJson("/api/select", `{"mode":"polygons","indices":[1,2,3,4,5]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[1,2,3,4,5]}`));
     cmd("mesh.delete");
     auto before = dumpVerts();
     assert(before.length == 4,
         "setup: single quad should have 4 verts, got " ~ before.length.to!string);
 
-    postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     cmd("mesh.smooth strn:1 iter:10 lockCorner:true");
     auto after = dumpVerts();
 
@@ -312,16 +312,16 @@ unittest { // single quad (cube minus 5 faces): all 4 remaining verts
 unittest { // lockBound + lockCorner together is equivalent to lockBound
            // alone — corner is a subset. Verify on cube-minus-top.
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     cmd("mesh.delete");
-    postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     cmd("mesh.smooth strn:1 iter:5 lockBound:true lockCorner:true");
     auto both = dumpVerts();
 
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     cmd("mesh.delete");
-    postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     cmd("mesh.smooth strn:1 iter:5 lockBound:true");
     auto boundOnly = dumpVerts();
 
@@ -486,17 +486,17 @@ unittest { // open mesh (cube minus top) + preserve: verts still
            // smooth (proving the projection actually fires) and that
            // verts haven't escaped a reasonable bbox.
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     cmd("mesh.delete");
 
-    postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     cmd("mesh.smooth strn:0.5 iter:2 preserve:true");
     auto withPreserve = dumpVerts();
 
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     cmd("mesh.delete");
-    postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     cmd("mesh.smooth strn:0.5 iter:2 preserve:false");
     auto noPreserve = dumpVerts();
 

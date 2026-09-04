@@ -43,6 +43,7 @@
 // `onParamChanged` reads 0 there and the op-log zero below would be free.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -103,7 +104,7 @@ void interactiveAttr(string line) {
 /// the defaults, so the ridge is standing but no parameter has been scrubbed.
 void armOnEdgeZero() {
     resetCube();
-    auto s = postTo("/api/select", `{"mode":"edges","indices":[0]}`);
+    auto s = postTo("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[0]}`));
     assert(s["status"].str == "ok", "edge select failed: " ~ s.toString);
     cmd("tool.set edge.extend on");
     settle();

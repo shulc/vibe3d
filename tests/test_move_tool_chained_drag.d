@@ -21,6 +21,7 @@
 // `/api/model`.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -90,8 +91,7 @@ double[3] applyModel(double[16] m, double x, double y, double z) {
 
 unittest { // After drag1+drag2 in one tool session, rendered position = CPU mesh
     postJson("/api/reset", "");
-    postJson("/api/select",
-        `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     postJson("/api/script", "tool.set move");
 
     auto cam = fetchCamera();

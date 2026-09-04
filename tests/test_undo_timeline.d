@@ -16,6 +16,7 @@
 //     unchanged (not over-reverted).
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math   : fabs;
@@ -59,8 +60,7 @@ void select_(string mode, int[] indices) {
         idxJson ~= v.to!string;
     }
     idxJson ~= "]";
-    auto j = jpost("/api/select",
-        format(`{"mode":"%s","indices":%s}`, mode, idxJson));
+    auto j = jpost("/api/command", commandBody("mesh.select", format(`{"mode":"%s","indices":%s}`, mode, idxJson)));
     assert(j["status"].str == "ok", "/api/select failed: " ~ j.toString);
 }
 

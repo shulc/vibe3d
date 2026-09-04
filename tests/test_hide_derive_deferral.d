@@ -60,6 +60,7 @@
 // Runner: ./run_test.d test_hide_derive_deferral
 
 import http_client : getJson, postRaw, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl : get, post;
 import std.json;
 import std.format : format;
@@ -117,7 +118,7 @@ private Round pasteRound(int subdivides, bool vertexMode) {
     if (vertexMode) {
         postOk("/api/command", "select.typeFrom vertex");
         auto idx = iota(n).map!(i => i.to!string).join(",");
-        postOk("/api/select", `{"mode":"vertices","indices":[` ~ idx ~ `]}`);
+        postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[` ~ idx ~ `]}`));
     } else {
         postOk("/api/command", "select.typeFrom polygon");
     }

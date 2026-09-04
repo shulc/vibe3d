@@ -23,6 +23,7 @@
 // refusal's TEXT, which is what tells a real refusal apart from a missed entry.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.json;
 import std.net.curl : get, post;
 import std.algorithm : canFind;
@@ -97,7 +98,7 @@ unittest { // C-3 — Re-run of a REAL recorded session refuses, mesh intact
     // under the wire name "mesh.bevel_edit". No latch plumbing to trust.
     resetScene();
 
-    auto r = postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    auto r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 
     // AFTER the select, deliberately unlike the original — this clears any

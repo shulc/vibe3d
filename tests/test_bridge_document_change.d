@@ -56,6 +56,7 @@
 // read → drop → assert discipline and the same reason.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.algorithm : canFind, map;
 import std.array : array;
 import std.conv : to;
@@ -148,7 +149,7 @@ JSONValue armBridgeHaul() {
         `{"azimuth":0.6,"elevation":0.5,"distance":5.0,`
         ~ `"focus":{"x":0.5,"y":0.5,"z":0.5}}`);
     assert(r["status"].str == "ok", "camera failed: " ~ r.toString);
-    r = postJson("/api/select", `{"mode":"polygons","indices":[0,1]}`);
+    r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0,1]}`));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 
     cmd("history.clear");
@@ -196,7 +197,7 @@ void armRadialSweep() {
     import core.time   : dur;
 
     loadCapsStand();
-    auto r = postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
+    auto r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
     cmd("history.clear");
     cmd("tool.set mesh.radialSweepTool on");

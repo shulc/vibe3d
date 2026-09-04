@@ -19,6 +19,7 @@
 // projected straight down onto it.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math  : fabs;
@@ -223,8 +224,7 @@ double[3][] readActiveVerts() {
 
 // Select a single vertex by index using /api/select.
 void selectVert(int idx) {
-    auto r = postJson("/api/select",
-        `{"mode":"vertices","indices":[` ~ idx.to!string ~ `]}`);
+    auto r = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[` ~ idx.to!string ~ `]}`));
     assert(r["status"].str == "ok", "selectVert failed: " ~ r.toString);
 }
 

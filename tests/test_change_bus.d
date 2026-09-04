@@ -28,6 +28,7 @@
 //   Vertex=1, Edge=2, Face=4.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -236,8 +237,7 @@ unittest {
     cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
         ~ "segmentsX:2 segmentsY:2 segmentsZ:2 radius:0");
     cmd("select.typeFrom polygon");
-    auto sel = postJson("/api/select",
-        `{"mode":"polygons","indices":[11,12,13]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[11,12,13]}`));
     assert(sel["status"].str == "ok", "select failed: " ~ sel.toString);
     cmd("tool.set move on");
     cmd("actr.local");
@@ -293,7 +293,7 @@ unittest {
         "subpatch preview not active (face-verts " ~ surf["faceVertCount"].integer.to!string
         ~ ") — redirect path would not be exercised");
 
-    auto sel = postJson("/api/select", `{"mode":"polygons","indices":[11,12,13]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[11,12,13]}`));
     assert(sel["status"].str == "ok", "select failed: " ~ sel.toString);
     cmd("tool.set move on");
     cmd("actr.local");
@@ -322,8 +322,7 @@ void selectVia(string mode, int[] indices) {
     string idxs = indices.length
         ? indices.map!(i => text(i)).join(",")
         : "";
-    auto j = postJson("/api/select",
-        `{"mode":"` ~ mode ~ `","indices":[` ~ idxs ~ `]}`);
+    auto j = postJson("/api/command", commandBody("mesh.select", `{"mode":"` ~ mode ~ `","indices":[` ~ idxs ~ `]}`));
     assert(j["status"].str == "ok", "select failed: " ~ j.toString);
 }
 

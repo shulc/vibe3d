@@ -10,6 +10,7 @@
 // State is read back from the WORK stage's listAttrs via /api/toolpipe.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -121,8 +122,7 @@ unittest { // alignToSelection on top face: workplane center sits at face centro
     }
     assert(topFace >= 0, "no top face on default cube");
 
-    post(baseUrl ~ "/api/select",
-        `{"mode":"polygons","indices":[` ~ topFace.to!string ~ `]}`);
+    post(baseUrl ~ "/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[` ~ topFace.to!string ~ `]}`));
     runCmd("workplane.alignToSelection");
 
     auto a = workplaneAttrs();

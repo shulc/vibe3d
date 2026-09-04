@@ -25,6 +25,7 @@
 // stay green).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, tan, PI;
@@ -166,7 +167,7 @@ void selectUpperRegion() {
     string s = "[";
     foreach (i, v; sel) s ~= (i ? "," : "") ~ v.to!string;
     s ~= "]";
-    postJson("/api/select", `{"mode":"polygons","indices":` ~ s ~ `}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":` ~ s ~ `}`));
 }
 
 void setupFlex() {
@@ -398,7 +399,7 @@ unittest {
     string s2 = "[";
     foreach (i, v; sel2) s2 ~= (i ? "," : "") ~ v.to!string;
     s2 ~= "]";
-    postJson("/api/select", `{"mode":"polygons","indices":` ~ s2 ~ `}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":` ~ s2 ~ `}`));
     Thread.sleep(dur!"msecs"(80));
     getJson("/api/toolpipe/eval");        // idle tick fires the clear hook
     Thread.sleep(dur!"msecs"(40));

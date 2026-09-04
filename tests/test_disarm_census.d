@@ -4,6 +4,7 @@
 // policy exemptions.
 
 import http_client : testBaseUrl, getJson, postJson, postRaw;
+import http_command_helpers : commandBody;
 import core.thread : Thread;
 import core.time : msecs;
 import std.algorithm : canFind, sort, startsWith;
@@ -36,7 +37,7 @@ string fireCommand(string id, string paramsJson = null) {
 }
 
 void seedSelection() {
-    postRaw("/api/select", `{"mode":"vertices","indices":[0]}`);
+    postRaw("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
 }
 
 void armMirror(string context = null) {

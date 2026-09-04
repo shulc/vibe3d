@@ -161,6 +161,7 @@
 // --------------------------------------------------------------------------
 
 import http_client : getJson, postJson, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.format : format;
 import std.json;
 import std.math : abs, round, cos, sin, PI;
@@ -508,7 +509,7 @@ private Handles handles() {
 // comparison below would be against the wrong baseline.
 private Cell armMoveAndPark() {
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     postJson("/api/script", "tool.set move");
 
     auto c = cell();

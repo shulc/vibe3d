@@ -14,6 +14,7 @@
 //     `tool.pipe.attr actionCenter userPlacedCenter "x,y,z"`.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -88,7 +89,7 @@ unittest { // pickedCenter is just the falloff anchor, NOT a
            // Apply TX=0.3 → only the -Z face moves (= the prior
            // selection); the +Z face stays put.
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
     cmd("tool.set xfrm.elementMove on");
     cmd("tool.pipe.attr actionCenter userPlacedCenter \"0,0,0.5\"");
     cmd("tool.pipe.attr falloff dist 2");

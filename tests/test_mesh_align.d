@@ -8,6 +8,7 @@
 // The shared HTTP client resolves the port assigned by run_test.d.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -56,7 +57,7 @@ double[3][] loadAndAlignAllFaces(string meshJson) {
         idxJson ~= i.to!string;
     }
     idxJson ~= "]";
-    auto sel = postJson("/api/select", `{"mode":"polygons","indices":` ~ idxJson ~ `}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":` ~ idxJson ~ `}`));
     assert(sel["status"].str == "ok", "/api/select failed: " ~ sel.toString);
 
     cmd(`{"id":"mesh.align"}`);
@@ -124,7 +125,7 @@ unittest { // multi-island — two disjoint warped quads, each flattened indepen
         "/api/load-mesh failed: " ~ resp.toString);
 
     cmd("select.typeFrom polygon");
-    auto sel = postJson("/api/select", `{"mode":"polygons","indices":[0,1]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0,1]}`));
     assert(sel["status"].str == "ok", "/api/select failed: " ~ sel.toString);
     cmd(`{"id":"mesh.align"}`);
 
@@ -167,7 +168,7 @@ unittest { // undo restores original (warped) positions
         `{"vertices":[[-1,0,-1],[1,0,-1],[1,0.5,1],[-1,-0.5,1]],` ~
         `"faces":[[0,1,2,3]]}`);
     cmd("select.typeFrom polygon");
-    auto sel = postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
     assert(sel["status"].str == "ok", "/api/select failed: " ~ sel.toString);
 
     auto before = dumpVerts();
@@ -205,7 +206,7 @@ unittest { // no-op on already-planar tilted quad — must NOT return ok, verts 
         `{"vertices":[[0,0,0],[1,0,0.3],[1,1,0.5],[0,1,0.2]],` ~
         `"faces":[[0,1,2,3]]}`);
     cmd("select.typeFrom polygon");
-    auto sel = postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
     assert(sel["status"].str == "ok", "/api/select failed: " ~ sel.toString);
 
     auto before = dumpVerts();

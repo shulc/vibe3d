@@ -8,6 +8,7 @@
 //   • factor > 1 because we drag in the projected +X direction
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -48,8 +49,7 @@ string buildPinnedRelativeDragLog(int vpX, int vpY, int vpW, int vpH,
 
 void runScalePlaneDrag(int plane) {
     post(testBaseUrl() ~ "/api/reset", "");
-    auto selResp = post(testBaseUrl() ~ "/api/select",
-                        `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    auto selResp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",
         "select failed: " ~ cast(string)selResp);
 
@@ -112,8 +112,7 @@ unittest { // X-axis scale: drag X-arrow → mesh X spreads, Y / Z stay
 
     // Select all 8 cube verts so the whole mesh participates (ACEN.Auto
     // centroid lands at the origin and scaling is symmetric).
-    auto selResp = post(testBaseUrl() ~ "/api/select",
-                        `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    auto selResp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",
         "select failed: " ~ cast(string)selResp);
 
@@ -188,8 +187,7 @@ unittest { // X-axis scale: drag X-arrow → mesh X spreads, Y / Z stay
 
 unittest { // X-axis scale keeps dragging from relative motion even if x/y stop
     post(testBaseUrl() ~ "/api/reset", "");
-    auto selResp = post(testBaseUrl() ~ "/api/select",
-                        `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    auto selResp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",
         "select failed: " ~ cast(string)selResp);
 
@@ -259,8 +257,7 @@ unittest { // XZ plane scale: X/Z factors change, Y stays fixed
 
 unittest { // X-axis scale reaches zero with finite reverse drag
     post(testBaseUrl() ~ "/api/reset", "");
-    auto selResp = post(testBaseUrl() ~ "/api/select",
-                        `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    auto selResp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",
         "select failed: " ~ cast(string)selResp);
 

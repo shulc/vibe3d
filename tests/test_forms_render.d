@@ -25,6 +25,7 @@
 // code path rather than a hand-typed argstring.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import forms : parseBinding, substituteQuery, valueToArgToken;
 
 import std.net.curl;
@@ -64,7 +65,7 @@ void selectVerts(int[] idx) {
     string s = "[";
     foreach (i, v; idx) { if (i) s ~= ","; s ~= v.to!string; }
     s ~= "]";
-    auto r = postJson("/api/select", `{"mode":"vertices","indices":` ~ s ~ `}`);
+    auto r = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":` ~ s ~ `}`));
     assert(r["status"].str == "ok", "/api/select failed: " ~ r.toString);
 }
 

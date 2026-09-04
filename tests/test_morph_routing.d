@@ -14,6 +14,7 @@
 //              6:(+,+,+) 7:(-,+,+),  half-extent 0.5.
 
 import http_client : testBaseUrl, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.file   : remove, exists, readText;
@@ -46,8 +47,7 @@ void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto j = postJson("/api/select",
-        `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
+    auto j = postJson("/api/command", commandBody("mesh.select", `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`));
     assert(j["status"].str == "ok", "/api/select failed: " ~ j.toString);
 }
 

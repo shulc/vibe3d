@@ -15,6 +15,7 @@
 // engine runs at test time.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -71,9 +72,8 @@ int[4] buildAndSelectLoop() {
     // the untouched cube corner values).
     cmd("mesh.move_vertex from:{0.5,-0.5,-0.5} to:{0.7071,-0.5,0.0}");
 
-    postJson("/api/select",
-        `{"mode":"vertices","indices":[` ~ idxA.to!string ~ `,` ~ idxB.to!string
-        ~ `,` ~ idxC.to!string ~ `,` ~ idxE.to!string ~ `]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[` ~ idxA.to!string ~ `,` ~ idxB.to!string
+        ~ `,` ~ idxC.to!string ~ `,` ~ idxE.to!string ~ `]}`));
     return [idxA, idxB, idxC, idxE];
 }
 
@@ -156,9 +156,8 @@ unittest { // weight blend law, BIT-EXACT verified against the
 // rather than inheriting whatever selection the preceding undo left live.
 void buildAndSelectLoopReselect(int[4] idx) {
     cmd("select.typeFrom vertex");
-    postJson("/api/select",
-        `{"mode":"vertices","indices":[` ~ idx[0].to!string ~ `,` ~ idx[1].to!string
-        ~ `,` ~ idx[2].to!string ~ `,` ~ idx[3].to!string ~ `]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[` ~ idx[0].to!string ~ `,` ~ idx[1].to!string
+        ~ `,` ~ idx[2].to!string ~ `,` ~ idx[3].to!string ~ `]}`));
 }
 
 unittest { // N-Sided(4) uses the SAME center + radius as Circle mode for

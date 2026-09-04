@@ -12,6 +12,7 @@
 //   * undo restores
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -108,8 +109,7 @@ unittest { // displacement bounded by scl per axis
 unittest { // selection-aware: vertex mode + 1 selected vert ⇒ only that vert moves
     postJson("/api/reset", "");
     cmd("select.typeFrom vertex");
-    auto sel = postJson("/api/select",
-        `{"mode":"vertices","indices":[3]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[3]}`));
     assert(sel["status"].str == "ok");
     cmd("mesh.jitter rangeX:0.1 rangeY:0.1 rangeZ:0.1 seed:1");
     auto verts = dumpVerts();
@@ -269,8 +269,7 @@ unittest { // no-op jitter undo must not truncate the undo stack (task 2110).
            // everything hidden ⇒ empty operand).
     postJson("/api/reset", "");
     cmd("select.typeFrom vertex");
-    auto selAll = postJson("/api/select",
-        `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    auto selAll = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(selAll["status"].str == "ok", selAll.toString);
     // `CommandHistory` caps the undo stack at `maxDepth = 50`
     // (command_history.d:243) and evicts the OLDEST entry on every push once
@@ -296,7 +295,7 @@ unittest { // no-op jitter undo must not truncate the undo stack (task 2110).
     //     no-op jitter] rather than the two edits being adjacent. Strict LIFO
     //     therefore needs three presses below: no-op jitter, mesh.select, then
     //     real jitter. Each press removes one record.
-    auto clearSel = postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+    auto clearSel = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     assert(clearSel["status"].str == "ok", clearSel.toString);
     cmd("mesh.jitter rangeX:0.1 rangeY:0.1 rangeZ:0.1 seed:2");
     auto depthBeforeUndos = undoDepth();

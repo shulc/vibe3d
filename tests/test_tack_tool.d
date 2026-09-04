@@ -17,6 +17,7 @@
 // derivation note.
 
 import http_client : testBaseUrl, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -59,8 +60,7 @@ void loadScene() {
 }
 
 void selectFace(int idx) {
-    auto r = parseJSON(cast(string) post(baseUrl ~ "/api/select",
-        format(`{"mode":"polygons","indices":[%d]}`, idx)));
+    auto r = parseJSON(cast(string) post(baseUrl ~ "/api/command", commandBody("mesh.select", format(`{"mode":"polygons","indices":[%d]}`, idx))));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 }
 

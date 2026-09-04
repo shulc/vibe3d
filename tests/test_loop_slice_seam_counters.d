@@ -35,6 +35,7 @@
 // vacuous.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -98,7 +99,7 @@ int seedEdgeIndex() {
     return ei;
 }
 void selectEdge(int ei) {
-    auto r = postCmd("/api/select", `{"mode":"edges","indices":[` ~ ei.to!string ~ `]}`);
+    auto r = postCmd("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[` ~ ei.to!string ~ `]}`));
     assert(r["status"].str == "ok", "/api/select failed: " ~ r.toString);
 }
 

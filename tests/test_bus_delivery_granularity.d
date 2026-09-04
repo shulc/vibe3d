@@ -111,6 +111,7 @@
 // the number so the distinction cannot drift unobserved.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -499,7 +500,7 @@ long selectedVertexCount() {
 /// below so the Polygons-lasso front-facing pre-check accepts the faces.
 void gridSceneBelow(int n, string mode) {
     postJson("/api/reset?type=grid&n=" ~ n.to!string, "");
-    postJson("/api/select", `{"mode":"` ~ mode ~ `","indices":[]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"` ~ mode ~ `","indices":[]}`));
     postJson("/api/camera", `{"elevation":-0.4}`);
     settle();
 }
@@ -680,7 +681,7 @@ unittest {
     enum int kEdges = 3000;
     string idx;
     foreach (i; 0 .. kEdges) idx ~= (i ? "," : "") ~ i.to!string;
-    postJson("/api/select", `{"mode":"edges","indices":[` ~ idx ~ `]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[` ~ idx ~ `]}`));
 
     const long d0 = deliveries();
     cmd("mesh.remove");
@@ -724,7 +725,7 @@ unittest {
     enum int kEdges = 3000;
     string idx;
     foreach (i; 0 .. kEdges) idx ~= (i ? "," : "") ~ i.to!string;
-    postJson("/api/select", `{"mode":"edges","indices":[` ~ idx ~ `]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[` ~ idx ~ `]}`));
 
     auto begun = postJson("/api/refire", `{"action":"begin"}`);
     assert(begun["status"].str == "ok", "PREMISE: /api/refire begin must be accepted");

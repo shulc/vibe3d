@@ -3,6 +3,7 @@
 // positive control: the same gesture really commits while its mesh survives.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.algorithm : canFind;
 import std.conv : to;
 import std.file : exists, remove, write;
@@ -318,8 +319,7 @@ int loopSeedEdge() {
 }
 
 void selectEdge(int index) {
-    auto r = postJson("/api/select",
-        `{"mode":"edges","indices":[` ~ index.to!string ~ `]}`);
+    auto r = postJson("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[` ~ index.to!string ~ `]}`));
     assert(r["status"].str == "ok", "edge selection failed: " ~ r.toString);
 }
 

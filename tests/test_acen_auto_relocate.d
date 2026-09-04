@@ -22,6 +22,7 @@
 // test is fully deterministic and needs no raw event injection.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv  : to;
@@ -131,7 +132,7 @@ void relocateAuto(float x, float y, float z) {
 unittest { // Auto baseline = selection centroid, userPlaced=false
     resetCubeAuto();
     // Face 4 = top of the default cube, centroid (0, 0.5, 0).
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     auto a = getAcenAttrs();
     assert(a["mode"] == "auto", "expected auto, got " ~ a["mode"]);
     assert(a["userPlaced"] == "false",
@@ -148,7 +149,7 @@ unittest { // Auto baseline = selection centroid, userPlaced=false
 
 unittest { // Auto click-away relocates the pivot
     resetCubeAuto();
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);  // centroid (0,0.5,0)
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));  // centroid (0,0.5,0)
 
     // Click away from the gizmo → pivot projected onto the work plane at
     // a point distinct from the selection centroid.
@@ -177,12 +178,12 @@ unittest { // Auto click-away relocates the pivot
 
 unittest { // relocated pivot sticks across selection change
     resetCubeAuto();
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     relocateAuto(1.0f, 1.0f, 1.0f);
 
     // Change the selection — Auto would normally recompute the centroid,
     // but the click-away pin must win.
-    postJson("/api/select", `{"mode":"polygons","indices":[5]}`); // bottom face
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[5]}`)); // bottom face
     auto a = getAcenAttrs();
     assert(a["userPlaced"] == "true",
         "relocate pin must survive a selection change; got " ~ a["userPlaced"]);
@@ -198,7 +199,7 @@ unittest { // relocated pivot sticks across selection change
 
 unittest { // re-picking Auto clears the relocate pin
     resetCubeAuto();
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     relocateAuto(3.0f, 3.0f, 3.0f);
     assert(getAcenAttrs()["userPlaced"] == "true", "precondition: pinned");
 
@@ -221,7 +222,7 @@ unittest { // re-picking Auto clears the relocate pin
 
 unittest { // Select mode ignores the relocate pin
     resetCubeAuto();
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     postJson("/api/command", "tool.pipe.attr actionCenter mode select");
 
     // Even if a userPlaced point gets written, Select's computeCenter
@@ -328,7 +329,7 @@ unittest { // Auto off-gizmo click relocates onto the camera-facing PRINCIPAL-AX
     // --- Preamble ---
     // resetCubeAuto() resets to a cube with Auto ACEN, no userPlaced pin.
     resetCubeAuto();
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     postJson("/api/script", "tool.set move");
     settle();
 
@@ -467,7 +468,7 @@ unittest { // Auto relocate plane passes through the camera FOCUS, not the ORIGI
     // which axis is actually dominant.
     // ---------------------------------------------------------------------
     resetCubeAuto();
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     postJson("/api/script", "tool.set move");
     settle();
 
@@ -557,7 +558,7 @@ unittest { // Auto relocate tracks camera focus on two axes (task 0066 focus-tra
     // = 0.6. X/Z are loose (in-plane PROVISIONAL, 0058). FAILS pre-fix (Y≈0).
     // ---------------------------------------------------------------------
     resetCubeAuto();
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     postJson("/api/script", "tool.set move");
     settle();
 
@@ -690,7 +691,7 @@ unittest { // Auto relocate tracks camera focus on two axes (task 0066 focus-tra
 
 unittest { // Focus-far-from-origin discriminator: X-dominant camera
     resetCubeAuto();
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     postJson("/api/script", "tool.set move");
     settle();
 
@@ -769,7 +770,7 @@ unittest { // Focus-far-from-origin discriminator: X-dominant camera
 
 unittest { // Focus-far-from-origin discriminator: Z-dominant camera
     resetCubeAuto();
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     postJson("/api/script", "tool.set move");
     settle();
 

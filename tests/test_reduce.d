@@ -6,6 +6,7 @@
 // Triple (all):       98v / ??? e / 192f (all tris)
 
 import http_client : testBaseUrl, postRaw;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -312,8 +313,7 @@ unittest { // preserveBoundary: open mesh boundary vertex set preserved
     runCmd("mesh.subdivide"); // 26v / 24 quads
 
     // Select and delete one face to create a boundary.
-    auto r0 = postJ("/api/select",
-        `{"mode":"polygons","indices":[0]}`);
+    auto r0 = postJ("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
     assert(r0["status"].str == "ok");
     postCommand(`{"id":"mesh.delete"}`);
 

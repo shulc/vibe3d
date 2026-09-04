@@ -64,6 +64,7 @@
 // Run via: ./run_test.d test_bus_snap_grid_after_drag
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -239,8 +240,7 @@ unittest {
     armAndBuildGrid();
     auto before = modelVerts();
 
-    auto selR = postJson("/api/select",
-                         `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    auto selR = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(selR["status"].str == "ok", "select failed: " ~ selR.toString);
 
     cmd("tool.pipe.attr snap enabled false");
@@ -265,8 +265,7 @@ unittest {
     armAndBuildGrid();
     auto before = modelVerts();
 
-    auto selR = postJson("/api/select",
-                         `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    auto selR = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(selR["status"].str == "ok", "select failed: " ~ selR.toString);
 
     // Snap OFF for the gesture — see the header: this is what keeps the grid

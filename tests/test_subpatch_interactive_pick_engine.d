@@ -26,6 +26,7 @@
 // Run via: ./run_test.d subpatch_interactive_pick_engine
 
 import http_client : testBaseUrl, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -59,7 +60,7 @@ void waitPlayerIdle() {
 /// that lands on a face already selected would otherwise be indistinguishable
 /// from one that selected nothing.
 void clearSelection() {
-    auto r = postJson("/api/select", `{"mode":"polygons","indices":[]}`);
+    auto r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[]}`));
     assert("error" !in r, "/api/select clear failed: " ~ r.toString);
 }
 

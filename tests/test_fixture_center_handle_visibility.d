@@ -45,6 +45,7 @@
 // hypotheses predict the same motion). No drag assertion is written here.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -110,7 +111,7 @@ void assertAxisBanksIntact(bool[int] vis, string ctx) {
 /// the gizmo part list, drop the tool again. Returns the visibility map.
 bool[int] readOnSubject(string subject, string ctx) {
     if (subject == "component") {
-        postOk("/api/select", `{"mode":"vertices","indices":[0,1]}`);
+        postOk("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1]}`));
         assert(getJson("/api/selection")["selType"].str == "vertex",
                ctx ~ ": component subject must be current");
     } else {

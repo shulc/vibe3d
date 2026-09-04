@@ -26,6 +26,7 @@
 // /api/toolpipe/eval, geometry off /api/model.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, sin, cos, atan2, PI;
@@ -186,8 +187,7 @@ void setupSingleBankScene(string flag) {
     establishCubeBaseline();
     lockCamera();
     int topFace = findTopFace();
-    auto sel = postJson("/api/select",
-        `{"mode":"polygons","indices":[` ~ topFace.to!string ~ `]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[` ~ topFace.to!string ~ `]}`));
     assert(sel["status"].str == "ok", "select failed: " ~ sel.toString);
     settle();
     cmd("actr.auto");

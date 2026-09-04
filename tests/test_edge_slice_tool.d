@@ -86,6 +86,7 @@
 // and stays green independently — this file only exercises the tool path.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -183,7 +184,7 @@ bool hasNewVertNear(JSONValue m, double[3] p, size_t fromIdx, double eps = 1e-5)
 void resetCube() {
     auto r = postCmd("/api/reset", "");
     assert(r["status"].str == "ok", "/api/reset failed");
-    auto s = postCmd("/api/select", `{"mode":"edges","indices":[]}`);
+    auto s = postCmd("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[]}`));
     assert(s["status"].str == "ok", "/api/select (edges) failed");
 }
 

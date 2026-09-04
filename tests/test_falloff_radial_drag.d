@@ -18,6 +18,7 @@
 //     the least
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -32,8 +33,7 @@ bool approx(double a, double b, double eps = 1e-3) { return fabs(a - b) < eps; }
 unittest { // radial falloff: closer-to-center verts move more in a drag
     post(testBaseUrl() ~ "/api/reset", "");
 
-    auto selResp = post(testBaseUrl() ~ "/api/select",
-                        `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    auto selResp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",
         "select failed: " ~ cast(string)selResp);
 

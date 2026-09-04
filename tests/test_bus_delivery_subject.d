@@ -40,6 +40,7 @@
 // in the card.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -90,8 +91,7 @@ void selectTopFrontEdge() {
     auto m = model();
     int ei = edgeIndex(m, 6, 7);
     assert(ei >= 0, "cube top-front edge missing");
-    auto r = parseJSON(cast(string)post(BASE ~ "/api/select",
-        `{"mode":"edges","indices":[` ~ ei.to!string ~ `]}`));
+    auto r = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[` ~ ei.to!string ~ `]}`)));
     assert(r["status"].str == "ok", "edge selection failed");
 }
 

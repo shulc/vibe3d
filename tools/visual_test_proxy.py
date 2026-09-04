@@ -113,7 +113,7 @@ def forward(method: str, path: str, body: bytes):
 # change has applied and the visible instance has rendered it) we hold the
 # response for --cmd-delay ms so a human can actually see each step land instead
 # of the whole test flashing past.
-DELAY_POST_PATHS = ("/api/command", "/api/script", "/api/select", "/api/camera")
+DELAY_POST_PATHS = ("/api/command", "/api/script", "/api/camera")
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"

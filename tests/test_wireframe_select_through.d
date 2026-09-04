@@ -73,6 +73,7 @@
 // answered out of A's FBO.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math   : fabs, lround;
@@ -104,7 +105,7 @@ void setStyle(string s) {
 }
 
 void setMode(string m) {
-    auto r = postJson("/api/select", format(`{"mode":"%s","indices":[]}`, m));
+    auto r = postJson("/api/command", commandBody("mesh.select", format(`{"mode":"%s","indices":[]}`, m)));
     assert(r["status"].str == "success" || r["status"].str == "ok",
            "/api/select " ~ m ~ " failed: " ~ r.toString);
     settle();

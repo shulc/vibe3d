@@ -26,6 +26,7 @@
 // test-only wrapper command.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 
@@ -54,7 +55,7 @@ unittest { // view-preset switch preserves selection, no active tool
     postJson("/api/reset", "{}");
     runCmd("prim.cube");
 
-    auto selResp = postJson("/api/select", `{"mode":"vertices","indices":[0,2,5]}`);
+    auto selResp = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,2,5]}`));
     assert(selResp["status"].str == "ok", "select failed: " ~ selResp.toString);
 
     auto before = getJson("/api/selection");
@@ -74,7 +75,7 @@ unittest { // view-preset switch preserves selection AND the active tool
     postJson("/api/reset", "{}");
     runCmd("prim.cube");
 
-    auto selResp = postJson("/api/select", `{"mode":"vertices","indices":[1,3,6]}`);
+    auto selResp = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[1,3,6]}`));
     assert(selResp["status"].str == "ok", "select failed: " ~ selResp.toString);
 
     runCmd("tool.set move on");
@@ -104,7 +105,7 @@ unittest { // view-preset switch preserves an EMPTY selection + active tool
     postJson("/api/reset", "{}");
     runCmd("prim.cube");
 
-    auto selResp = postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+    auto selResp = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     assert(selResp["status"].str == "ok", "select failed: " ~ selResp.toString);
 
     runCmd("tool.set move on");

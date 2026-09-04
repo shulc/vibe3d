@@ -20,6 +20,7 @@
 // Run via: ./run_test.d tool_aim_item_transform
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv      : to;
@@ -492,7 +493,7 @@ Vec3 planeHit(Vec3 o, Vec3 d, Vec3 p0, Vec3 p1, Vec3 p2) {
 void selectIndices(string mode, int[] idx) {
     string s;
     foreach (i, v; idx) s ~= format("%s%d", i ? "," : "", v);
-    auto r = postJson("/api/select", format(`{"mode":"%s","indices":[%s]}`, mode, s));
+    auto r = postJson("/api/command", commandBody("mesh.select", format(`{"mode":"%s","indices":[%s]}`, mode, s)));
     assert(r["status"].str == "ok", "/api/select failed: " ~ r.toString);
 }
 

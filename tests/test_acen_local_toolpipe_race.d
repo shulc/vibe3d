@@ -21,6 +21,7 @@
 // and friends use for a real gizmo-handle drag).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math    : fabs;
@@ -55,7 +56,7 @@ void setupLocalTwoClusterScene() {
     lockCamera();
     cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1");
     cmd("select.typeFrom polygon");
-    auto sel = postJson("/api/select", `{"mode":"polygons","indices":[4,5]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4,5]}`));
     assert(sel["status"].str == "ok", "select failed: " ~ sel.toString);
     cmd("tool.set move on");
     cmd("actr.local");

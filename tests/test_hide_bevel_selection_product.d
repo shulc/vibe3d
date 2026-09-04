@@ -41,6 +41,7 @@
 // and one that asserted only the vertex plane passes too (rebuildEdges does
 // not re-index vertexMarks, so the vertex product is identical either way).
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -72,12 +73,11 @@ int[] beveledProduct(int operandEdge) {
     cmd(`{"id":"history.clear"}`);
 
     cmd("select.typeFrom vertex");
-    postJson("/api/select", `{"mode":"vertices","indices":[0]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
     cmd(`{"id":"mesh.hide"}`);
 
     cmd("select.typeFrom edge");
-    postJson("/api/select",
-             `{"mode":"edges","indices":[` ~ operandEdge.to!string ~ `]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[` ~ operandEdge.to!string ~ `]}`));
     cmd(`{"id":"mesh.bevel"}`);
     return selectedEdges();
 }

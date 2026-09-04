@@ -20,6 +20,7 @@
 // hovering the anchor must make that exact part hot.
 
 import http_client : getJson, postJson, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.format : format;
 import std.json;
 import std.net.curl : get, post;
@@ -47,8 +48,7 @@ private string hoverLog(int vpX, int vpY, int vpW, int vpH, int x, int y) {
 
 unittest {
     postJson("/api/reset", "");
-    postJson("/api/select",
-        `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     // The bare preset — T+R+S in one bank, which is the presentation that
     // swaps the scale stems for ScaleHeadHandle proxies.
     postJson("/api/script", "tool.set Transform");

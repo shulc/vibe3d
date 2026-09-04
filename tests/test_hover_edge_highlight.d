@@ -45,6 +45,7 @@
 // control passes and the HASH assertion is the one that fires.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math   : fabs, lround, sqrt;
@@ -114,7 +115,7 @@ unittest {
 
     // Edges are the selection type, so the edge hover picker is the one that
     // runs and the edge highlight is the one that draws.
-    auto sel = postJson("/api/select", `{"mode":"edges","indices":[]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[]}`));
     assert(sel["status"].str == "success" || sel["status"].str == "ok",
            "/api/select edges failed: " ~ sel.toString);
     settle();

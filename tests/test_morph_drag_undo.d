@@ -20,6 +20,7 @@
 // screen position, and the synthesized event log presses exactly there.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.file   : remove, exists, readText;
@@ -51,8 +52,7 @@ void postSelect(string mode, int[] indices) {
     string idx = "[";
     foreach (i, v; indices) { if (i > 0) idx ~= ","; idx ~= v.to!string; }
     idx ~= "]";
-    auto j = postJson("/api/select",
-        `{"mode":"` ~ mode ~ `","indices":` ~ idx ~ `}`);
+    auto j = postJson("/api/command", commandBody("mesh.select", `{"mode":"` ~ mode ~ `","indices":` ~ idx ~ `}`));
     assert(j["status"].str == "ok", "/api/select failed: " ~ j.toString);
 }
 bool approxEq(double a, double b, double eps = 1e-4) { return fabs(a - b) < eps; }

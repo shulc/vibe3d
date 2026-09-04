@@ -41,6 +41,7 @@
 // under the framing this file pins.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.json;
@@ -139,8 +140,7 @@ unittest { // width, then a horizontal haul on the extrude arrow, and the tool b
 
     int ei = findEdgeXPosZNeg();
     assert(ei >= 0, "no cube edge found at x=+0.5, z=-0.5");
-    r = postJson("/api/select",
-        `{"mode":"edges","indices":[` ~ ei.to!string ~ `]}`);
+    r = postJson("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[` ~ ei.to!string ~ `]}`));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 
     // The framing is PART OF THE GESTURE, not decoration: the handle anchors

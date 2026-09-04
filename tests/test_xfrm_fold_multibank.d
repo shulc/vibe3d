@@ -83,6 +83,7 @@
 // composed result equals the manual S·R·T of the known cube verts.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -149,8 +150,7 @@ void drainAndReset() {
 }
 
 void selectAll8() {
-    auto r = postJson("/api/select",
-        `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    auto r = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(r["status"].str == "ok", "/api/select failed: " ~ r.toString);
 }
 

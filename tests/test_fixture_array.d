@@ -14,6 +14,7 @@
 // `arrayFacesGrid` doc comment), not against a reference capture.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import fixture_helpers;
 import std.net.curl;
 import std.json;
@@ -51,8 +52,7 @@ void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post(testBaseUrl() ~ "/api/select",
-        `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`));
     assert(parseJSON(resp)["status"].str == "ok", "/api/select failed: " ~ resp);
 }
 

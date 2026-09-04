@@ -48,6 +48,7 @@
 //
 // LANE: `./run_test.d` (lane S).
 import http_client : testBaseUrl, postRaw;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -193,7 +194,7 @@ unittest { // mesh.duplicate — the other unconditionally hook-free member
     // Polygons mode and a face selection are BOTH required by `evaluate`, so
     // the setup builds them; without either, the row would measure a refusal.
     undoRoundTrip("mesh.duplicate",
-        kCubePolyMode ~ [Step("/api/select", `{"mode":"polygons","indices":[0]}`)],
+        kCubePolyMode ~ [Step("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`))],
         `{"id":"mesh.duplicate"}`);
 }
 
@@ -203,7 +204,7 @@ unittest { // mesh.array — the DETACH path's winding install
     // rewrite is arity-preserving, so V/F/E and every mark word round-trip
     // whether or not it is restored — only the plane-complete dump sees it.
     undoRoundTrip("mesh.array",
-        kCubePolyMode ~ [Step("/api/select", `{"mode":"polygons","indices":[0]}`)],
+        kCubePolyMode ~ [Step("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`))],
         `{"id":"mesh.array","params":{"count":2,"offset":[1,0,0]}}`);
 }
 
@@ -269,7 +270,7 @@ void assertRefuses(string row, in Step[] setup, string cmdJson) {
 
 unittest { // mesh.duplicate refuses with NO face selected
     assertRefuses("mesh.duplicate/empty",
-        kCubePolyMode ~ [Step("/api/select", `{"mode":"polygons","indices":[]}`)],
+        kCubePolyMode ~ [Step("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[]}`))],
         `{"id":"mesh.duplicate"}`);
 }
 

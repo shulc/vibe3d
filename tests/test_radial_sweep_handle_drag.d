@@ -41,6 +41,7 @@
 // the swept angle, which follows the drag, which follows the viewport.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.json;
@@ -102,7 +103,7 @@ unittest { // dragging the Start Angle handle moves `startAngle` off zero
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     cmd("history.clear");
 
-    r = postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 
     cmd("tool.set " ~ TOOL ~ " on");
@@ -209,7 +210,7 @@ unittest { // dragging the Start Angle handle moves `startAngle` off zero
     // counter that never moves satisfies `== 0` for free. `mesh.delete` is one
     // of the four ops already on the per-mutation tracker (default-on), so it
     // records into an op-log and ticks the same counter.
-    auto sel = postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
     assert(sel["status"].str == "ok", "control select failed: " ~ sel.toString);
     immutable long ctlBefore = busCounter("opLogEntriesRecorded");
     cmd("mesh.delete");

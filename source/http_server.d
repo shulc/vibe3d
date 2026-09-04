@@ -520,10 +520,6 @@ class HttpServer {
     // Concurrent /api/command queries would race this single slot; any future
     // parallel-request work must revisit (per-epoch slot or a lock).
 
-    // ----- /api/select synchronous bridge ----------------------------------
-    private alias SelectionHandler = void delegate(string mode, int[] indices);
-    private SelectionHandler selectionHandler;
-
     // ----- /api/transform synchronous bridge -------------------------------
     private alias TransformHandler = void delegate(string kind, JSONValue params);
     private TransformHandler transformHandler;
@@ -709,7 +705,7 @@ class HttpServer {
     // MainThreadBridge instances (task 0183 C3) — one per marshaled endpoint,
     // constructed (and self-registered into `bridges`) in the HttpServer
     // constructor, IN THE SAME ORDER the old hand-written app.d tick list used
-    // (reset, model, pipeEval, path, command, selection, transform, loadMesh,
+    // (reset, model, pipeEval, path, command, transform, loadMesh,
     // cameraSet, gpuSurface, pick, refire, block, undo, jump). Each bridge's
     // `service` delegate closes over `this` (reading the handler/provider
     // fields above AT TICK TIME, so it works even though app.d wires those
@@ -755,10 +751,6 @@ class HttpServer {
     struct CmdReq  { string id; string params; bool interactive; bool uiOrigin; }
     struct CmdResp { string error; string result; }
     private MainThreadBridge!(CmdReq, CmdResp) commandBridge;
-
-    struct SelReq  { string mode; int[] indices; }
-    struct SelResp { string error; }
-    private MainThreadBridge!(SelReq, SelResp) selectionBridge;
 
     struct XfReq  { string kind; JSONValue params; }
     struct XfResp { string error; }
@@ -1081,20 +1073,6 @@ class HttpServer {
                             uiCommandHandler(req.id, req.params);
                         else
                             commandHandler(req.id, req.params);
-                        resp.error = "";
-                    } catch (Exception e) {
-                        resp.error = e.msg;
-                    }
-                }
-            });
-
-        selectionBridge = new MainThreadBridge!(SelReq, SelResp)(this,
-            (ref SelReq req, ref SelResp resp) {
-                if (selectionHandler is null) {
-                    resp.error = "selection handler not set";
-                } else {
-                    try {
-                        selectionHandler(req.mode, req.indices);
                         resp.error = "";
                     } catch (Exception e) {
                         resp.error = e.msg;
@@ -1596,14 +1574,6 @@ class HttpServer {
      */
     public void setCmdResult(string json) {
         commandBridge.resp.result = json;
-    }
-
-    /**
-     * Set the selection handler callback. Same synchronous main-thread
-     * dispatch as setCommandHandler — see tickSelection().
-     */
-    public void setSelectionHandler(SelectionHandler handler) {
-        this.selectionHandler = handler;
     }
 
     /**
@@ -3513,45 +3483,6 @@ class HttpServer {
         response.headers["Content-Type"] = "application/json";
     }
 
-    private void route_apiSelect(HttpRequest request, HttpResponse response) {
-        if (selectionHandler is null) {
-            response.statusCode = 200;
-            response.body = `{"status":"error","message":"selection handler not set"}`;
-        } else {
-            try {
-                auto j = parseJSON(request.body);
-                if ("mode" !in j || j["mode"].type != JSONType.string)
-                    throw new Exception("missing 'mode' string field");
-                if ("indices" !in j || j["indices"].type != JSONType.array)
-                    throw new Exception("missing 'indices' array field");
-                selectionBridge.req.mode = j["mode"].str;
-                int[] idx;
-                foreach (n; j["indices"].array) {
-                    if (n.type != JSONType.integer && n.type != JSONType.uinteger)
-                        throw new Exception("indices must be integers");
-                    idx ~= cast(int)n.integer;
-                }
-                selectionBridge.req.indices = idx;
-                selectionBridge.resp.error  = "";
-                if (!selectionBridge.submitAndWait())
-                    selectionBridge.resp.error = "timeout waiting for main thread";
-                if (selectionBridge.resp.error.length == 0) {
-                    response.statusCode = 200;
-                    response.body = `{"status":"ok"}`;
-                } else {
-                    response.statusCode = 200;
-                    response.body = `{"status":"error","message":"`
-                                    ~ jsonEsc(selectionBridge.resp.error) ~ `"}`;
-                }
-            } catch (Exception e) {
-                response.statusCode = 200;
-                response.body = `{"status":"error","message":"`
-                                ~ jsonEsc(e.msg) ~ `"}`;
-            }
-        }
-        response.headers["Content-Type"] = "application/json";
-    }
-
     private void route_apiCommand(HttpRequest request, HttpResponse response) {
         if (commandHandler is null) {
             // Unreachable while the readiness gate in `handleRequest` stands
@@ -4300,7 +4231,6 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/transform",            "POST", Match.exact,  Answered.mainThread, "route_apiTransform"),
     RouteSpec("/api/load-mesh",            "POST", Match.exact,  Answered.mainThread, "route_apiLoadMesh"),
     RouteSpec("/api/test/layer",           "POST", Match.exact,  Answered.mainThread, "route_apiTestLayer"),
-    RouteSpec("/api/select",               "POST", Match.exact,  Answered.mainThread, "route_apiSelect"),
     // Match.prefix (task 1520): `?origin=ui` puts a query string on the path,
     // and Match.exact compares the whole path — the query would never match.
     // No other route is a prefix of this one.

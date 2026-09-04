@@ -28,6 +28,7 @@
 //     history.undo restores pre-sweep vertex and face counts
 
 import http_client : testBaseUrl, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -52,8 +53,7 @@ void setSelection(string mode, int[] indices) {
     foreach (i, v; indices)
         idxJson ~= (i > 0 ? "," : "") ~ v.to!string;
     idxJson ~= "]";
-    auto r = postJson("/api/select",
-        `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
+    auto r = postJson("/api/command", commandBody("mesh.select", `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`));
     assert(r["status"].str == "ok", "/api/select failed: " ~ r.toString);
 }
 

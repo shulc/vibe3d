@@ -10,6 +10,7 @@
 // Literal 2-vertex faces are exercised only in the mesh.d dub unittests.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -217,8 +218,7 @@ unittest { // mesh.edgeCrease.set / .clear: one undo step each, and it restores
     // `tests/test_edge_weight_v3d.d` uses. Two and not one: a single-edge
     // crease plane is uniform, and a restore onto the wrong edge would
     // compare EQUAL.
-    auto selResp = post(testBaseUrl() ~ "/api/select",
-                        `{"mode":"edges","indices":[6,9]}`);
+    auto selResp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[6,9]}`));
     assert(parseJSON(selResp)["status"].str == "ok",
            "/api/select failed: " ~ selResp);
 

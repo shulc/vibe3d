@@ -13,6 +13,7 @@
 // y decreasing) increases inset.
 
 import http_client : testBaseUrl, postJson;
+import http_command_helpers : commandBody;
 import std.json;
 import std.math : abs;
 import std.net.curl : get, post;
@@ -42,7 +43,7 @@ unittest { // an upward haul drives `inset` positive through the motion path
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     cmd("history.clear");
 
-    r = postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 
     cmd("tool.set " ~ TOOL ~ " on");

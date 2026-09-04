@@ -43,6 +43,7 @@
 // frozen-vs-live frame is what the assertion below pins.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, tan, PI;
@@ -172,7 +173,7 @@ unittest {
     string selStr = "[";
     foreach (i, s; sel) selStr ~= (i ? "," : "") ~ s.to!string;
     selStr ~= "]";
-    postJson("/api/select", `{"mode":"polygons","indices":` ~ selStr ~ `}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":` ~ selStr ~ `}`));
 
     // Flex preset (axis.mode=select, actionCenter.mode=border,
     // falloff=selection), but scale-only: T/R off so ONLY the scale bank

@@ -55,6 +55,7 @@
 //    checked instead.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -89,8 +90,7 @@ void selectMode(string mode, int[] indices) {
     string idx = "[";
     foreach (i, v; indices) { if (i) idx ~= ","; idx ~= v.to!string; }
     idx ~= "]";
-    auto r = postJson("/api/select",
-        `{"mode":"` ~ mode ~ `","indices":` ~ idx ~ `}`);
+    auto r = postJson("/api/command", commandBody("mesh.select", `{"mode":"` ~ mode ~ `","indices":` ~ idx ~ `}`));
     assert(r["status"].str == "ok", "/api/select failed: " ~ r.toString);
 }
 

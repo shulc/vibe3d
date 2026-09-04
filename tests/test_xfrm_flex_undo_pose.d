@@ -25,6 +25,7 @@
 // the rendered frame returns to the PRE-gesture pose.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, tan, sin, cos, atan2, PI;
@@ -123,7 +124,7 @@ void selectUpperRegion() {
     string selStr = "[";
     foreach (i, s; sel) selStr ~= (i ? "," : "") ~ s.to!string;
     selStr ~= "]";
-    postJson("/api/select", `{"mode":"polygons","indices":` ~ selStr ~ `}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":` ~ selStr ~ `}`));
 }
 // Where the scale box for one axis ACTUALLY is, asked of the tool instead of
 // frozen as a pixel. Part ids 20/21/22 are the scale bank's axis heads (see

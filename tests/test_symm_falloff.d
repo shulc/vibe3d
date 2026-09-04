@@ -19,6 +19,7 @@
 // applyFold → driver pass + the single position-copy mirror).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -53,8 +54,7 @@ void selectJson(string mode, int[] indices) {
     import std.array : join;
     import std.algorithm : map;
     string idxStr = indices.map!(i => i.to!string).join(",");
-    auto j = postJson("/api/select",
-        `{"mode":"` ~ mode ~ `","indices":[` ~ idxStr ~ `]}`);
+    auto j = postJson("/api/command", commandBody("mesh.select", `{"mode":"` ~ mode ~ `","indices":[` ~ idxStr ~ `]}`));
     assert(j["status"].str == "ok", "select failed: " ~ j.toString);
 }
 

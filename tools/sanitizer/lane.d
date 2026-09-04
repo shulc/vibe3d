@@ -2454,7 +2454,6 @@ enum SweepRoute[] kSweepRoutes = [
     SweepRoute("/api/transform", "POST", `{}`),
     SweepRoute("/api/load-mesh", "POST", `{}`),
     SweepRoute("/api/test/layer", "POST", `{}`),
-    SweepRoute("/api/select", "POST", `{}`),
     SweepRoute("/api/command", "POST", `{}`),
     SweepRoute("/api/script", "POST", `{}`),
     SweepRoute("/api/undo", "POST", `{}`),

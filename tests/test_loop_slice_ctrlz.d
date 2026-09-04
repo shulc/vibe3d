@@ -51,6 +51,7 @@
 // (documented in test_loop_slice_v2.d's V2 comment: V=8+4*count, F=6+4*count).
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv  : to;
@@ -84,7 +85,7 @@ void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto r = postCmd("/api/select", `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
+    auto r = postCmd("/api/command", commandBody("mesh.select", `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`));
     assert(r["status"].str == "ok", "/api/select failed: " ~ r.toString);
 }
 

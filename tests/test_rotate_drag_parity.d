@@ -27,6 +27,7 @@
 //   gizmoSize(center); drag tangentially along the arc to a second param.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math   : fabs, sqrt, sin, cos, atan2, PI;
@@ -104,8 +105,7 @@ int[] setupScene() {
     postJson("/api/reset", "");
     lockCamera();
     int topFace = findTopFace();
-    auto sel = postJson("/api/select",
-        `{"mode":"polygons","indices":[` ~ topFace.to!string ~ `]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[` ~ topFace.to!string ~ `]}`));
     assert(sel["status"].str == "ok", "select failed: " ~ sel.toString);
     cmd("tool.set xfrm.transform on");
     cmd("tool.attr xfrm.transform T false");

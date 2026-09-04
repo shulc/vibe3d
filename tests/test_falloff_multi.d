@@ -21,6 +21,7 @@
 // so WGHT-task stages are counted/addressed by id.
 
 import http_client : testBaseUrl, getJson, postJson, postRaw;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -140,8 +141,7 @@ unittest {
     double dragOnceMeasureDy0() {
         // Select the whole cube; configure the PRIMARY radial so v0
         // (-0.5,-0.5,-0.5) is at full weight and the gizmo pivot is origin.
-        auto selResp = post(baseUrl ~ "/api/select",
-                            `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+        auto selResp = post(baseUrl ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
         assert(parseJSON(cast(string)selResp)["status"].str == "ok",
             "select failed: " ~ cast(string)selResp);
 

@@ -39,6 +39,7 @@
 // polygon control fails that implementation loudly, so the pair pins
 // "type-aware", not merely "whole-model".
 
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -76,7 +77,7 @@ void selectFaces(int[] idx) {
     string j = "[";
     foreach (i, v; idx) { if (i) j ~= ","; j ~= v.to!string; }
     j ~= "]";
-    auto r = postJson("/api/select", `{"mode":"polygons","indices":` ~ j ~ `}`);
+    auto r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":` ~ j ~ `}`));
     assert(r["status"].str == "ok", "/api/select failed: " ~ r.toString);
 }
 

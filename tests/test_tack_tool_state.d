@@ -6,6 +6,7 @@
 // commit/undo/parity coverage this file does NOT duplicate.
 
 import http_client : testBaseUrl, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -45,8 +46,7 @@ void selectFaces(int[] idx) {
     string idxJson = "[";
     foreach (k, v; idx) { if (k) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto r = parseJSON(cast(string) post(baseUrl ~ "/api/select",
-        format(`{"mode":"polygons","indices":%s}`, idxJson)));
+    auto r = parseJSON(cast(string) post(baseUrl ~ "/api/command", commandBody("mesh.select", format(`{"mode":"polygons","indices":%s}`, idxJson))));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 }
 

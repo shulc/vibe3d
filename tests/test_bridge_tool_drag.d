@@ -33,6 +33,7 @@
 // the gesture alone would go red on entirely correct code.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.json;
@@ -93,7 +94,7 @@ unittest { // a bare horizontal haul bridges the two caps, and the drop records 
         ~ `"focus":{"x":0.5,"y":0.5,"z":0.5}}`);
     assert(r["status"].str == "ok", "camera failed: " ~ r.toString);
 
-    r = postJson("/api/select", `{"mode":"polygons","indices":[0,1]}`);
+    r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0,1]}`));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 
     cmd("history.clear");

@@ -33,6 +33,7 @@
 // it never takes and could not come out differently.
 
 import http_client : testBaseUrl, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -91,7 +92,7 @@ void selectEdges(int[] idx) {
     string j = "[";
     foreach (i, v; idx) { if (i) j ~= ","; j ~= v.to!string; }
     j ~= "]";
-    ok(postJson("/api/select", `{"mode":"edges","indices":` ~ j ~ `}`), "/api/select edges");
+    ok(postJson("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":` ~ j ~ `}`)), "/api/select edges");
 }
 
 size_t faceCount(JSONValue m) { return m["faces"].array.length; }
@@ -114,7 +115,7 @@ unittest { // the fin-bundle path runs inside ONE batch, and it is the OUTERMOST
     // for free. So make the SAME counter move first, with a command that is
     // deliberately still batchless.
     loadCube();
-    ok(postJson("/api/select", `{"mode":"vertices","indices":[]}`), "/api/select");
+    ok(postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`)), "/api/select");
     auto c0 = changes();
     foreach (c; kBatchlessControlSeq)
         ok(postJson("/api/command", c), kBatchlessControlCommand);

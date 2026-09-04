@@ -2864,6 +2864,26 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
             }
         }
 
+        // Retired HTTP wrapper arguments. These commands predate Param-backed
+        // JSON injection, so their former route validation/configuration now
+        // lives at the one generic command-dispatch point.
+        void injectRetiredWrapperArgs(Command cmd, ref JSONValue pj) {
+            if (auto select = cast(MeshSelect)cmd) {
+                if ("mode" !in pj || pj["mode"].type != JSONType.string)
+                    throw new Exception("missing 'mode' string field");
+                if ("indices" !in pj || pj["indices"].type != JSONType.array)
+                    throw new Exception("missing 'indices' array field");
+                int[] indices;
+                foreach (n; pj["indices"].array) {
+                    if (n.type != JSONType.integer && n.type != JSONType.uinteger)
+                        throw new Exception("indices must be integers");
+                    indices ~= cast(int)n.integer;
+                }
+                select.setMode(pj["mode"].str);
+                select.setIndices(indices);
+            }
+        }
+
         // ------------------------------------------------------------------
         // ONE dispatcher BODY, TWO refusal policies (task 1520).
         //
@@ -2958,6 +2978,11 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
 
                     // select.* commands: inject positional args.
                     injectSelectCommandPositional(cmd, pj);
+
+                    // Commands formerly reached through dedicated HTTP
+                    // wrappers: preserve their payload shapes while applying
+                    // them through this single refusal-aware dispatcher.
+                    injectRetiredWrapperArgs(cmd, pj);
 
                     // Falloff side-channel — mesh.smooth / mesh.jitter /
                     // mesh.quantize accept a `falloff` JSON object that
@@ -3344,24 +3369,17 @@ private void wireHistoryProviders(HttpServer httpServer, ref EditorApp app,
             else throw new Exception("invalid block action '" ~ action ~ "'");
         });
 
-        // Phase A.5: dispatch /api/select through the unified Command path
+        // Phase A.5: dispatch mesh.transform through the unified Command path
         // (MeshSelect) so selection changes land on the undo stack and
         // share the same snapshot/revert mechanism as everything else.
     }
 }
 
-// wireMutationHandlers — `/api/select`, `/api/transform`, `/api/reset`, `/api/load-mesh`,
+// wireMutationHandlers — `/api/transform`, `/api/reset`, `/api/load-mesh`,
 // `/api/test/layer` — the POST routes that change the document.
 private void wireMutationHandlers(HttpServer httpServer, ref EditorApp app,
                              ref string[] optionalSlots) {
     with (app) {
-        httpServer.setSelectionHandler((string mode, int[] indices) {
-            auto cmd = cast(MeshSelect)reg.commandFactories["mesh.select"]();
-            cmd.setMode(mode);
-            cmd.setIndices(indices);
-            applyOrRefireThrowing(cmd, RecordMode.Record, "mesh.select did not apply");
-        });
-
         // Phase A.5: dispatch /api/transform through MeshTransform command.
         httpServer.setTransformHandler((string kind, JSONValue params) {
             import math : Vec3;

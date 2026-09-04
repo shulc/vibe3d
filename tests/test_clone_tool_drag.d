@@ -37,6 +37,7 @@
 // channel satisfies for free — that is why THEY open with a control.)
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.json;
@@ -78,7 +79,7 @@ unittest { // a free centre haul clones face 4 and records exactly one entry
 
     // CloneTool is gated to Polygons mode and builds its mask from the
     // RESTORED face selection, so the operand has to be a face selection.
-    r = postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
     cmd("history.clear");
 

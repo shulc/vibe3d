@@ -8,6 +8,7 @@
 // needing to hand-author a raw vertex/face JSON fixture.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -56,7 +57,7 @@ void selectFaces(int[] idx) {
     string[] parts;
     foreach (i; idx) parts ~= i.to!string;
     string body = `{"mode":"polygons","indices":[` ~ joinCommas(parts) ~ `]}`;
-    auto r = parseJSON(cast(string) post(baseUrl ~ "/api/select", body));
+    auto r = parseJSON(cast(string) post(baseUrl ~ "/api/command", commandBody("mesh.select", body)));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 }
 

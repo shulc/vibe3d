@@ -91,6 +91,7 @@
 // ===========================================================================
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, PI, cos, sin;
@@ -357,7 +358,7 @@ ClusterInfo setupLocalMoveScene() {
     cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
       ~ "segmentsX:2 segmentsY:2 segmentsZ:2 radius:0");
     cmd("select.typeFrom polygon");
-    auto sel = postJson("/api/select", `{"mode":"polygons","indices":[11,12,13]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[11,12,13]}`));
     assert(sel["status"].str == "ok", "select failed: " ~ sel.toString);
     settle();
     cmd("tool.set move on");
@@ -613,7 +614,7 @@ unittest {
 
     // Selection change to a DIFFERENT polygon set = a hard geometry-run boundary
     // (resetRun). Re-selecting the same set would be a no-op. Use a disjoint set.
-    auto sel = postJson("/api/select", `{"mode":"polygons","indices":[2,3]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[2,3]}`));
     assert(sel["status"].str == "ok", "relocate-select failed: " ~ sel.toString);
     settle();
 

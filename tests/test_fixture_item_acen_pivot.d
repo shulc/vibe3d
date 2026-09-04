@@ -20,6 +20,7 @@
 // value this read can produce.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -147,7 +148,7 @@ unittest {
     // did not move, the item answer above would be untrustworthy — it could
     // be the only value this read ever produces.
     {
-        postOk("/api/select", `{"mode":"vertices","indices":[]}`);
+        postOk("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
         assert(getJson("/api/selection")["selType"].str == "vertex",
                "the subject switch must actually take");
         auto got  = actionCenter();

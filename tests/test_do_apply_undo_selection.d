@@ -42,6 +42,7 @@
 //   test_edge_extrude_tool.d / test_edge_extend_tool.d.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -75,8 +76,7 @@ void postSelect(string mode, int[] indices) {
         idxJson ~= v.to!string;
     }
     idxJson ~= "]";
-    auto resp = postJson("/api/select",
-        `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
+    auto resp = postJson("/api/command", commandBody("mesh.select", `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`));
     assert(resp["status"].str == "ok", "/api/select failed: " ~ resp.toString);
 }
 

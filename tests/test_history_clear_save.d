@@ -4,6 +4,7 @@
 // /api/command so we don't depend on ImGui rendering.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -26,7 +27,7 @@ void translate(double dx) {
 
 unittest { // history.clear wipes both undo + redo stacks.
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
 
     translate(0.1);
     translate(0.1);
@@ -51,7 +52,7 @@ unittest { // history.saveAsScript writes #LXMacro# header + one
            // argstring per undo entry.
     postJson("/api/reset", "");
     postJson("/api/command", "history.clear");   // pristine
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
 
     translate(0.1);
     translate(0.2);

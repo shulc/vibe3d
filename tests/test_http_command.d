@@ -1,4 +1,5 @@
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -49,8 +50,7 @@ unittest { // ERROR: missing 'id' field returns status:error
 unittest { // /api/select: vertex mode, two indices
     post(testBaseUrl() ~ "/api/reset", "");
 
-    auto resp = post(testBaseUrl() ~ "/api/select",
-                     `{"mode":"vertices","indices":[2,5]}`);
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[2,5]}`));
     assert(parseJSON(resp)["status"].str == "ok",
         "expected ok, got: " ~ resp);
 
@@ -66,14 +66,14 @@ unittest { // /api/select: vertex mode, two indices
 unittest { // /api/select switches edit mode
     post(testBaseUrl() ~ "/api/reset", "");
 
-    post(testBaseUrl() ~ "/api/select", `{"mode":"edges","indices":[3]}`);
+    post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[3]}`));
     auto sel = parseJSON(get(testBaseUrl() ~ "/api/selection"));
     assert(sel["mode"].str == "edges",
         "expected edges mode, got " ~ sel["mode"].str);
     assert(sel["selectedEdges"].array.length == 1);
     assert(sel["selectedEdges"].array[0].integer == 3);
 
-    post(testBaseUrl() ~ "/api/select", `{"mode":"polygons","indices":[0,4]}`);
+    post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0,4]}`));
     sel = parseJSON(get(testBaseUrl() ~ "/api/selection"));
     assert(sel["mode"].str == "polygons");
     assert(sel["selectedFaces"].array.length == 2);
@@ -83,8 +83,8 @@ unittest { // /api/select switches edit mode
 
 unittest { // /api/select replaces previous selection in same mode
     post(testBaseUrl() ~ "/api/reset", "");
-    post(testBaseUrl() ~ "/api/select", `{"mode":"vertices","indices":[0,1,2]}`);
-    post(testBaseUrl() ~ "/api/select", `{"mode":"vertices","indices":[7]}`);
+    post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2]}`));
+    post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[7]}`));
     auto sel = parseJSON(get(testBaseUrl() ~ "/api/selection"));
     auto verts = sel["selectedVertices"].array;
     assert(verts.length == 1, "expected 1 vert after replacement, got "
@@ -94,8 +94,7 @@ unittest { // /api/select replaces previous selection in same mode
 
 unittest { // /api/select: out-of-range index returns error
     post(testBaseUrl() ~ "/api/reset", "");
-    auto resp = post(testBaseUrl() ~ "/api/select",
-                     `{"mode":"vertices","indices":[999]}`);
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[999]}`));
     auto j = parseJSON(resp);
     assert(j["status"].str == "error",
         "expected error for OOR index, got: " ~ resp);
@@ -103,8 +102,8 @@ unittest { // /api/select: out-of-range index returns error
 
 unittest { // /api/select: empty indices clears current selection
     post(testBaseUrl() ~ "/api/reset", "");
-    post(testBaseUrl() ~ "/api/select", `{"mode":"vertices","indices":[0,1]}`);
-    post(testBaseUrl() ~ "/api/select", `{"mode":"vertices","indices":[]}`);
+    post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1]}`));
+    post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     auto sel = parseJSON(get(testBaseUrl() ~ "/api/selection"));
     assert(sel["selectedVertices"].array.length == 0,
         "expected empty selection after empty indices");

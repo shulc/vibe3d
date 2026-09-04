@@ -14,6 +14,7 @@
 // see the toolcard's own capture-method note).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -66,9 +67,8 @@ unittest { // open 4-vertex chain, uniform=false (default): endpoints fixed,
     // Pre-displace B so uniform vs nonuniform diverge (toolcard method).
     cmd("mesh.move_vertex from:{0.5,-0.5,-0.5} to:{0.2,-0.15,-0.1}");
 
-    auto sel = postJson("/api/select",
-        `{"mode":"vertices","indices":[` ~ idxA.to!string ~ `,` ~ idxB.to!string
-        ~ `,` ~ idxC.to!string ~ `,` ~ idxD.to!string ~ `]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[` ~ idxA.to!string ~ `,` ~ idxB.to!string
+        ~ `,` ~ idxC.to!string ~ `,` ~ idxD.to!string ~ `]}`));
     assert(sel["status"].str == "ok", sel.toString);
 
     cmd("mesh.linear_align");
@@ -108,9 +108,8 @@ unittest { // same chain, uniform=true — B lands at equal chain-index
     int idxD = findVert(before,  0.5,  0.5,  0.5);
 
     cmd("mesh.move_vertex from:{0.5,-0.5,-0.5} to:{0.2,-0.15,-0.1}");
-    postJson("/api/select",
-        `{"mode":"vertices","indices":[` ~ idxA.to!string ~ `,` ~ idxB.to!string
-        ~ `,` ~ idxC.to!string ~ `,` ~ idxD.to!string ~ `]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[` ~ idxA.to!string ~ `,` ~ idxB.to!string
+        ~ `,` ~ idxC.to!string ~ `,` ~ idxD.to!string ~ `]}`));
 
     cmd("mesh.linear_align uniform:true");
     auto after = dumpVerts();
@@ -136,9 +135,8 @@ unittest { // weight=0.5 blends source -> aligned (nonuniform) linearly.
     int idxD = findVert(before,  0.5,  0.5,  0.5);
 
     cmd("mesh.move_vertex from:{0.5,-0.5,-0.5} to:{0.2,-0.15,-0.1}");
-    postJson("/api/select",
-        `{"mode":"vertices","indices":[` ~ idxA.to!string ~ `,` ~ idxB.to!string
-        ~ `,` ~ idxC.to!string ~ `,` ~ idxD.to!string ~ `]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[` ~ idxA.to!string ~ `,` ~ idxB.to!string
+        ~ `,` ~ idxC.to!string ~ `,` ~ idxD.to!string ~ `]}`));
 
     cmd("mesh.linear_align weight:0.5");
     auto after = dumpVerts();

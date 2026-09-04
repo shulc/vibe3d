@@ -35,6 +35,7 @@
 // comparing the two would have measured the presentation rather than the gate.
 
 import http_client : getJson, postJson, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.conv   : to;
 import std.format : format;
 import std.json;
@@ -120,7 +121,7 @@ private Vec3 pivotFromState() {
 private void setUp() {
     postJson("/api/reset", "");
     postJson("/api/camera", `{"azimuth":0.785,"elevation":0.6,"distance":3.2}`);
-    postJson("/api/select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
 }
 
 // Where the box's outer face is PREDICTED to project, for a given arm factor.

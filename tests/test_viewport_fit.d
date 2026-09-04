@@ -5,6 +5,7 @@
 //                falls back to the whole mesh when nothing is selected.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.file : read;
@@ -36,8 +37,7 @@ void setSelection(string mode, int[] indices) {
         idxJson ~= v.to!string;
     }
     idxJson ~= "]";
-    post(testBaseUrl() ~ "/api/select",
-        `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
+    post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`));
 }
 
 JSONValue cam() {

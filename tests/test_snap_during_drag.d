@@ -12,6 +12,7 @@
 //     v0 from snapping to itself.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -27,8 +28,7 @@ bool approx(double a, double b, double eps = 1e-3) { return fabs(a - b) < eps; }
 unittest { // axis-X drag of v0 with vertex snap lands v0 on v1
     post(testBaseUrl() ~ "/api/reset", "");
 
-    auto selResp = post(testBaseUrl() ~ "/api/select",
-                        `{"mode":"vertices","indices":[0]}`);
+    auto selResp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",
         "select failed: " ~ cast(string)selResp);
 

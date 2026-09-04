@@ -10,6 +10,7 @@
 // applying).
 
 import http_client : testBaseUrl, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -161,7 +162,7 @@ unittest {
 
 unittest {
     resetCube();
-    auto sresp = postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
+    auto sresp = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
     assert(sresp["status"].str == "ok");
 
     toolSet(TOOL);

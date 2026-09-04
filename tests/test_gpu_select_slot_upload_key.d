@@ -58,6 +58,7 @@
 // Runner: ./run_test.d test_gpu_select_slot_upload_key
 
 import http_client : getJson, postRaw, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl : get, post;
 import std.json;
 import std.format : format;
@@ -159,7 +160,7 @@ unittest {
 
     // Slide the cube by exactly its own width, so the parked pixel is occupied
     // by a DIFFERENT, still-pickable vertex.
-    postOk("/api/select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     settle();
     postOk("/api/transform", `{"kind":"translate","delta":[1.0,0,0]}`);
     settle(600);

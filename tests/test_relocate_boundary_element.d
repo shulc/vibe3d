@@ -48,6 +48,7 @@
 // navHistory on the background HTTP thread).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -186,7 +187,7 @@ string ctrlZ(double t) {
 // of the +Z face the second gesture picks (~158px away), so the second
 // click cannot accidentally re-grab a handle.
 void activateElementMovePreset() {
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     postJson("/api/script", "tool.set xfrm.elementMove on");
     postJson("/api/command", "tool.pipe.attr falloff dist 4");
     settle();

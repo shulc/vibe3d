@@ -28,6 +28,7 @@
 //      of its drag-start value. Pre-fix they flip; post-fix they are frozen.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, tan, PI;
@@ -145,7 +146,7 @@ unittest {
     string selStr = "[";
     foreach (i, s; sel) selStr ~= (i ? "," : "") ~ s.to!string;
     selStr ~= "]";
-    postJson("/api/select", `{"mode":"polygons","indices":` ~ selStr ~ `}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":` ~ selStr ~ `}`));
 
     // Flex preset with T + R + S ALL on so the move + rotate SIBLING banks
     // render and publish their rendered triples during the scale drag.

@@ -37,6 +37,7 @@
 // carries the reason it cannot be fired blind, and each was measured.
 
 import http_client : testBaseUrl, getJson, postRaw;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -56,7 +57,7 @@ void resetTo(string query) { postRaw("/api/reset" ~ query, ""); }
 
 /// One vertex selected — see correction (2) in the header.
 void seedSelection() {
-    postRaw("/api/select", `{"mode":"vertices","indices":[0]}`);
+    postRaw("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
 }
 
 /// The WHOLE document — every layer's vertices and faces — see correction (1).

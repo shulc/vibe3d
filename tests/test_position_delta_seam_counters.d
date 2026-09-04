@@ -34,6 +34,7 @@
 //                     and quoting it as such would be a check that cannot come
 //                     out differently.
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -129,7 +130,7 @@ void selectVerts(int[] idx) {
     string s = "[";
     foreach (i, v; idx) { if (i) s ~= ","; s ~= v.to!string; }
     s ~= "]";
-    auto r = postJson("/api/select", `{"mode":"vertices","indices":` ~ s ~ `}`);
+    auto r = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":` ~ s ~ `}`));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 }
 
@@ -172,8 +173,7 @@ Drive[] drives() {
             // do with the migration. Measured: index 8 on this stand is such
             // an edge, and the first run of this file reddened on it.
             const int ei = edgeIndexByEnds(5, 6);
-            auto r = postJson("/api/select",
-                              format(`{"mode":"edges","indices":[%d]}`, ei));
+            auto r = postJson("/api/command", commandBody("mesh.select", format(`{"mode":"edges","indices":[%d]}`, ei)));
             assert(r["status"].str == "ok", "edge select: " ~ r.toString);
             ok(`{"id":"mesh.edge_slide","t":0.6}`);
             ok("select.typeFrom vertex"); }),

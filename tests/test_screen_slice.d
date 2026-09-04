@@ -25,6 +25,7 @@
 // Here we use the position-duplicate backstop from test_axis_slice.d.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -89,7 +90,7 @@ size_t duplicatePositionVerts(JSONValue m) {
 void loadCube() {
     auto r = postCmd("/api/reset", "");
     assert(r["status"].str == "ok", "/api/reset failed");
-    auto s = postCmd("/api/select", `{"mode":"vertices","indices":[]}`);
+    auto s = postCmd("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     assert(s["status"].str == "ok", "/api/select failed");
 }
 

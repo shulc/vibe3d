@@ -41,6 +41,7 @@
 // assertion RED rather than green.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.format : format;
@@ -103,7 +104,7 @@ unittest { // dragging the offset arrow moves `shift` off zero
 
     // Face 4 is the cube's +Y face: centroid (0,0.5,0), normal +Y — so the
     // offset arrow is drawn straight up the world Y axis.
-    r = postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 
     cmd("tool.set " ~ TOOL ~ " on");

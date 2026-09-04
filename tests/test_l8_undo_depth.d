@@ -51,6 +51,7 @@
 //
 // LANE: `./run_test.d` (lane S).
 import http_client : testBaseUrl, postRaw;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -185,7 +186,7 @@ enum Step[] kCubeVertMode = [Step("/api/reset", ""),
 enum Step[] kCubeEdgeMode = [Step("/api/reset", ""),
                              Step("/api/command", "select.typeFrom edge")];
 
-enum Step kSelFace0 = Step("/api/select", `{"mode":"polygons","indices":[0]}`);
+enum Step kSelFace0 = Step("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
 
 unittest { // poly.extrude — the RIGID arm of extrudeFacesByMask
     // Its op-log on this stand is `[AddVerts, FaceReindex]` — no

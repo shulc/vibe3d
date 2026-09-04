@@ -57,6 +57,7 @@
 // `g_isDocumentMesh` predicate is weakening these zeros.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.format : format;
@@ -113,7 +114,7 @@ void selectAllVerts(int n) {
     import std.conv : to;
     string idx;
     foreach (i; 0 .. n) { if (i) idx ~= ","; idx ~= i.to!string; }
-    auto j = postJson("/api/select", `{"mode":"vertices","indices":[` ~ idx ~ `]}`);
+    auto j = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[` ~ idx ~ `]}`));
     assert(j["status"].str == "ok", "select failed: " ~ j.toString);
 }
 

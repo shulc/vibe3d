@@ -41,6 +41,7 @@
 // tests/test_run_absolute_rotate.d (principal-ring arc geometry).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, sin, cos, atan2, PI;
@@ -271,7 +272,7 @@ void selectUpperRegion() {
     string s = "[";
     foreach (i, v; sel) s ~= (i ? "," : "") ~ v.to!string;
     s ~= "]";
-    postJson("/api/select", `{"mode":"polygons","indices":` ~ s ~ `}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":` ~ s ~ `}`));
 }
 
 void setupFlex() {

@@ -5,6 +5,7 @@
 // its final width depended on how SDL split one physical drag into motions.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -63,8 +64,7 @@ void selectTopFrontEdge() {
     auto m = model();
     int ei = edgeIndex(m, 6, 7);
     assert(ei >= 0, "cube top-front edge missing");
-    auto r = parseJSON(cast(string)post(BASE ~ "/api/select",
-        `{"mode":"edges","indices":[` ~ ei.to!string ~ `]}`));
+    auto r = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[` ~ ei.to!string ~ `]}`)));
     assert(r["status"].str == "ok", "edge selection failed");
 }
 
@@ -75,8 +75,7 @@ void selectCornerEdges() {
     auto m = model();
     int[] es = [edgeIndex(m, 6, 7), edgeIndex(m, 2, 6), edgeIndex(m, 5, 6)];
     foreach (ei; es) assert(ei >= 0, "cube corner edge missing");
-    auto r = parseJSON(cast(string)post(BASE ~ "/api/select",
-        format(`{"mode":"edges","indices":[%d,%d,%d]}`, es[0], es[1], es[2])));
+    auto r = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("mesh.select", format(`{"mode":"edges","indices":[%d,%d,%d]}`, es[0], es[1], es[2]))));
     assert(r["status"].str == "ok", "corner edge selection failed");
 }
 
@@ -322,8 +321,7 @@ unittest {
 
     int spine = edgeIndex(m0, 0, 1);
     assert(spine >= 0, "the loaded fin bundle has no (0,1) spine edge");
-    auto sr = parseJSON(cast(string)post(BASE ~ "/api/select",
-        `{"mode":"edges","indices":[` ~ spine.to!string ~ `]}`));
+    auto sr = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[` ~ spine.to!string ~ `]}`)));
     assert(sr["status"].str == "ok", "spine edge selection failed");
 
     auto before = getJson("/api/changes");

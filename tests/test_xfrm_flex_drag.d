@@ -67,6 +67,7 @@
 // somewhere else by an earlier test would otherwise decide this one's result.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, sin, cos, tan, PI;
@@ -191,7 +192,7 @@ unittest {
     string selStr = "[";
     foreach (i, s; sel) selStr ~= (i ? "," : "") ~ s.to!string;
     selStr ~= "]";
-    postJson("/api/select", `{"mode":"polygons","indices":` ~ selStr ~ `}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":` ~ selStr ~ `}`));
 
     // Coordinate Rounding = None: this scenario's detector is a per-step
     // smoothness proxy and the drag steps 1.2-3.0 rounding quanta, so a

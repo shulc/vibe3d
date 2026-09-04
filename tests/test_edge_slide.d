@@ -13,6 +13,7 @@
 //   * history.undo restores pre-slide positions.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -111,7 +112,7 @@ void selectEdges(long[] indices) {
         arr ~= idx.to!string;
     }
     arr ~= "]";
-    auto j = postJson("/api/select", `{"mode":"edges","indices":` ~ arr ~ `}`);
+    auto j = postJson("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":` ~ arr ~ `}`));
     assert(j["status"].str == "ok", "edge select failed: " ~ j.toString);
 }
 
@@ -274,7 +275,7 @@ unittest { // degraded: command returns ok with vertex unchanged when no rail on
     reset();
     cmd("select.typeFrom edge");
     // Select the first edge (cube edge, 1 or 2 incident faces).
-    auto j = postJson("/api/select", `{"mode":"edges","indices":[0]}`);
+    auto j = postJson("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[0]}`));
     assert(j["status"].str == "ok");
 
     auto before = dumpVerts();

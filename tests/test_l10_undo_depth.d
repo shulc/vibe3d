@@ -47,6 +47,7 @@
 //
 // LANE: `./run_test.d` (lane S).
 import http_client : testBaseUrl, postRaw;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -207,43 +208,43 @@ unittest { // poly.unify — a duplicate face is the only operand it accepts
 
 unittest { // mesh.mergeFaces — two ADJACENT faces; a disjoint pair refuses
     undoRoundTrip("mesh.mergeFaces",
-        kCube ~ [Step("/api/select", `{"mode":"polygons","indices":[0,2]}`)],
+        kCube ~ [Step("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0,2]}`))],
         `{"id":"mesh.mergeFaces"}`);
 }
 
 unittest { // mesh.collapse, polygon mode
     undoRoundTrip("mesh.collapse/polygon",
-        kCube ~ [Step("/api/select", `{"mode":"polygons","indices":[0]}`)],
+        kCube ~ [Step("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`))],
         `{"id":"mesh.collapse"}`);
 }
 
 unittest { // mesh.collapse, edge mode — a different kernel behind one class
     undoRoundTrip("mesh.collapse/edge",
-        kCube ~ [Step("/api/select", `{"mode":"edges","indices":[0]}`)],
+        kCube ~ [Step("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[0]}`))],
         `{"id":"mesh.collapse"}`);
 }
 
 unittest { // mesh.collapse, vertex mode — the third kernel
     undoRoundTrip("mesh.collapse/vertex",
-        kCube ~ [Step("/api/select", `{"mode":"vertices","indices":[0,1]}`)],
+        kCube ~ [Step("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1]}`))],
         `{"id":"mesh.collapse"}`);
 }
 
 unittest { // vert.join — the collapse-then-weld member, with its policy
     undoRoundTrip("vert.join",
-        kCube ~ [Step("/api/select", `{"mode":"vertices","indices":[0,1]}`)],
+        kCube ~ [Step("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1]}`))],
         `{"id":"vert.join"}`);
 }
 
 unittest { // vert.merge — range:fixed so the pair is inside the weld radius
     undoRoundTrip("vert.merge",
-        kCube ~ [Step("/api/select", `{"mode":"vertices","indices":[0,1]}`)],
+        kCube ~ [Step("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1]}`))],
         `{"id":"vert.merge","params":{"range":"fixed","dist":10}}`);
 }
 
 unittest { // mesh.weldVertexPair — the same weld tail through the other door
     undoRoundTrip("mesh.weldVertexPair",
-        kCube ~ [Step("/api/select", `{"mode":"vertices","indices":[0]}`)],
+        kCube ~ [Step("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`))],
         `{"id":"mesh.weldVertexPair","params":{"source":1,"target":0}}`);
 }
 
@@ -257,7 +258,7 @@ unittest { // mesh.edgeJoin — a pentagon, dissolving its one 2-valent corner
         [Step("/api/reset?empty=true", ""),
          Step("/api/load-mesh", `{"vertices":[[0,0,0],[1,0,0],[2,0,0],[2,1,0],`
                               ~ `[0,1,0]],"faces":[[0,1,2,3,4]]}`),
-         Step("/api/select", `{"mode":"edges","indices":[0,1]}`)],
+         Step("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[0,1]}`))],
         `{"id":"mesh.edgeJoin"}`);
 }
 
@@ -276,13 +277,13 @@ unittest { // mesh.sweep — polygon mode, the arm that DELETES the profile face
         [Step("/api/reset?empty=true", ""),
          Step("/api/load-mesh", `{"vertices":[[1,0,0],[0,0,1],[-1,0,0],`
                               ~ `[0,0,-1]],"faces":[[0,1,2,3]]}`),
-         Step("/api/select", `{"mode":"polygons","indices":[0]}`)],
+         Step("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`))],
         `{"id":"mesh.sweep","count":6,"axis":"Y","angle":6.2831853}`);
 }
 
 unittest { // mesh.bridge — polygon mode, the arm that DELETES both cap faces
     // after the kernel. Same story as sweep, and the same stage moved it in.
     undoRoundTrip("mesh.bridge",
-        kCube ~ [Step("/api/select", `{"mode":"polygons","indices":[0,1]}`)],
+        kCube ~ [Step("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0,1]}`))],
         `{"id":"mesh.bridge"}`);
 }

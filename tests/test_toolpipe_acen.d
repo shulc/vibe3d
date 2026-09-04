@@ -10,6 +10,7 @@
 // - Unknown mode / sub-mode strings are rejected.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv  : to;
@@ -83,7 +84,7 @@ unittest { // Auto follows selection centroid
     resetCube();
     // Select face 0 (back face of default cube — verts 0,3,2,1 all
     // at z=-0.5; centroid sits at (0,0,-0.5)).
-    postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
     auto a = getAcenAttrs();
     assert(abs(floatAttr(a, "cenZ") - (-0.5f)) < 1e-3,
         "Auto+selection cenZ expected -0.5, got " ~ a["cenZ"]);
@@ -97,7 +98,7 @@ unittest { // Auto follows selection centroid
 
 unittest { // Origin mode
     resetCube();
-    postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
     postJson("/api/command", "tool.pipe.attr actionCenter mode origin");
     auto a = getAcenAttrs();
     assert(a["mode"] == "origin", "mode != origin: " ~ a["mode"]);
@@ -116,7 +117,7 @@ unittest { // Origin mode
 unittest { // selectSubMode top / bottom
     resetCube();
     // Select all 6 faces (whole cube — bbox = [-0.5..+0.5]^3).
-    postJson("/api/select", `{"mode":"polygons","indices":[0,1,2,3,4,5]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0,1,2,3,4,5]}`));
     postJson("/api/command", "tool.pipe.attr actionCenter mode select");
 
     postJson("/api/command",
@@ -160,7 +161,7 @@ unittest { // Manual ignores selection changes
     postJson("/api/command", "tool.pipe.attr actionCenter cenZ 5");
     // Now select a face that would shift Auto's centroid — Manual must
     // stay pinned.
-    postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
     auto a = getAcenAttrs();
     assert(abs(floatAttr(a, "cenX") - 5.0f) < 1e-6,
         "Manual cenX must not follow selection; got " ~ a["cenX"]);
@@ -216,7 +217,7 @@ unittest { // Screen mode resolves to a finite center
 unittest { // Element mode — single face → face centroid
     resetCube();
     // Default cube face 4 = [3, 7, 6, 2] with all y = 0.5 (top face).
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     postJson("/api/command", "tool.pipe.attr actionCenter mode element");
     auto a = getAcenAttrs();
     assert(a["mode"] == "element", "expected element, got " ~ a["mode"]);
@@ -234,7 +235,7 @@ unittest { // Element mode — single face → face centroid
 unittest { // Element mode — two faces → mean of centroids
     resetCube();
     // Face 4 = top (y=0.5), face 5 = bottom (y=-0.5). Mean y = 0.
-    postJson("/api/select", `{"mode":"polygons","indices":[4,5]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4,5]}`));
     postJson("/api/command", "tool.pipe.attr actionCenter mode element");
     auto a = getAcenAttrs();
     assert(abs(floatAttr(a, "cenY")) < 1e-3,
@@ -285,7 +286,7 @@ unittest { // Local — two disjoint face clusters
     resetCube();
     // Faces 4 (top, y=0.5) + 5 (bottom, y=-0.5) share no edge → 2
     // clusters.
-    postJson("/api/select", `{"mode":"polygons","indices":[4,5]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4,5]}`));
     postJson("/api/command", "tool.pipe.attr actionCenter mode local");
     auto a = getAcenAttrs();
     assert(a["mode"] == "local", "expected local, got " ~ a["mode"]);
@@ -296,7 +297,7 @@ unittest { // Local — two disjoint face clusters
 unittest { // Local — adjacent faces = single cluster
     resetCube();
     // Faces 0 (back) + 5 (bottom) share edge [0,1] → 1 cluster.
-    postJson("/api/select", `{"mode":"polygons","indices":[0,5]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0,5]}`));
     postJson("/api/command", "tool.pipe.attr actionCenter mode local");
     auto a = getAcenAttrs();
     assert(a["clusterCount"].to!int == 1,
@@ -312,7 +313,7 @@ unittest { // Local — adjacent faces = single cluster
 unittest { // SelectAuto — same center as Select; axis stage handles the
            // "auto axis" part separately.
     resetCube();
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     postJson("/api/command", "tool.pipe.attr actionCenter mode selectauto");
     auto a = getAcenAttrs();
     assert(a["mode"] == "selectauto", "got " ~ a["mode"]);
@@ -325,7 +326,7 @@ unittest { // Border — mode label set, currently degrades to centroid
            // (proper border-edges algorithm is a follow-up). Verify
            // it doesn't crash and emits a finite Vec3.
     resetCube();
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     postJson("/api/command", "tool.pipe.attr actionCenter mode border");
     auto a = getAcenAttrs();
     assert(a["mode"] == "border", "got " ~ a["mode"]);
@@ -339,7 +340,7 @@ unittest { // Element edges mode — edge midpoint as pivot.
     resetCube();
     // Edge 0 = [0,3] of cube — verts (-0.5,-0.5,-0.5) ↔ (-0.5, 0.5,-0.5).
     // Midpoint: (-0.5, 0, -0.5).
-    postJson("/api/select", `{"mode":"edges","indices":[0]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[0]}`));
     postJson("/api/command", "tool.pipe.attr actionCenter mode element");
     auto a = getAcenAttrs();
     assert(abs(floatAttr(a, "cenX") - (-0.5f)) < 1e-3, "cenX: " ~ a["cenX"]);
@@ -350,7 +351,7 @@ unittest { // Element edges mode — edge midpoint as pivot.
 unittest { // Element vertices mode — vertex coord as pivot.
     resetCube();
     // Vert 6 = (0.5, 0.5, 0.5).
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     postJson("/api/command", "tool.pipe.attr actionCenter mode element");
     auto a = getAcenAttrs();
     assert(abs(floatAttr(a, "cenX") - 0.5f) < 1e-3, "cenX: " ~ a["cenX"]);
@@ -364,7 +365,7 @@ unittest { // Local edges mode — two disjoint edges (no shared vert)
     // Pick two edges with no shared vertex. Edge 0 = [0,3];
     // Edge 4 = [4,5] (verts (-0.5,-0.5,0.5)↔(0.5,-0.5,0.5)). No shared
     // vert between {0,3} and {4,5}.
-    postJson("/api/select", `{"mode":"edges","indices":[0,4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[0,4]}`));
     postJson("/api/command", "tool.pipe.attr actionCenter mode local");
     auto a = getAcenAttrs();
     assert(a["clusterCount"].to!int == 2,
@@ -375,7 +376,7 @@ unittest { // Local vertices mode — two non-adjacent verts → 2 clusters.
     resetCube();
     // Vert 0 and vert 6 are diagonal corners of the cube; no shared
     // edge → 2 clusters.
-    postJson("/api/select", `{"mode":"vertices","indices":[0,6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,6]}`));
     postJson("/api/command", "tool.pipe.attr actionCenter mode local");
     auto a = getAcenAttrs();
     assert(a["clusterCount"].to!int == 2,
@@ -384,7 +385,7 @@ unittest { // Local vertices mode — two non-adjacent verts → 2 clusters.
 
 unittest { // Local — empty selection → 0 clusters, centroid fallback.
     resetCube();
-    postJson("/api/select", `{"mode":"polygons","indices":[]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[]}`));
     postJson("/api/command", "tool.pipe.attr actionCenter mode local");
     auto a = getAcenAttrs();
     assert(a["clusterCount"].to!int == 0,

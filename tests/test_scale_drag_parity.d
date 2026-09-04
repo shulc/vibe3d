@@ -16,6 +16,7 @@
 // (post.x / pre.x) is unambiguous.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math   : fabs, sqrt;
@@ -61,8 +62,7 @@ void lockCamera() {
 void setupScene() {
     postJson("/api/reset", "");
     lockCamera();
-    auto sel = postJson("/api/select",
-        `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(sel["status"].str == "ok", "select failed: " ~ sel.toString);
     cmd("tool.set xfrm.transform on");
     cmd("tool.attr xfrm.transform T false");

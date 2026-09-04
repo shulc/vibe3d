@@ -57,6 +57,7 @@
 // Run via: ./run_test.d test_bus_symmetry_pairing_after_drag
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -174,7 +175,7 @@ void assertPairingFollowed(string arm) {
 unittest {
     armAndBuildPairing();
 
-    auto selR = postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    auto selR = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     assert(selR["status"].str == "ok", "select failed: " ~ selR.toString);
 
     // Symmetry OFF for the displacement — see the header. With it on, the
@@ -203,7 +204,7 @@ unittest {
 unittest {
     armAndBuildPairing();
 
-    auto selR = postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    auto selR = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     assert(selR["status"].str == "ok", "select failed: " ~ selR.toString);
 
     cmd("tool.pipe.attr symmetry enabled false");

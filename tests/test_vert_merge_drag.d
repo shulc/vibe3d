@@ -38,6 +38,7 @@
 // — dragging UP (screen y decreasing) increases the merge distance.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.json;
@@ -85,7 +86,7 @@ unittest { // an upward haul at a framing where `dist` can actually reach a neig
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     cmd("history.clear");
 
-    r = postJson("/api/select", `{"mode":"vertices","indices":[0,1,2,3]}`);
+    r = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3]}`));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 
     // DISTANCE 40, AND THAT NUMBER IS THE FIX. See the header: the same haul on

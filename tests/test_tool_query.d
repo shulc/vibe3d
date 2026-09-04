@@ -14,6 +14,7 @@
 // All driven over HTTP via /api/command, mirroring test_reevaluate's idioms.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -68,7 +69,7 @@ void selectVerts(int[] idx) {
     string s = "[";
     foreach (i, v; idx) { if (i) s ~= ","; s ~= v.to!string; }
     s ~= "]";
-    auto r = postJson("/api/select", `{"mode":"vertices","indices":` ~ s ~ `}`);
+    auto r = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":` ~ s ~ `}`));
     assert(r["status"].str == "ok", "/api/select failed: " ~ r.toString);
 }
 

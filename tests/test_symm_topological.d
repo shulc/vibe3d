@@ -27,6 +27,7 @@
 // The shared HTTP client resolves the port assigned by run_test.d.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -68,7 +69,7 @@ void selectVertices(int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = postJson("/api/select", `{"mode":"vertices","indices":` ~ idxJson ~ `}`);
+    auto resp = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":` ~ idxJson ~ `}`));
     assert(resp["status"].str == "ok", "select failed: " ~ resp.toString);
 }
 JSONValue translate(double dx, double dy, double dz) {

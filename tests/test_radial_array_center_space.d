@@ -66,6 +66,7 @@
 // reason that IS about the geometry, and says so in place.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl : get, post;
 import std.json;
 import std.math   : fabs, sqrt, sin, cos, PI;
@@ -245,7 +246,7 @@ void buildStandFull(bool transformed, double sclY, double az, double el) {
     assert("status" !in cr || cr["status"].str != "error",
            "camera set failed: " ~ cr.toString());
 
-    postJson("/api/select", format(`{"mode":"polygons","indices":[%d]}`, TOP_FACE));
+    postJson("/api/command", commandBody("mesh.select", format(`{"mode":"polygons","indices":[%d]}`, TOP_FACE)));
     settle();
 }
 

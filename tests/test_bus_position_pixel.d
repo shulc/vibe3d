@@ -119,6 +119,7 @@
 // two shades of background.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -288,8 +289,7 @@ void selectAllVertices() {
     string idx = "[";
     foreach (i; 0 .. n) { if (i) idx ~= ","; idx ~= i.to!string; }
     idx ~= "]";
-    auto r = postJson("/api/select",
-                      `{"mode":"vertices","indices":` ~ idx ~ `}`);
+    auto r = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":` ~ idx ~ `}`));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
     settle();
 }

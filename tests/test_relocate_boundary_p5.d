@@ -45,6 +45,7 @@
 // stack BEFORE the reset (/api/reset is itself undoable).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -206,7 +207,7 @@ string ctrlZ(double t) {
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     postJson("/api/script", "tool.set move");
     // actr.select: relocate-DISALLOWED. An off-gizmo click is inert for the
     // pivot but MUST commit the run under Phase 5.
@@ -306,7 +307,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     postJson("/api/script", "tool.set move");
     postJson("/api/script", "actr.select");
     settle();
@@ -369,7 +370,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     postJson("/api/script", "tool.set move");
     postJson("/api/script", "actr.select");
     settle();
@@ -434,7 +435,7 @@ enum int ZFACE_Y = 343;
 
 unittest {
     establishCubeBaseline();
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     postJson("/api/script", "tool.set xfrm.elementMove on");
     postJson("/api/command", "tool.pipe.attr falloff dist 4");
     settle();

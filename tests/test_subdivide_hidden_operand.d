@@ -51,6 +51,7 @@
 // rather than "= -0.5" because the smooth mode relaxes it to -5/12.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -99,7 +100,7 @@ string sIdx(const int[] v) {
 void selectPolys(const int[] idx) {
     string b = `{"mode":"polygons","indices":[`;
     foreach (i, x; idx) { if (i) b ~= ","; b ~= x.to!string; }
-    postOk("/api/select", b ~ "]}");
+    postOk("/api/command", commandBody("mesh.select", b ~ "]}"));
 }
 
 size_t selectedFaceCount() {
@@ -237,7 +238,7 @@ unittest {
     // operable again.
     {
         cubeWithOneHiddenFace();
-        postOk("/api/select", `{"mode":"vertices","indices":[]}`);
+        postOk("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
         assert(getJson("/api/selection")["mode"].str == "vertices",
             "this row must run with Vertices as the edit mode");
         cmd(`{"id":"mesh.subdivide"}`);

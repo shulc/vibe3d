@@ -61,6 +61,7 @@
 //
 // LANE: `./run_test.d --no-build test_tool_gesture_g1`.
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.algorithm : sort, canFind, startsWith;
 import std.array     : appender, array;
 import std.conv      : to;
@@ -899,8 +900,7 @@ unittest {
         "Plain", "MeshSessionEdit+delta",
         {
             resetCube();
-            auto r = postJ("/api/select",
-                `{"mode":"edges","indices":[` ~ findEdgeXPosZNeg().to!string ~ `]}`);
+            auto r = postJ("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[` ~ findEdgeXPosZNeg().to!string ~ `]}`));
             assert(r["status"].str == "ok", "edge select failed: " ~ r.toString);
             cmd("history.clear");
             setOrbitCamera();
@@ -944,8 +944,7 @@ unittest {
         "Plain", "MeshSessionEdit+delta",
         {
             resetCube();
-            auto r = postJ("/api/select",
-                `{"mode":"edges","indices":[` ~ findEdgeXPosZNeg().to!string ~ `]}`);
+            auto r = postJ("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[` ~ findEdgeXPosZNeg().to!string ~ `]}`));
             assert(r["status"].str == "ok", "edge select failed: " ~ r.toString);
             cmd("history.clear");
             setOrbitCamera();

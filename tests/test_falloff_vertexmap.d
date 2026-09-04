@@ -6,6 +6,7 @@
 //   3. Smoke lifecycle: create/rename/set/remove + falloff attr round-trip.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv      : to;
@@ -46,8 +47,7 @@ double[3][] dumpVerts() {
 void selectAllVerts(int n) {
     string indices = iota(n).map!(i => i.to!string).join(",");
     auto j = parseJSON(cast(string)
-        post(baseUrl ~ "/api/select",
-             `{"mode":"vertices","indices":[` ~ indices ~ `]}`));
+        post(baseUrl ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[` ~ indices ~ `]}`)));
     assert(j["status"].str == "ok", "select-all-verts failed: " ~ j.toString);
 }
 

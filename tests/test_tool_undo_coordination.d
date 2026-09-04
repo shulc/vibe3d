@@ -30,6 +30,7 @@
 // (test_edge_extrude_tool, test_tool_move_drag, test_primitive_box, ...).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.string : format;
@@ -153,7 +154,7 @@ unittest {
         if ((p == va && q == vb) || (p == vb && q == va)) { ei = cast(int)i; break; }
     }
     assert(ei >= 0, "cube top-front edge not found");
-    postJson("/api/select", `{"mode":"edges","indices":[` ~ ei.to!string ~ `]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[` ~ ei.to!string ~ `]}`));
     postJson("/api/command",
         `{"id":"mesh.edge_extrude","params":{"extrude":0.2,"width":0.1}}`);
 
@@ -245,7 +246,7 @@ unittest {
         if ((p == va && q == vb) || (p == vb && q == va)) { ei = cast(int)i; break; }
     }
     assert(ei >= 0, "cube top-front edge not found");
-    postJson("/api/select", `{"mode":"edges","indices":[` ~ ei.to!string ~ `]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[` ~ ei.to!string ~ `]}`));
     postJson("/api/command",
         `{"id":"mesh.edge_extrude","params":{"extrude":0.2,"width":0.1}}`);
 
@@ -317,7 +318,7 @@ unittest {
         if ((p == va && q == vb) || (p == vb && q == va)) { ei = cast(int)i; break; }
     }
     assert(ei >= 0, "cube top-front edge not found");
-    postJson("/api/select", `{"mode":"edges","indices":[` ~ ei.to!string ~ `]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[` ~ ei.to!string ~ `]}`));
     postJson("/api/command",
         `{"id":"mesh.edge_extrude","params":{"extrude":0.2,"width":0.1}}`);
     size_t undoAfterEdit = undoLen();
@@ -376,7 +377,7 @@ unittest {
         }
     }
     assert(v6 >= 0, "cube +++ corner not found");
-    postJson("/api/select", `{"mode":"vertices","indices":[` ~ v6.to!string ~ `]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[` ~ v6.to!string ~ `]}`));
 
     cmd("tool.set move");
 
@@ -450,7 +451,7 @@ unittest {
         }
     }
     assert(v6 >= 0, "cube +++ corner not found");
-    postJson("/api/select", `{"mode":"vertices","indices":[` ~ v6.to!string ~ `]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[` ~ v6.to!string ~ `]}`));
 
     cmd("tool.set move");
     // Auto mode allows click-away relocate (Select/Element/Local refuse it).

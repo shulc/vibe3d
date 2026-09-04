@@ -114,6 +114,7 @@
 //      was only ever visible in the overlay, which no headless test can see.
 //
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -208,7 +209,7 @@ void buildStand(JSONValue kase) {
     string idx = "";
     foreach (i; 0 .. fx["stand"]["vertices"].array.length)
         idx ~= (i ? "," : "") ~ i.to!string;
-    postJson("/api/select", format(`{"mode":"vertices","indices":[%s]}`, idx));
+    postJson("/api/command", commandBody("mesh.select", format(`{"mode":"vertices","indices":[%s]}`, idx)));
 }
 
 double[][] modelVertices() {

@@ -15,6 +15,7 @@
 // three-step) DO catch the accumulation bug directly.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -71,7 +72,7 @@ void handleScreen(int part, out int x, out int y) {
 }
 
 void selectFaceZero() {
-    auto sel = parseJSON(cast(string)post(BASE ~ "/api/select", `{"mode":"polygons","indices":[0]}`));
+    auto sel = parseJSON(cast(string)post(BASE ~ "/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`)));
     assert(sel["status"].str == "ok", "face select failed");
 }
 

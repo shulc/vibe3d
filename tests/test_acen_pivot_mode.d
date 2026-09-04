@@ -7,6 +7,7 @@
 // - Null-primary fallback → (0,0,0) / identity basis.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv  : to;
@@ -147,7 +148,7 @@ unittest { // symmetry ON + both-sides selection does NOT clobber Pivot center
     cmd("tool.pipe.attr symmetry enabled true");
     cmd("tool.pipe.attr symmetry axis x");
     // select all 8 cube vertices — spans both sides of the x=0 plane
-    post(baseUrl ~ "/api/select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    post(baseUrl ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     cmd("tool.pipe.attr actionCenter mode pivot");
     auto a = getAcenAttrs();
     assert(a["mode"] == "pivot", "expected mode=pivot, got " ~ a["mode"]);

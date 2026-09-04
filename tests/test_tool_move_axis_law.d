@@ -59,6 +59,7 @@
 // formula, and (5) is a relation between two of our own drags.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math   : fabs, sqrt, tan, PI;
@@ -92,7 +93,7 @@ void setupAxisDrag(string acen, string rounding = "fine", double dist = 0) {
              format(`{"azimuth":0.5,"elevation":0.4,"distance":%.6f}`, dist));
         Thread.sleep(120.msecs);
     }
-    auto sel = post(BASE ~ "/api/select", `{"mode":"vertices","indices":[6]}`);
+    auto sel = post(BASE ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     assert(parseJSON(cast(string)sel)["status"].str == "ok",
            "select failed: " ~ cast(string)sel);
     auto set = post(BASE ~ "/api/script", "tool.set move");

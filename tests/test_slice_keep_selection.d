@@ -20,6 +20,7 @@
 // stay selected: 2 selected in -> 4 selected out.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.format : format;
@@ -44,8 +45,7 @@ void selectPolygons(int[] indices) {
     string idxJson = "[";
     foreach (k, v; indices) { if (k) idxJson ~= ","; idxJson ~= format("%d", v); }
     idxJson ~= "]";
-    auto resp = cast(string) post(BASE ~ "/api/select",
-        format(`{"mode":"polygons","indices":%s}`, idxJson));
+    auto resp = cast(string) post(BASE ~ "/api/command", commandBody("mesh.select", format(`{"mode":"polygons","indices":%s}`, idxJson)));
     assert(parseJSON(resp)["status"].str == "ok", "/api/select failed: " ~ resp);
 }
 

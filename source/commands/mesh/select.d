@@ -15,7 +15,8 @@ import symmetry_pick     : captureLiveSymmetry;
 
 /// Replace the current selection with the given indices in the given mode.
 /// Switches editMode to match (vertices/edges/polygons). Used to be a direct
-/// HTTP handler in app.d (setSelectionHandler); now a Command so undo/redo
+/// Generic HTTP command dispatch and interactive selection share this command,
+/// so undo/redo
 /// covers selection changes uniformly with the rest of the system.
 class MeshSelect : Command {
     private EditMode*         editModePtr;       // app.d's editMode (writable)

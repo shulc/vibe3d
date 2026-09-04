@@ -25,6 +25,7 @@
 //     component in their screen plane), world Y WOULD change → the assert fails.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -75,8 +76,7 @@ unittest {
            "cell0 (Top) focus must be world origin for the centre-grab to land");
 
     // ---- 3. Select the whole cube + activate the move tool. ----
-    auto selResp = parseJSON(cast(string)post(testBaseUrl() ~ "/api/select",
-                             `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
+    auto selResp = parseJSON(cast(string)post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`)));
     assert(selResp["status"].str == "ok", "select failed: " ~ selResp.toString);
     auto setResp = parseJSON(cast(string)post(testBaseUrl() ~ "/api/script", "tool.set move"));
     assert(setResp["status"].str == "ok", "tool.set move failed: " ~ setResp.toString);

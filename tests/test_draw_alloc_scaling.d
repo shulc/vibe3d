@@ -65,6 +65,7 @@
 //   * `/api/selection`'s own report of the selection type, asserted to be the
 //     one that was asked for.
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.exception : enforce;
@@ -216,8 +217,7 @@ void resetGrid(int n) {
 }
 
 void selectAs(string mode, string indices) {
-    auto r = parseJSON(httpPost("/api/select",
-        `{"mode":"` ~ mode ~ `","indices":` ~ indices ~ `}`));
+    auto r = parseJSON(httpPost("/api/command", commandBody("mesh.select", `{"mode":"` ~ mode ~ `","indices":` ~ indices ~ `}`)));
     enforce("status" in r && r["status"].str == "ok",
             "/api/select " ~ mode ~ " failed: " ~ r.toString);
 }

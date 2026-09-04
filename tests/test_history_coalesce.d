@@ -1,5 +1,7 @@
 module test_history_coalesce;
 
+
+import http_command_helpers : commandBody;
 // Phase 2 of the undo/redo migration — op coalescing.
 //
 // Consecutive COMPATIBLE programmatic edits (same command type, same index
@@ -163,7 +165,7 @@ unittest {
     assert(r1["status"].str == "ok", r1.toString());
 
     // Intervening selection edit lands its own entry on top.
-    auto s = postJson("/api/select", `{"mode":"vertices","indices":[0,1]}`);
+    auto s = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1]}`));
     // /api/select returns {"status":"ok"} on success.
     assert(s["status"].str == "ok", "select: " ~ s.toString());
 

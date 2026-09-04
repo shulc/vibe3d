@@ -100,6 +100,7 @@
 //
 // LANE: `./run_test.d --no-build test_tool_gesture_g4`.
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.algorithm : sort, canFind, startsWith, endsWith;
 import std.array     : appender, array;
 import std.conv      : to;
@@ -675,8 +676,7 @@ void setCamera(double az, double el, double dist,
 void setOrbitCamera(double dist = 4.0) { setCamera(0.4, 1.1, dist); }
 
 void selectMode(string mode, int[] idx) {
-    auto r = postJ("/api/select",
-        format(`{"mode":"%s","indices":%s}`, mode, idx.to!string));
+    auto r = postJ("/api/command", commandBody("mesh.select", format(`{"mode":"%s","indices":%s}`, mode, idx.to!string)));
     assert(r["status"].str == "ok",
         "select " ~ mode ~ " " ~ idx.to!string ~ " failed: " ~ r.toString);
 }

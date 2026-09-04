@@ -22,7 +22,9 @@
 // retry is keyed on the geometry MOVE (a missed grab leaves v6 unmoved -> retry).
 module test_tool_activation_undo;
 
+
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, PI, sin, cos;
@@ -95,7 +97,7 @@ void establishCubeBaseline() {
 }
 
 void selectV6() {
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     settle();
     auto s = getJson("/api/selection");
     assert(s["mode"].str == "vertices"

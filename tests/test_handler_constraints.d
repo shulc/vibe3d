@@ -18,6 +18,7 @@
 //      reworking ACEN.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -35,8 +36,7 @@ enum uint MOD_CTRL = 0x00C0;
 
 void resetCubeSelectAllMove() {
     post(testBaseUrl() ~ "/api/reset", "");
-    auto selResp = post(testBaseUrl() ~ "/api/select",
-                        `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    auto selResp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",
         "select failed: " ~ cast(string)selResp);
     auto setResp = post(testBaseUrl() ~ "/api/script", "tool.set move");

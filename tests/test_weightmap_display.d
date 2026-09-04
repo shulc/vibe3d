@@ -37,7 +37,9 @@
 // Flow H  — the clamp is on the blend factor, not on the output.
 module test_weightmap_display;
 
+
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.stdio     : writeln, writefln;
 import std.net.curl  : HTTP;
 import std.json      : parseJSON, JSONValue, JSONType;
@@ -827,7 +829,7 @@ bool testFlowE() {
         "the cage must show the w = 1.0 colour before the preview is turned "
         ~ "on, or this flow cannot attribute what it sees afterwards");
 
-    httpPost("/api/select", `{"mode":"polygons","indices":[0,1,2,3,4,5]}`);
+    httpPost("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0,1,2,3,4,5]}`));
     settle();
     postCommand("mesh.subpatch_toggle");
     // AND DROP THE SELECTION AGAIN before probing. The toggle needs a polygon
@@ -836,7 +838,7 @@ bool testFlowE() {
     // sample shares one x-parity — that reads as half the samples, not a
     // quarter. Leaving it selected made this flow fail on the OVERLAY while
     // reporting it as a weight-colour fault. The overlay is Flow G's subject.
-    httpPost("/api/select", `{"mode":"polygons","indices":[]}`);
+    httpPost("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[]}`));
     settle();
 
     // RE-LOCATE the fill against the PREVIEW, rather than reusing the cage's
@@ -925,11 +927,11 @@ bool testFlowF() {
     // about five-fold, which is the direction that turns a stale attribute
     // pointer into an out-of-range fetch.
     immutable size_t vBefore = model()["vertices"].array.length;
-    httpPost("/api/select", `{"mode":"polygons","indices":[0,1,2,3,4,5]}`);
+    httpPost("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0,1,2,3,4,5]}`));
     settle();
     postCommand("mesh.poly_inset");
     settle();
-    httpPost("/api/select", `{"mode":"polygons","indices":[]}`);
+    httpPost("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[]}`));
     settle();
     immutable size_t vAfter = model()["vertices"].array.length;
     enforce(vAfter > vBefore, format(
@@ -1022,7 +1024,7 @@ bool testFlowG() {
     writefln("    G1 PASS: an 8x4 all-weight block at (%d,%d)", bx, by);
 
     // --- selection: exactly a quarter of the block, ONE colour where it covers ---
-    httpPost("/api/select", `{"mode":"polygons","indices":[0,1,2,3,4,5]}`);
+    httpPost("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0,1,2,3,4,5]}`));
     settle();
 
     // THE PREMISE THE OVERLAY ASSERTIONS BELOW REST ON (task 1862), asserted

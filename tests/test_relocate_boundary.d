@@ -36,6 +36,7 @@
 // navHistory on the background HTTP thread).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -185,7 +186,7 @@ string ctrlZ(double t) {
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     postJson("/api/script", "tool.set move");   // default ACEN mode = None (relocate-permitted)
     long stackBefore = undoCount();
 
@@ -278,7 +279,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     postJson("/api/script", "tool.set move");
     long stackBefore = undoCount();
 
@@ -407,7 +408,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     establishCubeBaseline();
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     // Do NOT drain the select's UI-undo entry: undoing a select restores the
     // PREVIOUS selection — on a shared per-worker instance that's whatever a
     // preceding test left (e.g. an edge selection), silently retargeting every

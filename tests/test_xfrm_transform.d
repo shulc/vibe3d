@@ -5,6 +5,7 @@
 // any handler bank to its matching sub-tool.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -73,7 +74,7 @@ unittest { // tool.set xfrm.transform activates without error; attrs
     // with no mutation. The /api/model below verifies the cube is
     // untouched in that case.
     cmd("select.typeFrom vertex");
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     cmd("tool.doApply");
     auto verts = dumpVerts();
     // v6 = (+0.5, +0.5, +0.5) translated by TX=0.25 → x=0.75.
@@ -88,7 +89,7 @@ unittest { // T flag off skips the translate step even with TX set.
     cmd("tool.set xfrm.transform on");
     cmd("tool.attr xfrm.transform T false");
     cmd("tool.attr xfrm.transform TX 0.5");
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     cmd("tool.doApply");
     auto verts = dumpVerts();
     assert(approxEq(verts[6][0], 0.5, 1e-4),
@@ -104,7 +105,7 @@ unittest { // Pure RY=90° around ACEN.Auto pivot (= selection bbox
     cmd("tool.attr xfrm.transform T false");
     cmd("tool.attr xfrm.transform S false");
     cmd("tool.attr xfrm.transform RY 90");
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     cmd("tool.doApply");
     auto verts = dumpVerts();
     foreach (c; 0 .. 3)
@@ -125,7 +126,7 @@ unittest { // SY=2 with multi-vertex selection. ACEN.Auto pivot is the
     cmd("tool.attr xfrm.transform T false");
     cmd("tool.attr xfrm.transform R false");
     cmd("tool.attr xfrm.transform SY 2.0");
-    postJson("/api/select", `{"mode":"vertices","indices":[2,6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[2,6]}`));
     cmd("tool.doApply");
     auto verts = dumpVerts();
     foreach (vi; [2, 6]) {
@@ -141,7 +142,7 @@ unittest { // TransformMove preset flips T=1 / R=0 / S=0 on the base
            // and a non-zero RY/SX confirms only translate fired (no
            // rotation / scale leak through disabled flags).
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     cmd("tool.set TransformMove on");
     cmd("tool.attr TransformMove TX 0.25");
     cmd("tool.attr TransformMove RY 90");   // ignored — R is off
@@ -160,7 +161,7 @@ unittest { // TransformMove preset flips T=1 / R=0 / S=0 on the base
 unittest { // TransformScale preset: T=0/R=0/S=1. Pure SY=2 around
            // the bbox-centre of multi-vertex selection.
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"vertices","indices":[0,1,4,5]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,4,5]}`));
     cmd("tool.set TransformScale on");
     cmd("tool.attr TransformScale TX 100");   // ignored — T off
     cmd("tool.attr TransformScale SY 2.0");
@@ -240,7 +241,7 @@ unittest { // Interactive: T=1 only, click+drag the X-arrow with v6
            // does on its own. Mirrors test_tool_move_drag.d but via
            // xfrm.transform.
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     cmd("tool.set xfrm.transform on");
     cmd("tool.attr xfrm.transform R false");
     cmd("tool.attr xfrm.transform S false");
@@ -282,7 +283,7 @@ unittest { // Interactive: T=1 only, click+drag the X-arrow with v6
 unittest { // Bare Transform: rotate ring dispatches to Rotate, not Move.
     postJson("/api/reset", "");
     int topFace = findTopFace();
-    postJson("/api/select", `{"mode":"polygons","indices":[` ~ topFace.to!string ~ `]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[` ~ topFace.to!string ~ `]}`));
     cmd("tool.set Transform on");
 
     int[] topVerts;
@@ -337,7 +338,7 @@ unittest { // Bare Transform: rotate ring dispatches to Rotate, not Move.
 
 unittest { // Bare Transform: scale axis head dispatches to Scale, not Move.
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     cmd("tool.set Transform on");
 
     double[3][8] pre;
@@ -383,7 +384,7 @@ unittest { // Bare Transform: scale axis head dispatches to Scale, not Move.
 
 unittest { // Bare Transform: rotate then move must not re-apply the rotation.
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"vertices","indices":[0,1,2]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2]}`));
     cmd("tool.set Transform off");
     cmd("tool.set Transform on");
     cmd("tool.pipe.attr actionCenter mode auto");
@@ -454,7 +455,7 @@ unittest { // T→R→S chain order: TX=0.5 first translates v6 to
     cmd("tool.set xfrm.transform on");
     cmd("tool.attr xfrm.transform TX 0.5");
     cmd("tool.attr xfrm.transform RY 90");
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     cmd("tool.doApply");
     auto verts = dumpVerts();
     // Pivot = v6's ORIGINAL position = (0.5, 0.5, 0.5). After TX=0.5:

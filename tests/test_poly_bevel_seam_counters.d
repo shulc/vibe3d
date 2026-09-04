@@ -45,6 +45,7 @@
 // vacuous.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -77,11 +78,11 @@ long vertCount(JSONValue m) { return m["vertexCount"].integer; }
 long faceCount(JSONValue m) { return m["faceCount"].integer; }
 
 void selectFaceZero() {
-    auto r = postTo("/api/select", `{"mode":"polygons","indices":[0]}`);
+    auto r = postTo("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
     assert(r["status"].str == "ok", "face select failed: " ~ r.toString);
 }
 void selectEdgeZero() {
-    auto r = postTo("/api/select", `{"mode":"edges","indices":[0]}`);
+    auto r = postTo("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[0]}`));
     assert(r["status"].str == "ok", "edge select failed: " ~ r.toString);
 }
 
@@ -563,7 +564,7 @@ unittest {   // the Poly INSET tool's drag — the plain restore-and-rerun shape
     enum int kFrames = 12;
     auto rr = postTo("/api/reset", "");
     assert(rr["status"].str == "ok", "reset failed: " ~ rr.toString);
-    auto sel = postTo("/api/select", `{"mode":"polygons","indices":[4]}`);
+    auto sel = postTo("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     assert(sel["status"].str == "ok", "face select failed: " ~ sel.toString);
     cmd("tool.set mesh.polyInsetTool on");
     settle();

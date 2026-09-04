@@ -36,6 +36,7 @@
 // the real wrapper mouse-up, not a synthetic attr write.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math   : fabs, sqrt;
@@ -107,13 +108,13 @@ void establishCubeBaseline() {
         Thread.sleep(120.msecs);
         drainHistory();
         postJson("/api/reset", "");
-        postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+        postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
         clearHistory();
         if (cubePristine() && selectionPristine()) return;
         Thread.sleep(20.msecs);
     }
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     clearHistory();
     assert(cubePristine() && selectionPristine(),
         "could not establish pristine cube baseline");
@@ -160,8 +161,7 @@ string ctrlShiftZ(double t) {
 // then drag the Y arrow up by `px` window pixels and wait for the settle.
 // Returns the settled pivot Y after mouse-up.
 double dragYArrowAllVerts(int px) {
-    auto selResp = postJson("/api/select",
-                            `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    auto selResp = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(selResp["status"].str == "ok", "select-all failed");
 
     auto cam = fetchCamera();
@@ -188,8 +188,7 @@ double dragYArrowAllVerts(int px) {
 }
 
 Vec3 dragViewRingAllVerts(int px) {
-    auto selResp = postJson("/api/select",
-                            `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    auto selResp = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(selResp["status"].str == "ok", "select-all failed");
 
     auto cam = fetchCamera();
@@ -371,7 +370,7 @@ unittest {
     // Select ONLY the top face's verts (v2,v3,v6,v7 — the y=+something corners
     // after the drag). The soft pin must be CLEARED so the center recomputes to
     // THIS selection's centroid, NOT the prior whole-mesh settle.
-    postJson("/api/select", `{"mode":"vertices","indices":[4]}`);  // single vert
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[4]}`));  // single vert
     settle();
     Vec3 piv = evalPivot();
     // The new selection is one vertex; the recomputed center sits AT that vert,

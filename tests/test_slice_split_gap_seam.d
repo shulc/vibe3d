@@ -36,6 +36,7 @@
 // geometry would not notice the feed going away.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -105,7 +106,7 @@ double[] distinctX() {
 void loadCube() {
     auto r = postAt("/api/reset", "");
     assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
-    auto s = postAt("/api/select", `{"mode":"vertices","indices":[]}`);
+    auto s = postAt("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     assert(s["status"].str == "ok", "/api/select failed: " ~ s.toString);
 }
 
@@ -140,8 +141,7 @@ unittest { // a RESTRICTED split+gap publishes the seam write: Position, once
              ~ "command would refuse, making every counter assertion vacuous",
                cross.length));
 
-    auto sel = postAt("/api/select",
-        format(`{"mode":"polygons","indices":[%d,%d]}`, cross[0], cross[1]));
+    auto sel = postAt("/api/command", commandBody("mesh.select", format(`{"mode":"polygons","indices":[%d,%d]}`, cross[0], cross[1])));
     assert(sel["status"].str == "ok", "/api/select polygons failed: " ~ sel.toString);
 
     armSplitGap(0.2);

@@ -14,6 +14,7 @@
 // selection resolution. This test pins it.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -79,8 +80,7 @@ unittest { // /api/model emits in-range edges + faces; both stable under a move
     // --- topology BYTE-STABLE across a vertex move ---------------------------
     // Select a vertex and translate it. The vertices change; the edge/face
     // index arrays must be byte-identical (toString comparison).
-    auto sel = post(testBaseUrl() ~ "/api/select",
-        `{"mode":"vertices","indices":[0]}`);
+    auto sel = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
     assert(parseJSON(sel)["status"].str == "ok", "/api/select failed: " ~ sel);
 
     auto xf = post(testBaseUrl() ~ "/api/transform",

@@ -72,7 +72,8 @@ bool selectVertices(int[] indices) {
     }
     a.put("]}");
     try {
-        auto resp = post(g_baseUrl ~ "/api/select", a.data);
+        auto resp = post(g_baseUrl ~ "/api/command",
+            `{"id":"mesh.select","params":` ~ a.data ~ `}`);
         auto j = parseJSON(cast(string)resp);
         return ("status" in j) && j["status"].str == "ok";
     } catch (Exception) {
@@ -80,7 +81,7 @@ bool selectVertices(int[] indices) {
     }
 }
 
-// Mode-aware selection. POST /api/select {"mode":mode,"indices":[...]}.
+// Mode-aware selection through mesh.select's generic command envelope.
 // `mesh.select` sets the app's editMode to match `mode` as a side effect,
 // and an empty `indices` clears the selection (⇒ "whole mesh"). Returns
 // true on {"status":"ok"}.
@@ -95,7 +96,8 @@ bool selectMode(string mode, int[] indices) {
     }
     a.put("]}");
     try {
-        auto resp = post(g_baseUrl ~ "/api/select", a.data);
+        auto resp = post(g_baseUrl ~ "/api/command",
+            `{"id":"mesh.select","params":` ~ a.data ~ `}`);
         auto j = parseJSON(cast(string)resp);
         return ("status" in j) && j["status"].str == "ok";
     } catch (Exception) {

@@ -4,6 +4,7 @@
 // whatever the moving cursor passed over.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -30,7 +31,7 @@ unittest {
     // not in the moving set and v0 is far outside v6's sphere → nothing moves).
     // That way the cursor genuinely DIVERGES from v6 — if the per-frame pick
     // weren't frozen it would re-hover whatever is under the moving cursor.
-    pj("/api/select", `{"mode":"vertices","indices":[0]}`);
+    pj("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
     pj("/api/script","tool.set xfrm.elementMove on");
     pj("/api/command","tool.pipe.attr falloff dist 0.2");
     pj("/api/command","tool.pipe.attr falloff mode vertex");

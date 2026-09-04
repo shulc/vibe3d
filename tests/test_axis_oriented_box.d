@@ -35,6 +35,7 @@
 // rather than a reference answer.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -82,7 +83,7 @@ string show(Vec3 v) { return format("(%.5f, %.5f, %.5f)", v.x, v.y, v.z); }
 Frame frameFor(string sel, string mesh = null, string actr = "select") {
     ok(post(BASE ~ "/api/reset", ""), "reset");
     if (mesh !is null) ok(post(BASE ~ "/api/load-mesh", mesh), "load-mesh");
-    ok(post(BASE ~ "/api/select", sel), "select");
+    ok(post(BASE ~ "/api/command", commandBody("mesh.select", sel)), "select");
     ok(post(BASE ~ "/api/script", "actr." ~ actr), "actr." ~ actr);
     auto ev = parseJSON(cast(string)get(BASE ~ "/api/toolpipe/eval"));
     Vec3 rd(string slot) {

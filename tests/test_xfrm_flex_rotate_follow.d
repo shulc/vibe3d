@@ -22,6 +22,7 @@
 // vectors via the /api/toolpipe/eval rendered-pose seam.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, tan, PI;
@@ -126,7 +127,7 @@ void selectUpperRegion() {
     string selStr = "[";
     foreach (i, s; sel) selStr ~= (i ? "," : "") ~ s.to!string;
     selStr ~= "]";
-    postJson("/api/select", `{"mode":"polygons","indices":` ~ selStr ~ `}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":` ~ selStr ~ `}`));
 }
 
 // Drive one chunked view-ring rotate at the CURRENT gizmo pivot. Returns the

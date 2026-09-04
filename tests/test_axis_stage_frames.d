@@ -67,6 +67,7 @@
 // asserted in `test_axis_oriented_box.d` and nowhere here.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -97,7 +98,7 @@ void ok(char[] resp, string what) {
 // the point of this file is that they move independently.
 Frame frameFor(string actr, string sel = SEL_TOP_FACE) {
     post(BASE ~ "/api/reset", "");
-    ok(post(BASE ~ "/api/select", sel), "select");
+    ok(post(BASE ~ "/api/command", commandBody("mesh.select", sel)), "select");
     ok(post(BASE ~ "/api/script", "actr." ~ actr), "actr." ~ actr);
     auto ev = parseJSON(cast(string)get(BASE ~ "/api/toolpipe/eval"));
     Vec3 rd(string slot) {
@@ -198,7 +199,7 @@ unittest { // THE SEPARABILITY PROPERTY — one centre, two frames
 // has a component along the handle whichever way it projects.
 double[3] dragHandle(string actr, int part, string sel = SEL_TOP_FACE) {
     post(BASE ~ "/api/reset", "");
-    ok(post(BASE ~ "/api/select", sel), "select");
+    ok(post(BASE ~ "/api/command", commandBody("mesh.select", sel)), "select");
     ok(post(BASE ~ "/api/script", "tool.set move"), "tool.set move");
     ok(post(BASE ~ "/api/script", "actr." ~ actr), "actr." ~ actr);
 
@@ -295,7 +296,7 @@ unittest { // Local and Select stay in lockstep off the world axes too
     auto lm = post(BASE ~ "/api/load-mesh", ROTATED_CUBE);
     assert(parseJSON(cast(string)lm)["status"].str == "ok",
            "load-mesh failed: " ~ cast(string)lm);
-    ok(post(BASE ~ "/api/select", SEL_TOP_FACE), "select");
+    ok(post(BASE ~ "/api/command", commandBody("mesh.select", SEL_TOP_FACE)), "select");
 
     Frame read(string actr) {
         ok(post(BASE ~ "/api/script", "actr." ~ actr), "actr." ~ actr);

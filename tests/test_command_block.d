@@ -1,5 +1,7 @@
 module test_command_block;
 
+
+import http_command_helpers : commandBody;
 // Tests for command-block (begin/end) grouping in the undo system.
 //
 // /api/history/block {"action":"begin","label":"..."} opens a command block;
@@ -48,8 +50,7 @@ void postSelect(string mode, int[] indices) {
         idxJson ~= v.to!string;
     }
     idxJson ~= "]";
-    auto resp = post(testBaseUrl() ~ "/api/select",
-        `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`));
     assert(parseJSON(cast(string)resp)["status"].str == "ok",
         "/api/select failed: " ~ cast(string)resp);
 }

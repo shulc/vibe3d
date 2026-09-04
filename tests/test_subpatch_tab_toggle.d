@@ -18,6 +18,7 @@
 // localises cleanly.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.string : format;
@@ -98,7 +99,7 @@ unittest { // Tab with a single face selected flips only that face
     // the Tab handler reads mesh.selectedFaces, which /api/select
     // populates.
     postJson("/api/command", "select.typeFrom polygon");
-    postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
 
     auto r = postJson("/api/play-events", LOG_HEADER ~ "\n" ~ tabKey(50));
     assert(r["status"].str == "success",
@@ -121,7 +122,7 @@ unittest { // MODE-AWARE (parity 0464): a face selection made in polygon mode
     postJson("/api/reset", "");
     // Select 2 of 6 faces in polygon mode …
     postJson("/api/command", "select.typeFrom polygon");
-    postJson("/api/select", `{"mode":"polygons","indices":[0,1]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0,1]}`));
     // … then switch to edge mode. The face selection persists in the mesh
     // (hasAnySelectedFaces() is still true), so the OLD, mode-blind handler
     // would have toggled only faces 0,1. The fix keys off currentSelType.

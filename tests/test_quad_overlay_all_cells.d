@@ -49,7 +49,9 @@
 // vanish when the tool is dropped), not as the load-bearing check.
 module test_quad_overlay_all_cells;
 
+
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.stdio     : writeln, writefln;
 import std.net.curl  : HTTP;
 import std.json      : parseJSON, JSONValue, JSONType;
@@ -214,7 +216,7 @@ bool testFlowA() {
     // Arm a tool from OUTSIDE the removed list (trap 1). `edge.extend` is a
     // plain `Tool` holding a transform wrapper, so both of the deleted casts
     // missed it and its non-owner cells used to be told to draw nothing.
-    httpPost("/api/select", `{"mode":"edges","indices":[0]}`);
+    httpPost("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[0]}`));
     script("tool.set edge.extend on");
     settle();
 
@@ -319,7 +321,7 @@ bool testFlowB() {
     // `edge.bevel`, also outside the removed list, and unlike edge.extend it
     // publishes a handle arbiter over HTTP (`/api/tool/handles`), which is
     // what lets this flow assert hover and capture rather than infer them.
-    httpPost("/api/select", `{"mode":"edges","indices":[0]}`);
+    httpPost("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[0]}`));
     script("tool.set edge.bevel on");
     settle();
 

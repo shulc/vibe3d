@@ -83,6 +83,7 @@
 //     value where the derived plane re-reads it from its incident polygons.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv      : to;
@@ -144,7 +145,7 @@ string sIdx(int[] v) {
 void selectPolys(int[] idx) {
     string body_ = `{"mode":"polygons","indices":[`;
     foreach (i, x; idx) { if (i) body_ ~= ","; body_ ~= x.to!string; }
-    postOk("/api/select", body_ ~ "]}");
+    postOk("/api/command", commandBody("mesh.select", body_ ~ "]}"));
 }
 
 unittest {

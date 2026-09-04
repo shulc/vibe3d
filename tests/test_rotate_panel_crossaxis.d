@@ -24,6 +24,7 @@
 // /api/model; ring-grab retry on the undo count.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, sin, cos, atan2, PI;
@@ -244,8 +245,7 @@ int[] setupRotateScene(bool localAcen = false) {
     establishCubeBaseline();
     lockCamera();
     int topFace = findTopFace();
-    auto sel = postJson("/api/select",
-        `{"mode":"polygons","indices":[` ~ topFace.to!string ~ `]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[` ~ topFace.to!string ~ `]}`));
     assert(sel["status"].str == "ok", "select failed: " ~ sel.toString);
     settle();
     if (localAcen) cmd("actr.local"); else cmd("actr.auto");
@@ -267,8 +267,7 @@ Vec3[] numericRotateRef(string[] steps, bool localAcen = false) {
     establishCubeBaseline();
     lockCamera();
     int tf = findTopFace();
-    postJson("/api/select",
-        `{"mode":"polygons","indices":[` ~ tf.to!string ~ `]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[` ~ tf.to!string ~ `]}`));
     settle();
     if (localAcen) cmd("actr.local"); else cmd("actr.auto");
     settle();
@@ -296,8 +295,7 @@ Vec3[] numericRotateSeqRef(string axisAttr1, double a1,
     lockCamera();
     int tf = findTopFace();
     void selTop() {
-        postJson("/api/select",
-            `{"mode":"polygons","indices":[` ~ tf.to!string ~ `]}`);
+        postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[` ~ tf.to!string ~ `]}`));
         settle();
         if (localAcen) cmd("actr.local"); else cmd("actr.auto");
         settle();

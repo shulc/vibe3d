@@ -52,6 +52,7 @@
 // float noise is a genuine regression — STOP, do not loosen this tolerance).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math   : fabs, sqrt;
@@ -118,13 +119,13 @@ void establishCubeBaseline() {
         Thread.sleep(120.msecs);
         drainHistory();
         postJson("/api/reset", "");
-        postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+        postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
         cmd("history.clear");
         if (cubePristine() && undoCount() == 0) return;
         Thread.sleep(20.msecs);
     }
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     cmd("history.clear");
     assert(cubePristine(), "could not establish pristine cube baseline");
 }

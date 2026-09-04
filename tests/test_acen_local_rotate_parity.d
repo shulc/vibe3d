@@ -29,6 +29,7 @@
 // ACEN.Local invariants cover the per-cluster path.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math   : fabs, sqrt, cos, sin, PI;
@@ -97,8 +98,7 @@ void setupScene() {
     cmd("prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 "
       ~ "segmentsX:2 segmentsY:2 segmentsZ:2 radius:0");
     cmd("select.typeFrom polygon");
-    auto sel = postJson("/api/select",
-                        `{"mode":"polygons","indices":[11,12,13]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[11,12,13]}`));
     assert(sel["status"].str == "ok", sel.toString);
     cmd("tool.set xfrm.transform on");
     cmd("actr.local");

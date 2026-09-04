@@ -12,6 +12,7 @@
 // results).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -71,9 +72,8 @@ int[4] buildChain() {
     int idxD = findVert(before,  0.5,  0.5,  0.5);
     assert(idxA >= 0 && idxB >= 0 && idxC >= 0 && idxD >= 0);
     cmd("mesh.move_vertex from:{0.5,-0.5,-0.5} to:{0.2,-0.15,-0.1}");
-    postJson("/api/select",
-        `{"mode":"vertices","indices":[` ~ idxA.to!string ~ `,` ~ idxB.to!string
-        ~ `,` ~ idxC.to!string ~ `,` ~ idxD.to!string ~ `]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[` ~ idxA.to!string ~ `,` ~ idxB.to!string
+        ~ `,` ~ idxC.to!string ~ `,` ~ idxD.to!string ~ `]}`));
     return [idxA, idxB, idxC, idxD];
 }
 

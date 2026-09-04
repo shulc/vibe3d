@@ -21,6 +21,7 @@
 // positions become a stable test surface.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -132,8 +133,7 @@ unittest { // a 20-step move-tool drag produces ONE undo entry
     // Setup mirrors test_tool_move_drag.d so the pin is on the same
     // code path: select v6, activate Move, drag X-arrow.
     establishCubeBaseline();   // drain any in-flight replay, reset, verify cube
-    auto sel = postJson("/api/select",
-        `{"mode":"vertices","indices":[6]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     assert(sel["status"].str == "ok", "select failed");
     auto setResp = postJson("/api/script", "tool.set move");
     assert(setResp["status"].str == "ok", "tool.set move failed");
@@ -225,7 +225,7 @@ unittest { // 2 separate move-tool drags in one tool session = 1 entry
     // drag 2 would start where the gizmo USED to be (off-handle) and the
     // run would split.
     establishCubeBaseline();   // drain any in-flight replay, reset, verify cube
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     postJson("/api/script", "tool.set move");
     long stackBefore = undoCount();
 

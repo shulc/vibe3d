@@ -56,6 +56,7 @@
 // a background-thread gesture.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -112,7 +113,7 @@ void drainHistory() {
 // The select entry simply sits BELOW the floor counters captured after it;
 // the bounded Ctrl+Z ladders never pop that deep.
 void selectV6() {
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     settle();
     auto s = getJson("/api/selection");
     assert(s["mode"].str == "vertices"

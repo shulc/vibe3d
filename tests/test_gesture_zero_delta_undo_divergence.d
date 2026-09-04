@@ -169,6 +169,7 @@
 //        deliveries against the control's 0 — the press was never delivered".
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.json;
 import std.net.curl : get, post;
 import std.format   : format;
@@ -270,8 +271,7 @@ void selectVerts(const int[] idx) {
     string s = "[";
     foreach (k, v; idx) { if (k) s ~= ","; s ~= format("%d", v); }
     s ~= "]";
-    auto r = postJson("/api/select",
-                      format(`{"mode":"vertices","indices":%s}`, s));
+    auto r = postJson("/api/command", commandBody("mesh.select", format(`{"mode":"vertices","indices":%s}`, s)));
     assert(r["status"].str == "ok",
         format("select %s failed: %s", idx, r.toString));
 }

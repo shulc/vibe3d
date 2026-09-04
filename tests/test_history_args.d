@@ -1,5 +1,7 @@
 module test_history_args;
 
+
+import http_command_helpers : commandBody;
 // Integration tests for subphase 5.3: /api/history returns structured per-entry
 // objects { "label": ..., "args": ..., "command": ... } instead of plain strings.
 
@@ -34,8 +36,7 @@ private void postSelect(string mode, int[] indices) {
         if (i > 0) idxList ~= ",";
         idxList ~= idx.to!string;
     }
-    post(testBaseUrl() ~ "/api/select",
-        format(`{"mode":"%s","indices":[%s]}`, mode, idxList));
+    post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", format(`{"mode":"%s","indices":[%s]}`, mode, idxList)));
 }
 
 // ---------------------------------------------------------------------------

@@ -41,13 +41,14 @@ import std.conv : to;
 import std.math : fabs, PI, sqrt, acos;
 import std.format : format;
 import std.algorithm : sort;
+import http_command_helpers : commandBody;
 
 alias BASE = testBaseUrl;
 
 private string endpointPath(string ep) {
     switch (ep) {
         case "reset":     return BASE ~ "/api/reset";
-        case "select":    return BASE ~ "/api/select";
+        case "select":    return BASE ~ "/api/command";
         case "command":   return BASE ~ "/api/command";
         case "transform": return BASE ~ "/api/transform";
         case "script":    return BASE ~ "/api/script";
@@ -95,6 +96,8 @@ private void postStep(JSONValue step, string name, string phase, size_t i) {
     string body = ("argstring" in step) ? step["argstring"].str
                 : ("body"      in step) ? step["body"].toString
                 : "";
+    if (ep == "select")
+        body = commandBody("mesh.select", body);
     bool allowError = ("allowError" in step) && step["allowError"].type == JSONType.true_;
     auto resp = cast(string) post(endpointPath(ep), body);
     if (resp.length && resp[0] == '{') {
@@ -309,8 +312,9 @@ void runStep(JSONValue step, string name, string phase, size_t i) {
         string idxJson = "[";
         foreach (k, v; idx) { if (k) idxJson ~= ","; idxJson ~= format("%d", v); }
         idxJson ~= "]";
-        auto resp = cast(string) post(BASE ~ "/api/select",
-            format(`{"mode":"%s","indices":%s}`, mode, idxJson));
+        auto resp = cast(string) post(BASE ~ "/api/command",
+            commandBody("mesh.select",
+                format(`{"mode":"%s","indices":%s}`, mode, idxJson)));
         auto j = parseJSON(resp);
         if ("status" !in j || j["status"].str != "ok")
             assert(false, format("%s: select failed: %s", ctx, resp));
@@ -1563,8 +1567,9 @@ void runSelectLoopSuite(string fixtureJson) {
         assert(seedIdx >= 0,
             format("%s: seed edge (%d,%d) not found after load-mesh", cn, su, sv));
 
-        auto selR = parseJSON(cast(string) post(BASE ~ "/api/select",
-            format(`{"mode":"edges","indices":[%d]}`, seedIdx)));
+        auto selR = parseJSON(cast(string) post(BASE ~ "/api/command",
+            commandBody("mesh.select",
+                format(`{"mode":"edges","indices":[%d]}`, seedIdx))));
         if ("status" in selR) assert(selR["status"].str == "ok",
             format("%s: seed select failed: %s", cn, selR.toString));
 
@@ -1627,9 +1632,10 @@ void runSelectLoopFvSuite(string fixtureJson) {
             if (i) indices ~= ",";
             indices ~= s.integer.to!string;
         }
-        auto selR = parseJSON(cast(string) post(BASE ~ "/api/select",
-            format(`{"mode":"%s","indices":[%s]}`,
-                   isVert ? "vertices" : "polygons", indices)));
+        auto selR = parseJSON(cast(string) post(BASE ~ "/api/command",
+            commandBody("mesh.select",
+                format(`{"mode":"%s","indices":[%s]}`,
+                       isVert ? "vertices" : "polygons", indices))));
         if ("status" in selR) assert(selR["status"].str == "ok",
             format("%s: seed select failed: %s", cn, selR.toString));
 

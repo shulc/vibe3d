@@ -36,6 +36,7 @@
 // their assertion RED rather than green.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.json;
@@ -82,7 +83,7 @@ unittest { // a free centre haul arrays face 4 and records exactly one entry
     auto r = postJson("/api/reset", "");
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
 
-    r = postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
     cmd("history.clear");
 

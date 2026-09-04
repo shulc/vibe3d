@@ -44,6 +44,7 @@
 // vacuous, and `bevelEdgesByMask` refuses on a great many preconditions.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -90,7 +91,7 @@ void selectEdges(int[] idx) {
     string j = "[";
     foreach (i, v; idx) { if (i) j ~= ","; j ~= v.to!string; }
     j ~= "]";
-    auto r = postTo("/api/select", `{"mode":"edges","indices":` ~ j ~ `}`);
+    auto r = postTo("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":` ~ j ~ `}`));
     assert(r["status"].str == "ok", "edge select failed: " ~ r.toString);
 }
 void selectTopFrontEdge() {
@@ -229,7 +230,7 @@ void assertRecorded(JSONValue before, JSONValue after, string what,
 // ---------------------------------------------------------------------------
 unittest {
     resetCube();
-    auto s = postTo("/api/select", `{"mode":"vertices","indices":[]}`);
+    auto s = postTo("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     assert(s["status"].str == "ok", "clear select failed: " ~ s.toString);
 
     auto b = changes();
@@ -268,7 +269,7 @@ unittest {
 // ---------------------------------------------------------------------------
 unittest {
     resetCube();
-    auto s = postTo("/api/select", `{"mode":"polygons","indices":[0]}`);
+    auto s = postTo("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
     assert(s["status"].str == "ok", "control select failed: " ~ s.toString);
 
     auto b = changes();

@@ -12,6 +12,7 @@
 // After splitting v6: fi=1 keeps v6, fi=3→v8, fi=4→v9.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -42,8 +43,7 @@ void postSelect(string mode, int[] indices) {
     string idxJson = "[";
     foreach (i, v; indices) { if (i > 0) idxJson ~= ","; idxJson ~= v.to!string; }
     idxJson ~= "]";
-    auto resp = post(testBaseUrl() ~ "/api/select",
-        `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
+    auto resp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`));
     assert(parseJSON(resp)["status"].str == "ok");
 }
 

@@ -16,6 +16,7 @@
 // Authoritative T-junction check (index-share) is in mesh.d unittest{}.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -91,7 +92,7 @@ void loadCube() {
     auto r = postCmd("/api/reset", "");
     assert(r["status"].str == "ok", "/api/reset failed");
     // Switch to vertex mode to guarantee a SubjectPacket is in the VectorStack.
-    auto s = postCmd("/api/select", `{"mode":"vertices","indices":[]}`);
+    auto s = postCmd("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     assert(s["status"].str == "ok", "/api/select failed");
 }
 

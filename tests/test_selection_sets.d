@@ -5,6 +5,7 @@
 // file-path primitive). See doc/selection_sets_plan.md Stage 3/4/6 and the
 // task card doc/tasks/work/1060-selection-sets.md.
 import http_client : getJson, postJson, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.format : format;
@@ -43,12 +44,12 @@ private void selectFaceIdx(int[] idx) {
     string j = "[";
     foreach (k, v; idx) { if (k) j ~= ","; j ~= format("%d", v); }
     j ~= "]";
-    auto r = postJson("/api/select", format(`{"mode":"polygons","indices":%s}`, j));
+    auto r = postJson("/api/command", commandBody("mesh.select", format(`{"mode":"polygons","indices":%s}`, j)));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 }
 
 private void selectNone(string mode) {
-    auto r = postJson("/api/select", format(`{"mode":"%s","indices":[]}`, mode));
+    auto r = postJson("/api/command", commandBody("mesh.select", format(`{"mode":"%s","indices":[]}`, mode)));
     assert(r["status"].str == "ok", "select-none failed: " ~ r.toString);
 }
 
@@ -291,8 +292,7 @@ unittest {
     auto verts = model()["vertices"].array;
     foreach (i, v; verts) if (v.array[0].floating > 0.4) rightVerts ~= cast(int) i;
     assert(rightVerts.length == 4, "setup: cube must have 4 vertices at x=+0.5");
-    auto rsel = postJson("/api/select",
-        format(`{"mode":"vertices","indices":%s}`, rightVerts));
+    auto rsel = postJson("/api/command", commandBody("mesh.select", format(`{"mode":"vertices","indices":%s}`, rightVerts)));
     assert(rsel["status"].str == "ok");
     cmd("select.set.store name:VS");
 
@@ -304,8 +304,7 @@ unittest {
     foreach (i, e; edges)
         if (atRight(e.array[0].integer) && atRight(e.array[1].integer)) rightEdges ~= cast(int) i;
     assert(rightEdges.length == 4, "setup: cube must have 4 edges wholly at x=+0.5");
-    auto esel = postJson("/api/select",
-        format(`{"mode":"edges","indices":%s}`, rightEdges));
+    auto esel = postJson("/api/command", commandBody("mesh.select", format(`{"mode":"edges","indices":%s}`, rightEdges)));
     assert(esel["status"].str == "ok");
     cmd("select.set.store name:ES");
 

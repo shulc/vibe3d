@@ -21,6 +21,7 @@
 // -- no HTTP server, no live vibe3d instance, no GL context required.
 
 import http_client : getJson, postJson, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.conv : to;
 import std.math : abs, sin, cos, PI;
 import mesh;
@@ -275,7 +276,7 @@ unittest {
     // golden case above (edge index 2 on the default cube: vert1=
     // (0.5,-0.5,-0.5), vert2=(0.5,0.5,-0.5)).
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"edges","indices":[2]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[2]}`));
 
     httpCmd("tool.set " ~ TOOL);
     httpCmd("tool.attr " ~ TOOL ~ " sides 100000000");

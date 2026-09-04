@@ -16,6 +16,7 @@
 // target coordinates.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -77,9 +78,8 @@ int[4] buildLoop() {
     int idxE = findVert(before, -0.5, -0.5,  0.5);
     assert(idxA >= 0 && idxB >= 0 && idxC >= 0 && idxE >= 0);
     cmd("mesh.move_vertex from:{0.5,-0.5,-0.5} to:{0.7071,-0.5,0.0}");
-    postJson("/api/select",
-        `{"mode":"vertices","indices":[` ~ idxA.to!string ~ `,` ~ idxB.to!string
-        ~ `,` ~ idxC.to!string ~ `,` ~ idxE.to!string ~ `]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[` ~ idxA.to!string ~ `,` ~ idxB.to!string
+        ~ `,` ~ idxC.to!string ~ `,` ~ idxE.to!string ~ `]}`));
     return [idxA, idxB, idxC, idxE];
 }
 
@@ -151,9 +151,8 @@ unittest { // weight attr blends source -> aligned(weight=1) — bit-exact
     cmd("history.undo");
 
     cmd("select.typeFrom vertex");
-    postJson("/api/select",
-        `{"mode":"vertices","indices":[` ~ idx[0].to!string ~ `,` ~ idx[1].to!string
-        ~ `,` ~ idx[2].to!string ~ `,` ~ idx[3].to!string ~ `]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[` ~ idx[0].to!string ~ `,` ~ idx[1].to!string
+        ~ `,` ~ idx[2].to!string ~ `,` ~ idx[3].to!string ~ `]}`));
 
     cmd("tool.set xfrm.radialAlignTool on");
     cmd("tool.attr xfrm.radialAlignTool weight 0.5");

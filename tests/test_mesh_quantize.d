@@ -9,6 +9,7 @@
 //   * Undo restores the original positions exactly.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -95,8 +96,7 @@ unittest { // selection-aware in vertices mode: only selected verts move
     postJson("/api/reset", "");
     cmd("select.typeFrom vertex");
     // Select vert 0 only — that's at (-0.5, -0.5, -0.5).
-    auto sel = postJson("/api/select",
-        `{"mode":"vertices","indices":[0]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
     assert(sel["status"].str == "ok", sel.toString);
     cmd("mesh.quantize X:0.3 Y:0.3 Z:0.3");
     auto verts = getJson("/api/model")["vertices"].array;
@@ -195,8 +195,7 @@ unittest { // no-op quantize undo must not truncate the undo stack (task 2110).
            // every vertex hidden.
     postJson("/api/reset", "");
     cmd("select.typeFrom vertex");
-    auto selAll = postJson("/api/select",
-        `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    auto selAll = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(selAll["status"].str == "ok", selAll.toString);
     // `CommandHistory` caps the undo stack at `maxDepth = 50`
     // (command_history.d:243) and evicts the OLDEST entry on every push once
@@ -222,7 +221,7 @@ unittest { // no-op quantize undo must not truncate the undo stack (task 2110).
     //     no-op edit is [... real quantize, mesh.select, no-op quantize].
     //     Strict LIFO therefore needs three presses below: no-op quantize,
     //     mesh.select, then real quantize. Each press removes one record.
-    auto clearSel = postJson("/api/select", `{"mode":"vertices","indices":[]}`);
+    auto clearSel = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[]}`));
     assert(clearSel["status"].str == "ok", clearSel.toString);
     cmd("mesh.quantize X:0.3 Y:0.3 Z:0.3");
     auto depthBeforeUndos = undoDepth();

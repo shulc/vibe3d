@@ -11,6 +11,7 @@
 //     undo.test.force (SideEffect + UndoForce) DOES land on the stack.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -35,7 +36,7 @@ void translate(double dx) {
 // last guarantees an empty stack at the start of each test.
 void freshSession() {
     postJson("/api/reset", "");
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     postJson("/api/command", "history.clear");
 }
 

@@ -4,6 +4,7 @@
 // the workplane's basis on state.axis.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv  : to;
@@ -110,7 +111,7 @@ unittest { // Workplane mode follows WorkplaneStage
 
 unittest { // Element mode — face normal as up
     resetCube();
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     postJson("/api/command", "tool.pipe.attr axis mode element");
     auto a = getAxisAttrs();
     assert(a["mode"] == "element", "expected element, got " ~ a["mode"]);
@@ -141,7 +142,7 @@ unittest { // Select mode — top face (face 4) — normal +Y.
     // Top face normal +Y (Y-axis). fwd = world+Y.
     // up = −Z (Y-axis rule: Y → up=−Z).
     // right = cross(−Z, +Y) = +X.
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     postJson("/api/command", "tool.pipe.attr axis mode select");
     auto a = getAxisAttrs();
     assert(a["mode"] == "select", "got " ~ a["mode"]);
@@ -155,7 +156,7 @@ unittest { // Select mode — back face (face 0) — normal −Z.
     // Back face normal −Z (Z-axis, negative). fwd = world−Z.
     // up = +Y (Z-axis rule: Z → up=+Y; sign-independent of normal sign).
     // right = cross(+Y, −Z) = −X.
-    postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
     postJson("/api/command", "tool.pipe.attr axis mode select");
     auto a = getAxisAttrs();
     assert(abs(floatAttr(a, "rightX") - (-1.0f)) < 1e-3, "rightX: " ~ a["rightX"]);
@@ -181,7 +182,7 @@ unittest { // SelectAuto — the AUTO frame, NOT Select's.
     // The centre half of that pairing is unchanged and still tested next to
     // Select's in tests/test_toolpipe_acen.d; only the FRAME moved.
     resetCube();
-    postJson("/api/select", `{"mode":"polygons","indices":[0]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
     postJson("/api/command", "tool.pipe.attr axis mode selectauto");
     auto a = getAxisAttrs();
     assert(a["mode"] == "selectauto", "got " ~ a["mode"]);
@@ -206,7 +207,7 @@ unittest { // Local — the SELECTION frame, not the world axes.
     // derived, so before this the same mode answered with a face frame per
     // cluster and the world axes globally, on one selection.
     resetCube();
-    postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     postJson("/api/command", "tool.pipe.attr axis mode local");
     auto a = getAxisAttrs();
     assert(a["mode"] == "local", "got " ~ a["mode"]);
@@ -269,7 +270,7 @@ unittest { // Manual — switching mode without setting manual* attrs
 unittest { // Element edges — edge tangent as right; up perpendicular.
     resetCube();
     // Edge 0 = [0,3] direction = +Y. Tangent → right=(0,1,0).
-    postJson("/api/select", `{"mode":"edges","indices":[0]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":[0]}`));
     postJson("/api/command", "tool.pipe.attr axis mode element");
     auto a = getAxisAttrs();
     assert(abs(floatAttr(a, "rightY") - 1.0f) < 1e-3,
@@ -288,7 +289,7 @@ unittest { // Element vertices — averaged incident face normal as up.
     resetCube();
     // Vert 6 = (0.5, 0.5, 0.5) — corner shared by faces 1 (top, +Y),
     // 3 (right, +X), 4 (front, +Z). Avg face normal: (1/√3)*(1,1,1).
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     postJson("/api/command", "tool.pipe.attr axis mode element");
     auto a = getAxisAttrs();
     auto ux = floatAttr(a, "upX");

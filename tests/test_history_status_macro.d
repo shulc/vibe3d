@@ -4,6 +4,7 @@
 // produces a #LXMacro# file with the executed argstrings.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -28,7 +29,7 @@ unittest { // /api/history surfaces a non-zero flags field; the bit
            // pattern includes Succeeded (1) + Undoable (16) = 17.
     postJson("/api/reset", "");
     postJson("/api/command", "history.clear");
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
 
     translate(0.1);
 
@@ -51,7 +52,7 @@ unittest { // macro.record state:1 starts capture; subsequent
            // a #LXMacro# file with one line per captured argstring.
     postJson("/api/reset", "");
     postJson("/api/command", "history.clear");
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
 
     auto r = postJson("/api/command", "macro.record state:1");
     assert(r["status"].str == "ok",
@@ -88,7 +89,7 @@ unittest { // macro.record state:0 stops capture; commands after
            // stop are NOT in the saved file.
     postJson("/api/reset", "");
     postJson("/api/command", "history.clear");
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
 
     postJson("/api/command", "macro.record state:1");
     translate(0.1);

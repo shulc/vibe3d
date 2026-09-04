@@ -9,6 +9,7 @@
 //      Also plays a non-Ctrl open drag and asserts -1.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, sin, cos, tan, PI;
@@ -206,8 +207,7 @@ void settleMs(int ms = 150, string baseUrl = testBaseUrl()) {
 
 void resetCubeSelectAllMove(string baseUrl = testBaseUrl()) {
     post(baseUrl ~ "/api/reset", "");
-    auto sel = post(baseUrl ~ "/api/select",
-                    `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    auto sel = post(baseUrl ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(parseJSON(cast(string)sel)["status"].str == "ok",
         "select failed: " ~ cast(string)sel);
     auto setT = post(baseUrl ~ "/api/script", "tool.set move");

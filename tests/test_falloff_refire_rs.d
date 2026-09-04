@@ -47,6 +47,7 @@
 // value across an in-session undo.)
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, sin, cos, PI;
@@ -123,7 +124,7 @@ void drainHistory() {
 // stale prior selection on the shared per-worker instance — the -j bleed). The
 // select entry sits below the floor counters captured after it.
 void selectV6() {
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     settle();
     auto s = getJson("/api/selection");
     assert(s["mode"].str == "vertices"
@@ -851,7 +852,7 @@ unittest {
     assert(undoCount() == floor + 1, "move gesture records one entry");
 
     // CHANGE the selection → the wrapper's guard consolidates + closes the run.
-    postJson("/api/select", `{"mode":"vertices","indices":[0]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
     settle();
     long afterSel = undoCount();
 

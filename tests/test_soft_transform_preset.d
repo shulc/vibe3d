@@ -22,6 +22,7 @@
 //   S bank — tool.attr SX + tool.doApply. Same assertion as R bank.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -50,8 +51,7 @@ void cmd(string s) {
 // the script parser).
 void setupSoftTransform() {
     postJson("/api/reset", "");
-    auto selResp = postJson("/api/select",
-                            `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    auto selResp = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(selResp["status"].str == "ok",
         "select-all failed: " ~ selResp.toString);
     string script =

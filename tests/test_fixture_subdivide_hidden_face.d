@@ -48,6 +48,7 @@
 //     polygons with 0 hidden.
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv      : to;
@@ -93,7 +94,7 @@ string sIdx(int[] v) {
 void selectPolys(int[] idx) {
     string b = `{"mode":"polygons","indices":[`;
     foreach (i, x; idx) { if (i) b ~= ","; b ~= x.to!string; }
-    postOk("/api/select", b ~ "]}");
+    postOk("/api/command", commandBody("mesh.select", b ~ "]}"));
 }
 
 size_t selectedFaceCount() {

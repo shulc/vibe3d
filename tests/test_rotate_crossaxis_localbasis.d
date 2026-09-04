@@ -35,6 +35,7 @@
 // count (the known ring-grab flake — a missed grab records nothing).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, sin, cos, atan2, PI;
@@ -365,8 +366,7 @@ unittest {
     establishCubeBaseline();
     lockCamera();
     int topFace = findTopFace();
-    postJson("/api/select",
-        `{"mode":"polygons","indices":[` ~ topFace.to!string ~ `]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[` ~ topFace.to!string ~ `]}`));
     settle();
     cmd("tool.set xfrm.transform on");
     cmd("tool.attr xfrm.transform T false");
@@ -428,8 +428,7 @@ unittest {
             firstSeqCall = false;
         }
         int tf = findTopFace();
-        postJson("/api/select",
-            `{"mode":"polygons","indices":[` ~ tf.to!string ~ `]}`);
+        postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[` ~ tf.to!string ~ `]}`));
         settle();
     }
     auto seqRef = numericRotateSeqRef(&seqSetup, attr1, deg1, attr2, deg2);
@@ -471,7 +470,7 @@ unittest {
 Vec3 localPivot;   // the local gizmo pivot (read from the eval after actr.local)
 void selectLocalClusters() {
     cmd("select.typeFrom polygon");
-    auto sel = postJson("/api/select", `{"mode":"polygons","indices":[11,12,13]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[11,12,13]}`));
     assert(sel["status"].str == "ok", "select failed: " ~ sel.toString);
     settle();
 }

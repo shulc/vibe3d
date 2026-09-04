@@ -29,6 +29,7 @@
 // /api/toolpipe/eval (never the raw panel struct).
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -131,7 +132,7 @@ void establishCubeBaseline() {
 }
 
 void selectV6() {
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     settle();
     auto s = getJson("/api/selection");
     assert(s["mode"].str == "vertices"

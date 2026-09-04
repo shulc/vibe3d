@@ -40,6 +40,7 @@
 // therefore genuinely locks the contract.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs;
@@ -105,7 +106,7 @@ unittest {
     //    vertex count constant, so the post-undo and pre-undo baselines are the
     //    same length — the stale-baseline failure shows up as different
     //    geometry, not a crash.
-    auto sel = postJson("/api/select", `{"mode":"vertices","indices":[2,3,6,7]}`);
+    auto sel = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[2,3,6,7]}`));
     assert(sel["status"].str == "ok", "select failed: " ~ sel.toString);
     auto xf = postJson("/api/transform", `{"kind":"translate","delta":[0.4,0.3,0.2]}`);
     assert(xf["status"].str == "ok", "translate failed: " ~ xf.toString);

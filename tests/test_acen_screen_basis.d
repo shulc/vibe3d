@@ -10,6 +10,7 @@
 // - World mode still returns identity (no-regression sentinel).
 
 import http_client : testBaseUrl, getJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv  : to;
@@ -191,8 +192,7 @@ unittest { // Screen basis is selection-independent
     setCamera(0.5f, 0.4f, 3.0f);
 
     // (a) polygon face selected
-    auto selR = parseJSON(cast(string)post(baseUrl ~ "/api/select",
-        `{"mode":"polygons","indices":[4]}`));
+    auto selR = parseJSON(cast(string)post(baseUrl ~ "/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`)));
     assert(selR["status"].str == "ok", "polygon select failed");
     auto axPoly = evalAxis();
     auto rPoly  = axisVec(axPoly, "right");

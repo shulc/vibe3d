@@ -9,6 +9,7 @@
 // tool-driven entries.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -55,7 +56,7 @@ unittest { // jumpTo walks undo/redo correctly. Build 3 translates,
            // observed via v6.x.
     postJson("/api/reset", "");
     clearHistory();
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
 
     size_t baseLen = historyLen("undo");
 
@@ -108,7 +109,7 @@ unittest { // jumpTo walks undo/redo correctly. Build 3 translates,
 unittest { // Out-of-range target clamps silently to maxTarget.
     postJson("/api/reset", "");
     clearHistory();
-    postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
 
     size_t baseLen = historyLen("undo");
     translate(0.2);

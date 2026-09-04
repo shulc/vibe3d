@@ -43,6 +43,7 @@
 //   Absolute formula: dy(v) ≈ dyFull · combined_weight(v)  (within 5%)
 
 import http_client : testBaseUrl, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math  : fabs, sqrt;
@@ -78,8 +79,7 @@ unittest {
     resetCube();
 
     // Select all 8 cube vertices.
-    auto selResp = post(baseUrl ~ "/api/select",
-                        `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    auto selResp = post(baseUrl ~ "/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     assert(parseJSON(cast(string) selResp)["status"].str == "ok",
         "select all verts failed: " ~ cast(string) selResp);
 

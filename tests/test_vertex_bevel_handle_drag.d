@@ -43,6 +43,7 @@
 // mesh.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.format : format;
@@ -105,7 +106,7 @@ unittest { // dragging the inset arrow moves `inset` off zero
 
     // v6 = (0.5,0.5,0.5): its three adjacent faces average to the (1,1,1)
     // diagonal, which is the inset axis the arrow is drawn along.
-    r = postJson("/api/select", `{"mode":"vertices","indices":[6]}`);
+    r = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[6]}`));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 
     // The framing is PART OF THE GESTURE: the press point is derived from the

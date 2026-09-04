@@ -38,6 +38,7 @@
 // count parameter and the offset follows the drag, which follows the viewport.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.algorithm : canFind, sort;
 import std.conv : to;
 import std.json;
@@ -94,7 +95,7 @@ unittest { // dragging the offset arrow moves `offset` off zero
     assert(r["status"].str == "ok", "reset failed: " ~ r.toString);
     cmd("history.clear");
 
-    r = postJson("/api/select", `{"mode":"polygons","indices":[4]}`);
+    r = postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[4]}`));
     assert(r["status"].str == "ok", "select failed: " ~ r.toString);
 
     cmd("tool.set " ~ TOOL ~ " on");

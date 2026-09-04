@@ -65,6 +65,7 @@
 // Runner: ./run_test.d test_bus_epoch_position_class
 
 import http_client : getJson, postRaw, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl : get, post;
 import std.json;
 import std.format : format;
@@ -112,7 +113,7 @@ unittest {
                     "baseline: the cage VBO does not match the reset mesh");
     }
 
-    postOk("/api/select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     settle();
 
     auto before = getJson("/api/changes");

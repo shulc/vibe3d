@@ -48,6 +48,7 @@
 //      was CORRECT and had to survive: no user-placed pin, pivot unmoved.
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math  : fabs, sqrt, atan2, acos, asin, PI, sin;
@@ -114,7 +115,7 @@ Vec3 acenCenter() {
 void setup(string mode) {
     pj("/api/reset", "");
     settle();
-    pj("/api/select", format(`{"mode":"polygons","indices":[%d]}`, topFaceIndex()));
+    pj("/api/command", commandBody("mesh.select", format(`{"mode":"polygons","indices":[%d]}`, topFaceIndex())));
     cmd("actr." ~ mode);
     cmd("tool.set rotate");
     settle();

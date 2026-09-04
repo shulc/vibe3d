@@ -18,6 +18,7 @@
 //   • bottom-face verts are untouched (no selection bleed)
 
 import http_client : testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt;
@@ -55,8 +56,7 @@ unittest { // dragging the view-axis ring rotates top face rigidly
     post(testBaseUrl() ~ "/api/reset", "");
 
     int topFace = findTopFace();
-    auto selResp = post(testBaseUrl() ~ "/api/select",
-                        `{"mode":"polygons","indices":[` ~ topFace.to!string ~ `]}`);
+    auto selResp = post(testBaseUrl() ~ "/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[` ~ topFace.to!string ~ `]}`));
     assert(parseJSON(cast(string)selResp)["status"].str == "ok",
         "select failed: " ~ cast(string)selResp);
 

@@ -116,6 +116,7 @@
 // ---------------------------------------------------------------------------
 
 import http_client : getJson, postJson, testBaseUrl;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.format  : format;
@@ -277,7 +278,7 @@ private void selectEdges(const long[] idx) {
     import std.conv : to;
     string s = "[";
     foreach (i, v; idx) { if (i) s ~= ","; s ~= v.to!string; }
-    postJson("/api/select", `{"mode":"edges","indices":` ~ s ~ `]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":` ~ s ~ `]}`));
     settle();
 }
 
@@ -285,7 +286,7 @@ private void selectVerts(const long[] idx) {
     import std.conv : to;
     string s = "[";
     foreach (i, v; idx) { if (i) s ~= ","; s ~= v.to!string; }
-    postJson("/api/select", `{"mode":"vertices","indices":` ~ s ~ `]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":` ~ s ~ `]}`));
     settle();
 }
 
@@ -336,7 +337,7 @@ private void selectPolys(const long[] idx) {
     import std.conv : to;
     string s = "[";
     foreach (i, v; idx) { if (i) s ~= ","; s ~= v.to!string; }
-    postJson("/api/select", `{"mode":"polygons","indices":` ~ s ~ `]}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":` ~ s ~ `]}`));
     settle();
 }
 

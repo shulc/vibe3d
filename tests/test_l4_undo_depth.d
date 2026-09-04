@@ -44,6 +44,7 @@
 //
 // LANE: `./run_test.d` (lane S).
 import http_client : testBaseUrl, postRaw;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.conv : to;
@@ -179,7 +180,7 @@ enum Step[] kCubePolyMode = [Step("/api/reset", ""),
 enum Step[] kCubeEdgeMode = [Step("/api/reset", ""),
                              Step("/api/command", "select.typeFrom edge")];
 
-enum Step kSelFace0 = Step("/api/select", `{"mode":"polygons","indices":[0]}`);
+enum Step kSelFace0 = Step("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":[0]}`));
 
 unittest { // mesh.axisSlice — ONE plane
     // On the cube every axis has extent, so the class's DEFAULT axis works

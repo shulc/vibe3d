@@ -27,6 +27,7 @@
 // test_element_pick_drag_gizmo.d; acen.local pivots by test_acen_local_*.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math : fabs, sqrt, tan, PI;
@@ -148,7 +149,7 @@ void selectUpperRegion() {
     string selStr = "[";
     foreach (i, s; sel) selStr ~= (i ? "," : "") ~ s.to!string;
     selStr ~= "]";
-    postJson("/api/select", `{"mode":"polygons","indices":` ~ selStr ~ `}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":` ~ selStr ~ `}`));
 }
 
 // Where the scale box for one axis ACTUALLY is, asked of the tool instead of
@@ -505,7 +506,7 @@ unittest {
     string s2 = "[";
     foreach (i, s; sel2) s2 ~= (i ? "," : "") ~ s.to!string;
     s2 ~= "]";
-    postJson("/api/select", `{"mode":"polygons","indices":` ~ s2 ~ `}`);
+    postJson("/api/command", commandBody("mesh.select", `{"mode":"polygons","indices":` ~ s2 ~ `}`));
     Thread.sleep(dur!"msecs"(80));
     // Force an idle update tick so the selection-change boundary fires its clear.
     getJson("/api/toolpipe/eval");

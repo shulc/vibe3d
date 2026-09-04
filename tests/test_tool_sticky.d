@@ -32,6 +32,7 @@
 //      mechanistically correct exemplar for a settle-only repro.
 
 import http_client : getJson, postJson;
+import http_command_helpers : commandBody;
 import std.net.curl;
 import std.json;
 import std.math     : fabs;
@@ -198,7 +199,7 @@ void selectEdges(long[] indices) {
     string arr = "[";
     foreach (i, idx; indices) { if (i) arr ~= ","; arr ~= idx.to!string; }
     arr ~= "]";
-    auto j = postJson("/api/select", `{"mode":"edges","indices":` ~ arr ~ `}`);
+    auto j = postJson("/api/command", commandBody("mesh.select", `{"mode":"edges","indices":` ~ arr ~ `}`));
     assert(j["status"].str == "ok", "edge select failed: " ~ j.toString);
 }
 

@@ -6,6 +6,7 @@
 // task 3693, so its changed first step witnesses the lifecycle-head change.
 
 import http_client : testBaseUrl, getJson, postJson;
+import http_command_helpers : commandBody;
 import std.conv : to;
 import std.json : JSONType, JSONValue, parseJSON;
 import std.math : fabs;
@@ -70,7 +71,7 @@ unittest {
 
     command(format("mesh.move_vertex from:{%g,-0.5,-0.5} to:{%g,-0.5,-0.5}",
         beforeX, beforeX + 0.25));
-    auto selected = postJson("/api/select", `{"mode":"vertices","indices":[0]}`);
+    auto selected = postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
     assert(selected["status"].str == "ok", "selection failed: " ~ selected.toString);
     command("tool.set move on");
 
