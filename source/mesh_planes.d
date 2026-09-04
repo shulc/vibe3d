@@ -246,17 +246,20 @@ struct VertSource {
 // `tests/unit/mesh_planes_census_test.d` / `mesh_planes_test.d`) each catch
 // that in a different way, none of them self-satisfying (§3 of the plan).
 //
-// SIBLING LIST: `source/mesh_edit_delta.d`'s `MeshOpEntry` carries its own
-// hand-maintained per-face group (`faceMat`/`facePrt`/`faceSub`/
-// `faceSetMsk`/`faceOrd` — task 1902 Stage H added `faceOrd`, closing the
-// gap this comment used to flag) for the undo/redo op-log. The two lists
-// are independent (one is the LIVE-mesh carry, the other is a REPLAY
-// payload) but describe the same five per-face planes, so a new entry in
-// `kFacePlanes` below is a new field `MeshOpEntry` should probably also
-// carry — check that file when extending this one. Executable side of this
-// cross-reference: `tests/unit/mesh_planes_census_test.d`'s
-// `kFacePlaneToEntryField` unittest walks `kFacePlanes` against
-// `MeshOpEntry`'s field set by name and reddens when the two diverge.
+// SIBLING LIST — NO LONGER A SECOND HAND-MAINTAINED ONE (task 4059).
+// `source/mesh_edit_delta.d`'s `MeshOpEntry` carries a per-face group
+// (`faceMat`/`facePrt`/`faceSub`/`faceSetMsk`/`faceOrd`) for the undo/redo
+// op-log. The two lists remain independent in ROLE — one is the LIVE-mesh
+// carry, the other a REPLAY payload — but they no longer diverge by
+// forgetfulness: `kFacePlaneEntryField` below states the correspondence, and
+// `MeshEditTracker.recordFaceReindex` fills the entry with a `static foreach`
+// over it. A plane added to `kFacePlanes` with no line in that table is a
+// COMPILE error at that site ("key `\"…\"` not found in associative array"),
+// not a runtime finding. `tests/unit/mesh_planes_census_test.d`'s
+// `kFacePlaneToEntryField` unittest still runs and still earns its place: it
+// checks the direction a compiler cannot — that every mapped name is a REAL
+// `MeshOpEntry` field, and that no per-face-shaped `MeshOpEntry` field is
+// left unclassified.
 // ---------------------------------------------------------------------------
 
 /// The per-face planes carried by `rewriteFaces`.
