@@ -75,10 +75,14 @@
 //
 // AND ONE THING IT SEES TOO EASILY, which is the honest weakness of a
 // window-based marker: a note silences its NEIGHBOURS as well as its own
-// compare. With 41 notes in `source/**` and a fifteen-line window each, some
-// six hundred lines of the tree are already "argued" before anyone writes a
+// compare. With 50 notes in `source/**` and a fifteen-line window each, some
+// seven hundred lines of the tree are already "argued" before anyone writes a
 // line there — so a new poll added directly beneath an existing note is born
-// green. The window cannot shrink much (ten-plus lines of reasoning is the
+// green. (The count is `grep -ric 'recorded remainder' source --include=*.d`
+// summed; it read 41 when this paragraph was written for 1906 and was already
+// 51 before task 4060 moved one note from a call site to a term. It is
+// illustrative of the WINDOW's reach, not a gate — nothing asserts it.)
+// The window cannot shrink much (ten-plus lines of reasoning is the
 // house style for these notes, and the note has to reach past the compare's
 // own multi-line condition), so this is a stated limit, not a bug to fix here.
 // ==> CLOSED AT STAGE 4 by the SET GATE at the bottom of this file. A poll
@@ -117,7 +121,9 @@ private enum repoRoot = dirName(dirName(dirName(__FILE_FULL_PATH__)));
 /// comment, which the scanner blanks. A pattern that can only ever match zero
 /// lines is not a check — it is a row that reads "unchanged" for the one
 /// reason that cannot be distinguished from working. Removing it moved the
-/// scanner's finding count by 0 (measured: 24 before and after).
+/// scanner's finding count by 0 — measured at the commit that removed it, 24
+/// before and 24 after. That 24 is a SNAPSHOT of that step, not the tree's
+/// total: the marks fold below took the total to 23.
 private immutable string[] kCounters = [
     "mutationVersion", "structVersion", "topologyVersion", "marksVersion",
     "uploadVersion", "sourceTopologyVersion",
@@ -631,8 +637,8 @@ private static immutable LedgerRow[] kRemainder = [
       ~ "`ActionCenterStage.bboxMembershipCached` (task 4060), which were the "
       ~ "same argument written twice: both memos carried an address and a "
       ~ "`marksVersion` beside each other and compared them by hand, and both "
-      ~ "are one `MeshKey!(… MeshTermMarks)` now. Net 0 — two rows out, one "
-      ~ "in, and a third consumer would add none"),
+      ~ "are one `MeshKey!(… MeshTermMarks)` now. Net MINUS ONE — two rows "
+      ~ "out, one in, 24 -> 23 — and a third consumer would add none"),
     LedgerRow("Mesh.vertexAdjacencyCSR", 1, "row 12"),
     LedgerRow("Mesh.loopsValid", 1, "row 13, first half"),
     LedgerRow("Mesh.edgeMapUsable", 1, "row 13, second half"),
@@ -643,7 +649,9 @@ private static immutable LedgerRow[] kRemainder = [
     // the terms of one `MeshKey!(MeshTermGeomEpoch, MeshTermMutation,
     // MeshTermTopology)` and the two compares are `agreesOn` calls that name
     // no counter. The arguments did not evaporate — they moved to the term
-    // declarations, which are the three rows above. Total 26 -> 24.
+    // declarations, which are the three rows above. Total 26 -> 24 AT THIS
+    // STEP; the `MeshTermMarks` row above then took it to 23, which is what
+    // this table sums to today (26 -> 23 over the task, net minus one).
     //
     // WHAT DID NOT MOVE, deliberately: `app.d`'s
     // `gpuUploadedPreviewTopVersion == subpatchPreview.sourceTopologyVersion`
@@ -742,7 +750,7 @@ unittest {
     //    ceremony: `recordedTotal` is summed from the table itself, so a
     //    legitimate row edit moves both sides at once.
     assert(kRemainder.length >= 15, format(
-        "the remainder table is down to %d row(s) from 24 — a table that "
+        "the remainder table is down to %d row(s) from 22 — a table that "
       ~ "small cannot be the §3.6 remainder, and `reconcile` agreeing with it "
       ~ "over a dead scanner is a green that measured nothing.",
         kRemainder.length));
