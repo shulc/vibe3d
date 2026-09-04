@@ -152,7 +152,10 @@ class Command {
 
     // Every command crosses one synchronous delivery boundary (task 1906).
     // `apply` is final and only `applyImpl` is overridable, so even a command
-    // with no bound mesh enters the global batch; publishers register their
+    // with no bound mesh enters the global batch — no `mesh is null` guard on
+    // the pair, the shipped case being `tools/create/box.d ::
+    // BoxLiveEditCommand` and its red the null-`mesh` block of
+    // `tests/unit/command_apply_anchor_test.d`. Publishers register their
     // actual subjects and the close coalesces them. Keep per-writer delivery
     // calls: callers outside a command batch depend on them. Evidence and the
     // superseded designs: doc/source_prose_policy.md#общая-граница-доставки.

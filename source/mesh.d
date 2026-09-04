@@ -11116,6 +11116,13 @@ struct Mesh {
     // Raw face-mark bulk write: preserve only `keepMask` and do not publish
     // (task 0613). The caller owes one final commit/derived-hide refresh; a
     // local hide-derive batch would combine nothing.
+    // SELF-ALIASING IS SUPPORTED and is what the `setFaceMarksFrom(faceMarks,
+    // ~Marks.Select)` call sites pass — safe for THIS body, not in general:
+    // with `src is faceMarks` the length assign is a no-op (nothing moves, no
+    // slot is zero-filled) and each slot is read into `w` and written back in
+    // the SAME iteration, so no index is ever read after a later one was
+    // written. A body that resized, or that read an index it had written,
+    // would not inherit this.
     // See doc/source_prose_policy.md#удалённый-отдельный-hide-derive-batch.
     void setFaceMarksFrom(const uint[] src, uint keepMask) {
         faceMarks.length = src.length;

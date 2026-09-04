@@ -482,7 +482,7 @@ package immutable InputBinding[] kTopoPenBindings = [
 //
 // Current gesture contracts live beside `PenGesture`, `kTopoPenBindings`, and
 // each handler. Phase history and measured alternatives:
-// doc/topopen_p0_plan.md through doc/topopen_p7_slide_plan.md, summarized in
+// doc/topopen_p1_plan.md through doc/topopen_p7_slide_plan.md, summarized in
 // doc/source_prose_policy.md#перенесённый-журнал-topology-pen.
 // ---------------------------------------------------------------------------
 
