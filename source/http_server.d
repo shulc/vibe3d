@@ -4034,6 +4034,22 @@ private string retiredWrapperRouteProblem(const RouteSpec[] rs) {
         "/api/select", "/api/transform", "/api/reset",
         "/api/load-mesh", "/api/undo", "/api/redo",
     ];
+    // POPULATION FLOOR, and it is the point of these four lines. The scan
+    // below is a "nothing matched" predicate, which is exactly the shape that
+    // is VACUOUSLY TRUE over an empty set: hand it `rs.length == 0`, or empty
+    // the `retired` list, and it returns `null` — a clean compile that has
+    // measured nothing. Both denominators are therefore stated. `retired` is a
+    // CLOSED historical set (the six routes task 4063 removed), so it is
+    // pinned exactly; `kRoutes` grows and shrinks with the API, so its floor
+    // is a "has this table been gutted" bound — 65 routes before the
+    // retirement, 59 after, and anything under 50 means this guard is reading
+    // a table that no longer describes the server.
+    if (retired.length != 6)
+        return "retired-route list is not the six routes task 4063 removed — "
+             ~ "this scan can pass over an empty set";
+    if (rs.length < 50)
+        return "route table has fewer than 50 entries — this scan would be "
+             ~ "reading a gutted table and would pass for that reason alone";
     foreach (route; rs)
         foreach (path; retired)
             if (route.path == path)
