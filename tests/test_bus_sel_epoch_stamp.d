@@ -26,7 +26,7 @@
 //
 // Runner: ./run_test.d test_bus_sel_epoch_stamp
 
-import http_client : testBaseUrl, getJson;
+import http_client : getJson, postRaw, testBaseUrl;
 import std.net.curl : get, post;
 import std.json;
 import std.format  : format;
@@ -38,8 +38,10 @@ void main() {}
 
 alias baseUrl = testBaseUrl;
 
-void postJson(string path, string body_ = "") {
-    auto resp = cast(string)post(baseUrl ~ path, body_);
+/// POST and require the app to answer ok. The transport is the shared
+/// client (tests/http_client.d); only the assertion is local.
+void postOk(string path, string body_ = "") {
+    auto resp = postRaw(path, body_);
     auto j = parseJSON(resp);
     assert("error" !in j
         && (("status" !in j) || j["status"].str == "ok"
@@ -62,7 +64,7 @@ long activeCellSelEpoch() {
 }
 
 unittest {
-    postJson("/api/reset");
+    postOk("/api/reset");
     settle();
 
     const long e0 = activeCellSelEpoch();
@@ -70,7 +72,7 @@ unittest {
     // A real selection-channel delivery: /api/select drives Mesh.selectVertex,
     // which commits and delivers on the selection channel synchronously
     // (task 1906). The positive control this test exists for.
-    postJson("/api/select", `{"mode":"vertices","indices":[0]}`);
+    postOk("/api/select", `{"mode":"vertices","indices":[0]}`);
     settle();
     const long e1 = activeCellSelEpoch();
     assert(e1 > e0,

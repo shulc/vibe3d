@@ -57,7 +57,7 @@
 //
 // Runner: ./run_test.d test_gpu_select_slot_upload_key
 
-import http_client : testBaseUrl, getJson;
+import http_client : getJson, postRaw, testBaseUrl;
 import std.net.curl : get, post;
 import std.json;
 import std.format : format;
@@ -73,8 +73,10 @@ void main() {}
 
 alias baseUrl = testBaseUrl;
 
-void postJson(string path, string body_) {
-    auto resp = cast(string)post(baseUrl ~ path, body_);
+/// POST and require the app to answer ok. The transport is the shared
+/// client (tests/http_client.d); only the assertion is local.
+void postOk(string path, string body_) {
+    auto resp = postRaw(path, body_);
     auto j = parseJSON(resp);
     assert("error" !in j
         && (("status" !in j) || j["status"].str == "ok"
@@ -113,7 +115,7 @@ void nearestOnScreen(JSONValue m, int px, int py,
 }
 
 unittest {
-    postJson("/api/reset", "");
+    postOk("/api/reset", "");
     settle();
 
     auto cam = fetchCamera();
@@ -157,9 +159,9 @@ unittest {
 
     // Slide the cube by exactly its own width, so the parked pixel is occupied
     // by a DIFFERENT, still-pickable vertex.
-    postJson("/api/select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    postOk("/api/select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
     settle();
-    postJson("/api/transform", `{"kind":"translate","delta":[1.0,0,0]}`);
+    postOk("/api/transform", `{"kind":"translate","delta":[1.0,0,0]}`);
     settle(600);
 
     auto m1 = getJson("/api/model");
@@ -187,5 +189,5 @@ unittest {
              ~ "since stage 2b removed the change-bus trigger",
                got, want, d0, d1, want, vid));
 
-    postJson("/api/reset", "");
+    postOk("/api/reset", "");
 }

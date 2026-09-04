@@ -33,7 +33,7 @@
 // Runner: ./run_test.d test_display_bus_refresh   (HTTP suite; needs a
 // running `vibe3d --test`, which run_test.d manages).
 
-import http_client : testBaseUrl;
+import http_client : postRaw, testBaseUrl;
 import std.net.curl : get, post;
 import std.json;
 import std.format : format;
@@ -48,15 +48,17 @@ void main() {}
 
 alias baseUrl = testBaseUrl;
 
-void postJson(string path, string body_) {
-    auto resp = cast(string)post(baseUrl ~ path, body_);
+/// POST and require the app to answer ok. The transport is the shared
+/// client (tests/http_client.d); only the assertion is local.
+void postOk(string path, string body_) {
+    auto resp = postRaw(path, body_);
     auto j = parseJSON(resp);
     assert(j["status"].str == "ok" || j["status"].str == "success",
         path ~ " failed: " ~ resp);
 }
 
 void cmd(string id) {
-    postJson("/api/command", format(`{"id":"%s"}`, id));
+    postOk("/api/command", format(`{"id":"%s"}`, id));
 }
 
 // Post-playback / post-command settle. /api/play-events/status flips to
@@ -89,7 +91,7 @@ long gpuFaceVertCount() {
 }
 
 unittest { // 1. same-batch undo→pick: the pull-guard scenario
-    postJson("/api/reset", "");
+    postOk("/api/reset", "");
     cmd("history.clear");
     settle();
 
@@ -164,12 +166,12 @@ unittest { // 1. same-batch undo→pick: the pull-guard scenario
                ~ "mid-batch pull-guard did not refresh the VBO before the pick",
                picked.to!string, vid));
 
-    postJson("/api/reset", "");
+    postOk("/api/reset", "");
     cmd("history.clear");
 }
 
 unittest { // 2. flush-site upload with no command-side display call
-    postJson("/api/reset", "");
+    postOk("/api/reset", "");
     settle();
 
     auto m0 = model();
@@ -189,6 +191,6 @@ unittest { // 2. flush-site upload with no command-side display call
                ~ "bus-driven upload did not run after mesh.subdivide",
                got, want));
 
-    postJson("/api/reset", "");
+    postOk("/api/reset", "");
     cmd("history.clear");
 }

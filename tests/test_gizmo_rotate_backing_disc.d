@@ -141,7 +141,7 @@
 //
 // --------------------------------------------------------------------------
 
-import http_client : testBaseUrl;
+import http_client : getJson, testBaseUrl;
 import std.format    : format;
 import std.json;
 import std.math      : abs, sqrt, cos, sin, atan2, PI, round, floor, isNaN;
@@ -185,10 +185,6 @@ private enum int SDLK_EQUALS_ = 61;
 // ---------------------------------------------------------------------------
 // Transport
 // ---------------------------------------------------------------------------
-
-private JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 private void script(string line) {
     auto j = parseJSON(cast(string)post(baseUrl ~ "/api/script", line));

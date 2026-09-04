@@ -11,7 +11,7 @@
 // is at (0,0,0) and a uniform scale factor f maps every vertex v → f*v.
 // No reference engine needed — the assertion is analytic.
 
-import http_client : testBaseUrl;
+import http_client : getJson, postJson, testBaseUrl;
 import std.net.curl : get, post;
 import std.json;
 import std.math  : fabs;
@@ -21,14 +21,6 @@ import std.format : format;
 void main() {}
 
 alias baseUrl = testBaseUrl;
-
-private JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
-
-private JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
 
 // Post an argstring command to /api/command (matches the format used by
 // test_scale_drag_parity.d, fixture_helpers.d, etc.).

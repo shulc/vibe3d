@@ -115,7 +115,7 @@
 // 1860-sel-display-align.md, section Мутация.
 // ---------------------------------------------------------------------------
 
-import http_client : testBaseUrl;
+import http_client : getJson, postJson, testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.format  : format;
@@ -133,14 +133,6 @@ alias baseUrl = testBaseUrl;
 // ---------------------------------------------------------------------------
 // HTTP
 // ---------------------------------------------------------------------------
-
-private JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
-
-private JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
 
 /// A state change is visible only once a frame has RENDERED with it, and a
 /// probe reads the last COMPLETED frame — so this has to cover two.

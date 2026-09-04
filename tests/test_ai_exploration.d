@@ -12,7 +12,7 @@
 
 module test_ai_exploration;
 
-import http_client : testBaseUrl;
+import http_client : getJson, postJson;
 import std.net.curl   : HTTP;
 import std.json       : JSONValue, JSONType, parseJSON;
 import std.string     : startsWith, indexOf;
@@ -39,41 +39,17 @@ void main() {}
 unittest { runHttpTests(); }
 
 // ---------------------------------------------------------------------------
-// Helper: HTTP GET/POST against the test server.
+// Helper: HTTP GET/POST against the test server. The transport is the shared
+// client (tests/http_client.d), which resolves this worker's port.
 // ---------------------------------------------------------------------------
-private string url(string base, string path) {
-    return base ~ path;
-}
-
-private JSONValue getJson(string base, string path) {
-    import std.net.curl : get;
-    return parseJSON(cast(string)get(url(base, path)));
-}
-
-private JSONValue postJson(string base, string path, string body_ = "{}") {
-    import std.net.curl : HTTP;
-    auto http = HTTP();
-    string response;
-    http.onReceive = (ubyte[] data) { response ~= cast(string)data; return data.length; };
-    http.method = HTTP.Method.post;
-    http.url = url(base, path);
-    http.setPostData(body_, "application/json");
-    http.perform();
-    return parseJSON(response.length ? response : `{}`);
-}
-
-private void reset(string base) {
-    postJson(base, "/api/reset");
+private void reset() {
+    postJson("/api/reset", "{}");
 }
 
 // ---------------------------------------------------------------------------
 // runHttpTests: verifies inertness of the exploration path under --test.
 // ---------------------------------------------------------------------------
 void runHttpTests() {
-    // run_test.d supplies VIBE3D_TEST_PORT to this process; the shared client
-    // resolves it at runtime so parallel workers cannot cross-connect.
-    alias base = testBaseUrl;
-
     // --- Inertness check 1: ε forced 0 under g_testMode -----------------------
     // We cannot directly observe whether the explore hook is set, but we CAN
     // verify that the 0027 passive capture path is unchanged: a handle grab
@@ -90,8 +66,8 @@ void runHttpTests() {
     // (exercises the undoEpoch accessor without regression).
 
     {
-        reset(base);
-        auto j = getJson(base, "/api/undo/status");
+        reset();
+        auto j = getJson("/api/undo/status");
         assert(j.type == JSONType.object, "/api/undo/status must return an object");
         assert("canUndo" in j, "/api/undo/status must have canUndo field");
 
@@ -132,12 +108,12 @@ void runHttpTests() {
     // counter logic did not break the undo path.
     {
         size_t vertexCount() {
-            return getJson(base, "/api/model")["vertices"].array.length;
+            return getJson("/api/model")["vertices"].array.length;
         }
 
-        reset(base);
+        reset();
         const vertsAtReset = vertexCount();
-        auto atReset = getJson(base, "/api/undo/status");
+        auto atReset = getJson("/api/undo/status");
         assert(atReset["modelDepth"].integer == 0, "reset leaves modelDepth 0");
 
         // The payload key is `id`. This block used to send `{"command": ...}`,
@@ -145,20 +121,20 @@ void runHttpTests() {
         // `{"status":"error","message":"missing 'id' string field"}` — so both
         // POSTs below did NOTHING. Check the status of each, or a future
         // contract change goes silent again instead of red.
-        auto mk = postJson(base, "/api/command", `{"id":"prim.cube"}`);
+        auto mk = postJson("/api/command", `{"id":"prim.cube"}`);
         assert(mk["status"].str == "ok", "prim.cube must be accepted: " ~ mk.toString);
         const vertsAfterCube = vertexCount();
         assert(vertsAfterCube > vertsAtReset,
                "prim.cube must actually add geometry, or the undo below undoes nothing");
-        auto before = getJson(base, "/api/undo/status");
+        auto before = getJson("/api/undo/status");
         assert(before["modelDepth"].integer == 1,
                "one Model entry above the boundary after prim.cube");
         assert(before["canRedo"].type == JSONType.false_,
                "a fresh action clears the redo timeline");
 
-        auto un = postJson(base, "/api/command", `{"id":"history.undo"}`);
+        auto un = postJson("/api/command", `{"id":"history.undo"}`);
         assert(un["status"].str == "ok", "history.undo must be accepted: " ~ un.toString);
-        auto after = getJson(base, "/api/undo/status");
+        auto after = getJson("/api/undo/status");
         assert(after["modelDepth"].integer == 0, "the Model entry is gone after undo");
         assert(after["canRedo"].type == JSONType.true_, "undo makes redo available");
         assert(vertexCount() == vertsAtReset, "undo must restore the pre-cube geometry");
@@ -180,8 +156,8 @@ void runHttpTests() {
     // suite check.  Here we verify the sink is still registered (by checking
     // that a reset + query cycle returns valid JSON, confirming no crash).
     {
-        reset(base);
-        auto sel = getJson(base, "/api/selection");
+        reset();
+        auto sel = getJson("/api/selection");
         assert(sel.type == JSONType.object, "/api/selection must not crash");
         writeln("PASS: post-reset /api/selection returns valid JSON (sink not broken)");
     }

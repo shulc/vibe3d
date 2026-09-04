@@ -105,7 +105,7 @@
 // expression into an equal one and cannot go red. A green from it would be
 // logged as "expected" and would mean nothing. There is no colour-separability
 // question left here to mutate against; the pass-identity question replaced it.
-import http_client : testBaseUrl;
+import http_client : getJson, testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.format  : format;
@@ -126,10 +126,6 @@ alias baseUrl = testBaseUrl;
 // ---------------------------------------------------------------------------
 // HTTP
 // ---------------------------------------------------------------------------
-
-private JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 private void cmd(string body_) {
     auto j = parseJSON(cast(string)post(baseUrl ~ "/api/command", body_));

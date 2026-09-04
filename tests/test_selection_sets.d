@@ -4,7 +4,7 @@
 // primary's model), and a save/load round trip (the suite has no dynamic
 // file-path primitive). See doc/selection_sets_plan.md Stage 3/4/6 and the
 // task card doc/tasks/work/1060-selection-sets.md.
-import http_client : testBaseUrl;
+import http_client : getJson, postJson, testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.format : format;
@@ -13,12 +13,6 @@ import std.file    : exists, remove;
 void main() {}
 
 alias BASE = testBaseUrl;
-
-private JSONValue getJson(string p) { return parseJSON(cast(string) get(BASE ~ p)); }
-
-private JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string) post(BASE ~ path, body_));
-}
 
 /// Fire a command (argstring form) that must SUCCEED.
 private JSONValue cmd(string argstring) {

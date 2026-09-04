@@ -74,7 +74,7 @@
 //       -> N2 "30 button(s) disagree with what their action declared: [tool
 //          'move' (Move): drawn available, declaration says it needs a target …]"
 
-import http_client : testBaseUrl;
+import http_client : getJson, testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv      : to;
@@ -99,8 +99,6 @@ alias BASE = testBaseUrl;
 /// changes, and the N1 block below is written so the failure tells you that is
 /// what happened.
 enum string kReason = "no mesh item is selected: there is no mesh edit target";
-
-private JSONValue getJson(string p) { return parseJSON(cast(string) get(BASE ~ p)); }
 
 private JSONValue post_(string argstring) {
     return parseJSON(cast(string) post(BASE ~ "/api/command", argstring));

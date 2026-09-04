@@ -160,7 +160,7 @@
 // profile covers all of them and would fail on a tenth-pixel width change.
 // --------------------------------------------------------------------------
 
-import http_client : testBaseUrl;
+import http_client : getJson, postJson, testBaseUrl;
 import std.format : format;
 import std.json;
 import std.math : abs, round, cos, sin, PI;
@@ -234,13 +234,6 @@ private enum double RING_ALPHA = 0.80;   // the plane handle's outline ring
 // further, to 0.997, because it is near saturation; the pixels that move most
 // under a width change are the ones the stroke's new edge sweeps across.)
 private enum double COV_TOL = 0.04;
-
-private JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
-private JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 private double num(JSONValue j, string[] path...) {
     JSONValue cur = j;

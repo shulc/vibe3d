@@ -34,7 +34,7 @@
 // the full bank, whose anchor is 70 % along the stem — a different point, and
 // comparing the two would have measured the presentation rather than the gate.
 
-import http_client : testBaseUrl;
+import http_client : getJson, postJson, testBaseUrl;
 import std.conv   : to;
 import std.format : format;
 import std.json;
@@ -56,12 +56,6 @@ private enum int SCALE_BASE = 20;
 private enum double ARM_ALONE  = 1.00;
 private enum double ARM_BESIDE = 1.10;
 
-private JSONValue postJson(string path, string body_) {
-    return parseJSON(cast(string)post(baseUrl ~ path, body_));
-}
-private JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 private void cmd(string script) { post(baseUrl ~ "/api/script", script); }
 
 private string hoverLog(int vpX, int vpY, int vpW, int vpH, int x, int y) {

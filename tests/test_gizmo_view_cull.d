@@ -70,7 +70,7 @@
 //           which is the point: the old rule is indistinguishable from this
 //           one until the gizmo's basis stops being the world basis.
 
-import http_client : testBaseUrl;
+import http_client : getJson, postRaw, testBaseUrl;
 import std.format : format;
 import std.json;
 import std.math : abs, asin, sin, cos, PI;
@@ -98,12 +98,6 @@ private enum int P_RING_Z = ROT_BASE + 2, P_RING_VIEW = ROT_BASE + 3;
 // The measured cull constants, restated (handles/gl_util.d).
 private enum double FACING_COS = 0.996;
 
-private JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
-private void postRaw(string path, string body_) {
-    post(baseUrl ~ path, body_);
-}
 private void script(string line) {
     auto r = parseJSON(cast(string)post(baseUrl ~ "/api/script", line));
     assert(r["status"].str == "ok", "script failed: " ~ line ~ " -> " ~ r.toString);

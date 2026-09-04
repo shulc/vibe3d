@@ -64,7 +64,7 @@
 //
 // Runner: ./run_test.d test_bus_epoch_position_class
 
-import http_client : testBaseUrl, getJson;
+import http_client : getJson, postRaw, testBaseUrl;
 import std.net.curl : get, post;
 import std.json;
 import std.format : format;
@@ -76,8 +76,10 @@ void main() {}
 
 alias baseUrl = testBaseUrl;
 
-void postJson(string path, string body_) {
-    auto resp = cast(string)post(baseUrl ~ path, body_);
+/// POST and require the app to answer ok. The transport is the shared
+/// client (tests/http_client.d); only the assertion is local.
+void postOk(string path, string body_) {
+    auto resp = postRaw(path, body_);
     auto j = parseJSON(resp);
     assert("error" !in j
         && (("status" !in j) || j["status"].str == "ok"
@@ -91,7 +93,7 @@ void settle(int ms = 300) { Thread.sleep(dur!"msecs"(ms)); }
 long counter(JSONValue ch, string key) { return ch[key].integer; }
 
 unittest {
-    postJson("/api/reset", "");
+    postOk("/api/reset", "");
     settle();
 
     // Baseline: the VBO already agrees with the mesh, so any disagreement
@@ -110,7 +112,7 @@ unittest {
                     "baseline: the cage VBO does not match the reset mesh");
     }
 
-    postJson("/api/select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
+    postOk("/api/select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`);
     settle();
 
     auto before = getJson("/api/changes");
@@ -118,7 +120,7 @@ unittest {
 
     // The ONE publication in the window. `mesh.transform` ends in
     // `commitChange(MeshEditScope.Position)`.
-    postJson("/api/transform", `{"kind":"translate","delta":[2.0,0,0]}`);
+    postOk("/api/transform", `{"kind":"translate","delta":[2.0,0,0]}`);
     settle();
 
     auto after = getJson("/api/changes");
@@ -171,5 +173,5 @@ unittest {
              ~ "class an interactive transform publishes",
                worstIdx, m[worstIdx].toString, p[worstIdx].toString, worst));
 
-    postJson("/api/reset", "");
+    postOk("/api/reset", "");
 }

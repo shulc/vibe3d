@@ -59,7 +59,7 @@
 //
 // Runner: ./run_test.d test_hide_derive_deferral
 
-import http_client : testBaseUrl, getJson;
+import http_client : getJson, postRaw, testBaseUrl;
 import std.net.curl : get, post;
 import std.json;
 import std.format : format;
@@ -74,8 +74,10 @@ void main() {}
 
 alias baseUrl = testBaseUrl;
 
-void postJson(string path, string body_) {
-    auto resp = cast(string)post(baseUrl ~ path, body_);
+/// POST and require the app to answer ok. The transport is the shared
+/// client (tests/http_client.d); only the assertion is local.
+void postOk(string path, string body_) {
+    auto resp = postRaw(path, body_);
     auto j = parseJSON(resp);
     assert("error" !in j
         && (("status" !in j) || j["status"].str == "ok"
@@ -102,9 +104,9 @@ size_t vertCount() { return getJson("/api/model")["vertices"].array.length; }
 private struct Round { long deferred; long unbatched; long delivered; size_t n; }
 
 private Round pasteRound(int subdivides, bool vertexMode) {
-    postJson("/api/reset?type=cube", "");
+    postOk("/api/reset?type=cube", "");
     settle();
-    foreach (i; 0 .. subdivides) { postJson("/api/command", "mesh.subdivide"); settle(80); }
+    foreach (i; 0 .. subdivides) { postOk("/api/command", "mesh.subdivide"); settle(80); }
 
     const size_t n = vertCount();
     assert(n > 8,
@@ -113,18 +115,18 @@ private Round pasteRound(int subdivides, bool vertexMode) {
              ~ "with a constant", n, subdivides));
 
     if (vertexMode) {
-        postJson("/api/command", "select.typeFrom vertex");
+        postOk("/api/command", "select.typeFrom vertex");
         auto idx = iota(n).map!(i => i.to!string).join(",");
-        postJson("/api/select", `{"mode":"vertices","indices":[` ~ idx ~ `]}`);
+        postOk("/api/select", `{"mode":"vertices","indices":[` ~ idx ~ `]}`);
     } else {
-        postJson("/api/command", "select.typeFrom polygon");
+        postOk("/api/command", "select.typeFrom polygon");
     }
     settle();
-    postJson("/api/command", "mesh.copy");
+    postOk("/api/command", "mesh.copy");
     settle();
 
     auto before = getJson("/api/changes");
-    postJson("/api/command", `{"id":"mesh.paste"}`);
+    postOk("/api/command", `{"id":"mesh.paste"}`);
     settle();
     auto after = getJson("/api/changes");
 

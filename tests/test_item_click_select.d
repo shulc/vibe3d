@@ -92,7 +92,7 @@
 //   * the border drawn one pixel wide, like a mesh's edges
 //       -> U6 "…carries 1 such pixels" where the fixture says 2.
 
-import http_client : testBaseUrl;
+import http_client : getJson, testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.format  : format;
@@ -113,10 +113,6 @@ alias baseUrl = testBaseUrl;
 // ---------------------------------------------------------------------------
 // HTTP
 // ---------------------------------------------------------------------------
-
-private JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 private void cmd(string body_) {
     auto j = parseJSON(cast(string)post(baseUrl ~ "/api/command", body_));

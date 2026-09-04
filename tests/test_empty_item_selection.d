@@ -79,7 +79,7 @@
 //       -> E8 "0 of 240 pixels across the model's row differ from the
 //          background".
 
-import http_client : testBaseUrl;
+import http_client : getJson, testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -91,8 +91,6 @@ import std.algorithm : canFind;
 void main() {}
 
 alias BASE = testBaseUrl;
-
-private JSONValue getJson(string p) { return parseJSON(cast(string) get(BASE ~ p)); }
 
 /// Fire a command that must SUCCEED.
 private JSONValue cmd(string argstring) {

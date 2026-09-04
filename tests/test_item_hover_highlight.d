@@ -83,7 +83,7 @@
 //       -> U2 "the parking pixel must be over empty space" — the app still
 //          reported item 1 with the pointer in the gap.
 
-import http_client : testBaseUrl;
+import http_client : getJson, testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.conv    : to;
@@ -120,10 +120,6 @@ private int[3] rgbOf(JSONValue v) {
 // ---------------------------------------------------------------------------
 // HTTP
 // ---------------------------------------------------------------------------
-
-private JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
 
 /// POST /api/command. Takes the raw body so both spellings work — a JSON object
 /// and the bare argstring form (`layer.attr 0 pos.x -4`).

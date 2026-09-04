@@ -61,7 +61,7 @@
 //        -> Flow C, "the scale bank must publish its hauled part like every
 //           other bank".
 
-import http_client : testBaseUrl;
+import http_client : getJson, postRaw, testBaseUrl;
 import std.format : format;
 import std.json;
 import std.math : abs, sqrt;
@@ -88,10 +88,6 @@ private enum int[3] RGB_ACTIVE = [255, 230, 102];   // 1.0, 0.9, 0.4
 // slop, not a shading tolerance.
 private enum int SLOP = 3;
 
-private JSONValue getJson(string path) {
-    return parseJSON(cast(string)get(baseUrl ~ path));
-}
-private void postRaw(string path, string body_) { post(baseUrl ~ path, body_); }
 private void script(string line) {
     auto r = parseJSON(cast(string)post(baseUrl ~ "/api/script", line));
     assert(r["status"].str == "ok", "script failed: " ~ line ~ " -> " ~ r.toString);

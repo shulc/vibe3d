@@ -85,7 +85,7 @@
 //
 // Runner: ./run_test.d test_gpu_select_slot_camera_key
 
-import http_client : testBaseUrl, getJson;
+import http_client : getJson, postRaw, testBaseUrl;
 import std.net.curl : get, post;
 import std.json;
 import std.format : format;
@@ -101,8 +101,10 @@ void main() {}
 
 alias baseUrl = testBaseUrl;
 
-void postJson(string path, string body_) {
-    auto resp = cast(string)post(baseUrl ~ path, body_);
+/// POST and require the app to answer ok. The transport is the shared
+/// client (tests/http_client.d); only the assertion is local.
+void postOk(string path, string body_) {
+    auto resp = postRaw(path, body_);
     auto j = parseJSON(resp);
     assert("error" !in j
         && (("status" !in j) || j["status"].str == "ok"
@@ -177,7 +179,7 @@ string parkAt(CameraState cam, int px, int py) {
 }
 
 unittest {
-    postJson("/api/reset", "");
+    postOk("/api/reset", "");
     settle();
 
     auto cam0 = fetchCamera();
@@ -198,7 +200,7 @@ unittest {
     // Orbit a quarter turn about world Y. ABSOLUTE: the reset camera is
     // `fromAngles(0.5, 0.4, 0)`, so `0.5 + PI/2` is the quarter turn without
     // ever reading the `%f`-quantised published azimuth.
-    postJson("/api/camera", format(`{"azimuth":%.9g}`, 0.5f + PI / 2));
+    postOk("/api/camera", format(`{"azimuth":%.9g}`, 0.5f + PI / 2));
     settle(600);
 
     // Re-park. Redundant (the hover pass re-picks every frame) but harmless,
@@ -243,5 +245,5 @@ unittest {
              ~ "camera moved",
                got, want, d0, d1, want, vid));
 
-    postJson("/api/reset", "");
+    postOk("/api/reset", "");
 }

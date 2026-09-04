@@ -67,7 +67,7 @@
 // No reference-editor name appears in this file; the routine names and
 // addresses behind the law live in the private capture card.
 
-import http_client : testBaseUrl;
+import http_client : getJson, postJson, testBaseUrl;
 import std.net.curl;
 import std.json;
 import std.math : fabs, isFinite;
@@ -78,11 +78,6 @@ import fixture_helpers : requireProvenance;
 void main() {}
 
 alias baseUrl = testBaseUrl;
-
-private JSONValue getJson(string p) { return parseJSON(cast(string) get(baseUrl ~ p)); }
-private JSONValue postJson(string p, string body_) {
-    return parseJSON(cast(string) post(baseUrl ~ p, body_));
-}
 
 private void cmd(string s, string ctx) {
     auto j = postJson("/api/command", s);

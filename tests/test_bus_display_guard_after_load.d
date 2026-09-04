@@ -62,7 +62,7 @@
 //
 // Runner: ./run_test.d test_bus_display_guard_after_load
 
-import http_client : testBaseUrl;
+import http_client : postRaw, testBaseUrl;
 import std.net.curl : get, post;
 import std.json;
 import std.format : format;
@@ -108,15 +108,17 @@ f 4 8 7 3
 f 1 2 6 5
 `;
 
-void postJson(string path, string body_) {
-    auto resp = cast(string)post(baseUrl ~ path, body_);
+/// POST and require the app to answer ok. The transport is the shared
+/// client (tests/http_client.d); only the assertion is local.
+void postOk(string path, string body_) {
+    auto resp = postRaw(path, body_);
     auto j = parseJSON(resp);
     assert(j["status"].str == "ok" || j["status"].str == "success",
         path ~ " failed: " ~ resp);
 }
 
 void cmd(string id, string params = "") {
-    postJson("/api/command", params.length
+    postOk("/api/command", params.length
         ? format(`{"id":"%s","params":%s}`, id, params)
         : format(`{"id":"%s"}`, id));
 }
@@ -199,7 +201,7 @@ void assertPixelIsLoadedMeshOnly(int px, int py) {
 /// stack, and the loaded mesh's nearest-vertex pixel in `px`/`py`.
 void armLoadedThenUndone(out int vid, out int px, out int py) {
     write(objPath(), kSmallCubeObj);
-    postJson("/api/reset", "");
+    postOk("/api/reset", "");
     cmd("history.clear");
     settle();
     const long baseVerts = model()["vertexCount"].integer;
@@ -272,7 +274,7 @@ unittest {
              ~ "green whether the display guard works or not",
                px, py, selectedVertices().to!string));
 
-    postJson("/api/reset", "");
+    postOk("/api/reset", "");
     cmd("history.clear");
     if (exists(objPath())) remove(objPath());
 }
@@ -318,7 +320,7 @@ unittest {
              ~ "2a the guard keys on the bus epoch, not on a pending word)",
                sel.to!string, vid));
 
-    postJson("/api/reset", "");
+    postOk("/api/reset", "");
     cmd("history.clear");
     if (exists(objPath())) remove(objPath());
 }

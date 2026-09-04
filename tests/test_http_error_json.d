@@ -25,35 +25,20 @@
 // token throws `unknown layer kind '<token>'`, and the token is whatever the
 // request said.
 
-import http_client : testBaseUrl;
+// The non-2xx-tolerant POST lives in the shared client: an error body is
+// the thing under test here, so `post` throwing on 500 would hide it.
+import http_client : postRawAllowingErrorStatus;
 import std.net.curl;
 import std.json;
 import std.algorithm : canFind;
 
 void main() {}
 
-alias baseUrl = testBaseUrl;
-
-// POST that tolerates a non-2xx status — an error body is the thing under
-// test, so `post` throwing on 500 would hide it.
-private string postRaw(string path, string body_) {
-    auto http = HTTP();
-    http.method = HTTP.Method.post;
-    http.url = baseUrl ~ path;
-    http.addRequestHeader("Content-Type", "application/json");
-    http.setPostData(body_, "application/json");
-    string resp;
-    http.onReceive = (ubyte[] data) { resp ~= cast(string)data; return data.length; };
-    http.onReceiveStatusLine = (HTTP.StatusLine) {};   // never throw on 4xx/5xx
-    http.perform();
-    return resp;
-}
-
 // One round: send `kindToken` as the layer kind, expect a refusal whose
 // message quotes the token back VERBATIM inside valid JSON.
 private void checkKind(string kindToken, string label) {
     auto reqBody = JSONValue(["kind": JSONValue(kindToken)]).toString();
-    string raw = postRaw("/api/test/layer", reqBody);
+    string raw = postRawAllowingErrorStatus("/api/test/layer", reqBody);
 
     JSONValue j;
     try {
