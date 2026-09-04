@@ -113,7 +113,7 @@ unittest {
                     "baseline: the cage VBO does not match the reset mesh");
     }
 
-    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
+    postOk("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0,1,2,3,4,5,6,7]}`));
     settle();
 
     auto before = getJson("/api/changes");

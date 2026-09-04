@@ -73,7 +73,7 @@ unittest {
     // A real selection-channel delivery: /api/select drives Mesh.selectVertex,
     // which commits and delivers on the selection channel synchronously
     // (task 1906). The positive control this test exists for.
-    postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
+    postOk("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[0]}`));
     settle();
     const long e1 = activeCellSelEpoch();
     assert(e1 > e0,

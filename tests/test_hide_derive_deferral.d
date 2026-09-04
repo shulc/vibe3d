@@ -118,7 +118,7 @@ private Round pasteRound(int subdivides, bool vertexMode) {
     if (vertexMode) {
         postOk("/api/command", "select.typeFrom vertex");
         auto idx = iota(n).map!(i => i.to!string).join(",");
-        postJson("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[` ~ idx ~ `]}`));
+        postOk("/api/command", commandBody("mesh.select", `{"mode":"vertices","indices":[` ~ idx ~ `]}`));
     } else {
         postOk("/api/command", "select.typeFrom polygon");
     }
