@@ -1112,42 +1112,29 @@ protected:
     // entire marks array, so it is O(V) per call, and `update()` asks it every
     // frame the tool is armed and not dragging.
     //
-    // The key is (marksVersion, editMode, MESH ADDRESS). The address term is
+    // The key is (MESH ADDRESS, marksVersion) + editMode. The address term is
     // not defensive padding: `mesh` is a pointer the tool re-binds when the
     // primary layer changes, and two layers can sit at the same marksVersion,
     // so without it a layer switch would serve the previous layer's signature.
     // Every version-keyed cache in this repository carries this term for that
-    // reason.
-    private ulong    selHashCache_;
-    private ulong    selHashKeyVer_  = ulong.max;
-    private size_t   selHashKeyMesh_;
-    private EditMode selHashKeyMode_;
+    // reason — which is why those two are ONE `MeshKey` (task 4060) and not
+    // the `(ulong ver, size_t addr)` pair they were, compared by hand. The
+    // argument for reading `marksVersion` lives at `mesh.MeshTermMarks` now.
+    // `editMode` stays a field of its own: it is not a property of the mesh.
+    private ulong               selHashCache_;
+    private MeshKey!MeshTermMarks selHashKey_;
+    private EditMode            selHashKeyMode_;
 
     // Single canonical selection-signature call (Mesh.selectionSignature) —
     // replaces the former per-mode selectionHash{V,E,F} dispatch. ulong (was
     // uint): a wider same-run change-detector token, harmless — nothing here
     // is persisted or compared across runs.
     ulong computeSelectionHash() {
-        // recorded remainder (1906 §3.6): `marksVersion` owns this memo's
-        // freshness term. It is the ONE counter stage 2 did not consider for
-        // migration at all, and correctly: no watcher carries `Marks` (the
-        // geometry and connectivity masks exclude it on purpose, and
-        // `DisplayEpochMask` does not list it either), and the thing being
-        // memoised — `selectionSignature` — IS the canonical content answer
-        // this counter is the cheap key for. A `Marks` epoch would be a
-        // strictly coarser restatement of a counter that already tracks exactly
-        // this class, on the mesh itself, where every scratch mesh has one.
-        //
-        // (Census shape C: counter into a local, compared two lines down.)
-        immutable ulong  ver  = mesh.marksVersion;
-        immutable size_t addr = cast(size_t)mesh;
-        if (ver == selHashKeyVer_ && addr == selHashKeyMesh_
-            && *editMode == selHashKeyMode_)
+        if (selHashKey_.matches(*mesh) && *editMode == selHashKeyMode_)
             return selHashCache_;
         { import perf_probe : g_perf, Cat; g_perf.count(Cat.selectionHashCompute, 1); }
         selHashCache_   = mesh.selectionSignature(*editMode);
-        selHashKeyVer_  = ver;
-        selHashKeyMesh_ = addr;
+        selHashKey_.stamp(*mesh);
         selHashKeyMode_ = *editMode;
         return selHashCache_;
     }

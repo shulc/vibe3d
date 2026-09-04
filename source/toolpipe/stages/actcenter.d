@@ -4,8 +4,8 @@ import std.format : format;
 
 import math    : Vec3, Pin, Viewport, screenRay, screenPointToRay, rayPlaneIntersect, applyAffine,
                  ModelSpace;
-import mesh    : Mesh, edgeKey;
-import mesh_dirty : MeshDirtyKey, g_topoEpochs;  // task 1906 stage 2d (row 15)
+import mesh    : Mesh, edgeKey, MeshKey, MeshTermMarks;
+import mesh_dirty : MeshDirtyKey, MeshTermTopoEpoch, g_topoEpochs;  // task 1906 stage 2d (row 15)
 import editmode : EditMode;
 import seltype : SelType;
 import toolpipe.stage    : Stage, TaskCode, ordAcen, ToolSwitchTransient;
@@ -500,14 +500,21 @@ private:
     // Order within the list is irrelevant: min/max over a multiset equals
     // min/max over its set, in any order, exactly.
     bool         _bboxCacheValid = false;
-    MeshDirtyKey _bboxKey;
+    // TWO TERMS, ONE KEY (task 4060). It was a `MeshDirtyKey` (address +
+    // `g_topoEpochs`) with a `ulong _bboxMarksVer` carried beside it and
+    // compared by hand — the shape `mesh.MeshKey` exists for. Both terms are
+    // unchanged:
+    //   * the CONNECTIVITY epoch, because this list is a function of adjacency
+    //     and of the selected set and of nothing else — keyed on the geometry
+    //     watcher instead, the O(V+E) walk would re-run on every step of every
+    //     gizmo drag (see `mesh_dirty.MeshTermTopoEpoch`);
+    //   * the SELECTION term, `Mesh.marksVersion` rather than the sibling
+    //     cluster cache's `selectionSignature()` — see
+    //     `bboxMembershipCached`'s doc comment for the measurement that forced
+    //     the difference. Its `ulong.max` default (a `MeshKey` term's, now)
+    //     is why a fresh stage cannot accidentally match a fresh mesh's zero.
+    MeshKey!(MeshTermTopoEpoch, MeshTermMarks) _bboxKey;
     int          _bboxEditMode   = -1;
-    // The SELECTION term, and it is `Mesh.marksVersion` rather than the
-    // sibling cluster cache's `selectionSignature()` — see
-    // `bboxMembershipCached`'s doc comment for the measurement that forced
-    // the difference. `ulong.max` rather than 0 so a fresh stage cannot
-    // accidentally match a fresh mesh's zero.
-    ulong        _bboxMarksVer   = ulong.max;
     // Vertex count the list was built against. Part of the key, mirroring the
     // cluster cache's `_cachedClusterOf.length == mesh_.vertices.length` belt:
     // an untracked vertex-count change would otherwise index out of range.
@@ -567,9 +574,8 @@ public:
         // 2006). Its own key check already catches selection / topology /
         // layer changes mid-session; this is the same belt-and-braces.
         _bboxCacheValid = false;
-        _bboxKey.clear();
+        _bboxKey.invalidate();
         _bboxEditMode   = -1;
-        _bboxMarksVer   = ulong.max;
         _bboxVertCount  = size_t.max;
         _bboxCount      = 0;
     }
@@ -1915,25 +1921,17 @@ private:
         if (mesh_ is null) return null;
 
         const int    edMode    = cast(int)(*editMode_);
-        const size_t meshAddr  = cast(size_t)mesh_;
-        const ulong  meshEpoch = g_topoEpochs.epochFor(meshAddr);
         const size_t nV        = mesh_.vertices.length;
 
-        // recorded remainder (1906 §3.6): `marksVersion` owns this memo's
-        // SELECTION term, the same way it owns `computeSelectionHash`'s in
-        // transform.d, and for the same reason — no watcher carries `Marks`
-        // (the geometry and connectivity masks exclude it on purpose, and
-        // `DisplayEpochMask` does not list it either), so a `Marks` epoch
-        // would be a strictly coarser restatement of a counter that already
-        // tracks exactly this class on the mesh itself. Here it replaces an
-        // O(V) `selectionSignature()` call that cost more than the walk it
-        // was guarding; see the doc comment above for the numbers.
-        // (Census shape C: counter into a local, compared four lines down.)
-        const ulong  marksVer  = mesh_.marksVersion;
+        // Both mesh terms sampled ONCE, into `cur`, then compared and — on a
+        // miss — assigned from that same sample: a publisher that fires during
+        // the walk below must leave the stamp BEHIND the live epoch, so the
+        // next call rebuilds. See `MeshKey.agreesOn`.
+        typeof(_bboxKey) cur;
+        cur.stamp(*mesh_);
         const bool hit = _bboxCacheValid
-                      && _bboxKey.matches(meshAddr, meshEpoch)
+                      && _bboxKey.agreesOn!(MeshTermTopoEpoch, MeshTermMarks)(cur)
                       && _bboxEditMode  == edMode
-                      && _bboxMarksVer  == marksVer
                       && _bboxVertCount == nV;
         if (hit) return _bboxVerts[0 .. _bboxCount];
 
@@ -1992,9 +1990,8 @@ private:
         }
 
         _bboxCount      = k;
-        _bboxKey.stamp(meshAddr, meshEpoch);
+        _bboxKey        = cur;
         _bboxEditMode   = edMode;
-        _bboxMarksVer   = marksVer;
         _bboxVertCount  = nV;
         _bboxCacheValid = true;
         return _bboxVerts[0 .. _bboxCount];

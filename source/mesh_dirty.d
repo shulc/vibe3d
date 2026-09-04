@@ -1,5 +1,57 @@
 module mesh_dirty;
 
+// ===========================================================================
+// HOW TO KEY A CACHE — READ THIS BEFORE WRITING A FRESHNESS CHECK
+// ===========================================================================
+// One shape, `mesh.MeshKey!(Terms...)`: a mesh ADDRESS (always, never optional)
+// plus one field per term you declare. `stamp(m)` writes them, `matches(m)`
+// asks whether all still hold, `agreesOn!(Sub...)` asks over a subset or
+// against a second key you sampled yourself. Terms available today, each with
+// its argument at its own declaration:
+//
+//   mesh.MeshTermMutation   `mutationVersion` — "anything committed changed"
+//   mesh.MeshTermStruct     `structVersion`   — the EDGE set
+//   mesh.MeshTermTopology   `topologyVersion` — the FACE set
+//   mesh.MeshTermMarks      `marksVersion`    — WHICH elements are selected
+//   MeshTermGeomEpoch       g_geomEpochs      — position, through the bus
+//   MeshTermTopoEpoch       g_topoEpochs      — connectivity, position EXCLUDED
+//
+// WHICH TO DECLARE. The law is the owner's and is measured (CLAUDE.md, "the
+// two domains"): version counters own STRUCTURE, the bus's `Position` class
+// owns POSITION, and a cache that depends on both carries BOTH terms.
+//
+//   * depends on where the vertices ARE  -> a geometry EPOCH, and a counter
+//     beside it. An interactive gizmo transform is version-silent at drag AND
+//     at commit, so a counter alone reads "fresh" over a cage that moved (task
+//     0401 lost three caches to that; 1906 found a fourth). The epoch cannot
+//     replace the counter either: `GeomEpochMask` drops `Marks` and
+//     `Material`, so a Tab toggle and a crease weight move no epoch.
+//     `SubpatchPreview.sourceKey` is the worked example — epoch + mutation +
+//     topology, three terms, each with its own witness.
+//   * depends only on CONNECTIVITY or on the selected set -> `MeshTermTopoEpoch`
+//     and/or `MeshTermMarks`. Do NOT reach for the geometry epoch here: it
+//     carries `Position`, so an O(V+E) walk would re-run on every step of
+//     every drag.
+//   * needs the IDENTITY of a layout rather than "did something change" (is
+//     this stencil table still laid out for that topology?) -> a counter, and
+//     say so: only an identity answers that question.
+//   * the subject is not a `Mesh` at all — a VBO upload generation, a render
+//     bridge frame, an undo epoch, an LRU tick -> none of this applies. Keep
+//     your own field and say what its subject is at the declaration. 29 of the
+//     38 hand-rolled version fields outside mesh.d are this case (task 4060).
+//
+// SAMPLE EACH TERM ONCE per call when the answer can move under you: stamp a
+// local key, compare with `agreesOn`, assign that same local on a miss. An
+// epoch re-read at the stamp can swallow a change that landed DURING the
+// rebuild — under-invalidation, the unsafe direction.
+//
+// THE GATE. `tests/unit/version_poll_census_test.d` enumerates every version
+// compare in `source/**`. A `MeshKey` instantiation adds NO row — the argument
+// for reading that counter was made once, at the term. A NEW TERM, or a
+// counter compared by hand, does, and has to be argued in a
+// `recorded remainder` comment beside it.
+// ===========================================================================
+
 // ---------------------------------------------------------------------------
 // Bus-driven, allocation-free per-mesh-address change EPOCHS — the consumer
 // side of task 1906 stage 2 (`doc/bus_sync_listeners_plan.md` §3).
@@ -214,6 +266,30 @@ struct MeshTermGeomEpoch {
     }
     static bool same(M)(ulong v, ref const M m) nothrow @nogc {
         return v == g_geomEpochs.epochFor(cast(size_t)&m);
+    }
+}
+
+/// The CONNECTIVITY-EPOCH term of a `mesh.MeshKey` — `g_topoEpochs`, i.e.
+/// `Points | Polygons` with `Position` deliberately EXCLUDED.
+///
+/// USE IT for a stage-owned derived structure that is a function of adjacency
+/// and of the selected set and of nothing else: the two consumers are
+/// `FalloffStage`'s selection-weight buffer and `ActionCenterStage`'s cluster
+/// partition and bbox membership list. Read that watcher's own doc comment
+/// below before choosing it over `MeshTermGeomEpoch` — the exclusion is the
+/// whole reason it exists, and getting it WIDER leaves every value correct
+/// and moves only a count, which is why both consumers are pinned by rates.
+///
+/// It pairs with a `Marks` term, never replaces one: no watcher here carries
+/// `Marks`, on purpose.
+struct MeshTermTopoEpoch {
+    enum string field = "topoEpoch";
+
+    static ulong read(M)(ref const M m) nothrow @nogc {
+        return g_topoEpochs.epochFor(cast(size_t)&m);
+    }
+    static bool same(M)(ulong v, ref const M m) nothrow @nogc {
+        return v == g_topoEpochs.epochFor(cast(size_t)&m);
     }
 }
 

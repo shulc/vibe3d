@@ -625,6 +625,14 @@ private static immutable LedgerRow[] kRemainder = [
         "the `structVersion` term's own compare"),
     LedgerRow("MeshTermTopology.same", 1,
         "the `topologyVersion` term's own compare"),
+    LedgerRow("MeshTermMarks.same", 1,
+        "the `marksVersion` term's own compare. It REPLACES the two rows "
+      ~ "`TransformTool.computeSelectionHash` and "
+      ~ "`ActionCenterStage.bboxMembershipCached` (task 4060), which were the "
+      ~ "same argument written twice: both memos carried an address and a "
+      ~ "`marksVersion` beside each other and compared them by hand, and both "
+      ~ "are one `MeshKey!(… MeshTermMarks)` now. Net 0 — two rows out, one "
+      ~ "in, and a third consumer would add none"),
     LedgerRow("Mesh.vertexAdjacencyCSR", 1, "row 12"),
     LedgerRow("Mesh.loopsValid", 1, "row 13, first half"),
     LedgerRow("Mesh.edgeMapUsable", 1, "row 13, second half"),
@@ -653,14 +661,6 @@ private static immutable LedgerRow[] kRemainder = [
       ~ "the same VBO-content generation; no Mesh change class answers that"),
     LedgerRow("shadowCheckMeshChanged", 1,
         "diagnostic only, behind VIBE3D_RENDER_HASH_CHECK"),
-    LedgerRow("ActionCenterStage.bboxMembershipCached", 1,
-        "the marksVersion key (task 2006) — the same argument as "
-      ~ "TransformTool.computeSelectionHash's below, one layer up: no watcher "
-      ~ "carries `Marks`, and the thing this counter stands in for is the "
-      ~ "O(V) `selectionSignature()` the cache used to call on EVERY "
-      ~ "evaluation. Measured at 1M faces (ldc2 -O3 -release): the hash cost "
-      ~ "2.23 ms in Vertices/Polygons and 4.46 ms in Edges, against a 1.02 ms "
-      ~ "bbox pass — i.e. the key was more expensive than the walk it guarded"),
     LedgerRow("RotateTool.projectPreparedUpdate", 1,
         "row 21's family — the dormant prepared projection"),
     LedgerRow("RotateTool.update", 1,
@@ -669,8 +669,6 @@ private static immutable LedgerRow[] kRemainder = [
         "same family, same argument — the dormant prepared projection"),
     LedgerRow("ScaleTool.update", 1,
         "same family, same argument — the gesture boundary"),
-    LedgerRow("TransformTool.computeSelectionHash", 1,
-        "the marksVersion memo"),
     LedgerRow("XfrmTransformTool.update", 1,
         "the wrapper's gesture boundary"),
     LedgerRow("XfrmTransformTool.projectPreparedUpdatePre", 1,

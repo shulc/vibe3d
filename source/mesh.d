@@ -764,6 +764,36 @@ struct MeshTermTopology {
     }
 }
 
+/// The SELECTION term: `Mesh.marksVersion`.
+///
+/// USE IT when the cached value depends on WHICH elements are selected. It is
+/// the one counter task 1906 stage 2 did not consider migrating to the bus at
+/// all, and correctly: NO watcher carries `Marks` — the geometry and
+/// connectivity masks exclude it on purpose and `DisplayEpochMask` does not
+/// list it either — so a `Marks` epoch would be a strictly coarser restatement
+/// of a counter that already tracks exactly this class, on the mesh itself,
+/// where every scratch mesh has one. Both its consumers memoise an O(V)
+/// `selectionSignature()` walk that measured MORE than the work it guards, so
+/// this term is not a convenience: it is the cheap key that made the memo
+/// worth having.
+struct MeshTermMarks {
+    enum string field = "marksVer";
+
+    static ulong read(ref const Mesh m) nothrow @nogc {
+        return m.marksVersion;
+    }
+    static bool same(ulong v, ref const Mesh m) nothrow @nogc {
+        // recorded remainder (1906 §3.6): `marksVersion` owns this compare, for
+        // the two selection memos — `TransformTool.computeSelectionHash` and
+        // `ActionCenterStage.bboxMembershipCached`. Measured at 1M faces
+        // (ldc2 -O3 -release), the walk this key replaces cost 2.23 ms in
+        // Vertices/Polygons and 4.46 ms in Edges against a 1.02 ms bbox pass,
+        // i.e. the content answer was more expensive than the walk it guarded.
+        // No watcher carries `Marks`, so there is no epoch to move to.
+        return v == m.marksVersion;
+    }
+}
+
 /// A cache-validity key for a cache that lives OUTSIDE the `Mesh` it was built
 /// from (a toolpipe stage's per-drag cluster or selection-weight cache, a
 /// tool's armed-preview guard, the subpatch preview's staleness key).
