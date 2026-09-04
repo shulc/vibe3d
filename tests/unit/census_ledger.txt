@@ -117,3 +117,20 @@ drop 2 9 3691 removed obsolete synthetic pre-cutover PreparedArm API tests after
 # gone. The row itself is carried to backlog card 4072, blocked on the same
 # P1.0c cutover decision that refuted row 4.
 drop 0 1 4066 the assert(hub !is null) added by row 8's MacroRecorder constructor, removed with the row when it was reverted for breaking five pins of the prepared-protocol census
+
+# Task 4062 deleted `oneStringArg` from source/http_providers.d — the helper
+# that read the single string argument of five `viewport.*` commands, and the
+# unittest that pinned its three accepted spellings plus the positional-wins
+# precedence. The function is gone because those five commands DECLARE that
+# argument now (`params()` is the positional order), and every spelling it
+# accepted is pinned again in tests/unit/command_bindargs_test.d and
+# tests/unit/command_bindargs_parity_test.d — the bare-scalar body, the
+# `_positional` array, the named key, and positional-wins-over-named all have
+# rows there, over the real commands rather than over a private helper. Its two
+# NON-answers are the exception and are not re-pinned: it read a numeric
+# positional as "" (no argument at all), and under the one coercion law a
+# number reaching a String slot is spelled out — the command hears the argument
+# and refuses it for its own reason instead of silently keeping its default.
+# Eight of its asserts went with it; the net loss after the two new files is
+# three.
+drop 0 3 4062 the oneStringArg unittest in source/http_providers.d, deleted with the helper when the viewport commands began declaring their own argument; every spelling it pinned is re-pinned over the real commands in tests/unit/command_bindargs_{,parity_}test.d
